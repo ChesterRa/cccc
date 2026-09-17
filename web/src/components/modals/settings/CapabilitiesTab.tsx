@@ -1019,7 +1019,7 @@ export function CapabilitiesTab({
         <div className={settingsWorkspaceBodyClass}>
           <div className="grid gap-3 md:grid-cols-2">
             <div className={settingsWorkspacePanelClass(_isDark)}>
-              <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+              <div className="text-[0.625rem] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
                 {t(
                   selfEvolvingSurface
                     ? "capabilities.selfEvolvingGroupCount"
@@ -1031,7 +1031,7 @@ export function CapabilitiesTab({
               </div>
             </div>
             <div className={settingsWorkspacePanelClass(_isDark)}>
-              <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+              <div className="text-[0.625rem] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
                 {t(
                   selfEvolvingSurface
                     ? "capabilities.selfProposedSource"
@@ -1060,16 +1060,16 @@ export function CapabilitiesTab({
                         {String(row.name || capId)}
                       </span>
                       {isBlocked ? (
-                        <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
+                        <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[0.625rem] text-rose-600 dark:text-rose-300">
                           {t("capabilities.manageStatusBlocked")}
                         </span>
                       ) : null}
                     </div>
-                    <div className="mt-0.5 text-[11px] truncate text-[var(--color-text-tertiary)]">
+                    <div className="mt-0.5 text-xs truncate text-[var(--color-text-tertiary)]">
                       {capId}
                     </div>
                     {String(row.description_short || "").trim() ? (
-                      <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                      <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                         {String(row.description_short || "")}
                       </div>
                     ) : null}
@@ -1101,11 +1101,11 @@ export function CapabilitiesTab({
                       <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">
                         {section.label}
                       </div>
-                      <div className="mt-0.5 font-mono text-[11px] text-[var(--color-text-tertiary)]">
+                      <div className="mt-0.5 font-mono text-xs text-[var(--color-text-tertiary)]">
                         {section.hint}
                       </div>
                     </div>
-                    <span className="w-fit rounded-full bg-[var(--glass-tab-bg)] px-2 py-1 text-[10px] font-medium text-[var(--color-text-secondary)]">
+                    <span className="w-fit rounded-full bg-[var(--glass-tab-bg)] px-2 py-1 text-[0.625rem] font-medium text-[var(--color-text-secondary)]">
                       {t("capabilities.selfProposedGroupSkillCount", {
                         count: section.rows.length,
                       })}
@@ -1125,16 +1125,16 @@ export function CapabilitiesTab({
                               {String(row.name || capId)}
                             </span>
                             {isBlocked ? (
-                              <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
+                              <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[0.625rem] text-rose-600 dark:text-rose-300">
                                 {t("capabilities.manageStatusBlocked")}
                               </span>
                             ) : null}
                           </div>
-                          <div className="mt-0.5 text-[11px] truncate text-[var(--color-text-tertiary)]">
+                          <div className="mt-0.5 text-xs truncate text-[var(--color-text-tertiary)]">
                             {capId}
                           </div>
                           {String(row.description_short || "").trim() ? (
-                            <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                            <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                               {String(row.description_short || "")}
                             </div>
                           ) : null}

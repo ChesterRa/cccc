@@ -27,7 +27,10 @@ function applyTheme(theme: Theme) {
   // Update meta theme-color for mobile browsers
   const metaThemeColor = document.querySelector('meta[name="theme-color"]');
   if (metaThemeColor) {
-    metaThemeColor.setAttribute("content", effectiveTheme === "dark" ? "#020617" : "#f8fafc");
+    metaThemeColor.setAttribute(
+      "content",
+      getComputedStyle(root).getPropertyValue("--color-body-bg").trim(),
+    );
   }
   syncDocumentBrandingTheme();
 }

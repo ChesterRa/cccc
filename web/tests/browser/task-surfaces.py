@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix='cccc-ui-polish-chrome-',ignore_cleanup_
    raise AssertionError(expr+'\n'+str(js('document.body.innerText.slice(-2500)')))
   def shot(name):out.joinpath(name+'.png').write_bytes(base64.b64decode(cdp('Page.captureScreenshot',{'format':'png'})['data']))
   def key(k,modifiers=0):
-   codes={'Enter':13,'Escape':27,'Tab':9,'ArrowRight':39,'ArrowLeft':37,'ArrowDown':40,'ArrowUp':38,'a':65}
+   codes={'Enter':13,'Escape':27,'Tab':9,'ArrowRight':39,'ArrowLeft':37,'ArrowDown':40,'ArrowUp':38,'a':65,' ':32}
    for t in ['keyDown','keyUp']:cdp('Input.dispatchKeyEvent',{'type':t,'key':k,'code':k,'windowsVirtualKeyCode':codes.get(k,0),'modifiers':modifiers,**({'text':'\r'} if k=='Enter' and t=='keyDown' else {})})
    time.sleep(.06)
   def click(sel):
@@ -94,7 +94,7 @@ with tempfile.TemporaryDirectory(prefix='cccc-ui-polish-chrome-',ignore_cleanup_
      matrix.append({'lang':lang,'width':w,'dark':dark,'box':box})
     if lang=='ja' and w==390:shot('branding-mobile-ja-dark')
   size(1440,1000);js('groupWorkProbe.setDark(false);groupWorkProbe.language("en")');time.sleep(.2)
-  tabs=[('global','account'),('global','actorProfiles'),('global','webAccess'),('global','webModels'),('global','developer'),('global','capabilities'),('group','delivery'),('group','messaging'),('group','transcript'),('group','im'),('group','copyGroups'),('group','assistants'),('group','space'),('group','guidance'),('group','automation')]
+  tabs=[('global','account'),('global','actorProfiles'),('global','webAccess'),('global','webModels'),('global','developer'),('global','capabilities'),('group','delivery'),('group','messaging'),('group','transcript'),('group','im'),('group','copyGroups'),('group','connections'),('group','assistants'),('group','space'),('group','guidance'),('group','automation')]
   for scope,tab in tabs:
    js(f'groupWorkProbe.openSettings("{scope}","{tab}")');time.sleep(.5)
    assert js('!!document.querySelector("[role=dialog][aria-modal=true]")'),tab
@@ -133,8 +133,115 @@ with tempfile.TemporaryDirectory(prefix='cccc-ui-polish-chrome-',ignore_cleanup_
   click('button[aria-label="Hide presentation"]');wait('!document.querySelector("#group-side-panel")')
   assert js('groupWorkProbe.group.getState().groupPresentation.slots.filter(s=>s.card).length')==2
   assert js('groupWorkProbe.errors')==[],js('groupWorkProbe.errors')
+  # Shared contrast requirements, not snapshots of one palette. Decorative dividers
+  # deliberately have no 3:1 requirement; input boundaries do.
+  js("""window.surfaceContrast=(foreground,background)=>{
+    const canvas=document.createElement('canvas');canvas.width=canvas.height=1;
+    const context=canvas.getContext('2d');
+    const rgb=color=>{context.clearRect(0,0,1,1);context.fillStyle=color;context.fillRect(0,0,1,1);return [...context.getImageData(0,0,1,1).data];};
+    const luminance=color=>rgb(color).slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+    const a=luminance(foreground),b=luminance(background);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+  };window.surfaceToken=name=>getComputedStyle(document.documentElement).getPropertyValue(name).trim();""")
+  surfaces=[]
+  for dark in [False,True]:
+   size(1440,1000);js(f'groupWorkProbe.setDark({str(dark).lower()});groupWorkProbe.language("en");groupWorkProbe.setTextScale(125)');time.sleep(.2)
+   ratios=js("""(()=>{const ratios=[];for(const bg of ['--color-bg-primary','--color-bg-secondary','--glass-bg','--glass-panel-bg']) for(const fg of ['--color-text-primary','--color-text-secondary','--color-text-tertiary','--color-text-muted']) ratios.push({fg,bg,ratio:surfaceContrast(surfaceToken(fg),surfaceToken(bg))});return ratios;})()""")
+   assert all(r['ratio']>=4.5 for r in ratios),(dark,ratios)
+   js('groupWorkProbe.openSettings("global","branding")');wait('!!document.querySelector("#branding-product-name")')
+   click('#branding-product-name');key('Tab')
+   assert js('document.activeElement.matches("button")&&getComputedStyle(document.activeElement).boxShadow!=="none"'),'keyboard focus must remain visible'
+   time.sleep(.2)  # Measure the resting border after its focus transition.
+   field=js("""(()=>{const s=getComputedStyle(document.querySelector('#branding-product-name'));return {border:surfaceContrast(s.borderTopColor,s.backgroundColor),text:surfaceContrast(s.color,s.backgroundColor)};})()""")
+   assert field['border']>=3 and field['text']>=4.5,(dark,field)
+   shot(('dark' if dark else 'light')+'-branding-125')
+   js('groupWorkProbe.setNotebookWarning("Notebook refresh is temporarily unavailable.");groupWorkProbe.openSettings("group","space")')
+   wait('document.querySelector("[aria-labelledby=settings-modal-title] [role=status]")?.textContent.includes("Notebook refresh is temporarily unavailable")')
+   before=js('groupWorkProbe.requests.filter(r=>r.method!=="GET").length')
+   wait('document.querySelector("[aria-labelledby=settings-modal-title]").textContent.includes("Saved Google session is verified.")')
+   shot(('dark' if dark else 'light')+'-notebook-125')
+   for lang,w in [('en',1440),('zh',390),('ja',320)]:
+    size(w,1000 if w>640 else 844);js(f'groupWorkProbe.language("{lang}")');time.sleep(.2)
+    box=dialog_ok();assert box['scroll']<=box['client']+1 and box['right']<=w+.5,(dark,lang,box)
+    if w<640:
+     assert js("[...document.querySelectorAll('[aria-labelledby=settings-modal-title] button[aria-pressed]')].filter(e=>e.getBoundingClientRect().width>0).every(e=>e.getBoundingClientRect().width>=innerWidth*.35)"),(dark,lang,'scope buttons squeeze each other')
+    click('[aria-labelledby=settings-modal-title] button[role=combobox]')
+    wait('!!document.querySelector("[role=listbox]")')
+    assert js("(()=>{const e=document.querySelector('[role=listbox]');const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+.5})()"),(dark,lang,'notebook menu overflow')
+    assert js("(()=>{const e=document.querySelector('[role=listbox]').closest('[data-radix-popper-content-wrapper]');return getComputedStyle(e.firstElementChild).backgroundColor.startsWith('rgb(')})()"),'floating menu must be opaque'
+    key('Escape');wait('!document.querySelector("[role=listbox]")')
+    assert js('document.activeElement.matches("button[role=combobox]")'),'menu restores trigger focus'
+    if w==320:shot(('dark' if dark else 'light')+'-notebook-mobile-125')
+   assert js('groupWorkProbe.requests.filter(r=>r.method!=="GET").length')==before,'opening settings and menus must not mutate state'
+   key('Escape');wait('!document.querySelector("[role=dialog][aria-modal=true]")')
+   size(1440,1000);js('groupWorkProbe.language("en")')
+   click('[data-workspace-files-toggle]');wait('!!document.querySelector("#group-side-panel")&&document.querySelector("#group-side-panel").textContent.includes("README.md")')
+   assert js("parseFloat(getComputedStyle(document.querySelector('[data-side-panel-header] h2')).fontSize)>=17.5&&parseFloat(getComputedStyle(document.querySelector('[data-side-panel-header] p')).fontSize)>=15")
+   shot(('dark' if dark else 'light')+'-files-125')
+   click('[data-workspace-files-toggle]');wait('!document.querySelector("#group-side-panel")')
+   click('[data-group-presentation-trigger]');wait('!!document.querySelector("#group-side-panel")')
+   js('groupWorkProbe.ui.getState().setChatSidePanelLayout("g1",{compact:false})');time.sleep(.2)
+   shot(('dark' if dark else 'light')+'-presentation-125')
+   click('[data-group-presentation-trigger]');wait('!document.querySelector("#group-side-panel")')
+   surfaces.append({'dark':dark,'contrast':ratios,'input':field})
+  # Apply the same layout and text-scale checks across every settings section.
+  settings_matrix=[]
+  js('groupWorkProbe.setTextScale(125)')
+  for lang in ['en','zh','ja']:
+   js(f'groupWorkProbe.language("{lang}")')
+   for scope,tab in tabs+[('global','branding')]:
+    js(f'groupWorkProbe.openSettings("{scope}","{tab}")');time.sleep(.2)
+    for dark in [False,True]:
+     js(f'groupWorkProbe.setDark({str(dark).lower()})')
+     for width in [1440,320]:
+      size(width,1000 if width>640 else 844);time.sleep(.04)
+      box=dialog_ok();assert box['scroll']<=box['client']+1,(lang,tab,dark,width,box)
+      overflow=js("[...document.querySelectorAll('[aria-labelledby=settings-modal-title] button,[aria-labelledby=settings-modal-title] input,[aria-labelledby=settings-modal-title] textarea')].filter(e=>e.getBoundingClientRect().width>2&&!e.closest('.scrollbar-hide')).filter(e=>{const r=e.getBoundingClientRect();return r.left<0||r.right>innerWidth+1||(e.tagName==='BUTTON'&&e.scrollWidth>e.clientWidth+2)}).map(e=>e.textContent||e.getAttribute('aria-label')||e.type)")
+      assert not overflow,(lang,tab,dark,width,overflow)
+      settings_matrix.append({'lang':lang,'tab':tab,'dark':dark,'width':width})
+      if lang=='en' and dark and width==1440:shot('settings-'+tab+'-125')
+  # An independent Profile keeps its object boundary; its edit fields stay usable
+  # in the nested dialog in either theme and all supported UI languages.
+  js('groupWorkProbe.language("en");groupWorkProbe.openSettings("global","actorProfiles")')
+  wait('document.querySelector("[aria-labelledby=settings-modal-title]").textContent.includes("Review and implementation")')
+  js("[...document.querySelectorAll('[aria-labelledby=settings-modal-title] button')].find(e=>e.textContent==='Edit').click()")
+  wait('document.querySelectorAll("[role=dialog][aria-modal=true]").length===2')
+  for lang in ['en','zh','ja']:
+   js(f'groupWorkProbe.language("{lang}")')
+   for dark in [False,True]:
+    js(f'groupWorkProbe.setDark({str(dark).lower()})')
+    for width in [1440,320]:
+     size(width,1000 if width>640 else 844)
+     overflow=js("[...document.querySelector('[role=dialog][aria-modal=true]:not([aria-labelledby])').querySelectorAll('button,input,textarea')].filter(e=>e.getBoundingClientRect().width>2).filter(e=>{const r=e.getBoundingClientRect();return r.left<0||r.right>innerWidth+1}).map(e=>e.textContent||e.type)")
+     assert not overflow,(lang,dark,width,'profile editor',overflow)
+     assert js("[...document.querySelectorAll('[role=dialog][aria-modal=true]:not([aria-labelledby]) .scrollbar-subtle')].every(e=>e.scrollWidth<=e.clientWidth+1)"),(lang,dark,width,'profile editor content overflow')
+     if lang=='ja' and dark and width==320:shot('profile-editor-ja-mobile-125')
+  click('[role=dialog][aria-modal=true]:not([aria-labelledby]) button')
+  wait('document.querySelectorAll("[role=dialog][aria-modal=true]").length===1')
+  # All shared settings switches retain a full hit target, visible keyboard focus,
+  # and native Space activation; opening/navigating controls does not write settings.
+  size(1440,1000);js('groupWorkProbe.language("en")')
+  before=js('groupWorkProbe.requests.filter(r=>r.method!=="GET").length')
+  for scope,tab in [('global','developer'),('group','assistants')]:
+   js(f'groupWorkProbe.openSettings("{scope}","{tab}")');wait('!!document.querySelector("[aria-labelledby=settings-modal-title] input[role=switch]")')
+   switches=js("[...document.querySelectorAll('[aria-labelledby=settings-modal-title] input[role=switch]')].map(e=>({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,disabled:e.disabled}))")
+   assert all(e['width']>=44 and e['height']>=44 for e in switches),(tab,switches)
+   js("document.querySelector('[aria-labelledby=settings-modal-title] input[role=switch]').focus()")
+   key('Tab');key('Tab',8)
+   assert js("document.activeElement.matches('input[role=switch]')"),tab
+   assert js("getComputedStyle(document.activeElement.nextElementSibling).boxShadow!=='none'"),(tab,'missing focus')
+   shot('settings-'+tab+'-keyboard-focus')
+  assert js('groupWorkProbe.requests.filter(r=>r.method!=="GET").length')==before
+  js('groupWorkProbe.openSettings("global","developer")');wait('!!document.querySelector("input[role=switch]")')
+  js('document.querySelector("input[role=switch]").focus()');checked=js('document.activeElement.checked');key(' ')
+  assert js('document.activeElement.checked')!=checked,'Space must toggle the native switch'
+  key(' ');assert js('document.activeElement.checked')==checked
+  key('Escape');wait('!document.querySelector("[role=dialog][aria-modal=true]")')
+  out.joinpath('settings-matrix.json').write_text(json.dumps(settings_matrix,indent=2))
+  js('groupWorkProbe.setTextScale(100);groupWorkProbe.setNotebookWarning("")')
+  assert js('groupWorkProbe.errors')==[],js('groupWorkProbe.errors')
+  out.joinpath('surfaces.json').write_text(json.dumps(surfaces,indent=2))
   out.joinpath('proof.json').write_text(json.dumps({'matrix':matrix,'errors':js('groupWorkProbe.errors'),'requests':js('groupWorkProbe.requests')},ensure_ascii=False,indent=2))
-  print('PASS search lifecycle, settings matrix, all settings tabs, compact/read/switch/collapse Presentation')
+  print('PASS search lifecycle, settings matrix, all settings tabs, compact/read/switch/collapse Presentation, theme contrast and scaled notebook/files surfaces')
  except Exception:
   try:shot('failure');print(js('groupWorkProbe.errors'));print(js("[...document.querySelectorAll('[role=dialog]')].map(e=>({label:e.getAttribute('aria-labelledby'),modal:e.getAttribute('aria-modal'),text:e.textContent.slice(-200)}))"))
   except:pass

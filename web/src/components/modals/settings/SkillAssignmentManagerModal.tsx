@@ -176,14 +176,14 @@ export function SkillAssignmentManagerModal({
 
           <div className="max-h-[calc(88vh-62px)] overflow-auto px-4 py-4">
             <div className="flex flex-wrap gap-1.5">
-              <span className="rounded bg-[var(--glass-tab-bg)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-secondary)]">
+              <span className="rounded bg-[var(--glass-tab-bg)] px-1.5 py-0.5 font-mono text-[0.625rem] text-[var(--color-text-secondary)]">
                 {capabilityId}
               </span>
-              <span className="rounded bg-[var(--glass-tab-bg)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-secondary)]">
+              <span className="rounded bg-[var(--glass-tab-bg)] px-1.5 py-0.5 text-[0.625rem] text-[var(--color-text-secondary)]">
                 {sourceId}
               </span>
               {qualificationStatus === "blocked" ? (
-                <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
+                <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[0.625rem] text-rose-600 dark:text-rose-300">
                   {labels.statusBlocked}
                 </span>
               ) : null}
@@ -214,14 +214,14 @@ export function SkillAssignmentManagerModal({
                 <div className="text-xs font-medium text-amber-800 dark:text-amber-200">
                   {labels.duplicateTitle}
                 </div>
-                <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">
                   {labels.duplicateHint}
                 </div>
                 <div className="mt-2 space-y-1">
                   {duplicateCandidates.map((row) => (
                     <div
                       key={String(row.capability_id || "")}
-                      className="truncate font-mono text-[11px] text-amber-800 dark:text-amber-200"
+                      className="truncate font-mono text-xs text-amber-800 dark:text-amber-200"
                     >
                       {String(row.capability_id || "")}
                     </div>
@@ -234,16 +234,16 @@ export function SkillAssignmentManagerModal({
               <div className="text-xs font-medium text-[var(--color-text-primary)]">
                 {labels.provenanceTitle}
               </div>
-              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+              <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                 {labels.provenanceHint}
               </div>
               <dl className="mt-3 grid gap-2 sm:grid-cols-2">
                 {provenanceRows.map((row) => (
                   <div key={row.label} className={settingsWorkspaceSoftPanelClass(isDark)}>
-                    <dt className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                    <dt className="text-[0.625rem] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
                       {row.label}
                     </dt>
-                    <dd className="mt-1 break-words font-mono text-[11px] text-[var(--color-text-secondary)]">
+                    <dd className="mt-1 break-words font-mono text-xs text-[var(--color-text-secondary)]">
                       {row.value}
                     </dd>
                   </div>
@@ -288,7 +288,7 @@ export function SkillAssignmentManagerModal({
                       rows={16}
                       className={`mt-1 ${inputClass()} resize-y font-mono text-xs leading-5`}
                     />
-                    <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
+                    <span className="mt-1 block text-[0.625rem] text-[var(--color-text-muted)]">
                       {labels.capsuleLimit}
                     </span>
                   </label>
@@ -325,72 +325,59 @@ export function SkillAssignmentManagerModal({
                   <div className="text-xs font-medium text-[var(--color-text-primary)]">
                     {labels.currentUseTitle}
                   </div>
-                  <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                     {labels.currentUseHint}
                   </div>
                   {usageLoading ? (
-                    <div className="mt-2 text-[11px] text-[var(--color-text-tertiary)]">
+                    <div className="mt-2 text-xs text-[var(--color-text-tertiary)]">
                       {labels.usageLoading}
                     </div>
                   ) : usage?.used ? (
                     <div className="mt-2 space-y-1.5">
-                      <div className={settingsWorkspaceSoftPanelClass(isDark)}>
-                        {labels.usageSummary}
-                      </div>
+                      <div className="min-w-0 break-words">{labels.usageSummary}</div>
                       {usage.group_enabled ? (
-                        <div className={settingsWorkspaceSoftPanelClass(isDark)}>
-                          {labels.usageGroup}
-                        </div>
+                        <div className="min-w-0 break-words">{labels.usageGroup}</div>
                       ) : null}
                       {(usage.session_enabled || []).map((row) => (
                         <div
                           key={`session:${row.actor_id}:${row.expires_at || ""}`}
-                          className={settingsWorkspaceSoftPanelClass(isDark)}
+                          className="min-w-0 break-words"
                         >
                           {labels.usageSession(row)}
                         </div>
                       ))}
                       {(usage.actor_enabled || []).map((row) => (
-                        <div
-                          key={`actor:${row.actor_id}`}
-                          className={settingsWorkspaceSoftPanelClass(isDark)}
-                        >
+                        <div key={`actor:${row.actor_id}`} className="min-w-0 break-words">
                           {labels.usageActor(row)}
                         </div>
                       ))}
                       {(usage.actor_autoload || []).map((row) => (
-                        <div
-                          key={`autoload:${row.actor_id}`}
-                          className={settingsWorkspaceSoftPanelClass(isDark)}
-                        >
+                        <div key={`autoload:${row.actor_id}`} className="min-w-0 break-words">
                           {labels.usageActorAutoload(row)}
                         </div>
                       ))}
                       {(usage.profile_autoload || []).map((row) => (
                         <div
                           key={`profile:${row.actor_id}:${row.profile_id || ""}`}
-                          className={settingsWorkspaceSoftPanelClass(isDark)}
+                          className="min-w-0 break-words"
                         >
                           {labels.usageProfileAutoload(row)}
                         </div>
                       ))}
                       {(usage.actor_hidden || []).map((row) => (
-                        <div
-                          key={`hidden:${row.actor_id}`}
-                          className={settingsWorkspaceSoftPanelClass(isDark)}
-                        >
+                        <div key={`hidden:${row.actor_id}`} className="min-w-0 break-words">
                           {labels.usageActorHidden(row)}
                         </div>
                       ))}
                       {usage.blocked ? (
-                        <div className="rounded-md bg-rose-500/10 px-2 py-1.5 text-[11px] text-rose-600 dark:text-rose-300">
+                        <div className="rounded-md bg-rose-500/10 px-2 py-1.5 text-xs text-rose-600 dark:text-rose-300">
                           {labels.usageBlocked}
                         </div>
                       ) : null}
                     </div>
                   ) : (
                     <div
-                      className={`mt-2 ${settingsWorkspaceSoftPanelClass(isDark)} text-[11px] text-[var(--color-text-tertiary)]`}
+                      className={`mt-2 ${settingsWorkspaceSoftPanelClass(isDark)} text-xs text-[var(--color-text-tertiary)]`}
                     >
                       {labels.noCurrentUse}
                     </div>
@@ -400,7 +387,7 @@ export function SkillAssignmentManagerModal({
                   <div className="text-xs font-medium text-[var(--color-text-primary)]">
                     {labels.actorAssignmentsTitle}
                   </div>
-                  <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                     {labels.actorAssignmentsHint}
                   </div>
                 </div>
@@ -429,34 +416,34 @@ export function SkillAssignmentManagerModal({
                               {actor.title ? `${actor.title} (${actorId})` : actorId}
                             </span>
                             {runtimeLabel ? (
-                              <span className="mt-0.5 block text-[11px] text-[var(--color-text-tertiary)]">
+                              <span className="mt-0.5 block text-xs text-[var(--color-text-tertiary)]">
                                 {runtimeLabel}
                               </span>
                             ) : null}
                             <span className="mt-1 flex flex-wrap gap-1">
                               {profileActorIds.has(actorId) ? (
-                                <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+                                <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] text-amber-700 dark:text-amber-300">
                                   {labels.profileBadge}
                                 </span>
                               ) : null}
                               {sessionActorIds.has(actorId) ? (
-                                <span className="rounded border border-black/10 bg-[rgb(245,245,245)] px-1.5 py-0.5 text-[10px] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
+                                <span className="rounded border border-black/10 bg-[rgb(245,245,245)] px-1.5 py-0.5 text-[0.625rem] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
                                   {labels.temporaryBadge}
                                 </span>
                               ) : null}
                               {actorScopeIds.has(actorId) ? (
-                                <span className="rounded border border-black/10 bg-[rgb(245,245,245)] px-1.5 py-0.5 text-[10px] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
+                                <span className="rounded border border-black/10 bg-[rgb(245,245,245)] px-1.5 py-0.5 text-[0.625rem] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
                                   {labels.actorScopeBadge}
                                 </span>
                               ) : null}
                               {hiddenActorIds.has(actorId) ? (
-                                <span className="rounded bg-slate-500/10 px-1.5 py-0.5 text-[10px] text-slate-600 dark:text-slate-300">
+                                <span className="rounded bg-slate-500/10 px-1.5 py-0.5 text-[0.625rem] text-slate-600 dark:text-slate-300">
                                   {labels.hiddenBadge}
                                 </span>
                               ) : null}
                             </span>
                           </span>
-                          <label className="shrink-0 text-[11px] text-[var(--color-text-secondary)]">
+                          <label className="shrink-0 text-xs text-[var(--color-text-secondary)]">
                             <input
                               type="checkbox"
                               className="mr-1 align-[-2px]"
@@ -470,7 +457,7 @@ export function SkillAssignmentManagerModal({
                     })}
                   {actors.length === 0 ? (
                     <div
-                      className={`${settingsWorkspaceSoftPanelClass(isDark)} text-[11px] text-[var(--color-text-tertiary)]`}
+                      className={`${settingsWorkspaceSoftPanelClass(isDark)} text-xs text-[var(--color-text-tertiary)]`}
                     >
                       {labels.noActors}
                     </div>

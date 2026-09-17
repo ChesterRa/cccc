@@ -194,7 +194,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               {title} <span className="font-mono">{ruleId || t("ruleEditor.unnamed")}</span>
             </div>
             {!isNewRule ? (
-              <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+              <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
                 {t("ruleEditor.last")} {status.last_fired_at || "—"} • {t("ruleEditor.next")}{" "}
                 {status.next_fire_at || "—"}{" "}
                 {status.completed
@@ -243,7 +243,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                   placeholder="daily_checkin"
                   spellCheck={false}
                 />
-                <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                   {t("ruleEditor.ruleNameHint")}
                 </div>
               </div>
@@ -291,7 +291,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                   ariaLabel={t("ruleEditor.scheduleType")}
                   className={inputClass(isDark)}
                 />
-                <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                   {scheduleLockedToOneTime
                     ? t("ruleEditor.oneTimeOnly")
                     : activeTriggerKind === "interval"
@@ -304,7 +304,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
             </div>
 
             {scope === "personal" ? (
-              <div className="text-[11px] text-amber-700 dark:text-amber-300">
+              <div className="text-xs text-amber-700 dark:text-amber-300">
                 {t("ruleEditor.personalRule", { owner: ownerActorId || "unknown" })}
               </div>
             ) : null}
@@ -328,7 +328,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                     className={inputClass(isDark)}
                   />
                 </div>
-                <div className="self-end text-[11px] text-[var(--color-text-muted)]">
+                <div className="self-end text-xs text-[var(--color-text-muted)]">
                   {t("ruleEditor.currentCadence", { duration: formatDuration(everySeconds, t) })}
                 </div>
               </div>
@@ -516,7 +516,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                   </div>
                 )}
 
-                <div className="text-[11px] text-[var(--color-text-muted)]">
+                <div className="text-xs text-[var(--color-text-muted)]">
                   {t("automation.savedSendTime")}{" "}
                   <span className="font-mono break-all">{atRaw || "—"}</span>
                 </div>
@@ -572,7 +572,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 className={inputClass(isDark)}
               />
               {!operationalActionsEnabled ? (
-                <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                   {t("automation.operationalActionsOnly")}
                 </div>
               ) : null}
@@ -671,22 +671,22 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       matchTriggerWidth
                     />
                     {snippetIds.length === 0 ? (
-                      <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                      <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">
                         {t("automation.noSnippetsYet")}
                       </div>
                     ) : null}
                     {snippetRef ? (
                       <div className="mt-3">
                         <div className="mb-2 flex items-center justify-between gap-2">
-                          <div className="text-[11px] font-medium text-[var(--color-text-secondary)]">
+                          <div className="text-xs font-medium text-[var(--color-text-secondary)]">
                             {t("ruleEditor.snippetPreview", { defaultValue: "Snippet Preview" })}
                           </div>
-                          <div className="rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2 py-0.5 text-[10px] font-mono text-[var(--color-text-secondary)]">
+                          <div className="rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2 py-0.5 text-[0.625rem] font-mono text-[var(--color-text-secondary)]">
                             {snippetRef}
                           </div>
                         </div>
                         <div
-                          className={`${inputClass(isDark)} min-h-[120px] whitespace-pre-wrap font-mono text-[12px] leading-6`}
+                          className={`${inputClass(isDark)} min-h-[120px] whitespace-pre-wrap font-mono text-xs leading-6`}
                         >
                           {selectedSnippetContent ||
                             t("ruleEditor.snippetPreviewEmpty", {
@@ -704,7 +704,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       onChange={(e) =>
                         patchRule({ action: { ...notifyAction, message: e.target.value } })
                       }
-                      className={`${inputClass(isDark)} font-mono text-[12px]`}
+                      className={`${inputClass(isDark)} font-mono text-xs`}
                       style={{ minHeight: 140 }}
                       placeholder={t("automation.messagePlaceholder")}
                       spellCheck={false}
@@ -740,7 +740,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                   ariaLabel={t("ruleEditor.groupStatusTarget")}
                   className={inputClass(isDark)}
                 />
-                <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                   {
                     groupStateCopy[
                       (groupStateValue as "active" | "idle" | "paused" | "stopped") || "paused"
@@ -773,7 +773,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                     ariaLabel={t("ruleEditor.runtimeOperation")}
                     className={inputClass(isDark)}
                   />
-                  <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                     {
                       actorOperationCopy[
                         (actorOperation as "start" | "stop" | "restart") || "restart"

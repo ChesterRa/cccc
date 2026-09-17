@@ -35,7 +35,7 @@ export function ResizableSidePanel({
         <div className="fixed inset-0 z-[1000] cursor-col-resize" aria-hidden="true" />
       )}
       <div
-        className="relative hidden w-2 flex-shrink-0 touch-none cursor-col-resize md:block"
+        className="group/resize relative hidden w-2 flex-shrink-0 touch-none cursor-col-resize md:block"
         onPointerDown={layout.onPointerDown}
         onKeyDown={layout.onKeyDown}
         role="separator"
@@ -52,12 +52,7 @@ export function ResizableSidePanel({
         aria-valuenow={layout.width}
         data-side-panel-resize
       >
-        <div
-          className={classNames(
-            "absolute inset-y-0 left-1/2 w-px -translate-x-1/2",
-            isDark ? "bg-white/8" : "bg-black/8",
-          )}
-        />
+        <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--color-border-primary)] group-hover/resize:bg-[var(--color-border-focus)] group-focus-visible/resize:bg-[var(--color-border-focus)]" />
         <div
           className={classNames(
             "absolute inset-y-0 -left-1 w-4 rounded-full transition-colors",
@@ -73,8 +68,7 @@ export function ResizableSidePanel({
       </div>
       <div
         className={classNames(
-          "hidden min-h-0 min-w-0 flex-shrink-0 flex-col overflow-hidden border-l md:flex",
-          isDark ? "border-white/8 bg-slate-950/20" : "border-black/8 bg-white/40",
+          "hidden min-h-0 min-w-0 flex-shrink-0 flex-col overflow-hidden border-l border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] md:flex",
         )}
         id="group-side-panel"
         style={{ width: `${layout.width}px` }}

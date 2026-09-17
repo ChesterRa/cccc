@@ -39,7 +39,7 @@ function PolicyGroup({
           {title}
         </div>
         {description ? (
-          <div className="mt-1 text-[11px] leading-snug text-[var(--color-text-muted)]">
+          <div className="mt-1 text-xs leading-snug text-[var(--color-text-muted)]">
             {description}
           </div>
         ) : null}

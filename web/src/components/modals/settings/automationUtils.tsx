@@ -5,7 +5,13 @@ import { useTranslation } from "react-i18next";
 
 import type { AutomationRule, AutomationRuleAction } from "../../../types";
 import { BellIcon as AppBellIcon, SparklesIcon } from "../../Icons";
-import { cardClass, inputClass, labelClass } from "./types";
+import {
+  inputClass,
+  labelClass,
+  settingsWorkspaceShellClass,
+  settingsWorkspaceHeaderClass,
+  settingsWorkspaceBodyClass,
+} from "./types";
 
 export const BellIcon = ({ className }: { className?: string }) => (
   <AppBellIcon className={className} />
@@ -48,16 +54,18 @@ export const Section = ({
   description: string;
   children: React.ReactNode;
 }) => (
-  <div className={cardClass(isDark)}>
-    <div className="flex items-center gap-2 mb-1">
-      <div className="rounded-md border border-black/8 bg-[rgb(245,245,245)] p-1.5 text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
-        <Icon className="w-4 h-4" />
+  <section className={settingsWorkspaceShellClass(isDark)}>
+    <div className={settingsWorkspaceHeaderClass(isDark)}>
+      <div>
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--color-text-primary)]">
+          <Icon className="h-4 w-4 shrink-0 text-[var(--color-text-secondary)]" />
+          {title}
+        </h3>
+        <p className="mt-1 text-xs text-[var(--color-text-muted)]">{description}</p>
       </div>
-      <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
     </div>
-    <p className="text-xs ml-9 mb-4 text-[var(--color-text-muted)]">{description}</p>
-    <div className="space-y-4 ml-1">{children}</div>
-  </div>
+    <div className={settingsWorkspaceBodyClass}>{children}</div>
+  </section>
 );
 
 export const NumberInputRow = ({
@@ -99,7 +107,7 @@ export const NumberInputRow = ({
         ) : null}
       </div>
       {helperText && (
-        <div className="mt-1.5 text-[11px] leading-snug text-[var(--color-text-muted)]">
+        <div className="mt-1.5 text-xs leading-snug text-[var(--color-text-muted)]">
           {helperText}
         </div>
       )}
@@ -118,7 +126,7 @@ export const Chip = ({
 }) => {
   const { t } = useTranslation();
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
+    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
       <span className="font-mono">{label}</span>
       {onRemove ? (
         <button

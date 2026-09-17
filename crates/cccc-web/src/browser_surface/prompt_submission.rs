@@ -33,6 +33,7 @@ pub(crate) enum PromptSubmissionOutcome {
 struct ComposerCandidate {
     selector: String,
     descriptor: String,
+    verification_required: bool,
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -563,10 +564,13 @@ impl BrowserSurfaces {
         let readiness = json!({
             "ready":ready,
             "login_required":!ready,
+            "verification_required":candidate.verification_required,
             "tab_url":url,
             "input_selector":candidate.descriptor,
             "checked_at":cccc_contracts::utc_now(),
-            "message":if ready {
+            "message":if candidate.verification_required {
+                "Complete the website's security verification in this browser. Delivery is waiting."
+            } else if ready {
                 "Browser model composer is ready."
             } else {
                 "Browser model sign-in or composer setup is required."
@@ -1067,6 +1071,15 @@ const SELECT_COMPOSER_SCRIPT: &str = r#"() => {
             && style.display !== 'none' && style.visibility !== 'hidden'
             && Number.parseFloat(style.opacity || '1') > 0.01;
     };
+    // A provider challenge page is not a composer. Ordinary background challenge
+    // scripts do not imply that the user is being asked to complete verification.
+    if (document.querySelector('script[src*="/challenge-platform/"][src*="/orchestrate/chl_page/"]')) {
+        return { selector: '', descriptor: '', verification_required: true };
+    }
+    // ChatGPT exposes a guest composer too; its presence does not prove sign-in.
+    if (Array.from(document.querySelectorAll('[data-testid="login-button"]')).some(visible)) {
+        return { selector: '', descriptor: '' };
+    }
     const editable = node => {
         if (!visible(node)) return false;
         if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) {
@@ -1106,7 +1119,11 @@ const SELECT_COMPOSER_SCRIPT: &str = r#"() => {
         seen.add(node);
         nodes.push(node);
     };
-    const selectors = [
+    // ChatGPT's landing/auth pages contain unrelated editable fields. Only its
+    // conversation composer is a delivery target; generic inputs are not.
+    const chatGptHost = /(^|\.)chatgpt\.com$/.test(location.hostname)
+        || ['chat.openai.com', 'auth.openai.com'].includes(location.hostname);
+    const selectors = chatGptHost ? ['#prompt-textarea'] : [
         '.ProseMirror', '#prompt-textarea', '[contenteditable="true"][data-virtualkeyboard="true"]',
         '[role="textbox"][contenteditable="true"]', 'textarea[data-id="prompt-textarea"]',
         'textarea[name="prompt-textarea"]', 'textarea[placeholder*="Send a message"]',
@@ -1380,3 +1397,54 @@ const ATTACHMENT_STATUS_SCRIPT: &str = r#"payload => {
         owned_input: ownedInput, owned_preview: ownedPreview, file_count: fileCount,
         preview_count: previewNodes.length, image_preview_count: imagePreviews.length };
 }"#;
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn chatgpt_auth_and_landing_inputs_are_not_conversation_composers() {
+        if crate::system_browser_path().is_none() {
+            return;
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = BrowserSurfaces::default();
+        let (url, server) = super::super::browser_surface_tests::local_page("<main></main>").await;
+        manager
+            .open("composer", &temp.path().join("profile"), &url, 800, 600)
+            .await
+            .expect("open");
+        let page = manager.page("composer").await.expect("page");
+        page.evaluate("document.body.innerHTML = '<input name=username><textarea placeholder=Ask></textarea>'").await.expect("landing page");
+        for host in ["chatgpt.com", "auth.openai.com"] {
+            // Exercise the production selector against an offline DOM, supplying
+            // only the hostname instead of contacting the provider in this test.
+            let script =
+                format!("(location => ({SELECT_COMPOSER_SCRIPT})())({{hostname:{host:?}}})");
+            let candidate = page
+                .evaluate(script)
+                .await
+                .expect("inspect inputs")
+                .into_value::<ComposerCandidate>()
+                .expect("candidate");
+            assert!(
+                candidate.selector.is_empty(),
+                "{host} input is not a composer"
+            );
+        }
+        page.evaluate("document.querySelector('textarea').id = 'prompt-textarea'")
+            .await
+            .expect("conversation");
+        let candidate = page
+            .evaluate(format!(
+                "(location => ({SELECT_COMPOSER_SCRIPT})())({{hostname:'chatgpt.com'}})"
+            ))
+            .await
+            .expect("composer")
+            .into_value::<ComposerCandidate>()
+            .expect("candidate");
+        assert!(!candidate.selector.is_empty());
+        manager.close("composer").await.expect("close");
+        server.abort();
+    }
+}

@@ -664,10 +664,6 @@
     "bound": "已绑定",
     "savedTarget": "已保存目标",
     "notBound": "未绑定",
-    "summaryTitle": "连接摘要",
-    "summaryGoogle": "Google",
-    "summaryWork": "工作",
-    "summaryMemory": "记忆",
     "summaryWarning": "警告",
     "notebookSectionLockedTitle": "笔记本绑定",
     "notebookSectionLockedDisconnected": "连接 Google 后，这里才会显示工作 / 记忆笔记本的查看、绑定与管理。",
@@ -1259,6 +1255,7 @@
         "conversationUrl": "ChatGPT 会话 URL"
       },
       "browser": {
+        "verificationRequired": "需要安全验证",
         "ready": "ChatGPT 已就绪",
         "signInNeeded": "需要登录",
         "notOpen": "未打开",
@@ -1281,6 +1278,7 @@
         "permissionDocsLink": "OpenAI app 权限说明"
       },
       "chatSetup": {
+        "verificationHint": "请在浏览器中完成验证，消息投递会等待。",
         "title": "{{actor}} 的 ChatGPT 设置",
         "description": "按顺序完成这些 ChatGPT 专用步骤。CCCC 浏览器投递只会使用已保存的目标会话。",
         "accountTitle": "1. 登录 ChatGPT",
@@ -1341,7 +1339,7 @@
       "browserSurface": {
         "starting": "正在打开 ChatGPT...",
         "waiting": "正在等待 ChatGPT...",
-        "ready": "ChatGPT 页面已就绪",
+        "ready": "浏览器已连接",
         "failed": "ChatGPT 页面打开失败",
         "closed": "ChatGPT 页面已关闭。",
         "reconnecting": "正在重新连接 ChatGPT 页面...",
@@ -1399,6 +1397,7 @@
         "bindConversationFailed": "绑定 ChatGPT 会话失败。"
       },
       "nextAction": {
+        "verify_browser": "完成安全验证",
         "open_chatgpt": "打开 ChatGPT",
         "restart_browser": "重启浏览器",
         "reload_page": "重新加载页面",

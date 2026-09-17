@@ -375,12 +375,12 @@ export function GroupSidebar({
                   <span className="min-w-0 flex-1 truncate">
                     {instanceName(connect.ownInstance, connect.instances)}
                   </span>
-                  <span className="shrink-0 text-[10px] text-[var(--color-text-tertiary)]">
+                  <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">
                     {t("connect.thisInstance")}
                   </span>
                 </div>
               ) : (
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]/85">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]/85">
                   {t("workingGroups")}
                 </div>
               )}
@@ -402,7 +402,7 @@ export function GroupSidebar({
                 aria-expanded={archivedPanelOpen}
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[var(--color-text-tertiary)]">
+                  <span className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--color-text-tertiary)]">
                     {t("archivedGroups")}
                   </span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">

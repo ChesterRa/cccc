@@ -637,7 +637,7 @@ export function AutomationTab(props: AutomationTabProps) {
             <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
               <button
                 type="button"
-                className={`${secondaryButtonClass()} w-full sm:w-auto whitespace-nowrap`}
+                className={`${secondaryButtonClass()} w-full sm:w-auto sm:whitespace-nowrap`}
                 onClick={openNewRule}
                 disabled={rulesBusy}
                 title={t("automation.createRuleTitle")}
@@ -646,7 +646,7 @@ export function AutomationTab(props: AutomationTabProps) {
               </button>
               <button
                 type="button"
-                className={`${secondaryButtonClass()} w-full sm:w-auto whitespace-nowrap`}
+                className={`${secondaryButtonClass()} w-full sm:w-auto sm:whitespace-nowrap`}
                 onClick={openSnippetManager}
                 disabled={rulesBusy}
                 title={t("automation.manageSnippetsTitle")}
@@ -658,7 +658,7 @@ export function AutomationTab(props: AutomationTabProps) {
             <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
               <button
                 type="button"
-                className={`${dangerButtonClass()} w-full sm:w-auto whitespace-nowrap`}
+                className={`${dangerButtonClass()} w-full sm:w-auto sm:whitespace-nowrap`}
                 onClick={resetToBaseline}
                 disabled={rulesBusy}
                 title={t("automation.resetTitle")}
@@ -667,7 +667,7 @@ export function AutomationTab(props: AutomationTabProps) {
               </button>
               <button
                 type="button"
-                className={`${primaryButtonClass(rulesBusy)} w-full sm:w-auto whitespace-nowrap`}
+                className={`${primaryButtonClass(rulesBusy)} w-full sm:w-auto sm:whitespace-nowrap`}
                 onClick={() => void saveRules()}
                 disabled={rulesBusy}
                 title={t("automation.saveTitle")}
@@ -692,7 +692,7 @@ export function AutomationTab(props: AutomationTabProps) {
           onDeleteRule={removeRule}
         />
 
-        <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+        <div className="mt-2 text-xs text-[var(--color-text-muted)]">
           {t("automation.editHint")}
         </div>
       </Section>

@@ -99,6 +99,16 @@ pub(super) async fn ensure_open_for_actor(
         .await
         .map_err(|error| ApiError::bad(format!("{error:#}")))?;
     let session_key = key(group_id, actor_id);
+    // An existing surface may be midway through sign-in or navigation. Opening
+    // its viewer must not send it away from that page to the saved conversation.
+    let ready = state
+        .browser_surfaces
+        .prompt_readiness(&session_key)
+        .await
+        .is_ok_and(|readiness| readiness["ready"] == true);
+    if !ready {
+        return Ok(state.browser_surfaces.info(&session_key).await);
+    }
     match target["kind"].as_str() {
         Some("existing_chat") if is_chatgpt_url(&open_url) => {
             if normalized_chatgpt_conversation_url(&open_url).is_some()
@@ -311,6 +321,9 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
         .unwrap_or_else(|| json!({}));
     let ready = readiness["ready"].as_bool().unwrap_or(false);
     let login_required = readiness["login_required"].as_bool().unwrap_or(false);
+    let verification_required = readiness["verification_required"]
+        .as_bool()
+        .unwrap_or(false);
     let url = readiness["tab_url"]
         .as_str()
         .or_else(|| surface["url"].as_str())
@@ -473,6 +486,12 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
             "Open ChatGPT",
             "Open ChatGPT to sign in or inspect the page.",
         )
+    } else if verification_required {
+        (
+            "verify_browser",
+            "Complete security verification",
+            "Complete the website's security verification in this browser. Delivery is waiting.",
+        )
     } else if login_required {
         (
             "login_chatgpt",
@@ -512,8 +531,8 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
         "tone":tone,
         "summary":next_label,
         "browser":{
-            "state":if ready{"ready"}else if login_required{"sign_in_required"}else if active{"open"}else{"closed"},
-            "label":if ready{"Ready"}else if login_required{"Needs sign-in"}else if active{"Open"}else{"Not open"},
+            "state":if verification_required{"verification_required"}else if ready{"ready"}else if login_required{"sign_in_required"}else if active{"open"}else{"closed"},
+            "label":if verification_required{"Needs verification"}else if ready{"Ready"}else if login_required{"Needs sign-in"}else if active{"Open"}else{"Not open"},
             "reason":readiness["message"].as_str().unwrap_or(if active {
                 "Open ChatGPT and sign in with this browser profile."
             } else {
@@ -546,13 +565,14 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
         "active":active,
         "ready":ready,
         "login_required":login_required,
+        "verification_required":verification_required,
         "pid":metadata["pid"],
         "cdp_port":metadata["cdp_port"],
         "profile_dir":metadata["profile_dir"],
         "visibility":metadata["visibility"],
         "started_at":surface["started_at"],
         "updated_at":surface["updated_at"],
-        "state":if ready{"ready"}else if login_required{"sign_in_required"}else if active{"open"}else{"idle"},
+        "state":if verification_required{"verification_required"}else if ready{"ready"}else if login_required{"sign_in_required"}else if active{"open"}else{"idle"},
         "message":readiness["message"],
         "tab_url":url,
         "last_tab_url":url,

@@ -72,7 +72,7 @@ export function MessagingTab(props: MessagingTabProps) {
                 ariaLabel={t("messaging.whenNoRecipients")}
                 className={inputClass(isDark)}
               />
-              <div className="text-[11px] leading-snug text-[var(--color-text-muted)]">
+              <div className="text-xs leading-snug text-[var(--color-text-muted)]">
                 {t("messaging.tip")}
               </div>
             </div>

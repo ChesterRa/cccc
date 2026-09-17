@@ -28,6 +28,136 @@ fn extracts_google_account_route_from_completion_url() {
 }
 
 #[tokio::test]
+async fn composer_readiness_waits_for_login_and_interactive_verification() {
+    require_chrome!();
+    let (url, server) = local_page(
+        r#"<!doctype html><button data-testid="login-button">Log in</button><textarea id="prompt-textarea">User draft</textarea>"#,
+    )
+    .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let key = "readiness";
+    manager
+        .open(key, &temp.path().join("profile"), &url, 800, 600)
+        .await
+        .expect("open");
+    let page = manager
+        .sessions
+        .lock()
+        .await
+        .get(key)
+        .expect("session")
+        .page
+        .clone();
+    let guest = manager.prompt_readiness(key).await.expect("guest state");
+    assert_eq!(guest["ready"], false);
+    assert_eq!(guest["login_required"], true);
+    assert_eq!(guest["verification_required"], false);
+
+    // Background JavaScript detection also runs on ordinary provider pages.
+    page.evaluate(
+        r#"document.querySelector('button').hidden = true;
+        const background = document.createElement('script');
+        background.type = 'application/json';
+        background.src = '/cdn-cgi/challenge-platform/h/g/jsd/r/normal';
+        document.head.append(background);"#,
+    )
+    .await
+    .expect("sign in");
+    assert_eq!(
+        manager.prompt_readiness(key).await.expect("signed in")["ready"],
+        true
+    );
+    page.evaluate(
+        r#"const challenge = document.createElement('script');
+        challenge.id = 'challenge'; challenge.type = 'application/json';
+        challenge.src = '/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1';
+        document.head.append(challenge);"#,
+    )
+    .await
+    .expect("verification page");
+    let challenge = manager
+        .prompt_readiness(key)
+        .await
+        .expect("challenge state");
+    assert_eq!(challenge["ready"], false);
+    assert_eq!(challenge["verification_required"], true);
+    page.evaluate("document.querySelector('#challenge').remove()")
+        .await
+        .expect("verification complete");
+    assert_eq!(
+        manager.prompt_readiness(key).await.expect("recovered")["ready"],
+        true
+    );
+    let draft: String = page
+        .evaluate("document.querySelector('textarea').value")
+        .await
+        .expect("draft")
+        .into_value()
+        .expect("text");
+    assert_eq!(draft, "User draft");
+    manager.close(key).await.expect("close");
+    server.abort();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn interactive_system_browser_keeps_native_mode_and_reuses_its_session() {
+    require_chrome!();
+    if !std::path::Path::new("/usr/bin/Xvfb").is_file() {
+        return;
+    }
+    let (url, server) = local_page("<textarea id='prompt-textarea'></textarea>").await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let profile = temp.path().join("profile");
+    let opened = manager
+        .ensure_open_system("interactive", &profile, &url, 800, 600)
+        .await
+        .expect("system browser");
+    let page = manager
+        .sessions
+        .lock()
+        .await
+        .get("interactive")
+        .expect("session")
+        .page
+        .clone();
+    let automated: bool = page
+        .evaluate("navigator.webdriver")
+        .await
+        .expect("browser mode")
+        .into_value()
+        .expect("mode");
+    assert!(
+        !automated,
+        "interactive system browser must not enable Chrome automation mode"
+    );
+    assert!(
+        opened["metadata"]["cdp_port"]
+            .as_u64()
+            .is_some_and(|port| port > 0)
+    );
+    page.evaluate(
+        "window.reuseMarker = true; document.querySelector('textarea').value = 'Keep draft'",
+    )
+    .await
+    .expect("interact");
+    let reused = manager
+        .ensure_open_system("interactive", &profile, &url, 800, 600)
+        .await
+        .expect("reuse");
+    assert_eq!(opened["metadata"]["pid"], reused["metadata"]["pid"]);
+    let kept: bool = page.evaluate("window.reuseMarker === true && document.querySelector('textarea').value === 'Keep draft'").await.expect("read state").into_value().expect("state");
+    assert!(
+        kept,
+        "reopening the surface must preserve the page and draft"
+    );
+    manager.close("interactive").await.expect("close");
+    server.abort();
+}
+
+#[tokio::test]
 async fn launches_chromium_and_captures_nonempty_frame() {
     require_chrome!();
     let (url, server) = local_page(
@@ -317,7 +447,7 @@ async fn shutdown_closes_all_browser_processes() {
     server.abort();
 }
 
-async fn local_page(body: &'static str) -> (String, JoinHandle<()>) {
+pub(super) async fn local_page(body: &'static str) -> (String, JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener");

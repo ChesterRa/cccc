@@ -80,7 +80,7 @@ export function InfoPopover({
             ref={setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
-            className={`z-max ${maxWidthClassName} rounded-xl shadow-2xl px-3 py-3 text-[11px] leading-6 transition-opacity duration-150 glass-panel ${
+            className={`z-max ${maxWidthClassName} rounded-xl shadow-2xl px-3 py-3 text-xs leading-6 transition-opacity duration-150 glass-panel ${
               isPositioned ? "opacity-100" : "opacity-0"
             } text-[var(--color-text-secondary)]`}
           >

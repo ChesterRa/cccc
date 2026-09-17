@@ -73,7 +73,7 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">
               {t("snippetModal.title")}
             </div>
-            <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+            <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
               {t("snippetModal.description")}
             </div>
           </div>
@@ -108,7 +108,7 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
             </div>
 
             {supportedVars.length > 0 ? (
-              <div className="rounded-lg border border-[var(--glass-border-subtle)] p-2.5 text-[11px] bg-[var(--glass-panel-bg)] text-[var(--color-text-tertiary)]">
+              <div className="rounded-lg border border-[var(--glass-border-subtle)] p-2.5 text-xs bg-[var(--glass-panel-bg)] text-[var(--color-text-tertiary)]">
                 <div className="font-semibold mb-1 text-[var(--color-text-secondary)]">
                   {t("snippetModal.availablePlaceholders")}
                 </div>
@@ -145,7 +145,7 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
                         <div className="text-xs font-semibold font-mono text-[var(--color-text-primary)]">
                           {snippetId}
                         </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[var(--color-text-tertiary)]">
                           <span className="rounded-full border border-[var(--glass-border-subtle)] px-2 py-0.5">
                             {isBuiltIn
                               ? t("snippetModal.builtInBadge")
@@ -181,7 +181,7 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
                     <textarea
                       value={content}
                       onChange={(e) => onUpdateSnippet(snippetId, e.target.value)}
-                      className={`${inputClass(isDark)} font-mono text-[12px]`}
+                      className={`${inputClass(isDark)} font-mono text-xs`}
                       style={{ minHeight: 140 }}
                       spellCheck={false}
                     />

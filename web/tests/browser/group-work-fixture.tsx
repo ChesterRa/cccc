@@ -35,6 +35,7 @@ const probe = {
   globalAllowed: true,
   runDelay: 0,
   runFailure: false,
+  notebookWarning: "",
 };
 const openTerminal = Terminal.prototype.open;
 Terminal.prototype.open = function (parent) {
@@ -237,7 +238,59 @@ window.fetch = async (input, init) => {
       },
     });
   if (url.pathname === "/api/v1/profiles")
-    return Response.json({ ok: true, result: { profiles: [] } });
+    return Response.json({
+      ok: true,
+      result: {
+        profiles: [
+          {
+            id: "profile-fixture",
+            name: "Review and implementation",
+            runtime: "codex",
+            revision: 2,
+            usage_count: 3,
+          },
+        ],
+      },
+    });
+  if (url.pathname.endsWith("/space/status"))
+    return Response.json({
+      ok: true,
+      result: {
+        provider: { auth_configured: true, write_ready: true, last_error: probe.notebookWarning },
+        bindings: {
+          work: { remote_space_id: "notebook-fixture", status: "bound" },
+          memory: { remote_space_id: "notebook-fixture", status: "bound" },
+        },
+      },
+    });
+  if (url.pathname.endsWith("/space/spaces"))
+    return Response.json({
+      ok: true,
+      result: {
+        spaces: [{ remote_space_id: "notebook-fixture", title: "CCCC · Release workspace" }],
+      },
+    });
+  if (url.pathname.endsWith("/notebooklm/auth"))
+    return Response.json({
+      ok: true,
+      result: { auth: { state: "idle", message: "Saved Google session is verified." } },
+    });
+  if (url.pathname.endsWith("/workspace/list"))
+    return Response.json({
+      ok: true,
+      result: {
+        scope_key: "fixture",
+        scope_url: "/synthetic/project",
+        root_path: "/synthetic/project",
+        path: url.searchParams.get("path") || "",
+        parent: null,
+        items: [
+          { name: "src", path: "src", is_dir: true },
+          { name: "README.md", path: "README.md", is_dir: false },
+          { name: "package.json", path: "package.json", is_dir: false },
+        ],
+      },
+    });
   if (url.pathname.endsWith("/connect/catalog")) {
     if (probe.catalogDelay) await new Promise((resolve) => setTimeout(resolve, probe.catalogDelay));
     if (probe.catalogRestricted)
@@ -471,6 +524,9 @@ export function Fixture() {
       setSearchMode: (mode: string, delay = 0) => {
         probe.searchMode = mode;
         probe.searchDelay = delay;
+      },
+      setNotebookWarning: (warning: string) => {
+        probe.notebookWarning = warning;
       },
       setGlobalAllowed: (value: boolean) => {
         probe.globalAllowed = value;

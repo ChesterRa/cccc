@@ -174,7 +174,6 @@ export default function WebModelConnectorsTab({
   >({});
   const [browserBusy, setBrowserBusy] = useState(false);
   const [showBrowserSurface, setShowBrowserSurface] = useState(false);
-  const [browserSurfaceRefreshNonce, setBrowserSurfaceRefreshNonce] = useState(0);
   const [browserSurfaceRestartNonce, setBrowserSurfaceRestartNonce] = useState(0);
   const [conversationUrlDraft, setConversationUrlDraft] = useState("");
   const [targetDraftMode, setTargetDraftMode] = useState<TargetDraftMode>("existing");
@@ -232,6 +231,7 @@ export default function WebModelConnectorsTab({
   ).trim();
   const browserActive = Boolean(selectedBrowserSession?.active || showBrowserSurface);
   const browserReady = Boolean(selectedBrowserSession?.ready);
+  const browserVerificationRequired = Boolean(selectedBrowserSession?.verification_required);
   const boundConversationUrl = String(selectedBrowserSession?.conversation_url || "").trim();
   const pendingNewChatBind = Boolean(selectedBrowserSession?.pending_new_chat_bind);
   const pendingNewChatUrl = String(selectedBrowserSession?.pending_new_chat_url || "").trim();
@@ -740,7 +740,6 @@ export default function WebModelConnectorsTab({
   const openBrowserLogin = async () => {
     setError("");
     setShowBrowserSurface(true);
-    setBrowserSurfaceRefreshNonce((value) => value + 1);
     pushNotice(wm("notices.signInSurfaceOpened"));
   };
 
@@ -875,7 +874,7 @@ export default function WebModelConnectorsTab({
     <div className={settingsWorkspaceShellClass(isDark)}>
       <div className={settingsWorkspaceHeaderClass(isDark)}>
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
             {wm("header.kicker")}
           </div>
           <h3 className="mt-1 text-base font-semibold text-[var(--color-text-primary)]">
@@ -923,7 +922,7 @@ export default function WebModelConnectorsTab({
                   {runtimeStatus.label}
                 </span>
                 {queuedCount > 0 ? (
-                  <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-200">
+                  <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-200">
                     {wm("queue.queued", { count: queuedCount })}
                   </span>
                 ) : null}
@@ -1000,16 +999,20 @@ export default function WebModelConnectorsTab({
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div className="min-w-0 text-sm leading-6 text-[var(--color-text-secondary)]">
                     <span className="font-semibold text-[var(--color-text-primary)]">
-                      {browserReady
-                        ? wm("browser.signedIn")
-                        : browserActive
-                          ? wm("browser.open")
-                          : wm("browser.notOpen")}
+                      {browserVerificationRequired
+                        ? wm("browser.verificationRequired")
+                        : browserReady
+                          ? wm("browser.signedIn")
+                          : browserActive
+                            ? wm("browser.open")
+                            : wm("browser.notOpen")}
                     </span>
                     <span className="ml-2 text-xs text-[var(--color-text-tertiary)]">
-                      {browserReady
-                        ? wm("chatSetup.accountReadyHint")
-                        : wm("chatSetup.accountOpenHint")}
+                      {browserVerificationRequired
+                        ? wm("chatSetup.verificationHint")
+                        : browserReady
+                          ? wm("chatSetup.accountReadyHint")
+                          : wm("chatSetup.accountOpenHint")}
                     </span>
                     {selectedBrowserSession?.error ? (
                       <div className="mt-1 text-xs leading-5 text-rose-600 dark:text-rose-300">
@@ -1056,7 +1059,7 @@ export default function WebModelConnectorsTab({
                     <ProjectedBrowserSurfacePanel
                       key={`chatgpt-actor-surface:${groupId}:${actorId}:${browserSurfaceRestartNonce}`}
                       isDark={isDark}
-                      refreshNonce={browserSurfaceRefreshNonce}
+                      refreshNonce={0}
                       defaultViewerMode="browser"
                       viewportClassName="h-[68vh] min-h-[460px] max-h-[780px]"
                       loadSession={loadBrowserSurfaceSession}

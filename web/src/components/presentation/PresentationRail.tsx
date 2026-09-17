@@ -114,7 +114,7 @@ export function PresentationRail({
                 disabled={!card && (readOnly || !onPinSlot)}
                 onClick={() => (card ? onOpenSlot(slot.slot_id) : onPinSlot?.(slot.slot_id))}
                 className={classNames(
-                  "relative min-w-0 overflow-hidden rounded-lg border border-[var(--glass-border-subtle)] text-left transition-colors hover:bg-[var(--glass-tab-bg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-default disabled:opacity-60",
+                  "relative min-w-0 overflow-hidden rounded-lg border border-[var(--glass-panel-border)] text-left transition-colors hover:bg-[var(--glass-tab-bg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-default disabled:opacity-60",
                   compact
                     ? "flex h-12 w-full items-center justify-center"
                     : "flex items-center gap-3 p-2.5",
@@ -141,7 +141,7 @@ export function PresentationRail({
                     </div>
                     {!compact && (
                       <div className="flex min-w-0 flex-1 items-start gap-2">
-                        <span className="text-[11px] tabular-nums text-[var(--color-text-tertiary)]">
+                        <span className="text-xs tabular-nums text-[var(--color-text-tertiary)]">
                           {index + 1}
                         </span>
                         <span className="min-w-0 flex-1">

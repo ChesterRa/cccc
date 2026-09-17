@@ -106,18 +106,19 @@ function FileViewer({
       <div
         className={classNames(
           "flex shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1.5",
-          isDark ? "border-white/8" : "border-black/8",
+          "border-[var(--glass-border-subtle)]",
         )}
       >
-        <span
-          className="min-w-0 flex-1 basis-24 truncate text-[13px] font-medium"
-          title={file.path}
-        >
+        <span className="min-w-0 flex-1 basis-24 truncate text-sm font-medium" title={file.path}>
           {baseName(file.path)}
           {dirty ? <span className="ml-1 opacity-60">•</span> : null}
-          <span className="ml-2 truncate text-[11px] font-normal opacity-45">{file.path}</span>
+          <span className="ml-2 truncate text-xs font-normal text-[var(--color-text-tertiary)]">
+            {file.path}
+          </span>
         </span>
-        <span className="shrink-0 text-[11px] opacity-50">{formatBytes(file.bytes)}</span>
+        <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">
+          {formatBytes(file.bytes)}
+        </span>
         <button
           ref={reloadButton}
           type="button"

@@ -74,6 +74,7 @@ export type WebModelBrowserSession = {
   active?: boolean;
   ready?: boolean;
   login_required?: boolean;
+  verification_required?: boolean;
   state?: string;
   pid?: number;
   cdp_port?: number;

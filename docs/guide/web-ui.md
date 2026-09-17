@@ -119,6 +119,8 @@ Message search shows the current Group name and Actor display names. Enter or **
 
 Settings keeps **This group** and **This instance** separate. Section forms share a plain work surface, while independent configurations and authorization states retain their own boundaries. Under **Branding**, save the product name explicitly; icon uploads and resets apply immediately. The product name changes the Web sidebar, sign-in screen and browser tab, not the instance name shown in Connect.
 
+Related fields use headings and spacing rather than nested cards. Section actions stay beside their heading when space allows and wrap on narrow screens. Settings help text follows the text-size preference. Switches support keyboard focus and Space, with a larger click/touch target around the compact track. These visual conventions do not change which settings save immediately or require a Save action.
+
 ### Workspace files
 
 Open **Files** in the Group header to browse the active workspace. The file tree and
@@ -540,6 +542,12 @@ and Google; Presentation may use its own Chromium runtime. Browser-native UI tha
 page is only visible through **Browser** (or through the physical browser window on platforms that
 expose it).
 
+In Web Model settings, **Open ChatGPT** reuses the current page without reloading it. Complete sign-in
+and any website security verification manually in that browser. **Browser connected** describes the
+viewer connection; it does not mean ChatGPT is signed in. Delivery waits for the signed-in conversation
+composer, leaving the sign-in or verification page in place. Use **Reload ChatGPT page** only when you
+intend to restart the dedicated browser; its saved profile and delivery target are retained.
+
 ## Performance behavior
 
 - Hidden tabs release their group event streams immediately. Returning to the tab reconnects and
@@ -728,7 +736,9 @@ For end-to-end setup details, see: `Group Space + NotebookLM`.
 
 ### Theme
 
-Switch between Light, Dark, or System theme.
+Switch between Light, Dark, or Automatic theme. Automatic uses light mode from 07:00 to 19:00 in the browser's local time zone and dark mode otherwise.
+
+Dark mode uses charcoal surfaces with lighter panels and visible borders. Input outlines and keyboard focus are stronger than ordinary section dividers. Text size also scales side-panel titles, file paths and settings labels; terminal text keeps its own sizing.
 
 ## Mobile Usage
 

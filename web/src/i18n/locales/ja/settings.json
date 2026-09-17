@@ -669,10 +669,6 @@
     "bound": "バインド済み",
     "savedTarget": "保存済みターゲット",
     "notBound": "未バインド",
-    "summaryTitle": "接続サマリー",
-    "summaryGoogle": "Google",
-    "summaryWork": "作業",
-    "summaryMemory": "メモリ",
     "summaryWarning": "警告",
     "notebookSectionLockedTitle": "ノートブック連携",
     "notebookSectionLockedDisconnected": "Google に接続すると、ここに作業 / メモリノートブックの表示・バインド・管理が現れます。",
@@ -1264,6 +1260,7 @@
         "conversationUrl": "ChatGPT 会話 URL"
       },
       "browser": {
+        "verificationRequired": "セキュリティ確認が必要です",
         "ready": "ChatGPT 準備完了",
         "signInNeeded": "サインインが必要",
         "notOpen": "未オープン",
@@ -1286,6 +1283,7 @@
         "permissionDocsLink": "OpenAI app 権限"
       },
       "chatSetup": {
+        "verificationHint": "ブラウザで確認を完了してください。メッセージ配信は待機します。",
         "title": "{{actor}} の ChatGPT 設定",
         "description": "ChatGPT 固有の手順を順番に完了します。ブラウザ配信で CCCC が使うのは保存済みの対象会話だけです。",
         "accountTitle": "1. ChatGPT にサインイン",
@@ -1346,7 +1344,7 @@
       "browserSurface": {
         "starting": "ChatGPT を開いています...",
         "waiting": "ChatGPT を待機中...",
-        "ready": "ChatGPT surface 準備完了",
+        "ready": "ブラウザに接続済み",
         "failed": "ChatGPT surface に失敗しました",
         "closed": "ChatGPT surface は閉じられました。",
         "reconnecting": "ChatGPT surface に再接続中...",
@@ -1404,6 +1402,7 @@
         "bindConversationFailed": "ChatGPT 会話のバインドに失敗しました。"
       },
       "nextAction": {
+        "verify_browser": "セキュリティ確認を完了",
         "open_chatgpt": "ChatGPT を開く",
         "restart_browser": "ブラウザを再起動",
         "reload_page": "ページをリロード",

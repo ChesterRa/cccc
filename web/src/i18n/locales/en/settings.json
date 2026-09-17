@@ -669,10 +669,6 @@
     "bound": "Bound",
     "savedTarget": "Saved target",
     "notBound": "Not bound",
-    "summaryTitle": "Connection Summary",
-    "summaryGoogle": "Google",
-    "summaryWork": "Work",
-    "summaryMemory": "Memory",
     "summaryWarning": "Warning",
     "notebookSectionLockedTitle": "Notebook bindings",
     "notebookSectionLockedDisconnected": "Sign in with Google to view, bind, and manage Work and Memory notebooks.",
@@ -1264,6 +1260,7 @@
         "conversationUrl": "ChatGPT conversation URL"
       },
       "browser": {
+        "verificationRequired": "Security verification required",
         "ready": "ChatGPT ready",
         "signInNeeded": "Sign-in needed",
         "notOpen": "Not open",
@@ -1286,6 +1283,7 @@
         "permissionDocsLink": "OpenAI app permissions"
       },
       "chatSetup": {
+        "verificationHint": "Complete the verification in the browser. Message delivery will wait.",
         "title": "ChatGPT setup for {{actor}}",
         "description": "Work through these ChatGPT-specific steps in order. The saved target is the only chat CCCC uses for browser delivery.",
         "accountTitle": "1. Sign in to ChatGPT",
@@ -1346,7 +1344,7 @@
       "browserSurface": {
         "starting": "Opening ChatGPT...",
         "waiting": "Waiting for ChatGPT...",
-        "ready": "ChatGPT surface ready",
+        "ready": "Browser connected",
         "failed": "ChatGPT surface failed",
         "closed": "ChatGPT surface closed.",
         "reconnecting": "Reconnecting ChatGPT surface...",
@@ -1404,6 +1402,7 @@
         "bindConversationFailed": "Failed to bind ChatGPT conversation."
       },
       "nextAction": {
+        "verify_browser": "Complete security verification",
         "open_chatgpt": "Open ChatGPT",
         "restart_browser": "Restart browser",
         "reload_page": "Reload page",

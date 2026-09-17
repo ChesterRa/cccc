@@ -214,7 +214,7 @@ export function GroupWorkArea({
                     key={view}
                     type="button"
                     aria-pressed={session.workView === view}
-                    className={`${buttonClass} text-sm ${session.workView === view ? "bg-[var(--color-bg-primary)] font-semibold text-[var(--color-text-primary)]" : "text-[var(--color-text-tertiary)]"}`}
+                    className={`${buttonClass} text-sm ${session.workView === view ? "bg-[var(--glass-tab-bg-active)] ring-1 ring-inset ring-[var(--glass-tab-border-active)] font-semibold text-[var(--color-text-primary)]" : "text-[var(--color-text-tertiary)]"}`}
                     onClick={() => setView(groupId, view)}
                   >
                     {t(`workView.${view}`)}
@@ -279,7 +279,7 @@ export function GroupWorkArea({
               key={entry.key}
               className={
                 inPage
-                  ? "min-h-0 min-w-0 overflow-hidden rounded-lg border border-[var(--glass-border-subtle)] focus-within:border-[var(--color-text-secondary)] focus-within:ring-1 focus-within:ring-[var(--color-text-secondary)]"
+                  ? "min-h-0 min-w-0 overflow-hidden rounded-lg border border-[var(--glass-panel-border)] focus-within:border-[var(--color-text-secondary)] focus-within:ring-1 focus-within:ring-[var(--color-text-secondary)]"
                   : expanded
                     ? "contents"
                     : "hidden"

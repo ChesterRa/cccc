@@ -12,9 +12,7 @@ import {
   settingsWorkspaceBodyClass,
   settingsWorkspaceFieldsClass,
   settingsWorkspaceHeaderClass,
-  settingsWorkspacePanelClass,
   settingsWorkspaceShellClass,
-  settingsWorkspaceSoftPanelClass,
 } from "./types";
 
 interface TranscriptTabProps {
@@ -119,7 +117,7 @@ export function TranscriptTab({
                   ariaLabel={t("transcript.visibilityLabel")}
                   className={inputClass()}
                 />
-                <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                <div className="mt-2 text-xs text-[var(--color-text-muted)]">
                   {t("transcript.visibilityTip")}
                 </div>
               </div>
@@ -197,9 +195,9 @@ export function TranscriptTab({
 
         <div className={settingsWorkspaceBodyClass}>
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <div className={settingsWorkspacePanelClass(_isDark)}>
+            <div className="min-w-0">
               <div className="space-y-4">
-                <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
+                <div className="min-w-0">
                   <label className="block text-xs text-[var(--color-text-tertiary)]">
                     {t("transcript.actor")}
                   </label>
@@ -221,7 +219,7 @@ export function TranscriptTab({
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
-                  <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
+                  <div className="min-w-0">
                     <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">
                       {t("transcript.maxChars")}
                     </label>
@@ -247,7 +245,7 @@ export function TranscriptTab({
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
+                  <div className="min-w-0">
                     <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
                       <input
                         type="checkbox"
@@ -258,7 +256,7 @@ export function TranscriptTab({
                       {t("transcript.stripAnsi")}
                     </label>
                   </div>
-                  <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
+                  <div className="min-w-0">
                     <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
                       <input
                         type="checkbox"
@@ -274,7 +272,7 @@ export function TranscriptTab({
               </div>
             </div>
 
-            <div className={settingsWorkspacePanelClass(_isDark)}>
+            <div className="min-w-0">
               {!!tailCopyInfo && (
                 <div className="mb-3 text-xs text-emerald-600 dark:text-emerald-400">
                   {tailCopyInfo}

@@ -12,8 +12,10 @@ import {
   primaryButtonClass,
   secondaryButtonClass,
   settingsWorkspaceBodyClass,
+  settingsWorkspaceActionBarClass,
   settingsWorkspaceHeaderClass,
   settingsWorkspacePanelClass,
+  settingsWorkspaceSectionClass,
   settingsWorkspaceShellClass,
   settingsWorkspaceSoftPanelClass,
 } from "./types";
@@ -526,7 +528,7 @@ export function IMBridgeTab({
           )}
 
           {/* Configuration */}
-          <div className={settingsWorkspacePanelClass(_isDark)}>
+          <div className={settingsWorkspaceSectionClass}>
             <div>
               <div className={sectionTitleClass}>{t("imBridge.platform")}</div>
               <div className={sectionHintClass}>{t("imBridge.description")}</div>
@@ -797,7 +799,7 @@ export function IMBridgeTab({
                         <div className="font-medium">{t("imBridge.weixinErrorDetails")}</div>
                         <div className="mt-1 break-words">{weixinErrorText}</div>
                         {weixinLoginStatus?.updated_at && (
-                          <div className="mt-2 text-[11px] text-red-500/80 dark:text-red-300/80">
+                          <div className="mt-2 text-xs text-red-500/80 dark:text-red-300/80">
                             {t("imBridge.weixinLastUpdated")}: {weixinLoginStatus.updated_at}
                           </div>
                         )}
@@ -840,7 +842,7 @@ export function IMBridgeTab({
                       </div>
                     )}
                     {!weixinLoginStatus?.qrcode_url && weixinLoginStatus?.qr_ascii && (
-                      <pre className="mt-3 overflow-auto rounded-lg bg-black/5 p-3 text-[10px] leading-none text-[var(--color-text-secondary)]">
+                      <pre className="mt-3 overflow-auto rounded-lg bg-black/5 p-3 text-[0.625rem] leading-none text-[var(--color-text-secondary)]">
                         {weixinLoginStatus.qr_ascii}
                       </pre>
                     )}
@@ -890,7 +892,7 @@ export function IMBridgeTab({
                             components={[
                               <code
                                 key="command"
-                                className="rounded bg-black/5 px-1 py-0.5 font-mono text-[11px] text-[var(--color-text-secondary)]"
+                                className="rounded bg-black/5 px-1 py-0.5 font-mono text-xs text-[var(--color-text-secondary)]"
                               />,
                             ]}
                           />
@@ -927,11 +929,8 @@ export function IMBridgeTab({
           </div>
 
           {/* Actions */}
-          <div className={settingsWorkspacePanelClass(_isDark)}>
-            <div className={sectionTitleClass}>
-              {t("common:actions", { defaultValue: "Actions" })}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
+          <div className={settingsWorkspaceActionBarClass(_isDark)}>
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={onSaveConfig}
                 disabled={imBusy || !canSaveIM()}

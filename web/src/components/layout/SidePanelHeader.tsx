@@ -40,11 +40,11 @@ export function SidePanelHeader({
       data-side-panel-header
     >
       <div className="min-w-0 flex-1 px-1">
-        <h2 className="truncate text-[13px] font-semibold" title={title}>
+        <h2 className="truncate text-sm font-semibold" title={title}>
           {title}
         </h2>
         {subtitle && (
-          <p className="truncate text-[11px] text-[var(--color-text-tertiary)]" title={subtitle}>
+          <p className="truncate text-xs text-[var(--color-text-tertiary)]" title={subtitle}>
             {subtitle}
           </p>
         )}

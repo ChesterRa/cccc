@@ -404,6 +404,16 @@ async fn deliver_once(
     {
         return resolve_pending_new_chat(state, group_id, actor_id, session_key, &target).await;
     }
+    // Do not navigate away from sign-in or a security challenge. This check must
+    // precede target alignment and claiming new work from the daemon.
+    let readiness = state
+        .browser_surfaces
+        .prompt_readiness(session_key)
+        .await
+        .map_err(|error| ApiError::bad(error.to_string()))?;
+    if readiness["ready"] != true {
+        return Ok(DeliveryOutcome::Idle);
+    }
     if target["kind"] == "existing_chat" && is_chatgpt_url(target_url) {
         if let Err(error) = state
             .browser_surfaces
@@ -1325,4 +1335,110 @@ fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, ApiError> {
         .as_str()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| ApiError::bad(format!("runtime turn missing {key}")))
+}
+
+#[cfg(test)]
+mod login_tests {
+    use super::*;
+    use axum::{Router, response::Html, routing::get};
+    use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
+    use cccc_core::{GroupStore, HomeLayout};
+
+    #[tokio::test]
+    async fn login_and_verification_do_not_claim_delivery_or_leave_the_page() {
+        if crate::system_browser_path().is_none() {
+            return;
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("login", "").expect("group");
+        group.running = true;
+        let mut actor = Actor::new("browser-test");
+        actor.runtime = ActorRuntime::WebModel;
+        actor.runner = RunnerKind::Headless;
+        actor
+            .env
+            .insert("CCCC_WEB_MODEL_DELIVERY_MODE".into(), "browser".into());
+        group.actors.push(actor);
+        group.extra.insert(
+            super::super::web_model_browser::TARGETS_KEY.into(),
+            json!({}),
+        );
+        store.save(&group).expect("save actor");
+        let shutdown = tokio::sync::broadcast::channel(1).0;
+        let (_, _, surfaces, state) = crate::app_with_shutdown(
+            home,
+            shutdown.clone(),
+            crate::WebMode::Normal,
+            None,
+            crate::LiveBinding {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            "login-test".into(),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listen");
+        let base = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new()
+                .route("/login", get(|| async { Html("<button data-testid='login-button'>Log in</button><textarea id='prompt-textarea'></textarea>") }))
+                .route("/verify", get(|| async { Html("<script type='application/json' src='/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1'></script><textarea id='prompt-textarea'></textarea>") }))
+                .route("/ready", get(|| async { Html("<textarea id='prompt-textarea'></textarea>") }))
+            ).await.expect("serve");
+        });
+        let key = key(&group.group_id, "browser-test");
+        let target = json!({"kind":"existing_chat", "url":format!("{base}/ready")});
+        update_target(&state, &group.group_id, "browser-test", target.clone()).expect("target");
+        surfaces
+            .open(
+                &key,
+                &temp.path().join("profile"),
+                &format!("{base}/login"),
+                800,
+                600,
+            )
+            .await
+            .expect("open");
+        for path in ["/login", "/verify"] {
+            let url = format!("{base}{path}");
+            surfaces
+                .navigate_to_url(&key, &url)
+                .await
+                .expect("navigate");
+            for _ in 0..2 {
+                assert!(matches!(
+                    deliver_pending(&state, &group.group_id, "browser-test")
+                        .await
+                        .expect("waiting"),
+                    DeliveryOutcome::Idle
+                ));
+                assert_eq!(surfaces.info(&key).await["url"], url);
+                assert_eq!(
+                    load_target(&state, &group.group_id, "browser-test").expect("target"),
+                    target
+                );
+            }
+        }
+        surfaces
+            .navigate_to_url(&key, &format!("{base}/ready"))
+            .await
+            .expect("signed in");
+        assert_eq!(
+            surfaces.prompt_readiness(&key).await.expect("ready")["ready"],
+            true
+        );
+        // No daemon is running in this fixture. Reaching IPC proves the next
+        // tick resumes normal delivery instead of remaining stuck in login.
+        assert!(
+            deliver_pending(&state, &group.group_id, "browser-test")
+                .await
+                .is_err()
+        );
+        surfaces.close(&key).await.expect("close");
+        let _ = shutdown.send(());
+        server.abort();
+    }
 }

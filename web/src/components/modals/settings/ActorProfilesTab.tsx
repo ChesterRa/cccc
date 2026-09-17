@@ -16,8 +16,8 @@ import {
   settingsWorkspaceBodyClass,
   settingsWorkspaceHeaderClass,
   settingsWorkspacePanelClass,
+  settingsWorkspaceSectionClass,
   settingsWorkspaceShellClass,
-  settingsWorkspaceSoftPanelClass,
 } from "./types";
 import { CapabilityPicker } from "../../CapabilityPicker";
 import { SelectCombobox } from "../../SelectCombobox";
@@ -277,7 +277,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                 searchable
               />
               {editorIsWebModel ? (
-                <div className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                <div className="mt-1.5 text-[0.625rem] leading-4 text-[var(--color-text-muted)]">
                   ChatGPT Web Model is managed as one CCCC actor in Settings &gt; ChatGPT Web Model;
                   new Runtime Profiles cannot use this runtime.
                 </div>
@@ -313,7 +313,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
               />
             ) : null}
             {editorSupportsDefaultCommand && editorDefaultCommand ? (
-              <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">
+              <div className="text-[0.625rem] mt-1 text-[var(--color-text-muted)]">
                 {editor.useDefaultCommand
                   ? t("actorProfiles.usingRuntimeDefaultCommand")
                   : t("actorProfiles.default")}{" "}
@@ -341,7 +341,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             />
           </div>
 
-          <div className={settingsWorkspacePanelClass(isDark)}>
+          <div className={settingsWorkspaceSectionClass}>
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">
               {t("actorProfiles.capabilityDefaults")}
             </div>
@@ -401,7 +401,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             </div>
           </div>
 
-          <div className={settingsWorkspacePanelClass(isDark)}>
+          <div className={settingsWorkspaceSectionClass}>
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">
               {t("actorProfiles.env")}
             </div>
@@ -419,7 +419,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                   <span
                     key={key}
                     title={secretMasks[key] ? `${key}=${secretMasks[key]}` : key}
-                    className="px-2 py-0.5 rounded text-[11px] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]"
+                    className="px-2 py-0.5 rounded text-xs bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]"
                   >
                     {key}
                   </span>
@@ -897,7 +897,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             </div>
           ) : null}
 
-          <div className={settingsWorkspacePanelClass(isDark)}>
+          <div className="min-w-0">
             <div className="grid gap-3 lg:grid-cols-[minmax(0,320px)_1fr] lg:items-end">
               <div>
                 <label className={labelClass()}>{t("actorProfiles.searchPlaceholder")}</label>
@@ -926,7 +926,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                         {profile.name || profile.id}
                       </div>
                       <span
-                        className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] ${
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-xs ${
                           isDark
                             ? "border-white/10 bg-white/[0.04] text-[var(--color-text-secondary)]"
                             : "border-black/8 bg-black/[0.03] text-[var(--color-text-secondary)]"
@@ -939,17 +939,11 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                       <code>{profile.id}</code>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <div className={settingsWorkspaceSoftPanelClass(isDark)}>
-                        <div className="text-[11px] text-[var(--color-text-muted)]">
-                          {t("actorProfiles.usageCount", {
-                            count: Number(profile.usage_count || 0),
-                          })}
-                        </div>
+                      <div className="text-xs text-[var(--color-text-muted)]">
+                        {t("actorProfiles.usageCount", { count: Number(profile.usage_count || 0) })}
                       </div>
-                      <div className={settingsWorkspaceSoftPanelClass(isDark)}>
-                        <div className="text-[11px] text-[var(--color-text-muted)]">
-                          {t("actorProfiles.revision", { revision: Number(profile.revision || 0) })}
-                        </div>
+                      <div className="text-xs text-[var(--color-text-muted)]">
+                        {t("actorProfiles.revision", { revision: Number(profile.revision || 0) })}
                       </div>
                     </div>
                   </div>

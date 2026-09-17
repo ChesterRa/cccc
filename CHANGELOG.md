@@ -10,12 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Mention connected Groups from the composer.** Select a remote `#Group` with its instance name and discover its Actor names through `@`. The reference gives local Agents the exact Connect destination; it does not send remotely or grant access by itself.
 
 ### Changed
+- **Web surfaces and controls are easier to read in both themes.** Dark mode uses lighter charcoal surfaces, clearer panel boundaries and stronger input outlines. Settings share flatter form sections, readable text that follows the text-size preference, and consistent controls with visible keyboard focus. Independent resources and authorization states retain their boundaries; save and permission behavior is unchanged.
 - **Group status is now the run-control entry.** An arrow-free status button in the header and expanded sidebar opens Start, Resume, Pause delivery and Stop actions for that Group. Mobile uses the same control; pending actions stay bound to their Group when you navigate.
 - **Search separates entering a query from its results.** Group and Actor names replace raw IDs, filters rerun the submitted query, and loading, no matches and failed requests have distinct states.
 - **Settings uses simpler forms.** Scope remains explicit, redundant card nesting is reduced, and Branding brings the name and icon controls together without changing how they are saved.
 - **Presentation keeps four compact slots until you open content.** New Groups default to the compact rail and side-by-side reading; slot navigation stays available in the viewer. Existing saved layout preferences are preserved.
 
 ### Fixed
+- **ChatGPT sign-in uses the system browser's interactive mode consistently.** Linux and Windows now use an explicit local debugging port, as macOS already does. Opening an existing sign-in surface no longer refreshes it; delivery waits through sign-in and security verification, and guest or unrelated input fields are not treated as a ready ChatGPT conversation.
 - **Presentation documents stay steady while reading.** Workspace-linked PDF and HTML previews reload on Refresh or a new publication, preserving reader state between updates.
 - **Live Presentation refreshes preserve the reading surface.** Images and Markdown keep their last loaded content during slow or temporarily failed updates, with an explicit stale-content notice. Permission or missing-resource errors clear stale content. Images decode before replacement; background refresh no longer reapplies a quoted Markdown reading position.
 - **Terminal paging is easier to use.** Larger page arrows keep the desktop header on one row. Touch users can also swipe the Actor title area without changing terminal-body gestures.

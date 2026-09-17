@@ -23,7 +23,7 @@ interface ModalFrameProps {
 export function ModalFrame({
   isOpen = true,
   inline = false,
-  isDark,
+  isDark: _isDark,
   surface = "glass",
   onClose,
   titleId,
@@ -44,11 +44,7 @@ export function ModalFrame({
   const closeButtonElement = (
     <button
       onClick={onClose}
-      className={`flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl border border-[var(--glass-border-subtle)] text-[var(--color-text-muted)] transition-all duration-300 hover:text-[var(--color-text-primary)] hover:border-[var(--color-text-primary)]/20 active:scale-[0.96] ${
-        isDark
-          ? "bg-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.08)]"
-          : "bg-[rgba(255,255,255,0.88)] hover:bg-[rgba(255,255,255,0.98)]"
-      } ${floatingCloseButtonClassName}`}
+      className={`flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border border-[var(--color-border-primary)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] ${floatingCloseButtonClassName}`}
       aria-label={closeAriaLabel}
     >
       {closeIcon || (
@@ -109,11 +105,7 @@ export function ModalFrame({
         {hasHeaderContent ? (
           <div
             className={`flex flex-shrink-0 items-center justify-between gap-4 border-b safe-area-inset-top border-[var(--glass-border-subtle)] ${surface === "solid" ? "px-4 py-3 sm:px-5" : "px-5 py-4 sm:px-6 sm:py-5"} ${
-              surface === "solid"
-                ? "bg-[var(--color-bg-primary)]"
-                : isDark
-                  ? "bg-[linear-gradient(180deg,rgba(24,26,31,0.96),var(--color-sidebar-bg))]"
-                  : "bg-[linear-gradient(180deg,rgba(255,255,255,0.995),var(--color-sidebar-bg))]"
+              surface === "solid" ? "bg-[var(--color-bg-primary)]" : "bg-[var(--glass-panel-bg)]"
             } ${headerClassName}`}
           >
             <div id={titleId} className="min-w-0 flex-1 pr-3">

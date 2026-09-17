@@ -29,6 +29,7 @@ import {
   settingsWorkspaceBodyClass,
   settingsWorkspaceHeaderClass,
   settingsWorkspacePanelClass,
+  settingsWorkspaceSectionClass,
   settingsWorkspaceShellClass,
   settingsWorkspaceSoftPanelClass,
 } from "./types";
@@ -1357,7 +1358,7 @@ export function WebAccessTab({
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
             <div className={settingsWorkspacePanelClass(isDark)}>
-              <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              <div className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
                 {t("webAccess.cards.reachability")}
               </div>
               <div
@@ -1371,7 +1372,7 @@ export function WebAccessTab({
             </div>
 
             <div className={settingsWorkspacePanelClass(isDark)}>
-              <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              <div className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
                 {t("webAccess.cards.accessControl")}
               </div>
               <div
@@ -1383,10 +1384,10 @@ export function WebAccessTab({
                 {accessSummary.detail}
               </div>
 
-              <div className={`mt-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
+              <div className={`mt-4 ${settingsWorkspaceSectionClass}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                    <div className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
                       {t("webAccess.currentBrowserTitle")}
                     </div>
                     <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">
@@ -1513,14 +1514,14 @@ export function WebAccessTab({
                             {token.user_id}
                           </div>
                           <span
-                            className={`rounded-full border px-2 py-0.5 text-[11px] ${statusChipClass(isDark, token.is_admin ? "good" : "neutral")}`}
+                            className={`rounded-full border px-2 py-0.5 text-xs ${statusChipClass(isDark, token.is_admin ? "good" : "neutral")}`}
                           >
                             {token.is_admin
                               ? t("webAccess.adminBadge")
                               : t("webAccess.scopedBadge")}
                           </span>
                           <span
-                            className={`rounded-full border px-2 py-0.5 text-[11px] ${statusChipClass(isDark, "neutral")}`}
+                            className={`rounded-full border px-2 py-0.5 text-xs ${statusChipClass(isDark, "neutral")}`}
                           >
                             {token.token_preview || "****"}
                           </span>
@@ -1737,7 +1738,7 @@ export function WebAccessTab({
                         {t(`webAccess.goals.${goal}.title`)}
                       </div>
                       {current ? (
-                        <span className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/12 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                        <span className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/12 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                           {t("webAccess.goalSelected")}
                         </span>
                       ) : null}

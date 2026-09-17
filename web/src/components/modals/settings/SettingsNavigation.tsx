@@ -56,7 +56,7 @@ export function SettingsNavigation({
         : "border border-transparent text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
     }`;
   const mobileScopeButtonClass = (active: boolean) =>
-    `flex-1 relative flex items-center justify-center px-3 py-2.5 rounded-xl text-sm min-h-[44px] font-medium transition-[background-color,border-color,color,box-shadow] ${
+    `min-w-0 flex-1 relative flex items-center justify-center px-3 py-2.5 rounded-xl text-sm min-h-[44px] font-medium transition-[background-color,border-color,color,box-shadow] ${
       active
         ? "border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg-active)] text-[var(--color-text-primary)] shadow-sm"
         : "border border-transparent bg-transparent text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
@@ -80,7 +80,7 @@ export function SettingsNavigation({
             >
               <div className="min-w-0">
                 <div>{t("navigation.thisGroup")}</div>
-                <div className="mt-0.5 truncate text-[11px] font-medium text-[var(--color-text-muted)]">
+                <div className="mt-0.5 truncate text-xs font-medium text-[var(--color-text-muted)]">
                   {groupTitle || scopeRootUrl || groupId || "—"}
                 </div>
               </div>
@@ -150,7 +150,7 @@ export function SettingsNavigation({
 
       <div className="sm:hidden flex flex-col flex-shrink-0">
         <div className="px-4 py-3 border-b border-[var(--glass-border-subtle)]">
-          <div className="flex items-center gap-2">
+          <div className="flex items-stretch gap-2">
             <button
               type="button"
               onClick={() => onScopeChange("group")}
@@ -159,9 +159,9 @@ export function SettingsNavigation({
               className={`${mobileScopeButtonClass(scope === "group")} disabled:opacity-40`}
             >
               <span className="min-w-0 pr-2">
-                <span className="block truncate">{t("navigation.thisGroup")}</span>
+                <span className="block">{t("navigation.thisGroup")}</span>
                 {groupTitle && (
-                  <span className="block truncate text-[11px] font-normal text-[var(--color-text-secondary)]">
+                  <span className="block truncate text-xs font-normal text-[var(--color-text-secondary)]">
                     {groupTitle}
                   </span>
                 )}
@@ -194,7 +194,7 @@ export function SettingsNavigation({
               disabled={!globalEnabled}
               className={`${mobileScopeButtonClass(scope === "global")} disabled:opacity-40`}
             >
-              <span>{t("navigation.global")}</span>
+              <span className="min-w-0 pr-2">{t("navigation.global")}</span>
               <div className="absolute right-1 top-1/2 -translate-y-1/2">
                 <ScopeTooltip
                   isDark={isDark}

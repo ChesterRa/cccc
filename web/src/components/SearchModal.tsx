@@ -262,7 +262,7 @@ export function SearchModal({
               value={by}
               onChange={(event) => filterSearch({ by: event.target.value })}
               aria-label={t("by")}
-              className="min-h-9 min-w-0 w-44 max-w-full rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-2 text-sm text-[var(--color-text-primary)]"
+              className="min-h-9 min-w-0 w-44 max-w-full rounded-lg border border-[var(--color-border-secondary)] bg-[var(--color-bg-primary)] px-2 text-sm text-[var(--color-text-primary)]"
             >
               <option value="">{t("any")}</option>
               <option value="user">{t("searchSenderUser")}</option>

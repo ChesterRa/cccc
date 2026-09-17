@@ -6471,6 +6471,11 @@ secondary character-count truncation. Browser-originated oversized text is
 converted to a `.txt` attachment before daemon delivery; the canonical
 `messages` array remains the source of truth for every structured turn.
 
+The browser adapter MUST wait for a signed-in conversation composer before claiming new work.
+A guest composer or provider security-verification page MUST NOT count as ready. While waiting
+for sign-in or verification, background delivery MUST NOT navigate to the saved conversation;
+existing ambiguous submissions still follow their normal reconciliation contract.
+
 #### `runtime_complete_turn`
 
 Close the actor's exact active structured-runtime turn after processing.

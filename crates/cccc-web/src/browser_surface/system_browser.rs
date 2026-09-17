@@ -52,7 +52,6 @@ impl SystemBrowserLaunch {
                 "Chrome, Microsoft Edge, or Chromium is required for projected browser authentication"
             )
         })?;
-        let cdp_port = initial_cdp_port()?;
         let display = VirtualDisplay::start(width, height).await?;
         #[cfg(target_os = "linux")]
         let (vnc, vnc_error) = match &display {
@@ -61,6 +60,7 @@ impl SystemBrowserLaunch {
         };
         #[cfg(not(target_os = "linux"))]
         let vnc_error = "unsupported_platform".to_owned();
+        let cdp_port = initial_cdp_port()?;
         Ok(Self {
             executable,
             channel,
@@ -327,20 +327,15 @@ async fn wait_for_browser_pid(profile: &Path, deadline: Instant) -> Result<u32> 
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn reserve_cdp_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     Ok(listener.local_addr()?.port())
 }
 
-#[cfg(target_os = "macos")]
 fn initial_cdp_port() -> Result<u16> {
+    // Port zero enables Chrome's automation mode, even in a headed browser.
+    // Interactive provider sign-in uses an ordinary system browser on every OS.
     reserve_cdp_port()
-}
-
-#[cfg(not(target_os = "macos"))]
-fn initial_cdp_port() -> Result<u16> {
-    Ok(0)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -937,10 +932,9 @@ mod tests {
         assert_ne!(reserve_cdp_port().expect("CDP port"), 0);
     }
 
-    #[cfg(not(target_os = "macos"))]
     #[test]
-    fn non_macos_browser_lets_chromium_assign_the_cdp_port_atomically() {
-        assert_eq!(initial_cdp_port().expect("initial CDP port"), 0);
+    fn interactive_browser_uses_an_explicit_cdp_port() {
+        assert_ne!(initial_cdp_port().expect("initial CDP port"), 0);
     }
 
     #[cfg(not(target_os = "macos"))]

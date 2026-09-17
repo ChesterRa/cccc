@@ -283,7 +283,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   const promptHintClass = "text-[var(--color-text-tertiary)]";
   const promptBodyClass = (expanded = false) =>
     `px-4 py-4 sm:px-5 sm:py-5 ${expanded ? "min-h-0 flex flex-1 flex-col" : "space-y-4"}`;
-  const promptPathClass = `inline-flex max-w-full items-center rounded-full border px-3 py-1 text-[11px] font-mono leading-5 ${
+  const promptPathClass = `inline-flex max-w-full items-center rounded-full border px-3 py-1 text-xs font-mono leading-5 ${
     isDark
       ? "border-white/8 bg-white/[0.03] text-white/64"
       : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
@@ -294,7 +294,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
       : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(246,248,251,0.88))]"
   }`;
   const editorTextareaClass = `${inputClass(isDark)} border-0 bg-transparent px-0 py-0 shadow-none focus-visible:ring-0`;
-  const editorMetaBadgeClass = `inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`;
+  const editorMetaBadgeClass = `inline-flex items-center rounded-full px-2.5 py-1 text-[0.625rem] font-medium border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`;
   const segmentedControlClass = `inline-flex rounded-full border p-1 ${
     isDark
       ? "border-white/8 bg-white/[0.025]"
@@ -310,8 +310,8 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.9),rgba(13,14,18,0.98))]"
       : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))]"
   }`;
-  const navSectionTitleClass = `mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]`;
-  const overridesHintClass = `rounded-[18px] border px-4 py-3 text-[11px] leading-5 ${
+  const navSectionTitleClass = `mb-2 text-[0.625rem] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]`;
+  const overridesHintClass = `rounded-[18px] border px-4 py-3 text-xs leading-5 ${
     isDark
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] text-white/50"
       : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(245,248,252,0.9))] text-[rgb(91,92,97)]"
@@ -322,7 +322,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
     const source = kind === "help" ? helpSource : preambleSource;
     return (
       <div
-        className={`inline-flex items-center rounded-full px-3 py-1.5 text-[11px] font-medium ${badgeClass}`}
+        className={`inline-flex items-center rounded-full px-3 py-1.5 text-xs font-medium ${badgeClass}`}
       >
         {source === "home" ? t("guidance.overrideBadge") : t("guidance.builtinBadge")}
       </div>
@@ -374,7 +374,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
           <div className={`text-sm font-semibold ${promptHeaderTextClass}`}>
             {t("guidance.preambleTitle")}
           </div>
-          <div className={`text-[11px] ${promptHintClass}`}>{t("guidance.preambleHint")}</div>
+          <div className={`text-xs ${promptHintClass}`}>{t("guidance.preambleHint")}</div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {!expanded ? (
@@ -411,7 +411,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
             <div className={editorMetaBadgeClass}>Markdown</div>
           </div>
           <textarea
-            className={`${editorTextareaClass} font-mono text-[12px] ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
+            className={`${editorTextareaClass} font-mono text-xs ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
             style={expanded ? undefined : { minHeight: 220 }}
             value={preamble?.content || ""}
             onChange={(e) => setPromptContent("preamble", e.target.value)}
@@ -547,7 +547,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
           <span className="font-medium truncate">{item.title}</span>
           {item.roleLabel ? (
             <span
-              className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`}
+              className={`text-[0.625rem] px-1.5 py-0.5 rounded-full shrink-0 border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`}
             >
               {item.roleLabel}
             </span>
@@ -564,7 +564,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
           <div className={`text-sm font-semibold ${promptHeaderTextClass}`}>
             {t("guidance.helpTitle")}
           </div>
-          <div className={`text-[11px] ${promptHintClass}`}>{t("guidance.helpHint")}</div>
+          <div className={`text-xs ${promptHintClass}`}>{t("guidance.helpHint")}</div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {!expanded ? (
@@ -598,7 +598,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
             className={`flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center ${expanded ? "pb-4" : "mb-4"}`}
           >
             <div className="min-w-0 flex-1">
-              <div className="max-w-[54ch] text-[11px] leading-5 text-[var(--color-text-tertiary)]">
+              <div className="max-w-[54ch] text-xs leading-5 text-[var(--color-text-tertiary)]">
                 {t(
                   "guidance.helpEditorHint",
                   "Structured mode edits common, role, and actor notes; raw mode keeps full-file control.",
@@ -703,7 +703,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
                 <div className="mb-4 flex items-start gap-4">
                   <div className="min-w-0">
                     <div
-                      className={`text-[11px] font-medium uppercase tracking-[0.16em] ${isDark ? "text-white/44" : "text-gray-500"}`}
+                      className={`text-xs font-medium uppercase tracking-[0.16em] ${isDark ? "text-white/44" : "text-gray-500"}`}
                     >
                       {t("guidance.editKind", { kind: selectedHelpScopeItem.title })}
                     </div>
@@ -712,15 +712,13 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
                     >
                       {selectedHelpScopeItem.title}
                     </div>
-                    <div
-                      className={`mt-1 text-[11px] ${isDark ? "text-white/40" : "text-gray-500"}`}
-                    >
+                    <div className={`mt-1 text-xs ${isDark ? "text-white/40" : "text-gray-500"}`}>
                       {selectedHelpScopeItem.hint}
                     </div>
                   </div>
                   {selectedHelpScopeItem.roleLabel ? (
                     <div
-                      className={`ml-auto shrink-0 rounded-full px-2.5 py-1 text-[10px] ${isDark ? "bg-white/[0.05] text-white/62" : "bg-black/[0.05] text-gray-600"}`}
+                      className={`ml-auto shrink-0 rounded-full px-2.5 py-1 text-[0.625rem] ${isDark ? "bg-white/[0.05] text-white/62" : "bg-black/[0.05] text-gray-600"}`}
                     >
                       {selectedHelpScopeItem.roleLabel}
                     </div>
@@ -731,7 +729,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
                   className={`${editorSurfaceSoftClass} ${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}
                 >
                   <textarea
-                    className={`${editorTextareaClass} font-mono text-[12px] ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
+                    className={`${editorTextareaClass} font-mono text-xs ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
                     style={expanded ? undefined : { minHeight: 320, maxHeight: "44vh" }}
                     value={selectedHelpScopeItem.value}
                     onChange={(e) => updateSelectedHelpScopeValue(e.target.value)}
@@ -753,7 +751,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
                   <div className={editorMetaBadgeClass}>Raw</div>
                 </div>
                 <textarea
-                  className={`${editorTextareaClass} font-mono text-[12px] ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
+                  className={`${editorTextareaClass} font-mono text-xs ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
                   style={expanded ? undefined : { minHeight: 320, maxHeight: "44vh" }}
                   value={help?.content || ""}
                   onChange={(e) => setHelpContentRaw(e.target.value)}

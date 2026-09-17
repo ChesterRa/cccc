@@ -49,7 +49,7 @@ export function AutomationRuleList({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-end gap-2 flex-wrap">
-        <label className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] min-h-[32px] border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] bg-[var(--glass-tab-bg)]">
+        <label className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs min-h-[32px] border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] bg-[var(--glass-tab-bg)]">
           <input
             type="checkbox"
             checked={showCompletedRules}
@@ -196,7 +196,7 @@ export function AutomationRuleList({
                 <div className="text-sm font-semibold text-[var(--color-text-primary)]">
                   {ruleId || t("ruleList.rule")}
                 </div>
-                <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
+                <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">
                   {scheduleLabel} • {enabled ? t("ruleList.on") : t("ruleList.off")}{" "}
                   {completed ? `• ${t("ruleList.completedLabel")}` : ""}
                 </div>
@@ -229,20 +229,20 @@ export function AutomationRuleList({
               </div>
             </div>
 
-            <div className="mt-2 text-[11px] text-[var(--color-text-muted)] break-words">
+            <div className="mt-2 text-xs text-[var(--color-text-muted)] break-words">
               <span className="font-mono">{actionLabel}</span>
             </div>
-            <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+            <div className="mt-1 text-xs text-[var(--color-text-muted)]">
               {t("ruleList.lastShort")}: {lastFireAt || "—"} • {t("ruleList.nextShort")}:{" "}
               {nextFireAt || "—"}
             </div>
             {completed ? (
-              <div className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+              <div className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
                 {t("ruleList.completedAt")} {completedAt || lastFireAt || "—"}
               </div>
             ) : null}
             {hasError ? (
-              <div className="mt-1 text-[11px] break-words text-rose-600 dark:text-rose-300">
+              <div className="mt-1 text-xs break-words text-rose-600 dark:text-rose-300">
                 {ruleStatus.last_error}
               </div>
             ) : null}

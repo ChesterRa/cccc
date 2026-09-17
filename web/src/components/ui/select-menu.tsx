@@ -57,7 +57,7 @@ export function SelectMenu<Value extends string | number>({
           aria-label={ariaLabel}
           aria-haspopup="menu"
           className={cn(
-            "flex min-h-[44px] min-w-0 items-center justify-between gap-2 rounded-md border border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-2 text-sm text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-45",
+            "flex min-h-[44px] min-w-0 items-center justify-between gap-2 rounded-lg border border-[var(--color-border-secondary)] bg-[var(--color-bg-primary)] px-3 text-sm text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50",
             className,
           )}
         >
