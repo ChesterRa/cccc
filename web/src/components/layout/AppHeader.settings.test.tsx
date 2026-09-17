@@ -28,14 +28,11 @@ const props: AppHeaderProps = {
   selectedGroupRuntimeStatus: null,
   actors: [],
   sseStatus: "connected",
-  busy: "",
   onOpenSidebar: noop,
   onOpenGroupEdit: noop,
   onOpenSearch: noop,
   onOpenContext: noop,
-  onStartGroup: noop,
-  onStopGroup: noop,
-  onSetGroupState: noop,
+  groupRunControls: { pending: null, run: async () => {} },
   onOpenSettings: noop,
   canAccessAccount: true,
   onOpenAccount: noop,
@@ -307,35 +304,36 @@ it("keeps the title readable without exposing editing when unavailable", async (
 });
 
 it.each([
-  { state: "active", running: true, label: "pauseDelivery", action: "paused" },
-  { state: "paused", running: true, label: "resumeDelivery", action: "active" },
-  { state: "idle", running: true, label: "resumeDelivery", action: "active" },
-  { state: "active", running: false, label: "launchAllAgents", action: "start" },
+  { state: "active", running: true, action: "pause" },
+  { state: "paused", running: true, action: "resume" },
+  { state: "idle", running: true, action: "resume" },
+  { state: "active", running: false, action: "start" },
 ] as const)(
-  "preserves $label behavior with neutral command buttons",
-  async ({ state, running, label, action }) => {
-    const onSetGroupState = vi.fn();
-    const onStartGroup = vi.fn();
-    const onStopGroup = vi.fn();
+  "opens explicit actions for $state/$running without starting work on click",
+  async ({ state, running, action }) => {
+    const run = vi.fn(async () => {});
     await mount({
       groupDoc: { group_id: "group-1", state },
       selectedGroupRunning: running,
       actors: [{ id: "actor-1" }],
-      onSetGroupState,
-      onStartGroup,
-      onStopGroup,
+      groupRunControls: { pending: null, run },
     });
-    const button = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
-    expect(button.hasAttribute("aria-pressed")).toBe(false);
-    const stop = host.querySelector<HTMLButtonElement>('[aria-label="stopAllAgents"]')!;
-    expect(stop.disabled).toBe(!running);
-    await act(async () => stop.click());
-    expect(onStopGroup).toHaveBeenCalledTimes(running ? 1 : 0);
+    const trigger = host.querySelector<HTMLButtonElement>("[data-group-run-control]")!;
+    await act(async () => trigger.click());
+    expect(run).not.toHaveBeenCalled();
+    const menu = document.querySelector('[role="menu"]')!;
+    const button = Array.from(menu.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      b.textContent?.startsWith(`groupRun.${action}`),
+    )!;
     await act(async () => button.click());
-    await act(async () => button.click());
-    if (action === "start") expect(onStartGroup).toHaveBeenCalledOnce();
-    else expect(onSetGroupState).toHaveBeenCalledWith(action);
-    expect(button.disabled).toBe(true);
-    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect(run).toHaveBeenCalledExactlyOnceWith("group-1", action);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   },
 );
+
+it("keeps read-only status passive", async () => {
+  await mount({ webReadOnly: true });
+  expect(host.querySelector("[data-group-run-control]")).toBeNull();
+  expect(host.querySelector('[title="statusRunning"]')).not.toBeNull();
+});

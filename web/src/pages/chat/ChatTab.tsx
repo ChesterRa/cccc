@@ -275,6 +275,7 @@ export function ChatTab({
     composerGroupSettled,
     composerRouteGroups,
     mentionSuggestions,
+    connectMentionStatus,
     slashCommands,
 
     // Agent state
@@ -299,6 +300,7 @@ export function ChatTab({
     selectedGroupRunning,
     actors,
     recipientActors,
+    showMentionMenu: showMentionMenu && !readOnly,
     mentionFilter,
     mentionKind,
     mentionActorScope,
@@ -997,6 +999,9 @@ export function ChatTab({
                     showMentionMenu={showMentionMenu}
                     setShowMentionMenu={setShowMentionMenu}
                     mentionSuggestions={mentionSuggestions}
+                    connectMentionStatus={
+                      mentionKind === "group" ? connectMentionStatus : undefined
+                    }
                     mentionSelectedIndex={mentionSelectedIndex}
                     setMentionSelectedIndex={setMentionSelectedIndex}
                     setMentionFilter={setMentionFilter}
@@ -1037,6 +1042,7 @@ export function ChatTab({
                 ) : splitPresentationViewer && !compact ? (
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                     <PresentationViewerSplitPanel
+                      key={`${selectedGroupId}:${splitPresentationViewer.slotId}`}
                       isDark={isDark}
                       readOnly={readOnly}
                       groupId={selectedGroupId}
@@ -1050,7 +1056,25 @@ export function ChatTab({
                         void handleSplitClearSlot(slotId);
                       }}
                       onOpenWindow={handleOpenPresentationWindow}
-                      onClose={() => setPresentationViewer(null)}
+                      onSelectSlot={(slotId) =>
+                        setPresentationViewer({
+                          groupId: selectedGroupId,
+                          slotId,
+                          surface: "split",
+                        })
+                      }
+                      onPinSlot={pinPresentationSlot}
+                      onCollapse={() => {
+                        toggleCompact();
+                        requestAnimationFrame(() =>
+                          document
+                            .querySelector<HTMLButtonElement>(
+                              '[data-presentation-density="compact"] button',
+                            )
+                            ?.focus(),
+                        );
+                      }}
+                      onClose={() => selectSidePanel("presentation")}
                     />
                   </Suspense>
                 ) : (
@@ -1060,7 +1084,22 @@ export function ChatTab({
                       <PresentationRail
                         groupId={selectedGroupId}
                         compact={compact}
-                        onToggleCompact={toggleCompact}
+                        onToggleCompact={() => {
+                          toggleCompact();
+                          if (compact) {
+                            const slots = ensurePresentation(groupPresentation);
+                            const slot =
+                              slots.slots.find(
+                                (item) => item.slot_id === slots.highlight_slot_id && item.card,
+                              ) || slots.slots.find((item) => item.card);
+                            if (slot)
+                              setPresentationViewer({
+                                groupId: selectedGroupId,
+                                slotId: slot.slot_id,
+                                surface: "split",
+                              });
+                          }
+                        }}
                         presentation={groupPresentation}
                         isDark={isDark}
                         readOnly={readOnly}

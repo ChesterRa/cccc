@@ -8,7 +8,7 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Extension, FromRequestParts, Query, State},
+    extract::{DefaultBodyLimit, Extension, FromRequestParts, Path, Query, State},
     http::{HeaderMap, request::Parts},
     routing::{get, post},
 };
@@ -19,6 +19,7 @@ use serde_json::json;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/connect", get(status))
+        .route("/api/v1/groups/{group_id}/connect/catalog", get(catalog))
         .route("/api/v1/connect/name", post(rename))
         .route(
             "/api/v1/connect/direct",
@@ -42,6 +43,36 @@ pub fn routes() -> Router<AppState> {
 #[derive(serde::Deserialize)]
 struct GroupQuery {
     group_id: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct CatalogQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_group_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<u64>,
+}
+
+// The existing Connect admin gate applies. This exposes communication metadata,
+// not target Web access; the daemon checks each current Group-pair binding.
+async fn catalog(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<CatalogQuery>,
+) -> ApiResult {
+    if state.web_mode.is_read_only() {
+        return Err(ApiError::forbidden(
+            "Connect discovery is unavailable in exhibit mode",
+        ));
+    }
+    let mut args = object(json!(query));
+    args.insert("group_id".into(), json!(group_id));
+    args.insert("by".into(), json!("user"));
+    call(&state, "connect_catalog", args).await
 }
 
 async fn direct_status(

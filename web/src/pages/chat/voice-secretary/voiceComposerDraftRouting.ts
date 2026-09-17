@@ -1,4 +1,8 @@
 import { useComposerStore } from "../../../stores/useComposerStore";
+import {
+  pruneComposerAgentMentionTokens,
+  pruneComposerGroupMentionTokens,
+} from "../../../hooks/composerGroupMentions";
 
 export type VoiceComposerDraftMode = "replace" | "append";
 
@@ -29,14 +33,25 @@ export function routeVoiceTextToComposerGroup(input: {
     return "active";
   }
 
-  state.upsertDraft(groupId, (draft) => ({
-    composerText: mergeVoiceComposerDraftText(draft?.composerText || "", text, input.mode),
-    composerFiles: draft?.composerFiles || [],
-    toText: draft?.toText || "",
-    replyTarget: draft?.replyTarget || null,
-    quotedPresentationRef: draft?.quotedPresentationRef || null,
-    quotedVoiceDocumentRef: draft?.quotedVoiceDocumentRef || null,
-    messageMode: draft?.messageMode || state.preferredMessageMode,
-  }));
+  state.upsertDraft(groupId, (draft) => {
+    const composerText = mergeVoiceComposerDraftText(draft?.composerText || "", text, input.mode);
+    return {
+      composerText,
+      composerGroupMentionTokens: pruneComposerGroupMentionTokens({
+        text: composerText,
+        tokens: draft?.composerGroupMentionTokens || [],
+      }),
+      composerAgentMentionTokens: pruneComposerAgentMentionTokens({
+        text: composerText,
+        tokens: draft?.composerAgentMentionTokens || [],
+      }),
+      composerFiles: draft?.composerFiles || [],
+      toText: draft?.toText || "",
+      replyTarget: draft?.replyTarget || null,
+      quotedPresentationRef: draft?.quotedPresentationRef || null,
+      quotedVoiceDocumentRef: draft?.quotedVoiceDocumentRef || null,
+      messageMode: draft?.messageMode || state.preferredMessageMode,
+    };
+  });
   return "draft";
 }

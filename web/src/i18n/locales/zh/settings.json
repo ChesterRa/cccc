@@ -23,7 +23,7 @@
   "navigation": {
     "targetScope": "目标范围",
     "thisGroup": "当前工作组",
-    "global": "全局",
+    "global": "整个实例",
     "groupScopeTitle": "工作组范围",
     "groupScopeContent": "仅应用于 {{scopeRoot}}。适用于工作组特定的超时和集成设置。",
     "globalScopeTitle": "全局范围",
@@ -158,12 +158,12 @@
   },
   "branding": {
     "title": "品牌",
-    "description": "定制实例名称和核心 logo 展示位，但不把 Web 扩成一整套白标主题系统。",
+    "description": "自定义 CCCC Web 显示的名称和图标。",
     "preview": "预览",
     "previewFaviconCustom": "浏览器标签图标当前使用独立 favicon。",
     "previewFaviconFollow": "浏览器标签图标默认跟随当前 logo icon；只有你单独覆写时才会不同。",
     "productNameTitle": "产品名称",
-    "productNameHint": "用于侧边栏文字标识、登录页标题，以及浏览器标签页标题。",
+    "productNameHint": "显示在侧边栏、登录页和浏览器标签中，不会修改 Connect 中的实例名称。",
     "productNameLabel": "名称",
     "productNamePlaceholder": "CCCC",
     "saveName": "保存名称",
@@ -182,7 +182,8 @@
     "followLogo": "跟随 logo",
     "useDefault": "恢复默认",
     "uploading": "上传中…",
-    "uploadFailed": "上传品牌资源失败。"
+    "uploadFailed": "上传品牌资源失败。",
+    "uploadAppliesImmediately": "上传或重置图标后立即生效。"
   },
   "capabilities": {
     "title": "能力治理",

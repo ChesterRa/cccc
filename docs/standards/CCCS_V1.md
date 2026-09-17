@@ -438,6 +438,14 @@ type ReferenceV1 =
       // extra fields MAY exist; clients MUST ignore unknown fields
     }
   | {
+      kind: "connect_group_ref"
+      instance_id: string
+      group_id: string
+      instance_name?: string
+      group_title?: string
+      token?: string
+    }
+  | {
       kind: "task_ref"
       task_id: string
       title?: string
@@ -447,6 +455,12 @@ type ReferenceV1 =
 ```
 
 **Rules**
+- `kind="connect_group_ref"` identifies a remote Group mentioned in the message,
+  qualified by both Instance and Group ID. Names and `token` are display snapshots.
+  It is advisory context, never a destination, access grant or automatic send.
+  Consumers MUST NOT interpret its Group ID as a local destination. When asked to
+  contact it, Agents use `cccc_connect(instance_id, target_group_id)` to discover
+  the current target, then ordinary Connect messaging with both destination IDs.
 - Attachments SHOULD include content hashes where possible (`sha256`) to enable reproducibility/auditing.
 - `path` MUST be stable and retrievable within the group’s storage scope.
 - `kind="presentation_ref"` is a structured evidence anchor into a group Presentation slot.

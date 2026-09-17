@@ -1,3 +1,4 @@
+import type { GroupRunControls } from "../../utils/groupControls";
 import { requestWorkspaceNavigation } from "../../stores/workspaceNavigation";
 import { WorkspaceNavigationDialog } from "../workspace/WorkspaceNavigationDialog";
 import { useEffect, useState, type CSSProperties } from "react";
@@ -95,8 +96,7 @@ type AppShellProps = {
   onOpenSearch: () => void;
   onOpenContext: () => void;
   onStartGroup: () => void;
-  onStopGroup: () => void;
-  onSetGroupState: (state: "active" | "idle" | "paused") => void;
+  groupRunControls: GroupRunControls;
   onOpenSettings: () => void;
   canAccessAccount: boolean;
   accountLabel?: string | null;
@@ -195,8 +195,7 @@ export function AppShell({
   onOpenSearch,
   onOpenContext,
   onStartGroup,
-  onStopGroup,
-  onSetGroupState,
+  groupRunControls,
   onOpenSettings,
   canAccessAccount,
   accountLabel,
@@ -270,6 +269,7 @@ export function AppShell({
           sidebarWidth={sidebarWidth}
           isDark={isDark}
           readOnly={webReadOnly}
+          groupRunControls={groupRunControls}
           codexVoice={canUseVoice ? codexVoice : undefined}
           onSelectGroup={(groupId) => {
             if (!remoteWorkspace && groupId === selectedGroupId) onSelectGroup(groupId);
@@ -306,14 +306,11 @@ export function AppShell({
               selectedGroupRuntimeStatus={selectedGroupRuntimeStatus}
               actors={actors}
               sseStatus={sseStatus}
-              busy={busy}
               onOpenSidebar={onOpenSidebar}
               onOpenGroupEdit={onOpenGroupEdit}
               onOpenSearch={onOpenSearch}
               onOpenContext={onOpenContext}
-              onStartGroup={onStartGroup}
-              onStopGroup={onStopGroup}
-              onSetGroupState={onSetGroupState}
+              groupRunControls={groupRunControls}
               onOpenSettings={onOpenSettings}
               canAccessAccount={canAccessAccount}
               accountLabel={accountLabel}

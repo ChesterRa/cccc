@@ -1,6 +1,33 @@
-import type { GroupMeta, LocalGroupRouteMessageRef } from "../types";
+import type { GroupMeta, LocalGroupRouteMessageRef, ConnectGroupMessageRef } from "../types";
 import type { ComposerGroupMentionToken } from "./composerGroupMentions";
-import { resolveSelectedComposerGroupMentionTargets } from "./composerGroupMentions";
+import {
+  pruneComposerGroupMentionTokens,
+  resolveSelectedComposerGroupMentionTargets,
+} from "./composerGroupMentions";
+
+export function buildComposerConnectGroupRefs(
+  text: string,
+  tokens: ComposerGroupMentionToken[],
+): ConnectGroupMessageRef[] {
+  const seen = new Set<string>();
+  return pruneComposerGroupMentionTokens({ text, tokens }).flatMap((token) => {
+    const remote = token.remote;
+    if (!remote) return [];
+    const key = JSON.stringify([remote.instance_id, remote.group_id]);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [
+      {
+        kind: "connect_group_ref",
+        instance_id: remote.instance_id,
+        instance_name: remote.instance_name,
+        group_id: remote.group_id,
+        group_title: remote.title,
+        token: token.token,
+      },
+    ];
+  });
+}
 
 export function buildComposerLocalGroupRouteRefs({
   text,

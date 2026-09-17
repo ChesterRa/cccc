@@ -1,3 +1,4 @@
+import type { GroupRunControls } from "../../utils/groupControls";
 import { groupConnectionCount } from "../../features/connect/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Monitor } from "lucide-react";
@@ -30,6 +31,7 @@ import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbenc
 
 export interface GroupSidebarProps {
   connect?: ConnectWorkbench;
+  groupRunControls?: GroupRunControls;
   orderedGroups: GroupMeta[];
   archivedGroupIds: string[];
   selectedGroupId: string;
@@ -53,6 +55,7 @@ export interface GroupSidebarProps {
 
 export function GroupSidebar({
   connect,
+  groupRunControls,
   orderedGroups,
   archivedGroupIds,
   selectedGroupId,
@@ -178,6 +181,7 @@ export function GroupSidebar({
             isDark={isDark}
             isCollapsed={false}
             readOnly={readOnly}
+            groupRunControls={readOnly ? undefined : groupRunControls}
             menuActionLabel={menuActionLabel}
             connectionsLabel={t("groupConnections.title")}
             onOpenConnections={onOpenGroupConnections}
@@ -200,6 +204,7 @@ export function GroupSidebar({
               <GroupSidebarItem
                 key={gid}
                 group={g}
+                groupRunControls={readOnly ? undefined : groupRunControls}
                 isActive={gid === selectedGroupId}
                 isCollapsed={isCollapsed}
                 isArchived={isArchivedSection}
@@ -232,6 +237,7 @@ export function GroupSidebar({
       onOpenGroupConnections,
       connect?.groupConnections,
       onSelectGroup,
+      groupRunControls,
       onWarmGroup,
       readOnly,
       selectedGroupId,

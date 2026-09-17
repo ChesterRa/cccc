@@ -1,13 +1,7 @@
-import { useEffect, useState } from "react";
 import "./MobileMenuSheet.css";
 import { useTranslation } from "react-i18next";
-import { Actor, GroupDoc, TextScale, Theme } from "../../types";
+import { GroupDoc, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
-import {
-  getGroupControlVisual,
-  getLaunchControlMode,
-  resolveGroupControls,
-} from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { AppearancePreferences } from "./AppearancePreferences";
@@ -18,9 +12,6 @@ import {
   SettingsIcon,
   AccountIcon,
   EditIcon,
-  PlayIcon,
-  StopIcon,
-  PauseIcon,
   CloseIcon,
 } from "../Icons";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
@@ -32,8 +23,6 @@ export interface MobileMenuSheetProps {
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
   selectedGroupRunning: boolean;
-  actors: Actor[];
-  busy: string;
   onClose: () => void;
   onThemeChange: (theme: Theme) => void;
   onTextScaleChange: (scale: TextScale) => void;
@@ -46,9 +35,6 @@ export interface MobileMenuSheetProps {
   accountLabel?: string | null;
   onOpenAccount: () => void;
   onOpenGroupEdit?: () => void;
-  onStartGroup: () => void;
-  onStopGroup: () => void;
-  onSetGroupState: (state: "active" | "paused" | "idle") => void | Promise<void>;
 }
 
 export function MobileMenuSheet({
@@ -58,8 +44,6 @@ export function MobileMenuSheet({
   selectedGroupId,
   groupDoc,
   selectedGroupRunning,
-  actors,
-  busy,
   onClose,
   onThemeChange,
   onTextScaleChange,
@@ -71,14 +55,9 @@ export function MobileMenuSheet({
   accountLabel,
   onOpenAccount,
   onOpenGroupEdit,
-  onStartGroup,
-  onStopGroup,
-  onSetGroupState,
 }: MobileMenuSheetProps) {
   const { modalRef } = useModalA11y(isOpen, onClose);
   const { t } = useTranslation("layout");
-  const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
-  const [hasObservedGroupBusy, setHasObservedGroupBusy] = useState(false);
   const selectedStatus = selectedGroupId
     ? getGroupStatusFromSource({
         running: selectedGroupRunning,
@@ -86,39 +65,6 @@ export function MobileMenuSheet({
         runtime_status: groupDoc?.runtime_status,
       })
     : null;
-  const selectedStatusKey = selectedStatus?.key ?? null;
-  const launchMode = getLaunchControlMode(selectedStatusKey);
-  const launchControl = getGroupControlVisual(selectedStatusKey, "launch", busy);
-  const pauseControl = getGroupControlVisual(selectedStatusKey, "pause", busy);
-  const stopControl = getGroupControlVisual(selectedStatusKey, "stop", busy);
-  const {
-    launchHardUnavailable,
-    pauseHardUnavailable,
-    stopHardUnavailable,
-    launchDisabled,
-    pauseDisabled,
-    stopDisabled,
-  } = resolveGroupControls({
-    selectedGroupId,
-    actorCount: actors.length,
-    statusKey: selectedStatusKey,
-    busy,
-  });
-  const isPauseAction = selectedStatusKey === "run";
-  const toggleControl = isPauseAction ? pauseControl : launchControl;
-  const toggleDisabled =
-    (isPauseAction ? pauseDisabled : launchDisabled) || pendingToggleAction !== null;
-  const toggleHardUnavailable = isPauseAction ? pauseHardUnavailable : launchHardUnavailable;
-  const toggleLabel = isPauseAction ? t("pauseState") : t("runState");
-  const isGroupBusy = busy.startsWith("group-");
-  const runtimeHint =
-    selectedStatusKey === "paused"
-      ? t("runtimeHintPaused")
-      : selectedStatusKey === "stop"
-        ? t("runtimeHintStop")
-        : selectedStatusKey === "idle"
-          ? t("runtimeHintIdle")
-          : t("runtimeHintRun");
   const sectionCardClass =
     "rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-2 shadow-sm backdrop-blur-xl";
   const sectionTitleClass =
@@ -126,77 +72,6 @@ export function MobileMenuSheet({
   const rowButtonClass =
     "w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-sm transition-all text-[var(--color-text-primary)] hover:bg-black/5 disabled:opacity-45 dark:hover:bg-white/6";
 
-  useEffect(() => {
-    if (!pendingToggleAction) return;
-    let timerId: number | null = null;
-    const resetPendingState = () => {
-      timerId = window.setTimeout(() => {
-        setPendingToggleAction(null);
-        setHasObservedGroupBusy(false);
-      }, 0);
-    };
-
-    if (selectedGroupId.trim() === "") {
-      resetPendingState();
-      return () => {
-        if (timerId !== null) window.clearTimeout(timerId);
-      };
-    }
-    if (isGroupBusy) {
-      if (!hasObservedGroupBusy) {
-        timerId = window.setTimeout(() => {
-          setHasObservedGroupBusy(true);
-        }, 0);
-      }
-      return () => {
-        if (timerId !== null) window.clearTimeout(timerId);
-      };
-    }
-    const launchSettled =
-      pendingToggleAction === "launch" &&
-      (selectedStatusKey === "run" || selectedStatusKey === "idle");
-    const pauseSettled = pendingToggleAction === "pause" && selectedStatusKey === "paused";
-    if (launchSettled || pauseSettled || hasObservedGroupBusy) {
-      resetPendingState();
-    }
-    return () => {
-      if (timerId !== null) window.clearTimeout(timerId);
-    };
-  }, [pendingToggleAction, hasObservedGroupBusy, isGroupBusy, selectedGroupId, selectedStatusKey]);
-
-  const handleLaunchClick = () => {
-    if (launchDisabled || selectedStatusKey === "run") return;
-    setPendingToggleAction("launch");
-    setHasObservedGroupBusy(false);
-    onClose();
-    if (launchMode === "activate") {
-      void onSetGroupState("active");
-      return;
-    }
-    onStartGroup();
-  };
-
-  const handlePauseClick = () => {
-    if (pauseDisabled || selectedStatusKey === "paused") return;
-    setPendingToggleAction("pause");
-    setHasObservedGroupBusy(false);
-    onClose();
-    void onSetGroupState("paused");
-  };
-
-  const handleStopClick = () => {
-    if (stopDisabled || selectedStatusKey === "stop") return;
-    onClose();
-    onStopGroup();
-  };
-
-  const handleToggleClick = () => {
-    if (isPauseAction) {
-      handlePauseClick();
-      return;
-    }
-    handleLaunchClick();
-  };
   if (!isOpen) return null;
 
   return (
@@ -363,41 +238,6 @@ export function MobileMenuSheet({
               onThemeChange={onThemeChange}
               onTextScaleChange={onTextScaleChange}
             />
-          </section>
-
-          <section className={sectionCardClass}>
-            <div className={sectionTitleClass}>{t("runtimeSection")}</div>
-            <div className="px-2.5 pb-1 text-[12px] leading-5 text-[var(--color-text-tertiary)]">
-              {runtimeHint}
-            </div>
-            <div className="mt-2 flex items-center gap-1 rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-bg)] p-1">
-              <button
-                className={classNames(
-                  "flex-1 flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-medium transition-all min-h-[48px]",
-                  toggleControl.className,
-                  toggleHardUnavailable && "opacity-45",
-                )}
-                onClick={handleToggleClick}
-                disabled={toggleDisabled}
-                aria-pressed={toggleControl.active}
-              >
-                {isPauseAction ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
-                <span>{toggleLabel}</span>
-              </button>
-              <button
-                className={classNames(
-                  "flex-1 flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-medium transition-all min-h-[48px]",
-                  stopControl.className,
-                  stopHardUnavailable && "opacity-45",
-                )}
-                onClick={handleStopClick}
-                disabled={stopDisabled}
-                aria-pressed={stopControl.active}
-              >
-                <StopIcon size={18} />
-                <span>{t("stopState")}</span>
-              </button>
-            </div>
           </section>
         </div>
       </div>

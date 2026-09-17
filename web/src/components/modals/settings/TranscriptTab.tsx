@@ -10,6 +10,7 @@ import {
   secondaryButtonClass,
   settingsWorkspaceActionBarClass,
   settingsWorkspaceBodyClass,
+  settingsWorkspaceFieldsClass,
   settingsWorkspaceHeaderClass,
   settingsWorkspacePanelClass,
   settingsWorkspaceShellClass,
@@ -94,13 +95,13 @@ export function TranscriptTab({
         </div>
 
         <div className={settingsWorkspaceBodyClass}>
-          <div className={settingsWorkspacePanelClass(_isDark)}>
+          <div className={settingsWorkspaceFieldsClass}>
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">
               {t("transcript.policy")}
             </div>
 
             <div className="mt-4 space-y-4">
-              <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
+              <div className={settingsWorkspaceFieldsClass}>
                 <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">
                   {t("transcript.visibilityLabel")}
                 </label>
@@ -124,7 +125,7 @@ export function TranscriptTab({
               </div>
 
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-                <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
+                <div className={settingsWorkspaceFieldsClass}>
                   <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
                     <input
                       type="checkbox"
@@ -136,7 +137,7 @@ export function TranscriptTab({
                   </label>
                 </div>
 
-                <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
+                <div className={settingsWorkspaceFieldsClass}>
                   <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">
                     {t("transcript.notificationLines")}
                   </label>

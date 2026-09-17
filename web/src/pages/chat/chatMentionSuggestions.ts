@@ -1,4 +1,5 @@
 import type { Actor, GroupMeta } from "../../types";
+import type { ConnectMentionGroup } from "../../hooks/useConnectMentionGroups";
 
 export type ComposerMentionKind = "agent" | "group";
 
@@ -10,6 +11,7 @@ export type ComposerMentionSuggestion = {
   description?: string;
   meta?: string;
   keywords?: string[];
+  remote?: ConnectMentionGroup;
 };
 
 export function getGroupRouteDisplayName(group: GroupMeta): string {
@@ -34,7 +36,7 @@ function matchesMentionFilter(item: ComposerMentionSuggestion, needle: string): 
 }
 
 function buildAgentMentionSuggestions(
-  recipientActors: Actor[],
+  recipientActors: Pick<Actor, "id" | "title">[],
   needle: string,
 ): ComposerMentionSuggestion[] {
   const base = ["@all", "@foreman", "@peers"];
@@ -68,8 +70,9 @@ function buildAgentMentionSuggestions(
 function buildGroupMentionSuggestions(
   groups: GroupMeta[],
   needle: string,
+  remoteGroups: ConnectMentionGroup[],
 ): ComposerMentionSuggestion[] {
-  return (groups || [])
+  const local = (groups || [])
     .filter((group) => String(group.group_id || "").trim())
     .map((group) => {
       const groupId = String(group.group_id || "").trim();
@@ -86,6 +89,22 @@ function buildGroupMentionSuggestions(
       };
     })
     .filter((item) => matchesMentionFilter(item, needle));
+  return [
+    ...local,
+    ...remoteGroups
+      .map(
+        (group): ComposerMentionSuggestion => ({
+          kind: "group",
+          value: group.group_id,
+          label: `${group.title || group.group_id} · ${group.instance_name || group.instance_id}`,
+          badgeKind: "remote",
+          meta: `${group.instance_id} / ${group.group_id}`,
+          keywords: [group.title, group.instance_name],
+          remote: group,
+        }),
+      )
+      .filter((item) => matchesMentionFilter(item, needle)),
+  ];
 }
 
 function containsRouteToken(text: string, token: string): boolean {
@@ -274,16 +293,18 @@ export function buildComposerMentionSuggestions({
   filter,
   recipientActors,
   groups,
+  remoteGroups = [],
 }: {
   kind: ComposerMentionKind;
   filter: string;
-  recipientActors: Actor[];
+  recipientActors: Pick<Actor, "id" | "title">[];
   groups: GroupMeta[];
+  remoteGroups?: ConnectMentionGroup[];
 }): ComposerMentionSuggestion[] {
   const needle = String(filter || "")
     .trim()
     .toLowerCase();
   return kind === "agent"
     ? buildAgentMentionSuggestions(recipientActors, needle)
-    : buildGroupMentionSuggestions(groups, needle);
+    : buildGroupMentionSuggestions(groups, needle, remoteGroups);
 }

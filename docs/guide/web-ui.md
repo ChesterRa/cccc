@@ -35,7 +35,15 @@ Appearance choices use application menus for theme, text size and language. Sele
 option keeps the containing menu open and returns focus to its trigger. Arrow keys navigate
 options; Escape closes only the inner choice menu. Narrow headers use the existing overflow
 sheet with the same choices and access rules; choice panels are portalled above its scroll area.
-**Pause Delivery** pauses message delivery; **Stop All Agents** stops the Actors themselves.
+The **Group status button** combines the status dot with run controls, without a dropdown arrow.
+When space allows, the header also shows the state text; narrow headers and expanded sidebar
+rows use a compact button. Click it to
+choose an action for that exact Group, without switching views. **Start Group** starts enabled
+Agents. **Pause message delivery** pauses CCCC delivery; work already in progress may continue.
+**Resume running** resumes delivery, starting enabled Agents if none are running. **Stop Group**
+stops running Agents while preserving their enabled settings. Pending operations show progress
+on the affected Group and prevent duplicate submissions. Read-only views retain passive status
+indicators. On mobile, use the same header control; collapsed sidebar icons remain navigation.
 
 Use **Messages / Terminals** in the Group header to switch the current Group's work view.
 On narrow headers, the view icon switches between these views. Presentation also opens from
@@ -86,7 +94,15 @@ independent of these brief progress previews. The same rules apply to every mana
 
 Files and Presentation share one resizable sidebar with matching header controls. Each Group remembers its expanded width and Presentation density. Files always opens at the expanded width; its file draft survives switching to Presentation and back.
 
-Presentation shows lightweight image, text and table previews. Drag it narrower to snap into four compact slots, or use the collapse button; expanding restores the remembered width. The divider supports arrow keys, and Enter toggles compact Presentation. Viewing thumbnails does not clear update indicators or start interactive browser/PDF sessions. Open a slot to view its full content through the existing window/split viewer. Phones retain dedicated full-screen surfaces.
+Presentation keeps four fixed slots. New Groups open a compact button rail by default; existing saved layout and window/split preferences are preserved. Open a filled slot to read its content, and use the four slot buttons to switch without returning to the list. Empty slots open the pin flow. The expanded overview uses image thumbnails and compact titled entries for other resources, without starting interactive browser/PDF sessions or clearing update indicators.
+
+Collapse returns to the compact rail; closing the sidebar only hides it and keeps its contents. The expand button restores the remembered width and opens an available slot. Dragging to the minimum width also returns to compact slots. The divider supports arrow keys, and Enter toggles density. The viewer can still open in a larger window, and phones retain full-screen surfaces.
+
+### Message search and settings
+
+Message search shows the current Group name and Actor display names. Enter or **Search** submits the keywords; changing a filter reruns the submitted query. Typing new keywords does not change existing highlights or pagination until you submit again. Initial guidance, loading, no matches and failed requests are separate states. **Open** returns to the message context; reply and copying the event ID remain available.
+
+Settings keeps **This group** and **This instance** separate. Section forms share a plain work surface, while independent configurations and authorization states retain their own boundaries. Under **Branding**, save the product name explicitly; icon uploads and resets apply immediately. The product name changes the Web sidebar, sign-in screen and browser tab, not the instance name shown in Connect.
 
 ### Workspace files
 

@@ -204,11 +204,12 @@ with tempfile.TemporaryDirectory(
         wait('!!document.querySelector("#group-side-panel")')
         panel_top = rect("#group-side-panel")["top"]
         js("groupWorkProbe.setRunning(false)")
-        wait('!!document.querySelector(\'[aria-label="Launch All Agents"]\')')
+        wait('document.querySelector("header [data-group-run-control]").innerText === "Stopped"')
         assert not js('!!document.querySelector("[data-chat-notices]")')
         assert rect("#group-side-panel")["top"] == panel_top
-        click('[aria-label="Launch All Agents"]')
-        assert js('groupWorkProbe.actions.includes("onStartGroup")')
+        click('header [data-group-run-control]')
+        js("[...document.querySelectorAll('[role=menuitem]')].find(b=>b.textContent.startsWith('Start Group')).click()")
+        wait('document.querySelector("header [data-group-run-control]").innerText === "Running"')
         js("groupWorkProbe.setCount(0)")
         wait('!!document.querySelector("[data-chat-notices]")')
         assert rect("[data-chat-notices]")["right"] <= rect("#group-side-panel")["left"]
@@ -221,9 +222,9 @@ with tempfile.TemporaryDirectory(
         js('groupWorkProbe.group.getState().closeChatWindow("g1")')
         js("groupWorkProbe.setRunning(false); groupWorkProbe.actions.length=0")
         dimensions(390)
-        click('[aria-label="Menu"]')
-        js("[...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent.trim()==='Run').click()")
-        assert js('groupWorkProbe.actions.includes("onStartGroup")')
+        click('header [data-group-run-control]')
+        js("[...document.querySelectorAll('[role=menuitem]')].find(b=>b.textContent.startsWith('Start Group')).click()")
+        wait('document.querySelector("header [data-group-run-control]").getAttribute("aria-label").endsWith("Running")')
         js("groupWorkProbe.setRunning(true); groupWorkProbe.actions.length=0")
         dimensions(1440)
 

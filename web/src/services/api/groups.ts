@@ -1593,19 +1593,25 @@ export async function attachScope(groupId: string, path: string) {
 export async function startGroup(groupId: string) {
   clearActorsReadOnlyRequest(groupId);
   clearGroupsReadRequest();
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/start?by=user`, { method: "POST" });
+  return apiJson<{ group: GroupDoc }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/start?by=user`,
+    { method: "POST" },
+  );
 }
 
 export async function stopGroup(groupId: string) {
   clearActorsReadOnlyRequest(groupId);
   clearGroupsReadRequest();
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/stop?by=user`, { method: "POST" });
+  return apiJson<{ group: GroupDoc }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/stop?by=user`,
+    { method: "POST" },
+  );
 }
 
 export async function setGroupState(groupId: string, state: "active" | "idle" | "paused") {
   clearActorsReadOnlyRequest(groupId);
   clearGroupsReadRequest();
-  return apiJson(
+  return apiJson<{ group: GroupDoc }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/state?state=${encodeURIComponent(state)}&by=user`,
     { method: "POST" },
   );

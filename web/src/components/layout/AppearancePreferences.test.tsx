@@ -68,16 +68,11 @@ describe("appearance choices inside their real hosts", () => {
           selectedGroupId=""
           groupDoc={null}
           selectedGroupRunning={false}
-          actors={[]}
-          busy=""
           onOpenSearch={noop}
           onOpenContext={noop}
           onOpenSettings={noop}
           canAccessAccount
           onOpenAccount={noop}
-          onStartGroup={noop}
-          onStopGroup={noop}
-          onSetGroupState={noop}
         />
       );
     }

@@ -155,6 +155,15 @@ export type LocalGroupRouteMessageRef = MessageRef & {
   token?: string;
 };
 
+export type ConnectGroupMessageRef = MessageRef & {
+  kind: "connect_group_ref";
+  instance_id: string;
+  instance_name?: string;
+  group_id: string;
+  group_title?: string;
+  token?: string;
+};
+
 export type StreamingActivity = {
   id: string;
   kind: "queued" | "thinking" | "plan" | "search" | "command" | "patch" | "tool" | "reply" | string;

@@ -1,6 +1,10 @@
 // Chat composer state store with per-group draft preservation.
 import { create } from "zustand";
 import type {
+  ComposerGroupMentionToken,
+  ComposerAgentMentionToken,
+} from "../hooks/composerGroupMentions";
+import type {
   AssistantVoiceDocument,
   PresentationMessageRef,
   ReplyTarget,
@@ -32,6 +36,8 @@ export {
 const initialMessageMode = loadComposerMessageModePreference();
 
 interface GroupDraft {
+  composerGroupMentionTokens?: ComposerGroupMentionToken[];
+  composerAgentMentionTokens?: ComposerAgentMentionToken[];
   composerText: string;
   composerFiles: File[];
   toText: string;
@@ -42,6 +48,18 @@ interface GroupDraft {
 }
 
 interface ComposerState {
+  composerGroupMentionTokens: ComposerGroupMentionToken[];
+  composerAgentMentionTokens: ComposerAgentMentionToken[];
+  setComposerGroupMentionTokens: (
+    tokens:
+      | ComposerGroupMentionToken[]
+      | ((prev: ComposerGroupMentionToken[]) => ComposerGroupMentionToken[]),
+  ) => void;
+  setComposerAgentMentionTokens: (
+    tokens:
+      | ComposerAgentMentionToken[]
+      | ((prev: ComposerAgentMentionToken[]) => ComposerAgentMentionToken[]),
+  ) => void;
   activeGroupId: string;
   preferredMessageMode: ComposerMessageMode;
   // Current active state
@@ -83,6 +101,18 @@ interface ComposerState {
 }
 
 export const useComposerStore = create<ComposerState>((set, get) => ({
+  composerGroupMentionTokens: [],
+  composerAgentMentionTokens: [],
+  setComposerGroupMentionTokens: (tokens) =>
+    set((s) => ({
+      composerGroupMentionTokens:
+        typeof tokens === "function" ? tokens(s.composerGroupMentionTokens) : tokens,
+    })),
+  setComposerAgentMentionTokens: (tokens) =>
+    set((s) => ({
+      composerAgentMentionTokens:
+        typeof tokens === "function" ? tokens(s.composerAgentMentionTokens) : tokens,
+    })),
   activeGroupId: "",
   preferredMessageMode: initialMessageMode,
   composerText: "",
@@ -187,6 +217,8 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     set((state) => {
       const activeGroupId = String(state.activeGroupId || "").trim();
       return {
+        composerGroupMentionTokens: [],
+        composerAgentMentionTokens: [],
         composerText: "",
         composerFiles: [],
         toText: "",
@@ -219,6 +251,8 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
 
       if (hasContent) {
         newDrafts[normalizedFromGroupId] = {
+          composerGroupMentionTokens: state.composerGroupMentionTokens,
+          composerAgentMentionTokens: state.composerAgentMentionTokens,
           composerText: state.composerText,
           composerFiles: state.composerFiles,
           toText: state.replyTarget ? state.toText : "",
@@ -245,6 +279,8 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       activeGroupId: normalizedDestGroupId,
       drafts: newDrafts,
       normalToTextByGroup: {},
+      composerGroupMentionTokens: draft?.composerGroupMentionTokens || [],
+      composerAgentMentionTokens: draft?.composerAgentMentionTokens || [],
       composerText: draft?.composerText || "",
       composerFiles: draft?.composerFiles || [],
       toText: nextToText,

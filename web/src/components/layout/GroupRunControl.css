@@ -1,0 +1,49 @@
+/* A small visual control inside a stable mouse/touch target. */
+.group-run-control-compact {
+  position: relative;
+  isolation: isolate;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+}
+
+.group-run-control-compact::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 50% auto auto 50%;
+  width: 1.5rem;
+  height: 1.5rem;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: 0.375rem;
+  background: var(--color-sidebar-item-hover);
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (hover: hover) {
+  .group-run-control-compact:hover::before {
+    opacity: 1;
+  }
+}
+
+.group-run-control-compact:is(:focus-visible, [aria-expanded="true"], [aria-busy="true"])::before {
+  opacity: 1;
+}
+
+.group-run-control-compact:focus-visible::before {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.group-run-control-compact:focus-visible {
+  box-shadow: none;
+}
+
+/* Global press scaling must not move the target out from under an edge click. */
+.group-run-control-compact:active:not(:disabled),
+[role="button"]:active:has(.group-run-control-compact:active) {
+  transform: none;
+}

@@ -1,4 +1,7 @@
 {
+  "connectMentionLoading": "接続先のグループを読み込み中…",
+  "connectMentionIncomplete": "一部の接続先を読み込めませんでした。# を開き直すと再試行できます。",
+  "connectMentionStale": "キャッシュ情報 · 古い可能性があります",
   "presentationCloseSplitAction": "Presentation ビューアを閉じる",
   "presentationOpenWindowAction": "ウィンドウで開く",
   "sidePanelResize": "サイドバーの幅を調整",
@@ -737,5 +740,13 @@
     "openFile": "現在のファイルを開く",
     "unified": "統合表示",
     "split": "左右に表示"
-  }
+  },
+  "searchStart": "このグループのメッセージを検索",
+  "searchStartHint": "キーワードや絞り込み条件を指定して検索します。",
+  "searching": "検索中…",
+  "searchResultsFor": "「{{query}}」の検索結果",
+  "searchFilteredResults": "絞り込み結果",
+  "searchFailed": "検索に失敗しました。もう一度お試しください。",
+  "searchSenderUser": "ユーザー",
+  "searchSenderSystem": "システム"
 }

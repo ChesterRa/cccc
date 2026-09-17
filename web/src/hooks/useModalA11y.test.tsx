@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { useModalA11y } from "./useModalA11y";
@@ -73,4 +73,36 @@ describe("modal keyboard focus", () => {
     await act(async () => root.unmount());
     expect(document.body.style.overflow).toBe("");
   });
+});
+
+it("honors an initial field and lets a nested popup consume Escape before the modal", async () => {
+  const close = vi.fn();
+  function SearchFixture() {
+    const input = useRef<HTMLInputElement>(null);
+    const { modalRef } = useModalA11y(true, close, { initialFocusRef: input });
+    return (
+      <div ref={modalRef}>
+        <button>Close</button>
+        <input ref={input} />
+      </div>
+    );
+  }
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  });
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<SearchFixture />));
+  expect(document.activeElement).toBe(host.querySelector("input"));
+  const nestedEscape = (event: KeyboardEvent) => event.preventDefault();
+  document.addEventListener("keydown", nestedEscape, { capture: true });
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+  expect(close).not.toHaveBeenCalled();
+  document.removeEventListener("keydown", nestedEscape, { capture: true });
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+  expect(close).toHaveBeenCalledOnce();
+  await act(async () => root.unmount());
 });

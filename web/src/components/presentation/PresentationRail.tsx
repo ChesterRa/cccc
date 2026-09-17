@@ -96,11 +96,7 @@ export function PresentationRail({
           compact ? "p-2" : "p-3",
         )}
       >
-        <div
-          className={
-            compact ? "flex flex-col gap-2" : "grid grid-cols-1 gap-3 @[480px]:grid-cols-2"
-          }
-        >
+        <div className={"flex flex-col gap-2"}>
           {normalized.slots.map((slot, index) => {
             const card = slot.card;
             const attention = !!attentionSlots?.[slot.slot_id];
@@ -119,7 +115,9 @@ export function PresentationRail({
                 onClick={() => (card ? onOpenSlot(slot.slot_id) : onPinSlot?.(slot.slot_id))}
                 className={classNames(
                   "relative min-w-0 overflow-hidden rounded-lg border border-[var(--glass-border-subtle)] text-left transition-colors hover:bg-[var(--glass-tab-bg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-default disabled:opacity-60",
-                  compact ? "flex h-12 w-full items-center justify-center" : "p-2.5",
+                  compact
+                    ? "flex h-12 w-full items-center justify-center"
+                    : "flex items-center gap-3 p-2.5",
                   !card && "border-dashed",
                   slot.slot_id === normalized.highlight_slot_id && "bg-[var(--glass-tab-bg)]",
                   attention && (isDark ? "ring-2 ring-cyan-300/60" : "ring-2 ring-cyan-600/50"),
@@ -130,23 +128,31 @@ export function PresentationRail({
                     <div
                       className={classNames(
                         "pointer-events-none flex items-center justify-center overflow-hidden",
-                        compact ? "h-7 w-7" : "h-28 rounded-md bg-[var(--color-bg-secondary)]",
+                        compact
+                          ? "h-7 w-7"
+                          : "h-12 w-16 shrink-0 rounded-md bg-[var(--color-bg-secondary)]",
                       )}
                     >
                       <PresentationSlotPreview
                         key={`${slot.slot_id}:${card.published_at}:${card.content.url || ""}`}
                         groupId={groupId}
                         slot={slot}
-                        compact={compact}
                       />
                     </div>
                     {!compact && (
-                      <div className="mt-2 flex min-w-0 items-center gap-2">
+                      <div className="flex min-w-0 flex-1 items-start gap-2">
                         <span className="text-[11px] tabular-nums text-[var(--color-text-tertiary)]">
                           {index + 1}
                         </span>
-                        <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                          {card.title}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{card.title}</span>
+                          {(card.summary ||
+                            card.content.url ||
+                            card.content.workspace_rel_path) && (
+                            <span className="mt-1 block truncate text-xs text-[var(--color-text-secondary)]">
+                              {card.summary || card.content.url || card.content.workspace_rel_path}
+                            </span>
+                          )}
                         </span>
                       </div>
                     )}
@@ -160,7 +166,7 @@ export function PresentationRail({
                   <div
                     className={classNames(
                       "flex items-center justify-center gap-2 text-[var(--color-text-tertiary)]",
-                      !compact && "min-h-10 text-xs",
+                      !compact && "min-h-6 text-xs",
                     )}
                   >
                     {readOnly || !onPinSlot ? (

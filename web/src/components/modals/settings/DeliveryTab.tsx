@@ -9,7 +9,7 @@ import {
   settingsWorkspaceBodyClass,
   settingsWorkspaceHeaderClass,
   settingsWorkspaceShellClass,
-  settingsWorkspaceSoftPanelClass,
+  settingsWorkspaceFieldsClass,
 } from "./types";
 
 interface DeliveryTabProps {
@@ -41,7 +41,7 @@ export function DeliveryTab(props: DeliveryTabProps) {
         </div>
 
         <div className={`${settingsWorkspaceBodyClass} grid grid-cols-1 gap-3 lg:grid-cols-2`}>
-          <div className={settingsWorkspaceSoftPanelClass(isDark)}>
+          <div className={settingsWorkspaceFieldsClass}>
             <NumberInputRow
               isDark={isDark}
               label={t("delivery.mailNotice")}
@@ -50,7 +50,7 @@ export function DeliveryTab(props: DeliveryTabProps) {
               helperText={t("delivery.mailNoticeHelp")}
             />
           </div>
-          <div className={settingsWorkspaceSoftPanelClass(isDark)}>
+          <div className={settingsWorkspaceFieldsClass}>
             <NumberInputRow
               isDark={isDark}
               label={t("delivery.replyNotice")}

@@ -1,6 +1,8 @@
+import { PanelRightClose } from "lucide-react";
+import { PresentationSlotNavigation } from "./PresentationSlotNavigation";
 import { GraphicViewer } from "../viewer/GraphicViewer";
 import { getPresentationReferenceHref } from "./presentationAssets";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUIStore } from "../../stores";
 import { MarkdownDocumentSurface } from "../document/MarkdownDocumentSurface";
@@ -58,6 +60,9 @@ type PresentationViewerBaseProps = {
   onReplyToMessage?: (event: LedgerEvent) => void;
   onReplaceSlot?: (slotId: string) => void;
   onClearSlot?: (slotId: string) => void | Promise<void>;
+  onSelectSlot?: (slotId: string) => void;
+  onPinSlot?: (slotId: string) => void;
+  onCollapse?: () => void;
   onClose: () => void;
 };
 
@@ -149,12 +154,22 @@ function PresentationViewer({
   onReplyToMessage,
   onReplaceSlot,
   onClearSlot,
+  onSelectSlot,
+  onPinSlot,
+  onCollapse,
   onClose,
 }: PresentationViewerProps) {
   const { t, i18n } = useTranslation("chat");
   const showError = useUIStore((state) => state.showError);
   const isModal = variant === "modal";
-  const { modalRef } = useModalA11y(isModal && isOpen, onClose);
+  const slotButtonRef = useRef<HTMLButtonElement>(null);
+  const hasSlotNavigation = !!onSelectSlot;
+  const { modalRef } = useModalA11y(isModal && isOpen, onClose, {
+    initialFocusRef: hasSlotNavigation ? slotButtonRef : undefined,
+  });
+  useLayoutEffect(() => {
+    if (!isModal && isOpen && hasSlotNavigation) slotButtonRef.current?.focus();
+  }, [isModal, isOpen, hasSlotNavigation, groupId, slotId]);
   const [refreshTick, setRefreshTick] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
   const [linkedMarkdown, setLinkedMarkdown] = useState("");
@@ -724,6 +739,8 @@ function PresentationViewer({
       )}
       error={linkedMarkdownError}
       isDark={isDark}
+      className={isModal ? undefined : "!rounded-none !border-0 !bg-transparent !p-3"}
+      minHeightClassName={isModal ? undefined : "min-h-0"}
     />
   ) : card.card_type === "table" ? (
     <div
@@ -1182,6 +1199,17 @@ function PresentationViewer({
     </div>
   );
 
+  const slotNavigation = onSelectSlot ? (
+    <PresentationSlotNavigation
+      presentation={presentation}
+      activeSlotId={slotId}
+      selectedButtonRef={slotButtonRef}
+      readOnly={readOnly}
+      onSelectSlot={onSelectSlot}
+      onPinSlot={onPinSlot}
+    />
+  ) : null;
+
   if (variant === "split") {
     return (
       <section
@@ -1195,14 +1223,20 @@ function PresentationViewer({
           title={card?.title || t("presentationTitle")}
           subtitle={card ? getCardTypeLabel(card.card_type, t) : undefined}
           onClose={onClose}
-          closeLabel={t("presentationCloseSplitAction")}
+          closeLabel={t("presentationCloseDockAction")}
         >
+          {onCollapse && (
+            <SidePanelButton title={t("presentationCompactSlots")} onClick={onCollapse}>
+              <PanelRightClose />
+            </SidePanelButton>
+          )}
           {onOpenWindow && (
             <SidePanelButton title={t("presentationOpenWindowAction")} onClick={onOpenWindow}>
               <WindowViewIcon />
             </SidePanelButton>
           )}
         </SidePanelHeader>
+        {slotNavigation}
         {(showWebPreviewModeToggle ||
           canRefresh ||
           copyReferenceValue ||
@@ -1309,6 +1343,7 @@ function PresentationViewer({
       headerActions={modalHeaderActions}
       modalRef={modalRef}
     >
+      {slotNavigation}
       {viewerBody}
     </ModalFrame>
   );

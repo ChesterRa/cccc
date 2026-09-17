@@ -140,7 +140,8 @@ describe("useUIStore sidebar width", () => {
     const mod = await import("../../src/stores/useUIStore");
     expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions)).toMatchObject({
       presentationDockOpen: false,
-      presentationDisplayMode: "modal",
+      presentationDisplayMode: "split",
+      presentationCompact: true,
     });
   });
 });

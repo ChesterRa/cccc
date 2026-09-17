@@ -1,3 +1,4 @@
+import type { GroupRunControls } from "../../utils/groupControls";
 import { groupConnectionCount, type GroupConnectionSummary } from "../../features/connect/protocol";
 import {
   DndContext,
@@ -21,6 +22,7 @@ interface GroupSidebarSortableListProps {
   isDark: boolean;
   isCollapsed: boolean;
   readOnly?: boolean;
+  groupRunControls?: GroupRunControls;
   menuActionLabel?: string;
   connectionsLabel?: string;
   connectionSummary?: GroupConnectionSummary | null;
@@ -42,6 +44,7 @@ export function GroupSidebarSortableList({
   isDark,
   isCollapsed,
   readOnly,
+  groupRunControls,
   menuActionLabel,
   connectionsLabel,
   connectionSummary,
@@ -102,6 +105,7 @@ export function GroupSidebarSortableList({
               <SortableGroupItem
                 key={gid}
                 group={group}
+                groupRunControls={readOnly ? undefined : groupRunControls}
                 isActive={gid === selectedGroupId}
                 isDark={isDark}
                 isCollapsed={isCollapsed}

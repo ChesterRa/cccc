@@ -1,4 +1,7 @@
 {
+  "connectMentionLoading": "Loading connected Groups…",
+  "connectMentionIncomplete": "Some connected Groups are unavailable. Reopen # to retry.",
+  "connectMentionStale": "Cached information · may be outdated",
   "presentationCloseSplitAction": "Close presentation",
   "presentationOpenWindowAction": "Open in window",
   "sidePanelResize": "Resize side panel",
@@ -737,5 +740,13 @@
     "openFile": "Open current file",
     "unified": "Unified",
     "split": "Side by side"
-  }
+  },
+  "searchStart": "Search this Group’s messages",
+  "searchStartHint": "Enter keywords or choose filters, then search.",
+  "searching": "Searching…",
+  "searchResultsFor": "Results for “{{query}}”",
+  "searchFilteredResults": "Filtered messages",
+  "searchFailed": "Search failed. Try again.",
+  "searchSenderUser": "User",
+  "searchSenderSystem": "System"
 }

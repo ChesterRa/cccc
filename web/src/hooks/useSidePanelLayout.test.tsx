@@ -68,6 +68,9 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   localStorage.clear();
   useUIStore.setState({ chatSessions: {} });
+  // Existing expanded preferences keep their resize behavior after the new default.
+  useUIStore.getState().setChatSidePanelLayout("a", { compact: false });
+  useUIStore.getState().setChatSidePanelLayout("b", { compact: false });
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -167,4 +170,17 @@ it("coalesces movement but commits the latest position when released before the 
   expect(layout.width).toBe(360);
   expect(state("a").sidePanelWidth).toBe(450);
   expect(state("b").sidePanelWidth).toBe(360);
+});
+
+it("starts new Groups compact and keeps saved Group preferences", async () => {
+  await render("new");
+  expect(layout.compact).toBe(true);
+  expect(layout.width).toBe(64);
+  expect(state("new").presentationDisplayMode).toBe("split");
+  await render("a");
+  expect(layout.compact).toBe(false);
+  useUIStore.getState().setChatPresentationDisplayMode("a", "modal");
+  await render("new");
+  await render("a");
+  expect(state("a").presentationDisplayMode).toBe("modal");
 });

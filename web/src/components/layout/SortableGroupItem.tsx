@@ -1,3 +1,4 @@
+import type { GroupRunControls } from "../../utils/groupControls";
 import { GroupConnectionBadge } from "../../features/connect/GroupConnectionBadge";
 import type { GroupConnectionCount } from "../../features/connect/protocol";
 import { useCallback } from "react";
@@ -8,10 +9,12 @@ import { classNames } from "../../utils/classNames";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import { useGroupMenu } from "./useGroupMenu";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
+import { GroupRunControl } from "./GroupRunControl";
 import { GroupItemMenuTrigger } from "./GroupItemMenuTrigger";
 
 interface SortableGroupItemProps {
   group: GroupMeta;
+  groupRunControls?: GroupRunControls;
   isActive: boolean;
   isDark: boolean;
   isCollapsed: boolean;
@@ -31,6 +34,7 @@ interface SortableGroupItemProps {
 
 export function SortableGroupItem({
   group,
+  groupRunControls,
   isActive,
   isDark: _isDark,
   isCollapsed,
@@ -174,11 +178,11 @@ export function SortableGroupItem({
           onMouseEnter={onWarm}
           onFocus={onWarm}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <GroupStatusIndicator status={status} />
+          <div className="flex items-center gap-1 min-w-0">
+            <GroupRunControl group={group} controls={groupRunControls} compact />
             <span
               className={classNames(
-                "text-sm font-medium truncate",
+                "text-sm leading-5 font-medium truncate",
                 isActive
                   ? "text-[rgb(35,36,37)] dark:text-white"
                   : "text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]",

@@ -264,7 +264,7 @@ export default function App({
   const { dropOverlayOpen, handleAppendComposerFiles, resetDragDrop, WEB_MAX_FILE_MB } =
     useDragDrop({ selectedGroupId });
 
-  const { handleStartGroup, handleStopGroup, handleSetGroupState } = useGroupActions();
+  const { handleStartGroup, groupRunControls } = useGroupActions();
 
   const computedSendGroupId = getEffectiveComposerDestGroupId(
     destGroupId,
@@ -486,8 +486,7 @@ export default function App({
           openModal("context");
         }}
         onStartGroup={handleStartGroup}
-        onStopGroup={handleStopGroup}
-        onSetGroupState={handleSetGroupState}
+        groupRunControls={groupRunControls}
         onOpenSettings={() => openModal("settings")}
         canAccessAccount={canManageGroups}
         accountLabel={connectEmbedded ? embeddedAccountLabel : connect.accountLabel}
@@ -534,9 +533,6 @@ export default function App({
             onStartReply={startReply}
             onThemeChange={setTheme}
             onTextScaleChange={setTextScale}
-            onStartGroup={handleStartGroup}
-            onStopGroup={handleStopGroup}
-            onSetGroupState={handleSetGroupState}
             fetchContext={fetchContext}
             canManageGroups={canManageGroups}
             accountLabel={connectEmbedded ? embeddedAccountLabel : connect.accountLabel}

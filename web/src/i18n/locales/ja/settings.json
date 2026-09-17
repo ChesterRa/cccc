@@ -23,7 +23,7 @@
   "navigation": {
     "targetScope": "対象範囲",
     "thisGroup": "この作業グループ",
-    "global": "グローバル",
+    "global": "このインスタンス",
     "groupScopeTitle": "作業グループ範囲",
     "groupScopeContent": "{{scopeRoot}} にのみ適用されます。グループ固有のタイムアウトと統合に役立ちます。",
     "globalScopeTitle": "グローバル範囲",
@@ -158,12 +158,12 @@
   },
   "branding": {
     "title": "ブランド",
-    "description": "インスタンス名と主要な logo 面だけを調整します。Web 全体を巨大なホワイトラベル機構にはしません。",
+    "description": "CCCC Web に表示する名前とアイコンを変更します。",
     "preview": "プレビュー",
     "previewFaviconCustom": "ブラウザタブのアイコンは専用 favicon を使っています。",
     "previewFaviconFollow": "ブラウザタブのアイコンは、個別に上書きしない限り logo icon に追従します。",
     "productNameTitle": "製品名",
-    "productNameHint": "サイドバーの文字ロゴ、サインイン画面タイトル、ブラウザタブタイトルに使われます。",
+    "productNameHint": "サイドバー、ログイン画面、ブラウザーのタブに表示します。Connect のインスタンス名は変更しません。",
     "productNameLabel": "名前",
     "productNamePlaceholder": "CCCC",
     "saveName": "名前を保存",
@@ -182,7 +182,8 @@
     "followLogo": "Logo に追従",
     "useDefault": "デフォルトに戻す",
     "uploading": "アップロード中…",
-    "uploadFailed": "ブランド資産のアップロードに失敗しました。"
+    "uploadFailed": "ブランド資産のアップロードに失敗しました。",
+    "uploadAppliesImmediately": "アイコンのアップロードやリセットはすぐに反映されます。"
   },
   "capabilities": {
     "title": "能力ガバナンス",

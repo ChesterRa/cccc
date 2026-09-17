@@ -9,6 +9,7 @@ type ChatMentionMenuProps = {
   isDark: boolean;
   isSmallScreen: boolean;
   items: ComposerMentionSuggestion[];
+  status?: "loading" | "incomplete";
   left: number;
   selectedIndex: number;
   onSelect: (item: ComposerMentionSuggestion) => void;
@@ -19,6 +20,7 @@ export function ChatMentionMenu({
   isDark,
   isSmallScreen,
   items,
+  status,
   left,
   selectedIndex,
   onSelect,
@@ -44,6 +46,11 @@ export function ChatMentionMenu({
       style={isSmallScreen ? undefined : { left: `${left}px` }}
       role="listbox"
     >
+      {status ? (
+        <div role="status" className="px-4 py-2 text-xs text-[var(--color-text-secondary)]">
+          {t(status === "loading" ? "connectMentionLoading" : "connectMentionIncomplete")}
+        </div>
+      ) : null}
       {items.map((item, index) => {
         const selected = index === selectedIndex;
         return (
@@ -51,7 +58,7 @@ export function ChatMentionMenu({
             ref={(node) => {
               optionRefs.current[index] = node;
             }}
-            key={`${item.kind}:${item.value}`}
+            key={JSON.stringify([item.kind, item.remote?.instance_id, item.value])}
             className={classNames(
               "relative w-full text-left px-4 py-3 text-sm transition-colors outline-none",
               isDark
@@ -65,6 +72,7 @@ export function ChatMentionMenu({
                   ? "hover:bg-white/5"
                   : "hover:bg-gray-50",
             )}
+            role="option"
             aria-selected={selected}
             onMouseDown={(event) => {
               event.preventDefault();
@@ -108,6 +116,11 @@ export function ChatMentionMenu({
                     </span>
                   ) : null}
                 </div>
+                {item.remote && !item.remote.fresh ? (
+                  <div className="text-[11px] text-[var(--color-text-tertiary)]">
+                    {t("connectMentionStale")}
+                  </div>
+                ) : null}
                 {item.description ? (
                   <div
                     className={classNames(

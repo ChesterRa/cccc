@@ -86,11 +86,11 @@ afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
 });
-it("shows bounded real content without mounting interactive viewers or opening slots", async () => {
+it("shows lightweight identifiable entries without mounting interactive viewers or opening slots", async () => {
   await render();
   expect(host.querySelector("img")?.getAttribute("src")).toBe("/assets/slot-1");
-  expect(host.textContent).toContain("Actual useful content");
-  expect(host.textContent).toContain("42ms");
+  expect(host.textContent).toContain("Notes");
+  expect(host.textContent).toContain("Results");
   expect(host.textContent).toContain("example.test");
   expect(host.querySelector("iframe,canvas")).toBeNull();
   expect(open).not.toHaveBeenCalled();

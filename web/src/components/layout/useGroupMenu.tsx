@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   FloatingFocusManager,
   FloatingPortal,
@@ -11,10 +11,10 @@ import {
   useInteractions,
   useRole,
 } from "@floating-ui/react";
-import { GroupMenuAction } from "./GroupMenuAction";
+import { GroupMenuAction, type GroupMenuActionProps } from "./GroupMenuAction";
 
 // Local sortable rows and remote rows share the same actions and focus behavior.
-export function useGroupMenu(label: string, actions: { label: string; onClick: () => void }[]) {
+export function useGroupMenu(label: string, actions: GroupMenuActionProps[], heading?: ReactNode) {
   const [open, setOpen] = useState(false);
   const { refs, floatingStyles, context } = useFloating({
     open,
@@ -40,6 +40,9 @@ export function useGroupMenu(label: string, actions: { label: string; onClick: (
             style={floatingStyles}
             {...getFloatingProps({
               "aria-label": label,
+              onPointerDown: (event) => event.stopPropagation(),
+              onMouseDown: (event) => event.stopPropagation(),
+              onTouchStart: (event) => event.stopPropagation(),
               onKeyDown(event: React.KeyboardEvent) {
                 if (event.key === "Escape" || event.key === "Tab") {
                   if (event.key === "Escape") event.preventDefault();
@@ -51,8 +54,11 @@ export function useGroupMenu(label: string, actions: { label: string; onClick: (
                 event.preventDefault();
                 event.stopPropagation();
                 const items = Array.from(
-                  refs.floating.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') || [],
+                  refs.floating.current?.querySelectorAll<HTMLElement>(
+                    '[role="menuitem"]:not(:disabled)',
+                  ) || [],
                 );
+                if (!items.length) return;
                 const current = items.indexOf(document.activeElement as HTMLElement);
                 const next =
                   event.key === "Home"
@@ -64,12 +70,13 @@ export function useGroupMenu(label: string, actions: { label: string; onClick: (
                 items[next]?.focus();
               },
             })}
-            className="z-max min-w-[180px] max-w-[calc(100vw-24px)] rounded-xl p-1.5 shadow-2xl glass-panel"
+            className={`z-max min-w-[180px] max-w-[calc(100vw-24px)] rounded-xl p-1.5 shadow-2xl glass-panel ${heading ? "w-72" : ""}`}
           >
+            {heading}
             {actions.map((action) => (
               <GroupMenuAction
+                {...action}
                 key={action.label}
-                label={action.label}
                 onClick={() => {
                   // A menu item disappears when it opens a dialog. Focus its durable
                   // trigger first so the dialog has somewhere to return to.

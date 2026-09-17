@@ -370,6 +370,22 @@ or broaden access to that instance's catalog. Supplying a target Group without
 an instance returns `connect_instance_required`. Error choices are restricted to
 the calling local Group under the same authorization as normal discovery.
 
+The Web composer reads the same cache through administrator-only
+`GET /api/v1/groups/{group_id}/connect/catalog`, with optional `instance_id`,
+`target_group_id`, `after` and `limit` query fields. The path fixes the local
+source Group and the port fixes `by=user`; exhibit access is denied. Embedded
+requests carry the ordinary Group resource's frame authorization. This read
+does not refresh peers or require a target Web Token. Restricted Web sessions
+retain local-only mention discovery, independently of background Agent grants.
+
+Selecting a remote `#Group` creates a `connect_group_ref` in the local message's
+`refs`; it never changes `to` or sends remotely. Candidates distinguish instances
+and include same-account catalogs and exact externally connected Groups (account
+sharing or Direct). Cached metadata can be marked stale; it is not online proof.
+The selected identity is retained with the local Group's draft. Plain pasted
+text does not create a reference. An Agent rechecks the current connection before
+acting; a draft or historical reference cannot keep a revoked grant alive.
+
 The CLI `cccc connect` is a thin `connect_catalog` port. `cccc send --dst-instance
 ... --dst-group ...` uses the same qualified route and retry-key semantics as MCP;
 `cccc reply` uses the local received Event ID and omits recipient overrides by

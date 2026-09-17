@@ -6,7 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+- **Mention connected Groups from the composer.** Select a remote `#Group` with its instance name and discover its Actor names through `@`. The reference gives local Agents the exact Connect destination; it does not send remotely or grant access by itself.
+
+### Changed
+- **Group status is now the run-control entry.** An arrow-free status button in the header and expanded sidebar opens Start, Resume, Pause delivery and Stop actions for that Group. Mobile uses the same control; pending actions stay bound to their Group when you navigate.
+- **Search separates entering a query from its results.** Group and Actor names replace raw IDs, filters rerun the submitted query, and loading, no matches and failed requests have distinct states.
+- **Settings uses simpler forms.** Scope remains explicit, redundant card nesting is reduced, and Branding brings the name and icon controls together without changing how they are saved.
+- **Presentation keeps four compact slots until you open content.** New Groups default to the compact rail and side-by-side reading; slot navigation stays available in the viewer. Existing saved layout preferences are preserved.
+
 ### Fixed
+- **Voice updates preserve selected Group and Actor references in saved drafts.** Finishing dictation after switching Groups keeps valid mention identities, including remote Connect destinations, when the draft is restored.
 - **Downloads keep their Chinese names.** Group packages, blob attachments, and Presentation assets now send a percent-encoded RFC 5987 filename, so browsers stop rendering non-ASCII names as mojibake.
 - **Multiple workbench windows no longer consume the HTTP/1.1 pool with SSE.** The UI multiplexes global, ledger, and headless events over one WebSocket per page, preserving cursor replay, headless snapshots, and live permission checks.
 

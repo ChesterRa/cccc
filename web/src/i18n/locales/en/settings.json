@@ -23,7 +23,7 @@
   "navigation": {
     "targetScope": "Target Scope",
     "thisGroup": "This group",
-    "global": "Global",
+    "global": "This instance",
     "groupScopeTitle": "Group Scope",
     "groupScopeContent": "Applies to {{scopeRoot}} only. Useful for group-specific timeouts and integrations.",
     "globalScopeTitle": "Global Scope",
@@ -158,12 +158,12 @@
   },
   "branding": {
     "title": "Branding",
-    "description": "Customize the instance name and core logo surfaces without turning Web into a full white-label theme system.",
+    "description": "Customize the name and icons shown in CCCC Web.",
     "preview": "Preview",
     "previewFaviconCustom": "Browser tab icon is using a dedicated favicon.",
     "previewFaviconFollow": "Browser tab icon follows the current logo icon unless you override it.",
     "productNameTitle": "Product Name",
-    "productNameHint": "Used for the sidebar wordmark, sign-in screen title, and browser tab title.",
+    "productNameHint": "Shown in the sidebar, sign-in screen and browser tab. This does not rename the instance in Connect.",
     "productNameLabel": "Name",
     "productNamePlaceholder": "CCCC",
     "saveName": "Save name",
@@ -182,7 +182,8 @@
     "followLogo": "Follow logo",
     "useDefault": "Use default",
     "uploading": "Uploading…",
-    "uploadFailed": "Failed to upload branding asset."
+    "uploadFailed": "Failed to upload branding asset.",
+    "uploadAppliesImmediately": "Uploading or resetting an icon takes effect immediately."
   },
   "capabilities": {
     "title": "Capability Governance",

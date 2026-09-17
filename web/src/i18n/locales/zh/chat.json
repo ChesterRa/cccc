@@ -1,4 +1,7 @@
 {
+  "connectMentionLoading": "正在读取已连接的群组…",
+  "connectMentionIncomplete": "部分连接群组暂不可用，请重新输入 # 重试。",
+  "connectMentionStale": "缓存信息 · 可能已过时",
   "presentationCloseSplitAction": "关闭展示查看器",
   "presentationOpenWindowAction": "在窗口中打开",
   "sidePanelResize": "调整侧栏宽度",
@@ -737,5 +740,13 @@
     "openFile": "打开当前文件",
     "unified": "统一视图",
     "split": "并排视图"
-  }
+  },
+  "searchStart": "搜索当前 Group 的消息",
+  "searchStartHint": "输入关键词或选择筛选条件，然后搜索。",
+  "searching": "正在搜索…",
+  "searchResultsFor": "“{{query}}”的搜索结果",
+  "searchFilteredResults": "筛选后的消息",
+  "searchFailed": "搜索失败，请重试。",
+  "searchSenderUser": "用户",
+  "searchSenderSystem": "系统"
 }

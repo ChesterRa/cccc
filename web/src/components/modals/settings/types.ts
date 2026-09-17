@@ -58,32 +58,24 @@ export const settingsDialogFooterClass = `flex shrink-0 items-center justify-end
 export const cardClass = (_isDark?: boolean) =>
   `glass-panel rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-4 shadow-sm`;
 
-export const settingsWorkspaceShellClass = (_isDark?: boolean) =>
-  `overflow-hidden rounded-[22px] border backdrop-blur-xl ${
-    _isDark
-      ? "border-white/8 bg-[linear-gradient(180deg,rgba(15,16,20,0.96),rgba(7,8,11,0.99))] shadow-[0_28px_100px_rgba(0,0,0,0.42)]"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))] shadow-[0_28px_100px_rgba(15,23,42,0.06)]"
-  }`;
+export const settingsWorkspaceShellClass = (_isDark?: boolean) => "min-w-0";
 
 export const settingsWorkspaceHeaderClass = (_isDark?: boolean) =>
-  `flex items-start justify-between gap-4 px-4 py-4 sm:px-5 sm:py-4 ${
-    _isDark
-      ? "border-b border-white/8 bg-black/[0.16]"
-      : "border-b border-black/6 bg-[rgba(18,18,20,0.018)]"
-  }`;
+  "flex flex-wrap items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] pb-3";
 
-export const settingsWorkspaceBodyClass = `px-4 py-4 sm:px-5 sm:py-5 space-y-4`;
+export const settingsWorkspaceBodyClass = "py-4 space-y-4";
+
+// Plain field groups do not need an additional visual container.
+export const settingsWorkspaceFieldsClass = "min-w-0 space-y-3";
 
 export const settingsWorkspacePanelClass = (_isDark?: boolean) =>
-  `rounded-2xl border border-[var(--glass-border-subtle)] p-4 sm:p-5 bg-[var(--glass-panel-bg)] shadow-[0_4px_24px_rgba(0,0,0,0.02)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.15)]`;
+  `rounded-xl border border-[var(--glass-border-subtle)] p-4 bg-[var(--color-bg-primary)]`;
 
 export const settingsWorkspaceSoftPanelClass = (_isDark?: boolean) =>
-  `rounded-2xl border border-[var(--glass-border-subtle)] px-4 py-3.5 sm:px-5 sm:py-4 bg-[var(--glass-panel-bg)]/40`;
+  `rounded-lg border border-[var(--glass-border-subtle)] px-3 py-3 bg-[var(--color-bg-secondary)]`;
 
 export const settingsWorkspaceActionBarClass = (_isDark?: boolean) =>
-  `mt-0 flex flex-wrap items-center gap-2 border-t px-4 py-3 sm:px-5 ${
-    _isDark ? "border-white/8 bg-white/[0.02]" : "border-black/6 bg-black/[0.015]"
-  }`;
+  "flex flex-wrap items-center gap-2 border-t border-[var(--glass-border-subtle)] py-3";
 
 export const preClass = (_isDark?: boolean) =>
   `mt-2 p-2 rounded overflow-x-auto whitespace-pre text-[11px] bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] border border-[var(--glass-border-subtle)]`;

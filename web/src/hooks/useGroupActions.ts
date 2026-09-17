@@ -1,100 +1,55 @@
-// Group action helpers (start/stop/state).
-import { useCallback } from "react";
+// Explicit Group targets keep sidebar actions independent of the current view.
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useGroupStore, useUIStore } from "../stores";
 import * as api from "../services/api";
-import { useShallow } from "zustand/react/shallow";
+import type { GroupRunAction, GroupRunControls, PendingGroupAction } from "../utils/groupControls";
+import i18n from "../i18n";
 
 export function useGroupActions() {
-  const { selectedGroupId, groupDoc, setGroupDoc, refreshGroups, refreshActors } = useGroupStore(
-    useShallow((s) => ({
-      selectedGroupId: s.selectedGroupId,
-      groupDoc: s.groupDoc,
-      setGroupDoc: s.setGroupDoc,
-      refreshGroups: s.refreshGroups,
-      refreshActors: s.refreshActors,
-    })),
-  );
-
-  const { setBusy, showError } = useUIStore(
-    useShallow((s) => ({ setBusy: s.setBusy, showError: s.showError })),
-  );
-
-  // Start group
-  const handleStartGroup = useCallback(async () => {
-    if (!selectedGroupId) return;
-    setBusy("group-start");
+  const [pending, setPending] = useState<PendingGroupAction | null>(null);
+  const pendingRef = useRef<PendingGroupAction | null>(null);
+  const run = useCallback(async (groupId: string, action: GroupRunAction) => {
+    if (!groupId || pendingRef.current) return;
+    const operation = { groupId, action };
+    pendingRef.current = operation;
+    setPending(operation);
+    const { setBusy, showError } = useUIStore.getState();
+    const busyKey = `group-${action === "resume" ? "activate" : action}`;
+    setBusy(busyKey);
+    const title =
+      useGroupStore.getState().groups.find((g) => g.group_id === groupId)?.title || groupId;
     try {
-      const resp = await api.startGroup(selectedGroupId);
-      if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
-        return;
+      let response =
+        action === "start"
+          ? await api.startGroup(groupId)
+          : action === "stop"
+            ? await api.stopGroup(groupId)
+            : await api.setGroupState(groupId, action === "pause" ? "paused" : "active");
+      // Resume delivery in existing sessions. Relaunch only when the authoritative
+      // response says there are no running sessions, including background Groups.
+      if (
+        response.ok &&
+        action === "resume" &&
+        !(response.result.group.runtime_status?.runtime_running ?? response.result.group.running)
+      ) {
+        response = await api.startGroup(groupId);
       }
-      await refreshActors();
-      await refreshGroups();
+      if (!response.ok) showError(`${title}: ${response.error.message}`);
+    } catch {
+      showError(i18n.t("layout:groupRun.failed", { group: title }));
     } finally {
-      setBusy("");
+      // These store methods apply/cache by Group ID and guard navigation races.
+      await useGroupStore.getState().refreshGroups();
+      await useGroupStore.getState().refreshActors(groupId);
+      pendingRef.current = null;
+      setPending(null);
+      if (useUIStore.getState().busy === busyKey) setBusy("");
     }
-  }, [selectedGroupId, setBusy, showError, refreshActors, refreshGroups]);
-
-  // Stop group
-  const handleStopGroup = useCallback(async () => {
-    if (!selectedGroupId) return;
-    setBusy("group-stop");
-    try {
-      const resp = await api.stopGroup(selectedGroupId);
-      if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
-        return;
-      }
-      await refreshActors();
-      await refreshGroups();
-    } finally {
-      setBusy("");
-    }
-  }, [selectedGroupId, setBusy, showError, refreshActors, refreshGroups]);
-
-  // Set group state
-  const handleSetGroupState = useCallback(
-    async (s: "active" | "idle" | "paused") => {
-      if (!selectedGroupId) return;
-      setBusy(s === "active" ? "group-activate" : s === "paused" ? "group-pause" : "group-idle");
-      try {
-        const resp = await api.setGroupState(selectedGroupId, s);
-        if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
-          return;
-        }
-        setGroupDoc(
-          groupDoc
-            ? {
-                ...groupDoc,
-                state: s,
-                runtime_status: {
-                  runtime_running: groupDoc.runtime_status?.runtime_running ?? false,
-                  running_actor_count: groupDoc.runtime_status?.running_actor_count ?? 0,
-                  has_running_foreman: groupDoc.runtime_status?.has_running_foreman ?? false,
-                  ...groupDoc.runtime_status,
-                  lifecycle_state: s,
-                },
-              }
-            : null,
-        );
-        // When resuming to active and no actors are running, also start
-        // the group so processes get relaunched (not just the state flag).
-        if (s === "active" && groupDoc && !groupDoc.running) {
-          const startResp = await api.startGroup(selectedGroupId);
-          if (!startResp.ok) {
-            showError(`${startResp.error.code}: ${startResp.error.message}`);
-          }
-          await refreshActors();
-        }
-        await refreshGroups();
-      } finally {
-        setBusy("");
-      }
-    },
-    [selectedGroupId, groupDoc, setBusy, showError, setGroupDoc, refreshGroups, refreshActors],
+  }, []);
+  const handleStartGroup = useCallback(
+    () => run(useGroupStore.getState().selectedGroupId, "start"),
+    [run],
   );
-
-  return { handleStartGroup, handleStopGroup, handleSetGroupState };
+  const groupRunControls = useMemo<GroupRunControls>(() => ({ pending, run }), [pending, run]);
+  return { handleStartGroup, groupRunControls };
 }

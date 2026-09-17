@@ -20,12 +20,16 @@ import type { Actor, LedgerEvent, MessageRef } from "../types";
 import { formatSendMessageError, shouldBlockLocalCrossGroupAttachments } from "../utils/chatSend";
 import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
-import type { ComposerAgentMentionToken, ComposerGroupMentionToken } from "./composerGroupMentions";
+import { useConnectMentionGroups } from "./useConnectMentionGroups";
 import {
+  resolveControlledComposerMentionContext,
   pruneComposerAgentMentionTokens,
   pruneComposerGroupMentionTokens,
 } from "./composerGroupMentions";
-import { buildComposerLocalGroupRouteRefs } from "./composerLocalGroupRouteRefs";
+import {
+  buildComposerConnectGroupRefs,
+  buildComposerLocalGroupRouteRefs,
+} from "./composerLocalGroupRouteRefs";
 import { buildComposerSendPlanTargets } from "./composerSendPlan";
 import {
   buildComposerMentionSuggestions,
@@ -69,6 +73,7 @@ interface UseChatTabOptions {
   selectedGroupRunning: boolean;
   actors: Actor[];
   recipientActors: Actor[];
+  showMentionMenu?: boolean;
   mentionFilter?: string;
   mentionKind?: ComposerMentionKind;
   mentionActorScope?: "selected" | "destination";
@@ -88,6 +93,7 @@ export function useChatTab({
   selectedGroupRunning,
   actors,
   recipientActors,
+  showMentionMenu = false,
   mentionFilter = "",
   mentionKind = "agent",
   mentionActorScope = "selected",
@@ -152,6 +158,10 @@ export function useChatTab({
   const { chatFilter, showScrollButton, chatUnreadCount, scrollSnapshot } = chatSession;
 
   const {
+    composerGroupMentionTokens,
+    setComposerGroupMentionTokens,
+    composerAgentMentionTokens,
+    setComposerAgentMentionTokens,
     activeGroupId,
     composerFiles,
     toText,
@@ -174,6 +184,10 @@ export function useChatTab({
     clearComposer,
   } = useComposerStore(
     useShallow((s) => ({
+      composerGroupMentionTokens: s.composerGroupMentionTokens,
+      setComposerGroupMentionTokens: s.setComposerGroupMentionTokens,
+      composerAgentMentionTokens: s.composerAgentMentionTokens,
+      setComposerAgentMentionTokens: s.setComposerAgentMentionTokens,
       activeGroupId: s.activeGroupId,
       composerFiles: s.composerFiles,
       toText: s.toText,
@@ -215,12 +229,6 @@ export function useChatTab({
   const enqueueOutbox = useChatOutboxStore((s) => s.enqueue);
   const removeOutbox = useChatOutboxStore((s) => s.remove);
   const sendInFlightRef = useRef(false);
-  const [composerGroupMentionTokens, setComposerGroupMentionTokens] = useState<
-    ComposerGroupMentionToken[]
-  >([]);
-  const [composerAgentMentionTokens, setComposerAgentMentionTokens] = useState<
-    ComposerAgentMentionToken[]
-  >([]);
 
   // ============ Computed Values ============
 
@@ -312,18 +320,52 @@ export function useChatTab({
   }, [crossGroupValidRecipientSet, sendGroupId, selectedGroupId, toText, validRecipientSet]);
 
   const composerRouteGroups = groups;
+  const connectMentions = useConnectMentionGroups(
+    selectedGroupId,
+    showMentionMenu && mentionKind === "group" && composerGroupSettled,
+  );
+  // Subscribe to the referenced target, not every composer keystroke. The
+  // resolved snapshot is stable until the user changes mention context.
+  const remoteMention = useComposerStore(
+    useCallback(
+      (state) =>
+        mentionKind === "agent" && mentionActorScope === "destination"
+          ? resolveControlledComposerMentionContext({
+              text: state.composerText,
+              atIndex: state.composerText.lastIndexOf("@"),
+              tokens: state.composerGroupMentionTokens,
+            }).remote
+          : undefined,
+      [mentionKind, mentionActorScope],
+    ),
+  );
 
   // Message-body mentions are text helpers: @ autocompletes names/references, # adds delegation hints.
   const mentionSuggestions = useMemo(() => {
-    const mentionActors =
-      mentionKind === "agent" && mentionActorScope === "selected" ? actors : recipientActors;
+    const mentionActors = remoteMention
+      ? remoteMention.actors
+          .filter((actor) => actor.enabled)
+          .map((actor) => ({ id: actor.id, title: actor.title || undefined }))
+      : mentionKind === "agent" && mentionActorScope === "selected"
+        ? actors
+        : recipientActors;
     return buildComposerMentionSuggestions({
       kind: mentionKind,
       filter: mentionFilter,
       recipientActors: mentionActors,
       groups: composerRouteGroups,
+      remoteGroups: connectMentions.groups,
     });
-  }, [actors, composerRouteGroups, mentionActorScope, mentionFilter, mentionKind, recipientActors]);
+  }, [
+    actors,
+    composerRouteGroups,
+    mentionActorScope,
+    mentionFilter,
+    mentionKind,
+    recipientActors,
+    remoteMention,
+    connectMentions.groups,
+  ]);
 
   // Project root
   const projectRoot = useMemo(() => {
@@ -458,7 +500,7 @@ export function useChatTab({
         setToText(cur.concat([t]).join(", "));
       }
     },
-    [toTokens, setToText],
+    [toTokens, setToText, setComposerAgentMentionTokens],
   );
 
   const clearRecipients = useCallback(() => {
@@ -484,7 +526,12 @@ export function useChatTab({
       }
       setComposerText(text);
     },
-    [composerAgentMentionTokens, setComposerText],
+    [
+      composerAgentMentionTokens,
+      setComposerText,
+      setComposerGroupMentionTokens,
+      setComposerAgentMentionTokens,
+    ],
   );
 
   const removeComposerFile = useCallback(
@@ -566,6 +613,10 @@ export function useChatTab({
     const refsSnapshot: MessageRef[] = [
       ...(quotedPresentationRefSnapshot ? [quotedPresentationRefSnapshot] : []),
       ...(quotedVoiceDocumentRefSnapshot ? [quotedVoiceDocumentRefSnapshot] : []),
+      ...buildComposerConnectGroupRefs(
+        composerStateSnapshot.composerText,
+        composerGroupMentionTokens,
+      ),
       ...buildComposerLocalGroupRouteRefs({
         text: composerStateSnapshot.composerText,
         selectedGroupId,
@@ -605,6 +656,8 @@ export function useChatTab({
       restoreFailedSendComposerState(
         {
           originGroupId,
+          composerGroupMentionTokens: groupMentionTokensSnapshot,
+          composerAgentMentionTokens: agentMentionTokensSnapshot,
           composerText: draftTextSnapshot,
           composerFiles: draftFilesSnapshot,
           toText: toTextSnapshot,
@@ -624,14 +677,10 @@ export function useChatTab({
           upsertDraft,
         },
       );
-      setComposerGroupMentionTokens(groupMentionTokensSnapshot);
-      setComposerAgentMentionTokens(agentMentionTokensSnapshot);
     };
 
     const applyImmediateComposerFeedback = (shouldLockBottom: boolean) => {
       clearComposer();
-      setComposerGroupMentionTokens([]);
-      setComposerAgentMentionTokens([]);
       if (chatAtBottomRef) chatAtBottomRef.current = shouldLockBottom;
       if (selectedGroupId) {
         setShowScrollButton(selectedGroupId, !shouldLockBottom);
@@ -919,6 +968,11 @@ export function useChatTab({
     composerGroupSettled,
     composerRouteGroups,
     mentionSuggestions,
+    connectMentionStatus: connectMentions.loading
+      ? ("loading" as const)
+      : connectMentions.incomplete
+        ? ("incomplete" as const)
+        : undefined,
 
     // Agent state
     agentStates,

@@ -8,6 +8,12 @@ import type { PresentationMessageRef, ReplyTarget, VoiceDocumentMessageRef } fro
 import type { ComposerMessageMode } from "../../stores/useComposerStore";
 
 export type FailedSendComposerSnapshot = {
+  composerGroupMentionTokens?: ReturnType<
+    typeof useComposerStore.getState
+  >["composerGroupMentionTokens"];
+  composerAgentMentionTokens?: ReturnType<
+    typeof useComposerStore.getState
+  >["composerAgentMentionTokens"];
   originGroupId: string;
   composerText: string;
   composerFiles: File[];
@@ -45,6 +51,8 @@ export function restoreFailedSendComposerState(
     currentSelectedGroupId === originGroupId && currentActiveGroupId === originGroupId;
 
   if (stillOnOriginGroup) {
+    composerState.setComposerGroupMentionTokens(snapshot.composerGroupMentionTokens || []);
+    composerState.setComposerAgentMentionTokens(snapshot.composerAgentMentionTokens || []);
     restoreActions.setComposerText(snapshot.composerText);
     restoreActions.setComposerFiles(snapshot.composerFiles);
     restoreActions.setReplyTarget(snapshot.replyTarget);
@@ -56,6 +64,8 @@ export function restoreFailedSendComposerState(
   }
 
   restoreActions.upsertDraft(originGroupId, () => ({
+    composerGroupMentionTokens: snapshot.composerGroupMentionTokens,
+    composerAgentMentionTokens: snapshot.composerAgentMentionTokens,
     composerText: snapshot.composerText,
     composerFiles: snapshot.composerFiles,
     toText: snapshot.toText,

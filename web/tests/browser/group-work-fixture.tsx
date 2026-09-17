@@ -4,7 +4,10 @@ import { Terminal } from "@xterm/xterm";
 import i18next from "../../src/i18n";
 import { MobileMenuSheet } from "../../src/components/layout/MobileMenuSheet";
 import { AppShell } from "../../src/components/app/AppShell";
+import { SearchModal } from "../../src/components/SearchModal";
+import { PresentationViewerModal } from "../../src/components/presentation/PresentationViewerModal";
 import { SettingsModal } from "../../src/components/SettingsModal";
+import { useGroupActions } from "../../src/hooks/useGroupActions";
 import { useTextScale } from "../../src/hooks/useTextScale";
 import { useTheme } from "../../src/hooks/useTheme";
 import {
@@ -24,6 +27,14 @@ const probe = {
   errors: [] as string[],
   actions: [] as string[],
   externalWriters: new Set<string>(),
+  catalogDelay: 0,
+  catalogRestricted: false,
+  searchMode: "results",
+  searchDelay: 0,
+  brandingName: "CCCC",
+  globalAllowed: true,
+  runDelay: 0,
+  runFailure: false,
 };
 const openTerminal = Terminal.prototype.open;
 Terminal.prototype.open = function (parent) {
@@ -61,13 +72,27 @@ const doc = (groupId: string): GroupDoc =>
     scopes: [{ scope_key: "fixture", url: "/synthetic/project" }],
     actors,
   }) as GroupDoc;
-const groups = ["g1", "g2"].map(
+function withRuntime(group: GroupMeta): GroupMeta {
+  return {
+    ...group,
+    runtime_status: {
+      lifecycle_state: group.state || "active",
+      runtime_running: !!group.running,
+      running_actor_count: group.running ? actors.length : 0,
+      has_running_foreman: !!group.running,
+    },
+  };
+}
+let groups = ["g1", "g2"].map(
   (id) => ({ group_id: id, title: doc(id).title, running: true, state: "active" }) as GroupMeta,
 );
 function seed(groupId: string) {
   useGroupStore.setState({
     selectedGroupId: groupId,
-    groupDoc: doc(groupId),
+    groupDoc: {
+      ...doc(groupId),
+      ...withRuntime(groups.find((group) => group.group_id === groupId)!),
+    },
     actors,
     groups,
     groupContext: { agent_states: [] },
@@ -80,7 +105,7 @@ function seed(groupId: string) {
           card: {
             title: "Release checklist",
             card_type: "markdown",
-            content: { markdown: "# Release\n\nAll checks have finished." },
+            content: { mode: "inline", markdown: "# Release\n\nAll checks have finished." },
             updated_at: "2026-09-06T00:00:00Z",
           },
         },
@@ -110,24 +135,167 @@ function seed(groupId: string) {
 }
 seed("g1");
 useObservabilityStore.setState({ loaded: true });
-useComposerStore.getState().setDestGroupId("g1");
+useComposerStore.getState().switchGroup(null, "g1");
 window.fetch = async (input, init) => {
   const url = new URL(String(input), location.href);
   const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : {};
   probe.requests.push({ path: url.pathname, method: init?.method || "GET", body });
   let result: unknown = {};
+  const runRoute = url.pathname.match(/^\/api\/v1\/groups\/([^/]+)\/(start|stop|state)$/);
+  if (runRoute && init?.method === "POST") {
+    if (probe.runDelay) await new Promise((resolve) => setTimeout(resolve, probe.runDelay));
+    if (probe.runFailure)
+      return Response.json(
+        { ok: false, error: { code: "fixture", message: "Runtime rejected the operation" } },
+        { status: 409 },
+      );
+    const [, id, action] = runRoute;
+    groups = groups.map((group) =>
+      group.group_id !== id
+        ? group
+        : {
+            ...group,
+            state:
+              action === "state"
+                ? (url.searchParams.get("state") as GroupMeta["state"])
+                : action === "start"
+                  ? "active"
+                  : "stopped",
+            running: action === "state" ? group.running : action === "start",
+          },
+    );
+    groups = groups.map(withRuntime);
+    return Response.json({
+      ok: true,
+      result: { group: { ...doc(id), ...groups.find((group) => group.group_id === id) } },
+    });
+  }
+  if (url.pathname === "/api/v1/groups") return Response.json({ ok: true, result: { groups } });
+  if (url.pathname.endsWith("/ledger/search")) {
+    const mode = probe.searchMode;
+    const query = url.searchParams.get("q") || "";
+    if (probe.searchDelay) await new Promise((resolve) => setTimeout(resolve, probe.searchDelay));
+    if (mode === "error")
+      return Response.json(
+        { ok: false, error: { code: "fixture", message: "Search temporarily unavailable" } },
+        { status: 503 },
+      );
+    return Response.json({
+      ok: true,
+      result: {
+        events:
+          mode === "empty"
+            ? []
+            : [
+                {
+                  id: "fixture-search-1",
+                  group_id: "g1",
+                  by: "actor-1",
+                  ts: "2026-09-17T02:32:00Z",
+                  kind: "chat.message",
+                  data: {
+                    text: `${query || "Release"}: checks completed. The next step is to review the deployment checklist together.`,
+                  },
+                },
+              ],
+        has_more: false,
+      },
+    });
+  }
+  if (url.pathname === "/api/v1/branding") {
+    if (body.product_name) probe.brandingName = body.product_name;
+    return Response.json({
+      ok: true,
+      result: {
+        branding: {
+          product_name: probe.brandingName,
+          logo_icon_url: "/ui/logo.svg",
+          favicon_url: "/ui/logo.svg",
+          has_custom_logo_icon: false,
+          has_custom_favicon: false,
+        },
+      },
+    });
+  }
+  if (url.pathname === "/api/v1/web_access/session")
+    return Response.json({
+      ok: true,
+      result: {
+        web_access_session: { login_active: true, can_access_global_settings: probe.globalAllowed },
+      },
+    });
+  if (url.pathname === "/api/v1/membership")
+    return Response.json({
+      ok: true,
+      result: {
+        membership: {
+          enabled: false,
+          logged_in: false,
+          account_reachable: true,
+          reach_supported: true,
+        },
+      },
+    });
+  if (url.pathname === "/api/v1/profiles")
+    return Response.json({ ok: true, result: { profiles: [] } });
+  if (url.pathname.endsWith("/connect/catalog")) {
+    if (probe.catalogDelay) await new Promise((resolve) => setTimeout(resolve, probe.catalogDelay));
+    if (probe.catalogRestricted)
+      return Response.json(
+        { ok: false, error: { code: "admin_required", message: "administrator access required" } },
+        { status: 403 },
+      );
+    const instance = url.searchParams.get("instance_id");
+    result = instance
+      ? {
+          instance: {
+            instance_id: instance,
+            display_name: instance === "i_mac" ? "Mac Studio" : "Direct workstation",
+          },
+          catalog: {
+            groups: [
+              {
+                group_id: "g1",
+                title: "Shared Team",
+                actors: [{ id: "remote-worker", title: "Remote worker", enabled: true }],
+              },
+            ],
+          },
+          fresh: instance === "i_mac",
+          next: null,
+        }
+      : {
+          instances: [{ instance_id: "i_mac", display_name: "Mac Studio" }],
+          external_groups: [
+            {
+              instance: { instance_id: "i_direct", display_name: "Direct workstation" },
+              group_id: "g1",
+              title: "Shared Team",
+              transport: "direct",
+            },
+          ],
+        };
+    return Response.json({ ok: true, result });
+  }
   if (url.pathname.endsWith("/codex_voice/calls/active"))
     result = { call: null, analyst: null, readiness: null, voices: [] };
   else if (url.pathname.endsWith("/codex_voice/messages/viewed"))
     result = { observed: body.messages.length };
   else if (url.pathname.endsWith("/terminal/tail"))
     result = { text: "◦ Working (esc to interrupt)\n", running: true };
-  else if (url.pathname.endsWith("/actors")) result = { actors };
+  else if (url.pathname.endsWith("/actors"))
+    result = {
+      actors: actors.map((actor) => ({
+        ...actor,
+        running:
+          groups.find((group) => group.group_id === url.pathname.split("/")[4])?.running ?? true,
+      })),
+    };
   else if (url.pathname.endsWith("/capabilities")) result = { capabilities: [] };
   else if (url.pathname.includes("/context")) result = { agent_states: [] };
   else if (url.pathname.includes("/presentation"))
     result = { presentation: useGroupStore.getState().groupPresentation };
-  else if (url.pathname.includes("messages/send"))
+  else if (url.pathname.endsWith("/send"))
     result = {
       event: {
         id: "sent-fixture",
@@ -246,7 +414,12 @@ const eventContainerRef = { current: null as HTMLDivElement | null };
 const contentRef = { current: null as HTMLDivElement | null };
 const chatAtBottomRef = { current: true };
 export function Fixture() {
+  const { groupRunControls } = useGroupActions();
+  const currentGroups = useGroupStore((state) => state.groups);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const groupId = useGroupStore((state) => state.selectedGroupId);
+  const presentation = useGroupStore((state) => state.groupPresentation);
+  const presentationViewer = useModalStore((state) => state.presentationViewer);
   const currentActors = useGroupStore((state) => state.actors);
   const currentDoc = useGroupStore((state) => state.groupDoc);
   const selectedGroupRunning = useGroupStore(
@@ -262,6 +435,14 @@ export function Fixture() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [showMentionMenu, setShowMentionMenu] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState("");
+  const [mentionKind, setMentionKind] = useState<"agent" | "group">("agent");
+  const [mentionActorScope, setMentionActorScope] = useState<"selected" | "destination">(
+    "selected",
+  );
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   useEffect(() => {
     const update = () => {
       setWidth(innerWidth);
@@ -272,6 +453,7 @@ export function Fixture() {
     return () => window.removeEventListener("resize", update);
   }, []);
   const changeGroup = (id: string) => {
+    useComposerStore.getState().switchGroup(groupId, id);
     seed(id);
     setMounted([]);
     useUIStore.getState().setActiveTab("chat");
@@ -281,18 +463,56 @@ export function Fixture() {
     groupWorkProbe: {
       ...probe,
       chooseGroup: changeGroup,
-      setRunning: (running: boolean) =>
+      openSearch: () => setSearchOpen(true),
+      openSettings: (scope: "group" | "global", tab: string) => {
+        useModalStore.getState().openSettingsTarget({ scope, tab });
+        setSettingsOpen(true);
+      },
+      setSearchMode: (mode: string, delay = 0) => {
+        probe.searchMode = mode;
+        probe.searchDelay = delay;
+      },
+      setGlobalAllowed: (value: boolean) => {
+        probe.globalAllowed = value;
+      },
+      setCatalogDelay: (ms: number) => {
+        probe.catalogDelay = ms;
+      },
+      setCatalogRestricted: (value: boolean) => {
+        probe.catalogRestricted = value;
+      },
+      setRunning: (running: boolean) => {
+        groups = groups.map((group) =>
+          group.group_id === groupId ? withRuntime({ ...group, running }) : group,
+        );
         useGroupStore.setState((state) => ({
-          groups: state.groups.map((group) =>
-            group.group_id === groupId ? { ...group, running } : group,
-          ),
+          groups,
+          groupDoc: { ...state.groupDoc!, ...groups.find((group) => group.group_id === groupId) },
           actors: state.actors.map((actor) => ({ ...actor, running })),
-        })),
+        }));
+      },
       setCount: (count: number) => useGroupStore.setState({ actors: actors.slice(0, count) }),
       patchActor: (id: string, patch: Partial<Actor>) =>
         useGroupStore.setState((state) => ({
           actors: state.actors.map((actor) => (actor.id === id ? { ...actor, ...patch } : actor)),
         })),
+      setRunTransport: (delay = 0, failure = false) => {
+        probe.runDelay = delay;
+        probe.runFailure = failure;
+      },
+      setGroupStatus: (id: string, state: GroupMeta["state"], running: boolean) => {
+        groups = groups.map((group) =>
+          group.group_id === id ? withRuntime({ ...group, state, running }) : group,
+        );
+        useGroupStore.setState((current) => ({
+          groups,
+          groupDoc:
+            current.groupDoc?.group_id === id
+              ? { ...current.groupDoc, ...groups.find((group) => group.group_id === id) }
+              : current.groupDoc,
+        }));
+      },
+      setSidebarCollapsed,
       setReadOnly,
       setCanAccessAccount,
       setTextScale,
@@ -302,13 +522,14 @@ export function Fixture() {
       language: (lang: string) => i18next.changeLanguage(lang),
       ui: useUIStore,
       group: useGroupStore,
+      composer: useComposerStore,
       modals: useModalStore,
     },
   });
   const props = {
     canUseVoice: true,
     canAccessAccount,
-    orderedGroups: groups,
+    orderedGroups: currentGroups,
     archivedGroupIds: [],
     selectedGroupId: groupId,
     groupDoc: currentDoc,
@@ -323,7 +544,7 @@ export function Fixture() {
     busy: "",
     isTransitioning: false,
     sidebarOpen,
-    sidebarCollapsed: false,
+    sidebarCollapsed,
     sidebarWidth: 248,
     isDark: dark,
     isSmallScreen: width < 768,
@@ -336,8 +557,16 @@ export function Fixture() {
     textScale,
     sseStatus: "connected",
     groupLabelById: { g1: "Release workspace", g2: "Research workspace" },
-    mentionSelectedIndex: 0,
-    showMentionMenu: false,
+    mentionSelectedIndex,
+    showMentionMenu,
+    mentionFilter,
+    mentionKind,
+    mentionActorScope,
+    setMentionSelectedIndex,
+    setShowMentionMenu,
+    setMentionFilter,
+    setMentionKind,
+    setMentionActorScope,
     composerRef,
     fileInputRef,
     eventContainerRef,
@@ -364,18 +593,11 @@ export function Fixture() {
     "onOpenSearch",
     "onOpenContext",
     "onStartGroup",
-    "onStopGroup",
-    "onSetGroupState",
     "onOpenSettings",
     "onOpenAccount",
     "onOpenMobileMenu",
     "appendComposerFiles",
-    "setMentionFilter",
-    "setMentionKind",
-    "setMentionActorScope",
     "setMentionTargetGroupId",
-    "setMentionSelectedIndex",
-    "setShowMentionMenu",
     "onToggleActorEnabled",
     "onRelaunchActor",
     "onNewActorSession",
@@ -401,8 +623,7 @@ export function Fixture() {
   props.onOpenContext = () => probe.actions.push("onOpenContext");
   props.onOpenSearch = () => probe.actions.push("onOpenSearch");
   props.onStartGroup = () => probe.actions.push("onStartGroup");
-  props.onStopGroup = () => probe.actions.push("onStopGroup");
-  props.onSetGroupState = (state) => probe.actions.push(`onSetGroupState:${state}`);
+  props.groupRunControls = groupRunControls;
   for (const name of [
     "onToggleActorEnabled",
     "onRelaunchActor",
@@ -423,8 +644,6 @@ export function Fixture() {
         selectedGroupId={groupId}
         groupDoc={currentDoc}
         selectedGroupRunning={selectedGroupRunning}
-        actors={currentActors}
-        busy=""
         onThemeChange={setTheme}
         onTextScaleChange={setTextScale}
         onOpenSearch={noop}
@@ -432,10 +651,49 @@ export function Fixture() {
         onOpenSettings={props.onOpenSettings}
         canAccessAccount={canAccessAccount}
         onOpenAccount={props.onOpenAccount}
-        onStartGroup={props.onStartGroup}
-        onStopGroup={props.onStopGroup}
-        onSetGroupState={props.onSetGroupState}
       />
+      <SearchModal
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        groupId={groupId}
+        groupTitle={currentDoc?.title}
+        actors={currentActors}
+        isDark={dark}
+        onReply={() => {
+          probe.actions.push("searchReply");
+          setSearchOpen(false);
+        }}
+        onJumpToMessage={() => {
+          probe.actions.push("searchContext");
+          setSearchOpen(false);
+        }}
+      />
+      {presentationViewer && presentationViewer.surface !== "split" && (
+        <PresentationViewerModal
+          key={`${presentationViewer.groupId}:${presentationViewer.slotId}`}
+          isOpen
+          isDark={dark}
+          readOnly={readOnly}
+          groupId={presentationViewer.groupId}
+          slotId={presentationViewer.slotId}
+          presentation={presentation}
+          supportsSplit={width >= 768}
+          onOpenSplit={() => {
+            useUIStore.getState().setChatPresentationDisplayMode(groupId, "split");
+            useModalStore
+              .getState()
+              .setPresentationViewer({ ...presentationViewer, surface: "split" });
+          }}
+          onSelectSlot={(slotId) =>
+            useModalStore.getState().setPresentationViewer({ groupId, slotId, surface: "modal" })
+          }
+          onPinSlot={(slotId) => {
+            useModalStore.getState().setPresentationViewer(null);
+            useModalStore.getState().setPresentationPin({ groupId, slotId });
+          }}
+          onClose={() => useModalStore.getState().setPresentationViewer(null)}
+        />
+      )}
       {settingsOpen ? (
         <SettingsModal
           isOpen

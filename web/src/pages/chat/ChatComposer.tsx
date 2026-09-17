@@ -158,6 +158,7 @@ export interface ChatComposerProps {
   showMentionMenu: boolean;
   setShowMentionMenu: Dispatch<SetStateAction<boolean>>;
   mentionSuggestions: ComposerMentionSuggestion[];
+  connectMentionStatus?: "loading" | "incomplete";
   mentionSelectedIndex: number;
   setMentionSelectedIndex: Dispatch<SetStateAction<number>>;
   setMentionFilter: Dispatch<SetStateAction<string>>;
@@ -208,6 +209,7 @@ export function ChatComposer({
   showMentionMenu,
   setShowMentionMenu,
   mentionSuggestions,
+  connectMentionStatus,
   mentionSelectedIndex,
   setMentionSelectedIndex,
   setMentionFilter,
@@ -807,6 +809,7 @@ export function ChatComposer({
       setComposerText(before + tokenText + " ");
       const token = createComposerGroupMentionToken({
         groupId: selected.value,
+        remote: selected.remote,
         token: tokenText,
         start: before.length,
       });
@@ -1206,11 +1209,12 @@ export function ChatComposer({
               ) : null}
 
               {/* Mention menu */}
-              {showMentionMenu && mentionSuggestions.length > 0 && (
+              {showMentionMenu && (mentionSuggestions.length > 0 || connectMentionStatus) && (
                 <ChatMentionMenu
                   isDark={isDark}
                   isSmallScreen={isSmallScreen}
                   items={mentionSuggestions}
+                  status={connectMentionStatus}
                   left={mentionMenuLeft}
                   selectedIndex={mentionSelectedIndex}
                   onSelect={(item) => {

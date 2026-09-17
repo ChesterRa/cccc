@@ -56,6 +56,16 @@ target's standalone page.
 
 ## Agent collaboration
 
+In an administrator Web session, type `#` in the message composer to find local
+and connected Groups. Remote entries show **Group · Instance**; their cached
+information may be outdated and does not prove they are online. Selecting an
+entry adds a reference for your current recipients—it does **not** change `To`
+or send your text to that Group. For example, ask your local Agent to coordinate
+with `#Team · Mac`; the reference carries the exact remote identity so the Agent
+can discover and contact it through Connect. `#Group @` also offers that Group's
+cached enabled Actors. Switching local Groups preserves references with their
+drafts. Restricted Web sessions continue to offer only local Groups.
+
 The same tools serve account connections and Direct connections. They are part
 of the ordinary Actor's core MCP catalog; no capability installation or Access
 Token is needed for Agent messaging.

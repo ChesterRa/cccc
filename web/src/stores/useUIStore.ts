@@ -61,10 +61,10 @@ const DEFAULT_CHAT_SESSION: ChatSessionState = {
   scrollSnapshot: null,
   mobileSurface: "messages",
   presentationDockOpen: false,
-  presentationDisplayMode: "modal",
+  presentationDisplayMode: "split",
   filesPanelOpen: false,
   sidePanelWidth: SIDE_PANEL_DEFAULT_WIDTH,
-  presentationCompact: false,
+  presentationCompact: true,
 };
 
 export function getChatSession(
@@ -233,10 +233,11 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
         ? (session.mobileSurface as MobileSurface)
         : "messages",
       presentationDockOpen: Boolean(session.presentationDockOpen),
-      presentationDisplayMode: session.presentationDisplayMode === "split" ? "split" : "modal",
+      presentationDisplayMode: session.presentationDisplayMode === "modal" ? "modal" : "split",
       filesPanelOpen: Boolean(session.filesPanelOpen),
       sidePanelWidth: clampSidePanelWidth(Number(session.sidePanelWidth)),
-      presentationCompact: Boolean(session.presentationCompact),
+      presentationCompact:
+        typeof session.presentationCompact === "boolean" ? session.presentationCompact : true,
     };
   }
   return next;

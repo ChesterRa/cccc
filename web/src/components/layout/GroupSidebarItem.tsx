@@ -1,3 +1,4 @@
+import type { GroupRunControls } from "../../utils/groupControls";
 import { GroupConnectionBadge } from "../../features/connect/GroupConnectionBadge";
 import type { GroupConnectionCount } from "../../features/connect/protocol";
 import { GroupMeta } from "../../types";
@@ -6,9 +7,11 @@ import { classNames } from "../../utils/classNames";
 import { GroupItemMenuTrigger } from "./GroupItemMenuTrigger";
 import { useGroupMenu } from "./useGroupMenu";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
+import { GroupRunControl } from "./GroupRunControl";
 
 interface GroupSidebarItemProps {
   group: GroupMeta;
+  groupRunControls?: GroupRunControls;
   isActive: boolean;
   isCollapsed: boolean;
   isArchived?: boolean;
@@ -24,6 +27,7 @@ interface GroupSidebarItemProps {
 
 export function GroupSidebarItem({
   group,
+  groupRunControls,
   isActive,
   isCollapsed,
   isArchived = false,
@@ -106,11 +110,11 @@ export function GroupSidebarItem({
           onMouseEnter={onWarm}
           onFocus={onWarm}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <GroupStatusIndicator status={status} />
+          <div className="flex items-center gap-1 min-w-0">
+            <GroupRunControl group={group} controls={groupRunControls} compact />
             <span
               className={classNames(
-                "text-sm font-medium truncate",
+                "text-sm leading-5 font-medium truncate",
                 isActive
                   ? "text-[rgb(35,36,37)] dark:text-white"
                   : "text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]",

@@ -83,9 +83,6 @@ interface AppModalsProps {
   onStartReply: (ev: LedgerEvent) => void;
   onThemeChange: (theme: Theme) => void;
   onTextScaleChange: (scale: TextScale) => void;
-  onStartGroup: () => Promise<void>;
-  onStopGroup: () => Promise<void>;
-  onSetGroupState: (state: "active" | "idle" | "paused") => Promise<void>;
   fetchContext: ContextModalFetch;
   canManageGroups: boolean;
   accountLabel?: string | null;
@@ -130,9 +127,6 @@ export function AppModals({
   onStartReply,
   onThemeChange,
   onTextScaleChange,
-  onStartGroup,
-  onStopGroup,
-  onSetGroupState,
   fetchContext,
   canManageGroups,
   accountLabel,
@@ -1825,8 +1819,6 @@ export function AppModals({
         selectedGroupId={selectedGroupId}
         groupDoc={groupDoc}
         selectedGroupRunning={selectedGroupRunning}
-        actors={actors}
-        busy={busy}
         onClose={() => closeModal("mobileMenu")}
         onOpenFiles={
           isSmallScreen && selectedGroupId
@@ -1854,9 +1846,6 @@ export function AppModals({
               }
             : undefined
         }
-        onStartGroup={onStartGroup}
-        onStopGroup={onStopGroup}
-        onSetGroupState={onSetGroupState}
       />
 
       {modals.relay && relayEventId ? (
@@ -1873,6 +1862,7 @@ export function AppModals({
       ) : null}
 
       <SearchModal
+        groupTitle={groupDoc?.title}
         isOpen={modals.search}
         onClose={() => closeModal("search")}
         groupId={selectedGroupId}
@@ -1961,6 +1951,17 @@ export function AppModals({
                     ? presentationViewerSourceEvent
                     : null
                 }
+                onSelectSlot={(nextSlotId) =>
+                  setPresentationViewer({
+                    groupId: selectedGroupId,
+                    slotId: nextSlotId,
+                    surface: "modal",
+                  })
+                }
+                onPinSlot={(nextSlotId) => {
+                  setPresentationViewer(null);
+                  setPresentationPin({ groupId: selectedGroupId, slotId: nextSlotId });
+                }}
                 onQuoteInChat={handleQuotePresentationReference}
                 onOpenMessageContext={(eventId) =>
                   void handleOpenPresentationMessageContext(eventId)

@@ -280,6 +280,7 @@ fn requires_admin(method: &Method, path: &str) -> bool {
         || path.starts_with("/api/v1/membership")
         || path == "/api/v1/connect"
         || path.starts_with("/api/v1/connect/")
+        || path.ends_with("/connect/catalog")
         || path.starts_with("/api/v1/remote_access")
         || path == "/api/v1/debug/tail_logs"
         || path == "/api/v1/debug/clear_logs"

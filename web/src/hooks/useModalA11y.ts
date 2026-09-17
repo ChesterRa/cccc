@@ -1,5 +1,5 @@
 // useModalA11y: Escape key, focus trap, and body scroll lock for modals.
-import { useCallback, useEffect, useId, useRef } from "react";
+import { useCallback, useEffect, useId, useRef, type RefObject } from "react";
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
@@ -106,9 +106,10 @@ function unlockBodyScroll(): void {
 export function useModalA11y(
   isOpen: boolean,
   onClose: () => void,
-  options?: { preserveTerminalKeys?: boolean },
+  options?: { preserveTerminalKeys?: boolean; initialFocusRef?: RefObject<HTMLElement | null> },
 ) {
   const preserveTerminalKeys = options?.preserveTerminalKeys === true;
+  const initialFocusRef = options?.initialFocusRef;
   const instanceId = useId();
   const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -120,7 +121,8 @@ export function useModalA11y(
 
   const handleEscape = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      // Nested popovers handle Escape first in capture; do not dismiss their parent too.
+      if (e.key !== "Escape" || e.defaultPrevented) return;
       if (!isTopModal(instanceId)) return;
       if (preserveTerminalKeys && e.target instanceof Element && e.target.closest(".xterm")) return;
       e.preventDefault();
@@ -184,7 +186,11 @@ export function useModalA11y(
       const modal = modalRef.current;
       if (!modal) return;
       modalElements.set(id, modal);
-      if (isTopModal(id)) focusFirst(modal);
+      if (isTopModal(id)) {
+        const initial = initialFocusRef?.current;
+        if (initial && modal.contains(initial)) initial.focus();
+        else focusFirst(modal);
+      }
     });
 
     return () => {
@@ -205,7 +211,7 @@ export function useModalA11y(
         requestAnimationFrame(() => focusTopModal(previous));
       }
     };
-  }, [isOpen, instanceId, handleEscape, handleTab]);
+  }, [isOpen, instanceId, handleEscape, handleTab, initialFocusRef]);
 
   return { modalRef };
 }

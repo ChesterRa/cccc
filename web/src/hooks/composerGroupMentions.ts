@@ -1,10 +1,12 @@
 import type { GroupMeta } from "../types";
+import type { ConnectMentionGroup } from "./useConnectMentionGroups";
 
 export interface ComposerGroupMentionToken {
   groupId: string;
   token: string;
   start: number;
   end: number;
+  remote?: ConnectMentionGroup;
 }
 
 export interface ComposerAgentMentionToken {
@@ -37,10 +39,12 @@ export function createComposerGroupMentionToken({
   groupId,
   token,
   start,
+  remote,
 }: {
   groupId: string;
   token: string;
   start: number;
+  remote?: ConnectMentionGroup;
 }): ComposerGroupMentionToken | null {
   const cleanGroupId = String(groupId || "").trim();
   const cleanToken = cleanTokenText(token);
@@ -51,6 +55,7 @@ export function createComposerGroupMentionToken({
     token: cleanToken,
     start: safeStart,
     end: safeStart + cleanToken.length,
+    ...(remote ? { remote } : {}),
   };
 }
 
@@ -137,6 +142,7 @@ export function resolveSelectedComposerGroupMention({
   const liveTokens = pruneComposerGroupMentionTokens({ text, tokens });
   let best: ComposerGroupMentionToken | null = null;
   for (const token of liveTokens) {
+    if (token.remote) continue;
     if (!token.groupId || token.groupId === selected) continue;
     const group = (groups || []).find(
       (item) => String(item.group_id || "").trim() === token.groupId,
@@ -170,6 +176,7 @@ export function resolveSelectedComposerGroupMentionTargets({
   }
 
   for (const token of [...liveTokens].sort((a, b) => a.start - b.start)) {
+    if (token.remote) continue;
     const groupId = String(token.groupId || "").trim();
     if (!groupId || groupId === selected || seen.has(groupId)) continue;
     const group = groupsById.get(groupId);
@@ -189,7 +196,11 @@ export function resolveControlledComposerMentionContext({
   text: string;
   atIndex: number;
   tokens: ComposerGroupMentionToken[];
-}): { scope: "selected" | "destination"; mentionTargetGroupId: string } {
+}): {
+  scope: "selected" | "destination";
+  mentionTargetGroupId: string;
+  remote?: ConnectMentionGroup;
+} {
   const source = String(text || "");
   const safeAt = Number.isFinite(atIndex) ? Math.max(0, Math.floor(atIndex)) : 0;
   const segStartNl = source.lastIndexOf("\n", Math.max(0, safeAt - 1));
@@ -199,5 +210,6 @@ export function resolveControlledComposerMentionContext({
     .filter((token) => token.start >= segStart && token.end <= safeAt)
     .sort((a, b) => b.start - a.start)[0];
   if (!best) return { scope: "selected", mentionTargetGroupId: "" };
+  if (best.remote) return { scope: "destination", mentionTargetGroupId: "", remote: best.remote };
   return { scope: "destination", mentionTargetGroupId: best.groupId };
 }
