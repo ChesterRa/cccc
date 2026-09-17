@@ -194,7 +194,9 @@ async fn serve(
     }
     let mut output = [0_u8; TERMINAL_OUTPUT_PAGE_BYTES];
     let mut shutdown = state.shutdown.subscribe();
-    let mut writable_poll = tokio::time::interval(Duration::from_millis(100));
+    // Retained background terminals need ownership updates, not a 10 Hz idle IPC loop.
+    // The daemon still checks writer ownership on every input and resize operation.
+    let mut writable_poll = tokio::time::interval(Duration::from_millis(500));
     let mut access_poll = tokio::time::interval(LIVE_ACCESS_INTERVAL);
     access_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     writable_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

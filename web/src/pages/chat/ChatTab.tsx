@@ -12,7 +12,6 @@ import {
   useState,
   type MutableRefObject,
   type RefObject,
-  type ReactNode,
 } from "react";
 import { InfoIcon } from "../../components/Icons";
 import {
@@ -25,7 +24,7 @@ import {
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { ChatComposer } from "./ChatComposer";
-import { GroupWorkArea, type RuntimeActorView } from "./GroupWorkArea";
+import { GroupWorkArea, type RuntimeActorRenderer } from "./GroupWorkArea";
 import { RuntimeDock } from "./RuntimeDock";
 import { useChatTab } from "../../hooks/useChatTab";
 import { useTranslation } from "react-i18next";
@@ -138,8 +137,7 @@ export interface ChatTabProps {
   actors: Actor[];
   runtimeActors: Actor[];
   activeRuntimeActorId?: string;
-  renderedActorIds: string[];
-  renderRuntimeActor: (actorId: string, view: RuntimeActorView) => ReactNode;
+  renderRuntimeActor: RuntimeActorRenderer;
   workControlsHost?: HTMLElement | null;
   sidePanelControlsHost?: HTMLElement | null;
 
@@ -190,7 +188,6 @@ export function ChatTab({
   actors,
   runtimeActors,
   activeRuntimeActorId,
-  renderedActorIds,
   renderRuntimeActor,
   workControlsHost = null,
   sidePanelControlsHost = null,
@@ -755,10 +752,10 @@ export function ChatTab({
 
                 <GroupWorkArea
                   covered={showWorkspaceFileViewer}
-                  key={selectedGroupId}
+                  availableGroupIds={Object.keys(groupLabelById)}
+                  readOnly={readOnly}
                   groupId={selectedGroupId}
                   actors={runtimeActors}
-                  renderedActorIds={renderedActorIds}
                   activeActorId={activeRuntimeActorId}
                   isDark={isDark}
                   isVisible={!isSmallScreen || mobileSurface === "messages"}

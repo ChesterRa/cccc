@@ -527,6 +527,7 @@
   "presentationInteractiveModeLabel": "增强",
   "presentationPreviewModeLabel": "网页预览模式",
   "presentationWorkspaceLiveBadge": "工作区实时链接",
+  "presentationRefreshFailed": "更新失败，当前显示上次加载的内容。",
   "presentationRefreshAction": "刷新",
   "presentationJumpToChatAction": "跳到聊天",
   "presentationReplyInChatAction": "在聊天中回复",

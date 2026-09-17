@@ -527,6 +527,7 @@
   "presentationInteractiveModeLabel": "拡張",
   "presentationPreviewModeLabel": "Webプレビューモード",
   "presentationWorkspaceLiveBadge": "workspace リアルタイムリンク",
+  "presentationRefreshFailed": "更新できませんでした。前回読み込んだ内容を表示しています。",
   "presentationRefreshAction": "再読み込み",
   "presentationJumpToChatAction": "チャットへ移動",
   "presentationReplyInChatAction": "チャットで返信",

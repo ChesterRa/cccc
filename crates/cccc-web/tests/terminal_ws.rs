@@ -14,8 +14,13 @@ use tokio_tungstenite::tungstenite::Message;
 mod support;
 use support::*;
 
+// Both fixtures run daemons in-process and share the runtime manager. One
+// daemon's shutdown must not stop the other fixture's terminal sessions.
+static DAEMON_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 async fn websocket_attach_streams_full_replay_and_keeps_legacy_clients_compatible() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     home.initialize().expect("initialize");
@@ -161,6 +166,7 @@ async fn websocket_attach_streams_full_replay_and_keeps_legacy_clients_compatibl
 
 #[tokio::test]
 async fn high_volume_initial_replay_does_not_starve_control_input() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     home.initialize().expect("initialize");

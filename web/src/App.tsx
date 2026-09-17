@@ -222,8 +222,6 @@ export default function App({
     chatAtBottomRef,
     actorsRef,
     allTabs,
-    renderedActorIds,
-    resetMountedActorIds,
     handleTabChange,
   } = useAppTabState({
     activeTab,
@@ -380,7 +378,6 @@ export default function App({
     setDestGroupId,
     fileInputRef,
     resetDragDrop,
-    resetMountedActorIds,
     setActiveTab,
     closeChatWindow,
     loadGroup,
@@ -419,7 +416,6 @@ export default function App({
         recipientActors={recipientActors}
         recipientActorsBusy={recipientActorsBusy}
         destGroupScopeLabel={destGroupScopeLabel}
-        renderedActorIds={renderedActorIds}
         activeTab={activeTab}
         busy={busy}
         isTransitioning={isTransitioning}

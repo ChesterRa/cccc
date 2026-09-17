@@ -55,7 +55,10 @@ the message reading position survive switching between views.
 
 The terminal view shows up to four Actors per page, in the Group's existing order. Narrow areas
 show one Actor per page. Page arrows appear only when there is more than one page, in the
-Group header or the single Actor title bar on mobile. Resizing keeps the focused Actor visible,
+Group header or the single Actor title bar on mobile. The arrows have 44-pixel targets, with a
+visible page count and disabled endpoints. On touchscreens, swipe horizontally on the Actor
+title area to page; buttons, vertical gestures and the terminal body keep their own behavior.
+Resizing keeps the focused Actor visible,
 or preserves the first visible Actor when no terminal has focus. Removing Actors displays a
 valid page without discarding the saved preference during loading.
 Indicators can point to waiting or stuck Actors on other pages without moving the current page.
@@ -68,6 +71,18 @@ remain terminal keys while the terminal has focus. Existing access and single-wr
 a read-only user cannot type. Opening a view leaves any existing writer in control; use
 **Take control** to take over explicitly. An ordinary reconnect does not take control away
 from another writer. With no existing writer, the terminal accepts input immediately.
+A reconnect that resumes contiguous output keeps the existing screen visible while catching up.
+
+Switching pages, Groups, or back to Messages keeps recently visited terminals and
+their connections in memory, including scrollback and selection. Each workbench
+retains up to **32 hidden terminals for five minutes** after leaving them; visible
+terminals do not count toward that limit. The oldest hidden views are released
+first, and background output does not extend their lifetime. Unvisited Actors are
+not loaded in advance. Hidden terminals continue receiving output but cannot
+accept input, resize the remote terminal, or take control automatically. On return, a
+retained writer synchronizes the PTY with its visible dimensions, including when
+control returned while hidden. Another window can still use **Take control**. Expiry, a browser reload, or a replaced
+Actor may require a fresh terminal view; retention does not start or stop Actors.
 
 Each Actor title bar keeps its status dot, common terminal actions and maximize control together.
 Ordinary running/working states are available through the dot's label; stopped, waiting, stuck
@@ -78,8 +93,8 @@ Use **More** for history, session, configuration, inbox and lifecycle actions. U
 actions are disabled; stopping and restarting use the same operations as the expanded view.
 Different Actors have independent pending-operation indicators.
 
-Paging or hiding the terminal view detaches hidden terminal connections; it does not stop or
-restart Actors. Returning attaches to their current output. Actors without a TUI use their existing
+Once a retained view expires or is evicted, returning attaches to the Actor's current output;
+this never stops or restarts Actors. Actors without a TUI use their existing
 runtime activity display, and stopped Actors are explicitly identified. Hidden Group messages do
 not clear the message unread count or count as viewed for Voice suppression. Following a message
 source link returns to Messages and locates the original event.
@@ -249,9 +264,18 @@ Touch screens support pinch zoom. Focus the viewport for `+`/`−`, `0` (fit),
 to its opener. Regular message scrolling, PDF controls and interactive browser
 surfaces retain their own behavior. The workspace text editor is unchanged.
 Refreshing the same workspace-linked Presentation image preserves its zoom and
-position, including across a failed refresh and recovery. Failures show an error
-without discarding the viewing position. Switching to another slot or publication
-starts with **Fit** again.
+position, including across a failed refresh and recovery. Image and Markdown updates replace
+content only after loading succeeds (and images decode). During a transient failure, the last
+loaded version stays visible with an update-failure notice. The next successful refresh clears
+the notice. Slow requests finish before another automatic refresh starts. First-load errors
+and confirmed missing or inaccessible resources show an error instead of stale content.
+Switching to another slot or publication clears the previous resource and starts images with
+**Fit** again.
+
+Workspace-linked PDF and HTML readers retain their current page, zoom and
+navigation state. Use **Refresh** to load edits from disk; publishing a new card
+also updates the reader. They do not reload on the automatic image/Markdown
+refresh timer.
 
 ### Codex Voice (Experimental)
 

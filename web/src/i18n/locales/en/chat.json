@@ -527,6 +527,7 @@
   "presentationInteractiveModeLabel": "Enhanced",
   "presentationPreviewModeLabel": "Web preview mode",
   "presentationWorkspaceLiveBadge": "Live workspace link",
+  "presentationRefreshFailed": "Update failed. Showing the last loaded version.",
   "presentationRefreshAction": "Refresh",
   "presentationJumpToChatAction": "Jump to chat",
   "presentationReplyInChatAction": "Reply in chat",

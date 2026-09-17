@@ -230,7 +230,7 @@ with tempfile.TemporaryDirectory(
 
         def live():
             return js(
-                "groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).sort()"
+                "groupWorkProbe.sockets.filter(s=>s.readyState===1 && s.group===groupWorkProbe.group.getState().selectedGroupId && [...document.querySelectorAll('[data-runtime-group-id]')].some(e=>e.dataset.runtimeGroupId===s.group && e.dataset.runtimeActorId===s.actor && !e.hasAttribute('inert'))).map(s=>s.actor).sort()"
             )
 
         def tiled():
@@ -440,7 +440,7 @@ with tempfile.TemporaryDirectory(
         else:
             beforeScroll = None
         tiled()
-        wait("groupWorkProbe.sockets.filter(s=>s.readyState===1).length===4")
+        wait('[...document.querySelectorAll("[data-runtime-group-id]")].filter(e=>!e.hasAttribute("inert")).length===4')
         time.sleep(0.5)
         assert live() == ["actor-1", "actor-2", "actor-3", "actor-4"], live()
         assert rect(composer_selector) == composer, (rect(composer_selector), composer)
@@ -526,7 +526,7 @@ with tempfile.TemporaryDirectory(
         assert js("groupWorkProbe.sockets.length") == opens
         assert js('document.activeElement.getAttribute("aria-label")') == "Controls for Foreman"
         messages()
-        wait("groupWorkProbe.sockets.every(s=>s.readyState===3)")
+        wait("[...document.querySelectorAll('[data-runtime-group-id]')].every(e=>e.hasAttribute('inert'))")
         time.sleep(0.3)
         if beforeScroll is not None:
             afterScroll = js(
@@ -537,25 +537,71 @@ with tempfile.TemporaryDirectory(
             js("document.querySelector(" + json.dumps(composer_selector) + ").value")
             == "Keep this Group draft"
         )
+        assert js("groupWorkProbe.sockets.length") == opens
         tiled()
-        wait("groupWorkProbe.sockets.filter(s=>s.readyState===1).length===4")
+        wait('[...document.querySelectorAll("[data-runtime-group-id]")].filter(e=>!e.hasAttribute("inert")).length===4')
+        # Retain scrollback, selection and connection while visiting another page/Group.
+        js("""(async()=>{
+          window.keptTerm=groupWorkProbe.terminals.find(t=>t.element?.closest('[data-runtime-actor-id=actor-1]'));
+          window.keptSocket=groupWorkProbe.sockets.find(s=>s.readyState===1&&s.actor==='actor-1');
+          await new Promise(done=>keptTerm.write(Array.from({length:200},(_,i)=>'cache line '+i+'\\r\\n').join(''),done));
+          keptTerm.scrollToLine(30); keptTerm.select(0,32,8);
+          window.keptScroll=keptTerm.buffer.active.viewportY;
+          window.keptSelection=keptTerm.getSelection();
+        })()""")
         click('[aria-label="Next page"]')
-        wait(
-            'groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).sort().join(",")==="actor-5,actor-6,actor-7,actor-8"'
-        )
+        wait('groupWorkProbe.sockets.filter(s=>s.readyState===1).length===8')
+        assert visible_panes() == ["actor-5", "actor-6", "actor-7", "actor-8"]
         js('groupWorkProbe.chooseGroup("g2")')
         time.sleep(0.3)
         assert live() == [], live()
-        assert (
-            js(
-                'document.querySelector("[data-group-terminal-view]").dataset.groupTerminalView'
-            )
-            == "hidden"
-        )
+        assert js('keptSocket.readyState') == 1
+        assert js('keptTerm._core._renderService._isPaused')
+        frames = js('keptSocket.frames.filter(f=>f.type===48||f.type===50).length')
+        js("keptTerm.input('must-not-reach-hidden',true); keptTerm.resize(31,9)")
+        assert js('keptSocket.frames.filter(f=>f.type===48||f.type===50).length') == frames
+        # Restore the local test dimensions; navigation fitting uses the visible container.
+        js('keptTerm.resize(80,24)')
+        tiled()
+        wait('groupWorkProbe.sockets.filter(s=>s.readyState===1).length===12')
+        assert js('document.querySelector("[data-runtime-group-id=g2][data-runtime-actor-id=actor-1] .xterm-screen")!==window.savedTerminal')
+        point_click('[data-runtime-group-id=g2][data-runtime-actor-id=actor-1] .xterm-screen')
+        typing('second-group-input')
+        assert not js('keptSocket.frames.some(f=>f.type===48&&f.text.includes("second-group-input"))')
         js('groupWorkProbe.chooseGroup("g1")')
-        wait(
-            'groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).sort().join(",")==="actor-5,actor-6,actor-7,actor-8"'
-        )
+        time.sleep(0.3)
+        assert visible_panes() == ["actor-5", "actor-6", "actor-7", "actor-8"]
+        click('[aria-label="Previous page"]')
+        assert js('document.querySelector("[data-runtime-group-id=g1][data-runtime-actor-id=actor-1] .xterm-screen")===window.savedTerminal')
+        assert js('keptSocket.readyState') == 1
+        # Capture after the deliberate resize, then verify ordinary navigation changes nothing.
+        js("keptTerm.scrollToLine(30);keptTerm.select(0,32,8);window.keptScroll=keptTerm.buffer.active.viewportY;window.keptSelection=keptTerm.getSelection();window.retainedOpens=groupWorkProbe.sockets.length")
+        click('[aria-label="Next page"]')
+        js('groupWorkProbe.chooseGroup("g2")')
+        time.sleep(0.2)
+        js('groupWorkProbe.chooseGroup("g1")')
+        time.sleep(0.2)
+        click('[aria-label="Previous page"]')
+        assert js('keptTerm.buffer.active.viewportY===keptScroll && keptTerm.getSelection()===keptSelection')
+        assert js('groupWorkProbe.sockets.length===retainedOpens')
+        # Ownership can return while hidden after another window changed the PTY
+        # dimensions. An unchanged xterm fit must still resynchronize the writer.
+        js('window.localSizeBeforeHide={cols:keptTerm.cols,rows:keptTerm.rows}')
+        click('[aria-label="Next page"]')
+        hidden_resizes = js('keptSocket.frames.filter(f=>f.type===50).length')
+        for writable in [False, True]:
+            js('keptSocket.onmessage({data:new TextEncoder().encode('+json.dumps('6'+json.dumps({'terminal_writable':writable}))+').buffer})')
+            time.sleep(.1)
+        assert js('keptSocket.frames.filter(f=>f.type===50).length') == hidden_resizes
+        click('[aria-label="Previous page"]')
+        wait(f'keptSocket.frames.filter(f=>f.type===50).length>{hidden_resizes}')
+        time.sleep(.3)
+        assert js('keptTerm.cols===localSizeBeforeHide.cols && keptTerm.rows===localSizeBeforeHide.rows')
+        assert js('keptSocket.frames.filter(f=>f.type===50).length') == hidden_resizes + 1
+        assert js('JSON.stringify(JSON.parse(keptSocket.frames.filter(f=>f.type===50).at(-1).text))===JSON.stringify(localSizeBeforeHide)')
+        assert js('keptSocket.readyState===1 && groupWorkProbe.sockets.length===retainedOpens')
+        print('PASS deferred writer resize after hidden ownership handoff, without reconnect or duplicate resize', flush=True)
+        click('[aria-label="Next page"]')
         js("window.groupWorkReloadPending=true")
         cdp("Page.reload")
         wait(
@@ -564,7 +610,7 @@ with tempfile.TemporaryDirectory(
         # Width changes keep the focused Actor, then the visible page anchor.
         point_click('[data-runtime-actor-id="actor-7"] .xterm-screen')
         dimensions(700)
-        wait('groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).sort().join(",")==="actor-7"')
+        wait('[...document.querySelectorAll("[data-runtime-group-id]")].filter(e=>!e.hasAttribute("inert")).map(e=>e.dataset.runtimeActorId).join(",")==="actor-7"')
         assert js('groupWorkProbe.ui.getState().chatSessions.g1.terminalPage') == 6
         dimensions(1440)
         wait('groupWorkProbe.sockets.filter(s=>s.readyState===1).length===4')
@@ -629,7 +675,7 @@ with tempfile.TemporaryDirectory(
         assert js('document.querySelector("[data-group-presentation-trigger]").getAttribute("aria-expanded")') == "true"
         assert len(live()) == 1
         click("[data-group-presentation-trigger]")
-        wait("groupWorkProbe.sockets.filter(s=>s.readyState===1).length===4")
+        wait('[...document.querySelectorAll("[data-runtime-group-id]")].filter(e=>!e.hasAttribute("inert")).length===4')
         # Stopped/headless Actors remain useful without creating a PTY connection.
         js('groupWorkProbe.ui.getState().setGroupTerminalPage("g1",0)')
         time.sleep(0.3)
@@ -658,7 +704,7 @@ with tempfile.TemporaryDirectory(
                 time.sleep(0.3)
                 shot("touch-status-" + status.lower() + "-" + str(scale))
                 assert js(f'''(() => {{
-                    const name = document.querySelector('#runtime-inspector-actor-{index + 1}');
+                    const name = document.querySelector('#runtime-inspector-g1-actor-{index + 1}');
                     const status = Array.from(name.parentElement.children).find(e => e.textContent === {json.dumps(status)});
                     return name.getBoundingClientRect().width >= 60 && !!status && status.getBoundingClientRect().width >= 25;
                 }})()'''), status
@@ -728,8 +774,7 @@ with tempfile.TemporaryDirectory(
         time.sleep(0.3)
         # An existing writer stays in control until the user explicitly takes over.
         messages()
-        wait("groupWorkProbe.sockets.every(s=>s.readyState===3)")
-        js('groupWorkProbe.externalWriters.add("actor-1")')
+        js("""groupWorkProbe.externalWriters.add('actor-1'); groupWorkProbe.sockets.filter(s=>s.readyState===1&&s.actor==='actor-1').forEach(s=>{s.frames.length=0;s.onmessage({data:new TextEncoder().encode('6{"terminal_writable":false}').buffer})})""")
         tiled()
         wait('!!document.querySelector(`[data-runtime-actor-id=actor-1] [aria-label="Take control"]`)')
         point_click("[data-runtime-actor-id=actor-1] .xterm-screen")
@@ -814,6 +859,137 @@ with tempfile.TemporaryDirectory(
         })()""")
         assert restored is not None and abs(restored-anchor["offset"])<2, (anchor, restored)
         print("PASS virtual message identity and visible offset across Terminals/ Messages", flush=True)
+        # Refreshed reading surfaces retain only the last successful version of
+        # the same resource. These requests are local synthetic responses.
+        js(r'''window.assetFixtureFetch=window.fetch;
+          window.assetStatus=200; window.assetReads=0; window.assetKind='markdown';window.assetRevision=0;
+          window.assetHold=false; window.assetRespond=null;
+          window.savedPresentation=groupWorkProbe.group.getState().groupPresentation;
+          window.fetch=async(input,init)=>{
+            if(!String(input).includes('/presentation/slots/'))return assetFixtureFetch(input,init);
+            assetReads++;
+            if(assetHold)await new Promise(resolve=>{assetRespond=resolve;});
+            return new Response(assetStatus!==200?'unavailable':assetKind==='markdown'
+              ? '# Stable document\n\n'+Array.from({length:160},(_,i)=>'Paragraph '+i+' version '+assetRevision+'\n\n').join('')
+              : '<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1800"><rect width="2400" height="1800" fill="#125665"/><text x="50" y="100" font-size="60" fill="white">Stable image</text></svg>',
+              {status:assetStatus,headers:{'Content-Type':assetKind==='markdown'?'text/markdown':'image/svg+xml'}});
+          };
+          window.showAsset=(kind,surface,revision='one')=>{
+            assetKind=kind;
+            if(surface==='split')groupWorkProbe.ui.getState().setChatPresentationDockOpen('g1',true);
+            groupWorkProbe.group.setState({groupPresentation:{v:1,slots:[{slot_id:'slot-1',index:1,card:{slot_id:'slot-1',title:'Reading continuity',card_type:kind,published_at:revision,published_by:'actor-1',content:{mode:'workspace_link',workspace_rel_path:kind==='markdown'?'sample.md':'sample.svg'}}}]}});
+            groupWorkProbe.modals.getState().setPresentationViewer({groupId:'g1',slotId:'slot-1',surface,focusRef:kind==='markdown'?{kind:'presentation_ref',slot_id:'slot-1',card_type:'markdown',locator:{viewer_scroll_top:300}}:null});
+          };''')
+        for surface in ["modal", "split"]:
+            js(f"assetStatus=200;showAsset('markdown','{surface}')")
+            wait('[...document.querySelectorAll("h1")].some(e=>e.textContent==="Stable document" && e.getClientRects().length)')
+            time.sleep(.3)
+            js('''window.oldHeading=[...document.querySelectorAll('h1')].find(e=>e.textContent==='Stable document' && e.getClientRects().length);window.reader=oldHeading.parentElement;
+              while(reader&&reader.scrollHeight<=reader.clientHeight+1)reader=reader.parentElement;
+              window.quotedScroll=reader.scrollTop;reader.scrollTop=500;window.initialScroll=reader.scrollTop;''')
+            assert js('quotedScroll') == 300
+            assert js('initialScroll') == 500
+            reads = js('assetReads')
+            wait(f'assetReads>{reads}')
+            assert js('oldHeading.isConnected && reader.scrollTop===initialScroll')
+            js('assetStatus=503')
+            click('[aria-label="Refresh"]')
+            wait('document.body.textContent.includes("Update failed. Showing the last loaded version.")')
+            assert js('oldHeading.isConnected && reader.scrollTop===initialScroll')
+            shot('markdown-stale-' + surface)
+            js('assetStatus=200')
+            click('[aria-label="Refresh"]')
+            wait('!document.body.textContent.includes("Update failed. Showing the last loaded version.")')
+            assert js('oldHeading.isConnected && reader.scrollTop===initialScroll')
+            js('assetRevision++')
+            click('[aria-label="Refresh"]')
+            wait('!oldHeading.isConnected')
+            assert js('reader.scrollTop') == 500
+            js('assetStatus=403')
+            click('[aria-label="Refresh"]')
+            wait('document.body.textContent.includes("HTTP 403")')
+            js('groupWorkProbe.modals.getState().setPresentationViewer(null)')
+            time.sleep(.2)
+
+            js(f"assetStatus=200;showAsset('image','{surface}')")
+            wait('!!document.querySelector("[data-graphic-viewer] img") && document.querySelector("[data-graphic-viewer] img").naturalWidth===2400')
+            click('[aria-label="Actual size"]')
+            js('''window.oldImage=document.querySelector('[data-graphic-viewer] img');
+              window.graphicViewport=document.querySelector('[data-graphic-viewer] [role=region]');
+              graphicViewport.scrollLeft=400;graphicViewport.scrollTop=500;
+              window.displayedSrc=oldImage.src; assetHold=true;''')
+            click('[aria-label="Refresh"]')
+            wait('!!assetRespond')
+            assert js('oldImage.isConnected && oldImage.src===displayedSrc && getComputedStyle(oldImage.parentElement).visibility==="visible"')
+            js('assetStatus=503;assetHold=false;assetRespond();assetRespond=null')
+            wait('document.body.textContent.includes("Update failed. Showing the last loaded version.")')
+            assert js('oldImage.isConnected && oldImage.src===displayedSrc && graphicViewport.scrollLeft===400 && graphicViewport.scrollTop===500')
+            shot('image-stale-' + surface)
+            js('assetStatus=200')
+            click('[aria-label="Refresh"]')
+            wait('oldImage.src!==displayedSrc && oldImage.complete')
+            assert js('oldImage.isConnected && getComputedStyle(oldImage.parentElement).visibility==="visible" && graphicViewport.scrollLeft===400 && graphicViewport.scrollTop===500')
+            # A new publication is a different resource: do not show the old image
+            # while its request is pending, or apply its zoom to the new resource.
+            js(f"assetHold=true;showAsset('image','{surface}','two')")
+            wait('!!assetRespond')
+            assert not js('oldImage.isConnected')
+            js('assetHold=false;assetRespond();assetRespond=null')
+            wait('!!document.querySelector("[data-graphic-viewer] img") && document.querySelector("[data-graphic-viewer] img").complete')
+            assert js('document.querySelector("[data-graphic-viewer] [role=region]").scrollTop===0')
+            js('assetStatus=403')
+            click('[aria-label="Refresh"]')
+            wait('!document.querySelector("[data-graphic-viewer] img") && document.body.textContent.includes("HTTP 403")')
+            js('groupWorkProbe.modals.getState().setPresentationViewer(null)')
+            time.sleep(.2)
+        js('window.fetch=assetFixtureFetch;groupWorkProbe.group.setState({groupPresentation:savedPresentation})')
+        if js('document.querySelector("[data-group-presentation-trigger]")?.getAttribute("aria-expanded")==="true"'):
+            click('[data-group-presentation-trigger]')
+        print('PASS Markdown/image pending, failure, recovery, permission loss and publication isolation in modal/split', flush=True)
+
+        js('groupWorkProbe.setCount(8);groupWorkProbe.patchActor("actor-1",{running:true,runner:"pty"})')
+        tiled()
+        js('groupWorkProbe.ui.getState().setGroupTerminalPage("g1",0)')
+        wait('!!document.querySelector(\'[aria-label="Next page"]\')')
+        pager = rect('[aria-label="Next page"]')
+        assert pager['width'] >= 44 and pager['height'] >= 44, pager
+        dimensions(900)
+        time.sleep(.3)
+        point_click('[aria-label="Next page"]')
+        assert js('document.activeElement.getAttribute("aria-label")') == 'Next page'
+        point_click('[aria-label="Previous page"]')
+        assert not js('document.activeElement.closest(".xterm")')
+        cdp("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 2})
+        dimensions(390, 844)
+        time.sleep(.5)
+        js('groupWorkProbe.ui.getState().setGroupTerminalPage("g1",0)')
+        time.sleep(.3)
+        def swipe(selector, dx, dy=0):
+            r = rect(selector)
+            x = r['x'] + r['width']*.7
+            y = r['y'] + min(16, r['height']/2)
+            cdp('Input.dispatchTouchEvent', {'type':'touchStart','touchPoints':[{'x':x,'y':y}]})
+            for part in range(1, 6):
+                cdp('Input.dispatchTouchEvent', {'type':'touchMove','touchPoints':[{'x':x+dx*part/5,'y':y+dy*part/5}]})
+                time.sleep(.025)
+            cdp('Input.dispatchTouchEvent', {'type':'touchEnd','touchPoints':[]})
+            time.sleep(.2)
+        title = '[data-runtime-actor-id="actor-1"] [data-terminal-title-bar]'
+        wait(f'!!document.querySelector({json.dumps(title)})')
+        swipe(title, -110)
+        wait('groupWorkProbe.ui.getState().chatSessions.g1.terminalPage===1')
+        swipe('[data-runtime-actor-id="actor-2"] [data-terminal-title-bar]', 90)
+        wait('groupWorkProbe.ui.getState().chatSessions.g1.terminalPage===0')
+        swipe(title, -110, 70)
+        assert js('groupWorkProbe.ui.getState().chatSessions.g1.terminalPage') == 0
+        swipe('[aria-label="Next page"]', -90)
+        assert js('groupWorkProbe.ui.getState().chatSessions.g1.terminalPage') == 0
+        swipe('[data-runtime-actor-id="actor-1"] .xterm-screen', -110)
+        assert js('groupWorkProbe.ui.getState().chatSessions.g1.terminalPage') == 0
+        shot('touch-terminal-paging')
+        cdp("Emulation.setTouchEmulationEnabled", {"enabled": False})
+        print('PASS 44px pagination targets, keyboard focus and title-only touch paging without body/button/vertical interception', flush=True)
+
         print("EVIDENCE", str(OUT), flush=True)
         print(
             "PASS input isolation, no focus theft, maximize same xterm/socket, terminal Escape/Tab, four-pane pagination, per-group persistence, reload, responsive/locales, Presentation split/mobile, stopped/headless, read-only input, Voice viewed gating and source navigation",

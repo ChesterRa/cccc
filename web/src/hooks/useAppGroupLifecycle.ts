@@ -9,7 +9,6 @@ type UseAppGroupLifecycleOptions = {
   setDestGroupId: (groupId: string) => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   resetDragDrop: () => void;
-  resetMountedActorIds: () => void;
   setActiveTab: (tab: string) => void;
   closeChatWindow: () => void;
   loadGroup: (groupId: string) => void;
@@ -47,7 +46,6 @@ export function useAppGroupLifecycle({
   setDestGroupId,
   fileInputRef,
   resetDragDrop,
-  resetMountedActorIds,
   setActiveTab,
   closeChatWindow,
   loadGroup,
@@ -73,7 +71,6 @@ export function useAppGroupLifecycle({
   useEffect(() => {
     if (fileInputRef.current) fileInputRef.current.value = "";
     resetDragDrop();
-    resetMountedActorIds();
     setActiveTab("chat");
     closeChatWindow();
 

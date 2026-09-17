@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import type { Window as HappyWindow } from "happy-dom";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -9,7 +10,7 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en" } }),
 }));
 
-describe("Presentation image refresh", () => {
+describe("Presentation refresh", () => {
   let host: HTMLDivElement, root: ReturnType<typeof createRoot>;
   const image = () => host.querySelector<HTMLImageElement>("[data-graphic-viewer] img")!;
   const viewport = () => host.querySelector<HTMLDivElement>("[data-graphic-viewer] [role=region]")!;
@@ -18,7 +19,13 @@ describe("Presentation image refresh", () => {
   const loadImage = async () => {
     await act(async () => image().dispatchEvent(new Event("load")));
   };
-  async function render(split = false, groupId = "g", slotId = "slot-1", revision = "one") {
+  async function render(
+    split = false,
+    groupId = "g",
+    slotId = "slot-1",
+    revision = "one",
+    cardType: "image" | "pdf" | "web_preview" = "image",
+  ) {
     const presentation: GroupPresentation = {
       v: 1,
       slots: ["slot-1", "slot-2"].map((id, index) => ({
@@ -27,10 +34,18 @@ describe("Presentation image refresh", () => {
         card: {
           slot_id: id,
           title: "Drawing",
-          card_type: "image",
+          card_type: cardType,
           published_at: revision,
           published_by: "worker",
-          content: { mode: "workspace_link", workspace_rel_path: "drawing.png" },
+          content: {
+            mode: "workspace_link",
+            workspace_rel_path:
+              cardType === "pdf"
+                ? "report.pdf"
+                : cardType === "web_preview"
+                  ? "report.html"
+                  : "drawing.png",
+          },
         },
       })),
     };
@@ -44,11 +59,22 @@ describe("Presentation image refresh", () => {
         ),
       ),
     );
-    await loadImage();
+    if (cardType === "image") await loadImage();
   }
 
+  let nextUrl = 0;
   beforeEach(() => {
+    nextUrl = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Blob(["image"]), { status: 200 })),
+    );
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:preview-${++nextUrl}`);
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.spyOn(HTMLImageElement.prototype, "decode").mockResolvedValue(undefined);
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    (window as unknown as HappyWindow).happyDOM.settings.navigation.disableChildFrameNavigation =
+      true;
     vi.useFakeTimers();
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(640);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(480);
@@ -74,6 +100,8 @@ describe("Presentation image refresh", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
+    (window as unknown as HappyWindow).happyDOM.settings.navigation.disableChildFrameNavigation =
+      false;
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -109,6 +137,53 @@ describe("Presentation image refresh", () => {
     },
   );
 
+  it("lets a slow refresh finish instead of restarting it on every polling tick", async () => {
+    await render();
+    let respond!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          respond = resolve;
+        }),
+    );
+    const oldSrc = image().src;
+    await act(async () => vi.advanceTimersByTime(5000));
+    const count = vi.mocked(fetch).mock.calls.length;
+    const signal = vi.mocked(fetch).mock.calls.at(-1)![1]!.signal!;
+    await act(async () => vi.advanceTimersByTime(15000));
+    expect(fetch).toHaveBeenCalledTimes(count);
+    expect(signal.aborted).toBe(false);
+    expect(image().src).toBe(oldSrc);
+    await act(async () => respond(new Response(new Blob(["next image"]))));
+    expect(image().src).not.toBe(oldSrc);
+  });
+
+  it.each([
+    [false, "pdf"],
+    [true, "pdf"],
+    [false, "web_preview"],
+    [true, "web_preview"],
+  ] as const)(
+    "keeps a reading document mounted until refresh or publication (split=%s, type=%s)",
+    async (split, type) => {
+      await render(split, "g", "slot-1", "one", type);
+      const frame = host.querySelector("iframe")!;
+      const src = frame.src;
+      await act(async () => vi.advanceTimersByTime(15000));
+      expect(host.querySelector("iframe")).toBe(frame);
+      expect(frame.src).toBe(src);
+
+      await act(async () => button("presentationRefreshAction").click());
+      const refreshed = host.querySelector("iframe")!.src;
+      expect(refreshed).not.toBe(src);
+      await act(async () => vi.advanceTimersByTime(10000));
+      expect(host.querySelector("iframe")!.src).toBe(refreshed);
+
+      await render(split, "g", "slot-1", "two", type);
+      expect(host.querySelector("iframe")!.src).not.toBe(refreshed);
+    },
+  );
+
   it("fits another Group, slot or publication even when the other identity fields match", async () => {
     await render();
     for (const [groupId, slotId, revision] of [
@@ -132,17 +207,19 @@ describe("Presentation image refresh", () => {
     const canvas = node.querySelector(".select-none")!.parentElement;
     node.scrollLeft = 400;
     node.scrollTop = 500;
+    const displayed = image().src;
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("unavailable", { status: 503 }));
     await act(async () => vi.advanceTimersByTime(5000));
-    await act(async () => image().dispatchEvent(new Event("error")));
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe("imagePreviewUnavailable");
-    expect(button("graphicViewer.actual").disabled).toBe(true);
+    expect(host.textContent).toContain("presentationRefreshFailed");
+    expect(image().src).toBe(displayed);
+    expect(button("graphicViewer.actual").disabled).toBe(false);
     expect(node.querySelector(".select-none")!.parentElement).toBe(canvas);
     expect(width()).toBe(2400);
     expect(node.scrollLeft).toBe(400);
     expect(node.scrollTop).toBe(500);
     await act(async () => vi.advanceTimersByTime(5000));
     await loadImage();
-    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.textContent).not.toContain("presentationRefreshFailed");
     expect(button("graphicViewer.actual").disabled).toBe(false);
     expect(width()).toBe(2400);
     expect(node.scrollLeft).toBe(400);

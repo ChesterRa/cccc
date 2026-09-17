@@ -319,6 +319,7 @@ export type WebModelDeliveryStatusPayload = {
 
 export type Actor = {
   id: string;
+  generation?: string;
   role?: string;
   internal_kind?: string | null;
   title?: string;

@@ -1,7 +1,7 @@
 import type { GroupRunControls } from "../../utils/groupControls";
 import { requestWorkspaceNavigation } from "../../stores/workspaceNavigation";
 import { WorkspaceNavigationDialog } from "../workspace/WorkspaceNavigationDialog";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { AppHeader } from "../layout/AppHeader";
 import { GroupConnectionsControl } from "../../features/connect/GroupConnectionsControl";
@@ -29,7 +29,6 @@ import {
   SIDEBAR_COLLAPSED_WIDTH,
   groupMessagesVisible,
 } from "../../stores/useUIStore";
-import { resolveRuntimeInspectorActor } from "./appShellRuntimeActors";
 import type { ComposerMentionKind } from "../../pages/chat/chatMentionSuggestions";
 import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbench";
 type AppShellProps = {
@@ -48,7 +47,6 @@ type AppShellProps = {
   recipientActors: Actor[];
   recipientActorsBusy: boolean;
   destGroupScopeLabel: string;
-  renderedActorIds: string[];
   activeTab: string;
   busy: string;
   isTransitioning: boolean;
@@ -122,19 +120,6 @@ type AppShellProps = {
   onTouchEnd: (event: React.TouchEvent) => void;
 };
 
-type MountedRuntimeActorSnapshot = { groupId: string | null; actorsById: Record<string, Actor> };
-
-function areMountedRuntimeActorSnapshotsEqual(
-  left: MountedRuntimeActorSnapshot,
-  right: MountedRuntimeActorSnapshot,
-): boolean {
-  if (left.groupId !== right.groupId) return false;
-  const leftIds = Object.keys(left.actorsById);
-  const rightIds = Object.keys(right.actorsById);
-  if (leftIds.length !== rightIds.length) return false;
-  return leftIds.every((actorId) => left.actorsById[actorId] === right.actorsById[actorId]);
-}
-
 export function AppShell({
   connectEmbedded = false,
   connect,
@@ -151,7 +136,6 @@ export function AppShell({
   recipientActors,
   recipientActorsBusy,
   destGroupScopeLabel,
-  renderedActorIds,
   activeTab,
   busy,
   isTransitioning,
@@ -228,8 +212,6 @@ export function AppShell({
   const setGroupConnections = useModalStore((state) => state.setGroupConnections);
   const [workControlsHost, setWorkControlsHost] = useState<HTMLDivElement | null>(null);
   const [sidePanelControlsHost, setSidePanelControlsHost] = useState<HTMLDivElement | null>(null);
-  const [mountedRuntimeActorsSnapshot, setMountedRuntimeActorsSnapshot] =
-    useState<MountedRuntimeActorSnapshot>({ groupId: null, actorsById: {} });
   const messagesVisible = useUIStore((state) => groupMessagesVisible(selectedGroupId, state));
   const codexVoice = useCodexVoiceShell(!webReadOnly && canUseVoice);
   useVoiceViewedMessages(
@@ -237,21 +219,6 @@ export function AppShell({
     selectedGroupId,
     !webReadOnly && canUseVoice && messagesVisible && !remoteWorkspace,
   );
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setMountedRuntimeActorsSnapshot((current) => {
-        const nextActorsById = current.groupId === selectedGroupId ? { ...current.actorsById } : {};
-        for (const actor of runtimeActors) {
-          const actorId = String(actor.id || "").trim();
-          if (actorId) nextActorsById[actorId] = actor;
-        }
-        const nextSnapshot = { groupId: selectedGroupId || null, actorsById: nextActorsById };
-        return areMountedRuntimeActorSnapshotsEqual(current, nextSnapshot) ? current : nextSnapshot;
-      });
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [runtimeActors, selectedGroupId]);
 
   return (
     <div
@@ -344,13 +311,8 @@ export function AppShell({
                     groupLabelById={groupLabelById}
                     actors={actors}
                     runtimeActors={runtimeActors}
-                    renderedActorIds={renderedActorIds}
                     renderRuntimeActor={(actorId, view) => {
-                      const mounted =
-                        mountedRuntimeActorsSnapshot.groupId === selectedGroupId
-                          ? mountedRuntimeActorsSnapshot.actorsById
-                          : {};
-                      const actor = resolveRuntimeInspectorActor(actorId, runtimeActors, mounted);
+                      const actor = runtimeActors.find((item) => item.id === actorId) || null;
                       return (
                         <ActorTab
                           actor={actor}
@@ -368,7 +330,7 @@ export function AppShell({
                           compact={view.compact}
                           onExpand={view.onExpand}
                           navigation={view.navigation}
-                          suspendWhenHidden
+                          onPage={view.onPage}
                           readOnly={webReadOnly}
                           actorStatusProvisional={selectedGroupActorStatusProvisional}
                           onToggleEnabled={(running) =>

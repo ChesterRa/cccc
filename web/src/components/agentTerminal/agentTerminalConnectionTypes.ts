@@ -10,6 +10,8 @@ export type AgentTerminalConnectionArgs = {
   actorId: string;
   actorRuntime: string | undefined;
   canControl: boolean;
+  /** Hidden retained views keep streaming, but cannot send input or resize the PTY. */
+  isVisible?: boolean;
   termEpoch: number;
   reconnectTrigger: number;
   terminalRef: RefObject<Terminal | null>;

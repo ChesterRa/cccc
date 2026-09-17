@@ -337,6 +337,7 @@ class FixtureSocket {
     this.realtime = parsed.pathname === "/api/v1/events/ws";
     this.actor = parsed.pathname.split("/").at(-2)!;
     this.group = parsed.pathname.split("/")[4];
+    const since = Number(parsed.searchParams.get("since") || 0);
     if (!this.realtime) probe.sockets.push(this);
     setTimeout(() => {
       if (this.readyState === 3) return;
@@ -352,14 +353,15 @@ class FixtureSocket {
             terminal_writable:
               parsed.searchParams.get("mode") !== "viewer" &&
               !probe.externalWriters.has(this.actor),
-            replay_cursor: 0,
-            replay_end_cursor: 0,
+            replay_cursor: since,
+            replay_end_cursor: since,
           },
         }),
       });
-      this.output(
-        `\x1b[36m${this.actor}\x1b[0m — ${this.group}\r\n\r\nReviewing the implementation and running focused tests.\r\n\r\n$ `,
-      );
+      if (!since)
+        this.output(
+          `\x1b[36m${this.actor}\x1b[0m — ${this.group}\r\n\r\nReviewing the implementation and running focused tests.\r\n\r\n$ `,
+        );
       let tick = 0;
       this.timer = setInterval(
         () => this.output(`\r\x1b[K◦ Working: checked ${++tick} files (esc to interrupt)`),
@@ -426,7 +428,6 @@ export function Fixture() {
     (state) => state.groups.find((group) => group.group_id === groupId)?.running ?? false,
   );
   const activeTab = useUIStore((state) => state.activeTab);
-  const [mounted, setMounted] = useState<string[]>([]);
   const [width, setWidth] = useState(innerWidth);
   const { theme, setTheme, isDark: dark } = useTheme();
   const { textScale, setTextScale } = useTextScale();
@@ -455,7 +456,6 @@ export function Fixture() {
   const changeGroup = (id: string) => {
     useComposerStore.getState().switchGroup(groupId, id);
     seed(id);
-    setMounted([]);
     useUIStore.getState().setActiveTab("chat");
     useComposerStore.getState().setDestGroupId(id);
   };
@@ -539,7 +539,6 @@ export function Fixture() {
     recipientActors: currentActors,
     recipientActorsBusy: false,
     destGroupScopeLabel: "",
-    renderedActorIds: mounted,
     activeTab,
     busy: "",
     isTransitioning: false,
@@ -575,7 +574,6 @@ export function Fixture() {
     onSelectGroup: changeGroup,
     onTabChange: (tab: string) => {
       useUIStore.getState().setActiveTab(tab);
-      if (tab !== "chat") setMounted((ids) => (ids.includes(tab) ? ids : [...ids, tab]));
     },
     getTermEpoch: () => 0,
   } as ComponentProps<typeof AppShell>;
@@ -677,6 +675,8 @@ export function Fixture() {
           groupId={presentationViewer.groupId}
           slotId={presentationViewer.slotId}
           presentation={presentation}
+          focusRef={presentationViewer.focusRef}
+          focusEventId={presentationViewer.focusEventId}
           supportsSplit={width >= 768}
           onOpenSplit={() => {
             useUIStore.getState().setChatPresentationDisplayMode(groupId, "split");

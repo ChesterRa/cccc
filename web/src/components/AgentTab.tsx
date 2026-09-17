@@ -1,3 +1,4 @@
+import { useTerminalTitlePaging } from "./agentTerminal/useTerminalTitlePaging";
 import {
   useCallback,
   useEffect,
@@ -106,9 +107,9 @@ interface AgentTabProps {
   agentState: AgentState | null;
   isVisible: boolean;
   compact?: boolean;
-  suspendWhenHidden?: boolean;
   onExpand?: () => void;
   navigation?: ReactNode;
+  onPage?: (direction: -1 | 1) => void;
   readOnly?: boolean;
   actorStatusProvisional: boolean;
   onQuit: () => void;
@@ -132,9 +133,9 @@ export function AgentTab({
   agentState,
   isVisible,
   compact = false,
-  suspendWhenHidden = false,
   onExpand,
   navigation,
+  onPage,
   readOnly,
   actorStatusProvisional,
   onQuit,
@@ -235,7 +236,7 @@ export function AgentTab({
   }, [canControl]);
 
   // Activate the terminal only after the user has visited this actor tab at least once.
-  // Keep the xterm instance; tiled views suspend the browser connection while hidden.
+  // The work area retains visited terminals and connections for bounded navigation reuse.
   useEffect(() => {
     if (!isVisible) return;
     const timer = window.setTimeout(() => setActivated(true), 0);
@@ -412,10 +413,10 @@ export function AgentTab({
   useEffect(() => {
     terminalOptionsSnapshotRef.current.canControl = canControl;
     if (terminalRef.current) {
-      terminalRef.current.options.disableStdin = !canControl;
-      terminalRef.current.options.cursorBlink = canControl;
+      terminalRef.current.options.disableStdin = !canControl || !isVisible;
+      terminalRef.current.options.cursorBlink = canControl && isVisible;
     }
-  }, [canControl]);
+  }, [canControl, isVisible]);
 
   useEffect(() => {
     terminalOptionsSnapshotRef.current.scrollbackLines = terminalScrollbackLines;
@@ -563,7 +564,8 @@ export function AgentTab({
     sendInterrupt,
   } = useAgentTerminalConnection({
     takeoverOnAttach: false,
-    activated: activated && (!suspendWhenHidden || isVisible),
+    activated,
+    isVisible,
     isRunning,
     isHeadless,
     groupId,
@@ -658,6 +660,8 @@ export function AgentTab({
     : 0;
   const stateNext = String(agentState?.hot?.next_action || "").trim();
   const actorGroupRole = normalizeActorGroupRole(actor.role);
+  const titlePaging = useTerminalTitlePaging(isVisible && compact ? onPage : undefined);
+
   const compactStatusText = !isRunning
     ? runtimeStatusText
     : !isHeadless && connectionStatus !== "connected"
@@ -672,6 +676,9 @@ export function AgentTab({
     <div className="@container/actor-view flex min-h-0 min-w-0 flex-col h-full">
       {compact ? (
         <div
+          {...titlePaging}
+          data-terminal-title-bar
+          style={onPage ? { touchAction: "pan-y pinch-zoom" } : undefined}
           className={classNames(
             "flex min-h-9 shrink-0 items-center border-b border-[var(--glass-border-subtle)] px-2 text-xs [@media(pointer:coarse)]:min-h-11",
             navigation
@@ -692,7 +699,7 @@ export function AgentTab({
               title={[runtimeStatusText, actor.effective_working_reason].filter(Boolean).join("\n")}
             />
             <span
-              id={`runtime-inspector-${actor.id}`}
+              id={`runtime-inspector-${groupId}-${actor.id}`}
               className="min-w-0 flex-1 truncate font-semibold"
               title={actor.title || actor.id}
             >
@@ -788,7 +795,7 @@ export function AgentTab({
               <div className="min-w-0 shrink-0">
                 <div className="flex items-center gap-2 min-w-0">
                   <span
-                    id={compact ? undefined : `runtime-inspector-${actor.id}`}
+                    id={compact ? undefined : `runtime-inspector-${groupId}-${actor.id}`}
                     className="min-w-0 truncate font-semibold text-[var(--color-text-primary)]"
                   >
                     {actor.title || actor.id}

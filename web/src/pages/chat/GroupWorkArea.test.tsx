@@ -2,7 +2,7 @@
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { GroupWorkArea } from "./GroupWorkArea";
+import { GroupWorkArea, type RuntimeActorView } from "./GroupWorkArea";
 import { terminalPageLayout } from "./groupWorkLayout";
 import { useUIStore } from "../../stores/useUIStore";
 
@@ -20,14 +20,32 @@ let width = 1200;
 let resize: () => void;
 const actors = Array.from({ length: 8 }, (_, index) => ({ id: `actor-${index + 1}` }));
 
+function FixtureActor({
+  id,
+  groupId,
+  isVisible,
+  onExpand,
+}: RuntimeActorView & { id: string; groupId: string }) {
+  return (
+    <div>
+      <span id={`runtime-inspector-${groupId}-${id}`}>{id}</span>
+      <button data-expand={id} onClick={onExpand}>
+        expand
+      </button>
+      <div className="xterm">
+        <textarea data-terminal={id} data-visible={String(isVisible)} />
+      </div>
+    </div>
+  );
+}
+
 function Fixture({ groupId = "g1", count = 8, loading = false, covered = false }) {
   const [active, setActive] = useState("chat");
   return (
     <GroupWorkArea
-      key={groupId}
       groupId={groupId}
       actors={actors.slice(0, count)}
-      renderedActorIds={[]}
+      availableGroupIds={["g1", "g2"]}
       activeActorId={active === "chat" ? undefined : active}
       isDark={false}
       isVisible
@@ -38,17 +56,7 @@ function Fixture({ groupId = "g1", count = 8, loading = false, covered = false }
       isSmallScreen={false}
       sidePanelControls={<button>presentation</button>}
       onInspectActor={setActive}
-      renderActor={(id, view) => (
-        <div>
-          <span id={`runtime-inspector-${id}`}>{id}</span>
-          <button data-expand={id} onClick={view.onExpand}>
-            expand
-          </button>
-          <div className="xterm">
-            <textarea data-terminal={id} data-visible={String(view.isVisible)} />
-          </div>
-        </div>
-      )}
+      renderActor={(id, view) => <FixtureActor id={id} groupId={groupId} {...view} />}
     >
       <div data-message>message history</div>
     </GroupWorkArea>
@@ -107,15 +115,27 @@ describe("Group work area", () => {
     expect(host.querySelectorAll("[data-terminal]")).toHaveLength(0);
     await click('[aria-label="workView.label"] button:last-child');
     expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(4);
+    const first = host.querySelector<HTMLTextAreaElement>('[data-terminal="actor-1"]')!;
+    first.value = "retained input";
     await click('[aria-label="workView.next"]');
     expect(host.querySelector('[data-terminal="actor-5"]')).not.toBeNull();
-    expect(host.querySelector('[data-terminal="actor-1"]')).toBeNull();
+    expect(host.querySelector('[data-terminal="actor-1"]')).toBe(first);
+    expect(first.closest("[inert]")).not.toBeNull();
     await render({ groupId: "g2" });
-    expect(host.querySelectorAll("[data-terminal]")).toHaveLength(0);
+    expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(0);
+    await click('[aria-label="workView.label"] button:last-child');
+    const second = host.querySelector('[data-runtime-group-id="g2"] [data-terminal="actor-1"]');
+    expect(second).not.toBe(first);
+    expect(second).not.toBeNull();
     await render({ groupId: "g1" });
     expect(host.querySelector('[data-terminal="actor-5"]')).not.toBeNull();
     expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(1);
     expect(host.querySelector("[data-group-message-view]")?.getAttribute("inert")).not.toBeNull();
+    await click('[aria-label="workView.previous"]');
+    expect(host.querySelector('[data-runtime-group-id="g1"] [data-terminal="actor-1"]')).toBe(
+      first,
+    );
+    expect(first.value).toBe("retained input");
   });
 
   it("maximizes and restores the same terminal, retaining input and terminal keys", async () => {

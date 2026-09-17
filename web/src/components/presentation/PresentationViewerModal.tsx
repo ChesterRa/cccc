@@ -2,6 +2,7 @@ import { PanelRightClose } from "lucide-react";
 import { PresentationSlotNavigation } from "./PresentationSlotNavigation";
 import { GraphicViewer } from "../viewer/GraphicViewer";
 import { getPresentationReferenceHref } from "./presentationAssets";
+import { usePresentationAsset } from "./usePresentationAsset";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUIStore } from "../../stores";
@@ -172,8 +173,6 @@ function PresentationViewer({
   }, [isModal, isOpen, hasSlotNavigation, groupId, slotId]);
   const [refreshTick, setRefreshTick] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [linkedMarkdown, setLinkedMarkdown] = useState("");
-  const [linkedMarkdownError, setLinkedMarkdownError] = useState("");
   const [copiedReference, setCopiedReference] = useState(false);
   const [quotePending, setQuotePending] = useState(false);
   const [clearingSlotId, setClearingSlotId] = useState("");
@@ -206,6 +205,29 @@ function PresentationViewer({
     !!card && card.card_type === "web_preview" && !String(card.content.url || "").trim();
   const cardType = String(card?.card_type || "").trim();
   const cardMode = String(card?.content.mode || "inline").trim();
+  const resourceKey = JSON.stringify([
+    groupId,
+    slotId,
+    card?.published_at,
+    cardType,
+    cardMode,
+    card?.content.workspace_rel_path,
+    card?.content.url,
+  ]);
+  const fetchedImage = isWorkspaceLinked && cardType === "image" && !card?.content.url;
+  const linkedAsset = usePresentationAsset(
+    href,
+    resourceKey,
+    !isOpen
+      ? null
+      : fetchedImage
+        ? "image"
+        : cardType === "markdown" && cardMode !== "inline"
+          ? "markdown"
+          : null,
+  );
+  const markdownReady =
+    cardType !== "markdown" || cardMode === "inline" || linkedAsset.content !== null;
   const allowLiveBrowser =
     !!card &&
     card.card_type === "web_preview" &&
@@ -439,47 +461,22 @@ function PresentationViewer({
 
   useEffect(() => {
     if (!isOpen || !isWorkspaceLinked) return;
+    // Documents own their reading/navigation state. Reload them only on an
+    // explicit refresh or publication, rather than replacing the iframe every tick.
+    if (cardType !== "image" && cardType !== "markdown") return;
     const timer = window.setInterval(() => {
-      setRefreshTick((value) => value + 1);
+      if (!linkedAsset.refreshing.current) setRefreshTick((value) => value + 1);
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [isOpen, isWorkspaceLinked, slotId, card?.published_at]);
-
-  useEffect(() => {
-    if (!isOpen || cardType !== "markdown") return;
-    if (cardMode === "inline") return;
-    if (!href) {
-      setLinkedMarkdown("");
-      setLinkedMarkdownError("");
-      return;
-    }
-
-    const controller = new AbortController();
-    let active = true;
-
-    const run = async () => {
-      try {
-        const resp = await fetch(href, { cache: "no-store", signal: controller.signal });
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`);
-        }
-        const text = await resp.text();
-        if (!active) return;
-        setLinkedMarkdown(text);
-        setLinkedMarkdownError("");
-      } catch (error) {
-        if (!active || controller.signal.aborted) return;
-        setLinkedMarkdown("");
-        setLinkedMarkdownError(error instanceof Error ? error.message : String(error));
-      }
-    };
-
-    void run();
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [cardMode, cardType, href, isOpen]);
+  }, [
+    isOpen,
+    isWorkspaceLinked,
+    groupId,
+    slotId,
+    cardType,
+    card?.published_at,
+    linkedAsset.refreshing,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -520,7 +517,8 @@ function PresentationViewer({
   }, [canCompareSnapshot, currentSnapshotUrl, snapshotViewMode]);
 
   useEffect(() => {
-    if (!isOpen || !canRestoreRefInViewer || targetViewerScrollTop == null) return;
+    if (!isOpen || !canRestoreRefInViewer || targetViewerScrollTop == null || !markdownReady)
+      return;
 
     let timeoutId: number | null = null;
     let rafIdOne: number | null = null;
@@ -553,14 +551,7 @@ function PresentationViewer({
         window.cancelAnimationFrame(rafIdTwo);
       }
     };
-  }, [
-    canRestoreRefInViewer,
-    isOpen,
-    linkedMarkdown,
-    linkedMarkdownError,
-    slotId,
-    targetViewerScrollTop,
-  ]);
+  }, [canRestoreRefInViewer, isOpen, markdownReady, slotId, targetViewerScrollTop]);
 
   const handleCopyReference = async () => {
     if (!copyReferenceValue) return;
@@ -735,9 +726,11 @@ function PresentationViewer({
   ) : card.card_type === "markdown" ? (
     <MarkdownDocumentSurface
       content={String(
-        card.content.mode === "inline" ? card.content.markdown || "" : linkedMarkdown || "",
+        card.content.mode === "inline" ? card.content.markdown || "" : linkedAsset.content || "",
       )}
-      error={linkedMarkdownError}
+      error={linkedAsset.stale ? "" : linkedAsset.error}
+      loading={cardMode !== "inline" && linkedAsset.content === null && !linkedAsset.error}
+      loadingLabel={t("common:loading")}
       isDark={isDark}
       className={isModal ? undefined : "!rounded-none !border-0 !bg-transparent !p-3"}
       minHeightClassName={isModal ? undefined : "min-h-0"}
@@ -792,11 +785,22 @@ function PresentationViewer({
       </div>
     </div>
   ) : card.card_type === "image" ? (
-    <GraphicViewer
-      resourceKey={`${groupId}:${slotId}:${card.published_at}`}
-      src={href}
-      alt={card.title}
-    />
+    fetchedImage && linkedAsset.content === null ? (
+      <p
+        role={linkedAsset.error ? "alert" : "status"}
+        className="p-4 text-sm text-[var(--color-text-secondary)]"
+      >
+        {linkedAsset.error
+          ? `${t("imagePreviewUnavailable")} (${linkedAsset.error})`
+          : t("common:loading")}
+      </p>
+    ) : (
+      <GraphicViewer
+        resourceKey={resourceKey}
+        src={fetchedImage ? linkedAsset.content! : href}
+        alt={card.title}
+      />
+    )
   ) : card.card_type === "pdf" ? (
     <iframe
       title={card.title}
@@ -882,7 +886,17 @@ function PresentationViewer({
                 </span>
               ) : null}
               {card.source_label ? <span>{card.source_label}</span> : null}
-              {publishedAt ? <span>{publishedAt}</span> : null}
+              {linkedAsset.stale ? (
+                <span
+                  role="status"
+                  className="min-w-0 flex-1 truncate text-amber-700 dark:text-amber-300"
+                  title={`${t("presentationRefreshFailed")} (${linkedAsset.error})`}
+                >
+                  {t("presentationRefreshFailed")}
+                </span>
+              ) : publishedAt ? (
+                <span>{publishedAt}</span>
+              ) : null}
               <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
                 {showWebPreviewModeToggle ? (
                   <div
@@ -1221,7 +1235,13 @@ function PresentationViewer({
       >
         <SidePanelHeader
           title={card?.title || t("presentationTitle")}
-          subtitle={card ? getCardTypeLabel(card.card_type, t) : undefined}
+          subtitle={
+            linkedAsset.stale
+              ? t("presentationRefreshFailed")
+              : card
+                ? getCardTypeLabel(card.card_type, t)
+                : undefined
+          }
           onClose={onClose}
           closeLabel={t("presentationCloseDockAction")}
         >
@@ -1236,6 +1256,11 @@ function PresentationViewer({
             </SidePanelButton>
           )}
         </SidePanelHeader>
+        {linkedAsset.stale && (
+          <span role="status" className="sr-only">
+            {t("presentationRefreshFailed")}
+          </span>
+        )}
         {slotNavigation}
         {(showWebPreviewModeToggle ||
           canRefresh ||

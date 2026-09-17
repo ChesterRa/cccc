@@ -16,6 +16,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Presentation keeps four compact slots until you open content.** New Groups default to the compact rail and side-by-side reading; slot navigation stays available in the viewer. Existing saved layout preferences are preserved.
 
 ### Fixed
+- **Presentation documents stay steady while reading.** Workspace-linked PDF and HTML previews reload on Refresh or a new publication, preserving reader state between updates.
+- **Live Presentation refreshes preserve the reading surface.** Images and Markdown keep their last loaded content during slow or temporarily failed updates, with an explicit stale-content notice. Permission or missing-resource errors clear stale content. Images decode before replacement; background refresh no longer reapplies a quoted Markdown reading position.
+- **Terminal paging is easier to use.** Larger page arrows keep the desktop header on one row. Touch users can also swipe the Actor title area without changing terminal-body gestures.
+- **Terminal reconnects keep the current screen visible.** Resuming contiguous output no longer briefly hides an intact terminal.
+- **Terminal navigation preserves recent views.** Paging or switching Groups retains up to 32 hidden terminals for five minutes, including their scrollback, selection and connections. Hidden views cannot send input or resize the runtime; a retained writer synchronizes its dimensions on return, including control regained while hidden. Idle ownership polling is reduced while explicit writer takeover remains available.
 - **Voice updates preserve selected Group and Actor references in saved drafts.** Finishing dictation after switching Groups keeps valid mention identities, including remote Connect destinations, when the draft is restored.
 - **Downloads keep their Chinese names.** Group packages, blob attachments, and Presentation assets now send a percent-encoded RFC 5987 filename, so browsers stop rendering non-ASCII names as mojibake.
 - **Multiple workbench windows no longer consume the HTTP/1.1 pool with SSE.** The UI multiplexes global, ledger, and headless events over one WebSocket per page, preserving cursor replay, headless snapshots, and live permission checks.

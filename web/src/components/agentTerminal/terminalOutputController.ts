@@ -46,7 +46,8 @@ export function createTerminalOutputController(args: {
     (args.cursors.deliveredCursor ?? 0) >= args.cursors.replayEndCursor;
 
   const handleAttachResult = (result: Record<string, unknown>) => {
-    const plan = planTerminalAttach(result, args.cursors.deliveredCursor);
+    const previousCursor = args.cursors.deliveredCursor;
+    const plan = planTerminalAttach(result, previousCursor);
     if (!plan) {
       args.ws.close(1002, "Invalid terminal bootstrap metadata");
       return;
@@ -73,7 +74,9 @@ export function createTerminalOutputController(args: {
     if (args.canControl() && !writable && result.terminal_input_blocked !== true) {
       args.onDecoded("\r\n[terminal] read-only connection.\r\n");
     }
-    args.resetReady();
+    // Contiguous reconnects append to the retained screen; hiding it would
+    // manufacture a blank frame even when there is no new terminal output.
+    if (previousCursor === null || plan.resetTerminal) args.resetReady();
     if (!pendingSnapshot && replayComplete()) args.scheduleReady();
   };
 
