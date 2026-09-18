@@ -62,9 +62,7 @@ export function PresentationTrigger({
       aria-expanded={isOpen}
     >
       <PanelsTopLeft size={17} className="shrink-0" aria-hidden="true" />
-      <span className={mobile ? "sr-only" : "hidden @min-[1000px]/group-header:inline"}>
-        {t("presentationTitle", { defaultValue: "Presentation" })}
-      </span>
+      <span className="sr-only">{t("presentationTitle", { defaultValue: "Presentation" })}</span>
       {hasAttention ? (
         <span
           className={classNames(

@@ -32,7 +32,7 @@ export function AppSettingsMenu({
     setOpen(next);
   });
   const row =
-    "flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 text-left text-sm hover:bg-[var(--glass-tab-bg)] disabled:opacity-45 focus-visible:outline-2";
+    "flex min-h-9 w-full items-center gap-2.5 rounded-md px-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg)] disabled:opacity-45 focus-visible:outline-2 pointer-coarse:min-h-11 [&>svg]:text-[var(--color-text-secondary)]";
 
   useEffect(() => {
     const trigger = triggerRef.current;
@@ -100,7 +100,7 @@ export function AppSettingsMenu({
         align="end"
         sideOffset={8}
         collisionPadding={12}
-        className="w-60 max-w-[calc(100vw-24px)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-xl p-2"
+        className="w-64 max-w-[calc(100vw-24px)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-xl p-2"
         aria-label={t("settingsAndMore")}
         data-app-settings-menu
         onPointerEnter={cancel}
@@ -119,7 +119,7 @@ export function AppSettingsMenu({
         }}
       >
         <AppearancePreferences {...appearance} />
-        <div className="my-2 border-t border-[var(--glass-border-subtle)]" />
+        <div className="my-1.5 border-t border-[var(--glass-border-subtle)]" />
         {canAccessAccount ? (
           <button type="button" className={row} onClick={() => openDialog(onOpenAccount)}>
             <AccountIcon size={17} />

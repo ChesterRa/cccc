@@ -164,9 +164,10 @@ export function AppHeader({
         {runMenu.menu}
       </div>
 
+      {/* Work controls, shortcuts and side-panel toggles form one right-aligned cluster. */}
       <div
         ref={workControlsRef}
-        className="flex shrink-0 items-center gap-1 @min-[760px]/group-header:ml-4"
+        className="ml-auto flex shrink-0 items-center gap-1"
         data-group-work-controls-host
       />
       {!webReadOnly && (
@@ -200,7 +201,7 @@ export function AppHeader({
       )}
       <div
         ref={sidePanelControlsRef}
-        className="ml-auto flex shrink-0 items-center gap-0.5"
+        className="flex shrink-0 items-center gap-0.5 @min-[760px]/group-header:ml-1"
         data-group-side-panel-controls-host
       />
       {!webReadOnly && (

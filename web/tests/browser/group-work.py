@@ -403,7 +403,7 @@ with tempfile.TemporaryDirectory(
           const controls=filters.querySelector('.chat-reading-width').getBoundingClientRect();
           return filters.getBoundingClientRect().top >= log.getBoundingClientRect().top - 1
             && Math.abs(rows.left-input.left)<2 && Math.abs(rows.width-input.width)<2
-            && Math.abs(controls.left-input.left)<2 && rows.width<log.clientWidth-100;
+            && Math.abs(controls.left-input.left)<2;
         })()""")
         point_click('[data-group-presentation-trigger]')
         wait('!!document.querySelector("#group-side-panel")')

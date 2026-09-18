@@ -32,7 +32,7 @@ export function WorkspaceFilesTrigger({ active, onToggle }: Props) {
       )}
     >
       <FolderIcon size={17} className="shrink-0" aria-hidden="true" />
-      <span className="hidden @min-[1000px]/group-header:inline">{t("workspaceFilesTitle")}</span>
+      <span className="sr-only">{t("workspaceFilesTitle")}</span>
     </button>
   );
 }
