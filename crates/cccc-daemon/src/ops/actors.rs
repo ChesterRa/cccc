@@ -208,6 +208,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         actor_profile_runtime::link(home, &patched_preview, &profile_id)?
     } else if profile_action == "convert_to_custom" {
         let mut resolved = actor_profile_runtime::resolve(home, &patched_preview)?;
+        resolved.env.clear();
         resolved.profile_id.clear();
         resolved.profile_scope = "global".into();
         resolved.profile_owner.clear();
@@ -231,9 +232,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         None
     };
     let converted_secrets = if profile_action == "convert_to_custom" {
-        let mut secrets = actor_profile_runtime::profile_secrets(home, current)?;
-        secrets.extend(original_secrets.clone().unwrap_or_default());
-        Some(secrets)
+        Some(actor_secrets::effective_values(home, &group_id, current)?)
     } else {
         None
     };
@@ -248,6 +247,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             } else if profile_action == "convert_to_custom" {
                 let mut resolved = actor_profile_runtime::resolve(home, &patched)
                     .map_err(|error| std::io::Error::other(error.message))?;
+                resolved.env.clear();
                 resolved.profile_id.clear();
                 resolved.profile_scope = "global".into();
                 resolved.profile_owner.clear();
@@ -379,13 +379,7 @@ enum ActorUpdateEffect {
 }
 
 fn actor_process_running(group: &GroupDoc, actor: &Actor) -> bool {
-    if super::local_headless::supports(actor) {
-        super::local_headless::running(&group.group_id, &actor.id)
-    } else if actor_runtime::is_structured(actor) {
-        false
-    } else {
-        actor_runtime::status(&group.group_id, &actor.id).is_some_and(|status| status.running)
-    }
+    actor_runtime::actor_is_running(group, actor)
 }
 
 fn rollback_actor_update(
@@ -705,11 +699,18 @@ fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult
     let status = match actor_runtime::apply(home, &group, &actor_id, kind) {
         Ok(status) => status,
         Err(error) => {
-            let effect = lifecycle_effect(
-                kind,
-                runtime_was_running,
-                actor_process_running(&group, &original_actor),
-            );
+            // A failed teardown has not launched a replacement. Do not turn
+            // this error into a second stop/start attempt during rollback.
+            let effect =
+                if error.details.get("lifecycle_stage").and_then(Value::as_str) == Some("stop") {
+                    ActorLifecycleEffect::None
+                } else {
+                    lifecycle_effect(
+                        kind,
+                        runtime_was_running,
+                        actor_process_running(&group, &original_actor),
+                    )
+                };
             return Err(rollback_actor_lifecycle(
                 home,
                 &group,

@@ -106,21 +106,6 @@ impl Endpoint {
     pub(super) fn validate_credentials(&self) -> io::Result<()> {
         self.auth().map(drop)
     }
-
-    /// Whether a daemon currently accepts connections. Synchronous and local;
-    /// a control socket without a listener refuses immediately.
-    pub(super) fn reachable(&self) -> bool {
-        #[cfg(unix)]
-        {
-            std::os::unix::net::UnixStream::connect(&self.address).is_ok()
-        }
-        #[cfg(windows)]
-        {
-            // Named-pipe probing needs the async client; treat as reachable so
-            // orphan cleanup never fires on Windows.
-            true
-        }
-    }
 }
 
 pub(super) async fn reply(endpoint: &Endpoint, short: &str, text: &str) -> io::Result<()> {

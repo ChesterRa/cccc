@@ -36,7 +36,7 @@ function AppearanceSelect<Value extends string | number>({
         options={options}
         onChange={onChange}
         ariaLabel={ariaLabel}
-        className="min-h-8 w-28 rounded-md border-[var(--glass-border-subtle)] bg-transparent px-2.5 text-xs text-[var(--color-text-primary)] transition-colors hover:bg-[var(--glass-tab-bg)] pointer-coarse:min-h-10"
+        className="min-h-8 w-28 rounded-md border-[var(--glass-border-subtle)] bg-transparent px-2.5 text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--glass-tab-bg)] pointer-coarse:min-h-10"
         contentClassName="w-28"
         triggerProps={{ "data-appearance-select": name }}
         contentProps={{ "data-appearance-menu": name }}
@@ -54,7 +54,7 @@ export function AppearancePreferences({
   const { t, i18n } = useTranslation(["layout", "common"]);
   return (
     <fieldset className="min-w-0" data-appearance-preferences>
-      <legend className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]/85">
+      <legend className="px-2 pb-1.5 text-xs font-medium text-[var(--color-text-tertiary)]">
         {t("appearanceSection")}
       </legend>
       <AppearanceSelect<Theme>

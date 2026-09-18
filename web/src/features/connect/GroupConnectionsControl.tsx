@@ -300,7 +300,7 @@ function AccountGroupConnectionsPanel({
         </p>
       )}
 
-      {state !== "not_linked" && (headline || value?.checked_at) && (
+      {state !== "not_linked" && (
         <section className="rounded-xl border border-[var(--glass-border-subtle)]">
           <div className="flex items-start justify-between gap-3 px-4 py-3">
             <div
@@ -363,7 +363,7 @@ function AccountGroupConnectionsPanel({
                             : "groupConnections.connected",
                         )}
                       </p>
-                      <code className="block break-all text-[11px] text-[var(--color-text-tertiary)]">
+                      <code className="block break-all text-xs text-[var(--color-text-tertiary)]">
                         {peer.group_id}
                       </code>
                     </div>

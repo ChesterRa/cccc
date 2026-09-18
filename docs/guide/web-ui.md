@@ -50,18 +50,18 @@ Saving or resetting one Guidance document updates that document without reloadin
 editor; **Discard changes** remains explicit.
 
 The **Group status button** combines the status dot with run controls, without a dropdown arrow.
-When space allows, the header also shows the state text; narrow headers and expanded sidebar
-rows use a compact button. Click it to
-choose an action for that exact Group, without switching views. **Start Group** starts enabled
+When space allows, the header also shows the state text; narrow headers keep a compact button.
+The sidebar keeps a passive status dot and places run actions in each Group’s **⋮** menu
+and context menu. These actions target that exact Group without switching views. **Start Group** starts enabled
 Agents. **Pause message delivery** pauses CCCC delivery; work already in progress may continue.
 **Resume running** resumes delivery, starting enabled Agents if none are running. **Stop Group**
-stops running Agents while preserving their enabled settings. Pending operations show progress
-on the affected Group and prevent duplicate submissions. Read-only views retain passive status
+stops running Agents while preserving their enabled settings. Pending operations disable run and
+delete menu actions to prevent duplicate submissions. Read-only views retain passive status
 indicators. On mobile, use the same header control; collapsed sidebar icons remain navigation.
 
 Use **Messages / Terminals** in the Group header to switch the current Group's work view.
 On narrow headers, the view icon switches between these views. Presentation also opens from
-the header, beside **Files** on desktop, with its own update indicator. Files and Presentation
+the header through the bookmark icon, beside the **Files** folder icon on desktop, with its own update indicator. Tooltips and accessible names identify these controls. View, search and context controls align with the main work area as the side panel resizes. Files and Presentation
 share one side column: selecting the other swaps panels; selecting the active one closes it.
 Switching views only replaces the history area; the message composer stays in place.
 Each Group remembers its view and terminal page in this browser, including after a page reload. Message drafts and

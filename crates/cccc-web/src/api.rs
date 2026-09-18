@@ -21,6 +21,11 @@ impl std::fmt::Display for ApiError {
 }
 
 impl ApiError {
+    pub(crate) fn with_details(mut self, details: Value) -> Self {
+        self.details = details;
+        self
+    }
+
     pub fn bad(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,

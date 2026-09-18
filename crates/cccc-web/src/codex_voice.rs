@@ -23,6 +23,7 @@ mod sessions_lifecycle;
 mod sessions_start;
 #[cfg(all(test, unix))]
 mod socket_tests;
+pub(crate) mod start_error;
 #[cfg(test)]
 mod tests;
 

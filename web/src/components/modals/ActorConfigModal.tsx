@@ -33,6 +33,7 @@ import {
   emptyActorSecretChanges,
   normalizeLoadedActorSecretKeys,
   type ActorSecretChanges,
+  type ActorSecretSaveChanges,
 } from "./actorSecretManagerModel";
 import { ModalFrame } from "./ModalFrame";
 
@@ -70,7 +71,9 @@ interface ActorConfigBaseProps {
   actorProfiles: ActorProfile[];
   actorProfilesBusy: boolean;
   onRequestActorProfiles?: () => Promise<void> | void;
-  onSaveAsProfile: () => Promise<SaveActorProfileResult | void> | void;
+  onSaveAsProfile: (
+    secrets?: ActorSecretSaveChanges,
+  ) => Promise<SaveActorProfileResult | void> | void;
   onCancel: () => void;
 }
 
@@ -1037,7 +1040,7 @@ function EditActorConfigModal({
     setSecretsError("");
     setLocalNotice("");
     try {
-      const result = await onSaveAsProfile();
+      const result = await onSaveAsProfile(buildActorSecretSaveChanges(secretChanges));
       const profileId = String(result?.profileId || "").trim();
       if (profileId && result?.useNow) {
         setPendingConvertToCustom(false);

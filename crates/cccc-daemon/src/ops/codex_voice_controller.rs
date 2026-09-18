@@ -22,8 +22,9 @@ use lease::CallLease;
 use projection::CallState;
 pub use projection::FinalProjection;
 pub use provider::{
-    DEFAULT_REALTIME_VOICE, REALTIME_VOICES, RealtimeCallConfig, create_realtime_answer,
-    realtime_greeting_commands, realtime_notice_commands, validate_realtime_voice,
+    DEFAULT_REALTIME_VOICE, REALTIME_VOICES, RealtimeCallConfig, RealtimeCallError,
+    create_realtime_answer, realtime_greeting_commands, realtime_notice_commands,
+    validate_realtime_voice,
 };
 
 /// One globally scoped, resumable Codex analysis runtime behind the Voice surface.

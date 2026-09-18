@@ -1,4 +1,4 @@
-use cccc_contracts::{ActorRuntime, DaemonRequest, GroupState};
+use cccc_contracts::{DaemonRequest, GroupState};
 use cccc_core::group::AUTOMATION_TIMING_KEYS;
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, Registry, active, permissions};
 use serde_json::{Map, Value, json};
@@ -72,24 +72,32 @@ fn settle_old_delete(
     deleted: std::io::Result<bool>,
 ) -> Option<String> {
     let error = deleted.err()?;
-    let holds_web_model = old
-        .actors
-        .iter()
-        .any(|actor| actor.runtime == ActorRuntime::WebModel);
     // A Group whose directory is already gone must not be resurrected by mutate.
-    if !holds_web_model || store.load(&old.group_id).is_err() {
+    if store.load(&old.group_id).is_err() {
         return Some(error.to_string());
     }
-    let released = store.mutate(&old.group_id, |document| {
-        document
-            .actors
-            .retain(|actor| actor.runtime != ActorRuntime::WebModel);
-        Ok(())
-    });
+    let released = (|| -> std::io::Result<bool> {
+        let profiles = cccc_core::profiles::ProfileStore::new(store.home().clone())?;
+        let mut retired = Vec::new();
+        for actor in &old.actors {
+            if cccc_core::actors::reserves_web_model(&profiles, actor)? {
+                retired.push(actor.id.clone());
+            }
+        }
+        if retired.is_empty() {
+            return Ok(false);
+        }
+        store.mutate(&old.group_id, |document| {
+            document.actors.retain(|actor| !retired.contains(&actor.id));
+            Ok(())
+        })?;
+        Ok(true)
+    })();
     Some(match released {
-        Ok(()) => format!(
+        Ok(true) => format!(
             "{error}; removed its ChatGPT Web Model actor because the replacement now holds it"
         ),
+        Ok(false) => error.to_string(),
         Err(release) => format!("{error}; could not remove its ChatGPT Web Model actor: {release}"),
     })
 }
@@ -300,7 +308,7 @@ mod settle_old_delete_tests {
         let old = store
             .mutate(&created.group_id, |document| {
                 let mut actor = Actor::new("web");
-                actor.runtime = ActorRuntime::WebModel;
+                actor.runtime = cccc_contracts::ActorRuntime::WebModel;
                 document.actors.push(actor);
                 document.actors.push(Actor::new("peer"));
                 Ok(document.clone())
@@ -333,6 +341,37 @@ mod settle_old_delete_tests {
             .map(|actor| actor.id.clone())
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["peer".to_owned()]);
+    }
+
+    #[test]
+    fn an_undeleted_group_releases_a_pending_profile_owner() {
+        let (_temp, store, old) = home_with_web_model_group();
+        let profiles =
+            cccc_core::profiles::ProfileStore::new(store.home().clone()).expect("profiles");
+        profiles
+            .upsert(
+                json!({"id":"pending","runtime":"web_model"})
+                    .as_object()
+                    .expect("profile object")
+                    .clone(),
+                None,
+            )
+            .expect("profile");
+        let old = store
+            .mutate(&old.group_id, |document| {
+                document.actors[0].runtime = cccc_contracts::ActorRuntime::Codex;
+                document.actors[0].profile_id = "pending".into();
+                Ok(document.clone())
+            })
+            .expect("pending actor");
+        let message = settle_old_delete(&store, &old, Err(std::io::Error::other("injected")))
+            .expect("reported");
+        assert!(
+            message.contains("removed its ChatGPT Web Model actor"),
+            "{message}"
+        );
+        assert_eq!(store.load(&old.group_id).expect("old").actors.len(), 1);
+        assert_eq!(store.load(&old.group_id).expect("old").actors[0].id, "peer");
     }
 
     #[test]

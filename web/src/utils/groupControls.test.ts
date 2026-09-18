@@ -5,7 +5,11 @@ describe("getGroupMenuControls", () => {
   it("offers pause while running, resume while paused or idle, launch otherwise", () => {
     expect(getGroupMenuControls("run").map((c) => c.control)).toEqual(["pause", "stop"]);
     expect(getGroupMenuControls("paused").map((c) => c.control)).toEqual(["activate", "stop"]);
-    expect(getGroupMenuControls("idle").map((c) => c.control)).toEqual(["activate", "stop"]);
+    expect(getGroupMenuControls("idle").map((c) => c.control)).toEqual([
+      "activate",
+      "pause",
+      "stop",
+    ]);
     expect(getGroupMenuControls("stop").map((c) => c.control)).toEqual(["launch"]);
     expect(getGroupMenuControls(null).map((c) => c.control)).toEqual(["launch", "stop"]);
   });

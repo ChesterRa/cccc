@@ -1,3 +1,4 @@
+import { useUIStore } from "../../stores/useUIStore";
 import { groupConnectionCount } from "../../features/connect/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
@@ -83,6 +84,7 @@ export function GroupSidebar({
   onDeleteGroup,
 }: GroupSidebarProps) {
   const { t } = useTranslation("layout");
+  const controlsBusy = useUIStore((state) => state.busy.startsWith("group-"));
   const branding = useBrandingStore((s) => s.branding);
   const logoSrc = resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark);
   const sidebarRef = useRef<HTMLElement | null>(null);
@@ -170,11 +172,14 @@ export function GroupSidebar({
     (group: GroupMeta) => {
       if (!onControlGroup || readOnly) return [];
       const gid = String(group.group_id || "");
-      return groupRunMenuActions(getGroupStatusFromSource(group).key, t, (control) =>
-        onControlGroup(gid, control),
+      return groupRunMenuActions(
+        getGroupStatusFromSource(group).key,
+        t,
+        (control) => onControlGroup(gid, control),
+        controlsBusy,
       );
     },
-    [onControlGroup, readOnly, t],
+    [onControlGroup, readOnly, t, controlsBusy],
   );
 
   const trailingActionsFor = useCallback(
@@ -184,6 +189,7 @@ export function GroupSidebar({
       return [
         {
           label: t("deleteGroup"),
+          disabled: controlsBusy,
           icon: <Trash2 size={15} />,
           tone: "danger" as const,
           section: "danger",
@@ -191,7 +197,7 @@ export function GroupSidebar({
         },
       ];
     },
-    [onDeleteGroup, readOnly, t],
+    [onDeleteGroup, readOnly, t, controlsBusy],
   );
 
   const renderGroupList = useCallback(
@@ -410,11 +416,11 @@ export function GroupSidebar({
                   : undefined
               }
             >
-              <div className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]/85">
+              <div className="shrink-0 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]">
                 {t("workingGroups")}
               </div>
               {connect?.ownInstance && (
-                <span className="min-w-0 flex-1 truncate text-right text-[10px] text-[var(--color-text-tertiary)]/70">
+                <span className="min-w-0 flex-1 truncate text-right text-xs text-[var(--color-text-secondary)]">
                   {instanceName(connect.ownInstance, connect.instances)}
                 </span>
               )}
@@ -434,10 +440,10 @@ export function GroupSidebar({
                 aria-expanded={archivedPanelOpen}
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[var(--color-text-tertiary)]">
+                  <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[var(--color-text-tertiary)]">
                     {t("archivedGroups")}
                   </span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
+                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
                     {archivedGroups.length}
                   </span>
                 </div>

@@ -74,6 +74,12 @@ else:
 PY
 fi
 case " $* " in
+  *" stdio "*)
+    printf '%s' "$$" > "$(dirname "$0")/probe-pid"
+    if [ "$AUDIT_MARKER" = profile ]; then touch "$(dirname "$0")/profile-env-applied"; fi
+    ;;
+esac
+case " $* " in
   *" leader "*) exec sleep 60 ;;
 esac
 while IFS= read -r line; do
@@ -332,6 +338,132 @@ fn managed_voice_secretary_rejected_start_restores_settings_actor_and_secrets() 
                     false
                 );
             }
+        },
+    );
+}
+
+#[test]
+fn managed_actor_profile_runtime_transitions_stop_the_registered_backend() {
+    isolated(
+        "managed_actor_profile_runtime_transitions_stop_the_registered_backend",
+        || {
+            let fixture = ManagedSecretary::new();
+            GroupStore::new(fixture.home.clone())
+                .expect("store")
+                .mutate(&fixture.group_id, |doc| {
+                    doc.actors[0].id = "lead-1".into();
+                    Ok(())
+                })
+                .expect("fixture actor id");
+            struct Cleanup<'a>(&'a ManagedSecretary);
+            impl Drop for Cleanup<'_> {
+                fn drop(&mut self) {
+                    let _ = call(
+                        &self.0.home,
+                        "group_stop",
+                        json!({"group_id":self.0.group_id}),
+                    );
+                }
+            }
+            let _cleanup = Cleanup(&fixture);
+            let base = || json!({"group_id":fixture.group_id,"actor_id":"lead-1","by":"user"});
+            let alive = |pid: u32| {
+                std::process::Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .expect("kill probe")
+                    .success()
+            };
+            let managed_pid = || {
+                std::fs::read_to_string(fixture._temp.path().join("probe-pid"))
+                    .expect("pid")
+                    .parse::<u32>()
+                    .expect("pid number")
+            };
+            let command = json!([fixture._temp.path().join("grok").to_string_lossy()]);
+            ok(
+                &fixture.home,
+                "actor_env_private_update",
+                json!({"group_id":fixture.group_id,"actor_id":"lead-1","set":{"AUDIT_MARKER":"old"}}),
+            );
+            ok(
+                &fixture.home,
+                "actor_profile_upsert",
+                json!({"profile_id":"managed","name":"managed","runtime":"grok","command":command}),
+            );
+            ok(
+                &fixture.home,
+                "actor_profile_secret_update",
+                json!({"profile_id":"managed","set":{"AUDIT_MARKER":"profile"}}),
+            );
+            ok(
+                &fixture.home,
+                "actor_update",
+                json!({"group_id":fixture.group_id,"actor_id":"lead-1","profile_id":"managed","capability_autoload":[]}),
+            );
+            ok(&fixture.home, "actor_start", base());
+            let old_pid = managed_pid();
+            assert!(alive(old_pid));
+            assert!(
+                fixture._temp.path().join("profile-env-applied").exists(),
+                "launch uses Profile environment"
+            );
+            ok(
+                &fixture.home,
+                "actor_update",
+                json!({"group_id":fixture.group_id,"actor_id":"lead-1","profile_action":"convert_to_custom","capability_autoload":[]}),
+            );
+            let use_pty = || {
+                ok(
+                    &fixture.home,
+                    "actor_update",
+                    json!({"group_id":fixture.group_id,"actor_id":"lead-1","runtime":"custom","command":["sleep","60"]}),
+                )
+            };
+            use_pty();
+            ok(&fixture.home, "actor_start", base());
+            assert_eq!(
+                managed_pid(),
+                old_pid,
+                "start is idempotent until explicit restart"
+            );
+            assert!(alive(old_pid));
+            ok(&fixture.home, "actor_restart", base());
+            assert!(
+                !alive(old_pid),
+                "old managed process must be gone before PTY startup"
+            );
+            let pty = cccc_runtime::status(&fixture.group_id, "lead-1").expect("PTY");
+            assert!(pty.running);
+            ok(
+                &fixture.home,
+                "actor_update",
+                json!({"group_id":fixture.group_id,"actor_id":"lead-1","profile_id":"managed"}),
+            );
+            ok(&fixture.home, "actor_start", base());
+            assert_eq!(
+                cccc_runtime::status(&fixture.group_id, "lead-1")
+                    .expect("retained PTY")
+                    .pid,
+                pty.pid
+            );
+            ok(&fixture.home, "actor_restart", base());
+            assert!(!alive(pty.pid.expect("PTY pid")));
+            let second = managed_pid();
+            assert!(alive(second));
+            ok(
+                &fixture.home,
+                "actor_update",
+                json!({"group_id":fixture.group_id,"actor_id":"lead-1","profile_action":"convert_to_custom"}),
+            );
+            use_pty();
+            ok(&fixture.home, "actor_stop", base());
+            assert!(
+                !alive(second),
+                "stop also follows actual ownership after saving a backend switch"
+            );
         },
     );
 }

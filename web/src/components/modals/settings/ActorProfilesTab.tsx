@@ -830,6 +830,14 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         return;
       }
 
+      // Configuration is committed even if a subsequent secret operation fails.
+      // Keep the draft, but retry against this exact Profile and revision.
+      setEditor((current) => ({
+        ...current,
+        id: profileId,
+        revision: Number(profile?.revision || 0),
+      }));
+
       if (copyFromProfileId && copyFromProfileId !== profileId) {
         const copyResp = await api.copyProfilePrivateEnvFromProfile(
           profileId,
@@ -842,6 +850,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         }
       }
 
+      if (copyFromProfileId) setDuplicateSourceProfileId("");
       if (hasSecretOps) {
         const secretResp = await api.updateProfilePrivateEnv(
           profileId,

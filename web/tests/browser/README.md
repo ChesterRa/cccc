@@ -38,3 +38,22 @@ The other Python/Shell scripts are focused diagnostic probes and larger historic
 matrices. They remain useful for their documented scenarios; they are not all CI
 entry points. Add durable critical regressions to `gates/` instead of copying browser
 launch, CDP connection and cleanup code into another one-off script.
+
+## Actor configuration through real ports
+
+Linux CI also runs `actor-config.py` with an isolated `CCCC_HOME`, owned daemon/Web
+processes and a fresh browser. It uses the actual app and HTTP/IPC implementations;
+only injected secret-save failures are synthetic. No Actors start and no provider
+account is used. This complements the component fixtures above, which cannot catch
+Web/daemon contract mismatches.
+
+```sh
+npm -C web run build
+cargo build --locked -p cccc --bin cccc
+python3 web/tests/browser/actor-config.py --binary target/debug/cccc
+# The same check accepts target/release/cccc after a package build.
+```
+
+The test covers linked Actor rename/Profile switch/conversion, exact command
+arguments, secret drafts, partial-save retry, and duplicate Profile prevention.
+Failure screenshots and traces are retained under `web/test-results/actor-config/`.

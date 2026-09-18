@@ -204,7 +204,7 @@ export function GroupWorkArea({
         ? createPortal(
             <>
               <div
-                className="hidden shrink-0 items-center rounded-lg bg-[var(--glass-tab-bg)] p-0.5 @min-[600px]/group-header:inline-flex"
+                className="hidden shrink-0 items-center rounded-lg bg-[var(--glass-tab-bg)] p-0.5 @min-[600px]/group-work-header:inline-flex"
                 role="group"
                 aria-label={t("workView.label")}
                 data-group-view-switch
@@ -224,7 +224,7 @@ export function GroupWorkArea({
               </div>
               <button
                 type="button"
-                className={`${buttonClass} @min-[600px]/group-header:hidden`}
+                className={`${buttonClass} @min-[600px]/group-work-header:hidden`}
                 data-group-view-toggle
                 aria-label={t("workView.switchTo", {
                   view: t(tiled ? "workView.messages" : "workView.terminals"),

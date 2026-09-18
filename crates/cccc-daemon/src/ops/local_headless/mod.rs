@@ -17,6 +17,7 @@ pub(crate) use events::{
     append as append_event, append_with_dedupe as append_event_with_dedupe,
     contains_dedupe as contains_event_dedupe,
 };
+pub(crate) use supervisor::registered_running;
 
 use cccc_core::HomeLayout;
 use serde::Serialize;

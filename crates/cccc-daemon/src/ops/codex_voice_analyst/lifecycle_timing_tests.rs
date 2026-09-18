@@ -81,7 +81,7 @@ async fn real_rpc_path_reports_success_error_and_timeout_without_payloads() {
         .await
         .expect("complete connect async in fixture")
         .0;
-    let client = ProtocolClient::new(socket, "probe".into());
+    let client = ProtocolClient::new(socket, "probe".into(), None);
     let capture = Capture::default();
     let _guard = tracing::subscriber::set_default(capture.clone());
     let timeout = Duration::from_secs(1);

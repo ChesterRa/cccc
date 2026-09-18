@@ -260,6 +260,41 @@ fn assert_denied(response: DaemonResponse) {
 }
 
 #[test]
+fn legacy_profile_without_runtime_does_not_block_web_model_creation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    cccc_core::fs::write_json(
+        &home.root().join("profiles.json"),
+        &json!({"profiles":{"legacy":{"id":"legacy","name":"Legacy","env":{}}}}),
+    )
+    .expect("legacy fixture");
+    let gid =
+        call(&home, "group_create", json!({"title":"legacy profile"})).result["group"]["group_id"]
+            .clone();
+    let linked = call(
+        &home,
+        "actor_add",
+        json!({"group_id":gid,"actor_id":"legacy-agent","profile_id":"legacy","by":"user"}),
+    );
+    assert_eq!(linked.result["actor"]["runtime"], "codex");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":gid,"actor_id":"web","runtime":"web_model","by":"user"}),
+    );
+    let duplicate = raw_call(
+        &home,
+        "actor_add",
+        json!({"group_id":gid,"actor_id":"second-web","runtime":"web_model","by":"user"}),
+    );
+    assert_eq!(
+        duplicate.error.expect("second Web Model rejected").code,
+        "chatgpt_web_model_singleton"
+    );
+}
+
+#[test]
 fn profile_switching_to_web_model_respects_the_singleton() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -315,6 +350,110 @@ fn profile_switching_to_web_model_respects_the_singleton() {
         json!({"group_id":group_b,"actor_id":"web","by":"user"}),
     );
     assert!(upsert("web_model").ok, "one linked actor and a free slot");
+    let duplicate = raw_call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_b,"actor_id":"second-web","runtime":"web_model","by":"user"}),
+    );
+    assert_eq!(
+        duplicate
+            .error
+            .expect("profile runtime owns the slot even before restart")
+            .code,
+        "chatgpt_web_model_singleton"
+    );
+}
+
+#[test]
+fn linked_actor_edits_and_snapshots_follow_profile_ownership() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let gid = call(
+        &home,
+        "group_create",
+        json!({"title":"profile transitions"}),
+    )
+    .result["group"]["group_id"]
+        .clone();
+    for id in ["source", "target", "copy"] {
+        call(
+            &home,
+            "actor_profile_upsert",
+            json!({"profile_id":id,"name":id,"runtime":"codex"}),
+        );
+    }
+    call(
+        &home,
+        "actor_profile_secret_update",
+        json!({"profile_id":"target","set":{"PROFILE_ONLY":"synthetic","SHARED":"profile"}}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":gid,"actor_id":"agent","enabled":false,
+        "env_private":{"OLD_ONLY":"synthetic","SHARED":"old"},"by":"user"}),
+    );
+    call(
+        &home,
+        "actor_update",
+        json!({"group_id":gid,"actor_id":"agent","profile_id":"source"}),
+    );
+    let renamed = call(
+        &home,
+        "actor_update",
+        json!({"group_id":gid,"actor_id":"agent",
+        "title":"Renamed","capability_autoload":[]}),
+    );
+    assert_eq!(renamed.result["actor"]["title"], "Renamed");
+    let linked = call(
+        &home,
+        "actor_update",
+        json!({"group_id":gid,"actor_id":"agent",
+        "profile_id":"target","capability_autoload":[]}),
+    );
+    assert_eq!(linked.result["actor"]["profile_id"], "target");
+    let denied = raw_call(
+        &home,
+        "actor_update",
+        json!({"group_id":gid,"actor_id":"agent","runtime":"custom"}),
+    );
+    assert_eq!(
+        denied.error.expect("readonly").code,
+        "actor_profile_linked_readonly"
+    );
+    call(
+        &home,
+        "actor_profile_copy_actor_secrets",
+        json!({"profile_id":"copy","group_id":gid,"actor_id":"agent"}),
+    );
+    let profiles = cccc_core::profiles::ProfileStore::new(home.clone()).expect("profiles");
+    let expected = profiles.secret_values("target").expect("target secrets");
+    assert_eq!(
+        profiles.secret_values("copy").expect("copied secrets"),
+        expected
+    );
+    let converted = call(
+        &home,
+        "actor_update",
+        json!({"group_id":gid,"actor_id":"agent",
+        "profile_action":"convert_to_custom","capability_autoload":[]}),
+    );
+    assert_eq!(converted.result["actor"]["profile_id"], "");
+    call(
+        &home,
+        "actor_profile_copy_actor_secrets",
+        json!({"profile_id":"copy","group_id":gid,"actor_id":"agent"}),
+    );
+    assert_eq!(
+        profiles.secret_values("copy").expect("snapshot secrets"),
+        expected
+    );
+    let keys = call(
+        &home,
+        "actor_env_private_keys",
+        json!({"group_id":gid,"actor_id":"agent"}),
+    );
+    assert_eq!(keys.result["keys"], json!(["PROFILE_ONLY", "SHARED"]));
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {

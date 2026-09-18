@@ -49,6 +49,7 @@ export function useCodexVoiceAnalystSettings(
   const [profileSaving, setProfileSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const profileSaveRef = useRef<{ profile: ActorProfile; copied: boolean } | null>(null);
   const dirty = useRef(false);
   const loadInFlight = useRef(false);
 
@@ -78,6 +79,9 @@ export function useCodexVoiceAnalystSettings(
           listActorProfiles(),
         ]);
         if (settingsResponse.ok) {
+          // Secret values are write-only. A fresh source snapshot invalidates
+          // the copy checkpoint, but keeps the destination Profile for retry.
+          if (profileSaveRef.current) profileSaveRef.current.copied = false;
           const nextSettings = normalizeVoiceAnalystSettings(settingsResponse.result.settings);
           setSettings(nextSettings);
           setLoadedSettings(nextSettings);
@@ -179,6 +183,7 @@ export function useCodexVoiceAnalystSettings(
     setEnvironmentRefreshing(true);
     const response = await fetchCodexVoiceAnalystSettings();
     if (response.ok) {
+      if (profileSaveRef.current) profileSaveRef.current.copied = false;
       if (settingsLoadFailed) {
         const nextSettings = normalizeVoiceAnalystSettings(response.result.settings);
         setSettings(nextSettings);
@@ -230,6 +235,8 @@ export function useCodexVoiceAnalystSettings(
     }
     const response = outcome.response;
     if (response.ok) {
+      // The source changed even if the subsequent reload fails.
+      if (profileSaveRef.current) profileSaveRef.current.copied = false;
       setSaved(
         response.result.discarded_work
           ? t("codexVoiceAnalystSettingsDiscarded")
@@ -275,19 +282,25 @@ export function useCodexVoiceAnalystSettings(
 
   const saveAsProfile = async () => {
     if (mode !== "custom" || editingDisabled || settingsLoadFailed) return;
-    const name = window.prompt(tActors("profileNamePrompt"), "Voice Analyst");
+    const name =
+      profileSaveRef.current?.profile.name ||
+      window.prompt(tActors("profileNamePrompt"), "Voice Analyst");
     if (!name?.trim()) return;
     setProfileSaving(true);
     setError("");
     setSaved("");
     try {
-      const response = await upsertActorProfile({
-        name: name.trim(),
-        runtime: settings.runtime,
-        command: settings.command.trim(),
-        submit: "enter",
-        env: {},
-      });
+      const response = await upsertActorProfile(
+        {
+          id: profileSaveRef.current?.profile.id,
+          name: name.trim(),
+          runtime: settings.runtime,
+          command: settings.command.trim(),
+          submit: "enter",
+          env: {},
+        },
+        profileSaveRef.current?.profile.revision,
+      );
       if (!response.ok) {
         setError(t("codexVoiceAnalystProfileSaveFailed", { detail: response.error.message }));
         return;
@@ -298,10 +311,14 @@ export function useCodexVoiceAnalystSettings(
         setError(t("codexVoiceAnalystProfileSaveFailed", { detail: "profile id is missing" }));
         return;
       }
-      const copyResponse = await copyVoiceAnalystPrivateEnvToProfile(profileId);
-      if (!copyResponse.ok) {
-        setError(t("codexVoiceAnalystProfileSaveFailed", { detail: copyResponse.error.message }));
-        return;
+      profileSaveRef.current = { profile, copied: profileSaveRef.current?.copied || false };
+      if (!profileSaveRef.current.copied) {
+        const copyResponse = await copyVoiceAnalystPrivateEnvToProfile(profileId);
+        if (!copyResponse.ok) {
+          setError(t("codexVoiceAnalystProfileSaveFailed", { detail: copyResponse.error.message }));
+          return;
+        }
+        profileSaveRef.current.copied = true;
       }
       if (
         environmentSaveChanges.clear ||
@@ -328,6 +345,7 @@ export function useCodexVoiceAnalystSettings(
         ),
         profile,
       ]);
+      profileSaveRef.current = null;
       setMode("profile");
       setSettings((current) => bindVoiceAnalystProfile(current, profile));
       setEnvironmentChangesState(emptyActorSecretChanges());
@@ -348,6 +366,7 @@ export function useCodexVoiceAnalystSettings(
   };
 
   const discard = () => {
+    profileSaveRef.current = null;
     setSettings(loadedSettings);
     setMode(loadedSettings.profile_id ? "profile" : "custom");
     setEnvironmentChangesState(emptyActorSecretChanges());

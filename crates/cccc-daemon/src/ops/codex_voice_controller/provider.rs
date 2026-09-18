@@ -5,6 +5,28 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 const MAX_REALTIME_SDP_BYTES: usize = 256 * 1024;
+
+/// Safe categories for callers; never carry credentials or provider response text.
+#[derive(Debug)]
+pub enum RealtimeCallError {
+    Credentials,
+    HttpStatus(u16),
+}
+
+impl std::fmt::Display for RealtimeCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Credentials => f.write_str("Realtime Voice ChatGPT credentials are unavailable"),
+            Self::HttpStatus(status) => write!(f, "Realtime Voice returned HTTP {status}"),
+        }
+    }
+}
+
+impl std::error::Error for RealtimeCallError {}
+
+#[cfg(test)]
+#[path = "provider_start_tests.rs"]
+mod start_tests;
 pub(super) const REALTIME_INSTRUCTIONS: &str = r#"# Role
 You are the conversational surface of one CCCC assistant. Voice owns the live conversation. The connected Voice Analyst supplies repository inspection, current project and CCCC facts, tools, research, substantial reasoning, and durable coordination. Never mention a backend, intermediary, delegation, or separate assistant.
 
@@ -95,22 +117,20 @@ pub fn validate_realtime_voice(value: &str) -> Result<String> {
 /// the Codex access token to the browser. The returned value is answer SDP.
 pub async fn create_realtime_answer(config: &RealtimeCallConfig, offer: &str) -> Result<String> {
     let offer = validated_realtime_offer(offer)?;
-    let auth: Value =
-        serde_json::from_slice(&tokio::fs::read(&config.auth_path).await.with_context(|| {
-            format!(
-                "read Codex authentication from {}",
-                config.auth_path.display()
-            )
-        })?)
-        .context("parse Codex authentication")?;
+    let auth: Value = serde_json::from_slice(
+        &tokio::fs::read(&config.auth_path)
+            .await
+            .context(RealtimeCallError::Credentials)?,
+    )
+    .context(RealtimeCallError::Credentials)?;
     let token = auth["tokens"]["access_token"]
         .as_str()
         .filter(|value| !value.is_empty())
-        .context("Codex ChatGPT access token is unavailable; run `codex login`")?;
+        .context(RealtimeCallError::Credentials)?;
     let account_id = auth["tokens"]["account_id"]
         .as_str()
         .filter(|value| !value.is_empty())
-        .context("Codex ChatGPT account id is unavailable; run `codex login`")?;
+        .context(RealtimeCallError::Credentials)?;
     let endpoint = format!(
         "{}/realtime/calls?intent=quicksilver&architecture=avas",
         config.base_url.trim_end_matches('/')
@@ -138,6 +158,11 @@ pub async fn create_realtime_answer(config: &RealtimeCallConfig, offer: &str) ->
         .await
         .context("create Codex Voice call")?;
     let status = response.status();
+    if status.as_u16() != 201 {
+        // An upstream explanation can echo credentials, SDP or user content.
+        // Status is sufficient to classify this rejected startup safely.
+        return Err(RealtimeCallError::HttpStatus(status.as_u16()).into());
+    }
     if response
         .content_length()
         .is_some_and(|length| length > MAX_REALTIME_SDP_BYTES as u64)
@@ -157,12 +182,6 @@ pub async fn create_realtime_answer(config: &RealtimeCallConfig, offer: &str) ->
         body.extend_from_slice(&chunk);
     }
     let body = String::from_utf8(body).context("Codex Voice answer is not UTF-8")?;
-    if status.as_u16() != 201 {
-        bail!(
-            "Codex Voice call failed with {status}: {}",
-            body.chars().take(500).collect::<String>()
-        );
-    }
     Ok(body)
 }
 

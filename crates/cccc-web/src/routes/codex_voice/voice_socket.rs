@@ -6,7 +6,7 @@ use cccc_daemon::experimental_codex_voice::{
 use serde_json::{Value, json};
 use std::fmt::Display;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -71,6 +71,7 @@ pub(super) async fn serve(
     attachment: crate::codex_voice::SessionAttachment,
     principal: crate::auth::Principal,
 ) {
+    let started = Instant::now();
     let session = Arc::clone(attachment.session());
     let info = session.info();
     let generation = info.generation.clone();
@@ -91,12 +92,26 @@ pub(super) async fn serve(
     )
     .await
     {
+        log_disconnect(
+            &generation,
+            call.analyst().generation(),
+            "ready_write_failed",
+            started,
+            None,
+        );
         lease_heartbeat.stop().await;
         finish(&state, attachment).await;
         return;
     }
     for command in realtime_greeting_commands() {
         if !send_provider_command(&mut socket, command).await {
+            log_disconnect(
+                &generation,
+                call.analyst().generation(),
+                "greeting_write_failed",
+                started,
+                None,
+            );
             lease_heartbeat.stop().await;
             finish(&state, attachment).await;
             return;
@@ -108,15 +123,17 @@ pub(super) async fn serve(
         state.ledger_events.clone(),
         principal.clone(),
     );
+    let mut end_reason = "browser_write_failed";
+    let mut close_code = None;
     'session: loop {
         tokio::select! {
             changed = notification_status.changed() => {
-                if changed.is_err() { break; }
+                if changed.is_err() { end_reason = "notification_stream_closed"; break; }
                 let paused = *notification_status.borrow_and_update();
                 if !send_json(&mut socket, json!({"type":"notification_status", "paused":paused})).await { break; }
             }
             _ = notification_output.tick() => {
-                if !principal.current_admin(&state.home).unwrap_or(false) { break; }
+                if !principal.current_admin(&state.home).unwrap_or(false) { end_reason = "authorization_lost"; break; }
                 match send_notification_results(&mut socket, &state.home, &generation).await {
                     Ok(()) => output_failed = false,
                     Err(error) if !output_failed => {
@@ -127,8 +144,9 @@ pub(super) async fn serve(
                     Err(_) => {}
                 }
             }
-            _ = shutdown.recv() => break,
+            _ = shutdown.recv() => { end_reason = "server_shutdown"; break; },
             error = lease_heartbeat.failed() => {
+                end_reason = "recording_lease_lost";
                 tracing::warn!(%error, "Codex Voice recording lease heartbeat failed");
                 let _ = send_error(&mut socket, "recording_lease_lost", "The Codex Voice recording lease was lost.").await;
                 break;
@@ -138,14 +156,23 @@ pub(super) async fn serve(
                 if !send_json(&mut socket, json!({"type":"heartbeat"})).await { break; }
             }
             browser = socket.recv() => {
-                if !principal.current_admin(&state.home).unwrap_or(false) { break; }
-                let Some(Ok(browser)) = browser else { break; };
+                if !principal.current_admin(&state.home).unwrap_or(false) { end_reason = "authorization_lost"; break; }
+                let browser = match browser {
+                    Some(Ok(browser)) => browser,
+                    Some(Err(_)) => { end_reason = "browser_read_failed"; break; },
+                    None => { end_reason = "browser_stream_ended"; break; },
+                };
                 let text = match browser {
                     Message::Text(text) => text,
-                    Message::Close(_) => break,
+                    Message::Close(frame) => {
+                        end_reason = "browser_close";
+                        close_code = frame.map(|frame| frame.code);
+                        break;
+                    },
                     _ => continue,
                 };
                 if text.len() > MAX_BROWSER_EVENT_BYTES {
+                    end_reason = "event_too_large";
                     let _ = send_error(&mut socket, "event_too_large", "Codex Voice browser event is oversized.").await;
                     break;
                 }
@@ -268,7 +295,7 @@ pub(super) async fn serve(
                     "heartbeat" => {
                         if !send_json(&mut socket, json!({"type":"heartbeat"})).await { break; }
                     }
-                    "stop" => break,
+                    "stop" => { end_reason = "client_stop"; break; },
                     _ => {
                         if !send_error(&mut socket, "invalid_event", "Unknown Codex Voice browser event.").await { break; }
                     }
@@ -296,6 +323,7 @@ pub(super) async fn serve(
                             },
                             Err(error) => {
                                 tracing::warn!(%error, "Voice Analyst progress projection failed");
+                                end_reason = "analyst_projection_failed";
                                 let _ = send_error(&mut socket, "analyst_projection_failed", "The Voice Analyst result could not be returned to Realtime Voice.").await;
                                 break;
                             }
@@ -328,6 +356,7 @@ pub(super) async fn serve(
                                 Ok(None) => {}
                                 Err(error) => {
                                     tracing::warn!(%error, "Voice Analyst final projection failed");
+                                    end_reason = "analyst_projection_failed";
                                     let _ = send_error(&mut socket, "analyst_projection_failed", "The Voice Analyst result could not be returned to Realtime Voice.").await;
                                     break;
                                 }
@@ -355,6 +384,7 @@ pub(super) async fn serve(
                     if !send_json(&mut socket, json!({"type":"analyst_terminal","status":status})).await { break; }
                 }
                 Ok(AnalystLifecycleEvent::NeedsAttention { code }) => {
+                    end_reason = "analyst_needs_attention";
                     let _ = send_error(
                         &mut socket, code,
                         "The Voice Analyst encountered an incompatible approval or protocol request.",
@@ -362,10 +392,12 @@ pub(super) async fn serve(
                     break;
                 }
                 Ok(AnalystLifecycleEvent::Disconnected) => {
+                    end_reason = "analyst_disconnected";
                     let _ = send_error(&mut socket, "analyst_disconnected", "The Voice Analyst disconnected.").await;
                     break;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    end_reason = "analyst_event_gap";
                     tracing::warn!(
                         skipped,
                         "Codex Voice WebSocket fell behind Analyst lifecycle; closing the unreplayable stream"
@@ -377,12 +409,37 @@ pub(super) async fn serve(
                     ).await;
                     break;
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => { end_reason = "analyst_stream_closed"; break; },
             }
         }
     }
+    log_disconnect(
+        &generation,
+        call.analyst().generation(),
+        end_reason,
+        started,
+        close_code,
+    );
     lease_heartbeat.stop().await;
     finish(&state, attachment).await;
+}
+
+fn log_disconnect(
+    generation: &str,
+    analyst_generation: &str,
+    code: &'static str,
+    started: Instant,
+    close_code: Option<u16>,
+) {
+    // One structural record per closed control stream, including normal closure,
+    // to distinguish browser loss from an earlier Analyst failure. Never log
+    // frame contents, peer close reasons, provider responses or credentials.
+    let diagnostic = json!({
+        "stage":"voice_control", "generation":generation, "analyst_generation":analyst_generation, "code":code,
+        "close_code":close_code, "elapsed_ms":started.elapsed().as_millis() as u64,
+        "time_unix_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
+    });
+    eprintln!("[cccc] Codex Voice control ended: {diagnostic}");
 }
 
 async fn finish(state: &AppState, attachment: crate::codex_voice::SessionAttachment) {

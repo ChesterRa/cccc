@@ -20,7 +20,8 @@ enum ForceExitReason {
     Deadline,
 }
 
-/// Escalate to OS process-tree termination without entering normal cleanup.
+/// Bound provider stop requests, then terminate owned process trees without
+/// entering normal cleanup or acquiring managed-session stop locks.
 pub(crate) async fn watch_for_interrupt(
     _home: Option<HomeLayout>,
     #[cfg(windows)] _detached_daemon: crate::detached_daemon_owner::SharedOwnedDetachedDaemon,
@@ -28,7 +29,7 @@ pub(crate) async fn watch_for_interrupt(
     if tokio::signal::ctrl_c().await.is_err() {
         return;
     }
-    eprintln!("Stopping CCCC... (press Ctrl-C again to stop immediately)");
+    eprintln!("Stopping CCCC... (press Ctrl-C again to force exit)");
 
     let reason = force_exit_reason(
         async {
@@ -39,7 +40,7 @@ pub(crate) async fn watch_for_interrupt(
     .await;
     match reason {
         ForceExitReason::SecondInterrupt => {
-            eprintln!("Second interrupt received; forcing CCCC to stop immediately");
+            eprintln!("Second interrupt received; forcing CCCC to stop");
         }
         ForceExitReason::Deadline => {
             eprintln!(

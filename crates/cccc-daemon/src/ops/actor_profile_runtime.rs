@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::dispatch::OpError;
 
-const CONTROLLED_FIELDS: &[&str] = &["runtime", "command", "submit", "env", "capability_autoload"];
+// Actor capability autoload is an independent, additive baseline, even when linked.
+const CONTROLLED_FIELDS: &[&str] = &["runtime", "command", "submit", "env"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityDefaults {

@@ -7,6 +7,7 @@ interface GroupMenuActionProps {
   icon?: ReactNode;
   /** Reserve the icon column so labels line up when siblings carry icons. */
   iconSlot?: boolean;
+  disabled?: boolean;
   tone?: "default" | "danger";
   onClick: () => void;
 }
@@ -15,6 +16,7 @@ export function GroupMenuAction({
   label,
   icon,
   iconSlot,
+  disabled,
   tone = "default",
   onClick,
 }: GroupMenuActionProps) {
@@ -24,6 +26,7 @@ export function GroupMenuAction({
       variant="ghost"
       size="sm"
       role="menuitem"
+      disabled={disabled}
       className={classNames(
         "w-full justify-start gap-2.5 text-left text-sm",
         tone === "danger"

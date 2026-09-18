@@ -494,7 +494,7 @@ const eventContainerRef = { current: null as HTMLDivElement | null };
 const contentRef = { current: null as HTMLDivElement | null };
 const chatAtBottomRef = { current: true };
 export function Fixture() {
-  const { groupRunControls } = useGroupActions();
+  const { handleGroupControl, handleDeleteGroup } = useGroupActions();
   const currentGroups = useGroupStore((state) => state.groups);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const groupId = useGroupStore((state) => state.selectedGroupId);
@@ -709,7 +709,8 @@ export function Fixture() {
   props.onOpenContext = () => probe.actions.push("onOpenContext");
   props.onOpenSearch = () => probe.actions.push("onOpenSearch");
   props.onStartGroup = () => probe.actions.push("onStartGroup");
-  props.groupRunControls = groupRunControls;
+  props.onControlGroup = handleGroupControl;
+  props.onDeleteGroup = handleDeleteGroup;
   for (const name of [
     "onToggleActorEnabled",
     "onRelaunchActor",

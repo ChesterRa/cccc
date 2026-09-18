@@ -24,9 +24,9 @@ pub use process::{DetachedDaemon, StartOutcome};
 pub use server::run;
 pub use server_lifecycle::stop_every_runtime;
 
-/// Best-effort stop requests for managed Actor sessions that are not owned
-/// process trees (Claude Agent View). Returns once every request was sent or
-/// failed; it never waits for the providers to confirm.
+/// Best-effort provider stop requests for managed Actor sessions registered in
+/// this process (Claude Agent View). This does not address a detached daemon
+/// or Voice Analyst, and never waits for provider job disappearance.
 pub async fn request_managed_session_stop() {
     ops::local_headless::kill_all_requests().await;
 }
@@ -47,9 +47,9 @@ pub mod experimental_codex_voice {
     pub use crate::ops::codex_voice_analyst::{LaunchConfig, TurnReceipt};
     pub use crate::ops::codex_voice_controller::{
         CodexVoiceAnalyst, CodexVoiceCall, DEFAULT_REALTIME_VOICE, FinalProjection,
-        ProviderDelegation, REALTIME_VOICES, RealtimeCallConfig, create_realtime_answer,
-        parse_provider_delegation, realtime_greeting_commands, realtime_notice_commands,
-        validate_realtime_voice,
+        ProviderDelegation, REALTIME_VOICES, RealtimeCallConfig, RealtimeCallError,
+        create_realtime_answer, parse_provider_delegation, realtime_greeting_commands,
+        realtime_notice_commands, validate_realtime_voice,
     };
     pub use crate::ops::codex_voice_lifecycle::{
         AnalystLifecycleEvent, AnalystTurnOrigin, VoiceDelegationAdmission,

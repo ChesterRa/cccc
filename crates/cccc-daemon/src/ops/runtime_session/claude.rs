@@ -2,7 +2,6 @@ use super::{
     command_fingerprint, model_from_command, read, resume_enabled, string, valid_session_id,
     workspace_path, write,
 };
-use crate::ops::codex_voice_analyst::{WorkerIdentity, reap_unreachable_worker};
 use cccc_contracts::utc_now;
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
@@ -48,20 +47,6 @@ pub fn prepare_managed(
     if !valid_session_id(&session_id) {
         return Ok(None);
     }
-    // A worker tree whose daemon is gone cannot be resumed; the conversation can.
-    // Reap it now so the fresh worker is not a second copy.
-    if let Some(worker) = recorded_worker(&document) {
-        match reap_unreachable_worker(environment, &worker) {
-            Ok(None) => {}
-            Ok(Some(_)) => {
-                document.remove("provider_worker_pid");
-                document.remove("provider_worker_started");
-            }
-            Err(error) => {
-                tracing::warn!(%error, %group_id, %actor_id, "could not check the recorded Claude worker");
-            }
-        }
-    }
     document.insert("last_resume_attempt_at".into(), json!(utc_now()));
     document.insert("updated_at".into(), json!(utc_now()));
     write(home, group_id, actor_id, &document)?;
@@ -78,7 +63,6 @@ pub fn record_managed(
     environment: &BTreeMap<String, String>,
     session_id: &str,
     resumed: bool,
-    worker: Option<&WorkerIdentity>,
 ) -> std::io::Result<()> {
     if !resume_enabled() {
         return Ok(());
@@ -125,22 +109,8 @@ pub fn record_managed(
         ("last_resume_error".into(), json!("")),
         ("failure_count".into(), json!(0)),
         ("updated_at".into(), json!(utc_now())),
-        ("provider_worker_pid".into(), json!(worker.map(|w| w.pid))),
-        (
-            "provider_worker_started".into(),
-            json!(worker.map(|w| w.started.as_str())),
-        ),
     ]);
     write(home, group_id, actor_id, &document)
-}
-
-fn recorded_worker(document: &Map<String, Value>) -> Option<WorkerIdentity> {
-    let pid = document
-        .get("provider_worker_pid")
-        .and_then(Value::as_u64)
-        .and_then(|pid| u32::try_from(pid).ok())?;
-    let started = string(document, "provider_worker_started");
-    (!started.is_empty()).then_some(WorkerIdentity { pid, started })
 }
 
 fn identity_fingerprint(
@@ -160,70 +130,6 @@ fn identity_fingerprint(
 mod tests {
     use super::*;
     use cccc_core::GroupStore;
-
-    #[cfg(unix)]
-    #[test]
-    fn resume_reaps_a_worker_whose_daemon_is_gone_and_keeps_the_conversation() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        home.initialize().expect("initialize");
-        let group = GroupStore::new(home.clone())
-            .expect("store")
-            .create("Claude orphan", "")
-            .expect("group");
-        let workspace = temp.path().join("workspace");
-        std::fs::create_dir(&workspace).expect("workspace");
-        let config_dir = temp.path().join("claude-config");
-        std::fs::create_dir(&config_dir).expect("config dir");
-        let command = vec!["claude".into()];
-        let environment = BTreeMap::from([(
-            "CLAUDE_CONFIG_DIR".into(),
-            config_dir.to_string_lossy().into_owned(),
-        )]);
-        let (mut host, _worker) = crate::ops::codex_voice_analyst::spawn_fake_worker_host();
-        let started =
-            crate::ops::codex_voice_analyst::identify_worker(host.id()).expect("identity");
-        let session_id = "52b41c61-e23c-4b7c-8b60-809c347451b5";
-        record_managed(
-            &home,
-            &group.group_id,
-            "claude-1",
-            &workspace,
-            &command,
-            &environment,
-            session_id,
-            false,
-            Some(&started),
-        )
-        .expect("record");
-        assert_eq!(
-            read(&home, &group.group_id, "claude-1").expect("receipt")["provider_worker_pid"],
-            json!(host.id())
-        );
-
-        let resumed = prepare_managed(
-            &home,
-            &group.group_id,
-            "claude-1",
-            &workspace,
-            &command,
-            &environment,
-        )
-        .expect("prepare");
-        assert_eq!(
-            resumed.as_deref(),
-            Some(session_id),
-            "the conversation stays resumable"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        assert!(
-            host.try_wait().expect("poll").is_some(),
-            "orphaned worker host must be reaped"
-        );
-        let receipt = read(&home, &group.group_id, "claude-1").expect("receipt");
-        assert!(receipt.get("provider_worker_pid").is_none());
-        assert!(receipt.get("provider_worker_started").is_none());
-    }
 
     #[test]
     fn managed_receipt_rejects_legacy_and_identity_changes() {
@@ -252,7 +158,6 @@ mod tests {
             &environment,
             session_id,
             false,
-            None,
         )
         .expect("record Claude session");
         let stored = read(&home, &group.group_id, "claude-1").expect("receipt");
@@ -335,7 +240,6 @@ mod tests {
             &BTreeMap::new(),
             session_id,
             false,
-            None,
         )
         .expect("record session");
         assert_eq!(

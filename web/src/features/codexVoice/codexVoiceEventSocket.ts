@@ -19,6 +19,7 @@ export class CodexVoiceEventSocket {
   ) {}
 
   connect(): Promise<void> {
+    const started = performance.now();
     const socket = new WebSocket(getCodexVoiceWebSocketUrl(this.call.generation));
     this.socket = socket;
     return new Promise<void>((resolve, reject) => {
@@ -56,9 +57,20 @@ export class CodexVoiceEventSocket {
           reject(failure("event_stream_connect_failed"));
         }
       };
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         window.clearTimeout(timeout);
         this.clearHeartbeat();
+        if (!this.isStopping()) {
+          console.warn("Codex Voice control connection ended", {
+            generation: this.call.generation,
+            ready,
+            close_code: event.code,
+            was_clean: event.wasClean,
+            elapsed_ms: Math.round(performance.now() - started),
+            time_unix_ms: Date.now(),
+            page_state: globalThis.document?.visibilityState,
+          });
+        }
         if (!ready) reject(failure("event_stream_setup_closed"));
         else if (!this.isStopping()) {
           this.onFailure(eventStreamCloseCode(this.lastServerErrorCode));

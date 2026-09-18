@@ -17,6 +17,7 @@ export type GroupMenuActionItem = {
   label: string;
   onClick: () => void;
   icon?: ReactNode;
+  disabled?: boolean;
   tone?: "default" | "danger";
   /** Adjacent items with different sections are separated by a divider. */
   section?: string;
@@ -61,8 +62,11 @@ export function useGroupMenu(label: string, actions: GroupMenuActionItem[]) {
                 event.preventDefault();
                 event.stopPropagation();
                 const items = Array.from(
-                  refs.floating.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') || [],
+                  refs.floating.current?.querySelectorAll<HTMLElement>(
+                    '[role="menuitem"]:not(:disabled)',
+                  ) || [],
                 );
+                if (!items.length) return;
                 const current = items.indexOf(document.activeElement as HTMLElement);
                 const next =
                   event.key === "Home"
@@ -89,6 +93,7 @@ export function useGroupMenu(label: string, actions: GroupMenuActionItem[]) {
                   icon={action.icon}
                   iconSlot={hasIcons}
                   tone={action.tone}
+                  disabled={action.disabled}
                   onClick={() => {
                     // A menu item disappears when it opens a dialog. Focus its durable
                     // trigger first so the dialog has somewhere to return to.

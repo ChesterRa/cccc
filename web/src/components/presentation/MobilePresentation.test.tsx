@@ -84,7 +84,7 @@ describe("mobile presentation entry", () => {
     });
 
     const button = host.querySelector("button");
-    expect(button?.textContent).toContain("Presentation");
+    expect(button?.getAttribute("aria-label")).toContain("Presentation");
     expect(button?.getAttribute("aria-label")).toContain("slot 1: Mobile preview");
     expect(button?.hasAttribute("data-group-presentation-trigger")).toBe(true);
     expect(button?.dataset.mobilePresentationTrigger).toBe("true");

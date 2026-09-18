@@ -49,10 +49,7 @@ fn resolve_launch_actor(
     actor: &Actor,
 ) -> Result<Actor, OpError> {
     let mut actor = actor_profile_runtime::resolve(home, actor)?;
-    let profile_secrets = actor_profile_runtime::profile_secrets(home, &actor)?;
-    let actor_secret_values = actor_secrets::values(home, &group.group_id, &actor.id)?;
-    actor.env.extend(profile_secrets);
-    actor.env.extend(actor_secret_values);
+    actor.env = actor_secrets::effective_values(home, &group.group_id, &actor)?;
     Ok(actor)
 }
 

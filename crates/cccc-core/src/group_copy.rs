@@ -1,4 +1,4 @@
-use cccc_contracts::{ActorRuntime, Event, GroupState, utc_now};
+use cccc_contracts::{Event, GroupState, utc_now};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
@@ -552,11 +552,11 @@ fn scrub_group(group: &mut GroupDoc) {
 /// limit as actor_add; this runs before the group is registered so a rejected
 /// package leaves nothing behind.
 fn require_web_model_singleton(store: &GroupStore, group: &GroupDoc) -> io::Result<()> {
-    let imported = group
-        .actors
-        .iter()
-        .filter(|actor| actor.runtime == ActorRuntime::WebModel)
-        .count();
+    let profiles = crate::profiles::ProfileStore::new(store.home().clone())?;
+    let mut imported = 0;
+    for actor in &group.actors {
+        imported += usize::from(crate::actors::reserves_web_model(&profiles, actor)?);
+    }
     if imported == 0 {
         return Ok(());
     }
@@ -788,7 +788,7 @@ mod tests {
                     doc.actors.clear();
                     if present {
                         let mut actor = cccc_contracts::Actor::new("web");
-                        actor.runtime = ActorRuntime::WebModel;
+                        actor.runtime = cccc_contracts::ActorRuntime::WebModel;
                         doc.actors.push(actor);
                     }
                     Ok(())
@@ -814,6 +814,75 @@ mod tests {
         set_web_model(false);
         import(&store, &bytes, "", "").expect("import succeeds once the slot is free");
         assert_eq!(store.list().expect("registry").len(), 2);
+    }
+
+    #[test]
+    fn import_preserves_legacy_profile_without_runtime() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        crate::fs::write_json(
+            &home.root().join("profiles.json"),
+            &serde_json::json!({"profiles":{"legacy":{"id":"legacy","env":{}}}}),
+        )
+        .expect("legacy profile");
+        let source = store.create("source", "").expect("group");
+        store
+            .mutate(&source.group_id, |doc| {
+                let mut actor = cccc_contracts::Actor::new("linked");
+                actor.profile_id = "legacy".into();
+                doc.actors.push(actor);
+                Ok(())
+            })
+            .expect("actor");
+        let (bytes, _, _) = export(&store, &source.group_id).expect("export");
+        let imported = import(&store, &bytes, "", "").expect("import legacy Profile");
+        let imported = store.load(&imported.group_id).expect("imported group");
+        assert_eq!(imported.actors[0].profile_id, "legacy");
+        assert_eq!(
+            imported.actors[0].runtime,
+            cccc_contracts::ActorRuntime::Codex
+        );
+    }
+
+    #[test]
+    fn import_checks_pending_linked_profile_runtime() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let profiles = crate::profiles::ProfileStore::new(home).expect("profiles");
+        let upsert = |runtime: &str| {
+            profiles
+                .upsert(
+                    serde_json::json!({"id":"shared", "runtime":runtime})
+                        .as_object()
+                        .expect("profile object")
+                        .clone(),
+                    None,
+                )
+                .expect("profile")
+        };
+        upsert("codex");
+        let source = store.create("source", "").expect("group");
+        store
+            .mutate(&source.group_id, |doc| {
+                let mut actor = cccc_contracts::Actor::new("linked");
+                actor.profile_id = "shared".into();
+                doc.actors.push(actor);
+                Ok(())
+            })
+            .expect("actor");
+        let (bytes, _, _) = export(&store, &source.group_id).expect("export");
+        upsert("web_model");
+        let error = import(&store, &bytes, "", "").expect_err("linked runtime owns slot");
+        assert!(
+            error.to_string().contains("limited to one actor"),
+            "{error}"
+        );
+        assert_eq!(store.list().expect("registry").len(), 1);
+        store.delete(&source.group_id).expect("remove owner");
+        import(&store, &bytes, "", "").expect("free slot");
+        assert_eq!(store.list().expect("registry").len(), 1);
     }
 
     #[test]

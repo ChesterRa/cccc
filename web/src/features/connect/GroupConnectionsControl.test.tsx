@@ -220,3 +220,17 @@ it("reuses the Group panel in settings without a picker and aborts when leaving"
   await act(async () => root.render(null));
   expect(signal.aborted).toBe(true);
 });
+
+it("keeps Refresh available after an initial status request fails", async () => {
+  mocks.request.mockResolvedValueOnce({
+    ok: false,
+    error: { code: "unavailable", message: "Try again" },
+  });
+  await render();
+  await openConnections();
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain("Try again");
+  expect(button("groupConnections.refresh")).toBeDefined();
+  await act(async () => button("groupConnections.refresh").click());
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+  expect(button("groupConnections.invite").disabled).toBe(false);
+});

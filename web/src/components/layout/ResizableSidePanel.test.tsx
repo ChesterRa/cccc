@@ -28,7 +28,7 @@ it("keeps parent and panel contents out of drag renders while persisting the fin
     parentRenders++;
     const container = useRef<HTMLDivElement>(null);
     return (
-      <div ref={container}>
+      <div ref={container} data-group-shell>
         <main>Messages</main>
         <ResizableSidePanel
           groupId="resize"
@@ -68,6 +68,11 @@ it("keeps parent and panel contents out of drag renders while persisting the fin
     }
     expect(host.querySelector<HTMLElement>("#group-side-panel")!.style.width).toBe("460px");
     expect(divider.getAttribute("aria-valuenow")).toBe("460");
+    expect(
+      host
+        .querySelector<HTMLElement>("[data-group-shell]")!
+        .style.getPropertyValue("--group-side-panel-width"),
+    ).toBe("460px");
     expect({ parentRenders, contentRenders }).toEqual(initial);
     expect(host.querySelector("input")).toBe(input);
     expect(document.activeElement).toBe(input);

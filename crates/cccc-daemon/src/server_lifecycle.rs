@@ -43,8 +43,9 @@ impl DaemonLifecycle {
 }
 
 /// Gracefully stop every runtime this daemon started, closing the start gate.
-/// Forced launcher exit uses cccc_runtime::force_terminate_owned instead: this
-/// path may wait for protocol closure, session locks and output draining.
+/// Forced launcher exit only sends bounded provider stop requests for Actors
+/// in its process before cccc_runtime::force_terminate_owned: this normal path
+/// may wait for protocol closure, session locks and output draining.
 pub fn stop_every_runtime(home: &HomeLayout) -> Result<Vec<cccc_runtime::SessionStatus>> {
     let _ = crate::runtime_start_gate::prevent(home);
     crate::ops::actor_delivery::shutdown_all();

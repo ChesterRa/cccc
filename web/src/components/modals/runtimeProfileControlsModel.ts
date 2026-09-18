@@ -14,7 +14,7 @@ export function formatRuntimeCommand(command: unknown): string {
   if (typeof command === "string") return command.trim();
   if (!Array.isArray(command)) return "";
   return command
-    .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
+    .filter((value): value is string => typeof value === "string")
     .map(shellQuote)
     .join(" ");
 }

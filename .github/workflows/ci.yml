@@ -266,6 +266,21 @@ jobs:
           cargo test --package cccc-pair-daemon --lib --locked \
             live_kilo -- --test-threads=1
 
+      - name: Verify Actor configuration across real Web and daemon ports
+        timeout-minutes: 5
+        run: |
+          npm ci --prefix web
+          npm -C web exec -- playwright install --with-deps chromium
+          python3 web/tests/browser/actor-config.py --binary target/debug/cccc
+      - name: Upload Actor configuration failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: actor-configuration-failure-evidence
+          path: web/test-results/actor-config
+          retention-days: 7
+          if-no-files-found: ignore
+
   ci-required:
     if: always()
     needs:

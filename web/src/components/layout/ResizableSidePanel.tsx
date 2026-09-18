@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode, type RefObject } from "react";
+import { useLayoutEffect, useMemo, type ReactNode, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useSidePanelLayout } from "../../hooks/useSidePanelLayout";
 import type { SidePanelSurface } from "../../hooks/useSidePanelSelection";
@@ -24,6 +24,15 @@ export function ResizableSidePanel({
   const { t } = useTranslation("chat");
   const layout = useSidePanelLayout(groupId, surface, viewing, container);
   const { compact, toggleCompact } = layout;
+  // Share the resolved width with the header without rerendering the chat during a drag.
+  useLayoutEffect(() => {
+    const shell = container.current?.closest<HTMLElement>("[data-group-shell]");
+    if (!shell) return;
+    shell.style.setProperty("--group-side-panel-width", `${layout.width}px`);
+    return () => {
+      shell.style.removeProperty("--group-side-panel-width");
+    };
+  }, [container, layout.width]);
   // Width changes need CSS layout, but not another render of an unchanged file tree/viewer.
   const content = useMemo(
     () => children({ compact, toggleCompact }),

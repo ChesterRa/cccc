@@ -13,9 +13,11 @@ export function groupRunMenuActions(
   statusKey: GroupStatusKey | null | undefined,
   t: TFunction<"layout">,
   onControl: (control: GroupControl) => void,
+  disabled = false,
 ): GroupMenuActionItem[] {
   return getGroupMenuControls(statusKey).map(({ control, labelKey }) => ({
     label: t(labelKey),
+    disabled,
     icon:
       control === "pause" ? (
         <PauseIcon size={15} />

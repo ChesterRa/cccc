@@ -140,6 +140,21 @@ pub fn values(
     load(home, group_id, actor_id)
 }
 
+/// The linked Profile owns the entire explicit environment. Dormant custom
+/// secrets must neither override it at launch nor reappear when taking a snapshot.
+pub fn effective_values(
+    home: &HomeLayout,
+    group_id: &str,
+    actor: &cccc_contracts::Actor,
+) -> Result<BTreeMap<String, String>, OpError> {
+    if !actor.profile_id.is_empty() {
+        return super::actor_profile_runtime::profile_secrets(home, actor);
+    }
+    let mut env = actor.env.clone();
+    env.extend(values(home, group_id, &actor.id)?);
+    Ok(env)
+}
+
 pub fn replace(
     home: &HomeLayout,
     group_id: &str,

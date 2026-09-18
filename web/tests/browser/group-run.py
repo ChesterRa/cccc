@@ -12,7 +12,8 @@ import requests, websocket
 out=Path(os.environ.get('CCCC_GROUP_RUN_OUTPUT_DIR') or tempfile.mkdtemp(prefix='cccc-group-run-'));out.mkdir(parents=True,exist_ok=True)
 base_url=os.environ.get('CCCC_GROUP_WORK_BASE_URL','http://127.0.0.1:15559').rstrip('/')
 with tempfile.TemporaryDirectory(prefix='cccc-ui-polish-chrome-',ignore_cleanup_errors=True) as profile:
- browser=subprocess.Popen([os.environ.get('CHROME_BIN','/usr/bin/google-chrome'),'--headless=new','--no-sandbox','--remote-debugging-port=0','--remote-allow-origins=*','--user-data-dir='+profile,'about:blank'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+ # Match Playwright's desktop pointer defaults; bare headless Chrome advertises no pointer.
+ browser=subprocess.Popen([os.environ.get('CHROME_BIN','/usr/bin/google-chrome'),'--headless=new','--no-sandbox','--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4','--remote-debugging-port=0','--remote-allow-origins=*','--user-data-dir='+profile,'about:blank'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  sock=None
  try:
   for _ in range(100):
@@ -45,6 +46,7 @@ with tempfile.TemporaryDirectory(prefix='cccc-ui-polish-chrome-',ignore_cleanup_
    time.sleep(.06)
   def click(sel):
    point=js(f"(()=>{{const e=document.querySelector({json.dumps(sel)}); e.scrollIntoView({{block:'nearest'}}); const r=e.getBoundingClientRect();return {{x:r.x+r.width/2,y:r.y+r.height/2}};}})()")
+   cdp('Input.dispatchMouseEvent',{'type':'mouseMoved',**point});time.sleep(.15)
    cdp('Input.dispatchMouseEvent',{'type':'mousePressed','button':'left','clickCount':1,**point});cdp('Input.dispatchMouseEvent',{'type':'mouseReleased','button':'left','clickCount':1,**point});time.sleep(.12)
   def typein(sel,text):
    click(sel);key('a',2);cdp('Input.insertText',{'text':text});time.sleep(.1)
@@ -58,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix='cccc-ui-polish-chrome-',ignore_cleanup_
    js(f"[...document.querySelectorAll('[role=menuitem]')].find(e=>e.innerText.startsWith({json.dumps(text)})).setAttribute('data-test-action','true')")
    click('[data-test-action]')
   def header():return 'header [data-group-run-control]'
-  def sidebar(gid):return f'aside [data-group-run-control="{gid}"]'
+  def sidebar(gid):return 'aside button[aria-haspopup="menu"][aria-label$="'+('Release workspace' if gid=='g1' else 'Research workspace')+'"]'
   size(1440,900);cdp('Page.navigate',{'url':base_url+'/ui/tests/browser/group-work.html'})
   wait('!!window.groupWorkProbe && !!document.querySelector("header [data-group-run-control]")')
   js('groupWorkProbe.language("en")')
@@ -74,14 +76,14 @@ with tempfile.TemporaryDirectory(prefix='cccc-ui-polish-chrome-',ignore_cleanup_
   key('Tab');assert not js('!!document.querySelector("[role=menu]")')
   # Background Group controls retain both navigation and sorting state.
   click(sidebar('g2'));assert js('groupWorkProbe.group.getState().selectedGroupId')=='g1'
-  action('Pause message delivery');wait('document.querySelector(\'aside [data-group-run-control="g2"]\')?.getAttribute("aria-busy")==="false"')
+  action('Pause message delivery');wait('groupWorkProbe.ui.getState().busy === ""')
   assert mutations()[-1]['path']=='/api/v1/groups/g2/state'
   assert js('groupWorkProbe.group.getState().groups.find(g=>g.group_id==="g2").state')=='paused'
   assert js('document.querySelector("header [data-group-run-control]").innerText')=='Running'
   click(sidebar('g2'));action('Resume running');wait('groupWorkProbe.group.getState().groups.find(g=>g.group_id==="g2").state==="active"')
   assert not any(r['path'].endswith('/start') for r in mutations())
   # The invisible margin remains clickable; pressing must not shrink the row away.
-  p=js('(()=>{const r=document.querySelector(\'aside [data-group-run-control="g2"]\').getBoundingClientRect();return {x:r.x+1,y:r.y+r.height/2};})()')
+  p=js('(()=>{const r=document.querySelector(\'aside button[aria-haspopup="menu"][aria-label$="Research workspace"]\').getBoundingClientRect();return {x:r.x+1,y:r.y+r.height/2};})()')
   cdp('Input.dispatchMouseEvent',{'type':'mouseMoved',**p})
   cdp('Input.dispatchMouseEvent',{'type':'mousePressed','button':'left','clickCount':1,**p})
   cdp('Input.dispatchMouseEvent',{'type':'mouseReleased','button':'left','clickCount':1,**p})
@@ -89,7 +91,7 @@ with tempfile.TemporaryDirectory(prefix='cccc-ui-polish-chrome-',ignore_cleanup_
   assert js('groupWorkProbe.group.getState().selectedGroupId')=='g1'
   key('Escape')
   # Mouse motion over the status trigger must not activate the Group row's DnD sensor.
-  p=js('(()=>{const r=document.querySelector(\'aside [data-group-run-control="g2"]\').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()')
+  p=js('(()=>{const r=document.querySelector(\'aside button[aria-haspopup="menu"][aria-label$="Research workspace"]\').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()')
   cdp('Input.dispatchMouseEvent',{'type':'mousePressed','button':'left','clickCount':1,**p})
   cdp('Input.dispatchMouseEvent',{'type':'mouseMoved','button':'left','buttons':1,'x':p['x']+9,'y':p['y']+2})
   assert not js('document.querySelector("[id^=DndLiveRegion]")?.textContent?.includes("picked up")')
@@ -97,15 +99,15 @@ with tempfile.TemporaryDirectory(prefix='cccc-ui-polish-chrome-',ignore_cleanup_
   assert js('groupWorkProbe.group.getState().selectedGroupId')=='g1';key('Escape')
   # Real action hook: pending spans both entrances and survives navigating away.
   js('groupWorkProbe.setRunTransport(900)');click(sidebar('g2'));action('Stop Group')
-  assert js('document.querySelector(\'aside [data-group-run-control="g2"]\').getAttribute("aria-busy")')=='true'
+  assert js('groupWorkProbe.ui.getState().busy')=='group-stop'
   before=len(mutations());click(header());assert js('[...document.querySelectorAll("[role=menuitem]")].every(e=>e.disabled)');key('Escape')
-  js('groupWorkProbe.chooseGroup("g2")');wait('document.querySelector("header [data-group-run-control]").getAttribute("aria-busy")==="false"')
+  js('groupWorkProbe.chooseGroup("g2")');wait('groupWorkProbe.ui.getState().busy === ""')
   assert len(mutations())==before
   assert js('document.querySelector("header [data-group-run-control]").innerText')=='Stopped'
-  click(header());action('Start Group');wait('document.querySelector("header [data-group-run-control]").getAttribute("aria-busy")==="false"')
+  click(header());action('Start Group');wait('groupWorkProbe.ui.getState().busy === ""')
   assert mutations()[-1]['path']=='/api/v1/groups/g2/start'
   js('groupWorkProbe.setRunTransport(0,true)');click(header());action('Pause message delivery')
-  wait('document.querySelector("header [data-group-run-control]").getAttribute("aria-busy")==="false"')
+  wait('groupWorkProbe.ui.getState().busy === ""')
   assert js('groupWorkProbe.ui.getState().errorMsg').startswith('Research workspace:'),js('groupWorkProbe.ui.getState().errorMsg')
   assert js('document.querySelector("header [data-group-run-control]").innerText')=='Running'
   js('groupWorkProbe.setRunTransport();groupWorkProbe.setGroupStatus("g2","paused",false)')
@@ -138,9 +140,9 @@ with tempfile.TemporaryDirectory(prefix='cccc-ui-polish-chrome-',ignore_cleanup_
       matrix.append({'language':lang,'width':w,'scale':scale,'dark':dark})
   # Real touch input cannot bubble into row dragging either.
   size(390,844);js('groupWorkProbe.language("en");groupWorkProbe.setTextScale(100)')
-  click('[data-sidebar-toggle]');wait('!!document.querySelector(\'aside [data-group-run-control="g1"]\')')
+  click('[data-sidebar-toggle]');wait('!!document.querySelector(\'aside button[aria-haspopup="menu"][aria-label$="Release workspace"]\')')
   cdp('Emulation.setTouchEmulationEnabled',{'enabled':True})
-  p=js('(()=>{const r=document.querySelector(\'aside [data-group-run-control="g1"]\').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()')
+  p=js('(()=>{const r=document.querySelector(\'aside button[aria-haspopup="menu"][aria-label$="Release workspace"]\').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()')
   cdp('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[p]});time.sleep(.4)
   cdp('Input.dispatchTouchEvent',{'type':'touchMove','touchPoints':[{'x':p['x']+8,'y':p['y']}]})
   cdp('Input.dispatchTouchEvent',{'type':'touchEnd','touchPoints':[]});time.sleep(.2)

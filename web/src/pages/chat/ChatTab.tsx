@@ -793,55 +793,31 @@ export function ChatTab({
                   }
                 >
                   {showMessageFilters && (
-                    <div
-                      className="pointer-events-none absolute inset-x-0 top-0 z-10 overflow-hidden px-4 pt-2 pb-2"
-                      data-message-filters
-                    >
-                      <div className="chat-reading-width">
-                        {/* Auto-hide: a thin strip along the list's top edge reveals the
-                            pill, which slides down from above. It stays out while hovered
-                            or focused, on touch devices, and while a filter narrows the
-                            conversation so the narrowing is never invisible. */}
-                        <div className="group/filters relative w-fit max-w-full">
-                          <div
-                            aria-hidden
-                            className="pointer-events-auto absolute inset-x-0 -top-2 h-4"
-                          />
-                          <div
-                            className={classNames(
-                              "glass-panel inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-lg p-0.5 scrollbar-hide",
-                              "transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none",
-                              "group-hover/filters:pointer-events-auto group-hover/filters:translate-y-0 group-hover/filters:opacity-100",
-                              "focus-within:pointer-events-auto focus-within:translate-y-0 focus-within:opacity-100",
-                              "pointer-coarse:pointer-events-auto pointer-coarse:translate-y-0 pointer-coarse:opacity-100",
-                              chatFilter === "all"
-                                ? "pointer-events-none -translate-y-[calc(100%+0.5rem)] opacity-0"
-                                : "pointer-events-auto",
-                            )}
-                            role="group"
-                            aria-label={t("chatFilters")}
-                          >
-                            {filterOptions.map(([key, label]) => {
-                              const active = chatFilter === key;
-                              return (
-                                <button
-                                  key={key}
-                                  type="button"
-                                  className={classNames(
-                                    "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]",
-                                    active
-                                      ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]"
-                                      : "text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg)] hover:text-[var(--color-text-primary)]",
-                                  )}
-                                  onClick={() => setChatFilter(key)}
-                                  aria-pressed={active}
-                                >
-                                  {label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
+                    <div className="shrink-0 px-4 py-2" data-message-filters>
+                      <div
+                        className="chat-reading-width flex items-center gap-1 overflow-x-auto scrollbar-hide"
+                        role="group"
+                        aria-label={t("chatFilters")}
+                      >
+                        {filterOptions.map(([key, label]) => {
+                          const active = chatFilter === key;
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              className={classNames(
+                                "shrink-0 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]",
+                                active
+                                  ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]"
+                                  : "text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg)] hover:text-[var(--color-text-primary)]",
+                              )}
+                              onClick={() => setChatFilter(key)}
+                              aria-pressed={active}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

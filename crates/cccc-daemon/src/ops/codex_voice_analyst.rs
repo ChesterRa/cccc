@@ -9,9 +9,6 @@ use tokio::sync::broadcast;
 
 mod acp;
 mod claude;
-pub(crate) use claude::{WorkerIdentity, reap_unreachable_worker};
-#[cfg(all(test, unix))]
-pub(crate) use claude::{identify_worker, spawn_fake_worker_host};
 mod control;
 mod grok;
 mod launch;

@@ -54,7 +54,11 @@ impl AnalystSession {
         process::validate_loopback_endpoint(&endpoint)?;
         let socket =
             lifecycle_timing::run("codex.connect", protocol::connect_with_retry(&endpoint)).await?;
-        let protocol = ProtocolClient::new(socket, generation.clone());
+        let protocol = ProtocolClient::new(
+            socket,
+            generation.clone(),
+            process.as_ref().map(Arc::downgrade),
+        );
         protocol
             .request(
                 "initialize",

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodexVoiceBrowserSession } from "./codexVoiceSession";
+import { codexVoiceErrorText } from "./codexVoiceControllerText";
+import en from "../../i18n/locales/en/modals.json";
+import zh from "../../i18n/locales/zh/modals.json";
+import ja from "../../i18n/locales/ja/modals.json";
 
 const mocks = vi.hoisted(() => ({ start: vi.fn(), stop: vi.fn(), ice: vi.fn() }));
 vi.mock("../../services/api", () => ({
@@ -74,6 +78,42 @@ afterEach(() => {
 });
 
 describe("Voice startup cancellation", () => {
+  it.each([
+    "codex_voice_setup_failed",
+    "codex_voice_analyst_start_failed",
+    "codex_voice_analyst_start_timeout",
+    "codex_voice_recording_busy",
+    "codex_voice_recording_failed",
+    "codex_voice_realtime_auth_failed",
+    "codex_voice_realtime_timeout",
+    "codex_voice_realtime_connection_failed",
+    "codex_voice_realtime_rate_limited",
+    "codex_voice_realtime_rejected",
+    "codex_voice_realtime_failed",
+  ])("preserves %s for localized feedback and releases media without retry", async (code) => {
+    mocks.start.mockResolvedValue({
+      ok: false,
+      error: { code, message: "private upstream detail", details: { stage: "realtime" } },
+    });
+    const f = fixture();
+    await expect(f.session.start()).rejects.toThrow(code);
+    expect(f.callbacks.onError).toHaveBeenCalledExactlyOnceWith(code);
+    expect(f.track.stop).toHaveBeenCalledOnce();
+    expect(f.peer.close).toHaveBeenCalledOnce();
+    expect(mocks.start).toHaveBeenCalledOnce();
+    expect(mocks.stop).not.toHaveBeenCalled();
+    for (const locale of [en, zh, ja]) {
+      const messages = locale.codexVoiceErrors as Record<string, string>;
+      const text = codexVoiceErrorText(
+        (key) => messages[key.replace("codexVoiceErrors.", "")],
+        code,
+      );
+      expect(text).toBeTruthy();
+      expect(text).not.toBe(messages.unknown);
+      expect(text).not.toContain("private upstream detail");
+    }
+  });
+
   it("does not request the microphone after stopping during speaker setup", async () => {
     const speaker = deferred<void>();
     const f = fixture(vi.fn(() => speaker.promise));

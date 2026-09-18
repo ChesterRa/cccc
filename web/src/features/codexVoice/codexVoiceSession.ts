@@ -351,6 +351,16 @@ export class CodexVoiceBrowserSession {
 
   private async fail(code: string, providerCode?: string): Promise<void> {
     if (this.stopping) return;
+    if (code !== "provider_error") {
+      console.warn("Codex Voice session connection failed", {
+        code: normalizedErrorCode(code) || "unknown",
+        generation: this.call?.generation,
+        time_unix_ms: Date.now(),
+        page_state: globalThis.document?.visibilityState,
+        peer_state: this.peer?.connectionState,
+        ice_state: this.peer?.iceConnectionState,
+      });
+    }
     this.callbacks.onError(normalizedErrorCode(code) || "unknown", providerCode);
     this.callbacks.onPhase("failed");
     await this.stop({ notifyPhase: false });

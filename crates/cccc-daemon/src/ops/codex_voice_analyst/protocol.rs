@@ -3,8 +3,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::io;
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::{Mutex, Weak};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
@@ -62,13 +62,23 @@ pub(super) struct ProtocolClient {
 }
 
 impl ProtocolClient {
-    pub(super) fn new<S>(socket: tokio_tungstenite::WebSocketStream<S>, generation: String) -> Self
+    pub(super) fn new<S>(
+        socket: tokio_tungstenite::WebSocketStream<S>,
+        generation: String,
+        process: Option<Weak<super::ChildOwner>>,
+    ) -> Self
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
         let (commands, receiver) = mpsc::channel(COMMAND_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
-        let task = tokio::spawn(protocol_loop(socket, receiver, events.clone(), generation));
+        let task = tokio::spawn(protocol_loop(
+            socket,
+            receiver,
+            events.clone(),
+            generation,
+            process,
+        ));
         Self {
             commands,
             events,
@@ -160,15 +170,17 @@ async fn protocol_loop<S>(
     mut commands: mpsc::Receiver<ProtocolCommand>,
     events: broadcast::Sender<AnalystEvent>,
     generation: String,
+    process: Option<Weak<super::ChildOwner>>,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
+    let started = Instant::now();
     let mut next_id = 1_u64;
     let mut pending: HashMap<u64, PendingResponse> = HashMap::new();
     let mut pending_turn_start = None;
     let mut deferred_events = VecDeque::new();
     let mut turn_delegations = HashMap::new();
-    let terminal_error = loop {
+    let (terminal_error, diagnostic) = loop {
         tokio::select! {
             command = commands.recv() => match command {
                 Some(ProtocolCommand::Request(request)) => {
@@ -205,24 +217,24 @@ async fn protocol_loop<S>(
                         turn_delegation_id,
                     });
                     if let Err(error) = socket.send(Message::Text(message.to_string().into())).await {
-                        break format!("failed to write app-server request: {error}");
+                        break (format!("failed to write app-server request: {error}"), transport_diagnostic("request_write_failed", &error));
                     }
                 }
                 Some(ProtocolCommand::Respond { id, result }) => {
                     let message = json!({"jsonrpc":"2.0","id":id,"result":result});
                     if let Err(error) = socket.send(Message::Text(message.to_string().into())).await {
-                        break format!("failed to write app-server response: {error}");
+                        break (format!("failed to write app-server response: {error}"), transport_diagnostic("response_write_failed", &error));
                     }
                 }
                 Some(ProtocolCommand::RespondError { id, error }) => {
                     let message = json!({"jsonrpc":"2.0","id":id,"error":error});
                     if let Err(error) = socket.send(Message::Text(message.to_string().into())).await {
-                        break format!("failed to write app-server response: {error}");
+                        break (format!("failed to write app-server response: {error}"), transport_diagnostic("response_write_failed", &error));
                     }
                 }
                 Some(ProtocolCommand::Close) | None => {
                     let _ = socket.close(None).await;
-                    break "app-server client closed".to_owned();
+                    break ("app-server client closed".to_owned(), json!({"code":"client_closed"}));
                 }
             },
             frame = socket.next() => match frame {
@@ -231,7 +243,7 @@ async fn protocol_loop<S>(
                     if message.get("method").is_some() {
                         if pending_turn_start.is_some() {
                             if deferred_events.len() >= EVENT_CAPACITY {
-                                break "Codex app-server produced too many events before turn/start settled".into();
+                                break ("Codex app-server produced too many events before turn/start settled".into(), json!({"code":"admission_event_overflow"}));
                             }
                             deferred_events.push_back(message);
                         } else {
@@ -270,7 +282,7 @@ async fn protocol_loop<S>(
                                     .is_some_and(|turn_id| turn_id != response_turn_id)
                             })
                         {
-                            break "a competing terminal turn started while a correlated Codex request was pending".into();
+                            break ("a competing terminal turn started while a correlated Codex request was pending".into(), json!({"code":"competing_turn"}));
                         }
                         if let (Some(delegation_id), Some(turn_id)) =
                             (pending_response.turn_delegation_id.as_ref(), response_turn_id)
@@ -290,15 +302,25 @@ async fn protocol_loop<S>(
                 }
                 Some(Ok(Message::Ping(payload))) => {
                     if let Err(error) = socket.send(Message::Pong(payload)).await {
-                        break format!("failed to answer app-server ping: {error}");
+                        break (format!("failed to answer app-server ping: {error}"), transport_diagnostic("pong_write_failed", &error));
                     }
                 }
-                Some(Ok(Message::Close(_))) | None => break "app-server websocket closed".to_owned(),
+                Some(Ok(Message::Close(frame))) => break (
+                    "app-server websocket closed".to_owned(),
+                    json!({"code":"remote_close","close_code":frame.map(|frame| u16::from(frame.code))}),
+                ),
+                None => break ("app-server websocket closed".to_owned(), json!({"code":"stream_ended"})),
                 Some(Ok(_)) => {}
-                Some(Err(error)) => break format!("app-server websocket failed: {error}"),
+                Some(Err(error)) => break (format!("app-server websocket failed: {error}"), transport_diagnostic("read_failed", &error)),
             }
         }
     };
+    let diagnostic = disconnect_diagnostic(diagnostic, &generation, started, process);
+    if diagnostic["code"] != "client_closed" {
+        // Packaged launches do not require a tracing subscriber. Keep this one-shot
+        // report structural: no close reason, arbitrary error, protocol body or path.
+        eprintln!("[cccc] Managed Codex disconnected: {diagnostic}");
+    }
     for (_, pending_response) in pending {
         let _ = pending_response.response.send(Err(io::Error::new(
             io::ErrorKind::BrokenPipe,
@@ -307,9 +329,59 @@ async fn protocol_loop<S>(
     }
     let _ = events.send(AnalystEvent {
         generation,
-        message: json!({"method":super::MANAGED_AGENT_DISCONNECTED_METHOD,"params":{"reason":terminal_error}}),
+        message: json!({"method":super::MANAGED_AGENT_DISCONNECTED_METHOD,"params":{"reason":terminal_error,"diagnostic":diagnostic}}),
         requested_delegation_id: None,
     });
+}
+
+fn transport_diagnostic(
+    code: &'static str,
+    error: &tokio_tungstenite::tungstenite::Error,
+) -> Value {
+    use tokio_tungstenite::tungstenite::Error;
+    let (kind, os_error) = match error {
+        Error::Io(error) => ("io", error.raw_os_error()),
+        Error::Protocol(_) => ("protocol", None),
+        Error::ConnectionClosed | Error::AlreadyClosed => ("closed", None),
+        Error::Capacity(_) => ("capacity", None),
+        _ => ("other", None),
+    };
+    json!({"code":code,"error_kind":kind,"os_error":os_error})
+}
+
+fn disconnect_diagnostic(
+    mut diagnostic: Value,
+    generation: &str,
+    started: Instant,
+    process: Option<Weak<super::ChildOwner>>,
+) -> Value {
+    diagnostic["generation"] = json!(generation);
+    diagnostic["stage"] = json!("app_server");
+    diagnostic["elapsed_ms"] = json!(started.elapsed().as_millis() as u64);
+    diagnostic["time_unix_ms"] = json!(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    );
+    diagnostic["process_state"] = json!("unavailable");
+    if let Some(process) = process.and_then(|process| process.upgrade()) {
+        diagnostic["process_id"] = json!(process.id());
+        match process.exit_status() {
+            Ok(None) => diagnostic["process_state"] = json!("running"),
+            Ok(Some(status)) => {
+                diagnostic["process_state"] = json!("exited");
+                diagnostic["exit_code"] = json!(status.code());
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    diagnostic["exit_signal"] = json!(status.signal());
+                }
+            }
+            Err(error) => diagnostic["process_status_os_error"] = json!(error.raw_os_error()),
+        }
+    }
+    diagnostic
 }
 
 fn started_turn_id(message: &Value) -> Option<&str> {
@@ -356,3 +428,7 @@ fn publish_event(
         requested_delegation_id,
     });
 }
+
+#[cfg(test)]
+#[path = "protocol_disconnect_tests.rs"]
+mod disconnect_tests;

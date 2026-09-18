@@ -9,6 +9,10 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use tracing::Instrument;
 
+#[cfg(all(test, unix))]
+#[path = "shutdown_tests.rs"]
+mod shutdown_tests;
+
 type Key = (String, String);
 
 fn sessions() -> &'static RwLock<HashMap<Key, Arc<Session>>> {
@@ -284,7 +288,13 @@ pub async fn kill_all_requests() {
 
 #[must_use]
 pub fn running(group_id: &str, actor_id: &str) -> bool {
-    lookup(&(group_id.to_owned(), actor_id.to_owned())).is_some_and(|item| item.running())
+    registered_running(group_id, actor_id).unwrap_or(false)
+}
+
+/// A failed managed session still owns its attached terminal until cleanup
+/// succeeds. Preserve that distinction from an independent PTY session.
+pub(crate) fn registered_running(group_id: &str, actor_id: &str) -> Option<bool> {
+    lookup(&(group_id.to_owned(), actor_id.to_owned())).map(|item| item.running())
 }
 
 #[must_use]

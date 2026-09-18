@@ -1,6 +1,6 @@
 use cccc_runtime::OwnedProcessTree;
 use std::io;
-use std::process::Child;
+use std::process::{Child, ExitStatus};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -55,6 +55,22 @@ impl ChildOwner {
                     .map(|child| self.process_tree.try_wait(|| child.try_wait()))
             })
             .is_some_and(|status| status.ok().flatten().is_none())
+    }
+
+    pub(in crate::ops::codex_voice_analyst) fn exit_status(
+        &self,
+    ) -> io::Result<Option<ExitStatus>> {
+        let mut guard = self
+            .child
+            .lock()
+            .map_err(|_| io::Error::other("managed Agent child lock poisoned"))?;
+        let child = guard.as_mut().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "managed Agent child already released",
+            )
+        })?;
+        self.process_tree.try_wait(|| child.try_wait())
     }
 
     pub(in crate::ops::codex_voice_analyst) fn id(&self) -> Option<u32> {

@@ -1,3 +1,4 @@
+import { formatRuntimeCommand } from "../components/modals/runtimeProfileControlsModel";
 // Actor action helpers extracted from ActorTab-related logic.
 import { useCallback, useRef, useState } from "react";
 import { useGroupStore, useUIStore, useModalStore, useInboxStore, useFormStore } from "../stores";
@@ -165,7 +166,7 @@ export function useActorActions(groupId: string) {
       // Initialize form state with actor's current values
       const runtime = String(actor.runtime || "").trim();
       setEditActorRuntime((runtime || "codex") as SupportedRuntime);
-      setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
+      setEditActorCommand(formatRuntimeCommand(actor.command));
       setEditActorTitle(actor.title || "");
       setEditActorCapabilityAutoloadText(formatCapabilityIdInput(actor.capability_autoload));
       setEditingActor(actor);

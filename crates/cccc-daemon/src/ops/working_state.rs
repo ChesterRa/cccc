@@ -23,8 +23,9 @@ pub(super) fn fields(
     running: bool,
     runner_effective: &str,
 ) -> Map<String, Value> {
-    let managed_session = super::local_headless::uses_managed_session(actor);
-    let local_state = (running && super::local_headless::supports(actor))
+    let managed_session = super::local_headless::running(group_id, &actor.id)
+        || super::local_headless::uses_managed_session(actor);
+    let local_state = running
         .then(|| super::local_headless::status(group_id, &actor.id))
         .flatten();
     let (state, reason, updated_at, active_task_id) = if !running {

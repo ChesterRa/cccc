@@ -356,3 +356,174 @@ for (const [width, height, lang, scale] of [
     await expect.poll(() => area.evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
   });
 }
+
+test("Group menus preserve navigation and block duplicate lifecycle requests", async ({ page }) => {
+  await groupPage(page);
+  await page.evaluate(() => {
+    groupWorkProbe.setRunTransport(500);
+  });
+  const trigger = page.locator(
+    'aside button[aria-haspopup="menu"][aria-label$="Research workspace"]',
+  );
+  await trigger.focus();
+  await trigger.click();
+  await page.getByRole("menuitem", { name: "Stop Group", exact: true }).click();
+  await page.locator("header [data-group-run-controls]").click();
+  await expect(
+    page.getByRole("menuitem", { name: "Pause message delivery", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => groupWorkProbe.chooseGroup("g2"));
+  await expect.poll(() => page.evaluate(() => groupWorkProbe.ui.getState().busy)).toBe("");
+  await expect(page.locator("header [data-group-run-controls]")).toHaveText("Stopped");
+  expect(await page.evaluate(() => groupWorkProbe.group.getState().groupDoc.group_id)).toBe("g2");
+});
+
+test("message filters remain visible and mobile retains its status control", async ({ page }) => {
+  await groupPage(page);
+  const filters = page.locator("[data-message-filters]");
+  const filter = filters.getByRole("button", { name: "All", exact: true });
+  await expect(filter).toBeVisible();
+  await expect(filters.getByRole("group")).toHaveCSS("opacity", "1");
+  expect(
+    await filters.evaluate(
+      (e) =>
+        e.getBoundingClientRect().bottom <=
+        document.querySelector('[role="log"]').getBoundingClientRect().top + 1,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 390, height: 667 });
+  const status = page.locator("header [data-group-run-controls]");
+  await expect(status).toBeVisible();
+  await status.click();
+  await expect(
+    page.getByRole("menuitem", { name: "Pause message delivery", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(status).toBeFocused();
+});
+
+test("header work tools follow panel resizing and stay reachable", async ({ page }) => {
+  await groupPage(page);
+  await page.evaluate(() => groupWorkProbe.ui.getState().setGroupWorkView("g1", "terminals"));
+  await expect(page.locator(".xterm").first()).toBeVisible();
+  await page.locator("[data-workspace-files-toggle]").click();
+  const checkAlignment = async () => {
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const panel = document.querySelector("#group-side-panel").getBoundingClientRect();
+          const work = document.querySelector("[data-group-header-work]").getBoundingClientRect();
+          return Math.abs(work.right - (panel.left - 4));
+        }),
+      )
+      .toBeLessThanOrEqual(2);
+  };
+  await checkAlignment();
+  const divider = page.locator("[data-side-panel-resize]");
+  await divider.focus();
+  await divider.press("ArrowLeft");
+  await checkAlignment();
+  await page.evaluate(() =>
+    groupWorkProbe.ui.getState().setChatSidePanelLayout("g1", { width: 700 }),
+  );
+  await checkAlignment();
+  for (const label of ["Search messages", "Context Panel"]) {
+    await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
+  }
+  const buttons = page.locator("header button:visible");
+  expect(
+    await buttons.evaluateAll((items) =>
+      items.every((item, i) => {
+        const r = item.getBoundingClientRect();
+        return (
+          r.left >= 0 &&
+          r.right <= innerWidth &&
+          (!i || items[i - 1].getBoundingClientRect().right <= r.left + 1)
+        );
+      }),
+    ),
+  ).toBe(true);
+  await page.locator("[data-workspace-files-toggle]").click();
+  await expect(page.locator("#group-side-panel")).toHaveCount(0);
+  expect(
+    await page
+      .locator("[data-group-shell]")
+      .evaluate((e) => e.style.getPropertyValue("--group-side-panel-width")),
+  ).toBe("");
+  await page.locator("[data-group-presentation-trigger]").click();
+  await expect(page.locator("[data-group-presentation-trigger]")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(await page.locator("[data-group-presentation-trigger]").innerText()).toBe("");
+});
+
+test("appearance labels scale with text preferences and remain readable in both themes", async ({
+  page,
+}) => {
+  await groupPage(page);
+  for (const dark of [false, true]) {
+    await page.evaluate((dark) => {
+      groupWorkProbe.setDark(dark);
+      groupWorkProbe.setTextScale(125);
+    }, dark);
+    await page.locator("[data-app-settings-trigger]").focus();
+    await page.keyboard.press("Enter");
+    const legend = page.locator("[data-app-settings-menu] legend");
+    await expect(legend).toBeVisible();
+    await expect(legend).toHaveCSS("font-size", "15px");
+    const contrast = await legend.evaluate((element) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d");
+      const chain = [];
+      for (let parent = element; parent; parent = parent.parentElement) chain.unshift(parent);
+      context.fillStyle = "white";
+      context.fillRect(0, 0, 1, 1);
+      for (const parent of chain) {
+        context.fillStyle = getComputedStyle(parent).backgroundColor;
+        context.fillRect(0, 0, 1, 1);
+      }
+      const luminance = () => {
+        const rgb = [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
+        return rgb.reduce((sum, channel, index) => {
+          const value = channel / 255;
+          return (
+            sum +
+            (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4) *
+              [0.2126, 0.7152, 0.0722][index]
+          );
+        }, 0);
+      };
+      const background = luminance();
+      context.fillStyle = getComputedStyle(element).color;
+      context.fillRect(0, 0, 1, 1);
+      const foreground = luminance();
+      return (Math.max(background, foreground) + 0.05) / (Math.min(background, foreground) + 0.05);
+    });
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
+    await page.keyboard.press("Escape");
+  }
+});
+
+test.describe("touch appearance controls", () => {
+  test.use({ hasTouch: true });
+  test("retain their hit areas when text is reduced", async ({ page }) => {
+    await groupPage(page);
+    await page.evaluate(() => groupWorkProbe.setTextScale(70));
+    await page.locator("[data-app-settings-trigger]").tap();
+    await expect(page.locator("[data-app-settings-menu]")).toBeVisible();
+    const controls = page.locator("[data-app-settings-menu] button");
+    await expect
+      .poll(() =>
+        controls.evaluateAll((items) => items.every((e) => e.getBoundingClientRect().height >= 44)),
+      )
+      .toBe(true);
+    const theme = page.locator('[data-appearance-select="theme"]');
+    await theme.tap();
+    await page.locator('[role="menuitemradio"][data-value="dark"]').tap();
+    await expect(theme).toHaveAttribute("data-value", "dark");
+    await expect(theme).toBeFocused();
+  });
+});

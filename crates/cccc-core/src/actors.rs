@@ -3,6 +3,7 @@ use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
+use crate::profiles::ProfileStore;
 use crate::{GroupDoc, GroupStore};
 
 const RESERVED: &[&str] = &[
@@ -30,6 +31,7 @@ pub fn web_model_singleton_conflict(
     store: &GroupStore,
     exclude: Option<(&str, &str)>,
 ) -> io::Result<Option<String>> {
+    let profiles = ProfileStore::new(store.home().clone())?;
     for meta in store.list()? {
         let group = match store.load(&meta.group_id) {
             Ok(group) => group,
@@ -47,10 +49,12 @@ pub fn web_model_singleton_conflict(
                 )));
             }
         };
-        if let Some(actor) = group.actors.iter().find(|actor| {
-            actor.runtime == ActorRuntime::WebModel
-                && exclude != Some((group.group_id.as_str(), actor.id.as_str()))
-        }) {
+        for actor in &group.actors {
+            if exclude == Some((group.group_id.as_str(), actor.id.as_str()))
+                || !reserves_web_model(&profiles, actor)?
+            {
+                continue;
+            }
             let label = if actor.title.trim().is_empty() {
                 actor.id.as_str()
             } else {
@@ -63,6 +67,28 @@ pub fn web_model_singleton_conflict(
         }
     }
     Ok(None)
+}
+
+/// A linked profile may change before the Actor restarts and persists its new
+/// runtime. Reserve that future slot too; a still-applied Web Model keeps its
+/// slot until it has actually transitioned away.
+pub fn reserves_web_model(profiles: &ProfileStore, actor: &Actor) -> io::Result<bool> {
+    if actor.runtime == ActorRuntime::WebModel {
+        return Ok(true);
+    }
+    if actor.profile_id.is_empty() {
+        return Ok(false);
+    }
+    let Some(profile) = profiles.get_ref(
+        &actor.profile_id,
+        &actor.profile_scope,
+        &actor.profile_owner,
+    )?
+    else {
+        return Ok(false);
+    };
+    let runtime = crate::profiles::parse_profile_runtime(&profile)?;
+    Ok(runtime == ActorRuntime::WebModel)
 }
 
 pub fn validate_actor_id(value: &str) -> io::Result<String> {
