@@ -6,10 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.40] — Unreleased
+
 ### Added
+- **Native Mattermost IM connector.** Connect a Group through a dedicated Bot using REST and WebSocket, with channel/thread authorization, attachments, streaming replies, and processing reactions. Configure it in the Group's IM Bridge settings; no public callback or extra service is required.
+- **Browse and edit Group workspace files from the Web UI.** A shared Files/Presentation column shows the file tree and Git status; desktop text editing preserves drafts during file navigation and checks for on-disk changes before saving. Phones provide read-only browsing.
+- **Connect selected Groups across member accounts.** Invite another member from the Group’s sidebar menu and confirm both Groups on the account website. Exact Group scopes, duplicate-safe acceptance and bounded revocation reuse the durable message/reply/file pipeline without sharing administrator Tokens or terminals.
+- **CCCC Connect joins instances linked to the same account.** Background Group/Actor discovery and messaging need no manual Network or Group pairing; each instance retains its own data and needs a reachable HTTPS route.
+- **Remote workspaces open from the sidebar.** Each target requires its own administrator Access Token and serves its native messages, terminals, files, and Presentation. Restricted browser access remains single-instance.
+- **Cross-instance messages survive restarts with bounded delivery.** Persistent identities, target receipts, explicit failure outcomes, small attachments, replies, and cancellation preserve delivery semantics without letting offline peers block healthy ones.
+- **Direct Group connections work without an account.** Connect two selected Groups through an invitation and explicit approval over an existing reachable network. Only the receiving instance needs an inbound listener; messages, replies, small files and receipts retain the shared Connect semantics without granting workspace or terminal access.
 - **Mention connected Groups from the composer.** Select a remote `#Group` with its instance name and discover its Actor names through `@`. The reference gives local Agents the exact Connect destination; it does not send remotely or grant access by itself.
 
 ### Changed
+- **Group controls stay with their workspace.** Files and Presentation open directly from the Group header; Group connections is available from each Group’s sidebar menu, including remote Groups in Connect. Instance settings contains shared instance preferences.
+- **Membership settings distinguish Connect from Remote Access.** Directory confirmation, a configured route, and a connected tunnel are separate states. Connect requires version 0.4.40; the shared account minimum remains an explicit deployment choice.
+- **Local account linking prepares administrator access automatically.** Existing credentials are preserved; remote first setup still requires host proof. Account settings edit the same instance name as the website device list.
+- **Remote navigation stays expanded when switching Groups.** Previously opened Group lists have independent collapse controls; inactive frames close and reopening rechecks access.
 - **Workbench tools align with the main content.** View controls follow the Files/Presentation column when it is resized. Resource toggles use compact icons with accessible labels, and Presentation returns to its bookmark icon.
 - **Project Context puts shared work and Agent reports first.** Empty summaries take less space, task filters have visible selected states, and Agent working context opens on demand while blockers remain visible. Saved reports and record completeness are labelled separately from live Runtime or task state.
 - **Voice workspaces follow the selected task.** Doc keeps document tools, while Ask and Prompt prioritize requests and results without losing document drafts. Activity links reveal their documents without changing recording targets, and expanded Prompt controls remain reachable on short screens. Codex Voice preferences use a bounded reading width and explicit empty-search feedback; Voice document controls are localized in English, Chinese and Japanese.
@@ -21,6 +34,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Presentation keeps four compact slots until you open content.** New Groups default to the compact rail and side-by-side reading; slot navigation stays available in the viewer. Existing saved layout preferences are preserved.
 
 ### Fixed
+- **Antigravity feedback surveys no longer compete with automatic input.** Startup preparation disables the native user preference while preserving other settings; standalone AGY sessions under the same user also inherit this change.
+- **Connect names identify instances and message senders clearly.** New bindings initialize names from the host, the sidebar distinguishes instances from Groups, and remote Actors without custom titles display their actual IDs.
+- **Shared build caches embed the current checkout's Web UI.** Build inputs and asset paths are package-relative, so switching checkouts or rebuilding only the frontend cannot pair a new backend with another checkout's old UI. Source and packaged-crate builds retain incremental compilation.
+- **Antigravity uses automatic native-terminal delivery.** Bootstrap context accompanies the first task in one submission, without footer-text matching or per-process Web confirmation. Antigravity configures and verifies MCP with its native CLI before launch. First-payload pacing addresses its observed initialization race; later deliveries retain a conditional bootstrap reminder. Packaged Actor launches supply the owning CLI on PATH and inherit instance and Actor context. Native first-use setup must still be completed before sending tasks.
+- **Same-origin browser writes work behind host-rewriting proxies.** Cookie CSRF validation accepts browser-generated `Sec-Fetch-Site: same-origin` without requiring an external-origin allowlist, while other requests retain Origin/Referer checks.
+- **Terminal and stream WebSockets connect through HTTPS reverse proxies again.** Browsers send no Fetch Metadata on a WebSocket handshake, and a TLS-terminating proxy makes the origin server read an `https://` page back as `http://`, so cookie-authenticated sockets were rejected with `csrf_origin_invalid`. When the proxy hides the external scheme, matching uses the host and effective port; explicit ports remain distinct and a trusted forwarded scheme is respected. Different hosts, ports, and subdomains stay rejected.
+- **Grok uses and verifies its native CCCC MCP registration.** Startup no longer relies on an inherited Claude entry; effective command arguments, Actor environment, project/version overrides and native policy are checked before readiness is accepted.
+- **Source files use text previews.** Text content is no longer sent to media players based on an ambiguous MIME hint, so TypeScript `.ts` files no longer open as videos.
+- **Build diagnostics describe the running and served components.** Source fingerprints include compiled resources, and debug Web builds identify the assets served from disk rather than stale compile-time metadata. CLI, daemon and Web identities help distinguish stale binaries and tabs.
 - **Restored side panels align the header immediately.** Files and Presentation now publish their width on the first page render, including after refresh; resizing and Group switching retain the same alignment.
 - **Delayed Actor actions preserve the current view.** Finishing a removal no longer switches a newly selected Actor back to Messages or disrupts another Group's loading. Inbox responses and read refreshes stay attached to the exact opening, so closing and reopening an inbox cannot display an older response.
 - **Actor and Profile recovery handles partial failures consistently.** A retained terminal no longer hides failed managed-session cleanup. Retrying Voice Analyst Profile creation refreshes copied secrets after saving the source settings, and legacy Profiles without a runtime no longer block Web Model creation or Group import.
@@ -45,32 +67,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Downloads keep their Chinese names.** Group packages, blob attachments, and Presentation assets now send a percent-encoded RFC 5987 filename, so browsers stop rendering non-ASCII names as mojibake.
 - **Multiple workbench windows no longer consume the HTTP/1.1 pool with SSE.** The UI multiplexes global, ledger, and headless events over one WebSocket per page, preserving cursor replay, headless snapshots, and live permission checks.
 
-## [0.4.40] — Unreleased
-
-### Added
-- **Native Mattermost IM connector.** Connect a Group through a dedicated Bot using REST and WebSocket, with channel/thread authorization, attachments, streaming replies, and processing reactions. Configure it in the Group's IM Bridge settings; no public callback or extra service is required.
-- **Browse and edit Group workspace files from the Web UI.** A shared Files/Presentation column shows the file tree and Git status; desktop text editing preserves drafts during file navigation and checks for on-disk changes before saving. Phones provide read-only browsing.
-- **Connect selected Groups across member accounts.** Invite another member from the Group’s sidebar menu and confirm both Groups on the account website. Exact Group scopes, duplicate-safe acceptance and bounded revocation reuse the durable message/reply/file pipeline without sharing administrator Tokens or terminals.
-- **CCCC Connect joins instances linked to the same account.** Background Group/Actor discovery and messaging need no manual Network or Group pairing; each instance retains its own data and needs a reachable HTTPS route.
-- **Remote workspaces open from the sidebar.** Each target requires its own administrator Access Token and serves its native messages, terminals, files, and Presentation. Restricted browser access remains single-instance.
-- **Cross-instance messages survive restarts with bounded delivery.** Persistent identities, target receipts, explicit failure outcomes, small attachments, replies, and cancellation preserve delivery semantics without letting offline peers block healthy ones.
-
-### Changed
-- **Group controls stay with their workspace.** Files and Presentation open directly from the Group header; External connections moves to each Group’s sidebar menu, including remote Groups in Connect. Global settings contains global preferences.
-- **Membership settings distinguish Connect from Remote Access.** Directory confirmation, a configured route, and a connected tunnel are separate states. Connect requires version 0.4.40; the shared account minimum remains an explicit deployment choice.
-- **Local account linking prepares administrator access automatically.** Existing credentials are preserved; remote first setup still requires host proof. Account settings edit the same instance name as the website device list.
-- **Remote navigation stays expanded when switching Groups.** Previously opened Group lists have independent collapse controls; inactive frames close and reopening rechecks access.
-
 ### Removed
 - **Manual Group Bridge is retired.** Pairing, remote tool sessions, and dedicated MCP tools are removed. Historical messages remain; old pending work receives retirement outcomes before dedicated state is cleaned up. Downgrading the binary does not restore retired connections. Local cross-Group messaging remains available.
-
-### Fixed
-- **Antigravity feedback surveys no longer compete with automatic input.** Startup preparation disables the native user preference while preserving other settings; standalone AGY sessions under the same user also inherit this change.
-- **Connect names identify instances and message senders clearly.** New bindings initialize names from the host, the sidebar distinguishes instances from Groups, and remote Actors without custom titles display their actual IDs.
-- **Shared build caches embed the current checkout's Web UI.** Build inputs and asset paths are package-relative, so switching checkouts or rebuilding only the frontend cannot pair a new backend with another checkout's old UI. Source and packaged-crate builds retain incremental compilation.
-- **Antigravity uses automatic native-terminal delivery.** Bootstrap context accompanies the first task in one submission, without footer-text matching or per-process Web confirmation. Antigravity configures and verifies MCP with its native CLI before launch. First-payload pacing addresses its observed initialization race; later deliveries retain a conditional bootstrap reminder. Packaged Actor launches supply the owning CLI on PATH and inherit instance and Actor context. Native first-use setup must still be completed before sending tasks.
-- **Same-origin browser writes work behind host-rewriting proxies.** Cookie CSRF validation accepts browser-generated `Sec-Fetch-Site: same-origin` without requiring an external-origin allowlist, while other requests retain Origin/Referer checks.
-- **Terminal and stream WebSockets connect through HTTPS reverse proxies again.** Browsers send no Fetch Metadata on a WebSocket handshake, and a TLS-terminating proxy makes the origin server read an `https://` page back as `http://`, so cookie-authenticated sockets were rejected with `csrf_origin_invalid`. When the proxy hides the external scheme, matching uses the host and effective port; explicit ports remain distinct and a trusted forwarded scheme is respected. Different hosts, ports, and subdomains stay rejected.
 
 ## [0.4.39] — 2026-09-10
 

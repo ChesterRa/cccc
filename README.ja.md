@@ -1,13 +1,13 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/ChesterRa/cccc/main/assets/readme/hero.svg" width="100%" alt="CCCC は、単一の永続的なグループ台帳を通じて、ユーザー、統括役、複数のコーディングエージェント、信頼済みのリモートグループを連携させます" />
+<img src="https://raw.githubusercontent.com/ChesterRa/cccc/main/assets/readme/hero.svg" width="100%" alt="CCCC は各 Group のローカル台帳と明確な配信状態を使い、エージェントと接続先 Group の協調を支えます" />
 
 # CCCC
 
 ### コーディングエージェントをグループチャットのように指揮する
 
-**既読・送達トラッキング・リモートグループブリッジ・スマホ運用 —
-Claude Code、Codex、ChatGPT Web など 17 のランタイムをひとつの永続グループで。**
+**既読・送達トラッキング・インスタンス間連携・スマホ運用 —
+Claude Code、Codex、ChatGPT Web などの対応ランタイムをひとつの永続グループで。**
 
 複数のコーディングエージェントを、ランタイム・マシン・信頼済み working group をまたぐ**永続的で協調されたチーム**として運用 — バラバラのターミナルセッションではなく。
 
@@ -34,30 +34,42 @@ Claude Code、Codex、ChatGPT Web など 17 のランタイムをひとつの永
 
 ## なぜ CCCC か
 
-複数のコーディングエージェントを使う現実はこうです：協調記録はターミナルのスクロールバッファに埋もれて再起動で消え、保存済み、runtime への引き渡し、Inbox での消費、返信が混同され、起動/停止/復旧はツールごとに分散し、外出先から稼働中のグループを確認する手段もない。これが、マルチエージェント環境が「脆いデモ」で終わってしまう根本原因です。
+複数のコーディングエージェントで作業するときは、タスクの担当者、メッセージの到達状況、再起動後も残る進捗を把握する必要があります。CCCC はそれらを一か所で管理し、ターミナルを離れていても Web や IM から確認・操作できます。
 
 CCCC はエージェント群を、永続的で協調された 1 つのシステムとして運用します：
 
-- **永続協調** — 作業状態はターミナルスクロールではなく、append-only ledger に残ります。
+- **永続協調** — メッセージ履歴は append-only ledger に記録し、タスクと共有コンテキストもそれぞれ永続化します。
 - **配信事実の可視化** — ルーティング、保存、runtime 配信、既読、返信を個別に記録し、「送信済み」を「確認済み」と扱いません。
 - **1 つのコントロールプレーン** — Web UI、CLI、MCP、IM ブリッジがすべて同じ daemon 状態を共有します。
 - **マルチランタイム前提** — Claude Code、Codex CLI、ChatGPT Web、Grok Build などの主要ランタイムを 1 つのグループで混在運用できます。
-- **CCCC Connect によるインスタンス間連携** — 同一アカウントの Group が独立した状態を保って通信し、Web は各対象の管理者権限で開きます。
+- **CCCC Connect によるインスタンス間連携** — 同一アカウント内の検出、承認済みの会員間 Group 接続、アカウント不要の Direct 接続に対応。各インスタンスの状態と権限境界を保ちます。
 - **ローカルファースト運用** — インストールコマンドひとつで始められ、ランタイム状態は `CCCC_HOME` に置いたまま、必要時だけリモート監視へ広げられます。
 
 ## CCCC の役割
 
-CCCC はコマンド一つで導入でき、データベース、メッセージブローカー、Docker は不要です。それでいて、壊れやすいマルチエージェント構成に足りない運用基盤を提供します：
+CCCC はコマンド一つで導入でき、データベースやメッセージブローカーの別途運用、Docker は不要です：
 
 | 機能 | 実現方法 |
 |---|---|
-| **唯一の事実源** | append-only ledger（`ledger.jsonl`）が全メッセージ・イベントを記録 — 再生可能、監査可能、喪失なし |
+| **永続的なイベント履歴** | append-only ledger（`ledger.jsonl`）にメッセージと協調イベントを記録し、再生と監査に利用 |
 | **信頼性のあるメッセージング** | Send / Send + Reply / Mail、配信・既読・返信の事実を分離し、Mail 専用 Inbox を ledger 順で消費 — runtime への引き渡しを既読と偽りません |
 | **統一コントロールプレーン** | Web UI、CLI、MCP ツール、IM ブリッジがすべて 1 つの daemon に接続 — 状態の分断なし |
-| **マルチランタイム編成** | Claude Code、Cline CLI、Codex CLI、GitHub Copilot CLI、Cursor CLI、Devin CLI、Kiro CLI、Kilo Code CLI、Antigravity CLI、Grok Build、OpenCode、ChatGPT Web など 17 種の主要ランタイムを混在利用でき、さらに `custom` も扱える |
-| **CCCC Connect** | 同一アカウントのインスタンスを集約し、手動ペアリングなしで Group と Actor が連携 |
+| **マルチランタイム編成** | 対応するランタイムを同じ Group で混在利用し、その他の CLI エージェントには `custom` を使用 |
+| **CCCC Connect** | 自分のインスタンス、異なる会員の指定 Group、またはアカウントなしで二つの Group を直接接続 |
+| **ワークスペースツール** | ファイルの閲覧・編集、Git 差分確認、Presentation への文書固定、タイル表示の純正ターミナル操作 |
+| **音声ワークフロー** | Voice Secretary で音声を文書や入力欄の下書きに整理。実験的な Codex Voice はリアルタイム会話と Runtime を使う Analyst を連携 |
 | **ロールベース協調** | Foreman + Peer ロールモデル、権限境界と宛先ルーティング（`@all`、`@peers`、`@foreman`） |
 | **ローカルファーストなランタイム状態** | ランタイムデータはリポジトリではなく `CCCC_HOME` に保持しつつ、Web Access と IM ブリッジで遠隔運用も可能 |
+
+## 0.4.40 の主な変更
+
+- **三つの接続方法**：同一アカウントのインスタンス、会員間の指定 Group、アカウント不要の Direct Group 接続。入力欄の `#Group` 参照は Agent に正確な宛先を伝えます。
+- **Files と Git**：コードや文書の閲覧、下書き・競合保護付きのデスクトップ編集、作業ツリーとステージ済み変更の確認。
+- **安定した閲覧と移動**：コンパクトな Presentation、定期確認で点滅しない PDF、ページや Group の切り替えで保持されるターミナル、見やすいダークテーマと設定画面。
+- **Mattermost のネイティブ対応**：専用 Bot によるメッセージ、ファイル、スレッド、逐次返信。
+- **Runtime と設定の信頼性**：Profile 変換と秘密情報の保存再試行、Grok のネイティブ MCP 検証、ChatGPT の対話的ログイン、Voice の障害診断を改善。
+
+旧手動 Group Bridge は廃止され、既存の権限は自動変換されません。過去のメッセージは引き続き閲覧できます。更新時の動作と全変更は [0.4.40 リリースノート](docs/release/v0.4.40_release_notes.md)を参照してください。
 
 ## クイックスタート
 
@@ -74,7 +86,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-> **CCCC 0.4.36 の製品実装は Rust の 1 つだけです。** Web サイトのインストーラーを
+> **CCCC は単一のネイティブ Rust 実装を使用します。** Web サイトのインストーラーを
 > 推奨します。pip はパッケージマネージャー互換用で、同じネイティブ実行ファイルを
 > platform wheel として導入します。Python daemon、launcher、fallback は含みません。
 > 対応対象は Linux x86-64（glibc 2.28+）、Apple Silicon macOS 11+、Windows
@@ -116,6 +128,7 @@ cccc
 ```
 
 **http://127.0.0.1:8848** を開く — デフォルトで daemon とローカル Web UI が一緒に起動します。
+`localhost`／`127.0.0.1` から直接利用する場合はパスワード不要で、Access Token も作成しません。LAN、Remote Access、公開 URL、リバースプロキシ経由の利用には明示的な管理者 Token が必要です。
 
 ```bash
 cccc status            # 製品、daemon、group、actor、agent runtime を表示
@@ -129,10 +142,13 @@ Python runtime なしで 0.4.35 home を引き継げます。
 
 ### マルチエージェントグループの作成
 
+利用するエージェント CLI を先にインストールし、ログインしてください。以下は Claude Code と Codex CLI の例です。
+
 ```bash
 cd /path/to/your/repo
 cccc attach .                              # ディレクトリを scope として紐付け
-cccc setup --runtime claude                # CCCC のセッション単位 MCP 注入を確認
+cccc setup --runtime claude                # この例で使うランタイムだけを準備
+cccc setup --runtime codex
 cccc actor add foreman --runtime claude    # 最初の actor が foreman に
 cccc actor add implementer --runtime codex # peer を追加
 cccc group start                           # 全 actor を起動
@@ -167,9 +183,9 @@ graph TB
         direction LR
         A1["Claude Code"]
         A2["Codex CLI"]
-        A3["ChatGPT Web<br/>GPT-5.x via MCP"]
+        A3["ChatGPT Web<br/>Remote MCP"]
         A4["Grok Build"]
-        A5["+ 12 種 + custom"]
+        A5["その他のランタイム + custom"]
     end
 
     subgraph Daemon["CCCC Daemon · 単一ライター"]
@@ -192,16 +208,17 @@ graph TB
         TG["Telegram"]
         SL["Slack"]
         DC["Discord"]
+        MM["Mattermost"]
         FS["Feishu"]
         DT["DingTalk"]
         WC["WeCom"]
         WX["Weixin"]
     end
 
-    subgraph Remote["リモート CCCC Groups"]
+    subgraph Remote["接続済み CCCC Groups"]
         direction LR
-        RG1["信頼済みグループ"]
-        RG2["別マシン/チーム"]
+        RG1["別のインスタンス"]
+        RG2["別のマシン"]
     end
 
     A1 <-->|純正ターミナル<br/>MCP + 制御プロトコル| Daemon
@@ -211,35 +228,36 @@ graph TB
     A5 <-->|MCP ツール| Daemon
     Daemon <--> Ports
     Web <--> IM
-    Daemon <-->|CCCC Connect<br/>same-account messages| RG1
-    Daemon <-->|CCCC Connect<br/>same-account messages| RG2
+    Daemon <-->|CCCC Connect<br/>アカウントで認可した通信| RG1
+    Daemon <-->|Direct<br/>承認済み Group ペア| RG2
 
 ```
 
 **設計上の重要な決定：**
 
-- **Daemon は単一ライター** — すべての状態変更が 1 つのプロセスを経由し、競合状態を排除
-- **Ledger は append-only** — イベントは不変、履歴は信頼性が高くデバッグ可能
-- **ポートは薄い** — Web、CLI、MCP、IM ブリッジはステートレスなフロントエンド；daemon が全真実を保持
-- **インスタンスの権限は独立** — アカウントとデバイスがバックグラウンド通信を認可し、各対象が Web アクセスを検証します。
+- **Daemon が共有協調を管理** — Actor のライフサイクル、配信、協調状態の変更を同じコントロールプレーンで処理
+- **Ledger は append-only** — 過去のイベントを書き換えず、新しいイベントで変化を記録。Group 設定とコンテキストはそれぞれ別の正本を持ちます
+- **入口はコントロールプレーンを共有** — Web、CLI、MCP、IM の協調操作は daemon を経由。Web はブラウザ・音声・IM 連携サービスも実行します
+- **インスタンスの権限は独立** — アカウントとデバイスの関連付け、または承認済み Direct Group 権限が通信を許可。Web 閲覧は各対象が別途認可します
 - **ランタイムホーム `CCCC_HOME`**（デフォルト `~/.cccc/`）— ランタイム状態はリポジトリの外に保持
 
 ## サポートランタイム
 
-CCCC は 17 種の主要ランタイムでエージェントを編成し、残りは `custom` で扱えます。同一グループ内で各 actor が異なるランタイムを使用可能です。
+CCCC は 18 種の組み込み Runtime 連携と、その他の CLI エージェント向けの `custom` に対応します。同じ Group の Actor が異なる Runtime を使えます。操作方法と設定要件は Runtime ごとに異なります：
 
 | ランタイム | 連携方式 | 入口 / サーフェス |
 |-----------|----------|-------------------|
 | Claude Code | 管理 Agent View セッション + 純正 TUI、セッション単位 MCP | `claude` |
 | Cline CLI | MCP 自動設定 | `cline` |
-| Codex CLI | MCP 自動設定 | `codex` |
+| Codex CLI | 管理 app-server セッション + 純正 TUI、Actor 単位 MCP | `codex` |
+| DeepSeek Harness | 管理 ACP 開発者プレビュー、純正ターミナルなし | CCCC 管理の `dsh-acp-demo` |
 | GitHub Copilot CLI | MCP 自動設定 | `copilot` |
 | Cursor CLI | プロンプト支援 MCP 設定 | `cursor-agent` |
 | Devin CLI | MCP 自動設定 | `devin` |
 | Kiro CLI | MCP 自動設定 | `kiro-cli` |
 | Kilo Code CLI | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `kilo` |
 | Antigravity CLI | MCP 自動設定 | `agy` |
-| ChatGPT Web | Remote MCP + ブラウザ配信 | `chatgpt.com` conversation |
+| ChatGPT Web | Remote MCP + ブラウザ配信 | `chatgpt.com` の会話 |
 | Grok Build | 管理 ACP セッション + 純正 TUI、自動 MCP 設定 | `grok` |
 | Hermes Agent | MCP 自動設定 | `hermes` |
 | Droid | MCP 自動設定 | `droid` |
@@ -255,7 +273,7 @@ CCCC は 17 種の主要ランタイムでエージェントを編成し、残�
 cccc setup --runtime claude       # CCCC のセッション単位 MCP 注入を確認
 cccc setup --runtime cline        # Cline 純正 TUI の MCP を自動設定
 cccc setup --runtime cursor       # プロンプト支援 MCP 設定コントラクトを表示
-cccc setup --runtime kilo         # プロンプト支援 MCP 設定コントラクトを表示
+cccc setup --runtime kilo         # CCCC のセッション単位 MCP 注入を確認
 cccc setup --runtime antigravity  # Actor 起動前に Antigravity MCP を自動設定
 cccc runtime list --all           # 利用可能なランタイムを表示
 cccc doctor                       # 環境とランタイムの可用性を検証
@@ -263,23 +281,31 @@ cccc doctor                       # 環境とランタイムの可用性を検�
 
 Antigravity の設定時には、自動配信された端末入力を評価アンケートが消費しないよう、ユーザー設定でアンケートを無効にします。他の設定は保持されます。同じユーザーが単独で起動する AGY にも適用されます。
 
-ユーザーは Runtime だけを選び、CCCC が利用可能な操作面を自動的に決定します。CLI Actor は常に純正の書き込み可能なターミナルを表示します。Claude Code、Codex CLI、Grok Build、OpenCode は同じ provider session に構造化バックグラウンドプロトコルも接続し、ユーザーの直接操作と正確なライフサイクル把握を両立します。Actor メッセージは純正ターミナルへすぐ渡され、steer と queue の判断は受信 Runtime が行います。
+Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Claude Code、Codex CLI、Grok Build、OpenCode、Kilo は、同じ provider session で純正の書き込み可能なターミナルと構造化プロトコルを併用します。メッセージはそのターミナルへ渡され、steer と queue は受信 Runtime が判断します。DeepSeek Harness は純正ターミナルなしの ACP、ChatGPT Web はブラウザ配信と Remote MCP を使用します。
 
 各サポート Runtime の setup コマンド、操作方式、トラブルシュートは [サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) を参照してください。
 
-### ChatGPT Web / GPT-5.x をローカル開発 actor として
+### ChatGPT Web をローカル開発 actor として
 
-ChatGPT Web は外部チャットウィンドウではなく、実際の CCCC actor としてグループに参加できます。CCCC はブラウザ配信で紐付けた ChatGPT 会話へグループメッセージを届け、GPT-5.x は actor に紐付いた Remote MCP connector 経由で CCCC に接続します — ルーティングされたメッセージの受信、可視返信、リポジトリの確認/編集、scope 内の shell/git 実行まで、ネイティブなローカルコーディングエージェントに近い体験です。ChatGPT Web の余剰利用枠を、追加のローカル開発 agent 容量として活用することもできます。
+CCCC は Group メッセージを紐付けた ChatGPT 会話へ届けます。connector 対応の ChatGPT セッションは、Actor に紐付いた Remote MCP を通じてメッセージの受信、返信、リポジトリの閲覧・編集、scope 内の shell/git 実行ができます。現在、Web Model Actor はインスタンスごとに一つです。
 
 セットアップには MCP connector 用の public HTTPS URL（Cloudflare Tunnel、ngrok、Tailscale Funnel、またはリバースプロキシ）が必要です。CCCC は安定したテキストのみの配信を既定とし、実験的な **GPT Pro** モードも提供します。このモードは、画像添付によって第三者 MCP が利用可能になる一部アカウント向けに、ごく小さな空白 PNG を各配信へ添付します。CCCC はモデルを切り替えず、ChatGPT の変更後もこの互換手段が動作し続けることを保証しません。詳細な設定とトラブルシュート: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime)。
 
-## CCCC Connect：複数インスタンスを一つの作業画面に
+## CCCC Connect：インスタンスとチームをつなぐ
 
-各インスタンスの **Settings → Account** で同じアカウントを関連付けると、Group と Actor が相互に探索・通信できます。状態と履歴は各インスタンスに残り、Network の作成や Group の手動ペアリングは不要です。
+作業に合う接続範囲を選びます：
 
-管理者は Web サイドバーから関連付け済みインスタンスを開けます。対象ごとに**そのインスタンス自身の管理者 Access Token** が必要です。制限付きアクセスは単一インスタンスのままです。ブラウザーの権限とバックグラウンドのデバイス通信権限は独立し、Remote Access が管理された HTTPS 接続経路を提供します。
+| 方法 | 範囲と設定 |
+|---|---|
+| **同一アカウント** | **設定 → アカウント** で各インスタンスを関連付けると、Group ごとの手動ペアリングなしで検出・通信できます。 |
+| **異なる会員** | サイドバーの Group の **⋮ → Group 接続** または Group 設定から Member ID を招待し、双方がアカウントサイトで自分の Group を確認します。 |
+| **Direct、アカウント不要** | **Group 接続 → 直接接続** で信頼できる経路から招待を交換し、指定 Group の接続を承認します。一方が到達可能な LAN、VPN、既存のネットワーク経路で接続を受け付ける必要があります。 |
 
-Agent は `cccc_connect` で対象を探し、`cccc_message_send` または `cccc_file` に `dst_instance_id` と `dst_group_id` を指定します。返信には受信したローカル Event ID を使います。旧手動 Group Bridge とリモート任意ツールの権限は廃止され、別会員の Group とは、Group ヘッダーの「外部接続」から接続できます。双方がアカウントサイトで各自の Group を承認し、メッセージとファイルを共有します。リモート管理権限は付与されません。[CCCC Connect ガイド](https://chesterra.github.io/cccc/guide/connect)を参照してください。
+状態と履歴は各インスタンスに残ります。会員間接続と Direct は指定 Group 間のメッセージ、返信、小さなファイルを許可し、ターミナル、ワークスペース閲覧、任意ツールは公開しません。Direct に公開 Web 管理画面は不要で、ネットワークリレーも提供しません。
+
+管理者はサイドバーから同一アカウントのリモートワークスペースを開けますが、**各対象インスタンス自身の管理者 Access Token** と到達可能な HTTPS アドレスが必要です。制限付きアクセスは単一インスタンスに留まり、Web の権限とバックグラウンド連携の権限は独立しています。
+
+Agent は `cccc_connect` で対象を検出し、`cccc_message_send` または `cccc_file` に `dst_instance_id` と `dst_group_id` を指定します。返信には受信したローカル Event ID を使います。入力欄でリモート **`#Group`** を選ぶと、ローカル Agent に正確な識別情報を渡せます。それだけでリモート送信や権限付与は行いません。詳しくは [CCCC Connect ガイド](https://chesterra.github.io/cccc/guide/connect)を参照してください。
 
 ## メッセージングと協調
 
@@ -319,33 +345,42 @@ CCCC は IM グレードのメッセージングセマンティクスを実装 �
 
 ## Web UI
 
-内蔵 Web UI `http://127.0.0.1:8848` の機能：
+組み込み Web UI `http://127.0.0.1:8848` では以下を利用できます：
 
-- **チャットビュー** — `@mention` オートコンプリートとリプライスレッド
-- **actor ごとの埋め込みターミナル**（xterm.js）— 各 agent の作業状況をリアルタイムで確認
-- **グループ & actor 管理** — 作成、設定、起動、停止、再起動
-- **オートメーションルールエディター** — トリガー、スケジュール、アクションを視覚的に設定
-- **Context パネル** — 共有ビジョン、スケッチ、マイルストーン、タスク
-- **Group Space** — NotebookLM 統合による共有ナレッジ管理
-- **ChatGPT Web Model 設定** — 1 つの ChatGPT Web 会話を CCCC actor として接続
-- **CCCC Connect 設定** — アカウントの関連付け、ディレクトリ状態確認、Remote Access の設定。
-- **IM ブリッジ設定** — Telegram/Slack/Discord/Feishu/DingTalk/WeCom/Weixin に接続
-- **設定** — メッセージングポリシー、配信チューニング、ターミナルトランスクリプト制御
-- **テキストスケール** — 90% / 100% / 125% フォントサイズ、ブラウザごとに永続化
-- **ライト / ダーク / システムテーマ**
+- **メッセージ** — `@Actor` と `#Group` の補完、返信、検索、独立した配信・既読・返信状態
+- **タイル表示の純正ターミナル** — 直接入力、ページ移動、Group 切り替え時の最近の表示の保持
+- **Files と Git** — ワークスペース閲覧、コード・文書・メディアのプレビュー、デスクトップでの編集・ファイル管理。Git 変更は読み取り専用
+- **Presentation** — 四つのコンパクトな固定スロット、拡大表示、ズーム、引用
+- **Group と Actor 管理** — ライフサイクル操作、Runtime Profile の関連付け・Custom 設定、秘密の環境変数
+- **オートメーション編集** — トリガー、スケジュール、アクションの視覚的な設定
+- **Project Context** — 共有の協調情報、タスク、Agent 状態、自己進化スキル
+- **Group Space** — NotebookLM による共有ナレッジ管理
+- **ChatGPT Web Model 設定** — 一つの ChatGPT Web 会話を CCCC Actor として接続
+- **Voice Secretary と Codex Voice** — 音声から文書・入力欄の下書きを作成し、実験的なリアルタイム Voice では Analyst を保持
+- **CCCC Connect 設定** — アカウント経由の検出、指定 Group の接続、Direct ペアリング
+- **IM ブリッジ設定** — Telegram、Slack、Discord、Mattermost、Feishu、DingTalk、WeCom、Weixin
+- **設定** — メッセージポリシー、配信調整、ターミナル履歴
+- **文字サイズ** — 90% / 100% / 125% をブラウザごとに保存
+- **ライト／ダーク／システム連動テーマ**
 
 ### リモートアクセス
 
-localhost 外から Web UI にアクセスする場合：
+localhost からの直接利用に Access Token は不要です。他のマシンへ Web を公開する前に、**設定 → Web Access** で **Admin Access Token** を作成してください。リモートアクセスには認証が必要です。ローカルでの初回設定にブートストラップコードは不要ですが、リモートでの初回設定にはホストを管理できることの証明が必要です。
 
-- **LAN / プライベートネットワーク** — 全ローカルインターフェースにバインド：`CCCC_WEB_HOST=0.0.0.0 cccc`
-- **Cloudflare Tunnel**（推奨）— `cloudflared tunnel --url http://127.0.0.1:8848`
-- **Tailscale** — tailnet IP にバインド：`CCCC_WEB_HOST=$TAILSCALE_IP cccc`
-- ローカル以外へ公開する前に、まず **Settings > Web Access** で **Admin Access Token** を作成し、その完了まではネットワーク境界で保護してください。
-- **Settings > Web Access** で `127.0.0.1` はローカルのみ、`0.0.0.0` は localhost + LAN IP を意味します。CCCC が WSL2 のデフォルト NAT ネットワーク内で動作している場合、`0.0.0.0` は WSL 内部にのみ公開されます。LAN デバイスからのアクセスには WSL mirrored networking または Windows portproxy/ファイアウォールルールが必要です。
-- `Save` はターゲットバインディングを保存します。Web が `cccc` または `cccc web` で起動された場合は、**Settings > Web Access** の `Apply now` で短い監視付き再起動を実行してください。Docker、systemd 等の外部スーパーバイザが管理している場合は、そのサービスを再起動してください。
-- `Start` / `Stop` は Tailscale リモートアクセス専用で、既に稼働中の Web ソケットのリバインドは行いません。
-- トークンポリシーは意図的に階層化されています：localhost のみの場合はシンプルに、LAN/プライベート公開ではデフォルトで Access Token が必要、公開 URL/トンネル公開では Access Token が必須です。
+- **LAN／プライベートネットワーク** — Web Access に保存したバインド設定、または `cccc --host 0.0.0.0 --port 8848` を使用します。WSL2 の既定 NAT 環境では、LAN からのアクセスにミラーネットワークまたは Windows の転送・ファイアウォール設定も必要です。
+- **既存のトンネルやリバースプロキシ** — 例えば `cloudflared tunnel --url http://127.0.0.1:8848` で HTTPS 公開します。プロキシ側で転送ヘッダーを保護し、[Web アクセスガイド](https://chesterra.github.io/cccc/guide/web-ui#security)に従ってください。
+- **管理 Remote Access（CLI：`reach`）** — **設定 → アカウント** で関連付け、**Web Access** で有効化します。ローカルでの関連付けは既存の認証情報を保ちながら管理者アクセスを準備します。管理ヘルパーは現在 Linux と macOS に対応し、Windows は対象外です。Windows では外部トンネルやリバースプロキシを利用できます。
+
+```bash
+cccc login
+cccc reach on
+cccc reach status
+cccc reach off
+```
+
+バインド設定の保存後は、**Apply now** で CCCC 管理の Web を再起動するか、外部のプロセスマネージャーを再起動します。明示的な `--host`／`--port` は保存済み設定より優先され、保存済み設定は `CCCC_WEB_HOST`／`CCCC_WEB_PORT` より優先されます。
+
+Remote Access は固定版の `cloudflared` を `CCCC_HOME` に導入し、リポジトリや ledger はアップロードしません。Direct Group 接続は別の daemon 間通信経路で、Web 管理画面の公開は不要です。
 
 ## IM ブリッジ
 
@@ -361,14 +396,15 @@ cccc im start
 | Telegram | ✅ 対応済み |
 | Slack | ✅ 対応済み |
 | Discord | ✅ 対応済み |
+| Mattermost | ✅ 対応済み |
 | Feishu / Lark | ✅ 対応済み |
 | DingTalk | ✅ 対応済み |
 | WeCom / 企業微信 | ✅ 対応済み |
 | Weixin / 微信 | ✅ 対応済み |
 
-> Telegram、Slack、Discord、Feishu、DingTalk、WeCom は段階的な返信に対応し、長すぎる結果は欠落のない分割済み最終メッセージへフォールバックします。Weixin は欠落のない最終メッセージを配信し、現在はボットとのダイレクトチャットのみ対応しています。
+> Telegram、Slack、Discord、Mattermost、Feishu、DingTalk、WeCom は段階的な返信に対応し、長すぎる結果は欠落のない分割済み最終メッセージへフォールバックします。Weixin は欠落のない最終メッセージを配信し、現在はボットとのダイレクトチャットのみ対応しています。
 
-任意の対応プラットフォームから、通常の調整にはプレーンテキストまたは `/send @foreman <メッセージ>` を使い、真のブロードキャストだけ `/send @all <メッセージ>` を使います。`/status` でグループ状態を確認し、`/pause` / `/resume` で運用を制御できます — すべてスマートフォンから。
+通常のテキストや `/send @foreman <メッセージ>` で協調し、`/status` で Group 状態を確認、`/pause`／`/resume` でそのチャットの購読を一時停止・再開できます。Mattermost コマンドには `@botname` を付けます（例：`@cccc_bot /status`）。[Mattermost 設定ガイド](https://chesterra.github.io/cccc/guide/im-bridge/mattermost)を参照してください。
 
 ## CLI リファレンス
 
@@ -409,19 +445,18 @@ cccc im start|stop|status
 
 ## MCP ツール
 
-エージェントは、コンパクトな action-oriented MCP surface を通じて CCCC と対話します。コアツールは常時公開され、追加サーフェスは必要時のみ capability pack 経由で有効化されます。
+通常の Actor には `cccc_connect` を含むコンパクトな協調コアを常時公開します。その他の組み込みツールは、毎回ツールパック全体を公開せずに `cccc_capability_use` から呼び出せます。Web Model connector と専用アシスタントは役割ごとのツール範囲を持ちます。
 
-| サーフェス | 例 |
-|------------|----|
-| **セッションとガイダンス** | `cccc_bootstrap`、`cccc_help`、`cccc_project_info` |
-| **メッセージングとファイル** | `cccc_inbox_read`、`cccc_message_history`、`cccc_message_send`、`cccc_message_reply`、`cccc_file` |
-| **グループと actor 制御** | `cccc_group`、`cccc_actor` |
-| **協調と状態** | `cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state`、`cccc_context_sync` |
-| **インスタンス探索** | `cccc_connect`、および `cccc_message_send` と `cccc_file` の明確な宛先指定 |
-| **オートメーションと記憶** | `cccc_automation`、`cccc_memory`、`cccc_memory_admin` |
-| **必要時のみの拡張** | `cccc_capability_*`、`cccc_space`、`cccc_terminal`、`cccc_debug`、`cccc_im_bind` |
+| 機能面 | 例 |
+|--------|----|
+| **常時公開の協調コア** | `cccc_bootstrap`、`cccc_help`、機能検索・呼び出し、Inbox、メッセージ、ファイル、`cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state` |
+| **プロジェクト情報と記憶（必要時）** | `cccc_project_info`、`cccc_tracked_send`、`cccc_memory`、`cccc_context_sync` |
+| **Group と Actor 制御（必要時）** | `cccc_group`、`cccc_actor`、`cccc_runtime_list` |
+| **ワークスペースツール（必要時）** | `cccc_repo`、`cccc_presentation`、`cccc_terminal`、`cccc_debug` |
+| **インスタンス検出** | `cccc_connect`、`cccc_message_send` と `cccc_file` の正確なインスタンス間宛先 |
+| **その他の機能ツール** | `cccc_automation`、`cccc_space`、機能管理、`cccc_im_bind` |
 
-MCP アクセスを持つエージェントは、権限境界の中で自己組織化できます。受信箱の確認、可視返信、タスク協調、自己状態更新、そして必要なときだけの追加能力有効化が可能です。
+協調コアは必要なプロトコルを維持し、ワークフローや推論方法、任意のツール選択は Agent と現在のタスクに委ねます。`cccc_help` は CCCC の状態、復旧、委任、機能ルートを調べるためのもので、一般的な推論・文章作成方法は規定しません。
 
 ## CCCC の位置づけ
 
@@ -449,14 +484,14 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 
 ## セキュリティ
 
-- **Web UI は高権限。** ローカル以外へ公開する前に、まず **Settings > Web Access** で **Admin Access Token** を作成してください。
-- **Daemon IPC は認証なし。** デフォルトで localhost にのみバインド。
-- **IM ボットトークン** は環境変数から読み取り、設定ファイルには保存しない。
-- **ランタイム状態** は `CCCC_HOME`（`~/.cccc/`）に保持、リポジトリ内には置かない。
-- **Connect アカウントの関連付けはバックグラウンド連携を許可します。** 同じアカウントの他 Group と通信してよいインスタンスだけを関連付けてください。Web には対象ごとの管理者 Token が必要です。
-- **Capability allowlist** がエージェントの有効化できるオプション MCP サーフェスを管理。ポリシーはパッケージ内のデフォルトと `CCCC_HOME/config/` のユーザーオーバーレイで構成。
+- **Web UI は高権限の入口です。** ローカル以外へ公開する前に Admin Access Token を作成し、公開アクセスには信頼できるトンネルやリバースプロキシによる HTTPS を使用してください。
+- **Daemon IPC はアプリケーション認証のない、信頼されたローカルインターフェースです。** 利用可能な Unix socket または loopback TCP を使います。外部へ公開せず、ランタイムディレクトリを信頼できないユーザーと共有しないでください。
+- **IM の認証情報** は環境変数の参照または直接値で設定できます。設定を共有する場合は参照を優先し、認証情報やランタイム状態を公開しないでください。
+- **ランタイム状態** は `CCCC_HOME`（既定 `~/.cccc/`）に保持し、リポジトリと分離します。
+- **接続範囲は明示的です。** 同一アカウントの関連付けは対象インスタンス間の連携を許可し、会員間と Direct の権限は指定 Group の組に限定されます。リモートワークスペースには各対象の管理者 Token が必要です。
+- **Capability allowlist** は任意の MCP 機能を制御しますが、純正エージェントプロセスのサンドボックスではありません。Runtime 自体の権限と自律実行の既定値も確認してください。
 
-詳細なセキュリティガイダンスは [SECURITY.md](SECURITY.md) を参照。
+脆弱性の報告は [SECURITY.md](SECURITY.md)、アクセス制御の操作は [Web UI ガイド](https://chesterra.github.io/cccc/guide/web-ui)を参照してください。
 
 ## ドキュメント
 
@@ -467,7 +502,9 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 | [クイックスタート](https://chesterra.github.io/cccc/guide/getting-started/) | インストール、起動、最初のグループ作成 |
 | [ユースケース](https://chesterra.github.io/cccc/guide/use-cases) | 実践的なマルチエージェントシナリオ |
 | [Web UI ガイド](https://chesterra.github.io/cccc/guide/web-ui) | ダッシュボードのナビゲーション |
-| [IM ブリッジ設定](https://chesterra.github.io/cccc/guide/im-bridge/) | Telegram、Slack、Discord、Feishu、DingTalk、WeCom、Weixin の接続 |
+| [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | アカウント・Direct 接続、配信と権限境界 |
+| [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | 音声入力、文書、入力欄のワークフロー |
+| [IM ブリッジ設定](https://chesterra.github.io/cccc/guide/im-bridge/) | Telegram、Slack、Discord、Mattermost、Feishu、DingTalk、WeCom、Weixin の接続 |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM ナレッジ統合 |
 | [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | MCP 対応 ChatGPT Web を CCCC actor として接続。任意の実験的 GPT Pro モードでは小さな空白 PNG を添付します |
 | [Capability Allowlist](https://chesterra.github.io/cccc/guide/capability-allowlist) | MCP 機能ガバナンス |
@@ -560,17 +597,7 @@ Docker イメージには Claude Code、Codex CLI、Factory CLI がバンドル�
 
 ### 0.3.x からのアップグレード
 
-0.4.x はゼロからの書き直しです。先にクリーンアンインストール：
-
-```bash
-pipx uninstall cccc-pair || true
-pip uninstall cccc-pair || true
-rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
-```
-
-再インストール後、`cccc doctor` で環境を確認。
-
-> tmux-first の 0.3.x は [cccc-tmux](https://github.com/ChesterRa/cccc-tmux) にアーカイブ済み。
+tmux-first の 0.3.x は [cccc-tmux](https://github.com/ChesterRa/cccc-tmux) にアーカイブされています。0.4.x は異なるアーキテクチャです。旧インストールの管理元を確認し、そのパッケージマネージャーでアンインストールしてから上記の手順で導入し、`cccc doctor` を実行してください。既存のデータは保持してください。実行ファイルの再インストールで 0.3.x のセッションが 0.4.x の Group に変換されるわけではありません。
 
 ## コミュニティ
 
@@ -583,7 +610,7 @@ Telegram コミュニティ: [t.me/ccccpair](https://t.me/ccccpair)
 コントリビューションを歓迎します：
 
 1. 新しい Issue を開く前に既存の [Issues](https://github.com/ChesterRa/cccc/issues) を確認
-2. バグ報告：`cccc version`、OS、正確なコマンド、再現手順を含める
+2. バグ報告：`cccc --version`、OS、正確なコマンド、再現手順を含める
 3. 機能リクエスト：問題、提案する動作、運用への影響を記述
 4. ランタイム状態は `CCCC_HOME` に保持 — リポジトリにコミットしない
 
