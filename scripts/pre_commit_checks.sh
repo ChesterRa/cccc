@@ -173,6 +173,7 @@ if [[ "$full" == "1" ]]; then
   run_whitespace_check
   run_frontend_checks
   npm -C web test
+  npm -C web run test:browser
   npm -C web run build
   run_tooling_checks
   run_rust_checks

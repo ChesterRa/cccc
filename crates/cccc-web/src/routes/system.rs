@@ -44,17 +44,28 @@ async fn ping(
     if principal.is_none() {
         return Ok(success(json!({"status":"ok"})));
     }
-    let daemon = response.0["result"].clone();
+    let include_local_paths = query.include_home && principal.is_some_and(|value| value.is_admin);
+    let mut daemon = response.0["result"].clone();
+    if !include_local_paths {
+        if let Some(value) = daemon.as_object_mut() {
+            value.remove("executable");
+        }
+    }
+    let assets = crate::web_assets_info();
     let mut result = json!({
         "daemon": daemon,
         "version": env!("CARGO_PKG_VERSION"),
+        "build": cccc_core::build_info::current(),
         "web": {
+            "assets_id": assets.as_ref().map(|info| &info.assets_id),
+            "entry_script": assets.as_ref().map(|info| &info.entry_script),
             "mode": state.web_mode.as_str(),
             "read_only": state.web_mode.is_read_only()
         }
     });
-    if query.include_home && principal.is_some_and(|value| value.is_admin) {
+    if include_local_paths {
         result["home"] = json!(state.home.root().to_string_lossy());
+        result["executable"] = json!(std::env::current_exe().ok());
     }
     Ok(success(result))
 }
@@ -71,6 +82,9 @@ async fn health(
         .get_mut("result")
         .and_then(Value::as_object_mut)
         .map(|value| value.insert("status".into(), Value::String("ok".into())));
+    if let Some(value) = response.0["result"].as_object_mut() {
+        value.remove("executable");
+    }
     Ok(response)
 }
 async fn ready(

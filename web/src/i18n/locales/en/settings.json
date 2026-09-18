@@ -1145,7 +1145,6 @@
     "ccccVersion": "CCCC",
     "daemonVersion": "Daemon",
     "versionMismatchBadge": "Mismatch",
-    "versionMismatchHint": "The Web package and daemon are on different versions. Restart CCCC to realign them.",
     "warningTitle": "Warning",
     "warningText": "Developer mode enables verbose logs and extra diagnostics. Only enable it when you need it.",
     "enableDeveloperMode": "Enable developer mode",
@@ -1186,7 +1185,16 @@
     "lines": "Lines",
     "clearTruncate": "Clear (truncate)",
     "refresh": "Refresh",
-    "clear": "Clear"
+    "clear": "Clear",
+    "webSource": "Web server source",
+    "daemonSource": "Daemon source",
+    "webAssets": "Served Web bundle",
+    "servedEntry": "Served entry",
+    "loadedEntry": "Loaded browser entry",
+    "copyBuildInfo": "Copy build information",
+    "copied": "Copied",
+    "copyFailed": "Copy failed. Select the values above to copy them.",
+    "buildMismatchHint": "These components use different builds. Check the running CCCC installation; save your drafts before restarting or reloading."
   },
   "webModels": {
     "chatgpt": {

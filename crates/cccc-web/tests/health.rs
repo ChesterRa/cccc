@@ -56,6 +56,8 @@ async fn anonymous_health_checks_the_daemon_without_disclosing_details() {
     let payload = response_json(response).await;
     assert_eq!(payload["result"]["status"], "ok");
     assert!(payload["result"]["pid"].is_null());
+    assert!(payload["result"]["build"].is_null());
+    assert!(payload["result"]["executable"].is_null());
 
     let _ = cccc_client::DaemonClient::new(home)
         .call(&DaemonRequest {

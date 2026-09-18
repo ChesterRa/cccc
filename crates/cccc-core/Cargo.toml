@@ -47,3 +47,5 @@ workspace = true
 
 [lib]
 name = "cccc_core"
+[build-dependencies]
+sha2.workspace = true

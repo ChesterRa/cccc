@@ -1,4 +1,8 @@
 import { Switch } from "../../ui/switch";
+import { useState } from "react";
+import { copyTextToClipboard } from "../../../utils/copy";
+import { buildMismatch, type RuntimeBuildInfo } from "../../../utils/runtimeBuildInfo";
+import { Button } from "../../ui/button";
 // DeveloperTab configures developer mode.
 import { useTranslation } from "react-i18next";
 import { SelectCombobox } from "../../SelectCombobox";
@@ -19,6 +23,7 @@ interface DeveloperTabProps {
   isDark: boolean;
   groupId?: string;
   runtimeVersion: string;
+  runtimeBuildInfo?: RuntimeBuildInfo;
   daemonVersion: string;
   runtimeInfoErr: string;
   developerMode: boolean;
@@ -70,6 +75,7 @@ export function DeveloperTab({
   isDark: _isDark,
   groupId,
   runtimeVersion,
+  runtimeBuildInfo,
   daemonVersion,
   runtimeInfoErr,
   developerMode,
@@ -107,6 +113,7 @@ export function DeveloperTab({
   onReconcileRegistry,
 }: DeveloperTabProps) {
   const { t } = useTranslation("settings");
+  const [copyStatus, setCopyStatus] = useState<"" | "copied" | "copyFailed">("");
   const missing = Array.isArray(registryResult?.missing_group_ids)
     ? registryResult!.missing_group_ids
     : [];
@@ -117,7 +124,8 @@ export function DeveloperTab({
     ? registryResult!.removed_group_ids
     : [];
   const versionMismatch = Boolean(
-    runtimeVersion && daemonVersion && runtimeVersion !== daemonVersion,
+    (runtimeVersion && daemonVersion && runtimeVersion !== daemonVersion) ||
+    buildMismatch(runtimeBuildInfo),
   );
 
   return (
@@ -181,9 +189,57 @@ export function DeveloperTab({
 
             {versionMismatch ? (
               <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                {t("developer.versionMismatchHint")}
+                {t("developer.buildMismatchHint")}
               </div>
             ) : null}
+            {runtimeBuildInfo && (
+              <div className="mt-4 space-y-3">
+                <dl className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
+                  {(
+                    [
+                      "webSource",
+                      "daemonSource",
+                      "webAssets",
+                      "servedEntry",
+                      "loadedEntry",
+                    ] as const
+                  ).map((key) => (
+                    <div key={key} className="min-w-0">
+                      <dt className="text-[var(--color-text-muted)]">{t(`developer.${key}`)}</dt>
+                      <dd className="mt-1 break-all font-mono text-[var(--color-text-secondary)]">
+                        {runtimeBuildInfo[key] || "—"}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={async () => {
+                      const ok = await copyTextToClipboard(
+                        JSON.stringify(
+                          {
+                            web_version: runtimeVersion,
+                            daemon_version: daemonVersion,
+                            ...runtimeBuildInfo,
+                          },
+                          null,
+                          2,
+                        ),
+                      );
+                      setCopyStatus(ok ? "copied" : "copyFailed");
+                    }}
+                  >
+                    {t("developer.copyBuildInfo")}
+                  </Button>
+                  <span role="status" className="text-xs text-[var(--color-text-secondary)]">
+                    {copyStatus ? t(`developer.${copyStatus}`) : ""}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className={settingsWorkspaceSectionClass}>

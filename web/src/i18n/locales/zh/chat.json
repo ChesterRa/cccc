@@ -770,5 +770,6 @@
   "voiceSecretaryTranscriptAnalyzingAudio": "正在分析最终录音…",
   "voiceSecretaryTranscriptFinalFailed": "最终录音分析失败。",
   "voiceSecretaryTranscriptEmpty": "此文档的文档模式转录将显示在这里。",
-  "voiceSecretaryTranscriptNeedsDocument": "选择或创建文档以查看其转录记录。"
+  "voiceSecretaryTranscriptNeedsDocument": "选择或创建文档以查看其转录记录。",
+  "sendResultUnknown": "暂时无法确认消息是否已送达。请先检查消息列表，再决定是否重新发送。"
 }

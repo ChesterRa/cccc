@@ -243,5 +243,6 @@
     "stopPending": "Stopping…",
     "failed": "Could not update {{group}}. Check the connection and try again.",
     "noActors": "Add an Agent to start this Group."
-  }
+  },
+  "connectionInterruptedHint": "The page connection was interrupted. Reconnection is automatic; displayed information may be outdated."
 }

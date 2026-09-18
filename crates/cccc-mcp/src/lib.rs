@@ -196,6 +196,7 @@ async fn handle(
             "protocolVersion": negotiated_protocol_version(request),
             "capabilities": {"tools": {"listChanged": false}},
             "serverInfo": {"name": "cccc-mcp", "version": env!("CARGO_PKG_VERSION")},
+            "_meta": {"cccc/build": cccc_core::build_info::current()},
         }),
         "ping" => json!({}),
         "tools/list" => {

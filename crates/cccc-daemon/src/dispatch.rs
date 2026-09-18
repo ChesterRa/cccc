@@ -48,6 +48,8 @@ fn ping(_home: &HomeLayout, _request: &DaemonRequest) -> OpResult {
     object(json!({
         "pid": std::process::id(),
         "version": env!("CARGO_PKG_VERSION"),
+        "build": cccc_core::build_info::current(),
+        "executable": std::env::current_exe().ok(),
         "ts": cccc_contracts::utc_now(),
         "ipc_v": 1,
         "capabilities": {

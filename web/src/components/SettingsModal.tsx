@@ -1,3 +1,4 @@
+import { loadedWebEntry, type RuntimeBuildInfo } from "../utils/runtimeBuildInfo";
 // SettingsModal renders the settings modal.
 import { GroupConnectionsPanel } from "../features/connect/GroupConnectionsControl";
 import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback } from "react";
@@ -256,6 +257,7 @@ export function SettingsModal({
   const [debugSnapshotErr, setDebugSnapshotErr] = useState("");
   const [debugSnapshotBusy, setDebugSnapshotBusy] = useState(false);
   const [runtimeVersion, setRuntimeVersion] = useState("");
+  const [runtimeBuildInfo, setRuntimeBuildInfo] = useState<RuntimeBuildInfo>();
   const [daemonVersion, setDaemonVersion] = useState("");
   const [runtimeInfoErr, setRuntimeInfoErr] = useState("");
 
@@ -1253,6 +1255,7 @@ export function SettingsModal({
 
   const loadRuntimeInfo = async () => {
     setRuntimeInfoErr("");
+    setRuntimeBuildInfo(undefined);
     try {
       const resp = await api.fetchPing();
       if (!resp.ok) {
@@ -1268,6 +1271,15 @@ export function SettingsModal({
           : null;
       setRuntimeVersion(String(result.version || "").trim());
       setDaemonVersion(String(daemon?.version || "").trim());
+      setRuntimeBuildInfo({
+        webSource: String(result.build?.source_id || ""),
+        daemonSource: String(
+          (daemon?.build as { source_id?: string } | undefined)?.source_id || "",
+        ),
+        webAssets: String(result.web?.assets_id || ""),
+        servedEntry: String(result.web?.entry_script || ""),
+        loadedEntry: loadedWebEntry(),
+      });
     } catch {
       setRuntimeVersion("");
       setDaemonVersion("");
@@ -1805,6 +1817,7 @@ export function SettingsModal({
                     isDark={isDark}
                     groupId={groupId}
                     runtimeVersion={runtimeVersion}
+                    runtimeBuildInfo={runtimeBuildInfo}
                     daemonVersion={daemonVersion}
                     runtimeInfoErr={runtimeInfoErr}
                     developerMode={developerMode}

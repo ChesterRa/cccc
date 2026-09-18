@@ -2,7 +2,6 @@ import type { Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import type { GroupRunControls } from "../../utils/groupControls";
-import { classNames } from "../../utils/classNames";
 import { ClipboardIcon, EditIcon, SearchIcon, MoreIcon, MenuIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import { GroupRunControl } from "./GroupRunControl";
@@ -78,12 +77,23 @@ export function AppHeader({
         >
           <MenuIcon size={18} />
         </IconButton>
-        <h1
-          className="min-w-0 truncate text-base font-semibold leading-tight text-[var(--color-text-primary)] md:text-[1.125rem]"
-          title={groupTitle}
-        >
-          {groupTitle}
-        </h1>
+        <div className="min-w-0">
+          <h1
+            className="min-w-0 truncate text-base font-semibold leading-tight text-[var(--color-text-primary)] md:text-[1.125rem]"
+            title={groupTitle}
+          >
+            {groupTitle}
+          </h1>
+          {!!selectedGroupId && sseStatus !== "connected" && (
+            <p
+              role="status"
+              className="hidden truncate text-xs leading-tight text-[var(--color-text-secondary)] @min-[760px]/group-header:block"
+              title={t("connectionInterruptedHint")}
+            >
+              {sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}
+            </p>
+          )}
+        </div>
         {canEditGroup && (
           <IconButton
             type="button"
@@ -98,14 +108,16 @@ export function AppHeader({
             <EditIcon size={16} />
           </IconButton>
         )}
-        {selectedGroupId && sseStatus !== "connected" && (
+        {!!selectedGroupId && sseStatus !== "connected" && (
           <span
-            className={classNames(
-              "h-2 w-2 shrink-0 rounded-full",
-              sseStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500",
-            )}
-            title={sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}
-          />
+            role="status"
+            className={`h-2 w-2 shrink-0 rounded-full @min-[760px]/group-header:hidden ${sseStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500"}`}
+            title={`${sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}. ${t("connectionInterruptedHint")}`}
+          >
+            <span className="sr-only">
+              {sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}
+            </span>
+          </span>
         )}
         {!!selectedGroupId && (
           <GroupRunControl

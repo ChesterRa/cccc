@@ -147,6 +147,53 @@ async fn exhibit_ping_matches_python_contract() {
         home.root().to_string_lossy().as_ref()
     );
     assert_eq!(payload["result"]["daemon"]["implementation"], "rust");
+    assert_eq!(payload["result"]["build"], cccc_core::build_info::current());
+    assert_eq!(
+        payload["result"]["daemon"]["build"],
+        payload["result"]["build"]
+    );
+    assert_eq!(
+        payload["result"]["web"]["assets_id"],
+        cccc_web::web_assets_info().expect("Web assets").assets_id
+    );
+    assert_eq!(
+        payload["result"]["web"]["entry_script"],
+        cccc_web::web_assets_info()
+            .expect("Web assets")
+            .entry_script
+    );
+    assert!(payload["result"]["daemon"]["executable"].is_string());
+
+    for endpoint in ["/api/v1/ping", "/api/v1/health"] {
+        let response =
+            auth_support::authenticated_app_with_mode(home.clone(), cccc_web::WebMode::Exhibit)
+                .oneshot(
+                    Request::get(endpoint)
+                        .header(
+                            axum::http::header::AUTHORIZATION,
+                            format!("Bearer {}", token.token),
+                        )
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+        let payload: Value = serde_json::from_slice(
+            &response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes(),
+        )
+        .expect("json");
+        assert!(payload["result"].get("executable").is_none(), "{endpoint}");
+        assert!(
+            payload["result"]["daemon"].get("executable").is_none(),
+            "{endpoint}"
+        );
+        assert!(payload["result"].get("home").is_none(), "{endpoint}");
+    }
 
     shutdown_daemon(&home).await;
     daemon.await.expect("daemon task").expect("daemon");

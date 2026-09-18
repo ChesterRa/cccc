@@ -85,6 +85,9 @@ enum RestartBehavior {
 #[folder = "$CCCC_WEB_DIST_DIR/"]
 struct WebAssets;
 
+mod web_assets;
+pub use web_assets::{WebAssetsInfo, web_assets_info};
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     connect_frames: Arc<connect_frames::ConnectFrames>,

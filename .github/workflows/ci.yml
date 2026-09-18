@@ -62,6 +62,23 @@ jobs:
       - name: Test Web
         run: npm -C web test
 
+      - name: Install isolated test browser
+        run: npm -C web exec -- playwright install --with-deps chromium
+
+      - name: Verify critical browser workflows
+        run: npm -C web run test:browser
+
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-failure-evidence
+          path: |
+            web/test-results
+            web/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Build Web bundle
         run: npm -C web run build
 

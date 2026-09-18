@@ -661,27 +661,39 @@ export default function WebModelConnectorsTab({
   useEffect(() => {
     if (!isActive || !groupId || !actorId || !selectedActor) return;
     let cancelled = false;
+    let loading = false;
     const refresh = async () => {
-      const gid = groupId;
-      const aid = actorId;
-      const resp = await api.fetchWebModelBrowserSession(gid, aid, { inspect: true });
-      if (cancelled) return;
-      if (resp.ok) {
-        const nextSession = resp.result?.browser_session || {};
-        const key = browserSessionKey(gid, aid);
-        setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession }));
-        const currentSelection = currentSelectionRef.current;
-        if (gid === currentSelection.groupId && aid === currentSelection.actorId)
-          setBrowserSession(nextSession);
+      if (loading || document.hidden) return;
+      loading = true;
+      try {
+        const gid = groupId;
+        const aid = actorId;
+        const resp = await api.fetchWebModelBrowserSession(gid, aid, { inspect: true });
+        if (cancelled) return;
+        if (resp.ok) {
+          const nextSession = resp.result?.browser_session || {};
+          const key = browserSessionKey(gid, aid);
+          setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession }));
+          const currentSelection = currentSelectionRef.current;
+          if (gid === currentSelection.groupId && aid === currentSelection.actorId)
+            setBrowserSession(nextSession);
+        }
+      } finally {
+        loading = false;
       }
     };
     void refresh();
     const timer = window.setInterval(() => {
       void refresh();
     }, 4000);
+    const onVisibility = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [actorId, groupId, isActive, selectedActor]);
 

@@ -40,6 +40,8 @@ async fn daemon_status(home: &HomeLayout) -> Value {
             "running":true,
             "pid":response.result.get("pid").cloned().unwrap_or(Value::Null),
             "version":response.result.get("version").cloned().unwrap_or(Value::Null),
+            "build":response.result.get("build").cloned().unwrap_or(Value::Null),
+            "executable":response.result.get("executable").cloned().unwrap_or(Value::Null),
             "implementation":response.result.get("implementation").cloned().unwrap_or(Value::Null),
         }),
         Ok(response) => json!({
@@ -66,6 +68,8 @@ fn report(
     }
     json!({
         "version":product_version,
+        "build":cccc_core::build_info::current(),
+        "web_assets":cccc_web::web_assets_info().map(|info| info.assets_id),
         "home":home.root(),
         "installation":installation::report(),
         "daemon":daemon,

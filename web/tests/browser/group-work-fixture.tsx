@@ -153,6 +153,16 @@ window.fetch = async (input, init) => {
   }
   const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : {};
   probe.requests.push({ path: url.pathname, method: init?.method || "GET", body });
+  if (url.pathname === "/api/v1/ping")
+    return Response.json({
+      ok: true,
+      result: {
+        version: "0.4.40",
+        build: { source_id: "a".repeat(64) },
+        daemon: { version: "0.4.40", build: { source_id: "a".repeat(64) } },
+        web: { assets_id: "b".repeat(64), entry_script: "/ui/assets/fixture-entry.js" },
+      },
+    });
   let result: unknown = {};
   const runRoute = url.pathname.match(/^\/api\/v1\/groups\/([^/]+)\/(start|stop|state)$/);
   if (runRoute && init?.method === "POST") {
@@ -506,6 +516,9 @@ export function Fixture() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [readingExamples, setReadingExamples] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<
+    "connected" | "connecting" | "disconnected"
+  >("connected");
   const presentationPin = useModalStore((state) => state.presentationPin);
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
@@ -587,6 +600,7 @@ export function Fixture() {
       },
       setSidebarCollapsed,
       setReadingExamples,
+      setConnectionStatus,
       setReadOnly,
       setCanAccessAccount,
       setTextScale,
@@ -628,7 +642,7 @@ export function Fixture() {
     selectedGroupActorStatusProvisional: false,
     theme,
     textScale,
-    sseStatus: "connected",
+    sseStatus: connectionStatus,
     groupLabelById: { g1: "Release workspace", g2: "Research workspace" },
     mentionSelectedIndex,
     showMentionMenu,

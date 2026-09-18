@@ -16,7 +16,13 @@ export async function fetchPing(options?: { includeHome?: boolean }) {
       home?: string;
       daemon: unknown;
       version: string;
-      web?: { mode?: string; read_only?: boolean };
+      build?: { source_id?: string };
+      web?: {
+        mode?: string;
+        read_only?: boolean;
+        assets_id?: string | null;
+        entry_script?: string | null;
+      };
     }>(`/api/v1/ping${suffix}`),
   );
 }

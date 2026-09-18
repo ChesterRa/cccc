@@ -770,5 +770,6 @@
   "voiceSecretaryTranscriptAnalyzingAudio": "最終音声を解析中…",
   "voiceSecretaryTranscriptFinalFailed": "最終音声の解析に失敗しました。",
   "voiceSecretaryTranscriptEmpty": "このドキュメントの文書モードの文字起こしがここに表示されます。",
-  "voiceSecretaryTranscriptNeedsDocument": "ドキュメントを選択または作成すると、文字起こしを表示できます。"
+  "voiceSecretaryTranscriptNeedsDocument": "ドキュメントを選択または作成すると、文字起こしを表示できます。",
+  "sendResultUnknown": "メッセージが届いたか確認できません。再送する前に会話を確認してください。"
 }

@@ -365,6 +365,8 @@ Result:
   ipc_v: 1;
   capabilities: Record<string, unknown>;
   compatibility?: string;
+  build?: { source_id: string };
+  executable?: string | null;
 }
 ```
 
@@ -385,6 +387,23 @@ Notes:
 - Clients SHOULD probe operation support independently; a recognized operation may reject empty probe arguments, but MUST NOT return `unknown_op`.
 - Clients MUST NOT probe an unadvertised browser attach operation merely to discover support: a successful probe upgrades the connection and may acquire the only controller. They SHOULD consult the exact capability first.
 - Clients MUST use protocol, compatibility, and capability fields instead of exact product-version equality.
+- Optional `build.source_id` is a SHA-256 fingerprint of the Rust workspace source,
+  manifests/lockfile and bundled resources (root and crate-local `resources/`
+  trees), compiled into the running process. It
+  distinguishes same-version source changes, including uncommitted changes, without
+  requiring Git at build/run time. It is diagnostic metadata, not a binary checksum
+  or compatibility gate. Web assets are identified separately by authenticated Web
+  `ping` (`web.assets_id` and `web.entry_script`), using the same asset source as
+  HTTP delivery. Release builds inspect their immutable embedded bundle; source-run
+  debug builds inspect the current disk bundle, including frontend-only rebuilds.
+  Unavailable assets report null identities rather than old build-time values.
+  Unauthenticated health responses remain minimal.
+- `cccc doctor` includes its own build and the daemon's reported build. MCP
+  `initialize` includes the server's build under `_meta["cccc/build"]`; this reports
+  the MCP process actually answering, not the executable currently on disk.
+- `executable` is the effective daemon executable path for local diagnosis. Web
+  exposes local paths only to administrators requesting `include_home`; ordinary
+  authenticated ping and all health projections omit the executable path.
 - Ordinary business commands MUST NOT stop, signal, or replace a reachable daemon. Implementation replacement is restricted to explicit daemon lifecycle commands.
 
 #### `shutdown`

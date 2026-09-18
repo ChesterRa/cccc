@@ -25,6 +25,18 @@ Open a [GitHub Issue](https://github.com/ChesterRa/cccc/issues) and include:
 
 If the issue involves the daemon, include relevant lines from `~/.cccc/daemon/ccccd.log`.
 
+For a source build, include **Settings → This instance → Developer → Copy build
+information**. It identifies the running Web/daemon source and served/loaded Web
+entries even when product version numbers match; it does not include credentials
+or local paths. `cccc doctor` also reports the CLI and daemon build identities and
+installation paths. Check those paths before sharing its full output publicly.
+The source fingerprint is diagnostic metadata, not a binary checksum or a protocol
+compatibility check. Different source builds never trigger an automatic restart.
+Web asset diagnostics follow the resources actually served: embedded assets in
+release builds, current disk assets in debug/source-run builds. A frontend-only
+rebuild can therefore change the Web bundle identity without changing the Rust
+source identity; temporarily unavailable assets show no identity.
+
 ## Feature Requests
 
 Open a [GitHub Issue](https://github.com/ChesterRa/cccc/issues) with:

@@ -27,6 +27,8 @@ fn snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let mut result = json!({
         "implementation":"rust",
         "version":env!("CARGO_PKG_VERSION"),
+        "build":cccc_core::build_info::current(),
+        "executable":std::env::current_exe().ok(),
         "pid":std::process::id(),
         "home":home.root(),
         "observability":global.observability,

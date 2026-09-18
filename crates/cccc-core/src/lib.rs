@@ -10,6 +10,7 @@ mod automation_schedule;
 pub mod blobs;
 pub mod branding;
 pub mod branding_icon;
+pub mod build_info;
 pub mod capabilities;
 mod capability_builtin;
 pub mod capability_legacy;

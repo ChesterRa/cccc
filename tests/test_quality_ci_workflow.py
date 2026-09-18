@@ -91,6 +91,20 @@ def test_web_ci_uses_managed_node_and_composite_vite_plus_check() -> None:
     assert "npm -C web run lint" not in runs
 
 
+def test_browser_gates_cover_prs_and_nightly_without_external_credentials() -> None:
+    for job, command in [
+        (_workflow()["jobs"]["web"], "npm -C web run test:browser"),
+        (_nightly_workflow()["jobs"]["web-bundle"], "npm -C web run test:browser:matrix"),
+    ]:
+        runs = _runs(job)
+        assert runs.index("playwright install --with-deps chromium") < runs.index(command)
+        assert "secrets." not in json.dumps(job)
+        evidence = [s for s in job["steps"] if "browser-failure-evidence" in s.get("with", {}).get("name", "")]
+        assert len(evidence) == 1
+        assert evidence[0]["if"] == "failure()"
+        assert "web/test-results" in evidence[0]["with"]["path"]
+
+
 def test_native_empty_session_smoke_is_enabled_without_provider_secrets() -> None:
     steps = _workflow()["jobs"]["rust-linux"]["steps"]
     install = next(step for step in steps if step.get("name") == "Install verified native CLI versions")

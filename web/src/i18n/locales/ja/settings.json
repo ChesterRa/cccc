@@ -1145,7 +1145,6 @@
     "ccccVersion": "CCCC",
     "daemonVersion": "Daemon",
     "versionMismatchBadge": "不一致",
-    "versionMismatchHint": "Web パッケージと daemon のバージョンが一致していません。CCCC を再起動して揃えてください。",
     "warningTitle": "警告",
     "warningText": "開発者モードでは、詳細なログと追加の診断が有効になります。必要な場合にのみ有効にしてください。",
     "enableDeveloperMode": "開発者モードを有効にする",
@@ -1186,7 +1185,16 @@
     "lines": "行",
     "clearTruncate": "クリア（切り捨て）",
     "refresh": "リフレッシュ",
-    "clear": "クリア"
+    "clear": "クリア",
+    "webSource": "Web サーバーのソース",
+    "daemonSource": "Daemon のソース",
+    "webAssets": "配信中の Web バンドル",
+    "servedEntry": "配信中のエントリー",
+    "loadedEntry": "ブラウザーが読み込んだエントリー",
+    "copyBuildInfo": "ビルド情報をコピー",
+    "copied": "コピーしました",
+    "copyFailed": "コピーできませんでした。上の値を選択してコピーしてください。",
+    "buildMismatchHint": "コンポーネントのビルドが異なります。実行中の CCCC を確認してください。再起動や再読み込みの前に下書きを保存してください。"
   },
   "webModels": {
     "chatgpt": {

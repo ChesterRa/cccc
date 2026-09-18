@@ -29,6 +29,9 @@ export function formatSendMessageError(args: {
 }): string {
   const code = String(args.code || "").trim();
   const message = String(args.message || "").trim();
+  if (["NETWORK_ERROR", "EMPTY_RESPONSE", "PARSE_ERROR"].includes(code)) {
+    return args.t("sendResultUnknown");
+  }
   if (!code) return message || args.t("sendFailed", { defaultValue: "Failed to send message." });
   if (!message) return code;
   return `${code}: ${message}`;

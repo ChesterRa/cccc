@@ -770,5 +770,6 @@
   "voiceSecretaryTranscriptAnalyzingAudio": "Analyzing final audio...",
   "voiceSecretaryTranscriptFinalFailed": "Final audio analysis failed.",
   "voiceSecretaryTranscriptEmpty": "Document-mode transcript for this document will appear here.",
-  "voiceSecretaryTranscriptNeedsDocument": "Choose or create a document to see its transcript."
+  "voiceSecretaryTranscriptNeedsDocument": "Choose or create a document to see its transcript.",
+  "sendResultUnknown": "Delivery could not be confirmed. Check the conversation before sending again."
 }
