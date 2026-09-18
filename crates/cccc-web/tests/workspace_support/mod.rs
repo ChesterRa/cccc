@@ -14,7 +14,13 @@ pub struct Fixture {
 
 pub fn fixture() -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
-    let repo = temp.path().join("repo");
+    // Scope URLs are compared byte-for-byte by the routes, so the fixture path
+    // must already be canonical (macOS temp dirs live behind a /var symlink).
+    let repo = temp
+        .path()
+        .canonicalize()
+        .expect("canonical tempdir")
+        .join("repo");
     std::fs::create_dir_all(repo.join("src")).expect("src");
     std::fs::write(repo.join("src/lib.rs"), "fn main() {}\n").expect("lib");
     std::fs::write(repo.join("secret.txt"), "not in the repo\n").expect("decoy");
@@ -26,11 +32,7 @@ pub fn fixture() -> Fixture {
         &group.group_id,
         Scope {
             scope_key: "scope_repo".into(),
-            url: repo
-                .canonicalize()
-                .expect("canonicalize")
-                .to_string_lossy()
-                .into_owned(),
+            url: repo.to_string_lossy().into_owned(),
             label: "repo".into(),
             git_remote: String::new(),
         },

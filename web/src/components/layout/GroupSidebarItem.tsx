@@ -1,23 +1,25 @@
-import type { GroupRunControls } from "../../utils/groupControls";
+import { Archive, ArchiveRestore, Link2 } from "lucide-react";
 import { GroupConnectionBadge } from "../../features/connect/GroupConnectionBadge";
 import type { GroupConnectionCount } from "../../features/connect/protocol";
 import { GroupMeta } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
 import { GroupItemMenuTrigger } from "./GroupItemMenuTrigger";
-import { useGroupMenu } from "./useGroupMenu";
+import { useGroupMenu, type GroupMenuActionItem } from "./useGroupMenu";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
-import { GroupRunControl } from "./GroupRunControl";
 
 interface GroupSidebarItemProps {
   group: GroupMeta;
-  groupRunControls?: GroupRunControls;
   isActive: boolean;
   isCollapsed: boolean;
   isArchived?: boolean;
   menuActionLabel?: string;
   menuAriaLabel?: string;
   onMenuAction?: () => void;
+  /** Launch/pause/stop entries for this group; listed before the other actions. */
+  runActions?: GroupMenuActionItem[];
+  /** Destructive entries for this group; listed after the other actions. */
+  trailingActions?: GroupMenuActionItem[];
   connectionsLabel?: string;
   connection?: GroupConnectionCount;
   onOpenConnections?: () => void;
@@ -27,13 +29,14 @@ interface GroupSidebarItemProps {
 
 export function GroupSidebarItem({
   group,
-  groupRunControls,
   isActive,
   isCollapsed,
   isArchived = false,
   menuActionLabel,
   menuAriaLabel,
   onMenuAction,
+  runActions,
+  trailingActions,
   connectionsLabel,
   connection,
   onOpenConnections,
@@ -42,10 +45,20 @@ export function GroupSidebarItem({
 }: GroupSidebarItemProps) {
   const gid = String(group.group_id || "");
   const menu = useGroupMenu(menuAriaLabel || menuActionLabel || "", [
+    ...(runActions ?? []),
     ...(onOpenConnections && connectionsLabel
-      ? [{ label: connectionsLabel, onClick: onOpenConnections }]
+      ? [{ label: connectionsLabel, icon: <Link2 size={15} />, onClick: onOpenConnections }]
       : []),
-    ...(onMenuAction && menuActionLabel ? [{ label: menuActionLabel, onClick: onMenuAction }] : []),
+    ...(onMenuAction && menuActionLabel
+      ? [
+          {
+            label: menuActionLabel,
+            icon: isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />,
+            onClick: onMenuAction,
+          },
+        ]
+      : []),
+    ...(trailingActions ?? []),
   ]);
   const status = getGroupStatusFromSource(group);
 
@@ -110,11 +123,11 @@ export function GroupSidebarItem({
           onMouseEnter={onWarm}
           onFocus={onWarm}
         >
-          <div className="flex items-center gap-1 min-w-0">
-            <GroupRunControl group={group} controls={groupRunControls} compact />
+          <div className="flex items-center gap-2 min-w-0">
+            <GroupStatusIndicator status={status} />
             <span
               className={classNames(
-                "text-sm leading-5 font-medium truncate",
+                "text-sm font-medium truncate",
                 isActive
                   ? "text-[rgb(35,36,37)] dark:text-white"
                   : "text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]",

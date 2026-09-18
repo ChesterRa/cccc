@@ -1,6 +1,7 @@
 import { DirectConnectionsPanel } from "./DirectConnectionsPanel";
 import { localizedAccountUrl } from "../../components/modals/settings/reachMembershipModel";
 import { useEffect, useRef, useState } from "react";
+import { classNames } from "../../utils/classNames";
 import { useTranslation } from "react-i18next";
 import { useModalStore } from "../../stores/useModalStore";
 import { apiJson } from "../../services/api/base";
@@ -144,21 +145,27 @@ export function GroupConnectionsPanel(props: {
   return (
     <div className="space-y-4">
       {!props.invitation && (
-        <div className="flex flex-wrap gap-1" aria-label={t("groupConnections.title")}>
-          <Button
-            variant={active === "account" ? "secondary" : "ghost"}
-            aria-pressed={active === "account"}
-            onClick={() => setMode("account")}
-          >
-            {t("direct.account")}
-          </Button>
-          <Button
-            variant={active === "direct" ? "secondary" : "ghost"}
-            aria-pressed={active === "direct"}
-            onClick={() => setMode("direct")}
-          >
-            {t("direct.title")}
-          </Button>
+        <div
+          className="inline-flex items-center rounded-lg bg-[var(--glass-tab-bg)] p-0.5"
+          role="group"
+          aria-label={t("groupConnections.title")}
+        >
+          {(["account", "direct"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={active === option}
+              className={classNames(
+                "inline-flex h-8 items-center justify-center rounded-md px-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]",
+                active === option
+                  ? "bg-[var(--color-bg-primary)] font-semibold text-[var(--color-text-primary)] shadow-sm"
+                  : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]",
+              )}
+              onClick={() => setMode(option)}
+            >
+              {t(option === "account" ? "direct.account" : "direct.title")}
+            </button>
+          ))}
         </div>
       )}
       {active === "direct" ? (
@@ -264,6 +271,26 @@ function AccountGroupConnectionsPanel({
     value?.status === "ready" && (!value.expires_at || Date.parse(value.expires_at) <= Date.now())
       ? "unavailable"
       : value?.status;
+  const language = i18n.resolvedLanguage || i18n.language;
+  const accountLink = (path: string) =>
+    value?.account_origin
+      ? localizedAccountUrl(new URL(`${value.account_origin}${path}`), language)
+      : "";
+  // One headline carries the state; everything else is secondary to it.
+  const confirming = (!value && !error) || state === "syncing";
+  const headline = confirming
+    ? t("groupConnections.syncing")
+    : state === "unavailable"
+      ? t(
+          value?.error_code === "connect_groups_unsupported"
+            ? "groupConnections.unsupported"
+            : "groupConnections.syncFailed",
+        )
+      : state === "ready"
+        ? links.length > 0
+          ? t("groupConnections.count", { count: links.length })
+          : t("groupConnections.empty")
+        : "";
   return (
     <div className="min-h-0 space-y-4 overflow-y-auto">
       {invitation && <p className="text-sm">{t("groupConnections.invitation")}</p>}
@@ -272,111 +299,124 @@ function AccountGroupConnectionsPanel({
           {error}
         </p>
       )}
-      {state === "not_linked" ? (
-        <Button
-          onClick={() => {
-            onOpenAccount();
-          }}
-        >
-          {t("groupConnections.linkAccount")}
-        </Button>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          <Button
-            disabled={busy || state !== "ready" || !value?.account_id || !current}
-            onClick={() => void select()}
-          >
-            {t(invitation ? "groupConnections.accept" : "groupConnections.invite")}
-          </Button>
-          {value?.account_origin && (
-            <Button variant="secondary" asChild>
-              <a
-                href={localizedAccountUrl(
-                  new URL(`${value.account_origin}/connect`),
-                  i18n.resolvedLanguage || i18n.language,
-                )}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {t("groupConnections.manage")}
-              </a>
+
+      {state !== "not_linked" && (headline || value?.checked_at) && (
+        <section className="rounded-xl border border-[var(--glass-border-subtle)]">
+          <div className="flex items-start justify-between gap-3 px-4 py-3">
+            <div
+              className="min-w-0 space-y-1"
+              role={state === "unavailable" ? "alert" : confirming ? "status" : undefined}
+            >
+              {headline && (
+                <p
+                  className={classNames(
+                    "text-sm font-medium",
+                    state === "unavailable"
+                      ? "text-[var(--color-text-secondary)]"
+                      : "text-[var(--color-text-primary)]",
+                  )}
+                >
+                  {headline}
+                </p>
+              )}
+              {state === "unavailable" && value?.error_message && (
+                <p className="break-words text-xs text-[var(--color-text-tertiary)]">
+                  {value.error_message}
+                </p>
+              )}
+              {value?.checked_at && (
+                <p className="text-xs text-[var(--color-text-tertiary)]">
+                  {t("groupConnections.checkedAt", {
+                    time: new Date(value.checked_at).toLocaleTimeString(),
+                  })}
+                </p>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0"
+              disabled={busy}
+              onClick={() => setRefresh((n) => n + 1)}
+            >
+              {t("groupConnections.refresh")}
+            </Button>
+          </div>
+          {links.length > 0 && (
+            <ul className="divide-y divide-[var(--glass-border-subtle)] border-t border-[var(--glass-border-subtle)] px-4">
+              {links.map((link) => {
+                const peer =
+                  link.source.account_id === value?.account_id ? link.target : link.source;
+                return (
+                  <li
+                    key={link.id}
+                    className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 py-3"
+                  >
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="break-words text-sm font-medium">
+                        {peer.instance.display_name} · {peer.title}
+                      </p>
+                      <p className="text-xs text-[var(--color-text-secondary)]">
+                        {t(
+                          value?.direct_routes?.includes(link.id)
+                            ? "direct.routeSelected"
+                            : "groupConnections.connected",
+                        )}
+                      </p>
+                      <code className="block break-all text-[11px] text-[var(--color-text-tertiary)]">
+                        {peer.group_id}
+                      </code>
+                    </div>
+                    {value?.account_origin && (
+                      <a
+                        className="shrink-0 text-xs text-[var(--color-text-secondary)] underline-offset-2 hover:text-[var(--color-danger)] hover:underline"
+                        href={accountLink(`/connect/${link.id}/disconnect`)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {t("groupConnections.disconnect")}
+                      </a>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      )}
+
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {state === "not_linked" ? (
+            <Button onClick={onOpenAccount}>{t("groupConnections.linkAccount")}</Button>
+          ) : (
+            <Button
+              disabled={busy || state !== "ready" || !value?.account_id || !current}
+              onClick={() => void select()}
+            >
+              {t(invitation ? "groupConnections.accept" : "groupConnections.invite")}
             </Button>
           )}
-          <Button variant="ghost" disabled={busy} onClick={() => setRefresh((n) => n + 1)}>
-            {t("groupConnections.refresh")}
-          </Button>
+          {state !== "not_linked" && value?.account_origin && (
+            <a
+              className="text-sm text-[var(--color-text-secondary)] underline-offset-2 hover:text-[var(--color-text-primary)] hover:underline"
+              href={accountLink("/connect")}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {t("groupConnections.manage")}
+            </a>
+          )}
         </div>
-      )}
-      {prepared && (
-        <p className="text-sm">
-          <a className="underline" href={prepared} target="_blank" rel="noopener noreferrer">
-            {t("groupConnections.continue")}
-          </a>
-        </p>
-      )}
-      <p className="text-sm text-[var(--color-text-secondary)]">{t("groupConnections.sync")}</p>
-      {((!value && !error) || state === "syncing") && (
-        <p role="status" className="text-sm text-[var(--color-text-secondary)]">
-          {t("groupConnections.syncing")}
-        </p>
-      )}
-      {state === "unavailable" && (
-        <div role="alert" className="space-y-1 text-sm text-[var(--color-text-secondary)]">
-          <p>
-            {t(
-              value?.error_code === "connect_groups_unsupported"
-                ? "groupConnections.unsupported"
-                : "groupConnections.syncFailed",
-            )}
+        {prepared && (
+          <p className="text-sm">
+            <a className="underline" href={prepared} target="_blank" rel="noopener noreferrer">
+              {t("groupConnections.continue")}
+            </a>
           </p>
-          {value?.error_message && <p className="break-words text-xs">{value.error_message}</p>}
-        </div>
-      )}
-      {value?.checked_at && (
-        <p className="text-xs text-[var(--color-text-tertiary)]">
-          {t("groupConnections.checkedAt", {
-            time: new Date(value.checked_at).toLocaleTimeString(),
-          })}
-        </p>
-      )}
-      {state === "ready" && links.length === 0 && (
-        <p className="text-sm text-[var(--color-text-secondary)]">{t("groupConnections.empty")}</p>
-      )}
-      <ul className="divide-y divide-[var(--glass-border-subtle)]">
-        {links.map((link) => {
-          const peer = link.source.account_id === value?.account_id ? link.target : link.source;
-          return (
-            <li key={link.id} className="space-y-1 py-3">
-              <p className="font-medium">
-                {peer.instance.display_name} · {peer.title}
-              </p>
-              <p className="text-xs text-[var(--color-text-secondary)]">
-                {t(
-                  value?.direct_routes?.includes(link.id)
-                    ? "direct.routeSelected"
-                    : "groupConnections.connected",
-                )}
-              </p>
-              <code className="block break-all text-xs text-[var(--color-text-tertiary)]">
-                {peer.group_id}
-              </code>
-              {value?.account_origin && (
-                <a
-                  className="text-sm underline"
-                  href={localizedAccountUrl(
-                    new URL(`${value.account_origin}/connect/${link.id}/disconnect`),
-                    i18n.resolvedLanguage || i18n.language,
-                  )}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {t("groupConnections.disconnect")}
-                </a>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+        )}
+        <p className="text-xs text-[var(--color-text-tertiary)]">{t("groupConnections.sync")}</p>
+      </div>
     </div>
   );
 }

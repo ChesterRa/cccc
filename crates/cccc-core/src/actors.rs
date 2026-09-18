@@ -1,9 +1,9 @@
-use cccc_contracts::{Actor, ActorRole, utc_now};
+use cccc_contracts::{Actor, ActorRole, ActorRuntime, utc_now};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
-use crate::GroupDoc;
+use crate::{GroupDoc, GroupStore};
 
 const RESERVED: &[&str] = &[
     "user", "all", "system", "foreman", "peers", "admin", "root", "cccc",
@@ -19,6 +19,50 @@ pub const CROSS_GROUP_FOREMAN_RECIPIENT: &str = "@foreman";
 pub enum UniqueForemanError {
     NotFound,
     NotUnique,
+}
+
+/// Returns the conflict message for the ChatGPT Web Model actor registered
+/// anywhere in this instance, ignoring `exclude` (the actor being edited).
+/// A registry entry whose group document is gone is stale, not a live owner,
+/// so it is skipped; an unreadable document aborts the scan because it may
+/// still own the slot.
+pub fn web_model_singleton_conflict(
+    store: &GroupStore,
+    exclude: Option<(&str, &str)>,
+) -> io::Result<Option<String>> {
+    for meta in store.list()? {
+        let group = match store.load(&meta.group_id) {
+            Ok(group) => group,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                tracing::warn!(
+                    group_id = %meta.group_id,
+                    "skipping stale registry entry during ChatGPT Web Model singleton scan"
+                );
+                continue;
+            }
+            Err(error) => {
+                return Err(io::Error::other(format!(
+                    "could not read group {}: {error}",
+                    meta.group_id
+                )));
+            }
+        };
+        if let Some(actor) = group.actors.iter().find(|actor| {
+            actor.runtime == ActorRuntime::WebModel
+                && exclude != Some((group.group_id.as_str(), actor.id.as_str()))
+        }) {
+            let label = if actor.title.trim().is_empty() {
+                actor.id.as_str()
+            } else {
+                actor.title.as_str()
+            };
+            return Ok(Some(format!(
+                "ChatGPT Web Model is limited to one actor per CCCC instance (existing actor: {label} in group {}). Remove the existing ChatGPT Web Model actor before creating another.",
+                group.group_id
+            )));
+        }
+    }
+    Ok(None)
 }
 
 pub fn validate_actor_id(value: &str) -> io::Result<String> {

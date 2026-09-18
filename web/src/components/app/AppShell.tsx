@@ -1,4 +1,3 @@
-import type { GroupRunControls } from "../../utils/groupControls";
 import { requestWorkspaceNavigation } from "../../stores/workspaceNavigation";
 import { WorkspaceNavigationDialog } from "../workspace/WorkspaceNavigationDialog";
 import { useState, type CSSProperties } from "react";
@@ -7,6 +6,7 @@ import { AppHeader } from "../layout/AppHeader";
 import { GroupConnectionsControl } from "../../features/connect/GroupConnectionsControl";
 import { useModalStore } from "../../stores/useModalStore";
 import { GroupSidebar } from "../layout/GroupSidebar";
+import type { GroupControl } from "../../utils/groupControls";
 import {
   CodexVoiceMobileDock,
   CodexVoiceOverlays,
@@ -89,12 +89,13 @@ type AppShellProps = {
   ) => void;
   onArchiveGroup: (groupId: string) => void;
   onRestoreGroup: (groupId: string) => void;
+  onControlGroup: (groupId: string, control: GroupControl) => void;
+  onDeleteGroup: (groupId: string) => void;
   onOpenSidebar: () => void;
   onOpenGroupEdit: (() => void) | undefined;
   onOpenSearch: () => void;
   onOpenContext: () => void;
   onStartGroup: () => void;
-  groupRunControls: GroupRunControls;
   onOpenSettings: () => void;
   canAccessAccount: boolean;
   accountLabel?: string | null;
@@ -174,12 +175,13 @@ export function AppShell({
   onReorderGroupsInSection,
   onArchiveGroup,
   onRestoreGroup,
+  onControlGroup,
+  onDeleteGroup,
   onOpenSidebar,
   onOpenGroupEdit,
   onOpenSearch,
   onOpenContext,
   onStartGroup,
-  groupRunControls,
   onOpenSettings,
   canAccessAccount,
   accountLabel,
@@ -236,7 +238,6 @@ export function AppShell({
           sidebarWidth={sidebarWidth}
           isDark={isDark}
           readOnly={webReadOnly}
-          groupRunControls={groupRunControls}
           codexVoice={canUseVoice ? codexVoice : undefined}
           onSelectGroup={(groupId) => {
             if (!remoteWorkspace && groupId === selectedGroupId) onSelectGroup(groupId);
@@ -250,6 +251,8 @@ export function AppShell({
           onReorderSection={onReorderGroupsInSection}
           onArchiveGroup={onArchiveGroup}
           onRestoreGroup={onRestoreGroup}
+          onControlGroup={webReadOnly ? undefined : onControlGroup}
+          onDeleteGroup={webReadOnly || !canAccessAccount ? undefined : onDeleteGroup}
           onOpenGroupConnections={
             !webReadOnly && canAccessAccount ? setGroupConnections : undefined
           }
@@ -271,13 +274,12 @@ export function AppShell({
               groupDoc={groupDoc}
               selectedGroupRunning={selectedGroupRunning}
               selectedGroupRuntimeStatus={selectedGroupRuntimeStatus}
-              actors={actors}
               sseStatus={sseStatus}
               onOpenSidebar={onOpenSidebar}
               onOpenGroupEdit={onOpenGroupEdit}
               onOpenSearch={onOpenSearch}
               onOpenContext={onOpenContext}
-              groupRunControls={groupRunControls}
+              onControlGroup={webReadOnly ? undefined : onControlGroup}
               onOpenSettings={onOpenSettings}
               canAccessAccount={canAccessAccount}
               accountLabel={accountLabel}

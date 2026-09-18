@@ -401,7 +401,7 @@ with tempfile.TemporaryDirectory(
           const rows=log.querySelector('.chat-reading-width').getBoundingClientRect();
           const input=document.querySelector('footer .chat-reading-width').getBoundingClientRect();
           const controls=filters.querySelector('.chat-reading-width').getBoundingClientRect();
-          return filters.getBoundingClientRect().bottom <= log.getBoundingClientRect().top + 1
+          return filters.getBoundingClientRect().top >= log.getBoundingClientRect().top - 1
             && Math.abs(rows.left-input.left)<2 && Math.abs(rows.width-input.width)<2
             && Math.abs(controls.left-input.left)<2 && rows.width<log.clientWidth-100;
         })()""")

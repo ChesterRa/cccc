@@ -1,4 +1,3 @@
-import type { GroupRunControls } from "../../utils/groupControls";
 import { groupConnectionCount, type GroupConnectionSummary } from "../../features/connect/protocol";
 import {
   DndContext,
@@ -13,6 +12,7 @@ import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import { useCallback } from "react";
 import { GroupMeta } from "../../types";
 import { SortableGroupItem } from "./SortableGroupItem";
+import type { GroupMenuActionItem } from "./useGroupMenu";
 import { getSidebarSensorActivationConstraints } from "./groupSidebarModel";
 
 interface GroupSidebarSortableListProps {
@@ -22,7 +22,6 @@ interface GroupSidebarSortableListProps {
   isDark: boolean;
   isCollapsed: boolean;
   readOnly?: boolean;
-  groupRunControls?: GroupRunControls;
   menuActionLabel?: string;
   connectionsLabel?: string;
   connectionSummary?: GroupConnectionSummary | null;
@@ -31,6 +30,8 @@ interface GroupSidebarSortableListProps {
   /** Screen-reader instructions for a sortable row; replaces dnd-kit's default. */
   reorderInstructions?: string;
   onMenuAction?: (groupId: string) => void;
+  runActionsFor?: (group: GroupMeta) => GroupMenuActionItem[];
+  trailingActionsFor?: (group: GroupMeta) => GroupMenuActionItem[];
   onReorderSection: (section: "working" | "archived", fromIndex: number, toIndex: number) => void;
   onSelectGroup: (groupId: string) => void;
   onWarmGroup?: (groupId: string) => void;
@@ -44,7 +45,6 @@ export function GroupSidebarSortableList({
   isDark,
   isCollapsed,
   readOnly,
-  groupRunControls,
   menuActionLabel,
   connectionsLabel,
   connectionSummary,
@@ -52,6 +52,8 @@ export function GroupSidebarSortableList({
   menuAriaLabel,
   reorderInstructions,
   onMenuAction,
+  runActionsFor,
+  trailingActionsFor,
   onReorderSection,
   onSelectGroup,
   onWarmGroup,
@@ -105,7 +107,6 @@ export function GroupSidebarSortableList({
               <SortableGroupItem
                 key={gid}
                 group={group}
-                groupRunControls={readOnly ? undefined : groupRunControls}
                 isActive={gid === selectedGroupId}
                 isDark={isDark}
                 isCollapsed={isCollapsed}
@@ -119,6 +120,8 @@ export function GroupSidebarSortableList({
                   menuAriaLabel ? `${menuAriaLabel} · ${group.title || gid}` : undefined
                 }
                 onMenuAction={onMenuAction ? () => onMenuAction(gid) : undefined}
+                runActions={runActionsFor?.(group)}
+                trailingActions={trailingActionsFor?.(group)}
                 onMoveBy={(delta) => {
                   const target = index + delta;
                   if (target < 0 || target >= groups.length) return;

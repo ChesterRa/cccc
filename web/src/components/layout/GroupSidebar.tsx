@@ -1,11 +1,13 @@
-import type { GroupRunControls } from "../../utils/groupControls";
 import { groupConnectionCount } from "../../features/connect/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Monitor } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { instanceName } from "../../features/connect/instanceName";
 import { useTranslation } from "react-i18next";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
+import type { GroupControl } from "../../utils/groupControls";
+import { groupRunMenuActions } from "./groupRunMenuActions";
+import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import {
   CloseIcon,
   FolderIcon,
@@ -31,7 +33,6 @@ import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbenc
 
 export interface GroupSidebarProps {
   connect?: ConnectWorkbench;
-  groupRunControls?: GroupRunControls;
   orderedGroups: GroupMeta[];
   archivedGroupIds: string[];
   selectedGroupId: string;
@@ -51,11 +52,14 @@ export interface GroupSidebarProps {
   onArchiveGroup: (groupId: string) => void;
   onRestoreGroup: (groupId: string) => void;
   onOpenGroupConnections?: (groupId: string) => void;
+  /** Launch/pause/stop a group from its menu; omitted for read-only viewers. */
+  onControlGroup?: (groupId: string, control: GroupControl) => void;
+  /** Delete a group from its menu; the handler owns the confirmation. */
+  onDeleteGroup?: (groupId: string) => void;
 }
 
 export function GroupSidebar({
   connect,
-  groupRunControls,
   orderedGroups,
   archivedGroupIds,
   selectedGroupId,
@@ -75,6 +79,8 @@ export function GroupSidebar({
   onArchiveGroup,
   onRestoreGroup,
   onOpenGroupConnections,
+  onControlGroup,
+  onDeleteGroup,
 }: GroupSidebarProps) {
   const { t } = useTranslation("layout");
   const branding = useBrandingStore((s) => s.branding);
@@ -160,6 +166,34 @@ export function GroupSidebar({
     [isCollapsed, sidebarWidth],
   );
 
+  const runActionsFor = useCallback(
+    (group: GroupMeta) => {
+      if (!onControlGroup || readOnly) return [];
+      const gid = String(group.group_id || "");
+      return groupRunMenuActions(getGroupStatusFromSource(group).key, t, (control) =>
+        onControlGroup(gid, control),
+      );
+    },
+    [onControlGroup, readOnly, t],
+  );
+
+  const trailingActionsFor = useCallback(
+    (group: GroupMeta) => {
+      if (!onDeleteGroup || readOnly) return [];
+      const gid = String(group.group_id || "");
+      return [
+        {
+          label: t("deleteGroup"),
+          icon: <Trash2 size={15} />,
+          tone: "danger" as const,
+          section: "danger",
+          onClick: () => onDeleteGroup(gid),
+        },
+      ];
+    },
+    [onDeleteGroup, readOnly, t],
+  );
+
   const renderGroupList = useCallback(
     (groups: GroupMeta[], section: "working" | "archived") => {
       const isArchivedSection = section === "archived";
@@ -181,7 +215,6 @@ export function GroupSidebar({
             isDark={isDark}
             isCollapsed={false}
             readOnly={readOnly}
-            groupRunControls={readOnly ? undefined : groupRunControls}
             menuActionLabel={menuActionLabel}
             connectionsLabel={t("groupConnections.title")}
             onOpenConnections={onOpenGroupConnections}
@@ -189,6 +222,8 @@ export function GroupSidebar({
             menuAriaLabel={t("groupActions")}
             reorderInstructions={t("reorderWithKeyboard")}
             onMenuAction={handleMenuAction}
+            runActionsFor={runActionsFor}
+            trailingActionsFor={trailingActionsFor}
             onReorderSection={onReorderSection}
             onSelectGroup={onSelectGroup}
             onWarmGroup={onWarmGroup}
@@ -204,7 +239,6 @@ export function GroupSidebar({
               <GroupSidebarItem
                 key={gid}
                 group={g}
-                groupRunControls={readOnly ? undefined : groupRunControls}
                 isActive={gid === selectedGroupId}
                 isCollapsed={isCollapsed}
                 isArchived={isArchivedSection}
@@ -216,6 +250,8 @@ export function GroupSidebar({
                 menuActionLabel={isCollapsed ? undefined : menuActionLabel}
                 menuAriaLabel={isCollapsed ? undefined : `${t("groupActions")} · ${g.title || gid}`}
                 onMenuAction={isCollapsed ? undefined : () => handleMenuAction(gid)}
+                runActions={isCollapsed ? undefined : runActionsFor(g)}
+                trailingActions={isCollapsed ? undefined : trailingActionsFor(g)}
                 onSelect={() => {
                   onSelectGroup(gid);
                   if (window.matchMedia("(max-width: 767px)").matches) onClose();
@@ -237,11 +273,12 @@ export function GroupSidebar({
       onOpenGroupConnections,
       connect?.groupConnections,
       onSelectGroup,
-      groupRunControls,
       onWarmGroup,
       readOnly,
+      runActionsFor,
       selectedGroupId,
       t,
+      trailingActionsFor,
     ],
   );
 
@@ -363,33 +400,28 @@ export function GroupSidebar({
         {/* Group list */}
         <div className={groupSidebarScrollClass(isCollapsed)}>
           {!isCollapsed && (
-            <div className="px-2 pb-2">
-              {connect?.ownInstance ? (
-                <div
-                  className="flex min-h-10 min-w-0 items-center gap-2 text-sm text-[var(--color-text-secondary)]"
-                  title={[connect.ownInstance.display_name, connect.ownInstance.public_origin]
-                    .filter(Boolean)
-                    .join(" · ")}
-                >
-                  <Monitor size={16} className="shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {instanceName(connect.ownInstance, connect.instances)}
-                  </span>
-                  <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">
-                    {t("connect.thisInstance")}
-                  </span>
-                </div>
-              ) : (
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]/85">
-                  {t("workingGroups")}
-                </div>
+            <div
+              className="flex min-w-0 items-baseline gap-2 px-2 pb-2"
+              title={
+                connect?.ownInstance
+                  ? [connect.ownInstance.display_name, connect.ownInstance.public_origin]
+                      .filter(Boolean)
+                      .join(" · ")
+                  : undefined
+              }
+            >
+              <div className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]/85">
+                {t("workingGroups")}
+              </div>
+              {connect?.ownInstance && (
+                <span className="min-w-0 flex-1 truncate text-right text-[10px] text-[var(--color-text-tertiary)]/70">
+                  {instanceName(connect.ownInstance, connect.instances)}
+                </span>
               )}
             </div>
           )}
 
-          <div className={!isCollapsed && connect?.ownInstance ? "pl-3" : undefined}>
-            {renderGroupList(isCollapsed ? collapsedGroups : workingGroups, "working")}
-          </div>
+          {renderGroupList(isCollapsed ? collapsedGroups : workingGroups, "working")}
 
           {!isCollapsed && archivedGroups.length > 0 && (
             <div className="mt-4">
@@ -402,10 +434,10 @@ export function GroupSidebar({
                 aria-expanded={archivedPanelOpen}
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--color-text-tertiary)]">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[var(--color-text-tertiary)]">
                     {t("archivedGroups")}
                   </span>
-                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
                     {archivedGroups.length}
                   </span>
                 </div>

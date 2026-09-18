@@ -1,4 +1,4 @@
-use cccc_contracts::{Event, GroupState, utc_now};
+use cccc_contracts::{ActorRuntime, Event, GroupState, utc_now};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
@@ -209,6 +209,7 @@ pub fn import(
     }
     scrub_group(&mut group);
     sanitize_import_profiles(store, &mut group)?;
+    require_web_model_singleton(store, &group)?;
     let imported = store.import(group.clone())?;
     let target = store.group_dir(&final_group_id)?;
     let result = (|| {
@@ -547,6 +548,29 @@ fn scrub_group(group: &mut GroupDoc) {
     }
 }
 
+/// Imported packages must respect the same instance-wide ChatGPT Web Model
+/// limit as actor_add; this runs before the group is registered so a rejected
+/// package leaves nothing behind.
+fn require_web_model_singleton(store: &GroupStore, group: &GroupDoc) -> io::Result<()> {
+    let imported = group
+        .actors
+        .iter()
+        .filter(|actor| actor.runtime == ActorRuntime::WebModel)
+        .count();
+    if imported == 0 {
+        return Ok(());
+    }
+    if imported > 1 {
+        return Err(io::Error::other(
+            "ChatGPT Web Model is limited to one actor per CCCC instance; the package contains more than one",
+        ));
+    }
+    match crate::actors::web_model_singleton_conflict(store, None)? {
+        Some(message) => Err(io::Error::other(message)),
+        None => Ok(()),
+    }
+}
+
 fn sanitize_import_profiles(store: &GroupStore, group: &mut GroupDoc) -> io::Result<()> {
     let profiles = crate::profiles::ProfileStore::new(store.home().clone())?;
     for actor in &mut group.actors {
@@ -750,6 +774,46 @@ mod tests {
             .expect_err("rollback failure");
         assert!(error.to_string().contains("rollback_failed"));
         assert!(error.to_string().contains("g_import"));
+    }
+
+    #[test]
+    fn import_rejects_a_second_web_model_actor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let source = store.create("source", "").expect("source group");
+        let set_web_model = |present: bool| {
+            store
+                .mutate(&source.group_id, |doc| {
+                    doc.actors.clear();
+                    if present {
+                        let mut actor = cccc_contracts::Actor::new("web");
+                        actor.runtime = ActorRuntime::WebModel;
+                        doc.actors.push(actor);
+                    }
+                    Ok(())
+                })
+                .expect("mutate source group");
+        };
+        set_web_model(true);
+        let (bytes, _, _) = export(&store, &source.group_id).expect("export");
+
+        let error = import(&store, &bytes, "", "").expect_err("second owner must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("ChatGPT Web Model is limited to one actor"),
+            "{error}"
+        );
+        assert_eq!(
+            store.list().expect("registry").len(),
+            1,
+            "a rejected package must not register a group"
+        );
+
+        set_web_model(false);
+        import(&store, &bytes, "", "").expect("import succeeds once the slot is free");
+        assert_eq!(store.list().expect("registry").len(), 2);
     }
 
     #[test]

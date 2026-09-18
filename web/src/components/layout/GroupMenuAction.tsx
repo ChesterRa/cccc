@@ -1,21 +1,21 @@
 import type { ReactNode } from "react";
+import { classNames } from "../../utils/classNames";
 import { Button } from "../ui/button";
 
-export interface GroupMenuActionProps {
+interface GroupMenuActionProps {
   label: string;
   icon?: ReactNode;
-  description?: string;
-  disabled?: boolean;
-  destructive?: boolean;
+  /** Reserve the icon column so labels line up when siblings carry icons. */
+  iconSlot?: boolean;
+  tone?: "default" | "danger";
   onClick: () => void;
 }
 
 export function GroupMenuAction({
   label,
   icon,
-  description,
-  disabled,
-  destructive,
+  iconSlot,
+  tone = "default",
   onClick,
 }: GroupMenuActionProps) {
   return (
@@ -24,26 +24,29 @@ export function GroupMenuAction({
       variant="ghost"
       size="sm"
       role="menuitem"
-      disabled={disabled}
-      className={`w-full justify-start text-left text-sm ${description ? "h-auto min-h-10 items-start whitespace-normal py-2" : ""} ${destructive ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-primary)]"}`}
+      className={classNames(
+        "w-full justify-start gap-2.5 text-left text-sm",
+        tone === "danger"
+          ? "text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300"
+          : "text-[var(--color-text-primary)]",
+      )}
       onClick={(event) => {
         event.stopPropagation();
         onClick();
       }}
     >
-      {icon && (
-        <span className="mt-0.5 shrink-0" aria-hidden="true">
+      {icon || iconSlot ? (
+        <span
+          className={classNames(
+            "inline-flex size-4 shrink-0 items-center justify-center",
+            tone === "danger" ? "text-current" : "text-[var(--color-text-secondary)]",
+          )}
+          aria-hidden="true"
+        >
           {icon}
         </span>
-      )}
-      <span className="min-w-0">
-        <span className="block">{label}</span>
-        {description && (
-          <span className="mt-0.5 block text-xs font-normal text-[var(--color-text-secondary)]">
-            {description}
-          </span>
-        )}
-      </span>
+      ) : null}
+      <span className="truncate">{label}</span>
     </Button>
   );
 }

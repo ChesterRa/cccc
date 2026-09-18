@@ -36,14 +36,14 @@ export function ComposerResizeHandle({
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
       onDoubleClick={onReset}
-      className="group/composer-resize absolute inset-x-0 top-0 z-20 hidden h-3 -translate-y-1/2 cursor-ns-resize items-center justify-center touch-none focus-visible:outline-2 md:flex"
+      className="group/composer-resize absolute inset-x-0 top-0 z-20 hidden h-3 -translate-y-1/2 cursor-ns-resize items-center justify-center touch-none outline-none focus-visible:!shadow-none md:flex"
     >
       <div
         className={classNames(
           "h-[3px] w-14 rounded-full transition-colors group-hover/composer-resize:h-[5px] group-hover/composer-resize:w-20 group-focus-visible/composer-resize:w-20",
           resizing
             ? "bg-[var(--color-text-primary)]"
-            : "bg-[var(--glass-border)] group-hover/composer-resize:bg-[var(--color-text-secondary)]",
+            : "bg-[var(--glass-border)] group-hover/composer-resize:bg-[var(--color-text-secondary)] group-focus-visible/composer-resize:bg-[var(--color-text-secondary)]",
         )}
       />
     </div>

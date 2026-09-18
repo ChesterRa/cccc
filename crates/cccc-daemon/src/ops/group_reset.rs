@@ -1,4 +1,4 @@
-use cccc_contracts::{DaemonRequest, GroupState};
+use cccc_contracts::{ActorRuntime, DaemonRequest, GroupState};
 use cccc_core::group::AUTOMATION_TIMING_KEYS;
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, Registry, active, permissions};
 use serde_json::{Map, Value, json};
@@ -48,11 +48,7 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     {
         return Err(rollback_new(&store, &old, &replacement.group_id, error));
     }
-    let old_delete_error = store
-        .delete(&old.group_id)
-        .map_err(OpError::io)
-        .err()
-        .map(|error| error.message);
+    let old_delete_error = settle_old_delete(&store, &old, store.delete(&old.group_id));
     if old_delete_error.is_none() {
         super::actor_secrets::remove_group(home, &old.group_id)?;
     }
@@ -65,6 +61,37 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "active_group_id":was_active.then_some(&replacement.group_id),
         "group":super::group_runtime::group(replacement),
     }))
+}
+
+/// Reports a failed delete of the old Group. The replacement already carries
+/// the old actors, so an old Group that survives must give up its ChatGPT Web
+/// Model actor: the instance allows only one.
+fn settle_old_delete(
+    store: &GroupStore,
+    old: &GroupDoc,
+    deleted: std::io::Result<bool>,
+) -> Option<String> {
+    let error = deleted.err()?;
+    let holds_web_model = old
+        .actors
+        .iter()
+        .any(|actor| actor.runtime == ActorRuntime::WebModel);
+    // A Group whose directory is already gone must not be resurrected by mutate.
+    if !holds_web_model || store.load(&old.group_id).is_err() {
+        return Some(error.to_string());
+    }
+    let released = store.mutate(&old.group_id, |document| {
+        document
+            .actors
+            .retain(|actor| actor.runtime != ActorRuntime::WebModel);
+        Ok(())
+    });
+    Some(match released {
+        Ok(()) => format!(
+            "{error}; removed its ChatGPT Web Model actor because the replacement now holds it"
+        ),
+        Err(release) => format!("{error}; could not remove its ChatGPT Web Model actor: {release}"),
+    })
 }
 
 fn prepare_replacement(
@@ -256,6 +283,69 @@ mod tests {
         assert_eq!(
             registry.defaults.get(&detected.scope_key),
             Some(&old.group_id)
+        );
+    }
+}
+
+#[cfg(test)]
+mod settle_old_delete_tests {
+    use super::*;
+    use cccc_contracts::Actor;
+
+    fn home_with_web_model_group() -> (tempfile::TempDir, GroupStore, GroupDoc) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let created = store.create("old", "").expect("group");
+        let old = store
+            .mutate(&created.group_id, |document| {
+                let mut actor = Actor::new("web");
+                actor.runtime = ActorRuntime::WebModel;
+                document.actors.push(actor);
+                document.actors.push(Actor::new("peer"));
+                Ok(document.clone())
+            })
+            .expect("actors");
+        (temp, store, old)
+    }
+
+    #[test]
+    fn a_successful_delete_reports_nothing() {
+        let (_temp, store, old) = home_with_web_model_group();
+        assert_eq!(settle_old_delete(&store, &old, Ok(true)), None);
+    }
+
+    #[test]
+    fn an_undeleted_old_group_releases_its_web_model_actor() {
+        let (_temp, store, old) = home_with_web_model_group();
+        let message = settle_old_delete(&store, &old, Err(std::io::Error::other("injected")))
+            .expect("delete failure is reported");
+        assert!(message.contains("injected"), "{message}");
+        assert!(
+            message.contains("removed its ChatGPT Web Model actor"),
+            "{message}"
+        );
+        let ids = store
+            .load(&old.group_id)
+            .expect("old group survives")
+            .actors
+            .iter()
+            .map(|actor| actor.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["peer".to_owned()]);
+    }
+
+    #[test]
+    fn a_vanished_old_group_is_not_resurrected() {
+        let (_temp, store, old) = home_with_web_model_group();
+        let directory = store.group_dir(&old.group_id).expect("group dir");
+        std::fs::remove_dir_all(&directory).expect("remove old group");
+        let message = settle_old_delete(&store, &old, Err(std::io::Error::other("injected")))
+            .expect("delete failure is reported");
+        assert_eq!(message, "injected");
+        assert!(
+            !directory.exists(),
+            "mutate must not recreate the group directory"
         );
     }
 }

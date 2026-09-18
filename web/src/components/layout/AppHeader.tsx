@@ -1,10 +1,13 @@
 import type { Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { Actor, GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
-import type { GroupRunControls } from "../../utils/groupControls";
+import { getGroupStatusFromSource } from "../../utils/groupStatus";
+import { GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import { ClipboardIcon, EditIcon, SearchIcon, MoreIcon, MenuIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
-import { GroupRunControl } from "./GroupRunControl";
+import { GroupStatusIndicator } from "./GroupStatusIndicator";
+import { groupRunMenuActions } from "./groupRunMenuActions";
+import { useGroupMenu } from "./useGroupMenu";
+import type { GroupControl } from "../../utils/groupControls";
 import { AppSettingsMenu } from "./AppSettingsMenu";
 
 export interface AppHeaderProps {
@@ -17,13 +20,13 @@ export interface AppHeaderProps {
   groupDoc: GroupDoc | null;
   selectedGroupRunning: boolean;
   selectedGroupRuntimeStatus: GroupRuntimeStatus | null;
-  actors: Actor[];
   sseStatus: "connected" | "connecting" | "disconnected";
   onOpenSidebar: () => void;
   onOpenGroupEdit?: () => void;
   onOpenSearch: () => void;
   onOpenContext: () => void;
-  groupRunControls: GroupRunControls;
+  /** Opens the Group run menu from the status badge; absent when the viewer cannot control Groups. */
+  onControlGroup?: (groupId: string, control: GroupControl) => void;
   onOpenSettings: () => void;
   canAccessAccount: boolean;
   accountLabel?: string | null;
@@ -43,12 +46,11 @@ export function AppHeader({
   groupDoc,
   selectedGroupRunning,
   selectedGroupRuntimeStatus,
-  actors,
   onOpenSidebar,
   onOpenGroupEdit,
   onOpenSearch,
   onOpenContext,
-  groupRunControls,
+  onControlGroup,
   onOpenSettings,
   canAccessAccount,
   accountLabel,
@@ -61,6 +63,23 @@ export function AppHeader({
   const { t } = useTranslation("layout");
   const groupTitle = groupDoc?.title || (selectedGroupId ? selectedGroupId : t("selectGroup"));
   const canEditGroup = !!selectedGroupId && !webReadOnly && !!onOpenGroupEdit;
+  const selectedStatus = selectedGroupId
+    ? getGroupStatusFromSource({
+        running: selectedGroupRunning,
+        state:
+          (selectedGroupRuntimeStatus?.lifecycle_state as GroupDoc["state"] | undefined) ||
+          groupDoc?.state,
+        runtime_status: selectedGroupRuntimeStatus || undefined,
+      })
+    : null;
+  const runMenu = useGroupMenu(
+    groupTitle,
+    selectedStatus && onControlGroup && !webReadOnly
+      ? groupRunMenuActions(selectedStatus.key, t, (control) =>
+          onControlGroup(selectedGroupId, control),
+        )
+      : [],
+  );
   return (
     <header className="@container/group-header absolute inset-x-0 top-0 z-20 flex h-14 shrink-0 items-center gap-2 px-3 glass-header md:relative md:inset-auto md:px-4">
       <div
@@ -119,20 +138,30 @@ export function AppHeader({
             </span>
           </span>
         )}
-        {!!selectedGroupId && (
-          <GroupRunControl
-            key={selectedGroupId}
-            group={{
-              group_id: selectedGroupId,
-              title: groupTitle,
-              running: selectedGroupRunning,
-              state: groupDoc?.state,
-              runtime_status: selectedGroupRuntimeStatus || undefined,
-            }}
-            actorCount={actors.length}
-            controls={webReadOnly ? undefined : groupRunControls}
-          />
+        {selectedStatus && (
+          <span className="hidden shrink-0 @min-[480px]/group-header:inline-flex">
+            {runMenu.available ? (
+              <button
+                type="button"
+                data-group-run-controls
+                className="rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]"
+                aria-haspopup="menu"
+                aria-expanded={runMenu.open}
+                onClick={(event) => runMenu.toggle(event.currentTarget)}
+                onKeyDown={runMenu.onKeyDown}
+              >
+                <GroupStatusIndicator
+                  status={selectedStatus}
+                  variant="badge"
+                  className="cursor-pointer transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
+                />
+              </button>
+            ) : (
+              <GroupStatusIndicator status={selectedStatus} variant="badge" />
+            )}
+          </span>
         )}
+        {runMenu.menu}
       </div>
 
       <div

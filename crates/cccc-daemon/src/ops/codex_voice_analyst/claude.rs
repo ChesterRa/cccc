@@ -35,6 +35,9 @@ const EVENT_CAPACITY: usize = 2048;
 const COMMAND_CAPACITY: usize = 16;
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(15);
 const JOB_READY_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a live or freshly woken session may report transient activity
+/// before CCCC stops waiting to attach to it.
+const LIVE_SETTLE_TIMEOUT: Duration = Duration::from_secs(3);
 const TRANSCRIPT_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const PROMPT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(30);
 const PROMPT_SETTLED_CORRELATION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -93,7 +96,7 @@ async fn launch_inner(
         validate_session_id(session_id)?;
         if let Some((endpoint, job)) = find_live_job(&prepared.config_dir, session_id).await? {
             validate_worker_version(&job)?;
-            validate_job_state(&prepared.config_dir, &job, cwd, true)?;
+            await_settled(&prepared.config_dir, &job, cwd).await?;
             return connect_launched(
                 prepared,
                 endpoint,
@@ -199,7 +202,7 @@ async fn launch_inner(
         let rollback = kill_and_confirm(&endpoint, &job.short).await;
         return Err(with_optional_cleanup_error(error, rollback.err()));
     }
-    if let Err(error) = validate_job_state(&prepared.config_dir, &job, cwd, true) {
+    if let Err(error) = await_settled(&prepared.config_dir, &job, cwd).await {
         let rollback = kill_and_confirm(&endpoint, &job.short).await;
         return Err(with_optional_cleanup_error(error, rollback.err()));
     }
@@ -613,12 +616,66 @@ fn with_optional_cleanup_error(primary: io::Error, cleanup: Option<io::Error>) -
     }
 }
 
-fn validate_job_state(
-    config_dir: &Path,
-    job: &Job,
-    expected_cwd: &Path,
-    require_quiescent: bool,
-) -> io::Result<Value> {
+/// Whether a managed session can accept CCCC as its driver right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Quiescence {
+    /// The worker is at its prompt: safe to attach and send input.
+    Settled,
+    /// A turn is running.
+    Busy,
+}
+
+/// Only `tempo` is trusted. Agent View's `inFlight` and `outcome` bookkeeping
+/// is not a reliable signal for attachability: `queued` stays incremented after
+/// input delivered mid-turn has already been answered, `tasks` counts background
+/// monitors and shells that never stop the prompt from accepting input, and
+/// `outcome` survives `--resume`. Gating on them locked sessions out forever.
+fn classify_quiescence(state: &Value) -> Quiescence {
+    match state.get("tempo").and_then(Value::as_str) {
+        Some("idle" | "blocked") => Quiescence::Settled,
+        _ => Quiescence::Busy,
+    }
+}
+
+fn unsettled_error(short: &str, state: &Value) -> io::Error {
+    let field = |pointer: &str| {
+        state
+            .pointer(pointer)
+            .map(|value| match value {
+                Value::String(text) => text.clone(),
+                other => other.to_string(),
+            })
+            .unwrap_or_else(|| "?".into())
+    };
+    io::Error::new(
+        io::ErrorKind::WouldBlock,
+        format!(
+            "Claude Agent View session {short} is still running a turn (tempo={}, tasks={}, queued={}); retry once it settles, or stop it with `claude stop {short}`",
+            field("/tempo"),
+            field("/inFlight/tasks"),
+            field("/inFlight/queued"),
+        ),
+    )
+}
+
+/// Wait briefly for the session to be at its prompt. For a live worker this
+/// absorbs the tail of a finishing turn; for a freshly woken one it covers the
+/// window between the job appearing in `list` and Agent View rewriting state.
+async fn await_settled(config_dir: &Path, job: &Job, expected_cwd: &Path) -> io::Result<Value> {
+    let deadline = tokio::time::Instant::now() + LIVE_SETTLE_TIMEOUT;
+    loop {
+        let state = read_job_state(config_dir, job, expected_cwd)?;
+        if classify_quiescence(&state) == Quiescence::Settled {
+            return Ok(state);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(unsettled_error(&job.short, &state));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn read_job_state(config_dir: &Path, job: &Job, expected_cwd: &Path) -> io::Result<Value> {
     let state_path = config_dir.join("jobs").join(&job.short).join("state.json");
     let metadata = std::fs::symlink_metadata(&state_path)?;
     if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX_STATE_BYTES
@@ -648,27 +705,6 @@ fn validate_job_state(
             io::ErrorKind::InvalidInput,
             "Claude Agent View session is bound to a different working directory",
         ));
-    }
-    if require_quiescent {
-        let tasks = state
-            .pointer("/inFlight/tasks")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let queued = state
-            .pointer("/inFlight/queued")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let tempo = state.get("tempo").and_then(Value::as_str);
-        if tasks != 0
-            || queued != 0
-            || state.get("outcome").is_some_and(|value| !value.is_null())
-            || !matches!(tempo, Some("idle" | "blocked"))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "Claude Agent View session has active or unsettled work",
-            ));
-        }
     }
     Ok(state)
 }
@@ -1375,6 +1411,51 @@ fn closed_error() -> io::Error {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    struct ControlDirectory(PathBuf);
+
+    #[cfg(unix)]
+    impl Drop for ControlDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Install a control key under `config_dir` and bind a control socket
+    /// where `control::Endpoint::resolve` looks for it. Returns the canonical
+    /// config directory that callers must resolve the endpoint from.
+    #[cfg(unix)]
+    fn bind_fake_control(
+        config_dir: &Path,
+    ) -> (PathBuf, tokio::net::UnixListener, ControlDirectory) {
+        use sha2::{Digest, Sha256};
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        std::fs::create_dir_all(config_dir.join("daemon")).expect("daemon config");
+        let control_key = config_dir.join("daemon/control.key");
+        std::fs::write(&control_key, "0123456789abcdef0123456789abcdef\n").expect("control key");
+        std::fs::set_permissions(&control_key, std::fs::Permissions::from_mode(0o600))
+            .expect("control key permissions");
+        let config_dir = config_dir.canonicalize().expect("canonical config");
+        let digest = format!(
+            "{:x}",
+            Sha256::digest(config_dir.to_string_lossy().as_bytes())
+        );
+        let control_dir = Path::new("/tmp")
+            .join(format!(
+                "cc-daemon-{}",
+                config_dir.metadata().expect("metadata").uid()
+            ))
+            .join(&digest[..8]);
+        std::fs::create_dir_all(&control_dir).expect("control directory");
+        std::fs::set_permissions(&control_dir, std::fs::Permissions::from_mode(0o700))
+            .expect("control directory permissions");
+        let guard = ControlDirectory(control_dir.clone());
+        let listener = tokio::net::UnixListener::bind(control_dir.join("control.sock"))
+            .expect("control socket");
+        (config_dir, listener, guard)
+    }
+
     #[test]
     fn parses_only_exact_short_ids() {
         assert_eq!(
@@ -1385,7 +1466,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_job_identity_and_quiescence() {
+    fn validates_job_identity() {
         let temp = tempfile::tempdir().expect("tempdir");
         let config = temp.path().join("config");
         let cwd = temp.path().join("workspace");
@@ -1393,8 +1474,9 @@ mod tests {
         let session_id = "52b41c61-e23c-4b7c-8b60-809c347451b5";
         std::fs::create_dir_all(config.join("jobs").join(short)).expect("jobs");
         std::fs::create_dir(&cwd).expect("cwd");
+        let state_path = config.join("jobs").join(short).join("state.json");
         cccc_core::fs::write_json(
-            &config.join("jobs").join(short).join("state.json"),
+            &state_path,
             &json!({
                 "sessionId":session_id,
                 "daemonShort":short,
@@ -1410,24 +1492,85 @@ mod tests {
             cwd: cwd.clone(),
             cli_version: (2, 1, 259),
         };
-        validate_job_state(&config, &job, &cwd, true).expect("valid job");
+        read_job_state(&config, &job, &cwd).expect("valid job");
 
         cccc_core::fs::write_json(
-            &config.join("jobs").join(short).join("state.json"),
+            &state_path,
             &json!({
-                "sessionId":session_id,
+                "sessionId":"00000000-0000-4000-8000-000000000000",
                 "daemonShort":short,
-                "inFlight":{"tasks":1,"queued":0},
-                "tempo":"working",
+                "tempo":"idle",
             }),
         )
-        .expect("busy state");
+        .expect("foreign state");
         assert_eq!(
-            validate_job_state(&config, &job, &cwd, true)
-                .expect_err("busy job")
+            read_job_state(&config, &job, &cwd)
+                .expect_err("foreign session")
                 .kind(),
-            io::ErrorKind::WouldBlock
+            io::ErrorKind::InvalidData
         );
+
+        let other_cwd = temp.path().join("elsewhere");
+        std::fs::create_dir(&other_cwd).expect("other cwd");
+        cccc_core::fs::write_json(
+            &state_path,
+            &json!({"sessionId":session_id,"daemonShort":short,"tempo":"idle"}),
+        )
+        .expect("state");
+        assert_eq!(
+            read_job_state(&config, &job, &other_cwd)
+                .expect_err("different workspace")
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn classifies_session_quiescence_by_tempo_only() {
+        let settled = json!({"tempo":"idle","inFlight":{"tasks":0,"queued":0},"outcome":null});
+        assert_eq!(classify_quiescence(&settled), Quiescence::Settled);
+
+        // Agent View bookkeeping that used to lock sessions out for good:
+        // an outcome kept across --resume, a queued counter left behind by
+        // input answered mid-turn, and background monitors of a dead turn.
+        let stale_outcome = json!({
+            "tempo":"blocked",
+            "inFlight":{"tasks":0,"queued":0,"kinds":[]},
+            "outcome":{"kind":"done","summary":"earlier turn"},
+        });
+        assert_eq!(classify_quiescence(&stale_outcome), Quiescence::Settled);
+        let stale_queue = json!({"tempo":"blocked","inFlight":{"tasks":0,"queued":1,"kinds":[]}});
+        assert_eq!(classify_quiescence(&stale_queue), Quiescence::Settled);
+        let background_monitor = json!({
+            "tempo":"blocked",
+            "inFlight":{"tasks":1,"queued":0,"kinds":["monitor"]},
+            "needs":"API unavailable — retry",
+        });
+        assert_eq!(
+            classify_quiescence(&background_monitor),
+            Quiescence::Settled
+        );
+        let background_shell =
+            json!({"tempo":"idle","inFlight":{"tasks":1,"queued":0,"kinds":["local_bash"]}});
+        assert_eq!(classify_quiescence(&background_shell), Quiescence::Settled);
+
+        // A running turn is the only thing that must not be double-driven.
+        let working = json!({"tempo":"working","inFlight":{"tasks":1,"queued":0}});
+        assert_eq!(classify_quiescence(&working), Quiescence::Busy);
+        let active = json!({"tempo":"active","inFlight":{"tasks":0,"queued":0}});
+        assert_eq!(classify_quiescence(&active), Quiescence::Busy);
+        let missing_tempo = json!({"inFlight":{"tasks":0,"queued":0}});
+        assert_eq!(classify_quiescence(&missing_tempo), Quiescence::Busy);
+    }
+
+    #[test]
+    fn unsettled_error_is_retryable_and_actionable() {
+        let state = json!({"tempo":"active","inFlight":{"tasks":1,"queued":0}});
+        let error = unsettled_error("1234abcd", &state);
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        let text = error.to_string();
+        assert!(text.contains("tempo=active"), "{text}");
+        assert!(text.contains("claude stop 1234abcd"), "{text}");
     }
 
     #[test]
@@ -1816,17 +1959,8 @@ mod tests {
         versions: (&str, &'static str),
         re_adopt: bool,
     ) {
-        use sha2::{Digest, Sha256};
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::os::unix::fs::PermissionsExt;
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-        struct ControlDirectory(PathBuf);
-
-        impl Drop for ControlDirectory {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
 
         let temp = tempfile::tempdir().expect("tempdir");
         let config_dir = temp.path().join("config");
@@ -1845,28 +1979,7 @@ mod tests {
         .expect("fake Claude");
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
             .expect("executable permissions");
-        let control_key = config_dir.join("daemon/control.key");
-        std::fs::write(&control_key, "0123456789abcdef0123456789abcdef\n").expect("control key");
-        std::fs::set_permissions(&control_key, std::fs::Permissions::from_mode(0o600))
-            .expect("control key permissions");
-
-        let config_dir = config_dir.canonicalize().expect("canonical config");
-        let digest = format!(
-            "{:x}",
-            Sha256::digest(config_dir.to_string_lossy().as_bytes())
-        );
-        let control_dir = Path::new("/tmp")
-            .join(format!(
-                "cc-daemon-{}",
-                config_dir.metadata().expect("metadata").uid()
-            ))
-            .join(&digest[..8]);
-        std::fs::create_dir_all(&control_dir).expect("control directory");
-        std::fs::set_permissions(&control_dir, std::fs::Permissions::from_mode(0o700))
-            .expect("control directory permissions");
-        let _control_directory = ControlDirectory(control_dir.clone());
-        let listener = tokio::net::UnixListener::bind(control_dir.join("control.sock"))
-            .expect("control socket");
+        let (config_dir, listener, _control_directory) = bind_fake_control(&config_dir);
 
         let transcript_path = config_dir
             .join("projects/workspace")
@@ -2124,6 +2237,158 @@ mod tests {
             .await
             .expect("server timeout")
             .expect("server");
+    }
+
+    /// A live Agent View job plus a control server that records every
+    /// control operation, so tests can prove attaching touches nothing.
+    #[cfg(unix)]
+    struct SettleFixture {
+        _temp: tempfile::TempDir,
+        _control_directory: ControlDirectory,
+        config_dir: PathBuf,
+        workspace: PathBuf,
+        job: Job,
+        operations: Arc<std::sync::Mutex<Vec<String>>>,
+        server: JoinHandle<()>,
+    }
+
+    #[cfg(unix)]
+    impl SettleFixture {
+        fn new(initial_state: Value) -> Self {
+            use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+            let temp = tempfile::tempdir().expect("tempdir");
+            let workspace = temp.path().join("workspace");
+            std::fs::create_dir(&workspace).expect("workspace");
+            let short = "abcdef12";
+            let session_id = "52b41c61-e23c-4b7c-8b60-809c347451b5";
+            let config_dir = temp.path().join("config");
+            std::fs::create_dir_all(config_dir.join("jobs").join(short)).expect("job state");
+            let (config_dir, listener, control_directory) = bind_fake_control(&config_dir);
+            let state_path = config_dir.join("jobs").join(short).join("state.json");
+            let mut state = initial_state;
+            let object = state.as_object_mut().expect("state object");
+            object.insert("sessionId".into(), json!(session_id));
+            object.insert("daemonShort".into(), json!(short));
+            cccc_core::fs::write_json(&state_path, &state).expect("state");
+
+            let operations = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let listing = json!({
+                "short":short,
+                "sessionId":session_id,
+                "cwd":workspace,
+                "cliVersion":"2.1.260",
+            });
+            let server = {
+                let operations = Arc::clone(&operations);
+                tokio::spawn(async move {
+                    loop {
+                        let (stream, _) = listener.accept().await.expect("accept");
+                        let mut stream = BufReader::new(stream);
+                        let mut line = String::new();
+                        stream.read_line(&mut line).await.expect("request");
+                        let request: Value = serde_json::from_str(&line).expect("request JSON");
+                        let operation = request["op"].as_str().expect("operation").to_owned();
+                        operations
+                            .lock()
+                            .expect("operations")
+                            .push(operation.clone());
+                        let response = match operation.as_str() {
+                            "list" => json!({"ok":true,"op":"list","jobs":[listing.clone()]}),
+                            "attach" => json!({"ok":true,"op":"attach"}),
+                            "kill" => json!({"ok":true,"op":"kill"}),
+                            other => panic!("unexpected control operation: {other}"),
+                        };
+                        stream
+                            .get_mut()
+                            .write_all(format!("{response}\n").as_bytes())
+                            .await
+                            .expect("response");
+                        stream.get_mut().flush().await.expect("response flush");
+                    }
+                })
+            };
+            Self {
+                _temp: temp,
+                _control_directory: control_directory,
+                config_dir,
+                job: Job {
+                    short: short.into(),
+                    session_id: session_id.into(),
+                    cwd: workspace.clone(),
+                    cli_version: (2, 1, 260),
+                },
+                workspace,
+                operations,
+                server,
+            }
+        }
+
+        async fn settle(&self) -> io::Result<Value> {
+            // Resolving the endpoint proves the fake control plane is reachable,
+            // even though attaching must never need to talk to it.
+            control::Endpoint::resolve(&self.config_dir).expect("endpoint");
+            tokio::time::timeout(
+                LIVE_SETTLE_TIMEOUT * 2,
+                await_settled(&self.config_dir, &self.job, &self.workspace),
+            )
+            .await
+            .expect("settle must finish within its own deadline")
+        }
+
+        fn operations(&self) -> Vec<String> {
+            self.operations.lock().expect("operations").clone()
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for SettleFixture {
+        fn drop(&mut self) {
+            self.server.abort();
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn idle_session_with_stale_bookkeeping_is_attached_untouched() {
+        let fixture = SettleFixture::new(json!({
+            "tempo":"blocked",
+            "needs":"API unavailable — retry · API Error: Connection lost mid-response.",
+            "inFlight":{"tasks":1,"queued":1,"kinds":["monitor"],"drainableMonitors":0},
+            "fan":[{"id":"m1","kind":"monitor","label":"stale","startedAt":1}],
+            "outcome":{"kind":"done","summary":"earlier turn"},
+        }));
+        fixture
+            .settle()
+            .await
+            .expect("stale bookkeeping never blocks attaching");
+        assert!(
+            fixture.operations().is_empty(),
+            "attaching must neither cancel nor stop the worker: {:?}",
+            fixture.operations()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn running_turn_is_reported_without_being_touched() {
+        let fixture = SettleFixture::new(
+            json!({"tempo":"active","inFlight":{"tasks":1,"queued":0,"kinds":["prompt"]}}),
+        );
+        let error = fixture
+            .settle()
+            .await
+            .expect_err("a running turn is not adopted");
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert!(
+            error.to_string().contains("claude stop abcdef12"),
+            "{error}"
+        );
+        assert!(
+            fixture.operations().is_empty(),
+            "{:?}",
+            fixture.operations()
+        );
     }
 }
 

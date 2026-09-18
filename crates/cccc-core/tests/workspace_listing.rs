@@ -236,7 +236,9 @@ fn listing_identifies_links_without_leaking_external_target_metadata() {
     assert_eq!(repaired.unavailable, None);
 }
 
-#[cfg(unix)]
+// APFS refuses to create non-UTF-8 file names, so this can only run where the
+// filesystem accepts raw bytes.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn non_utf8_names_and_link_targets_never_alias_another_utf8_filename() {
     use std::os::unix::{ffi::OsStrExt, fs::symlink};

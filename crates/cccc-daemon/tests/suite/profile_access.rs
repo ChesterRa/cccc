@@ -259,6 +259,64 @@ fn assert_denied(response: DaemonResponse) {
     );
 }
 
+#[test]
+fn profile_switching_to_web_model_respects_the_singleton() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group_a = call(&home, "group_create", json!({"title":"a"})).result["group"]["group_id"]
+        .as_str()
+        .expect("group a")
+        .to_owned();
+    let group_b = call(&home, "group_create", json!({"title":"b"})).result["group"]["group_id"]
+        .as_str()
+        .expect("group b")
+        .to_owned();
+    let upsert = |runtime: &str| {
+        raw_call(
+            &home,
+            "actor_profile_upsert",
+            json!({"profile_id":"shared","name":"Shared","runtime":runtime}),
+        )
+    };
+    assert!(upsert("codex").ok);
+    // An unlinked profile may switch freely: no actor runs with it yet.
+    assert!(upsert("web_model").ok);
+    assert!(upsert("codex").ok);
+    for (group, actor) in [(&group_a, "one"), (&group_b, "two")] {
+        call(
+            &home,
+            "actor_add",
+            json!({"group_id":group,"actor_id":actor,"profile_id":"shared","by":"user"}),
+        );
+    }
+    let two_linked = upsert("web_model");
+    assert_eq!(
+        two_linked.error.expect("two linked actors").code,
+        "chatgpt_web_model_singleton"
+    );
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_b,"actor_id":"two","by":"user"}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_b,"actor_id":"web","runtime":"web_model","by":"user"}),
+    );
+    let slot_taken = upsert("web_model");
+    assert_eq!(
+        slot_taken.error.expect("slot already owned").code,
+        "chatgpt_web_model_singleton"
+    );
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_b,"actor_id":"web","by":"user"}),
+    );
+    assert!(upsert("web_model").ok, "one linked actor and a free slot");
+}
+
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     let response = raw_call(home, op, args);
     assert!(response.ok, "{op}: {:?}", response.error);

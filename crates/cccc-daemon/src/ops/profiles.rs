@@ -2,9 +2,9 @@ use super::operation::{
     Operation,
     Policy::{Read, Write},
 };
-use cccc_contracts::DaemonRequest;
-use cccc_core::HomeLayout;
+use cccc_contracts::{ActorRuntime, DaemonRequest};
 use cccc_core::profiles::ProfileStore;
+use cccc_core::{GroupStore, HomeLayout, actors};
 use serde_json::{Map, Value, json};
 
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
@@ -130,10 +130,66 @@ fn upsert(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .args
         .get("expected_revision")
         .and_then(Value::as_u64);
+    require_web_model_singleton(home, &profiles, &profile)?;
     let profile = profiles
         .upsert(profile, expected)
         .map_err(OpError::invalid)?;
     object(json!({"profile":profile}))
+}
+
+/// Linked actors run with the profile runtime, so a profile that switches to
+/// ChatGPT Web Model is bound by the same instance-wide limit as actor_add.
+fn require_web_model_singleton(
+    home: &HomeLayout,
+    profiles: &ProfileStore,
+    profile: &Map<String, Value>,
+) -> Result<(), OpError> {
+    let runtime = profile
+        .get("runtime")
+        .cloned()
+        .map(serde_json::from_value::<ActorRuntime>);
+    let profile_id = profile
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(runtime, Some(Ok(ActorRuntime::WebModel))) || profile_id.is_empty() {
+        return Ok(());
+    }
+    let usage = profiles
+        .usage_ref(
+            profile_id,
+            profile
+                .get("scope")
+                .and_then(Value::as_str)
+                .unwrap_or("global"),
+            profile
+                .get("owner_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        )
+        .map_err(OpError::io)?;
+    let linked = usage
+        .iter()
+        .filter_map(|entry| Some((entry["group_id"].as_str()?, entry["actor_id"].as_str()?)))
+        .collect::<Vec<_>>();
+    if linked.len() > 1 {
+        return Err(OpError::new(
+            "chatgpt_web_model_singleton",
+            format!(
+                "ChatGPT Web Model is limited to one actor per CCCC instance; profile {profile_id} is linked to {} actors",
+                linked.len()
+            ),
+        ));
+    }
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    match actors::web_model_singleton_conflict(&store, linked.first().copied())
+        .map_err(OpError::io)?
+    {
+        Some(message) if !linked.is_empty() => {
+            Err(OpError::new("chatgpt_web_model_singleton", message))
+        }
+        _ => Ok(()),
+    }
 }
 fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let profile_id = required_arg(request, "profile_id")?;

@@ -26,13 +26,11 @@ const props: AppHeaderProps = {
   groupDoc: null,
   selectedGroupRunning: true,
   selectedGroupRuntimeStatus: null,
-  actors: [],
   sseStatus: "connected",
   onOpenSidebar: noop,
   onOpenGroupEdit: noop,
   onOpenSearch: noop,
   onOpenContext: noop,
-  groupRunControls: { pending: null, run: async () => {} },
   onOpenSettings: noop,
   canAccessAccount: true,
   onOpenAccount: noop,
@@ -303,37 +301,32 @@ it("keeps the title readable without exposing editing when unavailable", async (
   }
 });
 
-it.each([
-  { state: "active", running: true, action: "pause" },
-  { state: "paused", running: true, action: "resume" },
-  { state: "idle", running: true, action: "resume" },
-  { state: "active", running: false, action: "start" },
-] as const)(
-  "opens explicit actions for $state/$running without starting work on click",
-  async ({ state, running, action }) => {
-    const run = vi.fn(async () => {});
-    await mount({
-      groupDoc: { group_id: "group-1", state },
-      selectedGroupRunning: running,
-      actors: [{ id: "actor-1" }],
-      groupRunControls: { pending: null, run },
-    });
-    const trigger = host.querySelector<HTMLButtonElement>("[data-group-run-control]")!;
-    await act(async () => trigger.click());
-    expect(run).not.toHaveBeenCalled();
-    const menu = document.querySelector('[role="menu"]')!;
-    const button = Array.from(menu.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
-      b.textContent?.startsWith(`groupRun.${action}`),
-    )!;
-    await act(async () => button.click());
-    expect(run).toHaveBeenCalledExactlyOnceWith("group-1", action);
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-  },
-);
+it("turns the status badge into the Group run menu", async () => {
+  const onControlGroup = vi.fn();
+  await mount({
+    groupDoc: { group_id: "group-1", state: "active" },
+    selectedGroupRunning: true,
+    onControlGroup,
+  });
+  const trigger = host.querySelector<HTMLButtonElement>("[data-group-run-controls]")!;
+  expect(trigger.textContent).toContain("statusRunning");
+  await act(async () => trigger.click());
+  const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
+  const labels = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item) =>
+    item.textContent?.trim(),
+  );
+  expect(labels).toEqual(["pauseDelivery", "stopAllAgents"]);
+  await act(async () => menu.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click());
+  expect(onControlGroup).toHaveBeenCalledWith("group-1", "pause");
+});
 
-it("keeps read-only status passive", async () => {
-  await mount({ webReadOnly: true });
-  expect(host.querySelector("[data-group-run-control]")).toBeNull();
-  expect(host.querySelector('[title="statusRunning"]')).not.toBeNull();
+it("shows a plain status badge when the viewer cannot control the Group", async () => {
+  await mount({
+    groupDoc: { group_id: "group-1", state: "active" },
+    selectedGroupRunning: true,
+    webReadOnly: true,
+    onControlGroup: vi.fn(),
+  });
+  expect(host.querySelector("[data-group-run-controls]")).toBeNull();
+  expect(host.textContent).toContain("statusRunning");
 });

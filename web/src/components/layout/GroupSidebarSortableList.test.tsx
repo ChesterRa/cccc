@@ -63,6 +63,59 @@ describe("GroupSidebarSortableList mobile controls", () => {
     expect(onSelectGroup).not.toHaveBeenCalled();
   });
 
+  it("lists run actions first and fires them for that row's Group only", async () => {
+    const onPause = vi.fn();
+    const onDelete = vi.fn();
+    const onSelectGroup = vi.fn();
+    const runActionsFor = vi.fn((group: GroupMeta) =>
+      group.group_id === "g_alpha"
+        ? [
+            { label: "Pause Delivery", onClick: onPause },
+            { label: "Stop All Agents", onClick: vi.fn() },
+          ]
+        : [],
+    );
+    await act(async () =>
+      root.render(
+        <GroupSidebarSortableList
+          groups={groups}
+          section="working"
+          selectedGroupId="g_beta"
+          isDark
+          isCollapsed={false}
+          menuActionLabel="Archive"
+          menuAriaLabel="Actions"
+          onMenuAction={vi.fn()}
+          runActionsFor={runActionsFor}
+          trailingActionsFor={() => [{ label: "Delete", onClick: onDelete }]}
+          onReorderSection={vi.fn()}
+          onSelectGroup={onSelectGroup}
+          onClose={vi.fn()}
+        />,
+      ),
+    );
+
+    const alpha = host.querySelector<HTMLButtonElement>('button[aria-label="Actions · Alpha"]');
+    await act(async () => alpha?.click());
+    const items = document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+    expect(Array.from(items, (item) => item.textContent)).toEqual([
+      "Pause Delivery",
+      "Stop All Agents",
+      "Archive",
+      "Delete",
+    ]);
+    await act(async () => items[0]?.click());
+    expect(onPause).toHaveBeenCalledOnce();
+    expect(onSelectGroup).not.toHaveBeenCalled();
+
+    const beta = host.querySelector<HTMLButtonElement>('button[aria-label="Actions · Beta"]');
+    await act(async () => beta?.click());
+    const betaItems = document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+    expect(Array.from(betaItems, (item) => item.textContent)).toEqual(["Archive", "Delete"]);
+    await act(async () => betaItems[1]?.click());
+    expect(onDelete).toHaveBeenCalledOnce();
+  });
+
   it("opens connections for an unselected Group and preserves its selection", async () => {
     const onOpenConnections = vi.fn();
     const onSelectGroup = vi.fn();

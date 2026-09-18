@@ -218,7 +218,11 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     };
     final_preview.role = None;
     final_preview.normalize_runtime_constraints();
-    if final_preview.runtime == ActorRuntime::WebModel {
+    // The scan only rejects; re-running it for an actor that already holds
+    // the slot cannot change the outcome.
+    if original_actor.runtime != ActorRuntime::WebModel
+        && final_preview.runtime == ActorRuntime::WebModel
+    {
         require_single_web_model_actor(home, &group_id, &actor_id)?;
     }
     let original_secrets = if profile_action == "convert_to_custom" {
@@ -914,30 +918,12 @@ fn require_single_web_model_actor(
     group_id: &str,
     actor_id: &str,
 ) -> Result<(), OpError> {
-    let store = store(home)?;
-    for meta in store.list().map_err(OpError::io)? {
-        let group = store.load(&meta.group_id).map_err(OpError::io)?;
-        for actor in &group.actors {
-            if actor.runtime != ActorRuntime::WebModel
-                || (group.group_id == group_id && actor.id == actor_id)
-            {
-                continue;
-            }
-            let label = if actor.title.trim().is_empty() {
-                actor.id.as_str()
-            } else {
-                actor.title.as_str()
-            };
-            return Err(OpError::new(
-                "chatgpt_web_model_singleton",
-                format!(
-                    "ChatGPT Web Model is limited to one actor per CCCC instance (existing actor: {label} in group {}). Remove the existing ChatGPT Web Model actor before creating another.",
-                    group.group_id
-                ),
-            ));
-        }
+    match actors::web_model_singleton_conflict(&store(home)?, Some((group_id, actor_id)))
+        .map_err(OpError::io)?
+    {
+        Some(message) => Err(OpError::new("chatgpt_web_model_singleton", message)),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 fn private_env_arg(request: &DaemonRequest) -> Result<Option<BTreeMap<String, String>>, OpError> {

@@ -720,13 +720,17 @@ fn required_identifier<'a>(value: &'a str, key: &str) -> Result<&'a str, ApiErro
         .ok_or_else(|| ApiError::bad(format!("{key} is required")))
 }
 
+/// Accepts any single path segment. Actor ids are Unicode alphanumerics
+/// (`cccc_core::actors::validate_actor_id`), so only traversal and separator
+/// characters are rejected here rather than everything outside ASCII.
 fn safe_segment(value: &str) -> Result<&str, ApiError> {
-    (!value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')))
-    .then_some(value)
-    .ok_or_else(|| ApiError::bad("invalid browser profile identifier"))
+    let traversal = value.is_empty() || value == "." || value == "..";
+    let unsafe_char = value
+        .chars()
+        .any(|ch| matches!(ch, '/' | '\\' | '\0') || ch.is_control());
+    (!traversal && !unsafe_char)
+        .then_some(value)
+        .ok_or_else(|| ApiError::bad("invalid browser profile identifier"))
 }
 
 fn dimension(body: &Value, key: &str, default: u32, min: u32, max: u32) -> u32 {
@@ -746,4 +750,19 @@ fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
 
 fn io_error(error: io::Error) -> ApiError {
     ApiError::bad(error.to_string())
+}
+
+#[cfg(test)]
+mod safe_segment_tests {
+    use super::safe_segment;
+
+    #[test]
+    fn accepts_unicode_actor_ids_and_rejects_traversal() {
+        for ok in ["自迭代研究", "peer-1", "g_405dedf31470", "a.b"] {
+            assert_eq!(safe_segment(ok).map_err(|_| ()), Ok(ok));
+        }
+        for bad in ["", ".", "..", "a/b", "a\\b", "a\0b", "a\nb"] {
+            assert!(safe_segment(bad).is_err(), "{bad:?} must be rejected");
+        }
+    }
 }

@@ -83,6 +83,7 @@ interface AppModalsProps {
   onStartReply: (ev: LedgerEvent) => void;
   onThemeChange: (theme: Theme) => void;
   onTextScaleChange: (scale: TextScale) => void;
+  onDeleteGroup: (groupId: string) => Promise<void>;
   fetchContext: ContextModalFetch;
   canManageGroups: boolean;
   accountLabel?: string | null;
@@ -127,6 +128,7 @@ export function AppModals({
   onStartReply,
   onThemeChange,
   onTextScaleChange,
+  onDeleteGroup,
   fetchContext,
   canManageGroups,
   accountLabel,
@@ -145,7 +147,6 @@ export function AppModals({
     groupPresentation,
     runtimes,
     setSelectedGroupId,
-    setGroupDoc,
     setGroupContext,
     setGroupSettings,
     setGroupPresentation,
@@ -168,7 +169,6 @@ export function AppModals({
       groupPresentation: s.groupPresentation,
       runtimes: s.runtimes,
       setSelectedGroupId: s.setSelectedGroupId,
-      setGroupDoc: s.setGroupDoc,
       setGroupContext: s.setGroupContext,
       setGroupSettings: s.setGroupSettings,
       setGroupPresentation: s.setGroupPresentation,
@@ -810,28 +810,7 @@ export function AppModals({
     }
   };
 
-  const handleDeleteGroup = async () => {
-    if (!selectedGroupId) return;
-    if (!window.confirm(t("deleteGroupConfirm", { name: groupDoc?.title || selectedGroupId })))
-      return;
-    setBusy("group-delete");
-    try {
-      const resp = await api.deleteGroup(selectedGroupId);
-      if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
-        return;
-      }
-      setSelectedGroupId("");
-      setGroupDoc(null);
-      useGroupStore.getState().setEvents([]);
-      useGroupStore.getState().setActors([]);
-      setGroupContext(null);
-      setGroupSettings(null);
-      await refreshGroups();
-    } finally {
-      setBusy("");
-    }
-  };
+  const handleDeleteGroup = () => onDeleteGroup(selectedGroupId);
 
   const handleResetGroup = async () => {
     if (!selectedGroupId) return;
