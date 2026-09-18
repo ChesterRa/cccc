@@ -1,179 +1,104 @@
 # Web UI Quick Start
 
-Get started with CCCC using the Web interface.
+Use the Web interface to create a working Group, start Agents and follow their work.
 
-## Step 1: Start CCCC
+## 1. Open CCCC
 
-Open a terminal and run:
+Run `cccc`, then open [http://127.0.0.1:8848/](http://127.0.0.1:8848/).
+This starts the daemon and Web interface. Keep the terminal running.
 
-```bash
-cccc
-```
+## 2. Create a Group
 
-This starts both the daemon and the Web UI.
+Click **+ New** in the sidebar. Choose a project directory on the machine running
+CCCC, give the Group a name, and create it. **Browse** lets you select a directory
+without typing its full path. Group administration requires administrator access.
 
-## Step 2: Open the Web UI
-
-Open your browser and navigate to:
-
-```
-http://127.0.0.1:8848/
-```
-
-You should see the CCCC Web interface.
-
-## Step 3: Create a Working Group
-
-1. Click the **+** button in the sidebar
-2. Or attach an existing project:
+Alternatively, attach the current directory from a terminal:
 
 ```bash
-# In another terminal
 cd /path/to/your/project
 cccc attach .
 ```
 
-3. Refresh the Web UI to see your new group
+Select the Group in the sidebar. Its name and run status appear in the header.
+The pencil beside the name edits the Group's name and description.
 
-## Step 4: Add Your First Agent
+## 3. Add an Agent
 
-1. Click **Add Actor** in the header
-2. Fill in the form:
-   - **Actor ID**: e.g., `assistant`
-   - **Runtime**: Select your installed CLI (e.g., Claude)
-3. Click **Create**
+Use the **+** in the Agent bar near the composer. Choose an installed Runtime
+(for example, Claude Code or Codex), set an Actor ID and review the configuration.
+Add the Agent when ready. The first Group coordinator has the **foreman** role;
+additional Agents can work as peers.
 
-## Step 5: Prepare the Runtime Integration
-
-If this is your first time using CCCC with this runtime:
+Complete the Runtime's own sign-in/setup if needed. To check its CCCC integration:
 
 ```bash
-cccc setup --runtime claude   # or codex, droid, etc.
+cccc setup --runtime claude
 ```
 
-This prepares or reports how the runtime communicates with CCCC. Direct managed
-Claude Code, Codex, Grok Build, and OpenCode sessions receive their scoped MCP
-entry automatically when CCCC starts them.
+Use the corresponding Runtime name for other CLIs. Managed Claude Code, Codex,
+Grok Build and OpenCode sessions receive their scoped CCCC MCP entry at startup.
 
-## Step 6: Start the Agent
+## 4. Start and communicate
 
-1. Find your agent in the tabs
-2. Click the **Play** button to start it
-3. Wait for the agent to initialize
+Open the Group status button in the header and choose **Start** to launch enabled
+Agents. To inspect or control one Agent, open it from the Agent bar.
 
-The agent's terminal output appears in the tab.
+In **Messages**, choose recipients using the **To** controls above the input,
+write a message and click **Send** or press `Ctrl+Enter` / `Cmd+Enter`.
+Choose an individual Agent or `@foreman` for directed work; use `@all` when every
+enabled Agent needs the message.
 
-## Step 7: Send Your First Message
+Typing `@` or `#` inserts references into the text. References do not replace the
+recipient controls. A selected remote `#Group` includes its Connect identity for
+your local Agents to use; it does not directly send a remote message.
 
-1. Click the **Chat** tab
-2. Type a message in the input box:
-   ```
-   Hello! Please introduce yourself.
-   ```
-3. Press `Ctrl+Enter` / `Cmd+Enter`, or click Send
+Switch to **Terminals** to see several Agents at once. The page arrows show the
+remaining Agents. Return to **Messages** to read replies or continue the discussion.
 
-## Step 8: Watch the Agent Work
+## 5. Keep the work organized
 
-1. Switch to the agent's tab to see terminal output
-2. Watch as the agent processes your request
-3. Responses appear in the Chat tab
+- **Project Context** (clipboard button in the header): **Coordination** contains
+  the working summary, `PROJECT.md`, coordination log and task board. **Agent State**
+  shows each Agent's latest saved report; it is not a live process monitor.
+  **Self-Evolving Skills** shows this Group's generated skill candidates.
+- **Files**: browse the workspace, preview supported files and inspect changes.
+  Desktop editing and file operations are available subject to your access.
+- **Presentation**: pin up to four resources for quick access and reading.
+- **Settings and more**: adjust appearance or open settings. Select **This group**
+  or **This instance** before changing configuration.
 
-## Adding More Agents
+## Common controls
 
-To add a second agent for collaboration:
-
-1. Click **Add Actor** again
-2. Use a different ID (e.g., `reviewer`)
-3. Optionally use a different runtime
-4. Start the agent
-
-Now you can:
-- Ask the coordinator: send a normal message, or select `@foreman` in the recipient controls
-- Send to a specific agent: select `assistant` or `reviewer` in the recipient controls
-- Broadcast only when needed: select `@all` in the recipient controls for announcements or urgent shared constraints
-- Track delegated work: use task-backed delegation when the task needs an owner, outcome, or evidence trail
-
-## Using the Context Panel
-
-Click **Context** to open the side panel:
-
-- **Vision**: Set the project goal
-- **Sketch**: Document the approach
-- **Tasks**: Track work items
-- **Notes**: Record learnings
-
-Agents can read and update this shared context.
-
-## Web UI Features
-
-| Feature | How to Access |
-|---------|---------------|
-| Switch groups | Click group in sidebar |
-| Agent terminal | Click agent tab |
-| Send message | Chat tab input |
-| @mention | Type `@` for name autocomplete/text references; recipients are controlled separately |
-| Reply to message | Click reply icon |
-| Settings | Gear icon in header |
-| Theme | Click moon/sun icon |
-
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Enter` / `Cmd+Enter` | Send message |
-| `Enter` | New line |
-| `@` | Open mention menu |
-| `Escape` | Cancel reply / Close menu |
-| `↑` `↓` | Navigate mention menu |
-| `Tab` / `Enter` | Select mention |
+| Action | Control |
+| --- | --- |
+| Switch Group | Sidebar Group list |
+| Edit Group name | Pencil beside the current Group name |
+| Start / pause delivery / stop Group | Group status button |
+| Add or inspect an Agent | Agent bar near the composer |
+| Search messages | Search button in the Group header |
+| Reply | **Reply** below a message |
+| Send | **Send**, `Ctrl+Enter` or `Cmd+Enter` |
+| Insert a line break | `Enter` |
+| Mention suggestions | Type `@` or `#`; use arrows, then `Tab` / `Enter` |
+| Close the current menu/dialog | `Escape` |
 
 ## Troubleshooting
 
-### Web UI not loading?
+**The page does not load:** check `cccc daemon status` and the terminal running
+CCCC. To use another Web port, run `CCCC_WEB_PORT=9000 cccc`.
 
-1. Check daemon is running:
-   ```bash
-   cccc daemon status
-   ```
+**An Agent does not start:** open its Runtime inspector, read the reported error,
+check that the CLI is installed and signed in, and run
+`cccc setup --runtime <name>` if the integration needs attention.
 
-2. Try a different port:
-   ```bash
-   CCCC_WEB_PORT=9000 cccc
-   ```
+**The project is not listed:** create a Group or run `cccc attach .` in its
+project directory. Paths refer to the CCCC host, not the device displaying the
+browser. Use an absolute path or one starting with `~`; Browse can help find it.
 
-### Agent won't start?
+## Next steps
 
-1. Check the terminal tab for errors
-2. Verify MCP setup:
-   ```bash
-   cccc setup --runtime <name>
-   ```
-
-### Can't see my project?
-
-Administrators can use **Create Group → Browse** to select a directory on the machine
-running the CCCC daemon. Project paths must be absolute (or start with `~`). Entering
-one missing final directory creates that exact directory when its parent already
-exists; relative paths and missing parent chains are rejected. The same directory can
-be attached to multiple independent groups; the newest attachment becomes the default
-group for later path-based lookup without changing the older groups.
-
-Group creation, scope attachment, ledger registration, and active-group selection are
-one compensated operation. Each committed file is read back against the exact value
-written before the next step starts. A failure restores the previous visible state or
-returns an explicit `rollback_failed` error. This is committed-state detection, not a
-claim of stronger filesystem durability than the host platform provides.
-The same single-request contract is used by the native Web and CLI surfaces;
-omitting `path` keeps the group-only creation behavior.
-For a request that includes `path`, CCCC publishes `group.created` only after the
-group, scope, ledger event, and active-group selection have all committed. A failed
-transaction removes its internal group without publishing a matching create or
-delete event.
-
-Alternatively, run `cccc attach .` in your project directory, then refresh the Web UI.
-
-## Next Steps
-
-- [Workflows](/guide/workflows) - Learn collaboration patterns
-- [Web UI Guide](/guide/web-ui) - Detailed UI documentation
-- [IM Bridge](/guide/im-bridge/) - Set up mobile access
+- [Workflows](/guide/workflows)
+- [Web UI Guide](/guide/web-ui)
+- [Voice Secretary](/guide/voice-secretary)
+- [IM Bridge](/guide/im-bridge/)

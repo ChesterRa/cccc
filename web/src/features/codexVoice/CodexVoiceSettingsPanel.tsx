@@ -98,6 +98,7 @@ export function CodexVoiceSettingsPanel({ active, controller, onClose }: Props) 
         <div
           id="codex-voice-settings-audio-panel"
           role="tabpanel"
+          className="mx-auto w-full max-w-4xl"
           aria-labelledby="codex-voice-settings-audio-tab"
           hidden={section !== "audio"}
         >
@@ -107,6 +108,7 @@ export function CodexVoiceSettingsPanel({ active, controller, onClose }: Props) 
         <div
           id="codex-voice-settings-notifications-panel"
           role="tabpanel"
+          className="mx-auto w-full max-w-4xl"
           aria-labelledby="codex-voice-settings-notifications-tab"
           hidden={section !== "notifications"}
         >
@@ -115,6 +117,7 @@ export function CodexVoiceSettingsPanel({ active, controller, onClose }: Props) 
         <div
           id="codex-voice-settings-analyst-panel"
           role="tabpanel"
+          className="mx-auto w-full max-w-4xl"
           aria-labelledby="codex-voice-settings-analyst-tab"
           hidden={section !== "analyst"}
         >

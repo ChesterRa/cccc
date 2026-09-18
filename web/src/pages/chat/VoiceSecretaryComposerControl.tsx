@@ -17,6 +17,7 @@ import type {
 import { classNames } from "../../utils/classNames";
 import {
   ChevronDownIcon,
+  ChevronLeftIcon,
   CloseIcon,
   CopyIcon,
   MaximizeIcon,
@@ -295,6 +296,9 @@ export function VoiceSecretaryComposerControl({
   const [mobilePromptDetailsOpen, setMobilePromptDetailsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
+  const [documentRevealed, setDocumentRevealed] = useState(false);
+  const documentBackRef = useRef<HTMLButtonElement | null>(null);
+  const documentLinkPathRef = useRef("");
   const refreshSeq = useRef(0);
   const visibleLoadSeqRef = useRef(0);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
@@ -4276,7 +4280,12 @@ export function VoiceSecretaryComposerControl({
     async (document: AssistantVoiceDocument) => {
       const nextPath = voiceDocumentPath(document);
       const currentPath = activeDocumentWritePath || viewedDocumentPath;
-      if (!nextPath || nextPath === currentPath) return;
+      if (!nextPath) return;
+      if (nextPath === currentPath) {
+        setVoiceWorkspaceView("document");
+        setDocumentRevealed(true);
+        return;
+      }
       if (documentHasUnsavedEdits) {
         const confirmed = window.confirm(
           t("voiceSecretarySwitchDocumentConfirm", {
@@ -4285,6 +4294,8 @@ export function VoiceSecretaryComposerControl({
         );
         if (!confirmed) return;
       }
+      setVoiceWorkspaceView("document");
+      setDocumentRevealed(true);
       setViewedDocumentPath(nextPath);
       let nextDocument = document;
       if (documentNeedsContentLoad(document)) {
@@ -4796,7 +4807,28 @@ export function VoiceSecretaryComposerControl({
   const assistantRowCurrentMode =
     assistantRowModeOptions.find((option) => option.key === captureMode) ||
     assistantRowModeOptions[0];
-  const workspaceVisibility = getVoiceSecretaryWorkspaceVisibility({ captureMode, isSmallScreen });
+  const workspaceVisibility = getVoiceSecretaryWorkspaceVisibility({
+    captureMode,
+    isSmallScreen,
+    documentRevealed,
+  });
+  useEffect(() => {
+    setDocumentRevealed(false);
+  }, [captureMode, selectedGroupId, open]);
+  useEffect(() => {
+    if (documentRevealed) documentBackRef.current?.focus();
+  }, [documentRevealed]);
+  const returnToActivity = () => {
+    setDocumentRevealed(false);
+    window.requestAnimationFrame(() => {
+      const links = workspaceScrollRef.current?.querySelectorAll<HTMLButtonElement>(
+        "[data-voice-document-link]",
+      );
+      Array.from(links || [])
+        .find((link) => link.dataset.voiceDocumentLink === documentLinkPathRef.current)
+        ?.focus();
+    });
+  };
   useEffect(() => {
     if (!open || !isSmallScreen) return undefined;
     const node = workspaceScrollRef.current;
@@ -5053,6 +5085,12 @@ export function VoiceSecretaryComposerControl({
                             ? t("loadingContext", { defaultValue: "Loading context..." })
                             : statusLabel}
                         </span>
+                        {captureMode !== "document" && documentHasUnsavedEdits ? (
+                          <span className="text-xs text-amber-700 dark:text-amber-300">
+                            {t("voiceSecretaryModeDocument")}:{" "}
+                            {t("voiceSecretaryUnsavedEditsBadge")}
+                          </span>
+                        ) : null}
                         {recordingGroupNoticeText ? (
                           <span
                             className={classNames(
@@ -5365,8 +5403,15 @@ export function VoiceSecretaryComposerControl({
                   key={`${captureMode}-${isSmallScreen ? "mobile" : "desktop"}`}
                   ref={workspaceScrollRef}
                   data-voice-workspace-body
-                  data-voice-body-mode={captureMode}
-                  className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto overflow-x-hidden scrollbar-hide px-4 py-4 [overflow-anchor:none] sm:px-5 sm:py-5 lg:grid-cols-[15rem_minmax(0,1fr)_18rem] lg:overflow-hidden"
+                  data-voice-body-mode={
+                    workspaceVisibility.showWorkspace ? "document" : captureMode
+                  }
+                  className={classNames(
+                    "grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto overflow-x-hidden scrollbar-hide px-4 py-4 [overflow-anchor:none] sm:px-5 sm:py-5 lg:overflow-hidden",
+                    workspaceVisibility.showWorkspace
+                      ? "lg:grid-cols-[15rem_minmax(0,1fr)_18rem]"
+                      : "mx-auto w-full max-w-4xl",
+                  )}
                 >
                   {workspaceVisibility.showDocumentList ? (
                     <VoiceSecretaryDocumentListPanel
@@ -5396,6 +5441,20 @@ export function VoiceSecretaryComposerControl({
 
                   {workspaceVisibility.showWorkspace ? (
                     <VoiceSecretaryWorkspacePanel
+                      navigation={
+                        documentRevealed && captureMode !== "document" ? (
+                          <button
+                            ref={documentBackRef}
+                            type="button"
+                            data-voice-back-to-activity
+                            className="mb-2 inline-flex min-h-11 items-center gap-1 self-start rounded-lg px-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
+                            onClick={returnToActivity}
+                          >
+                            <ChevronLeftIcon size={16} aria-hidden="true" />
+                            {t("voiceSecretaryBackToActivity")}
+                          </button>
+                        ) : null
+                      }
                       activeDocumentPath={activeDocumentPath}
                       activeDocumentWritePath={activeDocumentWritePath}
                       actionBusy={actionBusy}
@@ -5441,20 +5500,15 @@ export function VoiceSecretaryComposerControl({
                   {workspaceVisibility.showRequestPanel ? (
                     <aside
                       data-voice-request-panel
-                      className={classNames(
-                        "flex min-h-0 flex-col gap-4 rounded-[26px] border p-3.5",
-                        isDark
-                          ? "border-white/10 bg-white/[0.035]"
-                          : "border-black/10 bg-[rgb(250,250,250)]",
-                      )}
+                      data-voice-request-mode={captureMode}
+                      className={classNames("flex min-h-0 flex-col gap-4")}
                     >
                       {workspaceVisibility.showRequestCard ? (
                         <div
                           data-voice-request-card={captureMode}
                           data-voice-prompt-open={mobilePromptDetailsOpen}
                           className={classNames(
-                            "shrink-0 rounded-2xl border p-3",
-                            isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
+                            "shrink-0 rounded-xl border border-[var(--glass-panel-border)] bg-[var(--color-bg-primary)] p-3",
                           )}
                         >
                           <div
@@ -5483,13 +5537,41 @@ export function VoiceSecretaryComposerControl({
                               data-voice-prompt-description
                               id={`voice-prompt-help-${voiceCaptureOwnerIdRef.current}`}
                               className={classNames(
-                                "mt-3 rounded-2xl border px-3 py-2 text-xs leading-5",
-                                isDark
-                                  ? "border-white/10 bg-white/[0.04] text-slate-300"
-                                  : "border-black/10 bg-white text-gray-700",
+                                "mt-3 text-sm leading-6 text-[var(--color-text-secondary)]",
                               )}
                             >
-                              {panelRequestPlaceholder}
+                              <p>{panelRequestPlaceholder}</p>
+                              {composerText.trim() ? (
+                                <div className="mt-3">
+                                  <p className="text-xs font-medium">
+                                    {t("voiceSecretaryCurrentPrompt", {
+                                      defaultValue: "Current composer prompt",
+                                    })}
+                                  </p>
+                                  <div className="mt-1 max-h-36 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border-primary)] bg-[var(--color-bg-secondary)] px-3 py-2">
+                                    {composerText}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    data-voice-workspace-optimize
+                                    className="mt-3 min-h-11 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
+                                    disabled={
+                                      controlDisabled ||
+                                      !!actionBusy ||
+                                      !assistantEnabled ||
+                                      !canOptimizeComposerPrompt
+                                    }
+                                    title={promptOptimizeTitle}
+                                    onClick={handlePromptOptimizeClick}
+                                  >
+                                    {t(
+                                      promptOptimizePending
+                                        ? "voiceSecretaryPromptOptimizingButton"
+                                        : "voiceSecretaryPromptOptimizeButton",
+                                    )}
+                                  </button>
+                                </div>
+                              ) : null}
                             </div>
                           ) : (
                             <textarea
@@ -5528,8 +5610,7 @@ export function VoiceSecretaryComposerControl({
                         <div
                           data-voice-activity
                           className={classNames(
-                            "flex min-h-0 flex-col overflow-hidden rounded-2xl border p-3 lg:flex-1",
-                            isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
+                            "flex min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--glass-panel-border)] bg-[var(--color-bg-primary)] p-3 lg:flex-1",
                           )}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -5777,10 +5858,12 @@ export function VoiceSecretaryComposerControl({
                                       {artifactItems.map(({ path, linkedDocument }) => (
                                         <button
                                           key={path}
+                                          data-voice-document-link={path}
                                           type="button"
                                           disabled={!linkedDocument}
                                           onClick={() => {
                                             if (!linkedDocument) return;
+                                            documentLinkPathRef.current = path;
                                             void selectDocument(linkedDocument);
                                           }}
                                           className={classNames(

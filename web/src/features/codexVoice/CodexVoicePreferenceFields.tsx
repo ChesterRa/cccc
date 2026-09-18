@@ -9,13 +9,16 @@ type Props = {
   section: "audio" | "notifications";
 };
 const fieldClass =
-  "mt-2 h-10 w-full rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-3 text-sm text-[var(--color-text-primary)] disabled:opacity-60";
+  "mt-2 min-h-11 w-full rounded-lg px-3 py-2 text-sm glass-input text-[var(--color-text-primary)] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]";
 
 export function CodexVoicePreferenceFields({ preferences, section }: Props) {
   const { t } = useTranslation("modals");
   const groups = useGroupStore((state) => state.groups);
   const [search, setSearch] = useState("");
   const { value, saving, saved, error, change } = preferences;
+  const visibleGroups = groups.filter((group) =>
+    `${group.title ?? ""} ${group.group_id}`.toLowerCase().includes(search.trim().toLowerCase()),
+  );
   return (
     <div className="space-y-4 px-5 py-5 text-sm text-[var(--color-text-primary)] sm:px-6">
       {saving || saved ? (
@@ -92,9 +95,12 @@ export function CodexVoicePreferenceFields({ preferences, section }: Props) {
             />
             {t("voicePreferences.suppressViewed")}
           </label>
-          <p className="text-xs leading-5 text-[var(--color-text-muted)]">
-            {t("voicePreferences.viewedHint")}
-          </p>
+          <details className="text-xs leading-5 text-[var(--color-text-secondary)]">
+            <summary className="w-fit cursor-pointer py-1 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]">
+              {t("voicePreferences.viewedHelp")}
+            </summary>
+            <p className="mt-1">{t("voicePreferences.viewedHint")}</p>
+          </details>
           <input
             type="search"
             aria-label={t("voicePreferences.searchGroups")}
@@ -104,43 +110,40 @@ export function CodexVoicePreferenceFields({ preferences, section }: Props) {
             onChange={(e) => setSearch(e.target.value)}
           />
           <div className="divide-y divide-[var(--glass-border-subtle)]">
-            {groups
-              .filter((group) =>
-                `${group.title ?? ""} ${group.group_id}`
-                  .toLowerCase()
-                  .includes(search.toLowerCase()),
-              )
-              .map((group) => (
-                <label
-                  key={group.group_id}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3"
+            {visibleGroups.map((group) => (
+              <label
+                key={group.group_id}
+                className="grid min-w-0 grid-cols-1 items-center gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_14rem] sm:gap-4"
+              >
+                <span className="min-w-0 flex-1 break-words">{group.title || group.group_id}</span>
+                <select
+                  className={`${fieldClass} !mt-0 min-w-0`}
+                  aria-label={group.title || group.group_id}
+                  disabled={saving}
+                  value={value.groups[group.group_id] ?? "off"}
+                  onChange={(e) =>
+                    void change({
+                      groups: {
+                        ...value.groups,
+                        [group.group_id]: e.target.value as VoiceNotificationScope,
+                      },
+                    })
+                  }
                 >
-                  <span className="min-w-0 flex-1 break-words">
-                    {group.title || group.group_id}
-                  </span>
-                  <select
-                    className={`${fieldClass} !mt-0 !w-44 shrink-0`}
-                    aria-label={group.title || group.group_id}
-                    disabled={saving}
-                    value={value.groups[group.group_id] ?? "off"}
-                    onChange={(e) =>
-                      void change({
-                        groups: {
-                          ...value.groups,
-                          [group.group_id]: e.target.value as VoiceNotificationScope,
-                        },
-                      })
-                    }
-                  >
-                    {(["off", "to_user", "all_chat"] as const).map((option) => (
-                      <option key={option} value={option}>
-                        {t(`voicePreferences.${option}`)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
+                  {(["off", "to_user", "all_chat"] as const).map((option) => (
+                    <option key={option} value={option}>
+                      {t(`voicePreferences.${option}`)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
           </div>
+          {visibleGroups.length === 0 ? (
+            <p role="status" className="text-sm text-[var(--color-text-secondary)]">
+              {t(groups.length ? "voicePreferences.noMatchingGroups" : "voicePreferences.noGroups")}
+            </p>
+          ) : null}
         </>
       )}
     </div>

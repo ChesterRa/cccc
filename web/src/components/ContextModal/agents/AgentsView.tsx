@@ -15,7 +15,7 @@ export function AgentsView({ agents, tr, ui }: AgentsViewProps) {
   const agentsWithActiveTask = agents.filter((agent) => !!agentHot(agent).activeTaskId).length;
 
   return (
-    <section className={classNames(ui.surfaceClass, "p-4")}>
+    <section className="min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className={classNames("text-lg font-semibold", "text-[var(--color-text-primary)]")}>
@@ -24,7 +24,7 @@ export function AgentsView({ agents, tr, ui }: AgentsViewProps) {
           <div className={classNames("mt-1 text-sm", ui.subtleTextClass)}>
             {tr(
               "context.agentsHint",
-              "Use this view to recover each agent’s current execution state, not to steer the whole project.",
+              "Agent-reported working context. Check the update time; these reports are not live runtime status.",
             )}
           </div>
         </div>
@@ -43,7 +43,7 @@ export function AgentsView({ agents, tr, ui }: AgentsViewProps) {
               "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white",
             )}
           >
-            {tr("context.activeTasksCount", "{{count}} with active task", {
+            {tr("context.activeTasksCount", "Reports with a task: {{count}}", {
               count: agentsWithActiveTask,
             })}
           </span>
@@ -59,7 +59,7 @@ export function AgentsView({ agents, tr, ui }: AgentsViewProps) {
           ) : null}
         </div>
       </div>
-      <div className="mt-4 grid gap-3 2xl:grid-cols-2">
+      <div className="mt-4 grid items-start gap-3 xl:grid-cols-2">
         {agents.length > 0 ? (
           agents.map((agent) => (
             <AgentStateCard

@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { useRef } from "react";
 import { DirItem, DirSuggestion } from "../../types";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { ArrowDownIcon, DownloadIcon, FileIcon, FolderIcon, HomeIcon } from "../Icons";
@@ -55,7 +56,8 @@ export function CreateGroupModal({
   onCancelAndReset,
 }: CreateGroupModalProps) {
   const { t } = useTranslation("modals");
-  const { modalRef } = useModalA11y(isOpen, onClose);
+  const pathInputRef = useRef<HTMLInputElement>(null);
+  const { modalRef } = useModalA11y(isOpen, onClose, { initialFocusRef: pathInputRef });
   if (!isOpen) return null;
 
   const renderDirSuggestionIcon = (suggestion: DirSuggestion) => {
@@ -116,7 +118,7 @@ export function CreateGroupModal({
         </div>
       }
     >
-      <div className="p-6 space-y-5 overflow-y-auto min-h-0 flex-1 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_30%),linear-gradient(180deg,var(--color-bg-primary),var(--color-sidebar-bg))] dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),rgba(255,255,255,0)_34%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))]">
+      <div className="p-6 space-y-5 overflow-y-auto min-h-0 flex-1 bg-[var(--color-bg-primary)]">
         {dirSuggestions.length > 0 && !createGroupPath && (
           <div>
             <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
@@ -163,7 +165,7 @@ export function CreateGroupModal({
                 }
               }}
               placeholder={t("createGroup.pathPlaceholder")}
-              autoFocus
+              ref={pathInputRef}
             />
             <Button variant="secondary" onClick={() => onFetchDirContents(createGroupPath || "~")}>
               {t("createGroup.browse")}

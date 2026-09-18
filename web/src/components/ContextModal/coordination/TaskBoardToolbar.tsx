@@ -61,6 +61,7 @@ export function TaskBoardToolbar({
           value={taskQuery}
           onChange={(event) => onTaskQueryChange(event.target.value)}
           className={ui.inputClass}
+          aria-label={tr("context.searchTasks", "Search tasks by title, id, assignee, or outcome")}
           placeholder={tr("context.searchTasks", "Search tasks by title, id, assignee, or outcome")}
         />
         <SelectCombobox
@@ -75,7 +76,12 @@ export function TaskBoardToolbar({
           className={classNames(ui.inputClass, "w-full lg:w-[14rem]")}
           searchable
         />
-        <button type="button" onClick={onClearFilters} className={ui.buttonSecondaryClass}>
+        <button
+          type="button"
+          disabled={!taskQuery && assigneeFilter === "__all__" && taskFilter === "all"}
+          onClick={onClearFilters}
+          className={ui.buttonSecondaryClass}
+        >
           {tr("context.clearFilters", "Clear filters")}
         </button>
       </div>
@@ -85,12 +91,13 @@ export function TaskBoardToolbar({
           <button
             key={value}
             type="button"
+            aria-pressed={taskFilter === value}
             onClick={() => onTaskFilterChange(value)}
             className={classNames(
               ui.chipBaseClass,
               taskFilter === value
-                ? "border-black/10 bg-[rgb(35,36,37)] text-white shadow-[0_10px_24px_-20px_rgba(15,23,42,0.3)] dark:border-white/12 dark:bg-white dark:text-[rgb(20,20,22)]"
-                : "",
+                ? "border-transparent bg-[var(--primary)] text-[var(--primary-foreground)]"
+                : "border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
             )}
           >
             {label} · {count}

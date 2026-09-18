@@ -1,11 +1,7 @@
 // Real components, layout and visibility observer. No daemon, microphone or model calls.
 import { createRef, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import i18next from "i18next";
-import { initReactI18next } from "react-i18next";
-import modals from "../../src/i18n/locales/en/modals.json";
-import common from "../../src/i18n/locales/en/common.json";
-import actors from "../../src/i18n/locales/en/actors.json";
+import i18next from "../../src/i18n";
 import { CodexVoiceAnalystModal } from "../../src/components/modals/CodexVoiceAnalystModal";
 import { useVoiceViewedMessages } from "../../src/features/codexVoice/useVoiceViewedMessages";
 import type { CodexVoiceSessionController } from "../../src/features/codexVoice/useCodexVoiceSessionController";
@@ -13,16 +9,21 @@ import { useGroupStore } from "../../src/stores/useGroupStore";
 import type { GroupMeta } from "../../src/types";
 import "../../src/index.css";
 
-await i18next
-  .use(initReactI18next)
-  .init({ lng: "en", resources: { en: { modals, common, actors } } });
+const params = new URLSearchParams(location.search);
+await i18next.changeLanguage(params.get("lang") || "en");
+document.documentElement.classList.toggle("dark", params.get("theme") === "dark");
+document.documentElement.style.fontSize = `${params.get("scale") || 100}%`;
 const probe = {
+  failNextSave: false,
+  errors: [] as string[],
   writes: [] as { url: string; body: unknown }[],
   viewed: [] as string[],
   opened: "",
   stopped: false,
 };
 Object.assign(window, { voiceDuplexProbe: probe });
+window.addEventListener("error", (event) => probe.errors.push(event.message));
+window.addEventListener("unhandledrejection", (event) => probe.errors.push(String(event.reason)));
 let preferences = {
   revision: 0,
   groups: {},
@@ -35,6 +36,13 @@ window.fetch = async (input, init) => {
   const body = init?.body ? JSON.parse(String(init.body)) : {};
   if (init?.method && init.method !== "GET") probe.writes.push({ url, body });
   if (url === "/api/v1/codex_voice/preferences") {
+    if (init?.method === "PUT" && probe.failNextSave) {
+      probe.failNextSave = false;
+      return Response.json({
+        ok: false,
+        error: { code: "save_failed", message: "Fixture save failed. Try again." },
+      });
+    }
     if (init?.method === "PUT")
       preferences = { ...body.preferences, revision: preferences.revision + 1 };
     return Response.json({ ok: true, result: { preferences } });
@@ -155,7 +163,7 @@ const controller = {
 
 export function Fixture() {
   const [open, setOpen] = useState(true);
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState(params.get("theme") === "dark");
   const [session, setSession] = useState(controller);
   Object.assign(probe, {
     update: (patch: Partial<CodexVoiceSessionController>) =>

@@ -199,7 +199,7 @@ function isWebModelProfile(profile: ActorProfile): boolean {
 
 function modeButtonClass(selected: boolean): string {
   return [
-    "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-all ease-spring duration-300",
+    "min-w-0 whitespace-normal px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-all ease-spring duration-300",
     selected
       ? "border-[var(--color-text-primary)] bg-[var(--color-text-primary)] text-[var(--color-bg-primary)] hover:bg-[var(--color-text-primary)] hover:text-[var(--color-bg-primary)] hover:opacity-90"
       : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
@@ -304,7 +304,7 @@ function CreateActorConfigModal({
   const showRuntimeSetup = !useProfile && runtime === "custom";
   const webModelSetupIsActorBound = !useProfile && runtime === "web_model";
   const secretsPlaceholder = (SECRETS_PLACEHOLDER[runtime] ?? DEFAULT_SECRETS_PLACEHOLDER).set;
-  const sectionCardClass = "rounded-2xl p-4 sm:p-5 glass-panel";
+  const sectionCardClass = "min-w-0 rounded-2xl p-4 sm:p-5 glass-panel";
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
   const sectionHintClass = "mt-1 text-xs text-[var(--color-text-muted)]";
   const createAdvancedTabIds: AdvancedTabId[] = [
@@ -406,15 +406,15 @@ function CreateActorConfigModal({
         </>
       }
     >
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_30%),linear-gradient(180deg,var(--color-bg-primary),var(--color-sidebar-bg))] p-4 dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),rgba(255,255,255,0)_34%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))] sm:p-6">
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide bg-[var(--color-bg-primary)] p-4 sm:p-6">
         <div className="mx-auto w-full max-w-6xl space-y-4">
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.92fr)] xl:items-start">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.92fr)] xl:items-start">
             <Surface className={sectionCardClass}>
               <div className={sectionTitleClass}>{t("sectionBasics")}</div>
               <div className={sectionHintClass}>{t("addSectionBasicsHint")}</div>
 
               <div className="mt-4 space-y-4">
-                <div className="grid gap-4 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-start">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-start">
                   <ActorAvatarField
                     label={null}
                     avatarUrl={undefined}
@@ -1166,7 +1166,7 @@ function EditActorConfigModal({
     }
   };
 
-  const sectionCardClass = "rounded-2xl p-4 sm:p-5 glass-panel";
+  const sectionCardClass = "min-w-0 rounded-2xl p-4 sm:p-5 glass-panel";
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
   const sectionHintClass = "mt-1 text-xs text-[var(--color-text-muted)]";
   const saveDisabled =
@@ -1251,9 +1251,9 @@ function EditActorConfigModal({
         </>
       }
     >
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_30%),linear-gradient(180deg,var(--color-bg-primary),var(--color-sidebar-bg))] p-4 dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),rgba(255,255,255,0)_34%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))] sm:p-6">
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide bg-[var(--color-bg-primary)] p-4 sm:p-6">
         <div className="mx-auto w-full max-w-6xl space-y-4">
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.92fr)] xl:items-start">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.92fr)] xl:items-start">
             <Surface className={sectionCardClass}>
               <div className={sectionTitleClass}>{t("sectionBasics", "Basics")}</div>
               <div className={sectionHintClass}>
@@ -1264,7 +1264,7 @@ function EditActorConfigModal({
               </div>
 
               <div className="mt-4 space-y-4">
-                <div className="grid gap-4 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-start">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-start">
                   <div className="justify-self-start">
                     <ActorAvatarField
                       label={null}

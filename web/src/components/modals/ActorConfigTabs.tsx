@@ -21,7 +21,11 @@ export function ActorConfigTabs({ ariaLabel, tabs, activeId, onChange }: ActorCo
   if (!activeTab) return null;
 
   const focusTab = (id: string) => {
-    requestAnimationFrame(() => document.getElementById(`${baseId}-tab-${id}`)?.focus());
+    requestAnimationFrame(() => {
+      const tab = document.getElementById(`${baseId}-tab-${id}`);
+      tab?.focus();
+      tab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {

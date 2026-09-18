@@ -8,8 +8,8 @@ import {
 } from "../../src/pages/chat/VoiceSecretaryComposerControl";
 import "../../src/index.css";
 
-await i18next.changeLanguage("zh");
 const params = new URLSearchParams(location.search);
+await i18next.changeLanguage(params.get("lang") || "zh");
 const documentFixture = {
   doc_id: "fixture-document",
   title: params.has("long") ? "跨团队语音会议记录与后续事项跟进工作文档" : "语音会议工作稿",
@@ -20,6 +20,13 @@ const documentFixture = {
   content:
     "# 会议记录与工作计划\n\n## 当前进展\n\n" +
     "本次讨论确认需求、负责人与交付时间。记录应清楚呈现，方便手机阅读和后续跟进。\n\n".repeat(16),
+};
+const linkedDocumentFixture = {
+  ...documentFixture,
+  doc_id: "linked-document",
+  title: "Linked activity document",
+  workspace_path: "voice/linked-activity.md",
+  content: "# Linked activity document\n\nOpened from a Voice Secretary reply.",
 };
 const assistant = {
   assistant_id: "voice_secretary",
@@ -32,6 +39,8 @@ const assistant = {
   },
 };
 const probe = {
+  errors: [] as string[],
+  writes: [] as { url: string; body: unknown }[],
   enumerations: 0,
   starts: 0,
   stops: 0,
@@ -39,11 +48,14 @@ const probe = {
   devices: [] as string[],
 };
 Object.assign(window, { voiceWorkspaceProbe: probe });
+window.addEventListener("error", (event) => probe.errors.push(event.message));
+window.addEventListener("unhandledrejection", (event) => probe.errors.push(String(event.reason)));
 const replies = [
   {
     request_id: "first",
     status: "done",
     reply_text: "语音已识别完成，整理后的提示词可以直接使用。",
+    artifact_paths: [documentFixture.workspace_path, linkedDocumentFixture.workspace_path],
     created_at: "2026-01-02T08:00:00Z",
     updated_at: "2026-01-02T08:00:00Z",
   },
@@ -51,6 +63,7 @@ const replies = [
     request_id: "last",
     status: "needs_user",
     reply_text: "只识别到“一系”，信息不足，请重新说一遍完整问题。",
+    artifact_paths: [],
     created_at: "2026-01-01T08:00:00Z",
     updated_at: "2026-01-01T08:00:00Z",
   },
@@ -61,12 +74,14 @@ for (let i = 0; i < extraRows; i++)
     request_id: `older-${i}`,
     status: "done",
     reply_text: `更早的识别记录 ${i + 1}，用于验证动态区独立滚动。`,
+    artifact_paths: [],
     created_at: "2025-12-01T08:00:00Z",
     updated_at: "2025-12-01T08:00:00Z",
   });
 window.fetch = async (input, options) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const body = options?.body ? JSON.parse(String(options.body)) : {};
+  if (options?.method && options.method !== "GET") probe.writes.push({ url, body });
   if (url.endsWith("/settings") && options?.method === "PUT") {
     Object.assign(assistant.config, body.config);
     if (typeof body.enabled === "boolean") assistant.enabled = body.enabled;
@@ -76,7 +91,14 @@ window.fetch = async (input, options) => {
     return Response.json({ ok: true, result: { lease_id: "fixture", lost: false } });
   return Response.json({
     ok: true,
-    result: { assistant, documents: [documentFixture], sessions: [], ask_requests: replies },
+    result: {
+      assistant,
+      active_document_path: documentFixture.workspace_path,
+      capture_target_document_path: documentFixture.workspace_path,
+      documents: [documentFixture, linkedDocumentFixture],
+      sessions: [],
+      ask_requests: replies,
+    },
   });
 };
 navigator.mediaDevices.enumerateDevices = async () => {

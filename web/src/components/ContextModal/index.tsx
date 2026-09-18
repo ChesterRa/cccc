@@ -63,6 +63,7 @@ interface ContextModalProps {
   isOpen: boolean;
   onClose: () => void;
   groupId: string;
+  groupTitle?: string;
   context: GroupContext | null;
   initialTaskId?: string | null;
   onInitialTaskHandled?: () => void;
@@ -75,6 +76,7 @@ export function ContextModal({
   isOpen,
   onClose,
   groupId,
+  groupTitle,
   context,
   initialTaskId,
   onInitialTaskHandled,
@@ -1014,9 +1016,9 @@ export function ContextModal({
 
   const viewButtonClass = (active: boolean) =>
     classNames(
-      "rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+      "min-h-11 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]",
       active
-        ? "border border-black/10 bg-[rgb(35,36,37)] text-white shadow-[0_10px_24px_-20px_rgba(15,23,42,0.34)] dark:border-white/12 dark:bg-white dark:text-[rgb(20,20,22)]"
+        ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
         : "text-[var(--color-text-secondary)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06]",
     );
 
@@ -1026,19 +1028,19 @@ export function ContextModal({
         isDark={isDark}
         onClose={handleModalClose}
         titleId="context-modal-title"
-        title={tr("context.title", "Project Context")}
+        title={
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="font-semibold">{tr("context.title", "Project Context")}</span>
+            <span className="text-sm font-normal text-[var(--color-text-secondary)] break-all">
+              {groupTitle || groupId}
+            </span>
+          </span>
+        }
         closeAriaLabel={tr("context.closeAria", "Close context modal")}
         panelClassName="h-full w-full overflow-hidden rounded-none sm:h-[94vh] sm:max-w-[96vw]"
         modalRef={modalRef}
       >
-        <div
-          className={classNames(
-            "min-h-0 flex-1 overflow-y-auto",
-            isDark
-              ? "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_34%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))]"
-              : "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_30%),linear-gradient(180deg,var(--color-bg-primary),var(--color-sidebar-bg))]",
-          )}
-        >
+        <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]">
           <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5">
             {syncError ? (
               <div
@@ -1053,15 +1055,13 @@ export function ContextModal({
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div
-                className={classNames(
-                  "inline-flex w-fit rounded-[22px] border p-1.5 shadow-[0_14px_40px_-28px_rgba(15,23,42,0.18)]",
-                  isDark
-                    ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.92),rgba(14,15,19,0.96))]"
-                    : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,246,242,0.94))]",
-                )}
+                className="flex flex-wrap gap-1"
+                role="group"
+                aria-label={tr("context.title", "Project Context")}
               >
                 <button
                   type="button"
+                  aria-pressed={activeView === "coordination"}
                   onClick={() => handleSwitchActiveView("coordination")}
                   className={viewButtonClass(activeView === "coordination")}
                 >
@@ -1069,6 +1069,7 @@ export function ContextModal({
                 </button>
                 <button
                   type="button"
+                  aria-pressed={activeView === "agents"}
                   onClick={() => handleSwitchActiveView("agents")}
                   className={viewButtonClass(activeView === "agents")}
                 >
@@ -1076,6 +1077,7 @@ export function ContextModal({
                 </button>
                 <button
                   type="button"
+                  aria-pressed={activeView === "self_evolving_skills"}
                   onClick={() => handleSwitchActiveView("self_evolving_skills")}
                   className={viewButtonClass(activeView === "self_evolving_skills")}
                 >

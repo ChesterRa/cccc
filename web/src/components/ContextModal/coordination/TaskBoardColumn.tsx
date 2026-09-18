@@ -60,11 +60,8 @@ export function TaskBoardColumn({
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="text-sm font-semibold text-[var(--color-text-primary)]">{label}</div>
-          <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
-            {totalCount} {tr("context.items", "items")}
-          </div>
         </div>
-        <span className="rounded-full px-2 py-0.5 text-[11px] glass-panel text-[var(--color-text-tertiary)]">
+        <span className="rounded-full px-2 py-0.5 text-xs glass-panel text-[var(--color-text-tertiary)]">
           {totalCount}
         </span>
       </div>

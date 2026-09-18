@@ -3,6 +3,7 @@ import type { VoiceSecretaryCaptureMode } from "../VoiceSecretaryComposerControl
 export function getVoiceSecretaryWorkspaceVisibility(args: {
   captureMode: VoiceSecretaryCaptureMode;
   isSmallScreen: boolean;
+  documentRevealed?: boolean;
 }): {
   showDocumentList: boolean;
   showWorkspace: boolean;
@@ -10,7 +11,8 @@ export function getVoiceSecretaryWorkspaceVisibility(args: {
   showRequestCard: boolean;
   showActivityFeed: boolean;
 } {
-  if (!args.isSmallScreen) {
+  const showDocument = args.captureMode === "document" || args.documentRevealed;
+  if (!args.isSmallScreen && showDocument) {
     return {
       showDocumentList: true,
       showWorkspace: true,
@@ -19,7 +21,7 @@ export function getVoiceSecretaryWorkspaceVisibility(args: {
       showActivityFeed: true,
     };
   }
-  if (args.captureMode === "document") {
+  if (showDocument) {
     return {
       showDocumentList: false,
       showWorkspace: true,

@@ -77,121 +77,90 @@ export function SteeringPanel({
 }: SteeringPanelProps) {
   const tabButtonClass = (active: boolean) =>
     classNames(
-      "rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+      "min-h-11 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]",
       active
-        ? "border border-black/10 bg-[rgb(35,36,37)] text-white shadow-[0_10px_24px_-20px_rgba(15,23,42,0.34)] dark:border-white/12 dark:bg-white dark:text-[rgb(20,20,22)]"
+        ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
         : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
     );
+  const hasOverview = Boolean(
+    brief?.objective ||
+    brief?.current_focus ||
+    brief?.project_brief_stale ||
+    tasksSummary.active ||
+    attentionCounts.blocked ||
+    attentionCounts.waitingUser ||
+    unassignedCount,
+  );
+  const hasSummary = Boolean(brief?.project_brief || brief?.constraints?.length);
   const notesCardClass = classNames("rounded-xl border p-3 text-sm", "glass-card");
 
   return (
     <section className={classNames(ui.surfaceClass, "flex min-h-0 flex-1 flex-col p-4")}>
       <div className="flex min-h-0 flex-1 flex-col gap-4">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div className="min-w-0 flex-1">
-            <div
-              className={classNames("text-lg font-semibold", "text-[var(--color-text-primary)]")}
-            >
-              {brief?.objective || tr("context.noObjective", "No objective set")}
-            </div>
-            <div className={classNames("mt-1 text-sm", ui.subtleTextClass)}>
-              {brief?.current_focus || tr("context.noCurrentFocus", "No current focus set")}
-            </div>
-            {brief?.project_brief_stale ||
-            (Array.isArray(brief?.constraints) && brief.constraints.length > 0) ? (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {brief?.project_brief_stale ? (
+        {hasOverview ? (
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1">
+              <div
+                className={classNames("text-lg font-semibold", "text-[var(--color-text-primary)]")}
+              >
+                {brief?.objective || tr("context.brief", "Summary")}
+              </div>
+              {brief?.current_focus ? (
+                <div className={classNames("mt-1 text-sm", ui.subtleTextClass)}>
+                  {brief.current_focus}
+                </div>
+              ) : null}
+              {brief?.project_brief_stale ? (
+                <div className="mt-3 flex flex-wrap gap-1.5">
                   <button
                     type="button"
                     onClick={onStartBriefEdit}
                     className={classNames(
-                      "rounded-full px-2 py-1 text-[11px] transition-colors",
+                      "rounded-full px-2 py-1 text-xs transition-colors",
                       "bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25",
                     )}
                   >
                     {tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}
                   </button>
-                ) : null}
-                {(brief?.constraints || []).slice(0, 6).map((constraint, index) => (
-                  <span
-                    key={`${constraint}-${index}`}
-                    className={classNames(
-                      "rounded-full px-2 py-1 text-[11px]",
-                      "glass-panel text-[var(--color-text-secondary)]",
-                    )}
-                  >
-                    {constraint}
-                  </span>
-                ))}
-              </div>
-            ) : null}
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+              {Number(tasksSummary.active || 0) > 0 ? (
+                <span>
+                  {tr("context.active", "Active")} · {tasksSummary.active}
+                </span>
+              ) : null}
+              {attentionCounts.blocked > 0 ? (
+                <span className="rounded-full bg-rose-500/15 px-2 py-1 text-rose-600 dark:text-rose-300">
+                  {tr("context.blocked", "Blocked")} · {attentionCounts.blocked}
+                </span>
+              ) : null}
+              {attentionCounts.waitingUser > 0 ? (
+                <span className="rounded-full bg-amber-500/15 px-2 py-1 text-amber-700 dark:text-amber-300">
+                  {tr("context.waitingUser", "Waiting user")} · {attentionCounts.waitingUser}
+                </span>
+              ) : null}
+              {unassignedCount > 0 ? (
+                <span>
+                  {tr("context.unassigned", "Unassigned")} · {unassignedCount}
+                </span>
+              ) : null}
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 xl:max-w-[18rem] xl:justify-end">
-            <span
-              className={classNames(
-                "rounded-full px-2.5 py-1 text-xs",
-                "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white",
-              )}
-            >
-              {tr("context.active", "Active")} · {Number(tasksSummary.active || 0)}
-            </span>
-            <span
-              className={classNames(
-                "rounded-full px-2.5 py-1 text-xs",
-                "bg-rose-500/15 text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {tr("context.blocked", "Blocked")} · {attentionCounts.blocked}
-            </span>
-            <span
-              className={classNames(
-                "rounded-full px-2.5 py-1 text-xs",
-                "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-              )}
-            >
-              {tr("context.waitingUser", "Waiting user")} · {attentionCounts.waitingUser}
-            </span>
-            <span
-              className={classNames(
-                "rounded-full px-2.5 py-1 text-xs",
-                "glass-panel text-[var(--color-text-secondary)]",
-              )}
-            >
-              {tr("context.unassigned", "Unassigned")} · {unassignedCount}
-            </span>
-          </div>
-        </div>
+        ) : null}
 
         <div
           className={classNames(
-            "flex flex-col gap-3 border-t pt-4",
+            "flex flex-col gap-3",
+            hasOverview ? "border-t pt-4" : "",
             "border-[var(--glass-border-subtle)]",
           )}
         >
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div
-                className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}
-              >
-                {tr("context.steering", "Project steering")}
-              </div>
-              <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
-                {tr(
-                  "context.projectSteeringHint",
-                  "Steer the project here. Keep PROJECT.md as the full repository reference, and keep the working summary hot and short.",
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div
-            className={classNames(
-              "inline-flex w-fit rounded-2xl border p-1",
-              "glass-panel border-[var(--glass-border-subtle)]",
-            )}
-          >
+          <div className={classNames("flex flex-wrap gap-1")}>
             <button
               type="button"
+              aria-pressed={steeringTab === "summary"}
               onClick={() => onOpenSteeringTab("summary")}
               className={tabButtonClass(steeringTab === "summary")}
             >
@@ -199,6 +168,7 @@ export function SteeringPanel({
             </button>
             <button
               type="button"
+              aria-pressed={steeringTab === "project"}
               onClick={() => onOpenSteeringTab("project")}
               className={tabButtonClass(steeringTab === "project")}
             >
@@ -206,6 +176,7 @@ export function SteeringPanel({
             </button>
             <button
               type="button"
+              aria-pressed={steeringTab === "log"}
               onClick={() => onOpenSteeringTab("log")}
               className={tabButtonClass(steeringTab === "log")}
             >
@@ -214,28 +185,29 @@ export function SteeringPanel({
           </div>
 
           {steeringTab === "summary" ? (
-            <section className={classNames("rounded-xl border p-4", "glass-card")}>
+            <section className="min-w-0">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div
-                    className={classNames(
-                      "text-sm font-semibold",
-                      "text-[var(--color-text-primary)]",
-                    )}
-                  >
-                    {tr("context.brief", "Summary")}
-                  </div>
-                  <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
-                    {brief?.updated_at
-                      ? `${tr("context.updated", "Updated {{time}}", { time: noteTimestamp({ at: brief.updated_at }) })}`
-                      : tr("context.notUpdatedYet", "Not updated yet")}
-                  </div>
+                  {!editingBrief && !hasSummary ? (
+                    <p className={classNames("text-sm", ui.subtleTextClass)}>
+                      {tr(
+                        "context.emptySummaryHint",
+                        "Add a working summary and constraints to guide the next task.",
+                      )}
+                    </p>
+                  ) : brief?.updated_at ? (
+                    <p className={classNames("text-xs", ui.mutedTextClass)}>
+                      {tr("context.updated", "Updated {{time}}", {
+                        time: noteTimestamp({ at: brief.updated_at }),
+                      })}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2">
                   {editingBrief ? (
                     <span
                       className={classNames(
-                        "rounded-full px-2 py-0.5 text-[11px] font-medium",
+                        "rounded-full px-2 py-0.5 text-xs font-medium",
                         "bg-amber-500/15 text-amber-600 dark:text-amber-400",
                       )}
                     >
@@ -371,53 +343,48 @@ export function SteeringPanel({
                     {tr("context.projectBriefStale", "Mark working summary as stale")}
                   </label>
                 </div>
-              ) : (
-                <div className="mt-4 space-y-4">
-                  <div>
-                    <div
-                      className={classNames(
-                        "text-[11px] font-medium uppercase tracking-wide",
-                        ui.mutedTextClass,
-                      )}
-                    >
-                      {tr("context.projectBrief", "Working summary")}
+              ) : !hasSummary ? null : (
+                <div className="mt-3 space-y-3">
+                  {brief?.project_brief ? (
+                    <div>
+                      <div
+                        className={classNames(
+                          "text-xs font-medium uppercase tracking-wide",
+                          ui.mutedTextClass,
+                        )}
+                      >
+                        {tr("context.projectBrief", "Working summary")}
+                      </div>
+                      <div
+                        className={classNames(
+                          "mt-1 whitespace-pre-wrap text-sm",
+                          ui.subtleTextClass,
+                        )}
+                      >
+                        {brief.project_brief}
+                      </div>
                     </div>
-                    <div
-                      className={classNames("mt-1 whitespace-pre-wrap text-sm", ui.subtleTextClass)}
-                    >
-                      {brief?.project_brief ||
-                        tr("context.noProjectBrief", "No working summary set")}
-                    </div>
-                  </div>
-                  <div>
-                    <div
-                      className={classNames(
-                        "text-[11px] font-medium uppercase tracking-wide",
-                        ui.mutedTextClass,
-                      )}
-                    >
-                      {tr("context.constraints", "Constraints")}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {Array.isArray(brief?.constraints) && brief.constraints.length > 0 ? (
-                        brief.constraints.map((constraint, index) => (
+                  ) : null}
+                  {brief?.constraints?.length ? (
+                    <div>
+                      <div className={classNames("text-xs font-medium", ui.mutedTextClass)}>
+                        {tr("context.constraints", "Constraints")}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {brief.constraints.map((constraint, index) => (
                           <span
                             key={`${constraint}-${index}`}
                             className={classNames(
-                              "rounded-full px-2 py-1 text-[11px]",
+                              "rounded-full px-2 py-1 text-xs",
                               "glass-panel text-[var(--color-text-secondary)]",
                             )}
                           >
                             {constraint}
                           </span>
-                        ))
-                      ) : (
-                        <span className={ui.mutedTextClass}>
-                          {tr("context.noConstraints", "No constraints set")}
-                        </span>
-                      )}
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  ) : null}
                 </div>
               )}
             </section>

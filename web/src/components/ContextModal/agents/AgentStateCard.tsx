@@ -48,9 +48,7 @@ function ExpandableTextBlock({
 
   return (
     <div>
-      <div
-        className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}
-      >
+      <div className={classNames("text-xs font-medium uppercase tracking-wide", mutedTextClass)}>
         {label}
       </div>
       <div
@@ -92,7 +90,6 @@ export function AgentStateCard({
   mutedTextClass,
   subtleTextClass,
 }: AgentStateCardProps) {
-  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const hot = agentHot(agent);
   const warm = agentWarm(agent);
   const stale = isAgentStale(agent);
@@ -104,7 +101,7 @@ export function AgentStateCard({
   );
   const mindContextEmpty = !hasMindContext(agent);
   const recoveryEmpty = !hasRecoveryCues(agent);
-  const sectionClass = classNames("rounded-xl border px-3 py-3", "glass-card");
+  const sectionClass = "border-t border-[var(--glass-border-subtle)] pt-3";
   const sectionTitleClass = classNames(
     "text-xs font-semibold uppercase tracking-[0.12em]",
     "text-[var(--color-text-secondary)]",
@@ -112,7 +109,11 @@ export function AgentStateCard({
   const summary = recoverySummary(agent, tr);
 
   return (
-    <article className={classNames("rounded-2xl border p-4", "glass-card")}>
+    <article
+      className={classNames(
+        "min-w-0 rounded-xl border border-[var(--glass-panel-border)] p-4 bg-[var(--color-bg-primary)]",
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div
@@ -138,7 +139,7 @@ export function AgentStateCard({
             {stale ? (
               <span
                 className={classNames(
-                  "rounded-full px-2 py-0.5 text-[11px]",
+                  "rounded-full px-2 py-0.5 text-xs",
                   "bg-amber-500/15 text-amber-700 dark:text-amber-300",
                 )}
               >
@@ -151,7 +152,7 @@ export function AgentStateCard({
           {hot.activeTaskId ? (
             <span
               className={classNames(
-                "rounded-full px-2 py-0.5 text-[11px]",
+                "rounded-full px-2 py-0.5 text-xs",
                 "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white",
               )}
             >
@@ -161,7 +162,7 @@ export function AgentStateCard({
           {hot.blockers.length > 0 ? (
             <span
               className={classNames(
-                "rounded-full px-2 py-0.5 text-[11px]",
+                "rounded-full px-2 py-0.5 text-xs",
                 "bg-rose-500/15 text-rose-600 dark:text-rose-400",
               )}
             >
@@ -172,10 +173,10 @@ export function AgentStateCard({
       </div>
 
       <section className={classNames(sectionClass, "mt-4")}>
-        <div className={sectionTitleClass}>{tr("context.executionNow", "Execution Now")}</div>
+        <div className={sectionTitleClass}>{tr("context.executionNow", "Latest report")}</div>
         {executionEmpty ? (
           <div className={classNames("mt-2 text-sm", mutedTextClass)}>
-            {tr("context.noExecutionState", "No active execution state")}
+            {tr("context.noExecutionState", "No execution details reported")}
           </div>
         ) : (
           <div className="mt-3 space-y-3">
@@ -199,11 +200,11 @@ export function AgentStateCard({
               <div>
                 <div
                   className={classNames(
-                    "text-[11px] font-medium uppercase tracking-wide",
+                    "text-xs font-medium uppercase tracking-wide",
                     mutedTextClass,
                   )}
                 >
-                  {tr("context.activeTask", "Active task")}
+                  {tr("context.activeTask", "Reported task")}
                 </div>
                 <div className={classNames("mt-1 text-sm break-words", subtleTextClass)}>
                   {hot.activeTaskId}
@@ -219,7 +220,7 @@ export function AgentStateCard({
               >
                 <div
                   className={classNames(
-                    "text-[11px] font-medium uppercase tracking-wide",
+                    "text-xs font-medium uppercase tracking-wide",
                     "text-rose-600 dark:text-rose-300",
                   )}
                 >
@@ -241,8 +242,15 @@ export function AgentStateCard({
         )}
       </section>
 
-      <section className={classNames(sectionClass, "mt-3")}>
-        <div className={sectionTitleClass}>{tr("context.mindContext", "Mind Context")}</div>
+      <details className={classNames(sectionClass, "mt-3")}>
+        <summary
+          className={classNames(
+            sectionTitleClass,
+            "cursor-pointer py-1 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]",
+          )}
+        >
+          {tr("context.mindContext", "Mind Context")}
+        </summary>
         {mindContextEmpty ? (
           <div className={classNames("mt-2 text-sm", mutedTextClass)}>
             {tr("context.noMindContext", "No mind context recorded yet")}
@@ -272,87 +280,68 @@ export function AgentStateCard({
             />
           </div>
         )}
-      </section>
+      </details>
 
-      <section className={classNames(sectionClass, "mt-3")}>
-        <button
-          type="button"
-          onClick={() => setRecoveryOpen((prev) => !prev)}
-          aria-expanded={recoveryOpen}
-          className="flex w-full items-start justify-between gap-3 text-left"
-        >
-          <div className="min-w-0">
-            <div className={sectionTitleClass}>{tr("context.recoveryCues", "Recovery Cues")}</div>
-            <div className={classNames("mt-1 text-xs break-words", mutedTextClass)}>{summary}</div>
+      <details className={classNames(sectionClass, "mt-3")}>
+        <summary className="cursor-pointer py-1 text-left focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]">
+          <span className={sectionTitleClass}>{tr("context.recoveryCues", "Recovery Cues")}</span>
+          <span className={classNames("ml-2 text-xs break-words", mutedTextClass)}>{summary}</span>
+        </summary>
+        {recoveryEmpty ? (
+          <div className={classNames("mt-3 text-sm", mutedTextClass)}>
+            {tr("context.noRecoveryCues", "No recovery cues")}
           </div>
-          <span
-            className={classNames(
-              "mt-0.5 text-sm transition-transform",
-              mutedTextClass,
-              recoveryOpen ? "rotate-180" : "",
-            )}
-            aria-hidden="true"
-          >
-            ▾
-          </span>
-        </button>
-        {recoveryOpen ? (
-          recoveryEmpty ? (
-            <div className={classNames("mt-3 text-sm", mutedTextClass)}>
-              {tr("context.noRecoveryCues", "No recovery cues")}
-            </div>
-          ) : (
-            <div className="mt-3 space-y-4">
-              <ExpandableTextBlock
-                label={tr("context.whatChanged", "What changed")}
-                text={warm.whatChanged}
-                mutedTextClass={mutedTextClass}
-                subtleTextClass={subtleTextClass}
-                tr={tr}
-                lines={3}
-              />
-              {warm.openLoops.length > 0 ? (
-                <div>
-                  <div
-                    className={classNames(
-                      "text-[11px] font-medium uppercase tracking-wide",
-                      mutedTextClass,
-                    )}
-                  >
-                    {tr("context.openLoops", "Open loops")}
-                  </div>
-                  <ul
-                    className={classNames("mt-2 space-y-1 text-sm list-disc pl-5", subtleTextClass)}
-                  >
-                    {warm.openLoops.map((item, index) => (
-                      <li key={`${agent.id}-open-loop-${index}`}>{item}</li>
-                    ))}
-                  </ul>
+        ) : (
+          <div className="mt-3 space-y-4">
+            <ExpandableTextBlock
+              label={tr("context.whatChanged", "What changed")}
+              text={warm.whatChanged}
+              mutedTextClass={mutedTextClass}
+              subtleTextClass={subtleTextClass}
+              tr={tr}
+              lines={3}
+            />
+            {warm.openLoops.length > 0 ? (
+              <div>
+                <div
+                  className={classNames(
+                    "text-xs font-medium uppercase tracking-wide",
+                    mutedTextClass,
+                  )}
+                >
+                  {tr("context.openLoops", "Open loops")}
                 </div>
-              ) : null}
-              {warm.commitments.length > 0 ? (
-                <div>
-                  <div
-                    className={classNames(
-                      "text-[11px] font-medium uppercase tracking-wide",
-                      mutedTextClass,
-                    )}
-                  >
-                    {tr("context.commitments", "Commitments")}
-                  </div>
-                  <ul
-                    className={classNames("mt-2 space-y-1 text-sm list-disc pl-5", subtleTextClass)}
-                  >
-                    {warm.commitments.map((item, index) => (
-                      <li key={`${agent.id}-commitment-${index}`}>{item}</li>
-                    ))}
-                  </ul>
+                <ul
+                  className={classNames("mt-2 space-y-1 text-sm list-disc pl-5", subtleTextClass)}
+                >
+                  {warm.openLoops.map((item, index) => (
+                    <li key={`${agent.id}-open-loop-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {warm.commitments.length > 0 ? (
+              <div>
+                <div
+                  className={classNames(
+                    "text-xs font-medium uppercase tracking-wide",
+                    mutedTextClass,
+                  )}
+                >
+                  {tr("context.commitments", "Commitments")}
                 </div>
-              ) : null}
-            </div>
-          )
-        ) : null}
-      </section>
+                <ul
+                  className={classNames("mt-2 space-y-1 text-sm list-disc pl-5", subtleTextClass)}
+                >
+                  {warm.commitments.map((item, index) => (
+                    <li key={`${agent.id}-commitment-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </details>
     </article>
   );
 }

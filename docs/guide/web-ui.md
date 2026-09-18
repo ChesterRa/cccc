@@ -574,43 +574,30 @@ intend to restart the dedicated browser; its saved profile and delivery target a
 
 ## Managing Groups
 
-### Creating a Group
+### Creating and editing a Group
 
-1. Click the **+** button in the sidebar
-2. Or use CLI: `cccc attach /path/to/project`
+Click **+ New** in the sidebar, select the workspace directory and create the
+Group. You can also run `cccc attach /path/to/project` on the CCCC host.
+Select a Group in the sidebar to open it; use the pencil beside its header name
+to edit its title and description.
 
-### Switching Groups
+### Group settings
 
-Click on a group in the sidebar to switch.
-
-### Group Settings
-
-1. Click the **Settings** icon in the header
-2. Configure:
-   - Group title
-   - Guidance (preamble/help)
-   - Built-in automation, rules, and snippets
-   - Delivery and messaging defaults
-   - IM Bridge settings
+Open **Settings and more**, then settings, and select **This group**. Guidance,
+automation, delivery, messaging, assistants, connections and other Group options
+remain separate from **This instance** settings.
 
 ## Managing Agents
 
-### Adding an Agent
+Use the **+** in the Agent bar near the composer to add an Agent. Choose an
+installed Runtime, set its Actor ID and review the configuration before adding it.
+Open an existing Agent to inspect its Runtime and use its available lifecycle
+actions. The Group status button controls the whole Group's enabled Agents and
+message delivery; pausing delivery does not stop work already in progress.
 
-1. Click **Add Actor** button
-2. Choose a runtime (Claude, Codex, etc.)
-3. Set actor ID and options
-4. Click **Create**
-
-### Starting/Stopping Agents
-
-- Click the **Play** button to start an agent
-- Click the **Stop** button to stop
-- Use **Restart** to clear context and restart
-
-### Viewing Agent Terminal
-
-Click on an agent's tab to see its terminal output.
+Switch to **Terminals** for the paged multi-Agent view, or open one Agent's
+inspector from its entry. Runtime restart and session-reset actions have different
+semantics; use the action's explanation before discarding a session.
 
 ## Messaging
 
@@ -686,29 +673,29 @@ For concrete delegated work that needs an owner, done criterion, evidence, hando
 
 Click the reply icon on a message to quote and reply.
 
-## Context Panel
+## Project Context
 
-The Context panel shows shared project state (v2):
+Open **Project Context** from the clipboard button in the Group header. The
+header identifies the Group being viewed.
 
-### Presence
-
-Agent runtime status and capsule (short-term memory: focus, blockers, next action).
-
-### Vision
-
-One-sentence project goal. Agents should align with this.
-
-### Overview
-
-Structured project view with manual section (roles, collaboration mode, current focus) and live daemon-computed snapshot.
-
-### Tasks
-
-Multi-level task tree. Root tasks = phases/stages. Child tasks = execution units. Each task has steps and acceptance criteria.
+- **Coordination** combines the working summary, `PROJECT.md`, coordination log
+  and task board. The summary is a short steering brief; `PROJECT.md` remains
+  the fuller repository reference. Empty summaries keep an Edit action without
+  filling the page with empty fields.
+- **Tasks** retain Planned, Active and Done columns, including empty drop targets.
+  Search and attention filters narrow the board. Open a task for requirements,
+  steps, handoffs and completion details. Missing requirements or closeout records
+  describe record completeness; they do not change an existing task's status.
+- **Agent State** shows the latest saved reports, including their timestamps and
+  staleness. Focus, next action and blockers remain visible. Expand working context
+  or recovery cues when needed. A task named in a report does not prove that its
+  Runtime is currently working on it.
+- **Self-Evolving Skills** shows candidates originating in this Group. Instance
+  capability governance has a wider scope; the two views do not replace each other.
 
 ## Settings Panel
 
-Access via the gear icon:
+Open settings from **Settings and more** in the header:
 
 ### Copy Groups
 

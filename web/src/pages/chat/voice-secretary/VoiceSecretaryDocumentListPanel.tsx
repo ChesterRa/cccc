@@ -45,8 +45,7 @@ export function VoiceSecretaryDocumentListPanel({
   return (
     <aside
       className={classNames(
-        "flex min-h-0 flex-col rounded-[26px] border",
-        isDark ? "border-white/10 bg-white/[0.035]" : "border-black/10 bg-[rgb(250,250,250)]",
+        "flex min-h-0 flex-col rounded-xl border border-[var(--glass-panel-border)] bg-[var(--color-bg-secondary)]",
       )}
     >
       <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-3.5 py-3">
@@ -59,7 +58,7 @@ export function VoiceSecretaryDocumentListPanel({
           >
             {t("voiceSecretaryDocumentsTitle", { defaultValue: "Working documents" })}
           </div>
-          <div className="mt-0.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+          <div className="mt-0.5 text-xs leading-4 text-[var(--color-text-muted)]">
             {documentsCountLabel}
             {documents.length ? (
               <span>
@@ -76,7 +75,7 @@ export function VoiceSecretaryDocumentListPanel({
           onClick={onStartCreateDocument}
           disabled={!!actionBusy}
           className={classNames(
-            "rounded-full border px-3 py-1.5 text-[11px] font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
+            "rounded-full border px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
             isDark
               ? "border-white/10 text-slate-300 hover:bg-white/10"
               : "border-black/10 bg-white text-gray-700 hover:bg-black/5",
@@ -125,7 +124,7 @@ export function VoiceSecretaryDocumentListPanel({
                 onClick={onCancelCreateDocument}
                 disabled={actionBusy === "new_doc"}
                 className={classNames(
-                  "rounded-full px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-60",
+                  "rounded-full px-2 py-1 text-xs font-medium transition-colors disabled:opacity-60",
                   isDark ? "text-slate-400 hover:bg-white/8" : "text-gray-500 hover:bg-black/5",
                 )}
               >
@@ -136,7 +135,7 @@ export function VoiceSecretaryDocumentListPanel({
                 onClick={onCreateDocument}
                 disabled={actionBusy === "new_doc"}
                 className={classNames(
-                  "rounded-full px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-60",
+                  "rounded-full px-2 py-1 text-xs font-semibold transition-colors disabled:opacity-60",
                   isDark
                     ? "bg-white text-[rgb(20,20,22)] hover:bg-white/90"
                     : "bg-[rgb(35,36,37)] text-white hover:bg-black",
@@ -201,7 +200,7 @@ export function VoiceSecretaryDocumentListPanel({
                   </span>
                 </span>
                 {document.workspace_path ? (
-                  <span className="truncate text-[11px] text-[var(--color-text-muted)]">
+                  <span className="truncate text-xs text-[var(--color-text-muted)]">
                     {document.workspace_path}
                   </span>
                 ) : null}

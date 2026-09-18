@@ -167,7 +167,7 @@ export function GroupEditModal({
         </div>
       }
     >
-      <div className="scrollbar-hide flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_28%),linear-gradient(180deg,var(--color-bg-primary),var(--color-sidebar-bg))] px-6 pb-6 pt-4 dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),rgba(255,255,255,0)_32%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))] sm:px-7 sm:pb-7 sm:pt-5">
+      <div className="scrollbar-hide flex-1 overflow-y-auto bg-[var(--color-bg-primary)] px-6 pb-6 pt-4 sm:px-7 sm:pb-7 sm:pt-5">
         <div className="space-y-5">
           <div>
             <label className="mb-2 block text-xs font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)]">

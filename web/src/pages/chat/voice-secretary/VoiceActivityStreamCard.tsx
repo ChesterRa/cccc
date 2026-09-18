@@ -32,13 +32,13 @@ export function VoiceActivityStreamCard({
       <div className="flex items-center justify-between gap-2">
         <span
           className={classNames(
-            "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+            "rounded-full px-2 py-0.5 text-xs font-semibold",
             isDark ? "bg-cyan-300/15 text-cyan-100" : "bg-white text-cyan-800",
           )}
         >
           {t("voiceSecretaryTranscriptLive", { defaultValue: "Live" })}
         </span>
-        <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
           <span className="min-w-0 truncate">{voiceModeLabel(item.mode)}</span>
           {timeLabel ? (
             <time
@@ -53,14 +53,14 @@ export function VoiceActivityStreamCard({
       </div>
       <div
         className={classNames(
-          "mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4",
+          "mt-1.5 whitespace-pre-wrap break-words text-xs leading-4",
           isDark ? "text-cyan-50" : "text-cyan-950",
         )}
       >
         {item.text}
       </div>
       {title ? (
-        <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">{title}</div>
+        <div className="mt-1 truncate text-xs text-[var(--color-text-muted)]">{title}</div>
       ) : null}
     </div>
   );

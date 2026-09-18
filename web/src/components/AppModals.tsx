@@ -1994,6 +1994,7 @@ export function AppModals({
             isOpen={modals.context}
             onClose={() => closeModal("context")}
             groupId={selectedGroupId}
+            groupTitle={groupDoc?.group_id === selectedGroupId ? groupDoc.title : undefined}
             context={groupContext}
             initialTaskId={contextTaskId}
             onInitialTaskHandled={clearContextTask}

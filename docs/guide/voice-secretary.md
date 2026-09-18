@@ -27,6 +27,22 @@ Chinese and Japanese, menu lifecycle and focus, and real xterm touch protocols.
 It uses a temporary Chrome profile and synthetic HTTP, with no microphone,
 provider or daemon calls. These checks do not replace iPhone Safari QA.
 
+## Workspace modes
+
+**Doc** keeps the document list, document/transcript view and recent activity
+available together on desktop. **Ask** gives the request and its activity the
+main workspace. **Prompt** shows the current composer text, its existing
+optimization action and recent activity. Edit or send the text in the composer;
+choosing Prompt from the mode selector returns there.
+
+Open a linked document directly from Ask or Prompt activity, then use **Back to
+activity** to return without changing the capture mode or recording target.
+Doc also provides the full document list. Expanded Prompt controls and activity
+remain scrollable on short screens. Switching views preserves the
+unsaved document draft and typed Ask request; an unsaved-document notice remains
+visible outside Doc. Recording still locks mode changes and keeps its original
+target. Collapsing a section does not stop recording or background processing.
+
 ## External realtime ASR: Bailian and Volcengine
 
 Select **Settings > Assistants > Recognition location > External provider ASR**.

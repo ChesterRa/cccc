@@ -43,7 +43,7 @@ export function TaskCardBadges({
     workflow.isOptimization && !workflow.needsContract && !workflow.hasCurrentBest;
 
   return (
-    <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+    <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
       {task.assignee ? (
         <span className="max-w-full truncate rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]">
           {task.assignee}
@@ -95,12 +95,12 @@ export function TaskCardBadges({
       ) : null}
       {workflow.needsContract ? (
         <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-600 dark:text-amber-400">
-          {tr("context.needsContract", "Needs requirements")}
+          {tr("context.needsContract", "Requirements incomplete")}
         </span>
       ) : null}
       {workflow.needsCloseout ? (
         <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-600 dark:text-amber-400">
-          {tr("context.needsCloseout", "Needs closeout")}
+          {tr("context.needsCloseout", "Closeout incomplete")}
         </span>
       ) : null}
     </div>

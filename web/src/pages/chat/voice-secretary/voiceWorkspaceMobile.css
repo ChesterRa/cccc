@@ -3,6 +3,19 @@
   display: none;
 }
 
+/* Expanded Prompt content and its results must remain reachable at short heights.
+   Let the request column scroll instead of shrinking the activity below its content. */
+[data-voice-request-panel][data-voice-request-mode="prompt"] {
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+[data-voice-request-mode="prompt"] [data-voice-activity] {
+  flex: 1 0 auto;
+}
+[data-voice-request-mode="prompt"] [data-voice-activity-scroll] {
+  max-height: 42dvh;
+}
+
 @media (max-width: 639px) {
   [data-voice-mobile-sheet].glass-modal {
     padding: 12px 8px max(8px, env(safe-area-inset-bottom, 0px));
