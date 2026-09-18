@@ -403,6 +403,58 @@ test("message filters remain visible and mobile retains its status control", asy
   await expect(status).toBeFocused();
 });
 
+for (const surface of ["files", "presentation"]) {
+  test(`header aligns with restored ${surface} on first load and Group changes`, async ({
+    page,
+  }) => {
+    await groupPage(page);
+    await page
+      .locator(
+        surface === "files" ? "[data-workspace-files-toggle]" : "[data-group-presentation-trigger]",
+      )
+      .click();
+    await page.evaluate(() =>
+      groupWorkProbe.ui.getState().setChatSidePanelLayout("g1", { compact: false }),
+    );
+    await page.reload();
+    const checkAlignment = async () => {
+      await expect(page.locator("#group-side-panel")).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const panel = document.querySelector("#group-side-panel").getBoundingClientRect();
+            const work = document.querySelector("[data-group-header-work]").getBoundingClientRect();
+            return Math.abs(work.right - (panel.left - 4));
+          }),
+        )
+        .toBeLessThanOrEqual(2);
+    };
+    await checkAlignment();
+    await page.evaluate(() => groupWorkProbe.chooseGroup("g2"));
+    await expect(page.locator("#group-side-panel")).toHaveCount(0);
+    await page.evaluate(() => groupWorkProbe.chooseGroup("g1"));
+    await checkAlignment();
+    await page.setViewportSize({ width: 390, height: 667 });
+    await expect(page.locator("#group-side-panel")).not.toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await checkAlignment();
+    if (surface === "presentation") {
+      await page.evaluate(() =>
+        groupWorkProbe.ui.getState().setChatSidePanelLayout("g1", { compact: true }),
+      );
+      await page.reload();
+      await expect(page.locator("#group-side-panel")).toHaveCSS("width", "64px");
+      await expect
+        .poll(() =>
+          page
+            .locator("[data-group-shell]")
+            .evaluate((e) => e.style.getPropertyValue("--group-side-panel-width")),
+        )
+        .toBe("64px");
+    }
+  });
+}
+
 test("header work tools follow panel resizing and stay reachable", async ({ page }) => {
   await groupPage(page);
   await page.evaluate(() => groupWorkProbe.ui.getState().setGroupWorkView("g1", "terminals"));

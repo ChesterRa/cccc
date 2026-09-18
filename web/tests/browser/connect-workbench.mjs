@@ -1027,13 +1027,13 @@ try {
     await eventually(
       () =>
         evaluate(
-          "!![...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim().startsWith('Global'))",
+          "!![...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim().startsWith('This instance'))",
           world,
         ),
       "target settings scope",
     );
     await evaluate(
-      "[...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim().startsWith('Global')).click()",
+      "[...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim().startsWith('This instance')).click()",
       world,
     );
     await eventually(

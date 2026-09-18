@@ -115,6 +115,84 @@ try {
     .toEqual([]);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await closeActor();
+  // Closing an inbox does not cancel its HTTP response. A later opening owns
+  // the content even when the same Actor is opened again.
+  await page.getByRole("button", { name: "Open terminal for Linked renamed", exact: true }).click();
+  let releaseOldInbox;
+  let inboxRequests = 0;
+  await page.route("**/inbox/linked?*", async (route) => {
+    const index = ++inboxRequests;
+    if (index === 1)
+      await new Promise((resolve) => {
+        releaseOldInbox = resolve;
+      });
+    await route.fulfill({
+      json: {
+        ok: true,
+        result: {
+          messages: [
+            {
+              id: `inbox-${index}`,
+              kind: "chat.message",
+              by: "user",
+              ts: "2026-09-18T00:00:00Z",
+              data: { text: index === 1 ? "Previous inbox snapshot" : "Current inbox snapshot" },
+            },
+          ],
+        },
+      },
+    });
+  });
+  await page.getByRole("button", { name: /^Open inbox/ }).click();
+  const inbox = page.getByRole("dialog", { name: /^Mail · linked/ });
+  await expect(inbox).toBeVisible();
+  await expect.poll(() => !!releaseOldInbox).toBe(true);
+  await inbox.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: /^Open inbox/ }).click();
+  await expect(inbox).toContainText("Current inbox snapshot");
+  const oldResponse = page.waitForResponse((response) => response.url().includes("/inbox/linked?"));
+  releaseOldInbox();
+  await oldResponse;
+  // Observe beyond delivery of the response and React's update.
+  await page.waitForTimeout(150);
+  await expect(inbox).toContainText("Current inbox snapshot");
+  await expect(inbox).not.toContainText("Previous inbox snapshot");
+  await inbox.getByRole("button", { name: "Close", exact: true }).click();
+  await page.unroute("**/inbox/linked?*");
+
+  let releaseDelete;
+  await page.route("**/actors/linked?*", async (route) => {
+    if (route.request().method() === "DELETE") {
+      await new Promise((resolve) => {
+        releaseDelete = resolve;
+      });
+    }
+    await route.continue();
+  });
+  page.removeAllListeners("dialog");
+  page.on("dialog", (d) => (d.type() === "confirm" ? d.accept() : d.dismiss()));
+  await page.getByRole("button", { name: "Remove agent", exact: true }).click();
+  await expect.poll(() => !!releaseDelete).toBe(true);
+  await closeActor();
+  await page.getByRole("button", { name: "Open terminal for Renamed only", exact: true }).click();
+  const deleted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "DELETE" &&
+      new URL(response.url()).pathname.endsWith("/actors/linked"),
+  );
+  releaseDelete();
+  await deleted;
+  await page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  );
+  await expect.poll(() => actor("linked")).toBeUndefined();
+  await expect(
+    page.getByRole("button", { name: "Close expanded Actor view", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Edit agent configuration", exact: true }),
+  ).toBeVisible();
+  await closeActor();
   await page.getByRole("button", { name: "Settings and more", exact: true }).click();
   await page.getByRole("button", { name: "This instance", exact: false }).click();
   await page.getByRole("button", { name: "Actor Profiles", exact: true }).click();
@@ -149,7 +227,7 @@ try {
   ]);
   passed = true;
   process.stdout.write(
-    "Actor configuration real-port workflows passed: linked rename/switch/convert, draft retention, exact argv, effective secrets, partial-save retry without duplicates or stale revisions.\n",
+    "Actor configuration real-port workflows passed: linked rename/switch/convert, draft retention, exact argv, effective secrets, partial-save retry without duplicates or stale revisions, inbox response ownership and delayed deletion preserving navigation.\n",
   );
 } finally {
   if (!passed)

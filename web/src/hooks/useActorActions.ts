@@ -9,7 +9,8 @@ import { beginActorAction, endActorAction } from "./actorActionInFlight";
 import { resolveActorLifecycleRunning } from "./actorLifecycleAction";
 import { useShallow } from "zustand/react/shallow";
 
-function latestActorHasResumeFailure(actorId: string): boolean {
+function latestActorHasResumeFailure(groupId: string, actorId: string): boolean {
+  if (useGroupStore.getState().selectedGroupId !== groupId) return false;
   const aid = String(actorId || "").trim();
   if (!aid) return false;
   const latest = useGroupStore
@@ -41,11 +42,8 @@ export function useActorActions(groupId: string) {
   const { openModal, setEditingActor } = useModalStore(
     useShallow((s) => ({ openModal: s.openModal, setEditingActor: s.setEditingActor })),
   );
-  const { setInboxActorId, setInboxMessages } = useInboxStore(
-    useShallow((s) => ({
-      setInboxActorId: s.setInboxActorId,
-      setInboxMessages: s.setInboxMessages,
-    })),
+  const { openInbox, setInboxMessages } = useInboxStore(
+    useShallow((s) => ({ openInbox: s.openInbox, setInboxMessages: s.setInboxMessages })),
   );
   const {
     setEditActorRuntime,
@@ -78,14 +76,14 @@ export function useActorActions(groupId: string) {
           ? await api.stopActor(groupId, actor.id)
           : await api.startActor(groupId, actor.id);
         if (!resp.ok) {
-          await Promise.all([refreshActors(), refreshGroups()]);
-          if (isRunning || !latestActorHasResumeFailure(actor.id)) {
+          await Promise.all([refreshActors(groupId), refreshGroups()]);
+          if (isRunning || !latestActorHasResumeFailure(groupId, actor.id)) {
             showError(`${resp.error.code}: ${resp.error.message}`);
           }
           return;
         }
         clearStreamingEventsForActor(actor.id, groupId);
-        await Promise.all([refreshActors(), refreshGroups()]);
+        await Promise.all([refreshActors(groupId), refreshGroups()]);
       } finally {
         endActorAction(actorActionInFlightRef, actionKey);
         changeActorBusy(groupId, actor.id, -1);
@@ -111,12 +109,12 @@ export function useActorActions(groupId: string) {
       try {
         const resp = await api.restartActor(groupId, actor.id);
         if (!resp.ok) {
-          await Promise.all([refreshActors(), refreshGroups()]);
-          if (!latestActorHasResumeFailure(actor.id)) {
+          await Promise.all([refreshActors(groupId), refreshGroups()]);
+          if (!latestActorHasResumeFailure(groupId, actor.id)) {
             showError(`${resp.error.code}: ${resp.error.message}`);
           }
         } else {
-          await Promise.all([refreshActors(), refreshGroups()]);
+          await Promise.all([refreshActors(groupId), refreshGroups()]);
         }
         setTermEpochByActor((prev) => ({ ...prev, [actionKey]: (prev[actionKey] || 0) + 1 }));
       } finally {
@@ -137,11 +135,11 @@ export function useActorActions(groupId: string) {
       try {
         const resp = await api.newActorSession(groupId, actor.id);
         if (!resp.ok) {
-          await Promise.all([refreshActors(), refreshGroups()]);
+          await Promise.all([refreshActors(groupId), refreshGroups()]);
           showError(`${resp.error.code}: ${resp.error.message}`);
         } else {
           clearStreamingEventsForActor(actor.id, groupId);
-          await Promise.all([refreshActors(), refreshGroups()]);
+          await Promise.all([refreshActors(groupId), refreshGroups()]);
         }
         setTermEpochByActor((prev) => ({ ...prev, [actionKey]: (prev[actionKey] || 0) + 1 }));
       } finally {
@@ -193,11 +191,15 @@ export function useActorActions(groupId: string) {
           return;
         }
         clearStreamingEventsForActor(actor.id, groupId);
-        if (currentActiveTab === actor.id) {
+        if (
+          useGroupStore.getState().selectedGroupId === groupId &&
+          currentActiveTab === actor.id &&
+          useUIStore.getState().activeTab === actor.id
+        ) {
           setActiveTab("chat");
         }
-        await Promise.all([refreshActors(), refreshGroups()]);
-        await loadGroup(groupId);
+        await Promise.all([refreshActors(groupId), refreshGroups()]);
+        if (useGroupStore.getState().selectedGroupId === groupId) await loadGroup(groupId);
       } finally {
         changeActorBusy(groupId, actor.id, -1);
       }
@@ -218,22 +220,23 @@ export function useActorActions(groupId: string) {
   const openActorInbox = useCallback(
     async (actor: Actor) => {
       if (!actor || !groupId) return;
+      const target = { groupId, actorId: actor.id };
       changeActorBusy(groupId, actor.id, 1);
       try {
-        setInboxActorId(actor.id);
-        setInboxMessages([]);
+        openInbox(target);
         openModal("inbox");
         const resp = await api.fetchInbox(groupId, actor.id);
+        if (useInboxStore.getState().inboxTarget !== target) return;
         if (!resp.ok) {
           showError(`${resp.error.code}: ${resp.error.message}`);
           return;
         }
-        setInboxMessages(resp.result.messages || []);
+        setInboxMessages(target, resp.result.messages || []);
       } finally {
         changeActorBusy(groupId, actor.id, -1);
       }
     },
-    [groupId, changeActorBusy, showError, setInboxActorId, setInboxMessages, openModal],
+    [groupId, changeActorBusy, showError, openInbox, setInboxMessages, openModal],
   );
 
   // Get actor termEpoch

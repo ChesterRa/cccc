@@ -244,13 +244,20 @@ export function AppModals({
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const contextTaskId = useModalStore((state) => state.contextTaskId);
 
-  const { inboxActorId, inboxMessages, setInboxMessages } = useInboxStore(
+  const { inboxTarget, inboxMessages, setInboxMessages, clearInbox } = useInboxStore(
     useShallow((s) => ({
-      inboxActorId: s.inboxActorId,
+      inboxTarget: s.inboxTarget,
       inboxMessages: s.inboxMessages,
       setInboxMessages: s.setInboxMessages,
+      clearInbox: s.clearInbox,
     })),
   );
+  useEffect(() => {
+    if (inboxTarget && inboxTarget.groupId !== selectedGroupId) {
+      clearInbox();
+      closeModal("inbox");
+    }
+  }, [inboxTarget, selectedGroupId, clearInbox, closeModal]);
   const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
   const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
   const [messageActionBusy, setMessageActionBusy] = useState("");
@@ -780,24 +787,28 @@ export function AppModals({
   };
 
   const handleMarkAllRead = async () => {
-    if (!selectedGroupId || !inboxActorId) return;
+    if (!inboxTarget || inboxTarget.groupId !== selectedGroupId) return;
+    const { groupId, actorId } = inboxTarget;
     if (inboxMessages.length === 0) return;
-    setBusy(`inbox-read:${inboxActorId}`);
+    const busyKey = `inbox-read:${groupId}:${actorId}`;
+    setBusy(busyKey);
     try {
-      const resp = await api.readInbox(selectedGroupId, inboxActorId, inboxMessages.length);
+      const resp = await api.readInbox(groupId, actorId, inboxMessages.length);
       if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
+        if (useInboxStore.getState().inboxTarget === inboxTarget) {
+          showError(`${resp.error.code}: ${resp.error.message}`);
+        }
         return;
       }
       const [inboxResp] = await Promise.all([
-        api.fetchInbox(selectedGroupId, inboxActorId),
-        refreshActors(selectedGroupId, { includeUnread: true }),
+        api.fetchInbox(groupId, actorId),
+        refreshActors(groupId, { includeUnread: true }),
       ]);
       if (inboxResp.ok) {
-        setInboxMessages(inboxResp.result.messages || []);
+        setInboxMessages(inboxTarget, inboxResp.result.messages || []);
       }
     } finally {
-      setBusy("");
+      if (useUIStore.getState().busy === busyKey) setBusy("");
     }
   };
 
@@ -2017,13 +2028,16 @@ export function AppModals({
       />
 
       <InboxModal
-        isOpen={modals.inbox}
+        isOpen={modals.inbox && inboxTarget?.groupId === selectedGroupId}
         isDark={isDark}
-        actorId={inboxActorId}
+        actorId={inboxTarget?.actorId || ""}
         actors={actors}
         messages={inboxMessages}
         busy={busy}
-        onClose={() => closeModal("inbox")}
+        onClose={() => {
+          clearInbox();
+          closeModal("inbox");
+        }}
         onMarkAllRead={handleMarkAllRead}
       />
 

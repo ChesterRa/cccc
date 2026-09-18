@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, type ReactNode, type RefObject } from "react";
+import { useLayoutEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useSidePanelLayout } from "../../hooks/useSidePanelLayout";
 import type { SidePanelSurface } from "../../hooks/useSidePanelSelection";
@@ -24,15 +24,17 @@ export function ResizableSidePanel({
   const { t } = useTranslation("chat");
   const layout = useSidePanelLayout(groupId, surface, viewing, container);
   const { compact, toggleCompact } = layout;
+  const panelRef = useRef<HTMLDivElement>(null);
   // Share the resolved width with the header without rerendering the chat during a drag.
   useLayoutEffect(() => {
-    const shell = container.current?.closest<HTMLElement>("[data-group-shell]");
+    // Our DOM is attached before this effect; the parent's ref may not be on first mount.
+    const shell = panelRef.current?.closest<HTMLElement>("[data-group-shell]");
     if (!shell) return;
     shell.style.setProperty("--group-side-panel-width", `${layout.width}px`);
     return () => {
       shell.style.removeProperty("--group-side-panel-width");
     };
-  }, [container, layout.width]);
+  }, [layout.width]);
   // Width changes need CSS layout, but not another render of an unchanged file tree/viewer.
   const content = useMemo(
     () => children({ compact, toggleCompact }),
@@ -80,6 +82,7 @@ export function ResizableSidePanel({
           "hidden min-h-0 min-w-0 flex-shrink-0 flex-col overflow-hidden border-l border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] md:flex",
         )}
         id="group-side-panel"
+        ref={panelRef}
         style={{ width: `${layout.width}px` }}
       >
         {content}

@@ -53,6 +53,11 @@ it("keeps parent and panel contents out of drag renders while persisting the fin
     });
   try {
     await act(async () => root.render(<Harness />));
+    expect(
+      host
+        .querySelector<HTMLElement>("[data-group-shell]")!
+        .style.getPropertyValue("--group-side-panel-width"),
+    ).toBe(host.querySelector<HTMLElement>("#group-side-panel")!.style.width);
     const initial = { parentRenders, contentRenders };
     const input = host.querySelector("input")!;
     input.focus();
