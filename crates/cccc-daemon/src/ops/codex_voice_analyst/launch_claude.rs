@@ -106,6 +106,7 @@ impl AnalystSession {
                 &environment,
                 &launched.session_id,
                 launched.resumed,
+                launched.worker.as_ref(),
             )
         {
             tracing::warn!(%error, %group_id, %actor_id, "failed to persist Claude managed session");

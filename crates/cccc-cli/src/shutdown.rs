@@ -8,6 +8,10 @@ use std::time::Duration;
 // orphaned. This is only the backstop for a host nobody is watching -- an
 // operator in a hurry presses Ctrl-C again and never waits it out.
 const FORCE_EXIT_TIMEOUT: Duration = Duration::from_secs(60);
+// Agent View sessions are not owned process trees, so force_terminate_owned
+// leaves them running. One bounded round of stop requests keeps them from
+// being stranded without making the forced exit wait for confirmations.
+const FORCE_STOP_REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 const INTERRUPTED_EXIT_CODE: i32 = 130;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +48,11 @@ pub(crate) async fn watch_for_interrupt(
             );
         }
     }
+    let _ = tokio::time::timeout(
+        FORCE_STOP_REQUEST_TIMEOUT,
+        cccc_daemon::request_managed_session_stop(),
+    )
+    .await;
     force_exit();
 }
 

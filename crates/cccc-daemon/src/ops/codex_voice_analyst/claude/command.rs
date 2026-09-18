@@ -467,7 +467,7 @@ fn launcher_environment(environment: &BTreeMap<String, String>) -> BTreeMap<Stri
         .collect()
 }
 
-fn config_dir(environment: &BTreeMap<String, String>) -> io::Result<PathBuf> {
+pub(super) fn config_dir(environment: &BTreeMap<String, String>) -> io::Result<PathBuf> {
     let configured = environment.get("CLAUDE_CONFIG_DIR").cloned().or_else(|| {
         environment
             .get("HOME")

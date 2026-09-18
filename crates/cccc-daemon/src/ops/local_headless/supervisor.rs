@@ -219,6 +219,9 @@ pub fn stop_group(group_id: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Stops every managed Actor concurrently. Each stop waits for its provider
+/// to confirm (up to ~10s for Agent View), so a serial loop over a busy host
+/// outlives the launcher's forced-exit deadline and strands the remainder.
 pub fn stop_all() -> io::Result<()> {
     let keys = sessions()
         .read()
@@ -226,12 +229,25 @@ pub fn stop_all() -> io::Result<()> {
         .keys()
         .cloned()
         .collect::<Vec<_>>();
-    let mut failures = Vec::new();
-    for (group_id, actor_id) in keys {
-        if let Err(error) = stop(&group_id, &actor_id) {
-            failures.push(format!("{group_id}/{actor_id}: {error}"));
-        }
-    }
+    let failures = std::thread::scope(|scope| {
+        let handles = keys
+            .iter()
+            .map(|(group_id, actor_id)| {
+                scope.spawn(move || {
+                    stop(group_id, actor_id)
+                        .map_err(|error| format!("{group_id}/{actor_id}: {error}"))
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .filter_map(|handle| match handle.join() {
+                Ok(Ok(())) => None,
+                Ok(Err(failure)) => Some(failure),
+                Err(_) => Some("stop worker panicked".into()),
+            })
+            .collect::<Vec<_>>()
+    });
     if failures.is_empty() {
         Ok(())
     } else {
@@ -240,6 +256,30 @@ pub fn stop_all() -> io::Result<()> {
             failures.join("; ")
         )))
     }
+}
+
+/// Sends one stop request per managed Actor and returns without waiting for
+/// confirmation. Forced launcher exit calls this because Agent View workers are
+/// not owned process trees and would otherwise keep running after the exit.
+pub async fn kill_all_requests() {
+    let items = match sessions().read() {
+        Ok(items) => items.values().cloned().collect::<Vec<_>>(),
+        Err(_) => return,
+    };
+    let mut tasks = tokio::task::JoinSet::new();
+    for item in items {
+        tasks.spawn(async move {
+            if let Err(error) = item.managed.kill_request().await {
+                tracing::warn!(
+                    %error,
+                    group_id = %item.group_id,
+                    actor_id = %item.actor_id,
+                    "forced exit could not request a managed Actor stop"
+                );
+            }
+        });
+    }
+    while tasks.join_next().await.is_some() {}
 }
 
 #[must_use]

@@ -24,6 +24,13 @@ pub use process::{DetachedDaemon, StartOutcome};
 pub use server::run;
 pub use server_lifecycle::stop_every_runtime;
 
+/// Best-effort stop requests for managed Actor sessions that are not owned
+/// process trees (Claude Agent View). Returns once every request was sent or
+/// failed; it never waits for the providers to confirm.
+pub async fn request_managed_session_stop() {
+    ops::local_headless::kill_all_requests().await;
+}
+
 /// Return the recorded Web binding only when its process and signed readiness
 /// endpoint still match the persisted runtime identity.
 pub fn live_web_binding(home: &cccc_core::HomeLayout) -> Option<(String, u16)> {

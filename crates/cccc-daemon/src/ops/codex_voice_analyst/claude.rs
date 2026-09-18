@@ -20,8 +20,12 @@ mod transcript_continuity;
 #[cfg(all(test, unix))]
 mod transcript_move_client_tests;
 mod transcript_path;
+mod worker;
 
 pub(super) use command::prepare;
+pub(crate) use worker::{WorkerIdentity, reap_unreachable as reap_unreachable_worker};
+#[cfg(all(test, unix))]
+pub(crate) use worker::{identify as identify_worker, spawn_fake_host as spawn_fake_worker_host};
 
 pub(super) fn remove_actor_settings(
     home: &cccc_core::HomeLayout,
@@ -56,6 +60,8 @@ pub(super) struct LaunchedClaude {
     pub(super) tui_command: Vec<String>,
     pub(super) environment: BTreeMap<String, String>,
     pub(super) cleanup_paths: Vec<PathBuf>,
+    /// Worker process identity for orphan cleanup; `None` when unverifiable.
+    pub(super) worker: Option<WorkerIdentity>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +70,7 @@ struct Job {
     session_id: String,
     cwd: PathBuf,
     cli_version: command::Version,
+    pid: Option<u32>,
 }
 
 pub(super) async fn launch(
@@ -335,6 +342,7 @@ async fn connect_launched(
         // metadata. The owner-scoped file must therefore outlive individual
         // processes so a stopped Actor or Analyst can resume the same session.
         cleanup_paths: Vec::new(),
+        worker: job.pid.and_then(worker::identify),
     })
 }
 
@@ -564,11 +572,16 @@ fn parse_job(value: &Value) -> Option<Job> {
     valid_short_id(short)
         .then_some(())
         .and_then(|_| validate_session_id(session_id).ok())?;
+    let pid = value
+        .get("pid")
+        .and_then(Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok());
     (!cwd.is_empty()).then(|| Job {
         short: short.to_owned(),
         session_id: session_id.to_owned(),
         cwd: PathBuf::from(cwd),
         cli_version,
+        pid,
     })
 }
 
@@ -883,6 +896,15 @@ impl ClaudeClient {
         }
         self.running.store(false, Ordering::Release);
         Ok(())
+    }
+}
+
+impl ClaudeClient {
+    /// One kill request, no confirmation wait. Forced launcher exit uses this:
+    /// the Agent View daemon owns the worker and finishes the stop on its own,
+    /// so the session is not stranded when this process is already going away.
+    pub(super) async fn kill_request(&self) -> io::Result<()> {
+        control::kill(&self.endpoint, &self.short).await
     }
 }
 
@@ -1491,6 +1513,7 @@ mod tests {
             session_id: session_id.into(),
             cwd: cwd.clone(),
             cli_version: (2, 1, 259),
+            pid: None,
         };
         read_job_state(&config, &job, &cwd).expect("valid job");
 
@@ -2317,6 +2340,7 @@ mod tests {
                     session_id: session_id.into(),
                     cwd: workspace.clone(),
                     cli_version: (2, 1, 260),
+                    pid: None,
                 },
                 workspace,
                 operations,

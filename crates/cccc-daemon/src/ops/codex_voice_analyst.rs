@@ -9,6 +9,9 @@ use tokio::sync::broadcast;
 
 mod acp;
 mod claude;
+pub(crate) use claude::{WorkerIdentity, reap_unreachable_worker};
+#[cfg(all(test, unix))]
+pub(crate) use claude::{identify_worker, spawn_fake_worker_host};
 mod control;
 mod grok;
 mod launch;
@@ -225,6 +228,15 @@ impl ManagedProtocol {
                 Ok(())
             }
             Self::Claude(protocol) => protocol.close().await,
+        }
+    }
+
+    /// Best-effort stop request for sessions that are not owned process trees.
+    /// Codex and ACP providers are child processes and die with this process.
+    async fn kill_request(&self) -> io::Result<()> {
+        match self {
+            Self::Codex(_) | Self::Acp(_) => Ok(()),
+            Self::Claude(protocol) => protocol.kill_request().await,
         }
     }
 

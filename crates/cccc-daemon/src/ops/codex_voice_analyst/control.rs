@@ -116,6 +116,12 @@ impl AnalystSession {
             .await
     }
 
+    /// Ask the provider to stop without waiting for confirmation or cleaning
+    /// owned resources; see `ManagedProtocol::kill_request`.
+    pub(crate) async fn kill_request(&self) -> io::Result<()> {
+        self.protocol.kill_request().await
+    }
+
     pub(crate) async fn stop(&self, expected_generation: &str) -> io::Result<()> {
         self.require_generation(expected_generation)?;
         lifecycle_timing::run("runtime.protocol_close", self.protocol.close()).await?;
