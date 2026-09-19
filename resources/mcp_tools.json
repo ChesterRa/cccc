@@ -832,7 +832,7 @@
   },
   {
     "name": "cccc_repo",
-    "description": "Read-only active workspace repository inspection for remote runtimes: action=info|list|list_dir|read|search. All paths are constrained to the group's active scope root. Read returns sha256 and supports start_line/end_line; pass sha256 back as expected_sha256 before writing. Use cccc_repo_edit or cccc_apply_patch for writes.",
+    "description": "Read-only active workspace inspection: info|list|list_dir|read|search. Editing actions are rejected. list is shallow; list_dir honors depth and offset. Paths and file_path aliases are scope-relative; discovered symlinks are not followed. Search honors path, globs, case, context and limits. Check truncated/incomplete and skipped_files before concluding no match. Read returns whole-file sha256; use next_start_line to continue a truncated range. If partial_last_line is true, reread that line with a larger max_bytes (do not skip it). Use cccc_repo_edit or cccc_apply_patch for writes.",
     "annotations": {
       "readOnlyHint": true
     },
@@ -856,7 +856,7 @@
         },
         "path": {
           "type": "string",
-          "description": "Relative path under the active workspace root."
+          "description": "Path under the active workspace root (or file_path alias). Required for read; list/search default to root. Search accepts a directory or one file. Conflicting aliases are rejected."
         },
         "file_path": {
           "type": "string",
@@ -870,26 +870,28 @@
           "type": "integer",
           "default": 200000,
           "minimum": 1,
-          "maximum": 1000000
+          "maximum": 1000000,
+          "description": "Output byte budget: selected source bytes for read, sum of JSON entry/hit bytes for list/search (response metadata excluded). UTF-8 is not split. Read may return a partial last line; inspect continuation fields. Too-small budgets for one entry/hit return an actionable error."
         },
         "limit": {
           "type": "integer",
           "default": 200,
           "minimum": 1,
-          "maximum": 500
+          "maximum": 500,
+          "description": "Maximum entries or search hits returned. Check truncated/incomplete; search can be narrowed by path/globs."
         },
         "offset": {
           "type": "integer",
           "default": 1,
           "minimum": 1,
-          "description": "For action=list_dir, 1-indexed entry offset."
+          "description": "For list/list_dir, 1-indexed offset in the sorted filtered entries; use next_offset with the same query. If scan_truncated, narrow path instead."
         },
         "depth": {
           "type": "integer",
           "default": 2,
           "minimum": 1,
           "maximum": 8,
-          "description": "For action=list_dir, maximum directory depth."
+          "description": "For list_dir, maximum depth: 1 means immediate children. list remains shallow."
         },
         "start_line": {
           "type": "integer",
@@ -903,11 +905,13 @@
         },
         "include_hidden": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Include dot-prefixed entries during directory traversal (default false). Explicit paths are still allowed. Traversal never descends into .git, target or node_modules; inspect those directories using an explicit path."
         },
         "case_sensitive": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Search text case sensitivity (default false), including regex. Does not change glob matching."
         },
         "regex": {
           "type": "boolean",
@@ -917,25 +921,29 @@
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "description": "Optional included workspace-relative paths, with / separators. * stays within a path component; ** crosses directories (e.g. **/*.rs). Glob matching is case-sensitive on all platforms."
         },
         "exclude_globs": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "description": "Excluded workspace-relative globs; exclusion takes priority. Use dir/** to exclude descendants. No implicit .gitignore processing."
         },
         "context_lines": {
           "type": "integer",
           "default": 0,
           "minimum": 0,
-          "maximum": 10
+          "maximum": 10,
+          "description": "Search: before/after arrays contain up to this many surrounding lines per hit; counted in max_bytes."
         },
         "max_file_bytes": {
           "type": "integer",
           "default": 200000,
           "minimum": 1,
-          "maximum": 1000000
+          "maximum": 1000000,
+          "description": "Search: skip files larger than this size and report skipped_files.oversized plus incomplete=true. Does not cap read; read streams the entire file to compute its hash."
         }
       },
       "required": []
@@ -969,7 +977,7 @@
         },
         "path": {
           "type": "string",
-          "description": "Relative path under the active workspace root; required for write/delete/move/mkdir."
+          "description": "Required workspace-relative path (or file_path alias). Conflicting aliases are rejected."
         },
         "file_path": {
           "type": "string",
@@ -977,7 +985,7 @@
         },
         "dest_path": {
           "type": "string",
-          "description": "Destination path under the active workspace root; required for action=move."
+          "description": "Required destination for move, workspace-relative; to_path is an alias. Conflicting aliases are rejected."
         },
         "to_path": {
           "type": "string",
@@ -1033,7 +1041,7 @@
   },
   {
     "name": "cccc_apply_patch",
-    "description": "Codex-style file patch tool for structural or multi-file edits. Use *** Begin Patch / *** Add File / *** Update File / *** Delete File / *** End Patch. File paths must be relative to the active workspace root. For exact small edits, prefer cccc_repo_edit replace/multi_replace with expected_sha256.",
+    "description": "Codex-style file patch tool for structural or multi-file edits: *** Begin Patch, Add/Update/Delete File, optional Move to, @@ exact context anchors, End of File, End Patch. Paths are workspace-relative; new parent directories are supported. Exact whole-line matching, ordered hunks, preserved line endings and file permissions. Unanchored ambiguous hunks and existing move destinations are rejected. All sections are validated before writes; OS failures can still leave partial multi-file changes, which the error reports. For small edits, use cccc_repo_edit with expected_sha256.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true
@@ -1107,7 +1115,7 @@
   },
   {
     "name": "cccc_exec_command",
-    "description": "Start a long-running or interactive foreground process in the group's active workspace. Like cccc_shell, command strings use shell-style quoting but execute the program directly; operators and expansions require an explicit installed shell (e.g. sh -c on Unix or powershell.exe -NoProfile -Command on Windows). Returns a session_id; use cccc_write_stdin to read output, send input or terminate. Use cccc_shell for short one-shot commands.",
+    "description": "Start a long-running or interactive foreground process in the group's active workspace. Like cccc_shell, command strings use shell-style quoting but execute the program directly; operators and expansions require an explicit installed shell (e.g. sh -c on Unix or powershell.exe -NoProfile -Command on Windows). Returns session_id, status, initial output, cursor, has_more, cursor_expired, timed_out and closed. Waits up to yield_time_ms for output or exit. timeout_s is a hard lifetime limit (default/max 600 seconds), enforced without polling. Use cccc_write_stdin for incremental output/input/termination until closed=true, even when status.running=false but has_more=true. Output is bounded; max_output_bytes may extend by up to 3 bytes to finish a UTF-8 character. At most 64 sessions per host/Home; abandoned results expire 10 minutes after the command deadline. Use cccc_shell for short one-shot commands.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true
@@ -1166,7 +1174,7 @@
   },
   {
     "name": "cccc_write_stdin",
-    "description": "Writes characters to an existing cccc_exec_command session or polls it for more output.",
+    "description": "Write input or poll a cccc_exec_command session for new output only, waiting up to yield_time_ms. Returns status, output, cursor, has_more, cursor_expired, timed_out and closed. Continue polling until closed=true; stopped commands may still have unread pages. cursor_expired=true means older bytes exceeded the 2 MB retained buffer. max_output_bytes may extend by up to 3 bytes to finish a UTF-8 character. terminate=true stops the process tree and returns remaining output; input is ignored when terminating. Calls do not extend the original timeout_s. Do not automatically replay input after an uncertain transport failure.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true

@@ -598,11 +598,9 @@ button[class*="bg-cyan"]:active:not(:disabled) {
    Scrollbar Styling
    ============================================ */
 
-/* Keep the conversation and its composer aligned on wide workspaces. */
+/* Let the conversation, filters and composer use their available workspace. */
 .chat-reading-width {
   width: 100%;
-  max-width: 76rem;
-  margin-inline: auto;
 }
 
 /* Hide scrollbar utility */

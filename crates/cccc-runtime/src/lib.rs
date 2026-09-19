@@ -1,6 +1,7 @@
 mod cancellation;
 mod command;
 mod command_output;
+mod command_session;
 pub mod deepseek_acp;
 pub mod deepseek_supervisor;
 mod executable;
@@ -48,6 +49,7 @@ pub use command::{
     is_canonical_deepseek_runtime_manifest,
 };
 pub use command_output::{CapturedOutput, capture_command, capture_command_blocking};
+pub use command_session::CommandSession;
 pub use executable::{prepare_pty_command, resolve_command_executable, resolve_executable_in_path};
 pub use history_access::{
     active_history_replay, active_history_since, bracketed_paste_enabled, clear, history,

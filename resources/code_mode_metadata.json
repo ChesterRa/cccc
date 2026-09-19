@@ -117,8 +117,9 @@
   },
   "help_compact_notes": {
     "repo": [
-      "Use cccc_repo(action='search') to find candidate files or symbols before broad reads.",
-      "Use cccc_repo(action='read') to inspect text and get sha256.",
+      "Use cccc_repo(action='search', path=..., include_globs=...) to narrow candidate files. Search is case-insensitive by default; inspect incomplete, skipped_files and truncated_reason before treating an empty result as no match.",
+      "Use cccc_repo(action='read') for bounded text and whole-file sha256. Continue at next_start_line; if partial_last_line is true, reread that line with a larger max_bytes instead of skipping it.",
+      "Use list for immediate entries or list_dir with depth; page sorted results using next_offset with the same filters. If scan_truncated, narrow path instead. Traversal does not follow symlinks.",
       "Use cccc_repo_edit(action='replace'|'multi_replace', expected_sha256=...) for exact small edits.",
       "Use cccc_apply_patch only for Codex *** Begin Patch file patches.",
       "After edits, inspect cccc_git(action='diff') and run focused validation."
@@ -131,8 +132,8 @@
     ],
     "shell": [
       "Use cccc_shell for short one-shot commands.",
-      "Use cccc_exec_command plus cccc_write_stdin for long-running or interactive commands.",
-      "Keep cwd under the active scope and cap output with max_output_bytes."
+      "Use cccc_exec_command plus cccc_write_stdin for commands lasting up to timeout_s (default/max 600 seconds). Consume initial output, then poll incrementally until closed=true, including unread pages after exit.",
+      "Keep cwd under the active scope and cap output with max_output_bytes. Check timed_out and cursor_expired; never infer success from empty output or replay uncertain input."
     ],
     "message": [
       "Visible CCCC delivery must use cccc_message_send or cccc_message_reply.",

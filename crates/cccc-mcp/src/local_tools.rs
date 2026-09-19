@@ -15,11 +15,19 @@ pub async fn call(
 ) -> Result<Value, ToolCallError> {
     let root = scope(client, &args).await?;
     let payload = match name {
-        "cccc_repo" | "cccc_repo_edit" => crate::repo::call(&root, action(&args), &args)?,
+        "cccc_repo" | "cccc_repo_edit" => {
+            let operation = action(&args).to_owned();
+            let tool = name.to_owned();
+            tokio::task::spawn_blocking(move || {
+                crate::repo::call_tool(&root, &tool, &operation, &args)
+            })
+            .await
+            .map_err(|error| format!("repository task failed: {error}"))??
+        }
         "cccc_shell" => shell(&root, &args).await?,
         "cccc_git" => git(&root, &args).await?,
-        "cccc_exec_command" => crate::local_sessions::start(home, &root, &args)?,
-        "cccc_write_stdin" => crate::local_sessions::write(home, &args)?,
+        "cccc_exec_command" => crate::local_sessions::start(home, &root, &args).await?,
+        "cccc_write_stdin" => crate::local_sessions::write(home, &args).await?,
         "cccc_code_exec" => crate::code_mode::start(home, client, &root, &args).await?,
         "cccc_code_wait" => crate::code_mode::wait(home, client, &args).await?,
         "cccc_apply_patch" => apply_patch(&root, &args).await?,
@@ -173,13 +181,14 @@ fn append_git_paths(
     Ok(())
 }
 
-async fn apply_patch(root: &Path, args: &Map<String, Value>) -> Result<Value, String> {
+pub(super) async fn apply_patch(root: &Path, args: &Map<String, Value>) -> Result<Value, String> {
     let patch = args
         .get("patch")
+        .or_else(|| args.get("input"))
         .and_then(Value::as_str)
         .ok_or("patch is required")?;
     if patch.trim_start().starts_with("*** Begin Patch") {
-        let changed = apply_codex_patch(root, patch)?;
+        let changed = crate::local_patch::apply(root, patch)?;
         return Ok(json!({"applied":true,"files":changed}));
     }
     let mut command = std::process::Command::new("git");
@@ -196,126 +205,6 @@ async fn apply_patch(root: &Path, args: &Map<String, Value>) -> Result<Value, St
         return Err(String::from_utf8_lossy(&output.stderr).into_owned());
     }
     Ok(json!({"applied":true}))
-}
-
-enum PatchChange {
-    Write(PathBuf, Vec<u8>),
-    Delete(PathBuf),
-}
-
-fn apply_codex_patch(root: &Path, patch: &str) -> Result<Vec<String>, String> {
-    let lines = patch.lines().collect::<Vec<_>>();
-    if lines.first().copied() != Some("*** Begin Patch")
-        || lines.last().copied() != Some("*** End Patch")
-    {
-        return Err(
-            "Codex patch must start with *** Begin Patch and end with *** End Patch".into(),
-        );
-    }
-    let mut index = 1;
-    let mut changes = Vec::new();
-    let mut names = Vec::new();
-    while index + 1 < lines.len() {
-        let header = lines[index];
-        let (kind, raw_path) = if let Some(path) = header.strip_prefix("*** Add File: ") {
-            ("add", path)
-        } else if let Some(path) = header.strip_prefix("*** Update File: ") {
-            ("update", path)
-        } else if let Some(path) = header.strip_prefix("*** Delete File: ") {
-            ("delete", path)
-        } else {
-            return Err(format!("invalid Codex patch section: {header}"));
-        };
-        if raw_path.trim().is_empty() {
-            return Err("patch path is required".into());
-        }
-        index += 1;
-        let start = index;
-        while index + 1 < lines.len() && !lines[index].starts_with("*** ") {
-            index += 1;
-        }
-        let body = &lines[start..index];
-        let path = crate::repo::resolve(root, raw_path, kind == "add")?;
-        match kind {
-            "add" => {
-                if path.exists() {
-                    return Err(format!("file already exists: {raw_path}"));
-                }
-                let mut content = body
-                    .iter()
-                    .map(|line| {
-                        line.strip_prefix('+')
-                            .ok_or_else(|| "added file lines must start with +".to_owned())
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join("\n");
-                if !body.is_empty() {
-                    content.push('\n');
-                }
-                changes.push(PatchChange::Write(path, content.into_bytes()));
-            }
-            "delete" => changes.push(PatchChange::Delete(path)),
-            "update" => {
-                let current = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
-                let updated = apply_hunks(current, body)?;
-                changes.push(PatchChange::Write(path, updated.into_bytes()));
-            }
-            _ => unreachable!(),
-        }
-        names.push(raw_path.to_owned());
-    }
-    for change in changes {
-        match change {
-            PatchChange::Write(path, data) => {
-                cccc_core::fs::atomic_write(&path, &data).map_err(|error| error.to_string())?
-            }
-            PatchChange::Delete(path) => {
-                std::fs::remove_file(path).map_err(|error| error.to_string())?
-            }
-        }
-    }
-    Ok(names)
-}
-
-fn apply_hunks(mut current: String, body: &[&str]) -> Result<String, String> {
-    let mut index = 0;
-    while index < body.len() {
-        if !body[index].starts_with("@@") {
-            return Err("update patch requires @@ hunk headers".into());
-        }
-        index += 1;
-        let start = index;
-        while index < body.len() && !body[index].starts_with("@@") {
-            index += 1;
-        }
-        let mut old = Vec::new();
-        let mut new = Vec::new();
-        for line in &body[start..index] {
-            if line.starts_with("\\ No newline") {
-                continue;
-            }
-            let (marker, content) = line.split_at(line.len().min(1));
-            match marker {
-                " " => {
-                    old.push(content);
-                    new.push(content);
-                }
-                "-" => old.push(content),
-                "+" => new.push(content),
-                _ => return Err("hunk lines must start with space, +, or -".into()),
-            }
-        }
-        let old = old.join("\n");
-        let new = new.join("\n");
-        if old.is_empty() {
-            return Err("update hunk needs context or removed lines".into());
-        }
-        if current.matches(&old).count() != 1 {
-            return Err("patch hunk context must match exactly once".into());
-        }
-        current = current.replacen(&old, &new, 1);
-    }
-    Ok(current)
 }
 
 async fn file(
@@ -478,7 +367,8 @@ fn timeout(args: &Map<String, Value>) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_codex_patch, command, file_message_mode, timeout};
+    use super::{command, file_message_mode, timeout};
+    use crate::local_patch::apply as apply_codex_patch;
     use serde_json::json;
 
     #[cfg(unix)]

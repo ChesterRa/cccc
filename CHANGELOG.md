@@ -7,12 +7,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Fixed
+- Repository inspection honors scope, filters, case, context, pagination and output budgets, with explicit incomplete-result and continuation details. Traversal does not follow symlinks; the read-only tool rejects editing actions, and documented path aliases work across reads and edits.
+- Web Model command sessions honor wait times, hard timeouts and output budgets, return incremental output, and keep final pages readable after exit. Timeout/termination and host cleanup preserve ownership without relying on Actor history caches.
+- Local editing returns whole-file hashes for stale-write checks, validates batch replacements before writing, and preserves executable file permissions. Codex-style patches support exact anchors, ordered hunks, EOF markers, moves and new directories while rejecting ambiguous edits and destination conflicts.
 - Web Model code cells accept import-like text in strings, comments and templates while keeping Node module loading unavailable.
 - Repository `mkdir` honors `exist_ok` (true by default) without accepting file conflicts or paths outside the active workspace.
 - Browser page enumeration skips stale handles only after a browser-level check confirms the target disappeared; connection failures remain errors and saved profiles are preserved.
 - Local command tool descriptions make direct execution explicit. `cccc_shell` honors workspace-relative `cwd`, child `env`, output limits and the documented default timeout; session commands share the same directory and environment handling.
 
 ### Changed
+- Web conversations, filters and the composer use the available workspace width. Long messages leave an opposite-side gutter that adapts to the message area, making sent and received messages easier to distinguish without fixed bubble-width caps. Short messages retain their natural sizing, and reading position is preserved when the message area resizes.
 - Voice diagnostics distinguish Realtime request/TLS failures and managed Codex WebSocket protocol failures, including an abrupt close without a closing handshake. Reports retain bounded categories and OS error codes without private error text; retry and session-lifecycle behavior is unchanged.
 
 ## [0.4.40] — Unreleased

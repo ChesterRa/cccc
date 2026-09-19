@@ -1,25 +1,44 @@
 use cccc_contracts::RunnerKind;
 use cccc_core::HomeLayout;
+use cccc_runtime::CommandSession;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-#[derive(Clone)]
-struct SessionOwner {
+const MAX_SESSIONS_PER_HOME: usize = 64;
+const FINISHED_RETENTION: Duration = Duration::from_secs(600);
+
+struct LocalSession {
     home: PathBuf,
     group_id: String,
+    command: CommandSession,
+    io: tokio::sync::Mutex<()>,
+    cursor: Mutex<u64>,
+    closed: AtomicBool,
+    timed_out: AtomicBool,
+    cleanup_error: Mutex<Option<String>>,
 }
 
-pub fn start(home: &HomeLayout, root: &Path, args: &Map<String, Value>) -> Result<Value, String> {
+type Sessions = HashMap<String, Arc<LocalSession>>;
+
+pub async fn start(
+    home: &HomeLayout,
+    root: &Path,
+    args: &Map<String, Value>,
+) -> Result<Value, String> {
+    let wait = wait_time(args)?;
+    let limit = output_limit(args)?;
+    let timeout = Duration::from_secs(integer(args, "timeout_s", 600, 1, 600)?);
     let session_id = format!("s_{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
     let group_id = args
         .get("group_id")
         .and_then(Value::as_str)
         .ok_or("group_id is required")?
         .to_owned();
-    let mut owned = sessions().lock().map_err(|_| "session lock poisoned")?;
-    let status = cccc_runtime::start(cccc_runtime::LaunchSpec {
+    let spec = cccc_runtime::LaunchSpec {
         group_id: group_id.clone(),
         actor_id: session_id.clone(),
         runner: RunnerKind::Headless,
@@ -28,59 +47,169 @@ pub fn start(home: &HomeLayout, root: &Path, args: &Map<String, Value>) -> Resul
         env: super::local_tools::command_env(args)?,
         cols: 120,
         rows: 40,
-    })
-    .map_err(|error| error.to_string())?;
-    owned.insert(
-        session_id.clone(),
-        SessionOwner {
+    };
+    let session = {
+        let mut owned = sessions().lock().map_err(|_| "session lock poisoned")?;
+        if owned.values().filter(|s| s.home == home.root()).count() >= MAX_SESSIONS_PER_HOME {
+            return Err(
+                "local command session limit reached; finish or terminate an existing session"
+                    .into(),
+            );
+        }
+        // Registration and expiration are installed before the first await, so
+        // cancelling a start request cannot leave an unowned, unbounded child.
+        let session = Arc::new(LocalSession {
             home: home.root().to_owned(),
             group_id,
-        },
-    );
-    Ok(json!({"session_id":session_id,"status":status}))
+            command: CommandSession::start(spec).map_err(|e| e.to_string())?,
+            io: tokio::sync::Mutex::new(()),
+            cursor: Mutex::new(0),
+            closed: AtomicBool::new(false),
+            timed_out: AtomicBool::new(false),
+            cleanup_error: Mutex::new(None),
+        });
+        owned.insert(session_id.clone(), Arc::clone(&session));
+        schedule_expiration(session_id.clone(), &session, timeout);
+        session
+    };
+    poll(&session_id, session, wait, limit, None, false).await
 }
 
-pub fn write(home: &HomeLayout, args: &Map<String, Value>) -> Result<Value, String> {
-    let (session_id, group_id) = session(home, args)?;
-    if let Some(data) = args.get("chars").and_then(Value::as_str) {
-        cccc_runtime::write(&group_id, &session_id, data.as_bytes())
-            .map_err(|error| error.to_string())?;
-    }
-    if args
+pub async fn write(home: &HomeLayout, args: &Map<String, Value>) -> Result<Value, String> {
+    let wait = wait_time(args)?;
+    let limit = output_limit(args)?;
+    let (id, session) = session(home, args)?;
+    let chars = args
+        .get("chars")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    let terminate = args
         .get("terminate")
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        let status =
-            cccc_runtime::stop(&group_id, &session_id).map_err(|error| error.to_string())?;
-        remove_session(&session_id)?;
-        return Ok(json!({"session_id":session_id,"status":status}));
-    }
-    payload(&group_id, &session_id)
+        .unwrap_or(false);
+    poll(&id, session, wait, limit, chars, terminate).await
 }
 
-fn payload(group_id: &str, session_id: &str) -> Result<Value, String> {
-    let status = cccc_runtime::status(group_id, session_id).map_err(|error| error.to_string())?;
-    let history = cccc_runtime::history(group_id, session_id, None, 2_000_000)
-        .map_err(|error| error.to_string())?;
-    if !status.running {
-        cccc_runtime::stop(group_id, session_id).map_err(|error| error.to_string())?;
-        remove_session(session_id)?;
+async fn poll(
+    id: &str,
+    session: Arc<LocalSession>,
+    wait: Duration,
+    limit: usize,
+    chars: Option<String>,
+    terminate: bool,
+) -> Result<Value, String> {
+    // Stop must not queue behind a long poll or blocked stdin write.
+    if terminate {
+        let command = session.command.clone();
+        blocking(move || command.stop().map_err(|e| e.to_string())).await?;
+        *session
+            .cleanup_error
+            .lock()
+            .map_err(|_| "session lock poisoned")? = None;
     }
-    Ok(
-        json!({"session_id":session_id,"status":status,"output":history.data,"cursor":history.end_cursor}),
-    )
+    let _io = session.io.lock().await;
+    if session.closed.load(Ordering::Acquire) {
+        if terminate {
+            let command = session.command.clone();
+            let status = blocking(move || command.status().map_err(|e| e.to_string())).await?;
+            return Ok(
+                json!({"session_id":id,"status":status,"output":"","closed":true,
+                "cursor":*session.cursor.lock().map_err(|_| "session lock poisoned")?,
+                "has_more":false,"cursor_expired":false,"timed_out":session.timed_out.load(Ordering::Acquire)}),
+            );
+        }
+        return Err("session is closed".into());
+    }
+    if !terminate && let Some(chars) = chars {
+        let command = session.command.clone();
+        blocking(move || command.write(chars.as_bytes()).map_err(|e| e.to_string())).await?;
+    }
+    let deadline = Instant::now() + wait;
+    loop {
+        if let Some(error) = session
+            .cleanup_error
+            .lock()
+            .map_err(|_| "session lock poisoned")?
+            .as_ref()
+        {
+            return Err(format!("command cleanup failed: {error}"));
+        }
+        let cursor = *session.cursor.lock().map_err(|_| "session lock poisoned")?;
+        let command = session.command.clone();
+        let (status, page) = blocking(move || {
+            let status = command.status().map_err(|e| e.to_string())?;
+            let page = command
+                .history_since(cursor, limit)
+                .map_err(|e| e.to_string())?;
+            Ok((status, page))
+        })
+        .await?;
+        if !page.data.is_empty() || !status.running || Instant::now() >= deadline {
+            *session.cursor.lock().map_err(|_| "session lock poisoned")? = page.end_cursor;
+            let closed = !status.running && !page.has_more;
+            if closed {
+                session.closed.store(true, Ordering::Release);
+                remove_session(id)?;
+            }
+            return Ok(
+                json!({"session_id":id,"status":status,"output":page.data,"cursor":page.end_cursor,
+                "has_more":page.has_more,"cursor_expired":page.cursor_expired,"closed":closed,
+                "timed_out":session.timed_out.load(Ordering::Acquire)}),
+            );
+        }
+        tokio::time::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(25)),
+        )
+        .await;
+    }
 }
 
-fn remove_session(session_id: &str) -> Result<(), String> {
+fn schedule_expiration(id: String, session: &Arc<LocalSession>, timeout: Duration) {
+    let weak = Arc::downgrade(session);
+    tokio::spawn(async move {
+        tokio::time::sleep(timeout).await;
+        let Some(session) = weak.upgrade() else {
+            return;
+        };
+        let result = blocking(move || {
+            if session.command.status().map_err(|e| e.to_string())?.running {
+                session.timed_out.store(true, Ordering::Release);
+            }
+            session.command.stop().map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .await;
+        if let Some(session) = weak.upgrade() {
+            if let Err(error) = result {
+                if let Ok(mut stored) = session.cleanup_error.lock() {
+                    *stored = Some(error);
+                }
+            }
+        }
+        // Bound abandoned completed results; no polling creates new runtime work.
+        tokio::time::sleep(FINISHED_RETENTION).await;
+        if let Some(session) = weak.upgrade() {
+            session.closed.store(true, Ordering::Release);
+            let _ = remove_session(&id);
+        }
+    });
+}
+
+fn remove_session(id: &str) -> Result<(), String> {
     sessions()
         .lock()
         .map_err(|_| "session lock poisoned")?
-        .remove(session_id);
+        .remove(id);
     Ok(())
 }
 
-fn session(home: &HomeLayout, args: &Map<String, Value>) -> Result<(String, String), String> {
+fn session(
+    home: &HomeLayout,
+    args: &Map<String, Value>,
+) -> Result<(String, Arc<LocalSession>), String> {
     let id = args
         .get("session_id")
         .and_then(Value::as_str)
@@ -95,41 +224,74 @@ fn session(home: &HomeLayout, args: &Map<String, Value>) -> Result<(String, Stri
     if owner.home != home.root() {
         return Err("session does not belong to the requested home".into());
     }
-    let group = owner.group_id;
     if args
         .get("group_id")
         .and_then(Value::as_str)
-        .is_some_and(|requested| requested != group)
+        .is_some_and(|group| group != owner.group_id)
     {
         return Err("session does not belong to the requested group".into());
     }
-    Ok((id, group))
+    Ok((id, owner))
 }
 
-fn sessions() -> &'static Mutex<HashMap<String, SessionOwner>> {
-    static SESSIONS: OnceLock<Mutex<HashMap<String, SessionOwner>>> = OnceLock::new();
+fn sessions() -> &'static Mutex<Sessions> {
+    static SESSIONS: OnceLock<Mutex<Sessions>> = OnceLock::new();
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// The host drains requests before shutdown. Remove only this Home's local tools;
-/// the same process can also contain a Voice Analyst or another host's sessions.
+fn integer(
+    args: &Map<String, Value>,
+    name: &str,
+    default: u64,
+    min: u64,
+    max: u64,
+) -> Result<u64, String> {
+    let Some(value) = args.get(name) else {
+        return Ok(default);
+    };
+    value
+        .as_u64()
+        .filter(|v| (min..=max).contains(v))
+        .ok_or_else(|| format!("{name} must be an integer between {min} and {max}"))
+}
+fn wait_time(args: &Map<String, Value>) -> Result<Duration, String> {
+    Ok(Duration::from_millis(integer(
+        args,
+        "yield_time_ms",
+        1000,
+        0,
+        30000,
+    )?))
+}
+fn output_limit(args: &Map<String, Value>) -> Result<usize, String> {
+    Ok(integer(args, "max_output_bytes", 200000, 1, 1000000)? as usize)
+}
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// End only this host/Home's commands, never Actor or Analyst sessions.
 pub fn shutdown(home: &HomeLayout) -> Result<(), String> {
     let owned = {
         let mut sessions = sessions().lock().map_err(|_| "session lock poisoned")?;
         let ids = sessions
             .iter()
-            .filter(|(_, owner)| owner.home == home.root())
+            .filter(|(_, s)| s.home == home.root())
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
         ids.into_iter()
-            .filter_map(|id| sessions.remove(&id).map(|owner| (id, owner)))
+            .filter_map(|id| sessions.remove(&id))
             .collect::<Vec<_>>()
     };
     let mut errors = Vec::new();
-    for (id, owner) in owned {
-        match cccc_runtime::stop(&owner.group_id, &id) {
-            Ok(_) | Err(cccc_runtime::RuntimeError::NotFound(..)) => {}
-            Err(error) => errors.push(error.to_string()),
+    for session in owned {
+        session.closed.store(true, Ordering::Release);
+        if let Err(error) = session.command.stop() {
+            errors.push(error.to_string());
         }
     }
     if errors.is_empty() {
@@ -140,197 +302,5 @@ pub fn shutdown(home: &HomeLayout) -> Result<(), String> {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-
-    fn run_isolated(name: &str) -> bool {
-        const CASE_ENV: &str = "CCCC_MCP_LOCAL_SESSION_TEST";
-        if std::env::var(CASE_ENV).as_deref() == Ok(name) {
-            return false;
-        }
-        // Other MCP tests embed a daemon, whose shutdown intentionally stops
-        // its process-wide Runtime registry. Test ownership in a separate host.
-        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
-            .args([
-                "--exact",
-                &format!("local_sessions::tests::{name}"),
-                "--nocapture",
-            ])
-            .env(CASE_ENV, name)
-            .output()
-            .expect("isolated ownership test");
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        true
-    }
-
-    #[tokio::test]
-    async fn host_shutdown_releases_its_local_command_session() {
-        if run_isolated("host_shutdown_releases_its_local_command_session") {
-            return;
-        }
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let group_id = format!("g_{}", uuid::Uuid::new_v4().simple());
-        let args = json!({"group_id":group_id,"command":["sh","-c","sleep 60"]})
-            .as_object()
-            .cloned()
-            .expect("args");
-        let started = start(&home, temp.path(), &args).expect("start local command");
-        let id = started["session_id"].as_str().expect("session id");
-        crate::shutdown(&home).await;
-        let still_running = cccc_runtime::status(&group_id, id).is_ok_and(|status| status.running);
-        let _ = cccc_runtime::stop(&group_id, id);
-        let _ = remove_session(id);
-        assert!(
-            !still_running,
-            "MCP shutdown left its command session running"
-        );
-    }
-
-    #[tokio::test]
-    async fn shutdown_and_access_are_scoped_to_the_local_tool_owner() {
-        if run_isolated("shutdown_and_access_are_scoped_to_the_local_tool_owner") {
-            return;
-        }
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home-one")).expect("home");
-        let other = HomeLayout::from_path(temp.path().join("home-two")).expect("other home");
-        let group_id = format!("g_{}", uuid::Uuid::new_v4().simple());
-        let args = json!({"group_id":group_id,"command":["sh","-c","sleep 60"]})
-            .as_object()
-            .cloned()
-            .expect("args");
-        let first = start(&home, temp.path(), &args).expect("first tool");
-        let second = start(&other, temp.path(), &args).expect("second tool");
-        let first_id = first["session_id"].as_str().expect("first id");
-        let second_id = second["session_id"].as_str().expect("second id");
-        let unrelated = format!("actor_{}", uuid::Uuid::new_v4().simple());
-        cccc_runtime::start(cccc_runtime::LaunchSpec {
-            group_id: group_id.clone(),
-            actor_id: unrelated.clone(),
-            runner: RunnerKind::Headless,
-            command: vec!["sh".into(), "-c".into(), "sleep 60".into()],
-            cwd: temp.path().into(),
-            env: Default::default(),
-            cols: 80,
-            rows: 24,
-        })
-        .expect("unrelated host runtime");
-        let foreign = write(
-            &other,
-            &json!({"group_id":group_id,"session_id":first_id})
-                .as_object()
-                .cloned()
-                .expect("args"),
-        );
-        crate::shutdown(&home).await;
-        let first_gone = cccc_runtime::status(&group_id, first_id).is_err();
-        let second_running =
-            cccc_runtime::status(&group_id, second_id).is_ok_and(|status| status.running);
-        let unrelated_running =
-            cccc_runtime::status(&group_id, &unrelated).is_ok_and(|status| status.running);
-        crate::shutdown(&other).await;
-        let _ = cccc_runtime::stop(&group_id, first_id);
-        let _ = cccc_runtime::stop(&group_id, &unrelated);
-        assert!(
-            foreign
-                .expect_err("foreign Home cannot access a local session")
-                .contains("requested home")
-        );
-        assert!(first_gone);
-        assert!(
-            second_running && unrelated_running,
-            "shutdown stopped a different owner"
-        );
-    }
-
-    #[tokio::test]
-    async fn session_commands_honor_workdir_and_environment() {
-        if run_isolated("session_commands_honor_workdir_and_environment") {
-            return;
-        }
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let cwd = temp.path().join("subdir");
-        std::fs::create_dir(&cwd).expect("fixture operation");
-        let group_id = format!("g_{}", uuid::Uuid::new_v4().simple());
-        let args = json!({"group_id":group_id,"command":["sh","-c","printf '%s\\n%s' \"$PWD\" \"$CCCC_TOOL_CONTRACT_VALUE\""],"workdir":"subdir","env":{"CCCC_TOOL_CONTRACT_VALUE":"fixture-session"}});
-        let started =
-            start(&home, temp.path(), args.as_object().expect("arguments")).expect("session");
-        let id = started["session_id"].as_str().expect("string result");
-        let query = json!({"group_id":group_id,"session_id":id});
-        let output = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            loop {
-                let output = write(&home, query.as_object().expect("arguments")).expect("poll");
-                if output["status"]["running"] == false {
-                    break output;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        })
-        .await;
-        shutdown(&home).expect("cleanup");
-        let output = output.expect("finished");
-        let text = output["output"].as_str().expect("string result");
-        assert!(
-            text.contains(
-                cwd.canonicalize()
-                    .expect("canonical fixture directory")
-                    .to_str()
-                    .expect("UTF-8 fixture path")
-            ),
-            "{text}"
-        );
-        assert!(text.contains("fixture-session"), "{text}");
-        assert_eq!(output["status"]["exit_code"], 0);
-    }
-
-    #[tokio::test]
-    async fn observing_command_exit_releases_the_runtime_but_returns_its_final_output() {
-        if run_isolated("observing_command_exit_releases_the_runtime_but_returns_its_final_output")
-        {
-            return;
-        }
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let group_id = format!("g_{}", uuid::Uuid::new_v4().simple());
-        let args = json!({"group_id":group_id,"command":["sh","-c","printf local-finished"]})
-            .as_object()
-            .cloned()
-            .expect("args");
-        let started = start(&home, temp.path(), &args).expect("command");
-        let id = started["session_id"].as_str().expect("session id");
-        let query = json!({"group_id":group_id,"session_id":id})
-            .as_object()
-            .cloned()
-            .expect("query");
-        let final_output = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            loop {
-                let output = write(&home, &query).expect("poll command");
-                if output["status"]["running"] == false {
-                    break output;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        })
-        .await;
-        let removed = cccc_runtime::status(&group_id, id).is_err();
-        crate::shutdown(&home).await;
-        let output = final_output.expect("command finished");
-        assert!(
-            output["output"]
-                .as_str()
-                .is_some_and(|text| text.contains("local-finished"))
-        );
-        assert!(
-            removed,
-            "completed local command stayed in the runtime registry"
-        );
-        assert!(write(&home, &query).is_err());
-    }
-}
+#[path = "local_sessions_tests.rs"]
+mod tests;

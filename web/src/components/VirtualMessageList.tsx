@@ -99,6 +99,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const onScrollSnapshotRef = useRef(onScrollSnapshot);
   const captureScrollSnapshotRef = useRef<() => ChatScrollSnapshot | null>(() => null);
   const remeasureRafRef = useRef<number | null>(null);
+  const contentWidthRef = useRef<number | null>(null);
   // Message ordering is resolved upstream in useChatTab. The virtual list
   // should render that order verbatim instead of maintaining a second,
   // divergent streaming-order cache locally.
@@ -222,20 +223,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     [isAtBottomRef],
   );
 
-  const setFollowMode = useCallback(
-    (next: ChatFollowMode) => {
-      followModeRef.current = next;
-    },
-    [followModeRef],
-  );
-
   const notifyRestoredAwayFromBottom = useCallback(() => {
     onScrollChange?.(false);
   }, [onScrollChange]);
-
-  const detachFollowModeForHistoryLoad = useCallback(() => {
-    setFollowMode("detached");
-  }, [setFollowMode]);
 
   const markAwayFromBottomForHistoryLoad = useCallback(() => {
     setAtBottom(false);
@@ -405,6 +395,18 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     [displayMessages, getMessageRowById, lastScrollTopRef, shouldVirtualize, virtualizer],
   );
   const anchorRestoration = useAnchorRestoration(applyRestoredAnchor, cancelPendingBottomScroll);
+
+  const setFollowMode = useCallback(
+    (next: ChatFollowMode) => {
+      if (next === "follow") anchorRestoration.cancel();
+      followModeRef.current = next;
+    },
+    [anchorRestoration, followModeRef],
+  );
+
+  const detachFollowModeForHistoryLoad = useCallback(() => {
+    setFollowMode("detached");
+  }, [setFollowMode]);
 
   const topHistoryLoad = useTopHistoryLoadCoordinator({
     compensation: prependCompensation,
@@ -776,13 +778,40 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const observedEl = contentRef.current;
     if (!scrollEl || !observedEl || typeof ResizeObserver === "undefined") return;
 
-    const observer = new ResizeObserver(() => {
+    const observer = new ResizeObserver(([entry]) => {
       // Observe the message content layer rather than the scroll container.
       // Images, streaming text, and expanded attachment lists change content height
       // without changing the container size; observing only the container misses bottom-follow updates.
       lastScrollTopRef.current = scrollEl.scrollTop;
       const previousContentSize = previousContentSizeRef.current;
       previousContentSizeRef.current = getCurrentContentSize();
+      const width = entry.contentRect.width;
+      const widthChanged =
+        width > 0 && contentWidthRef.current !== null && contentWidthRef.current !== width;
+      if (width > 0) contentWidthRef.current = width;
+      // Virtual rows can finish measuring after the scroll event without moving
+      // scrollTop. Refresh the anchor then, before a later width change uses it.
+      if (
+        width > 0 &&
+        !widthChanged &&
+        followModeRef.current === "detached" &&
+        !anchorRestoration.isActive()
+      ) {
+        latestSnapshotRef.current = captureScrollSnapshotRef.current();
+      }
+      const snapshot = latestSnapshotRef.current;
+      // Width changes reflow earlier messages, so the old pixel scroll offset
+      // no longer identifies the message being read. Reuse its saved anchor.
+      if (
+        widthChanged &&
+        followModeRef.current === "detached" &&
+        !shouldAutoScrollNow({ previousContentSize }) &&
+        !anchorRestoration.isActive() &&
+        snapshot?.mode === "detached" &&
+        snapshot.anchorId
+      ) {
+        anchorRestoration.begin({ anchorId: snapshot.anchorId, offsetPx: snapshot.offsetPx });
+      }
       anchorRestoration.correct();
 
       if (shouldAutoScrollNow({ previousContentSize })) {
@@ -800,8 +829,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     return () => observer.disconnect();
   }, [
     anchorRestoration,
+    followModeRef,
     getCurrentContentSize,
     lastScrollTopRef,
+    latestSnapshotRef,
     previousContentSizeRef,
     scheduleScroll,
     scrollToBottom,
@@ -948,6 +979,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         <button
           className="glass-panel absolute bottom-6 right-5 z-30 rounded-full p-3 shadow-xl transition-all duration-200 hover:shadow-2xl hover:scale-105 active:scale-95 animate-scale-in text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
           onClick={() => {
+            anchorRestoration.cancel();
             scrollToBottom({ force: true });
             onScrollButtonClick();
           }}

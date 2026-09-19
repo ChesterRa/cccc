@@ -698,9 +698,10 @@ export const MessageBubble = memo(
       <div
         className={classNames(
           "relative flex w-full min-w-0 gap-2 sm:gap-3 group",
+          // Scale the opposite gutter with the message column, leaving room beyond the desktop avatar.
           isUserMessage
-            ? "flex-col items-end sm:items-start sm:flex-row-reverse"
-            : "flex-col items-start sm:flex-row",
+            ? "flex-col items-end pl-[clamp(1.5rem,8%,2rem)] sm:items-start sm:flex-row-reverse sm:pl-[clamp(6rem,12%,12rem)]"
+            : "flex-col items-start pr-[clamp(1.5rem,8%,2rem)] sm:flex-row sm:pr-[clamp(6rem,12%,12rem)]",
           isOptimistic ? "opacity-95" : "",
         )}
       >
@@ -762,10 +763,7 @@ export const MessageBubble = memo(
         {/* Message Content */}
         <div
           className={classNames(
-            "flex min-w-0 flex-col w-full md:w-auto",
-            isUserMessage
-              ? "md:max-w-[min(42rem,78%)] xl:max-w-[min(44rem,72%)]"
-              : "md:max-w-[min(48rem,86%)] xl:max-w-[min(52rem,80%)]",
+            "flex min-w-0 max-w-full flex-col w-full md:w-auto",
             isUserMessage ? "items-end" : "items-start",
           )}
         >

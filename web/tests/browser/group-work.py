@@ -392,18 +392,24 @@ with tempfile.TemporaryDirectory(
         dimensions(1440)
         print("PASS settings choices/locales/scale, account scope, keyboard focus, dialog handoff, responsive dismissal and mobile reachability", flush=True)
 
-        # Wide conversations share their reading bounds with filters and composer.
+        # Conversations, filters and composer use their padded column, including
+        # the message log's native scrollbar gutters.
         dimensions(1920, 1000)
         time.sleep(0.3)
         assert js("""(() => {
           const filters=document.querySelector('[data-message-filters]');
           const log=document.querySelector('[data-group-message-view] [role=log]');
           const rows=log.querySelector('.chat-reading-width').getBoundingClientRect();
-          const input=document.querySelector('footer .chat-reading-width').getBoundingClientRect();
+          const footer=document.querySelector('footer');
+          const input=footer.querySelector('.chat-reading-width').getBoundingClientRect();
           const controls=filters.querySelector('.chat-reading-width').getBoundingClientRect();
+          const contentWidth=e=>e.clientWidth-parseFloat(getComputedStyle(e).paddingLeft)-parseFloat(getComputedStyle(e).paddingRight);
           return filters.getBoundingClientRect().bottom <= log.getBoundingClientRect().top + 1
-            && Math.abs(rows.left-input.left)<2 && Math.abs(rows.width-input.width)<2
-            && Math.abs(controls.left-input.left)<2 && rows.width<log.clientWidth-100;
+            && Math.abs(rows.width-contentWidth(log))<2
+            && Math.abs(input.width-contentWidth(footer))<2
+            && Math.abs(controls.width-contentWidth(filters))<2
+            && Math.abs(controls.left-input.left)<2
+            && Math.abs((rows.left+rows.right)-(input.left+input.right))<2;
         })()""")
         point_click('[data-group-presentation-trigger]')
         wait('!!document.querySelector("#group-side-panel")')

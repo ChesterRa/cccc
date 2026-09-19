@@ -379,6 +379,105 @@ test("Group menus preserve navigation and block duplicate lifecycle requests", a
   expect(await page.evaluate(() => groupWorkProbe.group.getState().groupDoc.group_id)).toBe("g2");
 });
 
+for (const count of [30, 120]) {
+  test(`reading position survives message width changes with ${count} messages`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await groupPage(page);
+    await page.evaluate((count) => {
+      groupWorkProbe.setSidebarCollapsed(true);
+      groupWorkProbe.ui.getState().setChatSidePanelLayout("g1", { compact: false, width: 420 });
+      groupWorkProbe.group.getState().setEvents(
+        Array.from({ length: count }, (_, i) => ({
+          id: `resize-${i}`,
+          ts: new Date(Date.UTC(2026, 8, 19, 0, i)).toISOString(),
+          group_id: "g1",
+          kind: "chat.message",
+          by: i % 2 ? "actor-1" : "user",
+          data: {
+            text: "Keep the current message visible when the available workspace changes. ".repeat(
+              ((i % 4) + 1) * 12,
+            ),
+            to: [i % 2 ? "user" : "actor-1"],
+            message_mode: "send",
+          },
+        })),
+        "g1",
+      );
+    }, count);
+    const log = page.locator('[data-group-message-view] [role="log"]');
+    const anchor = () =>
+      log.evaluate((element) => {
+        const top = element.getBoundingClientRect().top;
+        const row = [...element.querySelectorAll("[data-message-row]")].find(
+          (row) => row.getBoundingClientRect().bottom > top + 1,
+        );
+        return {
+          id: row?.dataset.messageId,
+          offset: row?.getBoundingClientRect().top - top,
+          width: element.clientWidth,
+          scrollTop: element.scrollTop,
+        };
+      });
+    const settledAnchor = async () => {
+      let previousTop;
+      let stableFrames = 0;
+      await expect
+        .poll(
+          async () => {
+            const current = await anchor();
+            stableFrames = current.scrollTop === previousTop ? stableFrames + 1 : 0;
+            previousTop = current.scrollTop;
+            return stableFrames;
+          },
+          { intervals: [50] },
+        )
+        .toBeGreaterThanOrEqual(2);
+      return anchor();
+    };
+    await expect(page.locator(`[data-message-id="resize-${count - 1}"]`)).toBeVisible();
+    await log.hover();
+    const end = await anchor();
+    await page.mouse.wheel(0, -1300);
+    await expect.poll(async () => (await anchor()).scrollTop).toBeLessThan(end.scrollTop - 1000);
+    const reading = await settledAnchor();
+    await page.locator("[data-group-presentation-trigger]").click();
+    await expect.poll(async () => (await anchor()).width).toBeLessThan(reading.width - 200);
+    const checkAnchor = async () => {
+      await expect.poll(async () => (await anchor()).id).toBe(reading.id);
+      await expect
+        .poll(async () => Math.abs((await anchor()).offset - reading.offset))
+        .toBeLessThan(2);
+    };
+    await checkAnchor();
+    await page.locator("[data-group-presentation-trigger]").click();
+    await expect.poll(async () => (await anchor()).width).toBe(reading.width);
+    await checkAnchor();
+    // A manual scroll must still cancel restoration rather than being pulled back.
+    await log.hover();
+    await page.mouse.wheel(0, -600);
+    await expect.poll(async () => (await anchor()).id).not.toBe(reading.id);
+    // Reading history remains detached even when sending; the bottom button
+    // explicitly takes over from anchor restoration.
+    const manualAnchor = await settledAnchor();
+    await page.locator("[data-group-presentation-trigger]").click();
+    await expect.poll(async () => (await anchor()).width).toBeLessThan(reading.width - 200);
+    await expect.poll(async () => (await anchor()).id).toBe(manualAnchor.id);
+    if (count === 120) {
+      const composer = page.getByRole("textbox", { name: "Message input" });
+      await composer.fill("Continue from here");
+      await composer.press("Control+Enter");
+      await expect(composer).toHaveValue("");
+      await expect.poll(async () => (await anchor()).id).toBe(manualAnchor.id);
+    }
+    await page.getByRole("button", { name: "Scroll to bottom", exact: true }).click();
+    await expect
+      .poll(() => log.evaluate((e) => e.scrollHeight - e.clientHeight - e.scrollTop))
+      .toBeLessThan(8);
+  });
+}
+
 test("message filters remain visible and mobile retains its status control", async ({ page }) => {
   await groupPage(page);
   const filters = page.locator("[data-message-filters]");

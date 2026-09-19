@@ -253,6 +253,93 @@ and retains at most 200,000 bytes per output stream; `max_output_bytes` can rais
 that limit to 1,000,000. Check the exit code and truncation flags before relying
 on command output.
 
+`cccc_exec_command` returns initial output and a `session_id`. `yield_time_ms`
+(default 1,000; 0–30,000) waits for new output or exit without delaying other
+sessions. `cccc_write_stdin` returns only output not previously consumed by that
+session. Its output budget defaults to 200,000 bytes (maximum 1,000,000); a UTF-8
+character may extend the budget by up to three bytes instead of being split.
+Both calls include `status`, `cursor`, `has_more`, `cursor_expired`, `timed_out`
+and `closed`. Continue polling until `closed=true`: an exited command can still
+have unread output pages. Empty output alone does not indicate completion.
+
+`timeout_s` is a **hard command lifetime**, default and maximum 600 seconds,
+and is enforced even without another tool call. Polling does not extend it.
+`terminate=true` stops the owned process tree and returns unread output; it does
+not also submit `chars`. The command retains a bounded 2 MB output window;
+`cursor_expired=true` explicitly reports overwritten unread history. Redirect
+large logs to a workspace file when the whole log is needed. At most 64 sessions
+are retained per host/Home; abandoned results expire ten minutes after the
+command deadline. Commands are not persistent service hosting. Transport failure
+or a cancelled wait does not prove that input was not executed; do not silently
+replay input or start the same command again.
+
+### Bounded repository inspection
+
+`cccc_repo` accepts only its declared read-only actions; editing requires
+`cccc_repo_edit` or `cccc_apply_patch`. `path` and `file_path` are aliases across
+reads and edits; supplying both with different values is an error. Move accepts
+`dest_path` or `to_path` (existing `new_path` callers remain supported).
+
+- `read` honors line ranges and `max_bytes` (default 200,000; maximum 1,000,000).
+  It streams the file to calculate the whole-original-file hash while retaining
+  only the bounded selected range. Text retains the existing LF-separated,
+  no-final-LF presentation. `truncated` means the requested range was not fully
+  returned; use `next_start_line`. If `partial_last_line=true`, that line is
+  incomplete: reread it with a larger budget rather than advancing past it. For
+  a line exceeding the maximum budget, use a focused shell command. A full-file
+  hash still requires reading the whole file, even when only one line is shown.
+- `search` honors a directory or single-file `path`, `case_sensitive` (false by
+  default), `regex`, `include_globs`, `exclude_globs`, `context_lines`, `limit`
+  (default 200; maximum 500) and `max_bytes`. Context appears in each hit's
+  `before`/`after` arrays. Result budgets count serialized hit bytes, excluding
+  response metadata. Oversized files (`max_file_bytes`, default 200,000; maximum
+  1,000,000), non-text files and unreadable paths are counted in `skipped_files`.
+  `incomplete=true` distinguishes skipped oversized/unreadable files or limits
+  from a complete search with no matches. `truncated_reason` identifies result,
+  output or scan limits; narrow the path/globs or adjust the corresponding limit.
+- `list` returns immediate entries; `list_dir` uses `depth` (default 2, maximum 8;
+  depth 1 is immediate children). Both return sorted, filtered entries with a
+  scope-relative `path`, honor `limit`/`max_bytes`, and use 1-indexed `offset` plus
+  `next_offset`. Pagination assumes the directory contents and filters are
+  unchanged. `scan_truncated=true` requires narrowing the path; no reliable next
+  offset is offered for a partially scanned tree. Unreadable paths are reported.
+
+Traversal excludes dot-prefixed entries unless `include_hidden=true`, and does
+not descend into `.git`, `target` or `node_modules`; explicitly targeting those
+directories remains possible. Globs are case-sensitive workspace-relative paths
+with `/` separators on every platform: `*` stays within a component, `**` crosses
+directories, and exclusions win. `.gitignore` is not implicitly applied. Listing
+can show symbolic links, but traversal never follows them. Explicit internal
+links remain usable after scope validation; external links are rejected.
+
+A traversal inspects at most 10,000 entries, and one search reads at most 64 MiB
+of file contents. Reaching those bounds is reported, never represented as a
+complete empty result. An output budget too small for even one hit or entry
+returns an actionable error. Inspection runs off the async request executor;
+there is no background index, external `rg` requirement or automatic retry.
+
+### Scoped editing
+
+`cccc_repo(action="read")` returns a SHA-256 of the **whole original file**, even
+for a line-range read. Supply it as `expected_sha256` for a subsequent exact edit.
+`multi_replace` validates ordered replacements in memory and writes the file once,
+so a rejected later replacement leaves the original untouched. `replace_all` is
+explicit; `expected_replacements` checks the match count. Existing file modes are
+preserved, including executable scripts.
+
+Codex-style `cccc_apply_patch` accepts exact `@@ context` anchors, ordered hunks,
+`*** End of File`, `*** Move to:` and additions in new directories. It preserves
+existing line endings and the final-newline convention. An unanchored hunk must
+match uniquely; an exact unique anchor searches forward for the first matching
+block. No whitespace or punctuation guessing is performed. Move destinations
+must not exist; combine edits to the same path into one section. All sections
+are checked before writing, but multiple files are not one filesystem transaction:
+if an OS write fails, inspect the reported completed paths before retrying.
+
+After changing connector tool metadata, restart the updated CCCC build, refresh
+the connection in ChatGPT, and verify the tools in a new conversation. Local
+MCP tests alone do not establish ChatGPT's cached metadata or model performance.
+
 `cccc_code_exec` treats JavaScript strings, comments, regular expressions and
 raw template text as data. Node module loading remains unavailable: static
 imports are invalid in the cell function, dynamic imports have no loader, and
@@ -268,8 +355,8 @@ other JavaScript errors; effects of earlier nested tool calls are not rolled bac
 - Only tools whose declared operation is read-only are annotated with `readOnlyHint: true`. Mixed-action and mutating tools remain unannotated so a client is not encouraged to bypass approval for a write path.
 - The ChatGPT Web Model `tools/list` is intentionally stable for ChatGPT registration. Direct calls remain limited to that advertised surface; hidden built-in capability-pack tools must pass through `cccc_capability_use` and its actor-role checks.
 - ChatGPT Web Model local-power tools (`cccc_repo_edit`, `cccc_shell`, `cccc_git`) are actor-bound to the single ChatGPT Web Model actor identity and constrained to the active workspace scope.
-- Local `cccc_shell`, `cccc_git`, and unified-diff `cccc_apply_patch` calls own finite commands. Timeout covers input, output, and process exit; cancelling the call ends its owned process tree. This does not undo changes already made by a command. Run persistent work in the foreground through `cccc_exec_command`, rather than leaving background children behind a completed shell.
-- Shell and Git results retain at most 2,000,000 bytes per output stream and report `stdout_truncated` / `stderr_truncated`. Excess output is drained within the same command deadline instead of accumulating in memory.
+- Local `cccc_shell`, `cccc_git`, and unified-diff `cccc_apply_patch` calls own finite commands. Timeout covers input, output, and process exit; cancelling the call ends its owned process tree. This does not undo changes already made by a command. Use `cccc_exec_command` for foreground work within its declared lifetime, rather than leaving background children behind a completed shell.
+- Shell results follow `max_output_bytes` (default 200,000); Git results retain at most 2,000,000 bytes per output stream and report `stdout_truncated` / `stderr_truncated`. Excess output is drained within the same command deadline instead of accumulating in memory.
 - Local `cccc_exec_command` sessions belong to the CCCC host process and Home. Host shutdown ends those commands; closing a browser tab does not. Cleanup leaves Actor/Analyst sessions and other hosts alone.
 - ChatGPT proactive delivery depends on the shared projected browser session and an active logged-in browser profile.
 - New ChatGPT chats are supported through a saved pending target: the first successful browser delivery commits the submitted batch, then CCCC waits for ChatGPT to expose the concrete `chatgpt.com/c/...` URL before binding future deliveries to that conversation. Ordinary browser history such as `last_tab_url` is diagnostic only and is never treated as a saved target.
