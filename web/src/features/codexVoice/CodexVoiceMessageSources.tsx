@@ -25,7 +25,7 @@ export function CodexVoiceMessageSources({
     let cancelled = false;
     let pending = false;
     const refresh = async () => {
-      if (pending) return;
+      if (pending || document.hidden) return;
       pending = true;
       try {
         const response = await fetchVoiceNotifications();
@@ -39,10 +39,15 @@ export function CodexVoiceMessageSources({
         pending = false;
       }
     };
+    const onVisibilityChange = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2000);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.clearInterval(timer);
     };
   }, [active]);

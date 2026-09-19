@@ -964,6 +964,7 @@
     "weixinStatusError": "ログイン失敗",
     "weixinStatusLoadFailed": "Weixin ログイン状態の取得に失敗しました。",
     "weixinStartFailed": "Weixin QR ログインの開始に失敗しました。",
+    "weixinBridgeStartFailed": "Weixin にはログイン済みですが、ブリッジを起動できませんでした。「開始」をクリックして再試行してください。",
     "weixinVerifyFailed": "Weixin ログイン確認コードの検証に失敗しました。",
     "weixinLogoutFailed": "Weixin からのログアウトに失敗しました。",
     "weixinHintIdle": "「QR ログイン開始」を押すと、ここに読み取れる QR コードが表示されます。",

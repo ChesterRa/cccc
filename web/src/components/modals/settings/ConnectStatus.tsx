@@ -22,22 +22,33 @@ export function ConnectStatus({
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
+    let pending = false;
     let timer: number | undefined;
     const controller = new AbortController();
     const refresh = async () => {
+      if (pending || document.hidden) return;
+      window.clearTimeout(timer);
+      pending = true;
       const result = await apiJson<{ connect: ConnectSnapshot | null }>("/api/v1/connect", {
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
       });
+      pending = false;
       if (cancelled) return;
       setFailed(!result.ok);
       setSnapshot(
         result.ok && result.result.connect?.device_id === deviceId ? result.result.connect : null,
       );
-      timer = window.setTimeout(() => void refresh(), 15000);
+      if (!document.hidden) timer = window.setTimeout(() => void refresh(), 15000);
     };
+    const onVisibilityChange = () => {
+      window.clearTimeout(timer);
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     void refresh();
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       controller.abort();
       window.clearTimeout(timer);
     };

@@ -579,3 +579,128 @@ test.describe("touch appearance controls", () => {
     await expect(theme).toBeFocused();
   });
 });
+
+async function installWeixinSettingsFixture(page) {
+  await page.evaluate(() => {
+    const original = window.fetch;
+    const fixture = (window.weixinSettingsFixture = {
+      requests: [],
+      loggedIn: true,
+      scanning: false,
+      enabled: true,
+      running: false,
+      failStart: false,
+    });
+    const login = () => ({
+      status: fixture.scanning ? "waiting_scan" : fixture.loggedIn ? "logged_in" : "idle",
+      logged_in: fixture.loggedIn,
+      running: fixture.scanning,
+      account_id: "fixture",
+      qrcode_url: fixture.scanning ? "fixture-qr" : "",
+    });
+    window.fetch = async (input, init) => {
+      const url = new URL(String(input), location.href);
+      const path = url.pathname;
+      const method = init?.method || "GET";
+      fixture.requests.push({ path, method });
+      if (!path.startsWith("/api/im/")) return original(input, init);
+      let result = {};
+      if (path === "/api/im/status")
+        result = {
+          group_id: "g1",
+          configured: true,
+          platform: "weixin",
+          enabled: fixture.enabled,
+          running: fixture.running,
+          subscribers: 1,
+        };
+      else if (path === "/api/im/config" && method === "GET")
+        result = { im: { platform: "weixin", weixin_account_id: "fixture" } };
+      else if (path === "/api/im/set") {
+        // The real config route stops the bridge before starting a new QR login.
+        fixture.enabled = false;
+        fixture.running = false;
+      } else if (path === "/api/im/weixin/login/start") {
+        fixture.loggedIn = false;
+        fixture.scanning = true;
+        result = login();
+      } else if (path === "/api/im/weixin/login/status") result = login();
+      else if (path === "/api/im/start") {
+        if (fixture.failStart)
+          return Response.json({
+            ok: false,
+            error: { code: "fixture", message: "Connection unavailable" },
+          });
+        fixture.enabled = true;
+        fixture.running = true;
+      } else if (path === "/api/im/stop") {
+        fixture.enabled = false;
+        fixture.running = false;
+      } else throw new Error(`Unexpected IM fixture request: ${method} ${path}`);
+      return Response.json({ ok: true, result });
+    };
+  });
+}
+
+test("settings browsing does not start saved Weixin connections or load unrelated configuration", async ({
+  page,
+}) => {
+  await groupPage(page);
+  await installWeixinSettingsFixture(page);
+  await page.evaluate("groupWorkProbe.openSettings('group', 'guidance')");
+  await expect(page.getByRole("button", { name: "IM Bridge", exact: true }).first()).toBeVisible();
+  const initial = await page.evaluate("weixinSettingsFixture.requests");
+  expect(initial.some((request) => request.path.startsWith("/api/im/"))).toBe(false);
+  expect(initial.some((request) => request.path === "/api/v1/observability")).toBe(false);
+  await page.getByRole("button", { name: "IM Bridge", exact: true }).first().click();
+  await expect(page.getByText("Login status: Logged in", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate("weixinSettingsFixture.requests.some(r=>r.path==='/api/im/start')"),
+  ).toBe(false);
+  await page.getByRole("button", { name: "Guidance", exact: true }).first().click();
+  await page.getByRole("button", { name: "IM Bridge", exact: true }).first().click();
+  await expect(page.getByText("Login status: Logged in", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(
+      "weixinSettingsFixture.requests.filter(r=>r.path==='/api/im/config').length",
+    ),
+  ).toBe(1);
+  expect(await page.evaluate("weixinSettingsFixture.requests.some(r=>r.method!=='GET')")).toBe(
+    false,
+  );
+});
+
+test("explicit Weixin login completes once and a failed bridge start remains retryable", async ({
+  page,
+}) => {
+  await groupPage(page);
+  await installWeixinSettingsFixture(page);
+  await page.evaluate("groupWorkProbe.openSettings('group', 'im')");
+  await expect(page.getByText("Login status: Logged in", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Regenerate QR Code", exact: true }).click();
+  await expect(page.getByText("Login status: Waiting for scan", { exact: true })).toBeVisible();
+  await page.evaluate(
+    "weixinSettingsFixture.loggedIn=true;weixinSettingsFixture.scanning=false;weixinSettingsFixture.failStart=true",
+  );
+  await expect(page.getByRole("alert")).toHaveText("Connection unavailable");
+  await expect(page.getByText("Login status: Logged in", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(
+      "weixinSettingsFixture.requests.filter(r=>r.path==='/api/im/start').length",
+    ),
+  ).toBe(1);
+  await page.evaluate("weixinSettingsFixture.failStart=false");
+  await page.getByRole("button", { name: "Start Bridge", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Stop Bridge", exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.getByRole("button", { name: "Stop Bridge", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Start Bridge", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Guidance", exact: true }).first().click();
+  await page.getByRole("button", { name: "IM Bridge", exact: true }).first().click();
+  await expect(page.getByText("Login status: Logged in", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(
+      "weixinSettingsFixture.requests.filter(r=>r.path==='/api/im/start').length",
+    ),
+  ).toBe(2);
+});

@@ -214,10 +214,15 @@ export function SettingsModal({
     },
     [],
   );
-  const weixinAutoStartRef = useRef(false);
+  // Only a login explicitly started in this modal may continue into bridge startup.
+  const weixinLoginOwner = useRef<{ scope: typeof imActionScope.current } | null>(null);
+  const imInitiallyLoaded = useRef(false);
+  const observabilityLoaded = useRef(false);
+  const imTabActive = !settingsTarget && scope === "group" && groupTab === "im";
+  const developerTabActive = !settingsTarget && scope === "global" && globalTab === "developer";
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Preserve ref ownership checks and legacy platform behavior; revisiting Mattermost must not revive stale continuations.
+  // Weixin login and Mattermost mutations belong to the initiating Group and platform visit.
   const currentIMAction = useCallback(() => {
     const scope = imActionScope.current;
     const edit = imMattermostEditSeq.current;
@@ -225,6 +230,7 @@ export function SettingsModal({
     if (imPlatform === "mattermost") imMattermostBusy.current = true;
     const isCurrent = () =>
       (imPlatform !== "mattermost" &&
+        imPlatform !== "weixin" &&
         imCurrentPlatform.current !== "mattermost" &&
         imMattermostVisitSeq.current === visit) ||
       imActionScope.current === scope;
@@ -253,6 +259,10 @@ export function SettingsModal({
 
   // Developer-mode debug views
   const [devActors, setDevActors] = useState<Actor[]>([]);
+  useEffect(() => {
+    setDevActors([]);
+    setTailActorId("");
+  }, [groupId]);
   const [debugSnapshot, setDebugSnapshot] = useState("");
   const [debugSnapshotErr, setDebugSnapshotErr] = useState("");
   const [debugSnapshotBusy, setDebugSnapshotBusy] = useState(false);
@@ -379,6 +389,7 @@ export function SettingsModal({
 
   useEffect(() => {
     if (isOpen) return;
+    observabilityLoaded.current = false;
     setAccountReturnToWebAccess(false);
     setFocusReachOnOpen(false);
   }, [isOpen]);
@@ -414,6 +425,7 @@ export function SettingsModal({
   const resetIMState = () => {
     setImConfigError(null);
     setImStatus(null);
+    setWeixinLoginStatus(null);
     setImPlatform("telegram");
     setImBotTokenEnv("");
     setImAppTokenEnv("");
@@ -430,11 +442,7 @@ export function SettingsModal({
   };
 
   const loadIMStatus = useCallback(
-    async (opts?: {
-      resetFirst?: boolean;
-      isCurrent?: () => boolean;
-      canReloadConfig?: () => boolean;
-    }) => {
+    async (opts?: { isCurrent?: () => boolean; canReloadConfig?: () => boolean }) => {
       const gid = String(groupId || "").trim();
       const seq = ++imLoadSeq.current;
       const selection = imPlatformSelectionSeq.current;
@@ -446,7 +454,6 @@ export function SettingsModal({
       // Editing a draft blocks configuration hydration, not authoritative runtime status.
       const canReloadConfig = () =>
         opts?.canReloadConfig?.() !== false && imMattermostEditSeq.current === edit;
-      if (opts?.resetFirst) resetIMState();
       if (!gid) return;
       try {
         const statusResp = await api.fetchIMStatus(gid);
@@ -497,10 +504,21 @@ export function SettingsModal({
   );
 
   useEffect(() => {
-    if (!isOpen) return;
-    loadIMStatus({ resetFirst: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only load when the modal opens or groupId changes.
+    imInitiallyLoaded.current = false;
+    weixinLoginOwner.current = null;
+    setImBusy(false);
+    resetIMState();
+    return () => {
+      imLoadSeq.current += 1;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Reset once per settings opening/Group, not when revisiting a draft.
   }, [isOpen, groupId]);
+
+  useEffect(() => {
+    if (!isOpen || !imTabActive || imInitiallyLoaded.current) return;
+    imInitiallyLoaded.current = true;
+    void loadIMStatus();
+  }, [isOpen, groupId, imTabActive, loadIMStatus]);
 
   const toWeixinErrorStatus = useCallback(
     (message: string): WeixinLoginStatus => ({
@@ -518,7 +536,14 @@ export function SettingsModal({
   );
 
   useEffect(() => {
-    if (!isOpen || !groupId || imPlatform !== "weixin") return;
+    if (!isOpen || !groupId || imPlatform !== "weixin" || imBusy || imStatus?.group_id !== groupId)
+      return;
+    // A scan already in progress keeps completing across settings tabs.
+    const needsPoll = shouldPollWeixinLogin({
+      running: weixinLoginStatus?.running ?? false,
+      status: weixinLoginStatus?.status ?? "",
+    });
+    if (!imTabActive && !needsPoll) return;
     let cancelled = false;
     let loading = false;
     const loadWeixinStatus = async () => {
@@ -543,10 +568,6 @@ export function SettingsModal({
       }
     };
     void loadWeixinStatus();
-    const needsPoll = shouldPollWeixinLogin({
-      running: weixinLoginStatus?.running ?? false,
-      status: weixinLoginStatus?.status ?? "",
-    });
     if (!needsPoll)
       return () => {
         cancelled = true;
@@ -562,6 +583,9 @@ export function SettingsModal({
     isOpen,
     groupId,
     imPlatform,
+    imBusy,
+    imStatus?.group_id,
+    imTabActive,
     weixinLoginStatus?.running,
     weixinLoginStatus?.status,
     t,
@@ -569,49 +593,102 @@ export function SettingsModal({
   ]);
 
   useEffect(() => {
-    if (imPlatform !== "weixin") {
-      weixinAutoStartRef.current = false;
+    if (
+      !isOpen ||
+      imPlatform !== "weixin" ||
+      weixinLoginOwner.current?.scope !== imActionScope.current
+    ) {
+      weixinLoginOwner.current = null;
       return;
     }
-    if (!groupId) return;
-    if (!weixinLoginStatus?.logged_in) return;
-    if (!imStatus?.configured || String(imStatus.platform || "") !== "weixin") return;
-    if (!imStatus.enabled) {
-      weixinAutoStartRef.current = false;
+    if (imBusy || !groupId) return;
+    if (!weixinLoginStatus?.logged_in) {
+      if (!shouldPollWeixinLogin(weixinLoginStatus)) weixinLoginOwner.current = null;
       return;
     }
-    if (imStatus.running) {
-      weixinAutoStartRef.current = false;
+    // Saving QR login configuration leaves the bridge disabled. This explicit
+    // login intent, not that saved enabled flag, authorizes one subsequent start.
+    if (!imStatus?.configured || imStatus.platform !== "weixin" || imStatus.running) {
+      weixinLoginOwner.current = null;
       return;
     }
-    if (weixinAutoStartRef.current) return;
-
-    weixinAutoStartRef.current = true;
+    const owner = weixinLoginOwner.current;
     const { isCurrent, canReload } = currentIMAction();
     void (async () => {
       setImBusy(true);
+      setImConfigError(null);
       try {
         await api.runIMManagement(groupId, false, async () => {
-          if (!isCurrent()) return;
+          if (!isCurrent() || weixinLoginOwner.current !== owner) return;
+          weixinLoginOwner.current = null;
           const resp = await api.startIMBridge(groupId);
-          if (resp.ok && isCurrent()) await loadIMStatus({ isCurrent, canReloadConfig: canReload });
+          if (!isCurrent()) return;
+          if (resp.ok) await loadIMStatus({ isCurrent, canReloadConfig: canReload });
+          else
+            setImConfigError({
+              groupId,
+              message: resp.error?.message || t("imBridge.weixinBridgeStartFailed"),
+            });
         });
-      } catch (e) {
-        console.error("Failed to auto-start weixin bridge:", e);
+      } catch {
+        if (isCurrent())
+          setImConfigError({ groupId, message: t("imBridge.weixinBridgeStartFailed") });
       } finally {
+        if (weixinLoginOwner.current === owner) weixinLoginOwner.current = null;
         if (isCurrent()) setImBusy(false);
       }
     })();
-  }, [groupId, imPlatform, imStatus, loadIMStatus, weixinLoginStatus, currentIMAction]);
+  }, [
+    isOpen,
+    groupId,
+    imPlatform,
+    imBusy,
+    imStatus,
+    loadIMStatus,
+    weixinLoginStatus,
+    currentIMAction,
+    t,
+  ]);
 
   useEffect(() => {
-    if (isOpen && canAccessGlobalSettings === true) loadObservability();
-  }, [isOpen, canAccessGlobalSettings]);
+    if (
+      !isOpen ||
+      !developerTabActive ||
+      canAccessGlobalSettings !== true ||
+      observabilityLoaded.current
+    )
+      return;
+    observabilityLoaded.current = true;
+    void loadObservability();
+  }, [isOpen, developerTabActive, canAccessGlobalSettings]);
 
   useEffect(() => {
-    if (isOpen && groupId) loadDevActors();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only load when the modal opens or groupId changes.
-  }, [isOpen, groupId]);
+    if (
+      !isOpen ||
+      !groupId ||
+      settingsTarget ||
+      scope !== "group" ||
+      (groupTab !== "automation" && groupTab !== "transcript")
+    )
+      return;
+    let cancelled = false;
+    void api
+      .fetchActors(groupId, false)
+      .then((resp) => {
+        if (cancelled || !resp.ok) return;
+        const actors = Array.isArray(resp.result?.actors) ? resp.result.actors : [];
+        setDevActors(actors);
+        setTailActorId((current) =>
+          actors.some((actor) => actor.id === current) ? current : actors[0]?.id || "",
+        );
+      })
+      .catch((error) => {
+        if (!cancelled) console.error("Failed to load settings actor list:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, groupId, settingsTarget, scope, groupTab]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -666,22 +743,6 @@ export function SettingsModal({
       }
     } catch (e) {
       console.error("Failed to load observability settings:", e);
-    }
-  };
-
-  const loadDevActors = async () => {
-    if (!groupId) return;
-    try {
-      const resp = await api.fetchActors(groupId, false);
-      if (resp.ok && resp.result?.actors) {
-        const actors = Array.isArray(resp.result.actors) ? resp.result.actors : [];
-        setDevActors(actors);
-        if (!tailActorId && actors.length > 0) {
-          setTailActorId(actors[0].id);
-        }
-      }
-    } catch (e) {
-      console.error("Failed to load developer actor list:", e);
     }
   };
 
@@ -889,6 +950,8 @@ export function SettingsModal({
   // Handle platform change with config caching
   const handlePlatformChange = (newPlatform: IMPlatform) => {
     if (newPlatform === imPlatform) return;
+    weixinLoginOwner.current = null;
+    if (imPlatform === "weixin" || newPlatform === "weixin") setImBusy(false);
     // User selection invalidates stale Mattermost reads; programmatic hydration is not a user edit.
     imPlatformSelectionSeq.current += 1;
     if (imPlatform === "mattermost" || newPlatform === "mattermost") imLoadSeq.current += 1;
@@ -956,6 +1019,7 @@ export function SettingsModal({
 
   const handleRemoveIMConfig = async () => {
     if (!groupId) return;
+    weixinLoginOwner.current = null;
     const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
     setImConfigError(null);
@@ -1004,6 +1068,7 @@ export function SettingsModal({
 
   const handleStartBridge = async () => {
     if (!groupId) return;
+    weixinLoginOwner.current = null;
     if (!canStartIMBridge(imPlatform, !!weixinLoginStatus?.logged_in)) return;
     const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
@@ -1037,9 +1102,10 @@ export function SettingsModal({
           });
         }
         if (!resp.ok && imPlatform === "weixin") {
-          setWeixinLoginStatus(
-            toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStartFailed")),
-          );
+          setImConfigError({
+            groupId,
+            message: resp.error?.message || t("imBridge.weixinBridgeStartFailed"),
+          });
         }
       });
     } catch (e) {
@@ -1047,7 +1113,11 @@ export function SettingsModal({
       if (imPlatform === "mattermost") {
         setImConfigError({ groupId, message: t("imBridge.mattermostConfigFailed") });
       }
-      console.error("Failed to start bridge:", e);
+      if (imPlatform === "weixin") {
+        setImConfigError({ groupId, message: t("imBridge.weixinBridgeStartFailed") });
+      } else {
+        console.error("Failed to start bridge:", e);
+      }
     } finally {
       if (isCurrent()) {
         imMattermostBusy.current = false;
@@ -1058,6 +1128,7 @@ export function SettingsModal({
 
   const handleStopBridge = async () => {
     if (!groupId) return;
+    weixinLoginOwner.current = null;
     const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
     if (imPlatform === "mattermost") setImConfigError(null);
@@ -1091,6 +1162,7 @@ export function SettingsModal({
 
   const handleStartWeixinLogin = async () => {
     if (!groupId) return;
+    weixinLoginOwner.current = null;
     const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
     try {
@@ -1106,10 +1178,10 @@ export function SettingsModal({
         }
         await loadIMStatus({ isCurrent, canReloadConfig: canReload });
         if (!isCurrent()) return;
-        weixinAutoStartRef.current = false;
         const resp = await api.startWeixinLogin(groupId);
         if (!isCurrent()) return;
         if (resp.ok) {
+          weixinLoginOwner.current = { scope: imActionScope.current };
           setWeixinLoginStatus(resp.result ?? null);
         } else {
           setWeixinLoginStatus(
@@ -1128,12 +1200,12 @@ export function SettingsModal({
 
   const handleLogoutWeixin = async () => {
     if (!groupId) return;
+    weixinLoginOwner.current = null;
     const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
     try {
       await api.runIMManagement(groupId, false, async () => {
         if (!isCurrent()) return;
-        weixinAutoStartRef.current = false;
         const resp = await api.logoutWeixin(groupId);
         if (!isCurrent()) return;
         if (resp.ok) {

@@ -45,6 +45,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 async function render(active = true, deviceId = "binding-b") {
   await act(async () =>
@@ -148,4 +149,42 @@ it("keeps an edited name across refresh and saves to the shared instance naming 
   ).toBe(true);
   expect(host.querySelector("input")!.value).toBe("Workstation");
   expect(host.querySelector("button")!.disabled).toBe(true);
+});
+
+it("pauses reads in a hidden document, retains its view and resumes without overlapping requests", async () => {
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  await render();
+  await act(async () => vi.advanceTimersByTimeAsync(45000));
+  expect(mocks.request).not.toHaveBeenCalled();
+  hidden.mockReturnValue(false);
+  await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+  expect(mocks.request).toHaveBeenCalledTimes(1);
+  expect(host.textContent).toContain("account.connect.confirmed");
+  hidden.mockReturnValue(true);
+  await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+  await act(async () => vi.advanceTimersByTimeAsync(45000));
+  expect(mocks.request).toHaveBeenCalledTimes(1);
+  expect(host.textContent).toContain("account.connect.confirmed");
+  let finish!: (value: ReturnType<typeof confirmed>) => void;
+  mocks.request.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  hidden.mockReturnValue(false);
+  await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+  hidden.mockReturnValue(true);
+  await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+  hidden.mockReturnValue(false);
+  await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+  await act(async () => vi.advanceTimersByTimeAsync(45000));
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+  await act(async () => finish(confirmed()));
+  await act(async () => vi.advanceTimersByTimeAsync(15000));
+  expect(mocks.request).toHaveBeenCalledTimes(3);
+  await render(false);
+  await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+  expect(mocks.request).toHaveBeenCalledTimes(3);
 });

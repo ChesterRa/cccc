@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { fetchVoiceNotifications } from "../../services/api/codexVoice";
 import { CodexVoiceMessageSources } from "./CodexVoiceMessageSources";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -33,6 +34,11 @@ vi.mock("../../services/api/codexVoice", () => ({
   true;
 
 describe("Voice notification delivery status", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
   it("shows queued delivery separately from receipt uncertainty and preserves source access", async () => {
     const host = document.createElement("div");
     const root = createRoot(host);
@@ -69,4 +75,50 @@ describe("Voice notification delivery status", () => {
     expect(host.querySelector('[role="status"]')).toBeNull();
     await act(async () => root.unmount());
   });
+});
+
+it("only refreshes visible notification history and preserves it across backgrounding", async () => {
+  vi.useFakeTimers();
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const request = vi.mocked(fetchVoiceNotifications);
+  request.mockClear();
+  try {
+    await act(async () => root.render(<CodexVoiceMessageSources active />));
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(request).not.toHaveBeenCalled();
+    hidden.mockReturnValue(false);
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    expect(request).toHaveBeenCalledTimes(1);
+    const content = host.textContent;
+    hidden.mockReturnValue(true);
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toBe(content);
+    let finish!: (value: Awaited<ReturnType<typeof fetchVoiceNotifications>>) => void;
+    const response = await request.mock.results[0].value;
+    request.mockClear().mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    hidden.mockReturnValue(false);
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(request).toHaveBeenCalledTimes(1);
+    await act(async () => finish(response));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(request).toHaveBeenCalledTimes(2);
+    await act(async () => root.render(<CodexVoiceMessageSources active={false} />));
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    expect(request).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => root.unmount());
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
 });

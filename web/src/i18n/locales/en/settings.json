@@ -964,6 +964,7 @@
     "weixinStatusError": "Login failed",
     "weixinStatusLoadFailed": "Failed to load Weixin login status.",
     "weixinStartFailed": "Failed to start Weixin QR login.",
+    "weixinBridgeStartFailed": "Weixin is logged in, but the bridge could not start. Click Start to retry.",
     "weixinVerifyFailed": "Failed to verify the Weixin login code.",
     "weixinLogoutFailed": "Failed to log out from Weixin.",
     "weixinHintIdle": "Click Start QR Login to generate a scannable QR code here.",

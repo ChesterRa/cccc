@@ -956,6 +956,7 @@
     "weixinStatusError": "登录失败",
     "weixinStatusLoadFailed": "读取微信登录状态失败。",
     "weixinStartFailed": "启动微信扫码登录失败。",
+    "weixinBridgeStartFailed": "微信已登录，但消息桥接启动失败。请点击启动重试。",
     "weixinVerifyFailed": "微信登录验证码校验失败。",
     "weixinLogoutFailed": "退出微信登录失败。",
     "weixinHintIdle": "点击“开始扫码登录”后，这里会显示可扫码二维码。",

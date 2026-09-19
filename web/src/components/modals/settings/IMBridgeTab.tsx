@@ -974,7 +974,7 @@ export function IMBridgeTab({
             </div>
           </div>
 
-          {imPlatform === "mattermost" && imConfigError && (
+          {imConfigError && (
             <p role="alert" className="mt-2 break-words text-xs text-red-600 dark:text-red-400">
               {imConfigError}
             </p>

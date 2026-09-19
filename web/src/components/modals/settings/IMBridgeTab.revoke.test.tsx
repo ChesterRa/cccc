@@ -178,19 +178,26 @@ describe("IMBridgeTab revoke loading identity", () => {
     expect(container.textContent).toContain("imBridge.mattermostBotIsolationHint");
   });
 
-  it("displays configuration errors only on Mattermost", async () => {
-    const draft = {
-      ...props(),
-      imConfigError: "Test save failure",
-      imPlatform: "mattermost" as const,
-    };
-    await act(async () => root.render(<IMBridgeTab {...draft} />));
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Test save failure");
-    await act(async () => root.render(<IMBridgeTab {...draft} imPlatform="telegram" />));
-    expect(container.textContent).not.toContain("Test save failure");
-    await act(async () => root.render(<IMBridgeTab {...draft} imConfigError="" />));
-    expect(container.querySelector('[role="alert"]')).toBeNull();
-  });
+  it.each([
+    "telegram",
+    "slack",
+    "discord",
+    "mattermost",
+    "feishu",
+    "dingtalk",
+    "wecom",
+    "weixin",
+  ] as const)(
+    "displays configuration errors on %s and clears resolved errors",
+    async (imPlatform) => {
+      const draft = { ...props(), imPlatform, imConfigError: "Test save failure" };
+      await act(async () => root.render(<IMBridgeTab {...draft} />));
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe("Test save failure");
+      await act(async () => root.render(<IMBridgeTab {...draft} imConfigError="" />));
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      expect(container.textContent).not.toContain("Test save failure");
+    },
+  );
 });
 
 function props(): ComponentProps<typeof IMBridgeTab> {

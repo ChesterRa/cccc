@@ -55,17 +55,17 @@ describe("SettingsModal Mattermost draft group isolation", () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     writeSettingsLastLocation({ scope: "group", groupTab: "im", globalTab: "account" });
-    vi.mocked(api.fetchIMStatus).mockResolvedValue({
+    vi.mocked(api.fetchIMStatus).mockImplementation(async (group_id) => ({
       ok: true,
       result: {
-        group_id: "group-a",
+        group_id,
         configured: false,
         running: false,
         enabled: false,
         platform: "",
         subscribers: 0,
       },
-    });
+    }));
     vi.mocked(api.fetchIMConfig).mockResolvedValue({ ok: true, result: { im: null } });
     const unavailable = {
       ok: false as const,
@@ -310,12 +310,20 @@ describe("SettingsModal Mattermost draft group isolation", () => {
       order.push("auto-done");
       return { ok: true, result: {} };
     });
-    vi.mocked(api.setIMConfig).mockImplementationOnce(async () => {
-      order.push("mattermost-sent");
-      savedPlatform = "mattermost";
-      return { ok: true, result: {} };
-    });
+    vi.mocked(api.setIMConfig)
+      .mockResolvedValueOnce({ ok: true, result: {} })
+      .mockImplementationOnce(async () => {
+        order.push("mattermost-sent");
+        savedPlatform = "mattermost";
+        return { ok: true, result: {} };
+      });
     await renderGroup("auto-order");
+    expect(order).toEqual([]);
+    vi.mocked(api.startWeixinLogin).mockResolvedValueOnce({
+      ok: true,
+      result: { ...weixinStatus, status: "waiting_scan", running: true },
+    });
+    await act(async () => props().onStartWeixinLogin());
     await vi.waitFor(() => expect(order).toEqual(["auto-sent"]));
     await choose("mattermost");
     let next!: Promise<void>;
@@ -332,7 +340,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     expect(props().imBusy).toBe(false);
   });
 
-  it("keeps native legacy continuations but invalidates a Weixin login after visiting Mattermost", async () => {
+  it("invalidates a pending Weixin login after switching platforms", async () => {
     for (const viaMattermost of [false, true]) {
       await renderGroup(`weixin-return-${viaMattermost}`);
       await choose("weixin");
@@ -355,7 +363,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
         release();
         await pending;
       });
-      expect(api.startWeixinLogin).toHaveBeenCalledTimes(before + (viaMattermost ? 0 : 1));
+      expect(api.startWeixinLogin).toHaveBeenCalledTimes(before);
     }
   });
 
