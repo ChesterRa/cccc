@@ -2552,7 +2552,7 @@
   },
   {
     "name": "cccc_memory",
-    "description": "ReMe file-memory primary ops: action=layout_get|search|get|write.",
+    "description": "Local shared Markdown memory: action=layout_get|search|get|write. Search uses lexical matching, not embeddings; use get to read the matching source lines.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2594,7 +2594,8 @@
         "vector_weight": {
           "type": "number",
           "minimum": 0,
-          "maximum": 1
+          "maximum": 1,
+          "description": "Accepted for existing clients; the local lexical backend does not use this value."
         },
         "candidate_multiplier": {
           "type": "number",
@@ -2678,7 +2679,7 @@
   },
   {
     "name": "cccc_memory_admin",
-    "description": "Maintenance-only ReMe file-memory ops: index_sync|context_check|compact|daily_flush. Use cccc_memory for normal memory search/read/write.",
+    "description": "Local memory helpers: index_sync scans file counts without building a persistent index; context_check estimates tokens; compact returns a bounded excerpt or a summarization prompt, not an LLM summary. daily_flush writes a bounded daily-memory extract from supplied messages, or returns a prompt. Use cccc_memory for normal search/read/write.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2714,7 +2715,8 @@
           "type": "array",
           "items": {
             "type": "object"
-          }
+          },
+          "description": "Input for compact. The default summary is a bounded excerpt and can omit later facts; set return_prompt=true to obtain a prompt for the calling model to summarize."
         },
         "turn_prefix_messages": {
           "type": "array",

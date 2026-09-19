@@ -28,7 +28,7 @@ use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
 use cccc_core::access_tokens::AccessTokenStore;
 use rust_embed::RustEmbed;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -301,20 +301,6 @@ fn spawn_group_resource_reaper(
                 .iter()
                 .map(|group| group.group_id.clone())
                 .collect::<HashSet<_>>();
-            let active_actors = groups
-                .into_iter()
-                .filter_map(|group| {
-                    store.load(&group.group_id).ok().map(|doc| {
-                        (
-                            group.group_id,
-                            doc.actors
-                                .into_iter()
-                                .map(|actor| actor.id)
-                                .collect::<HashSet<_>>(),
-                        )
-                    })
-                })
-                .collect::<HashMap<_, _>>();
             let stopped = im_workers.stop_missing(&active_groups).await;
             let closed_groups = browser_surfaces
                 .close_missing_groups(&active_groups)
@@ -324,7 +310,7 @@ fn spawn_group_resource_reaper(
                     0
                 });
             let closed_actors = browser_surfaces
-                .close_missing_actors(&active_actors)
+                .close_missing_actors(&store)
                 .await
                 .unwrap_or_else(|error| {
                     tracing::warn!(%error,"failed to close stale actor browser surfaces");

@@ -111,23 +111,31 @@ impl BrowserSurfaces {
         Ok(closed)
     }
 
-    pub async fn close_missing_actors(
-        &self,
-        active_actors: &HashMap<String, HashSet<String>>,
-    ) -> Result<usize> {
+    pub async fn close_missing_actors(&self, store: &cccc_core::GroupStore) -> Result<usize> {
+        // Snapshot registered Actor surfaces first. Unused Groups need no
+        // document reads, and a newly opened surface waits for the next pass.
         let keys = self
             .sessions
             .lock()
             .await
             .keys()
+            .filter(|key| session_actor(key).is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut active_actors = HashMap::<String, HashSet<String>>::new();
+        let keys = keys
+            .into_iter()
             .filter(|key| {
                 session_actor(key).is_some_and(|(group_id, actor_id)| {
-                    !active_actors
-                        .get(group_id)
-                        .is_some_and(|actors| actors.contains(actor_id))
+                    let actors = active_actors.entry(group_id.to_owned()).or_insert_with(|| {
+                        store
+                            .load(group_id)
+                            .map(|group| group.actors.into_iter().map(|actor| actor.id).collect())
+                            .unwrap_or_default()
+                    });
+                    !actors.contains(actor_id)
                 })
             })
-            .cloned()
             .collect::<Vec<_>>();
         let mut closed = 0;
         for key in keys {
