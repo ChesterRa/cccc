@@ -228,6 +228,37 @@ curl -s "$CONNECTOR_URL" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"cccc_runtime_wait_next_turn","arguments":{}}}'
 ```
 
+## Local command execution
+
+`cccc_shell` and `cccc_exec_command` execute a program and its arguments directly.
+Command strings support shell-style quoting, but `&&`, pipes, redirection, variable
+expansion, and wildcards are not interpreted. The tool names remain unchanged for
+existing connectors. Invoke an installed shell explicitly when needed:
+
+```json
+{"command":"sh -c 'pwd && git status --short | head -5'"}
+```
+
+On Windows, for example:
+
+```json
+{"command":"powershell.exe -NoProfile -Command 'Get-Location; Get-ChildItem'"}
+```
+
+Both tools accept a relative `cwd` inside the Group's active workspace and `env`
+overrides for the child process. `cccc_exec_command` also accepts `workdir` as an
+alias. This constrains the starting directory, not what an authorized local
+program can subsequently access. `cccc_shell` defaults to a 60-second timeout
+and retains at most 200,000 bytes per output stream; `max_output_bytes` can raise
+that limit to 1,000,000. Check the exit code and truncation flags before relying
+on command output.
+
+`cccc_code_exec` treats JavaScript strings, comments, regular expressions and
+raw template text as data. Node module loading remains unavailable: static
+imports are invalid in the cell function, dynamic imports have no loader, and
+`require` is not exposed. Executable failures are reported when evaluated, like
+other JavaScript errors; effects of earlier nested tool calls are not rolled back.
+
 ## Current Boundaries
 
 - `web_model` does not spawn a local PTY or local headless model process.

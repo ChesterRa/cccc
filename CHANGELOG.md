@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Fixed
+- Web Model code cells accept import-like text in strings, comments and templates while keeping Node module loading unavailable.
+- Repository `mkdir` honors `exist_ok` (true by default) without accepting file conflicts or paths outside the active workspace.
+- Browser page enumeration skips stale handles only after a browser-level check confirms the target disappeared; connection failures remain errors and saved profiles are preserved.
+- Local command tool descriptions make direct execution explicit. `cccc_shell` honors workspace-relative `cwd`, child `env`, output limits and the documented default timeout; session commands share the same directory and environment handling.
+
 ### Changed
 - Voice diagnostics distinguish Realtime request/TLS failures and managed Codex WebSocket protocol failures, including an abrupt close without a closing handshake. Reports retain bounded categories and OS error codes without private error text; retry and session-lifecycle behavior is unchanged.
 

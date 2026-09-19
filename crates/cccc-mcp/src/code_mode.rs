@@ -3,7 +3,6 @@ mod buffering;
 use cccc_client::DaemonClient;
 use cccc_contracts::ActorRuntime;
 use cccc_core::{GroupStore, HomeLayout};
-use regex::Regex;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -71,7 +70,7 @@ pub async fn start(
     if source.trim().is_empty() {
         return Err("missing_source: source is required".into());
     }
-    reject_unsupported_source(source)?;
+    validate_source(source)?;
     let yield_time_ms = integer_arg(
         args.get("yield_time_ms")
             .or_else(|| pragma.get("yield-time_ms")),
@@ -255,31 +254,14 @@ fn parse_exec_pragma(source: &str) -> Result<(&str, Map<String, Value>), String>
     Ok((body, object.clone()))
 }
 
-fn reject_unsupported_source(source: &str) -> Result<(), String> {
+fn validate_source(source: &str) -> Result<(), String> {
     if source.chars().count() > MAX_SOURCE_CHARS {
         return Err(format!(
             "source_too_large: source exceeds {MAX_SOURCE_CHARS} characters"
         ));
     }
-    static REQUIRE: OnceLock<Regex> = OnceLock::new();
-    static IMPORT_CALL: OnceLock<Regex> = OnceLock::new();
-    static IMPORT_STMT: OnceLock<Regex> = OnceLock::new();
-    let require = REQUIRE.get_or_init(|| {
-        Regex::new(r"(^|[^\w$])require\s*\(").expect("static require regex must compile")
-    });
-    let import_call = IMPORT_CALL.get_or_init(|| {
-        Regex::new(r"(^|[^\w$])import\s*\(").expect("static import-call regex must compile")
-    });
-    let import_stmt = IMPORT_STMT.get_or_init(|| {
-        Regex::new(r#"(^|[^\w$])import\s+(['"{*$A-Za-z_])"#)
-            .expect("static import-statement regex must compile")
-    });
-    if require.is_match(source) {
-        return Err("unsupported_js: cccc_code_exec does not expose require()".into());
-    }
-    if import_call.is_match(source) || import_stmt.is_match(source) {
-        return Err("unsupported_js: cccc_code_exec does not support import".into());
-    }
+    // Module access is disabled by the VM, which parses executable JavaScript.
+    // Scanning raw text also rejects harmless source strings, comments and regexes.
     Ok(())
 }
 

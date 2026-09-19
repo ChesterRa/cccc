@@ -1,6 +1,7 @@
 use cccc_client::DaemonClient;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::ToolCallError;
@@ -15,7 +16,7 @@ pub async fn call(
     let root = scope(client, &args).await?;
     let payload = match name {
         "cccc_repo" | "cccc_repo_edit" => crate::repo::call(&root, action(&args), &args)?,
-        "cccc_shell" => one_shot(&root, command(&args)?, timeout(&args)).await?,
+        "cccc_shell" => shell(&root, &args).await?,
         "cccc_git" => git(&root, &args).await?,
         "cccc_exec_command" => crate::local_sessions::start(home, &root, &args)?,
         "cccc_write_stdin" => crate::local_sessions::write(home, &args)?,
@@ -52,11 +53,30 @@ async fn one_shot(root: &Path, cmd: Vec<String>, seconds: u64) -> Result<Value, 
     let (program, arguments) = cmd.split_first().ok_or("command is required")?;
     let mut command = std::process::Command::new(program);
     command.args(arguments).current_dir(root);
+    capture(&mut command, seconds, 2_000_000).await
+}
+
+async fn shell(root: &Path, args: &Map<String, Value>) -> Result<Value, String> {
+    let cmd = command(args)?;
+    let (program, arguments) = cmd.split_first().ok_or("command is required")?;
+    let mut process = std::process::Command::new(program);
+    process
+        .args(arguments)
+        .current_dir(command_cwd(root, args)?)
+        .envs(command_env(args)?);
+    capture(&mut process, timeout(args), output_limit(args)).await
+}
+
+async fn capture(
+    command: &mut std::process::Command,
+    seconds: u64,
+    limit: usize,
+) -> Result<Value, String> {
     let output = cccc_runtime::capture_command(
-        &mut command,
+        command,
         None,
         std::time::Duration::from_secs(seconds),
-        2_000_000,
+        limit,
     )
     .await
     .map_err(|error| error.to_string())?;
@@ -384,6 +404,46 @@ pub(super) fn command(args: &Map<String, Value>) -> Result<Vec<String>, String> 
     shell_words::split(raw).map_err(|error| error.to_string())
 }
 
+pub(super) fn command_cwd(root: &Path, args: &Map<String, Value>) -> Result<PathBuf, String> {
+    if ["cwd", "workdir"]
+        .iter()
+        .any(|key| args.get(*key).is_some_and(|value| !value.is_string()))
+    {
+        return Err("cwd and workdir must be relative directory strings".into());
+    }
+    let cwd = first_non_blank(args, &["cwd", "workdir"]).unwrap_or(".");
+    let path = crate::repo::resolve(root, cwd, false)?;
+    if !path.is_dir() {
+        return Err("cwd must be a directory inside the active scope".into());
+    }
+    Ok(path)
+}
+
+pub(super) fn command_env(args: &Map<String, Value>) -> Result<BTreeMap<String, String>, String> {
+    let Some(env) = args.get("env") else {
+        return Ok(BTreeMap::new());
+    };
+    let env = env
+        .as_object()
+        .ok_or("env must be an object of string values")?;
+    env.iter()
+        .map(|(key, value)| {
+            let value = value.as_str().ok_or("env values must be strings")?;
+            if key.is_empty() || key.contains(['=', '\0']) || value.contains('\0') {
+                return Err("env contains an invalid variable name or value".into());
+            }
+            Ok((key.clone(), value.to_owned()))
+        })
+        .collect()
+}
+
+fn output_limit(args: &Map<String, Value>) -> usize {
+    args.get("max_output_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(200_000)
+        .clamp(1, 1_000_000) as usize
+}
+
 fn first_non_blank<'a>(args: &'a Map<String, Value>, names: &[&str]) -> Option<&'a str> {
     names.iter().find_map(|name| {
         args.get(*name)
@@ -412,7 +472,7 @@ fn timeout(args: &Map<String, Value>) -> u64 {
     args.get("timeout_s")
         .or_else(|| args.get("timeout_seconds"))
         .and_then(Value::as_u64)
-        .unwrap_or(30)
+        .unwrap_or(60)
         .clamp(1, 600)
 }
 
@@ -420,6 +480,141 @@ fn timeout(args: &Map<String, Value>) -> u64 {
 mod tests {
     use super::{apply_codex_patch, command, file_message_mode, timeout};
     use serde_json::json;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_honors_cwd_environment_and_output_limit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cwd = temp.path().join("subdir");
+        std::fs::create_dir(&cwd).expect("fixture operation");
+        let args = json!({"command":["sh","-c","printf '%s\\n%s' \"$PWD\" \"$CCCC_TOOL_CONTRACT_VALUE\""],"cwd":"subdir","env":{"CCCC_TOOL_CONTRACT_VALUE":"fixture-value"}});
+        let result = super::shell(temp.path(), args.as_object().expect("arguments"))
+            .await
+            .expect("fixture operation");
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(
+            result["stdout"],
+            format!(
+                "{}\nfixture-value",
+                cwd.canonicalize()
+                    .expect("canonical fixture directory")
+                    .display()
+            )
+        );
+        let args = json!({"command":["sh","-c","printf 0123456789; printf failure >&2; exit 7"],"max_output_bytes":4});
+        let result = super::shell(temp.path(), args.as_object().expect("arguments"))
+            .await
+            .expect("fixture operation");
+        assert_eq!(result["exit_code"], 7);
+        assert_eq!(result["stdout"], "0123");
+        assert_eq!(result["stderr"], "fail");
+        assert_eq!(result["stdout_truncated"], true);
+        assert_eq!(result["stderr_truncated"], true);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_interprets_operators_only_when_explicitly_requested() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let args = json!({"command":"printf '%s ' 'a|b' '&&' '$HOME'"});
+        let result = super::shell(temp.path(), args.as_object().expect("arguments"))
+            .await
+            .expect("fixture operation");
+        assert_eq!(result["stdout"], "a|b && $HOME ");
+        let args = json!({"command":"sh -c 'printf first && printf second | cat > result.txt'"});
+        let result = super::shell(temp.path(), args.as_object().expect("arguments"))
+            .await
+            .expect("fixture operation");
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(result["stdout"], "first");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("result.txt")).expect("fixture operation"),
+            "second"
+        );
+    }
+
+    #[test]
+    fn command_options_keep_workspace_boundaries_and_schema_defaults() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cwd = temp.path().join("subdir");
+        std::fs::create_dir(&cwd).expect("fixture operation");
+        std::fs::write(temp.path().join("file"), "data").expect("fixture operation");
+        for path in ["../", "file", "missing"] {
+            assert!(
+                super::command_cwd(
+                    temp.path(),
+                    json!({"cwd":path}).as_object().expect("arguments")
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            super::command_cwd(
+                temp.path(),
+                json!({"cwd":temp.path()}).as_object().expect("arguments")
+            )
+            .is_err()
+        );
+        assert!(
+            super::command_cwd(
+                temp.path(),
+                json!({"cwd":123}).as_object().expect("arguments")
+            )
+            .is_err()
+        );
+        assert_eq!(
+            super::command_cwd(
+                temp.path(),
+                json!({"workdir":"subdir"}).as_object().expect("arguments")
+            )
+            .expect("fixture operation"),
+            cwd.canonicalize().expect("canonical fixture directory")
+        );
+        let defaults = serde_json::Map::new();
+        assert_eq!(super::timeout(&defaults), 60);
+        assert_eq!(super::output_limit(&defaults), 200_000);
+        assert_eq!(
+            super::output_limit(
+                json!({"max_output_bytes":999999999})
+                    .as_object()
+                    .expect("arguments")
+            ),
+            1_000_000
+        );
+        assert!(
+            super::command_env(
+                json!({"env":{"PRIVATE_VALUE":123}})
+                    .as_object()
+                    .expect("arguments")
+            )
+            .is_err()
+        );
+        assert!(
+            !super::command_env(
+                json!({"env":{"BAD=NAME":"sensitive"}})
+                    .as_object()
+                    .expect("arguments")
+            )
+            .expect_err("invalid environment")
+            .contains("sensitive")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_cwd_rejects_symlink_escape() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("tempdir");
+        std::os::unix::fs::symlink(outside.path(), temp.path().join("escape"))
+            .expect("fixture operation");
+        assert!(
+            super::command_cwd(
+                temp.path(),
+                json!({"cwd":"escape"}).as_object().expect("arguments")
+            )
+            .is_err()
+        );
+    }
 
     #[cfg(unix)]
     #[tokio::test]

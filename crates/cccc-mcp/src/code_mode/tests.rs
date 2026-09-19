@@ -1,12 +1,84 @@
 use super::{
-    Owner, cells, drain, expire_cell_after, normalize_identifier, parse_exec_pragma,
-    reject_unsupported_source, shutdown, spawn_cell,
+    Owner, cells, drain, expire_cell_after, normalize_identifier, parse_exec_pragma, shutdown,
+    spawn_cell, validate_source,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
 use std::time::Duration;
 
 static CODE_CELL_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tokio::test]
+async fn source_literals_and_comments_are_not_module_loads() {
+    let _guard = CODE_CELL_TEST_LOCK.lock().await;
+    if !node_available().await {
+        return;
+    }
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let client = DaemonClient::new(home.clone());
+    let owner = Owner {
+        home: home.root().into(),
+        group_id: "g_source".into(),
+        actor_id: "web1".into(),
+    };
+    for source in [
+        r#"const python = "from pathlib import Path"; text(python);"#,
+        "// import fs from 'node:fs'\ntext('ok');",
+        "/* require('node:fs') */ text('ok');",
+        "text(`raw import fs ${`nested require('fs') ${1 + 1}`}`);",
+        r#"text(/import\s+path/.test('import path'));"#,
+        r#"const label = "escaped \" import fs"; text(label);"#,
+    ] {
+        validate_source(source).expect("ordinary source text");
+        let (id, cell) = spawn_cell(temp.path(), owner.clone(), source, Vec::new(), 5_000)
+            .await
+            .expect("spawn");
+        cells().lock().await.insert(id.clone(), cell.clone());
+        let result = drain(&home, &client, &id, cell, 5_000, 1_000)
+            .await
+            .expect("result");
+        assert_eq!(result["status"], "completed", "{source}: {result}");
+        assert!(!result["output"].as_str().expect("string result").is_empty());
+    }
+}
+
+#[tokio::test]
+async fn runtime_rejects_module_access_including_template_expressions() {
+    let _guard = CODE_CELL_TEST_LOCK.lock().await;
+    if !node_available().await {
+        return;
+    }
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let client = DaemonClient::new(home.clone());
+    let owner = Owner {
+        home: home.root().into(),
+        group_id: "g_source".into(),
+        actor_id: "web1".into(),
+    };
+    for source in [
+        "import fs from 'node:fs'; text('unexpected');",
+        "await import('node:fs'); text('unexpected');",
+        "await import /* comment */ ('node:fs'); text('unexpected');",
+        "text(`${await import('node:fs')}`);",
+        "require('node:fs'); text('unexpected');",
+    ] {
+        let (id, cell) = spawn_cell(temp.path(), owner.clone(), source, Vec::new(), 5_000)
+            .await
+            .expect("spawn");
+        cells().lock().await.insert(id.clone(), cell.clone());
+        let result = drain(&home, &client, &id, cell, 5_000, 1_000)
+            .await
+            .expect("result");
+        assert_eq!(result["status"], "failed", "{source}: {result}");
+        assert!(
+            result["error_text"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty())
+        );
+    }
+}
 
 #[test]
 fn pragma_and_source_guards_match_public_contract() {
@@ -16,9 +88,8 @@ fn pragma_and_source_guards_match_public_contract() {
     .expect("pragma");
     assert_eq!(source, "text('ok')");
     assert_eq!(pragma["yield-time_ms"], 25);
-    assert!(reject_unsupported_source("const important = 1").is_ok());
-    assert!(reject_unsupported_source("require('node:fs')").is_err());
-    assert!(reject_unsupported_source("import('node:fs')").is_err());
+    assert!(validate_source("const important = 1").is_ok());
+    assert!(validate_source(&"x".repeat(super::MAX_SOURCE_CHARS + 1)).is_err());
 }
 
 #[test]

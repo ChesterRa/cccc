@@ -24,8 +24,8 @@ pub fn start(home: &HomeLayout, root: &Path, args: &Map<String, Value>) -> Resul
         actor_id: session_id.clone(),
         runner: RunnerKind::Headless,
         command: super::local_tools::command(args)?,
-        cwd: root.into(),
-        env: Default::default(),
+        cwd: super::local_tools::command_cwd(root, args)?,
+        env: super::local_tools::command_env(args)?,
         cols: 120,
         rows: 40,
     })
@@ -247,6 +247,47 @@ mod tests {
             second_running && unrelated_running,
             "shutdown stopped a different owner"
         );
+    }
+
+    #[tokio::test]
+    async fn session_commands_honor_workdir_and_environment() {
+        if run_isolated("session_commands_honor_workdir_and_environment") {
+            return;
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let cwd = temp.path().join("subdir");
+        std::fs::create_dir(&cwd).expect("fixture operation");
+        let group_id = format!("g_{}", uuid::Uuid::new_v4().simple());
+        let args = json!({"group_id":group_id,"command":["sh","-c","printf '%s\\n%s' \"$PWD\" \"$CCCC_TOOL_CONTRACT_VALUE\""],"workdir":"subdir","env":{"CCCC_TOOL_CONTRACT_VALUE":"fixture-session"}});
+        let started =
+            start(&home, temp.path(), args.as_object().expect("arguments")).expect("session");
+        let id = started["session_id"].as_str().expect("string result");
+        let query = json!({"group_id":group_id,"session_id":id});
+        let output = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let output = write(&home, query.as_object().expect("arguments")).expect("poll");
+                if output["status"]["running"] == false {
+                    break output;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        shutdown(&home).expect("cleanup");
+        let output = output.expect("finished");
+        let text = output["output"].as_str().expect("string result");
+        assert!(
+            text.contains(
+                cwd.canonicalize()
+                    .expect("canonical fixture directory")
+                    .to_str()
+                    .expect("UTF-8 fixture path")
+            ),
+            "{text}"
+        );
+        assert!(text.contains("fixture-session"), "{text}");
+        assert_eq!(output["status"]["exit_code"], 0);
     }
 
     #[tokio::test]

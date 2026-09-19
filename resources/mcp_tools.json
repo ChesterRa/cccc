@@ -1059,7 +1059,7 @@
   },
   {
     "name": "cccc_shell",
-    "description": "Short one-shot shell execution in the group's active workspace. Use for quick tests, builds, rg, scripts, and local commands from a cwd constrained to the active scope root. Returns exit_code, stdout, stderr, and output-truncation flags. For long-running, streaming, or interactive commands, use cccc_exec_command plus cccc_write_stdin.",
+    "description": "Short one-shot process execution in the group's active workspace. The command is split into program/arguments using shell-style quoting and executed directly: shell operators, redirection, variables, and wildcards are not expanded. For shell syntax, explicitly invoke an installed shell, e.g. sh -c 'pwd && git status --short' on Unix or powershell.exe -NoProfile -Command 'Get-Location; Get-ChildItem' on Windows. Returns exit_code, stdout, stderr, and output-truncation flags. For long-running or interactive commands use cccc_exec_command plus cccc_write_stdin.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true
@@ -1073,7 +1073,7 @@
         },
         "command": {
           "type": "string",
-          "description": "Shell command to run under the active workspace root."
+          "description": "Program and arguments with shell-style quoting. No implicit shell or expansion; invoke a shell explicitly for pipelines, redirection or compound commands."
         },
         "cwd": {
           "type": "string",
@@ -1088,6 +1088,7 @@
         },
         "max_output_bytes": {
           "type": "integer",
+          "description": "Maximum bytes retained per output stream (stdout and stderr). Further output is drained and marked truncated.",
           "default": 200000,
           "minimum": 1,
           "maximum": 1000000
@@ -1106,7 +1107,7 @@
   },
   {
     "name": "cccc_exec_command",
-    "description": "Codex-style session shell execution for long-running, streaming, or interactive commands in the group's active workspace. Starts a command and returns output plus session_id when it is still running; use cccc_write_stdin to poll or send input. Use cccc_shell for short one-shot commands.",
+    "description": "Start a long-running or interactive foreground process in the group's active workspace. Like cccc_shell, command strings use shell-style quoting but execute the program directly; operators and expansions require an explicit installed shell (e.g. sh -c on Unix or powershell.exe -NoProfile -Command on Windows). Returns a session_id; use cccc_write_stdin to read output, send input or terminate. Use cccc_shell for short one-shot commands.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true
@@ -1120,7 +1121,7 @@
         },
         "command": {
           "type": "string",
-          "description": "Shell command to run under the active workspace root."
+          "description": "Program and arguments with shell-style quoting. No implicit shell or expansion; invoke a shell explicitly for pipelines, redirection or compound commands."
         },
         "cmd": {
           "type": "string",

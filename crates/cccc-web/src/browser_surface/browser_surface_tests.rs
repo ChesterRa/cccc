@@ -847,3 +847,5 @@ fn classifies_only_group_owned_browser_sessions() {
 
 mod local_page_tests;
 mod resource_cleanup;
+
+mod page_enumeration;

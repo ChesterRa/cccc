@@ -23,7 +23,7 @@ use chromiumoxide::handler::viewport::Viewport;
 use futures_util::StreamExt;
 use futures_util::future::join_all;
 use navigation::goto_dom_content_loaded;
-use page_recovery::{close_internal_pages, is_internal_page};
+use page_recovery::{candidate_page_url, close_internal_pages, is_internal_page};
 use profile_owner::ProfileLease;
 use proxy::BrowserProxy;
 use serde_json::{Value, json};
@@ -704,7 +704,9 @@ impl BrowserSurfaces {
 
 async fn reusable_page(browser: &Browser) -> Result<Option<Page>> {
     for page in browser.pages().await? {
-        let url = page.url().await?.unwrap_or_default();
+        let Some(url) = candidate_page_url(browser, &page).await? else {
+            continue;
+        };
         if is_internal_page(&url) {
             return Ok(Some(page));
         }

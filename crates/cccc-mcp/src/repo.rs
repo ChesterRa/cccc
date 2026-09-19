@@ -129,7 +129,20 @@ fn edit(root: &Path, action: &str, args: &Map<String, Value>) -> Result<Value, S
     match action {
         "write" => cccc_core::fs::atomic_write(&path, required(args, "content")?.as_bytes())
             .map_err(|error| error.to_string())?,
-        "mkdir" => std::fs::create_dir(&path).map_err(|error| error.to_string())?,
+        "mkdir" => {
+            let exist_ok = args
+                .get("exist_ok")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            match std::fs::create_dir(&path) {
+                Ok(()) => {}
+                Err(error)
+                    if exist_ok
+                        && error.kind() == std::io::ErrorKind::AlreadyExists
+                        && path.is_dir() => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
         "delete" if path.is_dir() => {
             std::fs::remove_dir(&path).map_err(|error| error.to_string())?
         }
