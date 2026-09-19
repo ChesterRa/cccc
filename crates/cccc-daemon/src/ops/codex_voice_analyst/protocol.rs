@@ -346,7 +346,17 @@ fn transport_diagnostic(
         Error::Capacity(_) => ("capacity", None),
         _ => ("other", None),
     };
-    json!({"code":code,"error_kind":kind,"os_error":os_error})
+    let mut diagnostic = json!({"code":code,"error_kind":kind,"os_error":os_error});
+    if let Error::Protocol(error) = error {
+        use tokio_tungstenite::tungstenite::error::ProtocolError;
+        diagnostic["protocol_error"] = json!(match error {
+            ProtocolError::ResetWithoutClosingHandshake => "reset_without_close_handshake",
+            ProtocolError::SendAfterClosing => "send_after_closing",
+            ProtocolError::ReceivedAfterClosing => "received_after_closing",
+            _ => "invalid_websocket_protocol",
+        });
+    }
+    diagnostic
 }
 
 fn disconnect_diagnostic(

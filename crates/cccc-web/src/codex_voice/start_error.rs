@@ -32,6 +32,10 @@ pub(crate) struct StartDiagnostic {
     http_status: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     os_error: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_error: Option<&'static str>,
 }
 
 impl StartDiagnostic {
@@ -40,8 +44,31 @@ impl StartDiagnostic {
             .downcast_ref::<StartStage>()
             .copied()
             .unwrap_or(StartStage::Configuration);
-        let io_error = error.downcast_ref::<io::Error>();
+        let io_error = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<io::Error>());
         let request = error.downcast_ref::<reqwest::Error>();
+        let request_kind = request.map(|request| {
+            if request.is_connect() {
+                "connect"
+            } else if request.is_body() {
+                "body"
+            } else if request.is_decode() {
+                "decode"
+            } else if request.is_builder() {
+                "builder"
+            } else if request.is_redirect() {
+                "redirect"
+            } else {
+                "request"
+            }
+        });
+        let tls_error = find_tls_error(error.as_ref()).map(|cause| match cause {
+            rustls::Error::InvalidCertificate(_) => "invalid_certificate",
+            rustls::Error::NoCertificatesPresented => "missing_certificate",
+            rustls::Error::AlertReceived(_) => "peer_alert",
+            _ => "tls_protocol",
+        });
         let realtime = error.downcast_ref::<RealtimeCallError>();
         let http_status = match realtime {
             Some(RealtimeCallError::HttpStatus(status)) => Some(*status),
@@ -85,6 +112,8 @@ impl StartDiagnostic {
             elapsed_ms,
             http_status,
             os_error: io_error.and_then(io::Error::raw_os_error),
+            request_kind,
+            tls_error,
         }
     }
 
@@ -129,6 +158,25 @@ impl StartDiagnostic {
             }
         };
         ApiError::unavailable(self.code, message).with_details(self.details())
+    }
+}
+
+fn find_tls_error<'a>(
+    mut cause: &'a (dyn std::error::Error + 'static),
+) -> Option<&'a rustls::Error> {
+    loop {
+        if let Some(error) = cause.downcast_ref::<rustls::Error>() {
+            return Some(error);
+        }
+        // I/O errors delegate source() to their payload's source(), skipping the
+        // payload itself. TLS transports can nest several such wrappers.
+        cause = match cause
+            .downcast_ref::<io::Error>()
+            .and_then(io::Error::get_ref)
+        {
+            Some(inner) => inner,
+            None => cause.source()?,
+        };
     }
 }
 

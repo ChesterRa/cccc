@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Changed
+- Voice diagnostics distinguish Realtime request/TLS failures and managed Codex WebSocket protocol failures, including an abrupt close without a closing handshake. Reports retain bounded categories and OS error codes without private error text; retry and session-lifecycle behavior is unchanged.
+
 ## [0.4.40] — Unreleased
 
 ### Added

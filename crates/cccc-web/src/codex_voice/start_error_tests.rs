@@ -103,7 +103,101 @@ async fn request_timeout_and_connection_failure_do_not_become_login_errors() {
         .expect_err("closed port");
     let error = Error::new(error).context(StartStage::Realtime);
     assert_eq!(
+        StartDiagnostic::from_error(&error, 2).details()["request_kind"],
+        "connect"
+    );
+    assert!(StartDiagnostic::from_error(&error, 2).details()["os_error"].is_number());
+    assert_eq!(
         StartDiagnostic::from_error(&error, 2).code,
         "codex_voice_realtime_connection_failed"
     );
+}
+
+#[test]
+fn tls_diagnostic_omits_arbitrary_certificate_and_provider_details() {
+    let error = Error::new(rustls::Error::General("private peer detail".into()))
+        .context(StartStage::Realtime);
+    let details = StartDiagnostic::from_error(&error, 700).details();
+    assert_eq!(details["tls_error"], "tls_protocol");
+    assert!(!details.to_string().contains("private"));
+}
+
+#[tokio::test]
+async fn https_certificate_failure_preserves_tls_category_without_private_details() {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+    use std::{sync::Arc, time::Duration};
+
+    let fixture = include_bytes!("testdata/untrusted-localhost.pem");
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("TLS versions")
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![CertificateDer::from_pem_slice(fixture).expect("test certificate")],
+        PrivateKeyDer::from_pem_slice(fixture).expect("public test key"),
+    )
+    .expect("server config");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let timeout = Duration::from_secs(5);
+    let client = reqwest::Client::builder()
+        .use_rustls_tls()
+        .tls_built_in_root_certs(false)
+        .no_proxy()
+        .timeout(timeout)
+        .build()
+        .expect("client");
+    let server = tokio::spawn(async move {
+        let (socket, _) = tokio::time::timeout(timeout, listener.accept())
+            .await
+            .expect("accept deadline")
+            .expect("accept");
+        let mut socket = socket.into_std().expect("blocking socket");
+        socket.set_nonblocking(false).expect("blocking mode");
+        socket
+            .set_read_timeout(Some(timeout))
+            .expect("read timeout");
+        socket
+            .set_write_timeout(Some(timeout))
+            .expect("write timeout");
+        tokio::task::spawn_blocking(move || {
+            let mut connection = rustls::ServerConnection::new(Arc::new(config)).expect("TLS");
+            // The untrusted certificate must be rejected before any HTTP body is sent.
+            connection
+                .complete_io(&mut socket)
+                .expect_err("untrusted certificate")
+        })
+        .await
+        .expect("TLS server task")
+    });
+    let result = client
+        .get(format!(
+            "https://{address}/private-path?private-token=secret"
+        ))
+        .send()
+        .await;
+    server.await.expect("server joined");
+    let error =
+        Error::new(result.expect_err("certificate rejection")).context(StartStage::Realtime);
+    let diagnostic = StartDiagnostic::from_error(&error, 700);
+    assert_eq!(diagnostic.code, "codex_voice_realtime_connection_failed");
+    let details = diagnostic.details();
+    assert_eq!(details["request_kind"], "connect");
+    assert_eq!(details["tls_error"], "invalid_certificate");
+    let serialized = details.to_string();
+    for private_detail in [
+        "private-path",
+        "private-token",
+        "secret",
+        "cccc-loopback.test",
+    ] {
+        assert!(
+            !serialized.contains(private_detail),
+            "diagnostic leaked a private detail"
+        );
+    }
 }

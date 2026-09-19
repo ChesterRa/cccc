@@ -452,6 +452,17 @@ the call generation, not the explanation or conversation content. A stopped
 audio call does not discard the warm Analyst session. Provider diagnostics do
 not retry requests or change the existing disconnect policy.
 
+For startup or later connection failures, keep the CCCC and Runtime versions
+alongside the first server-log diagnostic. Realtime startup reports its stage,
+elapsed time, and available request/TLS categories and OS error code. Managed
+Codex disconnects report the session generation, child-process state and
+WebSocket protocol category. `reset_without_close_handshake` means the local
+transport ended without a WebSocket close handshake; it does not by itself
+identify which process or network component caused the closure. A later
+`analyst_disconnected` Voice-control message can be a consequence of that first
+failure. A still-running child PID does not prove that its session is usable.
+These reports omit raw errors, credentials and conversation content.
+
 Ordinary Codex, Claude Code, Grok, OpenCode, and Kilo Actors use the same runtime-specific managed adapter
 as Voice Analyst and always attach the Runtime's native writable TUI. Actor controllers
 are bound to a concrete Group and Actor MCP identity, while Voice Analyst uses the global user

@@ -91,3 +91,35 @@ fn exit_observation_precedes_cleanup_and_does_not_terminate_a_live_child() {
         process.stop().expect("cleanup");
     }
 }
+
+#[tokio::test]
+async fn abrupt_peer_eof_is_distinct_from_a_close_frame_or_invalid_protocol() {
+    let (client, server) = tokio::io::duplex(4096);
+    let client = tokio_tungstenite::WebSocketStream::from_raw_socket(
+        client,
+        tokio_tungstenite::tungstenite::protocol::Role::Client,
+        None,
+    )
+    .await;
+    let client = ProtocolClient::new(client, "fixture-eof".into(), None);
+    let mut events = client.subscribe();
+    drop(server);
+    let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+        .await
+        .expect("disconnect deadline")
+        .expect("disconnect event");
+    let diagnostic = &event.message["params"]["diagnostic"];
+    assert_eq!(diagnostic["code"], "read_failed");
+    assert_eq!(
+        diagnostic["protocol_error"],
+        "reset_without_close_handshake"
+    );
+    let malformed = tokio_tungstenite::tungstenite::Error::Protocol(
+        tokio_tungstenite::tungstenite::error::ProtocolError::InvalidOpcode(15),
+    );
+    assert_eq!(
+        transport_diagnostic("read_failed", &malformed)["protocol_error"],
+        "invalid_websocket_protocol"
+    );
+    client.close().await;
+}
