@@ -453,22 +453,32 @@ pub(super) async fn local_page(body: &'static str) -> (String, JoinHandle<()>) {
         .expect("listener");
     let address = listener.local_addr().expect("address");
     let server = tokio::spawn(async move {
+        // Chromium can preconnect without sending a request. Serve connections
+        // independently so an idle socket cannot block another browser's page.
+        // Dropping the server also aborts its connection tasks.
+        let mut connections = tokio::task::JoinSet::new();
         loop {
-            let Ok((mut stream, _)) = listener.accept().await else {
-                return;
-            };
-            let mut request = [0_u8; 2048];
-            let _ = stream.read(&mut request).await;
-            stream
-                .write_all(
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    )
-                    .as_bytes(),
-                )
-                .await
-                .expect("response");
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let Ok((mut stream, _)) = accepted else { return };
+                    connections.spawn(async move {
+                        let mut request = [0_u8; 2048];
+                        if !matches!(stream.read(&mut request).await, Ok(size) if size > 0) {
+                            return;
+                        }
+                        let _ = stream
+                            .write_all(
+                                format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                    body.len()
+                                )
+                                .as_bytes(),
+                            )
+                            .await;
+                    });
+                }
+                _ = connections.join_next(), if !connections.is_empty() => {}
+            }
         }
     });
     (format!("http://{address}"), server)
@@ -835,4 +845,5 @@ fn classifies_only_group_owned_browser_sessions() {
     assert_eq!(session_actor("g_one::presentation"), None);
 }
 
+mod local_page_tests;
 mod resource_cleanup;
