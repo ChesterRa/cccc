@@ -1252,6 +1252,8 @@
         "currentBrowserTab": "当前浏览器 tab",
         "currentBrowserEmpty": "尚未记录 ChatGPT tab。",
         "currentTabNotTarget": "这个 tab 只用于查看；投递仍使用已保存目标。",
+        "nextPaused": "投递已暂停；请检查 ChatGPT 后恢复。",
+        "reviewBeforeResume": "投递已暂停，以保护发送结果不明确的消息。请检查已保存的 ChatGPT 会话，发送或清空未发送的草稿，并等待回复结束。恢复后将继续投递排队消息，不会重发那条结果不明确的消息。",
         "changeTarget": "修改目标",
         "unsavedChanges": "目标修改尚未保存。",
         "noUnsavedChanges": "没有需要保存的目标修改。",
@@ -1364,6 +1366,7 @@
         "copyMcpUrl": "复制 MCP URL",
         "createMcpUrl": "创建 MCP URL",
         "openChatGpt": "打开 ChatGPT",
+        "resumeDelivery": "已检查 ChatGPT，恢复投递",
         "saveTarget": "保存目标",
         "useCurrentTab": "使用当前 tab",
         "reloadChatGpt": "重新加载 ChatGPT 页面",
@@ -1387,6 +1390,7 @@
         "browserClosed": "ChatGPT 浏览器会话已关闭。",
         "newChatSelected": "下一次投递将新建 ChatGPT 会话。",
         "conversationBound": "ChatGPT 会话已绑定到这个 actor。",
+        "deliveryResumed": "已恢复排队消息的投递，未重发结果不明确的消息。",
         "targetSavedExisting": "已保存。下一次投递会使用这个 ChatGPT 会话。",
         "targetSavedNewChat": "已保存。下一次投递会新建 ChatGPT 会话。",
         "copied": "{{label}} 已复制。",
@@ -1404,6 +1408,7 @@
         "revokeConnectorFailed": "撤销 connector 失败。",
         "restartBrowserFailed": "重启 ChatGPT 浏览器失败。",
         "closeBrowserFailed": "关闭 ChatGPT 浏览器会话失败。",
+        "resumeDeliveryFailed": "无法恢复投递。请检查已保存的 ChatGPT 会话后重试。",
         "bindConversationFailed": "绑定 ChatGPT 会话失败。"
       },
       "nextAction": {

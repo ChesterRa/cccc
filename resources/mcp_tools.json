@@ -670,7 +670,7 @@
   },
   {
     "name": "cccc_file",
-    "description": "CCCC chat attachment operations. Use read/blob_path/info for delivered state/blobs attachments; send attaches an active-scope file to user alone or one/more agents, never both. Mail is agent-only. For another same-account instance or an approved external Group, discover its qualified target with cccc_connect and provide both dst_instance_id and dst_group_id.",
+    "description": "CCCC files and attachments. read returns UTF-8 text or original PNG/JPEG/WebP bytes as native MCP images (20 MiB maximum). PDF and PPTX reads return original bytes as embedded MCP resources for the client's native file reader. For image-only PDF pages, use the client's native page/image viewing rather than treating an empty text layer as an empty document. No local conversion, cropping, OCR or document/audio/video parsing. In code mode images/PDF/PPTX resources are emitted automatically; JS receives metadata. info/blob_path return file metadata/path, not interpreted content. send attaches an active-scope file to user alone or agents, never both. Mail is agent-only. For Connect destinations supply both dst_instance_id and dst_group_id from cccc_connect.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -735,13 +735,13 @@
         },
         "rel_path": {
           "type": "string",
-          "description": "Required for action=blob_path/info/read. Use the delivered attachment path, e.g. 'state/blobs/sha256_notes.txt'; read is for UTF-8 text, blob_path is for binary/local tools."
+          "description": "Path for read/blob_path/info: an active-scope relative file path or delivered attachment path such as state/blobs/<hash>. Images, PDF and PPTX files are detected from file content, including extensionless blobs."
         },
         "max_bytes": {
           "type": "integer",
-          "default": 200000,
           "minimum": 1,
-          "maximum": 1000000
+          "maximum": 20971520,
+          "description": "Read byte budget: text defaults to 200000, maximum 5 MiB; images/PDF/PPTX default to/max 20 MiB. Text reports truncation; original binary files fail rather than truncate or convert."
         },
         "dst_instance_id": {
           "type": "string",
@@ -757,7 +757,7 @@
   },
   {
     "name": "cccc_code_exec",
-    "description": "Preferred/default ChatGPT Web Model tool for non-trivial local development work. Run JavaScript that orchestrates CCCC MCP tools through global tools.<toolName>(args), with ALL_TOOLS, COMMON_WORK_LOOPS, tool_help(query[, {detail:'schema'}]), tool_names(query), list_tools(query), text(), store(), load(), and yield_control(). Use this instead of many separate tool calls for multi-step loops such as read -> patch -> test -> diff -> report; direct repo/shell/git tools are still fine for simple one-step actions. The JS runtime has no Node require/import/fs/network/console access; use nested MCP tools for all real work. If the result says running with a cell_id, call cccc_code_wait. If output is truncated, narrow the commands/ranges or raise max_output_tokens up to 50000.",
+    "description": "Preferred/default ChatGPT Web Model tool for non-trivial local development work. Run JavaScript that orchestrates CCCC MCP tools through global tools.<toolName>(args), with ALL_TOOLS, COMMON_WORK_LOOPS, tool_help(query[, {detail:'schema'}]), tool_names(query), list_tools(query), text(), store(), load(), and yield_control(). Use this instead of many separate tool calls for multi-step loops such as read -> patch -> test -> diff -> report; direct repo/shell/git tools are still fine for simple one-step actions. The JS runtime has no Node require/import/fs/network/console access; use nested MCP tools for all real work. If the result says running with a cell_id, call cccc_code_wait. If output is truncated, narrow the commands/ranges or raise max_output_tokens up to 50000. Nested cccc_file reads automatically emit images and original PDF/PPTX resources (up to 4 binary items and 20 MiB total per result); JS receives file metadata, not base64. No image() helper is needed. Read fewer files or yield before reading more.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true
@@ -1067,7 +1067,7 @@
   },
   {
     "name": "cccc_shell",
-    "description": "Short one-shot process execution in the group's active workspace. The command is split into program/arguments using shell-style quoting and executed directly: shell operators, redirection, variables, and wildcards are not expanded. For shell syntax, explicitly invoke an installed shell, e.g. sh -c 'pwd && git status --short' on Unix or powershell.exe -NoProfile -Command 'Get-Location; Get-ChildItem' on Windows. Returns exit_code, stdout, stderr, and output-truncation flags. For long-running or interactive commands use cccc_exec_command plus cccc_write_stdin.",
+    "description": "Short one-shot process execution in the group's active workspace. Uses the host process's OS permissions; cwd is not a filesystem/network sandbox. The command is split into program/arguments using shell-style quoting and executed directly: shell operators, redirection, variables, and wildcards are not expanded. For shell syntax, explicitly invoke an installed shell, e.g. sh -c 'pwd && git status --short' on Unix or powershell.exe -NoProfile -Command 'Get-Location; Get-ChildItem' on Windows. Returns exit_code, stdout, stderr, and output-truncation flags. For long-running or interactive commands use cccc_exec_command plus cccc_write_stdin.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true
@@ -1115,7 +1115,7 @@
   },
   {
     "name": "cccc_exec_command",
-    "description": "Start a long-running or interactive foreground process in the group's active workspace. Like cccc_shell, command strings use shell-style quoting but execute the program directly; operators and expansions require an explicit installed shell (e.g. sh -c on Unix or powershell.exe -NoProfile -Command on Windows). Returns session_id, status, initial output, cursor, has_more, cursor_expired, timed_out and closed. Waits up to yield_time_ms for output or exit. timeout_s is a hard lifetime limit (default/max 600 seconds), enforced without polling. Use cccc_write_stdin for incremental output/input/termination until closed=true, even when status.running=false but has_more=true. Output is bounded; max_output_bytes may extend by up to 3 bytes to finish a UTF-8 character. At most 64 sessions per host/Home; abandoned results expire 10 minutes after the command deadline. Use cccc_shell for short one-shot commands.",
+    "description": "Start a long-running or interactive foreground process in the group's active workspace. Like cccc_shell, command strings use shell-style quoting but execute the program directly; operators and expansions require an explicit installed shell (e.g. sh -c on Unix or powershell.exe -NoProfile -Command on Windows). Returns session_id, status, initial output, cursor, has_more, cursor_expired, timed_out and closed. Waits up to yield_time_ms for output or exit. timeout_s is a hard lifetime limit (default/max 600 seconds), enforced without polling. Use cccc_write_stdin for incremental output/input/termination until closed=true, even when status.running=false but has_more=true. Output is bounded; max_output_bytes may extend by up to 3 bytes to finish a UTF-8 character. At most 64 sessions per host/Home; abandoned results expire 10 minutes after the command deadline. Use cccc_shell for short one-shot commands. Commands retain the host process's OS file/network permissions; workspace scope is not a sandbox.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true
@@ -1214,7 +1214,7 @@
   },
   {
     "name": "cccc_git",
-    "description": "Web Model local-power git operations in the group's active workspace: action=status|diff|log|add|commit. Returns exit_code, stdout, stderr and output-truncation flags. Use cccc_shell for unusual git commands.",
+    "description": "Web Model local-power git operations in the group's active workspace: action=status|diff|log|add|commit. Returns exit_code, stdout, stderr and output-truncation flags. Use cccc_shell for unusual git commands. Commands retain the host process's OS file/network permissions; workspace scope is not a sandbox.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true

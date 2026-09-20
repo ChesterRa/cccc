@@ -1260,6 +1260,8 @@
         "currentBrowserTab": "Current browser tab",
         "currentBrowserEmpty": "No ChatGPT tab recorded.",
         "currentTabNotTarget": "This tab is visible for inspection only; delivery uses the saved target.",
+        "nextPaused": "Paused until you check ChatGPT and resume delivery.",
+        "reviewBeforeResume": "Delivery is paused to protect an unverified submission. Check the saved ChatGPT chat, send or clear any unsent draft, and wait for its response to finish. Resuming continues queued messages; it does not resend the unverified message.",
         "changeTarget": "Change target",
         "unsavedChanges": "Target changes are not saved yet.",
         "noUnsavedChanges": "No target changes to save.",
@@ -1372,6 +1374,7 @@
         "copyMcpUrl": "Copy MCP URL",
         "createMcpUrl": "Create MCP URL",
         "openChatGpt": "Open ChatGPT",
+        "resumeDelivery": "I checked ChatGPT — resume",
         "saveTarget": "Save target",
         "useCurrentTab": "Use current tab",
         "reloadChatGpt": "Reload ChatGPT page",
@@ -1395,6 +1398,7 @@
         "browserClosed": "ChatGPT browser session closed.",
         "newChatSelected": "New ChatGPT chat selected for next delivery.",
         "conversationBound": "ChatGPT conversation bound to this actor.",
+        "deliveryResumed": "Queued delivery resumed. The unverified message was not resent.",
         "targetSavedExisting": "Saved. Next delivery uses this ChatGPT chat.",
         "targetSavedNewChat": "Saved. Next delivery starts a new ChatGPT chat.",
         "copied": "{{label}} copied.",
@@ -1412,6 +1416,7 @@
         "revokeConnectorFailed": "Failed to revoke connector.",
         "restartBrowserFailed": "Failed to restart ChatGPT browser.",
         "closeBrowserFailed": "Failed to close ChatGPT browser session.",
+        "resumeDeliveryFailed": "Could not resume delivery. Check the saved ChatGPT chat and try again.",
         "bindConversationFailed": "Failed to bind ChatGPT conversation."
       },
       "nextAction": {

@@ -26,6 +26,7 @@ sha2.workspace = true
 shell-words.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 axum.workspace = true

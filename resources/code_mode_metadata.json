@@ -25,7 +25,7 @@
     {
       "name": "attachments",
       "steps": [
-        "cccc_file(action='read', rel_path=...) for text blobs delivered by CCCC",
+        "cccc_file(action='read', rel_path=...) for UTF-8 text, original PNG/JPEG/WebP files and delivered blobs; images and original PDF/PPTX resources are emitted automatically, JS receives metadata",
         "cccc_file(action='blob_path', rel_path=...) for binary/local inspection",
         "create output files under the active scope",
         "cccc_file(action='send', path=..., text=..., dst_group_id=...) to return files as local or remote CCCC attachments"
@@ -126,14 +126,14 @@
     ],
     "file": [
       "CCCC attachments are blob references, not browser uploads.",
-      "Use cccc_file(action='read', rel_path=...) for UTF-8 text attachments.",
-      "Use cccc_file(action='blob_path', rel_path=...) for binary/local inspection.",
+      "Use cccc_file(action='read', rel_path=...) for UTF-8 text or PNG/JPEG/WebP files/attachments. Images (up to 20 MiB) are automatically emitted to the model; JS receives metadata only. No image() helper or base64 text is needed. PDF and PPTX reads emit embedded resources containing original bytes for the client's native file reader. For image-only PDF pages, use the client's native page/image viewing; an empty text layer does not mean an empty document. Images and documents share four binary items and 20 MiB total per exec/wait result; yield before reading more.",
+      "The file bridge performs no local conversion, cropping, OCR or PDF/Office/audio/video parsing. Resource delivery alone is not proof of model access; use the client's native file reader and report unavailable content explicitly. Use info/blob_path for other file metadata/paths; those do not expose interpreted file content to the model. Do not claim unsupported media was read.",
       "Use cccc_file(action='send', path=..., text=..., dst_group_id=...) to return active-scope files as local or remote chat attachments."
     ],
     "shell": [
       "Use cccc_shell for short one-shot commands.",
       "Use cccc_exec_command plus cccc_write_stdin for commands lasting up to timeout_s (default/max 600 seconds). Consume initial output, then poll incrementally until closed=true, including unread pages after exit.",
-      "Keep cwd under the active scope and cap output with max_output_bytes. Check timed_out and cursor_expired; never infer success from empty output or replay uncertain input."
+      "cwd selects the starting directory; child programs retain host OS file/network permissions. It is not a sandbox. Keep cwd under the active scope and cap output with max_output_bytes. Check timed_out and cursor_expired; never infer success from empty output or replay uncertain input."
     ],
     "message": [
       "Visible CCCC delivery must use cccc_message_send or cccc_message_reply.",

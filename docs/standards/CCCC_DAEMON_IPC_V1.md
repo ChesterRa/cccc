@@ -6509,6 +6509,17 @@ The browser adapter MUST wait for a signed-in conversation composer before claim
 A guest composer or provider security-verification page MUST NOT count as ready. While waiting
 for sign-in or verification, background delivery MUST NOT navigate to the saved conversation;
 existing ambiguous submissions still follow their normal reconciliation contract.
+A browser adapter MUST NOT overwrite an unrelated non-empty composer draft.
+Legacy draft recovery MAY replace only the exact expected old draft, revalidated
+on the same target page immediately before replacement, with no user messages,
+submission echo, or response generation. This MUST NOT grant general overwrite
+permission or replay an already-submitted message. After
+an unverified submission, it MUST fence later deliveries even for an existing
+conversation, until direct evidence verifies that submission or the user
+explicitly resolves it. User acknowledgement MUST NOT replay the unverified turn
+or fabricate an accepted runtime handoff. Ordinary occupied composers detected
+before claiming work MUST leave pending daemon work unclaimed. The adapter also
+MUST wait while the provider is visibly generating a response.
 
 #### `runtime_complete_turn`
 

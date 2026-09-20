@@ -269,13 +269,15 @@ export default function WebModelConnectorsTab({
         ? wm("target.savedNewChatDetail")
         : wm("target.savedNoneDetail");
   const savedTargetTone: SetupTone = boundConversationUrl || pendingNewChatBind ? "ready" : "needs";
-  const nextDeliveryDetail = boundConversationUrl
-    ? wm("target.nextExisting", { target: shortConversationLabel(boundConversationUrl) })
-    : deliveryTargetState === "new_chat_submitted"
-      ? wm("target.nextWaitBinding")
-      : pendingNewChatBind
-        ? wm("target.nextNewChat")
-        : wm("target.nextBlocked");
+  const nextDeliveryDetail = selectedBrowserSession?.can_resume_delivery
+    ? wm("target.nextPaused")
+    : boundConversationUrl
+      ? wm("target.nextExisting", { target: shortConversationLabel(boundConversationUrl) })
+      : deliveryTargetState === "new_chat_submitted"
+        ? wm("target.nextWaitBinding")
+        : pendingNewChatBind
+          ? wm("target.nextNewChat")
+          : wm("target.nextBlocked");
   const currentBrowserDetail = currentBrowserConversationUrl
     ? shortConversationLabel(currentBrowserConversationUrl)
     : currentBrowserUrl
@@ -865,6 +867,38 @@ export default function WebModelConnectorsTab({
     }
   };
 
+  const resumeDelivery = async () => {
+    if (!groupId || !actorId || browserBusy) return;
+    const gid = groupId;
+    const aid = actorId;
+    setBrowserBusy(true);
+    setError("");
+    try {
+      const resp = await api.resumeWebModelBrowserDelivery(
+        gid,
+        aid,
+        String(selectedBrowserSession?.last_delivery_id || ""),
+      );
+      const selection = currentSelectionRef.current;
+      if (selection.groupId !== gid || selection.actorId !== aid) return;
+      if (resp.ok) {
+        const next = resp.result?.browser_session || null;
+        setBrowserSession(next);
+        setBrowserSessionsByActor((current) => ({
+          ...current,
+          [browserSessionKey(gid, aid)]: next || {},
+        }));
+        pushNotice(wm("notices.deliveryResumed"));
+      } else {
+        setError(resp.error?.message || wm("errors.resumeDeliveryFailed"));
+      }
+    } catch {
+      setError(wm("errors.resumeDeliveryFailed"));
+    } finally {
+      setBrowserBusy(false);
+    }
+  };
+
   const saveDeliveryTarget = async () => {
     if (targetSaveDisabled) return;
     if (targetDraftMode === "new") {
@@ -1173,6 +1207,24 @@ export default function WebModelConnectorsTab({
               </SetupSection>
 
               <SetupSection title={wm("chatSetup.deliveryTargetTitle")}>
+                {selectedBrowserSession?.can_resume_delivery ? (
+                  <div
+                    role="status"
+                    className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--glass-border-subtle)] px-3 py-3"
+                  >
+                    <p className="min-w-0 flex-1 text-sm text-[var(--color-text-secondary)]">
+                      {wm("target.reviewBeforeResume")}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={browserBusy}
+                      onClick={() => void resumeDelivery()}
+                      className={secondaryButtonClass("sm")}
+                    >
+                      {wm("buttons.resumeDelivery")}
+                    </button>
+                  </div>
+                ) : null}
                 <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
                   <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3">
                     <div className="flex flex-wrap items-center gap-2">

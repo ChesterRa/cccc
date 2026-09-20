@@ -31,10 +31,14 @@ pub async fn call(
         "cccc_code_exec" => crate::code_mode::start(home, client, &root, &args).await?,
         "cccc_code_wait" => crate::code_mode::wait(home, client, &args).await?,
         "cccc_apply_patch" => apply_patch(&root, &args).await?,
-        "cccc_file" => file(home, client, &root, &args).await?,
+        "cccc_file" => return file(home, client, &root, &args).await,
         _ => return Err(format!("unsupported local tool: {name}").into()),
     };
-    Ok(tool_result(payload))
+    Ok(if matches!(name, "cccc_code_exec" | "cccc_code_wait") {
+        crate::code_mode::tool_result(payload)
+    } else {
+        tool_result(payload)
+    })
 }
 
 async fn scope(client: &DaemonClient, args: &Map<String, Value>) -> Result<PathBuf, ToolCallError> {
@@ -214,6 +218,9 @@ async fn file(
     args: &Map<String, Value>,
 ) -> Result<Value, ToolCallError> {
     let action = action(args);
+    if !matches!(action, "read" | "info" | "blob_path" | "send") {
+        return Err(format!("unsupported file action: {action}").into());
+    }
     let raw = first_non_blank(args, &["path", "rel_path"]).ok_or("path is required")?;
     if args.contains_key("dst_instance_id") {
         if action != "send" {
@@ -235,7 +242,9 @@ async fn file(
         crate::argument_normalization::normalize_recipients(&mut request);
         crate::mapping::connect_destination(&mut request)?;
         let result = daemon(client, "connect_send_files", request).await?;
-        return Ok(json!({"accepted":true,"queued":result.get("queued"),"result":result}));
+        return Ok(tool_result(
+            json!({"accepted":true,"queued":result.get("queued"),"result":result}),
+        ));
     }
     let path = if raw.starts_with("state/blobs/") {
         let group_id = args
@@ -272,13 +281,20 @@ async fn file(
             .and_then(|attachments| attachments.first())
             .cloned()
             .unwrap_or(Value::Null);
-        return Ok(json!({"sent":true,"attachment":attachment,"result":result}));
+        return Ok(tool_result(
+            json!({"sent":true,"attachment":attachment,"result":result}),
+        ));
     }
     if action == "blob_path" || action == "info" {
-        return Ok(json!({"path":path,"bytes":path.metadata().map(|meta|meta.len()).unwrap_or(0)}));
+        return Ok(tool_result(
+            json!({"path":path,"bytes":path.metadata().map(|meta|meta.len()).unwrap_or(0)}),
+        ));
     }
-    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
-    Ok(json!({"path":path,"content":String::from_utf8_lossy(&bytes),"bytes":bytes.len()}))
+    let args = args.clone();
+    tokio::task::spawn_blocking(move || crate::file_read::read(&path, &args))
+        .await
+        .map_err(|error| format!("file read task failed: {error}"))?
+        .map_err(Into::into)
 }
 
 pub(super) fn command(args: &Map<String, Value>) -> Result<Vec<String>, String> {

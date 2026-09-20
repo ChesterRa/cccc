@@ -197,7 +197,7 @@ function buildActivityBlock(
         tone: "needs",
       };
     }
-    if (state === "ambiguous") {
+    if (state === "ambiguous" || state === "blocked") {
       return {
         label: "Activity",
         value: String(health.delivery.label || "").trim() || "Delivery unverified",

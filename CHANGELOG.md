@@ -6,7 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+- Local PDF and PPTX reads hand off original files as native MCP resources for ChatGPT's own file reader, including attachments and code mode. CCCC performs no document extraction or rendering.
+- Local file reads deliver original PNG, JPEG and WebP bytes as native MCP images, including through code mode, with a 20 MiB image/result budget. Text previews honor their byte budget. The bridge performs no local media conversion; image understanding depends on the selected client/model.
+
 ### Fixed
+- Web Model delivery preserves unsent ChatGPT drafts and pauses after unverified submissions, with an explicit checked-chat resume action that never replays the uncertain message. Verified legacy drafts remain recoverable; unrelated or changed drafts stay protected.
+- Code-mode result deadlines now return while nested tools continue; subsequent waits collect their results, and termination cancels outstanding work.
+- Clarified that workspace paths and actor binding do not sandbox shell or Git subprocess permissions.
 - Repository inspection honors scope, filters, case, context, pagination and output budgets, with explicit incomplete-result and continuation details. Traversal does not follow symlinks; the read-only tool rejects editing actions, and documented path aliases work across reads and edits.
 - Web Model command sessions honor wait times, hard timeouts and output budgets, return incremental output, and keep final pages readable after exit. Timeout/termination and host cleanup preserve ownership without relying on Actor history caches.
 - Local editing returns whole-file hashes for stale-write checks, validates batch replacements before writing, and preserves executable file permissions. Codex-style patches support exact anchors, ordered hunks, EOF markers, moves and new directories while rejecting ambiguous edits and destination conflicts.

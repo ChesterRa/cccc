@@ -228,6 +228,103 @@ curl -s "$CONNECTOR_URL" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"cccc_runtime_wait_next_turn","arguments":{}}}'
 ```
 
+## Reading local images
+
+Use `cccc_file` with `action="read"` and an active-workspace relative path, or the
+`state/blobs/...` path of an attachment delivered to this Group:
+
+```json
+{"action":"read","path":"screenshots/page.png"}
+```
+
+PNG, JPEG and WebP files are detected from their bytes and returned as native MCP
+image content. **Original bytes are preserved**, including any existing metadata;
+CCCC does not decode, crop, resize, recompress or reorient them. The image limit is
+20 MiB. An explicit `max_bytes` may lower that limit; oversized images fail rather
+than returning a partial image. Image interpretation, including orientation and
+animated-frame handling, belongs to the selected client/model.
+
+Inside code mode, image reads automatically include the image in the next
+`cccc_code_exec` / `cccc_code_wait` result. JavaScript receives only file metadata;
+base64 transport bytes do not consume the text-output budget or pass through the
+JavaScript bridge. No `image()` helper is needed:
+
+```js
+const file = await tools.cccc_file({action: "read", path: "screenshots/page.png"});
+text(file);
+```
+
+Each code-mode result can include up to **four binary items totaling 20 MiB** before
+base64 encoding. Read fewer/smaller files or call `await yield_control()` before
+reading more. These limits fail explicitly, without silently dropping images.
+Ordinary UTF-8 reads return a bounded text preview (200,000 bytes by default,
+configurable with `max_bytes` up to 5 MiB) and a `truncated` flag. Use
+`cccc_repo(read)` when line continuation or a file hash is needed.
+
+After restarting the updated CCCC binary, test a known local image through the
+existing connector and ask for details available only in its pixels. Check both
+the tool call and answer; an image preview alone is not proof of understanding.
+Refresh the connector's tool definitions if it still advertises an older schema.
+No separate media connector is required.
+
+### Native-input boundary
+
+This bridge adapts inputs the selected ChatGPT client/model can consume through
+MCP. It does not supply local PDF extraction/rendering, image editing, OCR, Office
+parsers, audio transcription or video frame extraction. `region`, `page` and
+`view` are not supported. Unsupported binary reads fail explicitly; PDF/PPTX
+reads only forward original bytes. `info` and `blob_path` still
+return ordinary metadata/path, without starting any
+helper process. Neither metadata nor a local path means the model has read the
+file. The existing Presentation viewer, Voice features and general local command
+tools are separate capabilities and are unaffected by this boundary.
+
+PDF and PPTX handoff have been successfully tested by a user in ChatGPT. Other
+Office formats, audio and video remain unsupported by this file bridge. ChatGPT upload support does not establish MCP
+support: OpenAI's
+[Responses file-input documentation](https://developers.openai.com/api/docs/guides/file-inputs)
+describes `input_file`, a different interface from
+[ChatGPT MCP tool results](https://developers.openai.com/plugins/reference#tool-results).
+Do not infer one interface's file support or size limits from the other.
+
+Keep new formats limited to a small original-file handoff and an actual client
+test. Do not add a local converter, a paid inference fallback or a browser-upload
+workaround to simulate native support.
+
+### Original PDF and PPTX handoff
+
+`cccc_file(action="read")` returns original PDF and PPTX bytes as inline MCP
+embedded resources (`type="resource"`, base64 `blob`), using MIME `application/pdf`
+or `application/vnd.openxmlformats-officedocument.presentationml.presentation`.
+The `cccc-file:///...pdf` or `...pptx` URI identifies the content; it is not a
+public download endpoint. No new connector or document helper program is needed.
+
+Files are identified by their contents, including extensionless Group attachments.
+For PPTX, CCCC checks only ZIP format metadata to distinguish the presentation
+format from other archives; it does not extract slide text, notes, images or
+layout. The original file remains unchanged. The 20 MiB per-file limit applies;
+documents and images share the four-item/20 MiB aggregate code-mode budget.
+Binary files are never truncated. Code mode emits the native resource while
+JavaScript receives metadata, just as with images.
+
+User testing on 2026-09-20 confirmed both routes: ChatGPT read a 17-slide PPTX
+through its native file reader and opened a one-page image-only PDF through its
+native page reader, with no local extraction or rendering. These results establish
+the tested ChatGPT route; content interpretation remains the selected
+client/model's responsibility.
+
+After `cccc_file(action="read")`, use ChatGPT's native file reader. For PDF,
+read the text layer when useful, then use native page/image viewing for pages
+whose visual content matters. An image-only PDF can have an empty text layer
+while its page image is readable. A page-image reference alone is not a transcript;
+inspect the image before describing its contents. For long files, read the pages
+needed for the task and state the actual coverage.
+
+Native PPTX text access does not establish that slide layout, embedded images or
+charts are visible. If the client's native reader cannot expose requested content,
+report that limitation. This bridge does not silently extract, render or convert
+locally to compensate.
+
 ## Local command execution
 
 `cccc_shell` and `cccc_exec_command` execute a program and its arguments directly.
@@ -248,7 +345,11 @@ On Windows, for example:
 Both tools accept a relative `cwd` inside the Group's active workspace and `env`
 overrides for the child process. `cccc_exec_command` also accepts `workdir` as an
 alias. This constrains the starting directory, not what an authorized local
-program can subsequently access. `cccc_shell` defaults to a 60-second timeout
+program can subsequently access. Commands run with the CCCC host process's OS
+permissions, including access outside the workspace and network access. Actor
+binding authenticates which Group/Actor is calling; it does not create a
+filesystem or network sandbox. Use a container, VM, or OS-level isolation when
+that boundary is required. `cccc_shell` defaults to a 60-second timeout
 and retains at most 200,000 bytes per output stream; `max_output_bytes` can raise
 that limit to 1,000,000. Check the exit code and truncation flags before relying
 on command output.
@@ -346,6 +447,24 @@ imports are invalid in the cell function, dynamic imports have no loader, and
 `require` is not exposed. Executable failures are reported when evaluated, like
 other JavaScript errors; effects of earlier nested tool calls are not rolled back.
 
+Code-mode `yield_time_ms` limits the current wait for results, including nested
+tool calls. A slow nested tool keeps running in its cell and its result is
+collected by `cccc_code_wait`; a poll deadline does not cancel or replay it.
+Explicit cell termination, expiry, and host shutdown cancel outstanding nested
+calls. Changes already made are not rolled back.
+
+### Unverified browser delivery and unsent drafts
+
+If CCCC cannot verify a browser submission, later deliveries to that chat pause
+so they cannot replace an unsent draft. Check the saved conversation in the
+embedded browser, manually send or clear the draft, and wait for any response
+to finish. In the delivery-target section, **I checked ChatGPT — resume** resumes
+queued messages after checking that the saved chat is open and its composer is
+empty. It does not resend or mark the unverified message as accepted. A pending
+new chat still needs its final conversation URL bound through the existing
+save-target flow. Ordinary unsent drafts detected before a new batch is claimed
+are also preserved; queued delivery continues once they are sent or cleared.
+
 ## Current Boundaries
 
 - `web_model` does not spawn a local PTY or local headless model process.
@@ -354,7 +473,7 @@ other JavaScript errors; effects of earlier nested tool calls are not rolled bac
 - Unknown or malformed tool calls return JSON-RPC protocol errors. A known tool that fails execution or policy checks returns an MCP tool result with `isError: true`; the native server includes the daemon's machine-readable `code`, `message`, and non-empty `details` in `structuredContent.error` as well as the text content.
 - Only tools whose declared operation is read-only are annotated with `readOnlyHint: true`. Mixed-action and mutating tools remain unannotated so a client is not encouraged to bypass approval for a write path.
 - The ChatGPT Web Model `tools/list` is intentionally stable for ChatGPT registration. Direct calls remain limited to that advertised surface; hidden built-in capability-pack tools must pass through `cccc_capability_use` and its actor-role checks.
-- ChatGPT Web Model local-power tools (`cccc_repo_edit`, `cccc_shell`, `cccc_git`) are actor-bound to the single ChatGPT Web Model actor identity and constrained to the active workspace scope.
+- ChatGPT Web Model local-power tools are actor-bound. Repository/file APIs validate their paths against the active workspace (or authorized Group blobs). Shell execution and Git subprocesses start in that workspace but retain the host process's OS permissions; scope and identity binding are not an OS sandbox.
 - Local `cccc_shell`, `cccc_git`, and unified-diff `cccc_apply_patch` calls own finite commands. Timeout covers input, output, and process exit; cancelling the call ends its owned process tree. This does not undo changes already made by a command. Use `cccc_exec_command` for foreground work within its declared lifetime, rather than leaving background children behind a completed shell.
 - Shell results follow `max_output_bytes` (default 200,000); Git results retain at most 2,000,000 bytes per output stream and report `stdout_truncated` / `stderr_truncated`. Excess output is drained within the same command deadline instead of accumulating in memory.
 - Local `cccc_exec_command` sessions belong to the CCCC host process and Home. Host shutdown ends those commands; closing a browser tab does not. Cleanup leaves Actor/Analyst sessions and other hosts alone.

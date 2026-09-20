@@ -96,15 +96,9 @@ impl BrowserSurfaces {
         prompt: &str,
     ) -> Result<Value> {
         let page = self.page(key).await?;
-        let current_url = page.url().await?.unwrap_or_default();
         let _ = wait_for_composer(&page).await?;
         let snapshot = inspect_submission(&page, prompt, &submission_needles(prompt)).await?;
-        let recoverable = same_page(&current_url, target_url)
-            && snapshot.user_message_count == 0
-            && !snapshot.echo_found
-            && !snapshot.running
-            && !snapshot.stop_visible
-            && snapshot.composer_exact;
+        let recoverable = recoverable_staged_draft(target_url, &snapshot);
         self.record_page_state(key, &page).await;
         Ok(json!({
             "recoverable":recoverable,
@@ -120,25 +114,30 @@ impl BrowserSurfaces {
         prompt: &str,
         attachment_path: Option<&Path>,
         delivery_id: &str,
+        expected_staged_draft: Option<&str>,
     ) -> Result<PromptSubmissionOutcome> {
         if prompt.trim().is_empty() {
             bail!("browser prompt is empty");
         }
         let page = self.page(key).await?;
-        if has_chatgpt_conversation_route(target_url) {
-            self.align_chatgpt_conversation_target(key, target_url, Duration::from_secs(5))
-                .await?;
-        } else if !target_url.is_empty() {
-            let current = page.url().await?.unwrap_or_default();
-            if !same_page(&current, target_url) {
-                goto_dom_content_loaded(&page, target_url).await?;
+        // Recovery owns one exact draft on the current page, not permission to
+        // navigate back and replace whatever is there after a user changes tabs.
+        if expected_staged_draft.is_none() {
+            if has_chatgpt_conversation_route(target_url) {
+                self.align_chatgpt_conversation_target(key, target_url, Duration::from_secs(5))
+                    .await?;
+            } else if !target_url.is_empty() {
+                let current = page.url().await?.unwrap_or_default();
+                if !same_page(&current, target_url) {
+                    goto_dom_content_loaded(&page, target_url).await?;
+                }
             }
         }
         dismiss_duplicate_upload_dialog(&page).await?;
 
         let needles = submission_needles(prompt);
         let existing = inspect_submission(&page, prompt, &needles).await?;
-        if existing.echo_found {
+        if existing.echo_found && expected_staged_draft.is_none() {
             self.record_page_state(key, &page).await;
             return Ok(PromptSubmissionOutcome::Verified(evidence(
                 true,
@@ -152,6 +151,35 @@ impl BrowserSurfaces {
 
         let composer = wait_for_composer(&page).await?;
         let staged = inspect_submission(&page, prompt, &needles).await?;
+        let owns_staged_draft = if let Some(expected) = expected_staged_draft {
+            let previous =
+                inspect_submission(&page, expected, &submission_needles(expected)).await?;
+            if !recoverable_staged_draft(target_url, &previous) {
+                return Ok(PromptSubmissionOutcome::Ambiguous(evidence(
+                    false,
+                    "",
+                    "staged_draft_changed",
+                    &composer.descriptor,
+                    &previous,
+                    &previous,
+                )));
+            }
+            true
+        } else {
+            false
+        };
+        if !staged.composer_exact && staged.composer_chars > 0 && !owns_staged_draft {
+            // A previous delivery or a human may own this draft. Never replace
+            // it, including if it appeared after the pre-claim readiness check.
+            return Ok(PromptSubmissionOutcome::Ambiguous(evidence(
+                false,
+                "",
+                "composer_occupied",
+                &composer.descriptor,
+                &staged,
+                &staged,
+            )));
+        }
         if !staged.composer_exact {
             focus_and_select_composer(&page).await?;
             page.execute(InsertTextParams::new(prompt))
@@ -561,8 +589,15 @@ impl BrowserSurfaces {
             .into_value::<ComposerCandidate>()
             .context("decode visible browser composer")?;
         let ready = !candidate.selector.is_empty();
+        let snapshot = if ready {
+            inspect_submission(&page, "", &[]).await?
+        } else {
+            SubmissionSnapshot::default()
+        };
         let readiness = json!({
             "ready":ready,
+            "composer_chars":snapshot.composer_chars,
+            "running":snapshot.running,
             "login_required":!ready,
             "verification_required":candidate.verification_required,
             "tab_url":url,
@@ -742,6 +777,16 @@ async fn attach_compatibility_image(
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
+}
+
+// Keep the early recovery inspection and final replacement check identical.
+fn recoverable_staged_draft(target_url: &str, snapshot: &SubmissionSnapshot) -> bool {
+    same_page(&snapshot.url, target_url)
+        && snapshot.user_message_count == 0
+        && !snapshot.echo_found
+        && !snapshot.running
+        && !snapshot.stop_visible
+        && snapshot.composer_exact
 }
 
 fn same_page(left: &str, right: &str) -> bool {
@@ -1278,7 +1323,7 @@ const INSPECT_SUBMISSION_SCRIPT: &str = r#"payload => {
         ((node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) && !node.disabled && !node.readOnly)
         || node.isContentEditable || node.getAttribute('contenteditable') === 'true'
     );
-    const read = node => normalize(('value' in node && node.value) ? node.value : (node.innerText || node.textContent || ''));
+    const read = node => normalize(('value' in node) ? node.value : (node.innerText || node.textContent || ''));
     const marked = document.querySelector('[data-cccc-web-model-composer="cccc-web-model-composer"]');
     const markedText = marked ? read(marked) : '';
     const composers = Array.from(new Set([
@@ -1401,6 +1446,208 @@ const ATTACHMENT_STATUS_SCRIPT: &str = r#"payload => {
 #[cfg(test)]
 mod readiness_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn owned_draft_recovery_rechecks_composer_and_page_before_replacement() {
+        if crate::system_browser_path().is_none() {
+            return;
+        }
+        let temp = tempfile::tempdir().expect("fixture");
+        let manager = BrowserSurfaces::default();
+        let (url, server) = super::super::browser_surface_tests::local_page("<main></main>").await;
+        manager
+            .open("owned", &temp.path().join("profile"), &url, 800, 600)
+            .await
+            .expect("browser");
+        let page = manager.page("owned").await.expect("page");
+        let old = "[user -> browser-test] Verified old draft.";
+        let prompt = "[CCCC] Rebuilt bootstrap and recovered delivery batch.";
+        for editable in [false, true] {
+            for case in [
+                "unchanged",
+                "edited",
+                "cleared",
+                "history",
+                "generating",
+                "navigated",
+            ] {
+                let element = if editable {
+                    "<div id='prompt-textarea' contenteditable='true' role='textbox' style='width:400px;height:100px'></div>"
+                } else {
+                    "<textarea id='prompt-textarea' style='width:400px;height:100px'></textarea>"
+                };
+                let html = format!(
+                    "<main><form>{element}<button type='submit'>Send</button></form></main>"
+                );
+                page.evaluate(format!(r#"(() => {{
+                    history.replaceState(null,'',{});
+                    document.body.innerHTML={};
+                    window.sends=0;
+                    window.readDraft=()=>{{ const n=document.querySelector('#prompt-textarea'); return 'value' in n?n.value:n.textContent; }};
+                    window.writeDraft=(text)=>{{ const n=document.querySelector('#prompt-textarea'); if('value' in n)n.value=text;else n.textContent=text; }};
+                    window.writeDraft({});
+                    document.querySelector('form').onsubmit=(e)=>{{e.preventDefault(); window.sends++; const a=document.createElement('article'); a.dataset.messageAuthorRole='user'; a.textContent=window.readDraft(); document.querySelector('main').append(a); window.writeDraft('');}};
+                }})()"#, serde_json::to_string(&url).expect("url"),serde_json::to_string(&html).expect("html"),serde_json::to_string(old).expect("old"))).await.expect("reset fixture");
+                assert_eq!(
+                    manager
+                        .inspect_staged_prompt("owned", &url, old)
+                        .await
+                        .expect("precheck")["recoverable"],
+                    true
+                );
+                let mutation = match case {
+                    "edited" => "window.writeDraft('A newer human draft')",
+                    "cleared" => "window.writeDraft('')",
+                    "history" => {
+                        "document.querySelector('main').insertAdjacentHTML('beforeend', '<article data-message-author-role=user>A message already sent</article>')"
+                    }
+                    "generating" => {
+                        "document.querySelector('main').insertAdjacentHTML('beforeend', '<button aria-label=Stop>Stop</button>')"
+                    }
+                    "navigated" => "history.replaceState(null,'','/another-page')",
+                    _ => "void 0",
+                };
+                page.evaluate(mutation)
+                    .await
+                    .expect("change after early inspection");
+                let before: String = page
+                    .evaluate("window.readDraft()")
+                    .await
+                    .expect("before")
+                    .into_value()
+                    .expect("text");
+                let page_before = page.url().await.expect("url");
+                let outcome = manager
+                    .submit_prompt_with_attachment(
+                        "owned",
+                        &url,
+                        prompt,
+                        None,
+                        "recovered",
+                        Some(old),
+                    )
+                    .await
+                    .expect("recovery");
+                let sends: usize = page
+                    .evaluate("window.sends")
+                    .await
+                    .expect("sends")
+                    .into_value()
+                    .expect("count");
+                if case == "unchanged" {
+                    assert!(
+                        matches!(outcome, PromptSubmissionOutcome::Verified(_)),
+                        "owned draft must recover"
+                    );
+                    assert_eq!(sends, 1);
+                } else {
+                    let PromptSubmissionOutcome::Ambiguous(evidence) = outcome else {
+                        panic!("changed recovery must stop: {case}")
+                    };
+                    assert_eq!(
+                        evidence["submission_evidence"], "staged_draft_changed",
+                        "{case}"
+                    );
+                    assert_eq!(sends, 0, "{case}");
+                    assert_eq!(
+                        page.evaluate("window.readDraft()")
+                            .await
+                            .expect("after")
+                            .into_value::<String>()
+                            .expect("text"),
+                        before,
+                        "preserve {case}"
+                    );
+                    assert_eq!(
+                        page.url().await.expect("url"),
+                        page_before,
+                        "do not navigate on {case}"
+                    );
+                }
+            }
+        }
+        manager.close("owned").await.expect("close");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn unverified_submission_and_user_drafts_are_never_overwritten() {
+        if crate::system_browser_path().is_none() {
+            return;
+        }
+        let temp = tempfile::tempdir().expect("fixture");
+        let manager = BrowserSurfaces::default();
+        let (url, server) = super::super::browser_surface_tests::local_page(
+            "<main><article data-message-author-role='user'>Existing message</article><form onsubmit='event.preventDefault(); window.clicks=(window.clicks||0)+1'><textarea id='prompt-textarea'></textarea><button type='submit'>Send</button></form></main>"
+        ).await;
+        manager
+            .open("draft", &temp.path().join("profile"), &url, 800, 600)
+            .await
+            .expect("open");
+        let page = manager.page("draft").await.expect("page");
+        let first = manager
+            .submit_prompt_with_attachment(
+                "draft",
+                &url,
+                "original unsent batch",
+                None,
+                "first",
+                None,
+            )
+            .await
+            .expect("attempt");
+        assert!(matches!(first, PromptSubmissionOutcome::Ambiguous(_)));
+        for (element, original) in [
+            ("textarea", "original unsent batch"),
+            ("contenteditable", "human draft"),
+        ] {
+            if element == "contenteditable" {
+                page.evaluate("document.querySelector('textarea').outerHTML = '<div id=prompt-textarea contenteditable=true role=textbox style=width:400px;height:60px>human draft</div>'").await.expect("editable draft");
+            }
+            let next = manager
+                .submit_prompt_with_attachment(
+                    "draft",
+                    &url,
+                    "later incoming batch",
+                    None,
+                    "next",
+                    None,
+                )
+                .await
+                .expect("blocked");
+            let PromptSubmissionOutcome::Ambiguous(evidence) = next else {
+                panic!("must block occupied composer")
+            };
+            assert_eq!(evidence["submission_evidence"], "composer_occupied");
+            let snapshot = inspect_submission(&page, original, &[])
+                .await
+                .expect("preserved");
+            assert!(snapshot.composer_exact);
+            assert_eq!(
+                page.evaluate("window.clicks")
+                    .await
+                    .expect("clicks")
+                    .into_value::<usize>()
+                    .expect("number"),
+                1
+            );
+        }
+        page.evaluate("document.querySelector('#prompt-textarea').textContent=''; document.querySelector('form').onsubmit=(e)=>{e.preventDefault(); const input=document.querySelector('#prompt-textarea'); const msg=document.createElement('article'); msg.dataset.messageAuthorRole='user'; msg.textContent=input.textContent; document.querySelector('main').append(msg); input.textContent='';}").await.expect("manual clear");
+        let next = manager
+            .submit_prompt_with_attachment(
+                "draft",
+                &url,
+                "confirmed new batch",
+                None,
+                "confirmed",
+                None,
+            )
+            .await
+            .expect("submit");
+        assert!(matches!(next, PromptSubmissionOutcome::Verified(_)));
+        manager.close("draft").await.expect("close");
+        server.abort();
+    }
 
     #[tokio::test]
     async fn chatgpt_auth_and_landing_inputs_are_not_conversation_composers() {

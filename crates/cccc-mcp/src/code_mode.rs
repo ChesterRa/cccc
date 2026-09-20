@@ -16,7 +16,7 @@ use tokio::sync::{Mutex, mpsc};
 
 use buffering::{
     BoundedLine, EVENT_QUEUE_CAPACITY, MAX_EVENT_BYTES, OutputBuffer, content_text,
-    read_bounded_line,
+    is_native_media, read_bounded_line,
 };
 
 const DEFAULT_YIELD_TIME_MS: u64 = 10_000;
@@ -43,11 +43,30 @@ struct CodeCell {
     io: Mutex<CellIo>,
     started_at: Instant,
     last_used_at: StdMutex<Instant>,
+    nested: StdMutex<NestedControl>,
 }
 
 struct CellIo {
     stdin: ChildStdin,
     events: mpsc::Receiver<Value>,
+    pending: Option<PendingTool>,
+}
+
+#[derive(Default)]
+struct NestedControl {
+    stopped: bool,
+    abort: Option<tokio::task::AbortHandle>,
+}
+
+struct PendingTool {
+    id: String,
+    task: tokio::task::JoinHandle<Result<Value, crate::ToolCallError>>,
+}
+
+impl Drop for PendingTool {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 type SharedCell = Arc<CodeCell>;
@@ -405,9 +424,11 @@ async fn spawn_cell(
             io: Mutex::new(CellIo {
                 stdin,
                 events: receiver,
+                pending: None,
             }),
             started_at: now,
             last_used_at: StdMutex::new(now),
+            nested: StdMutex::new(NestedControl::default()),
         }),
     ))
 }
@@ -460,43 +481,28 @@ async fn send_command(stdin: &mut ChildStdin, payload: &Value) -> Result<(), Str
         .map_err(|error| format!("cell_closed: {error}"))
 }
 
-async fn drain(
-    home: &HomeLayout,
-    client: &DaemonClient,
-    cell_id: &str,
+fn drain<'a>(
+    home: &'a HomeLayout,
+    client: &'a DaemonClient,
+    cell_id: &'a str,
     cell: SharedCell,
     yield_time_ms: u64,
     max_output_tokens: usize,
-) -> Result<Value, String> {
-    let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
-    let mut output = OutputBuffer::new(max_output_tokens);
-    *cell
-        .last_used_at
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
-    let mut cell_io = cell.io.lock().await;
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Ok(format_response(
-                "running",
-                cell_id,
-                output,
-                cell.started_at,
-                "",
-            ));
-        }
-        let event = match tokio::time::timeout(remaining, cell_io.events.recv()).await {
-            Ok(Some(event)) => event,
-            Ok(None) => {
-                cells().lock().await.remove(cell_id);
-                return Ok(failed_response(
-                    cell_id,
-                    output,
-                    cell.started_at,
-                    "exec runtime ended unexpectedly",
-                ));
-            }
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + 'a>> {
+    Box::pin(async move {
+        let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
+        let mut output = OutputBuffer::new(max_output_tokens);
+        *cell
+            .last_used_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
+        let mut cell_io = match tokio::time::timeout(
+            deadline.saturating_duration_since(Instant::now()),
+            cell.io.lock(),
+        )
+        .await
+        {
+            Ok(io) => io,
             Err(_) => {
                 return Ok(format_response(
                     "running",
@@ -507,45 +513,9 @@ async fn drain(
                 ));
             }
         };
-        match event
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-        {
-            "started" => {}
-            "content" => {
-                if let Some(item) = event.get("item").filter(|item| item.is_object()) {
-                    output.push(item.clone());
-                }
-            }
-            "tool_call" => {
-                let event_id = event.get("id").and_then(Value::as_str).unwrap_or_default();
-                let name = event
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if event_id.is_empty() || name.is_empty() {
-                    continue;
-                }
-                let response =
-                    call_nested(home, client, &cell.owner, name, event.get("input")).await;
-                let payload = match response {
-                    Ok(result) => {
-                        json!({"type":"tool_response","id":event_id,"ok":true,"result":result})
-                    }
-                    Err(error) => {
-                        json!({
-                            "type":"tool_response",
-                            "id":event_id,
-                            "ok":false,
-                            "error":error.error_value(),
-                        })
-                    }
-                };
-                send_command(&mut cell_io.stdin, &payload).await?;
-            }
-            "yield" => {
-                update_stored_values(&cell.owner, event.get("stored_values"))?;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 return Ok(format_response(
                     "running",
                     cell_id,
@@ -554,46 +524,156 @@ async fn drain(
                     "",
                 ));
             }
-            "result" => {
-                cells().lock().await.remove(cell_id);
-                update_stored_values(&cell.owner, event.get("stored_values"))?;
-                let error_text = event
-                    .get("error_text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if error_text.is_empty() {
+            if let Some(pending) = cell_io.pending.as_mut() {
+                // Poll deadlines must not cancel or replay nested writes. The cell
+                // retains the task until completion, termination, or expiry.
+                let result = match tokio::time::timeout(remaining, &mut pending.task).await {
+                    Err(_) => {
+                        return Ok(format_response(
+                            "running",
+                            cell_id,
+                            output,
+                            cell.started_at,
+                            "",
+                        ));
+                    }
+                    Ok(Ok(result)) => result,
+                    Ok(Err(error)) => Err(format!("nested tool interrupted: {error}").into()),
+                };
+                let id = pending.id.clone();
+                cell_io.pending = None;
+                cell.nested
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .abort = None;
+                let payload = match result
+                    .and_then(|result| capture_nested_result(&mut output, result))
+                {
+                    Ok(result) => json!({"type":"tool_response","id":id,"ok":true,"result":result}),
+                    Err(error) => {
+                        json!({"type":"tool_response","id":id,"ok":false,"error":error.error_value()})
+                    }
+                };
+                send_command(&mut cell_io.stdin, &payload).await?;
+                continue;
+            }
+            let event = match tokio::time::timeout(remaining, cell_io.events.recv()).await {
+                Ok(Some(event)) => event,
+                Ok(None) => {
+                    cells().lock().await.remove(cell_id);
+                    return Ok(failed_response(
+                        cell_id,
+                        output,
+                        cell.started_at,
+                        "exec runtime ended unexpectedly",
+                    ));
+                }
+                Err(_) => {
                     return Ok(format_response(
-                        "completed",
+                        "running",
                         cell_id,
                         output,
                         cell.started_at,
                         "",
                     ));
                 }
-                return Ok(failed_response(
-                    cell_id,
-                    output,
-                    cell.started_at,
-                    error_text,
-                ));
+            };
+            match event
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+            {
+                "started" => {}
+                "content" => {
+                    if let Some(item) = event.get("item").filter(|item| item.is_object()) {
+                        output.push(item.clone());
+                    }
+                }
+                "tool_call" => {
+                    let event_id = event.get("id").and_then(Value::as_str).unwrap_or_default();
+                    let name = event
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if event_id.is_empty() || name.is_empty() {
+                        continue;
+                    }
+                    let mut nested = cell
+                        .nested
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if nested.stopped {
+                        return Ok(format_response(
+                            "terminated",
+                            cell_id,
+                            output,
+                            cell.started_at,
+                            "",
+                        ));
+                    }
+                    let (home, client, owner) = (home.clone(), client.clone(), cell.owner.clone());
+                    let name = name.to_owned();
+                    let input = event.get("input").cloned();
+                    let task = tokio::spawn(async move {
+                        call_nested(&home, &client, &owner, &name, input.as_ref()).await
+                    });
+                    nested.abort = Some(task.abort_handle());
+                    cell_io.pending = Some(PendingTool {
+                        id: event_id.to_owned(),
+                        task,
+                    });
+                }
+                "yield" => {
+                    update_stored_values(&cell.owner, event.get("stored_values"))?;
+                    return Ok(format_response(
+                        "running",
+                        cell_id,
+                        output,
+                        cell.started_at,
+                        "",
+                    ));
+                }
+                "result" => {
+                    cells().lock().await.remove(cell_id);
+                    update_stored_values(&cell.owner, event.get("stored_values"))?;
+                    let error_text = event
+                        .get("error_text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if error_text.is_empty() {
+                        return Ok(format_response(
+                            "completed",
+                            cell_id,
+                            output,
+                            cell.started_at,
+                            "",
+                        ));
+                    }
+                    return Ok(failed_response(
+                        cell_id,
+                        output,
+                        cell.started_at,
+                        error_text,
+                    ));
+                }
+                "stderr" => output.push(json!({
+                    "type":"text",
+                    "text":event.get("text").and_then(Value::as_str).unwrap_or_default(),
+                })),
+                "output_truncated" => output.mark_truncated(),
+                "runtime_eof" => {
+                    cells().lock().await.remove(cell_id);
+                    return Ok(failed_response(
+                        cell_id,
+                        output,
+                        cell.started_at,
+                        "exec runtime ended unexpectedly",
+                    ));
+                }
+                _ => {}
             }
-            "stderr" => output.push(json!({
-                "type":"text",
-                "text":event.get("text").and_then(Value::as_str).unwrap_or_default(),
-            })),
-            "output_truncated" => output.mark_truncated(),
-            "runtime_eof" => {
-                cells().lock().await.remove(cell_id);
-                return Ok(failed_response(
-                    cell_id,
-                    output,
-                    cell.started_at,
-                    "exec runtime ended unexpectedly",
-                ));
-            }
-            _ => {}
         }
-    }
+    })
 }
 
 async fn call_nested(
@@ -615,8 +695,41 @@ async fn call_nested(
     args.insert("by".into(), Value::String(owner.actor_id.clone()));
     args.entry("actor_id")
         .or_insert_with(|| Value::String(owner.actor_id.clone()));
-    let result = Box::pin(crate::router::call(home, client, name, args)).await?;
-    Ok(result.get("structuredContent").cloned().unwrap_or(result))
+    Box::pin(crate::router::call(home, client, name, args)).await
+}
+
+fn capture_nested_result(
+    output: &mut OutputBuffer,
+    mut result: Value,
+) -> Result<Value, crate::ToolCallError> {
+    if let Some(content) = result.get_mut("content").and_then(Value::as_array_mut) {
+        for item in content.iter_mut().filter(|item| is_native_media(item)) {
+            let summary = json!({"type":"text","text":content_text(item)});
+            output.push_media(std::mem::replace(item, summary))?;
+        }
+    }
+    // JS receives ordinary metadata; native media stays in Rust and bypasses the
+    // text-only Node bridge and its bounded JSON event frames.
+    Ok(result
+        .get_mut("structuredContent")
+        .map(Value::take)
+        .unwrap_or(result))
+}
+
+pub(crate) fn tool_result(mut payload: Value) -> Value {
+    let mut media = Vec::new();
+    if let Some(items) = payload.get_mut("items").and_then(Value::as_array_mut) {
+        for item in items.iter_mut().filter(|item| is_native_media(item)) {
+            let summary = json!({"type":"text","text":content_text(item)});
+            media.push(std::mem::replace(item, summary));
+        }
+    }
+    let mut result = crate::router::tool_result(payload);
+    result["content"]
+        .as_array_mut()
+        .expect("tool content")
+        .extend(media);
+    result
 }
 
 fn failed_response(
@@ -791,6 +904,16 @@ async fn terminate_cells(removed: Vec<SharedCell>) {
 }
 
 async fn terminate_cell(cell: &SharedCell) {
+    {
+        let mut nested = cell
+            .nested
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        nested.stopped = true;
+        if let Some(task) = nested.abort.take() {
+            task.abort();
+        }
+    }
     let mut child = cell.process.lock().await;
     let _ = child.start_kill();
     let _ = tokio::time::timeout(PROCESS_SHUTDOWN_TIMEOUT, child.wait()).await;

@@ -52,6 +52,10 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/web-model/browser-session/delivery-preference",
             post(update_delivery_preference),
         )
+        .route(
+            "/api/v1/web-model/browser-session/resume-delivery",
+            post(resume_delivery),
+        )
         .route("/api/v1/web-model/browser-session/ws", get(upgrade))
 }
 
@@ -207,6 +211,18 @@ async fn bind_current(State(state): State<AppState>, Json(body): Json<Value>) ->
         super::web_model_delivery::ensure_worker(state.clone(), group_id.clone(), actor_id.clone())
             .await;
     }
+    payload(&state, &group_id, &actor_id, false).await
+}
+
+async fn resume_delivery(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
+    let group_id = required(&body, "group_id")?;
+    let actor_id = required(&body, "actor_id")?;
+    validate_actor(&state, &group_id, &actor_id)?;
+    let delivery_id = required(&body, "delivery_id")?;
+    super::web_model_delivery::resume_after_review(&state, &group_id, &actor_id, &delivery_id)
+        .await?;
+    super::web_model_delivery::ensure_worker(state.clone(), group_id.clone(), actor_id.clone())
+        .await;
     payload(&state, &group_id, &actor_id, false).await
 }
 
@@ -393,6 +409,7 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
         | "completion_ambiguous"
         | "legacy_submission_unverified"
         | "ambiguous" => "ambiguous",
+        "draft_blocked" => "blocked",
         "failed" | "completion_conflict" => "failed",
         "submitted" => "submitted",
         "bound" => "bound",
@@ -435,6 +452,10 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
         }
     };
     let (delivery_label, delivery_reason) = match delivery_state {
+        "blocked" => (
+            "Unsent draft",
+            "ChatGPT has an unsent draft. Send or clear it in the browser; queued CCCC messages will then continue.",
+        ),
         "pending_bind" => (
             "Binding chat",
             "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
@@ -506,7 +527,7 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
             "Wait for ChatGPT chat binding",
             delivery_reason,
         )
-    } else if delivery_state == "ambiguous" {
+    } else if matches!(delivery_state, "ambiguous" | "blocked") {
         ("inspect_error", "Inspect ChatGPT delivery", delivery_reason)
     } else if delivery_state == "failed" {
         ("retry_delivery", "Retry ChatGPT delivery", delivery_reason)
@@ -603,6 +624,7 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
             "last_delivery_started_at":target["last_delivery_started_at"],
             "last_delivery_id":target["last_delivery_id"],
             "last_delivery_status":delivery_status,
+            "can_resume_delivery":kind == "existing_chat" && internal_delivery_status == "submission_ambiguous",
             "last_submission_evidence":submission_evidence,
             "last_send_selector":send_selector,
             "last_turn_id":target["last_delivery_turn_id"],

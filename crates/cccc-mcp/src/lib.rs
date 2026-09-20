@@ -4,6 +4,7 @@ mod bootstrap;
 mod code_mode;
 mod context_projection;
 mod cross_group;
+mod file_read;
 mod local_patch;
 mod local_sessions;
 mod local_tools;

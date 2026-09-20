@@ -1260,6 +1260,8 @@
         "currentBrowserTab": "現在のブラウザ tab",
         "currentBrowserEmpty": "ChatGPT tab はまだ記録されていません。",
         "currentTabNotTarget": "この tab は確認用です。配信は保存済みの配信先を使います。",
+        "nextPaused": "配信を一時停止中です。ChatGPT を確認してから再開してください。",
+        "reviewBeforeResume": "送信結果が未確認のメッセージを保護するため、配信を一時停止しました。保存済みの ChatGPT チャットを確認し、未送信の下書きを送信または消去して、応答の終了を待ってください。再開後は待機中のメッセージを配信します。未確認のメッセージは再送しません。",
         "changeTarget": "配信先を変更",
         "unsavedChanges": "配信先の変更はまだ保存されていません。",
         "noUnsavedChanges": "保存する配信先の変更はありません。",
@@ -1372,6 +1374,7 @@
         "copyMcpUrl": "MCP URL をコピー",
         "createMcpUrl": "MCP URL を作成",
         "openChatGpt": "ChatGPT を開く",
+        "resumeDelivery": "ChatGPT を確認して配信を再開",
         "saveTarget": "配信先を保存",
         "useCurrentTab": "現在の tab を使う",
         "reloadChatGpt": "ChatGPT ページをリロード",
@@ -1395,6 +1398,7 @@
         "browserClosed": "ChatGPT ブラウザセッションを閉じました。",
         "newChatSelected": "次回配信で新しい ChatGPT 会話を使います。",
         "conversationBound": "ChatGPT 会話をこの actor にバインドしました。",
+        "deliveryResumed": "待機中のメッセージの配信を再開しました。未確認のメッセージは再送していません。",
         "targetSavedExisting": "保存しました。次回配信はこの ChatGPT 会話を使います。",
         "targetSavedNewChat": "保存しました。次回配信で新しい ChatGPT 会話を開始します。",
         "copied": "{{label}} をコピーしました。",
@@ -1412,6 +1416,7 @@
         "revokeConnectorFailed": "connector の取り消しに失敗しました。",
         "restartBrowserFailed": "ChatGPT ブラウザの再起動に失敗しました。",
         "closeBrowserFailed": "ChatGPT ブラウザセッションの終了に失敗しました。",
+        "resumeDeliveryFailed": "配信を再開できませんでした。保存済みの ChatGPT チャットを確認して再試行してください。",
         "bindConversationFailed": "ChatGPT 会話のバインドに失敗しました。"
       },
       "nextAction": {

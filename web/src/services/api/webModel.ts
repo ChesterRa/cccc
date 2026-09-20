@@ -124,6 +124,7 @@ export type WebModelBrowserSession = {
   last_delivery_timeout_seconds?: number;
   last_delivery_id?: string;
   last_delivery_status?: string;
+  can_resume_delivery?: boolean;
   last_submission_evidence?: string;
   last_send_selector?: string;
   last_turn_id?: string;
@@ -420,6 +421,20 @@ export async function bindCurrentWebModelBrowserConversation(args: {
       health_snapshot: resp.result.health_snapshot,
     },
   };
+}
+
+export async function resumeWebModelBrowserDelivery(
+  groupId: string,
+  actorId: string,
+  deliveryId: string,
+) {
+  return apiJson<WebModelBrowserSurfaceResult>(
+    "/api/v1/web-model/browser-session/resume-delivery",
+    {
+      method: "POST",
+      body: JSON.stringify({ group_id: groupId, actor_id: actorId, delivery_id: deliveryId }),
+    },
+  );
 }
 
 export async function updateWebModelDeliveryPreference(args: {

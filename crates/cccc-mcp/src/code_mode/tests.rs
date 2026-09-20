@@ -8,6 +8,135 @@ use std::time::Duration;
 
 static CODE_CELL_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[test]
+fn original_document_resources_bypass_js_and_the_text_budget() {
+    use serde_json::json;
+    for (mime, suffix) in [
+        ("application/pdf", "pdf"),
+        (crate::file_read::PPTX_MIME, "pptx"),
+    ] {
+        let document = json!({"type":"resource","resource":{
+            "uri":format!("cccc-file:///fixture.{suffix}"),"mimeType":mime,"blob":"ZG9jdW1lbnQtYnl0ZXM="
+        }});
+        let mut output = super::OutputBuffer::new(1);
+        output.push(json!({"type":"text","text":"1234"}));
+        let metadata = super::capture_nested_result(
+            &mut output,
+            json!({
+                "content":[document.clone()],"structuredContent":{"mime_type":mime}
+            }),
+        )
+        .expect("document handoff despite exhausted text budget");
+        assert_eq!(metadata["mime_type"], mime);
+        assert!(!metadata.to_string().contains("ZG9jdW1lbnQtYnl0ZXM="));
+        let envelope = super::tool_result(super::format_response(
+            "completed",
+            "fixture",
+            output,
+            std::time::Instant::now(),
+            "",
+        ));
+        assert_eq!(envelope["content"][1], document);
+        assert!(
+            !envelope["structuredContent"]
+                .to_string()
+                .contains("ZG9jdW1lbnQtYnl0ZXM=")
+        );
+        assert!(
+            !envelope["content"][0]["text"]
+                .as_str()
+                .expect("text")
+                .contains("ZG9jdW1lbnQtYnl0ZXM=")
+        );
+    }
+}
+
+#[test]
+fn nested_images_reach_the_native_envelope_without_entering_js_or_text() {
+    use serde_json::json;
+    let mut output = super::OutputBuffer::new(1);
+    output.push(json!({"type":"text","text":"1234"}));
+    let metadata = super::capture_nested_result(
+        &mut output,
+        json!({
+            "content":[{"type":"image","mimeType":"image/png","data":"aW1hZ2UtYnl0ZXM="}],
+            "structuredContent":{"path":"fixture.png","bytes":11,"mime_type":"image/png"}
+        }),
+    )
+    .expect("capture image despite exhausted text budget");
+    assert_eq!(metadata["path"], "fixture.png");
+    assert!(!metadata.to_string().contains("aW1hZ2UtYnl0ZXM="));
+    let payload = super::format_response(
+        "completed",
+        "fixture",
+        output,
+        std::time::Instant::now(),
+        "",
+    );
+    assert!(
+        !payload["output"]
+            .as_str()
+            .expect("summary")
+            .contains("aW1hZ2UtYnl0ZXM=")
+    );
+    let envelope = super::tool_result(payload);
+    assert_eq!(envelope["content"][1]["data"], "aW1hZ2UtYnl0ZXM=");
+    assert!(
+        !envelope["structuredContent"]
+            .to_string()
+            .contains("aW1hZ2UtYnl0ZXM=")
+    );
+    assert!(
+        !envelope["content"][0]["text"]
+            .as_str()
+            .expect("text")
+            .contains("aW1hZ2UtYnl0ZXM=")
+    );
+}
+
+#[test]
+fn image_output_budget_is_separate_and_failure_is_explicit() {
+    use serde_json::json;
+    let mut output = super::OutputBuffer::new(1);
+    for _ in 0..4 {
+        super::capture_nested_result(
+            &mut output,
+            json!({
+                "content":[{"type":"image","mimeType":"image/png","data":"YQ=="}],
+                "structuredContent":{}
+            }),
+        )
+        .expect("image within budget");
+    }
+    assert!(
+        super::capture_nested_result(
+            &mut output,
+            json!({
+                "content":[{"type":"image","mimeType":"image/png","data":"YQ=="}],
+                "structuredContent":{}
+            })
+        )
+        .expect_err("image budget")
+        .to_string()
+        .contains("4 per result")
+    );
+    output.push(json!({"type":"text","text":"text"}));
+    let envelope = super::tool_result(super::format_response(
+        "completed",
+        "fixture",
+        output,
+        std::time::Instant::now(),
+        "",
+    ));
+    assert_eq!(envelope["content"].as_array().expect("content").len(), 5);
+    assert!(
+        envelope["structuredContent"]["output"]
+            .as_str()
+            .expect("output")
+            .ends_with("text")
+    );
+}
+
 #[tokio::test]
 async fn source_literals_and_comments_are_not_module_loads() {
     let _guard = CODE_CELL_TEST_LOCK.lock().await;

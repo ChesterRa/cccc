@@ -57,6 +57,8 @@ where
 pub(super) struct OutputBuffer {
     items: Vec<Value>,
     remaining_chars: usize,
+    media_count: usize,
+    media_bytes: usize,
     truncated: bool,
 }
 
@@ -65,6 +67,8 @@ impl OutputBuffer {
         Self {
             items: Vec::new(),
             remaining_chars: max_output_tokens.saturating_mul(4).max(1),
+            media_count: 0,
+            media_bytes: 0,
             truncated: false,
         }
     }
@@ -93,13 +97,65 @@ impl OutputBuffer {
         self.truncated = true;
     }
 
+    pub(super) fn push_media(&mut self, item: Value) -> Result<(), String> {
+        let data = if item["type"] == "resource" {
+            item.get("resource")
+                .and_then(|resource| resource.get("blob"))
+        } else {
+            item.get("data")
+        }
+        .and_then(Value::as_str)
+        .ok_or("media result is missing data")?;
+        let bytes = data.len().div_ceil(4) * 3
+            - data
+                .bytes()
+                .rev()
+                .take_while(|b| *b == b'=')
+                .take(2)
+                .count();
+        if self.media_count >= 4 || self.items.len() >= MAX_BUFFERED_ITEMS {
+            return Err("media output limit reached (4 per result); read fewer files or yield before reading more".into());
+        }
+        if bytes > crate::file_read::MAX_MEDIA_BYTES.saturating_sub(self.media_bytes) {
+            return Err("media output exceeds the 20 MiB total per result; use fewer/smaller files or yield before reading more".into());
+        }
+        // Binary media has its own bound. It must not be truncated as text or
+        // consume the text budget merely because its transport uses base64.
+        self.media_count += 1;
+        self.media_bytes += bytes;
+        self.items.push(item);
+        Ok(())
+    }
+
     pub(super) fn into_parts(self) -> (Vec<Value>, bool) {
         (self.items, self.truncated)
     }
 }
 
+pub(super) fn is_native_media(item: &Value) -> bool {
+    item["type"] == "image"
+        || (item["type"] == "resource"
+            && matches!(
+                item["resource"]["mimeType"].as_str(),
+                Some("application/pdf" | crate::file_read::PPTX_MIME)
+            ))
+}
+
 pub(super) fn content_text(item: &Value) -> String {
-    if item.get("type").and_then(Value::as_str).unwrap_or("text") == "text" {
+    let kind = item.get("type").and_then(Value::as_str).unwrap_or("text");
+    if kind == "image" {
+        format!(
+            "[Image: {}]",
+            item.get("mimeType")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    } else if kind == "resource" && is_native_media(item) {
+        format!(
+            "[Original file: {}]",
+            item["resource"]["mimeType"].as_str().unwrap_or("unknown")
+        )
+    } else if kind == "text" {
         item.get("text")
             .and_then(Value::as_str)
             .unwrap_or_default()
@@ -129,6 +185,27 @@ mod tests {
         let (items, truncated) = output.into_parts();
         assert_eq!(content_text(&items[0]), "12345678\n[truncated]");
         assert!(truncated);
+    }
+
+    #[test]
+    fn media_bytes_are_bounded_in_aggregate_and_failed_push_does_not_consume_budget() {
+        use base64::Engine;
+        let mut output = OutputBuffer::new(1);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(vec![1; 11 * 1024 * 1024]);
+        let item = json!({"type":"image","mimeType":"image/png","data":encoded});
+        output.push_media(item.clone()).expect("first image");
+        let pdf = json!({"type":"resource","resource":{"uri":"cccc-file:///fixture.pdf","mimeType":"application/pdf","blob":item["data"]}});
+        assert!(
+            output
+                .push_media(pdf)
+                .expect_err("total budget")
+                .contains("20 MiB total")
+        );
+        output
+            .push_media(json!({"type":"image","mimeType":"image/png","data":"YQ=="}))
+            .expect("small image still fits");
+        assert_eq!(output.media_count, 2);
+        assert_eq!(output.media_bytes, 11 * 1024 * 1024 + 1);
     }
 
     #[tokio::test]
