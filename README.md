@@ -622,6 +622,8 @@ Contributions are welcome. Please:
 3. For features: describe the problem, proposed behavior, and operational impact
 4. Keep runtime state in `CCCC_HOME` — never commit it to the repo
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, quality gates, and the pull request process.
+
 ## License
 
 [Apache-2.0](LICENSE)
