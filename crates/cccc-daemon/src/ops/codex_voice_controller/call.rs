@@ -10,14 +10,19 @@ impl CodexVoiceCall {
     #[cfg(test)]
     pub async fn launch(home: &HomeLayout, analyst: LaunchConfig) -> Result<Self> {
         let analyst = Arc::new(CodexVoiceAnalyst::launch(home, analyst).await?);
-        Self::start(home, analyst).await
+        Self::start(home, analyst, None).await
     }
 
-    pub async fn start(home: &HomeLayout, analyst: Arc<CodexVoiceAnalyst>) -> Result<Self> {
+    pub async fn start(
+        home: &HomeLayout,
+        analyst: Arc<CodexVoiceAnalyst>,
+        application_context: Option<cccc_contracts::codex_voice::VoiceApplicationContext>,
+    ) -> Result<Self> {
         let generation = uuid::Uuid::new_v4().simple().to_string();
         let lease = CallLease::acquire(home, "", "", &format!("codex-voice:{generation}"))?;
         Ok(Self {
             generation,
+            application_context,
             analyst,
             lease,
             state: tokio::sync::Mutex::new(CallState::default()),
@@ -26,6 +31,19 @@ impl CodexVoiceCall {
 
     pub fn generation(&self) -> &str {
         &self.generation
+    }
+
+    pub fn application_context(
+        &self,
+    ) -> Option<&cccc_contracts::codex_voice::VoiceApplicationContext> {
+        self.application_context.as_ref()
+    }
+
+    fn delegation_input(&self, request: &str) -> String {
+        self.application_context.as_ref().map_or_else(
+            || request.to_owned(),
+            |context| context.analyst_input(request),
+        )
     }
 
     #[cfg(test)]
@@ -85,7 +103,7 @@ impl CodexVoiceCall {
         let admission = self
             .analyst
             .lifecycle
-            .admit_voice(&delegation.id, &delegation.text)
+            .admit_voice(&delegation.id, &self.delegation_input(&delegation.text))
             .await?;
         if let VoiceDelegationAdmission::Turn(receipt) = &admission {
             self.follow_analyst_turn(receipt).await;
@@ -116,7 +134,7 @@ impl CodexVoiceCall {
         let admission = self
             .analyst
             .lifecycle
-            .admit_voice(&delegation.id, &delegation.text)
+            .admit_voice(&delegation.id, &self.delegation_input(&delegation.text))
             .await?;
         let turn = match admission {
             VoiceDelegationAdmission::Turn(turn) => turn,

@@ -17,6 +17,7 @@ impl CodexVoiceSessions {
         client_session_id: &str,
         offer_sdp: &str,
         voice: &str,
+        application_context: Option<cccc_contracts::codex_voice::VoiceApplicationContext>,
     ) -> Result<StartOutcome> {
         let client_session_id = persistence::validate_client_session_id(client_session_id)?;
         let analyst_settings = cccc_core::codex_voice_settings::load(home)?;
@@ -25,15 +26,18 @@ impl CodexVoiceSessions {
             cccc_core::codex_voice_settings::resolve(home, &analyst_settings, &custom_environment)?;
         let mut realtime = RealtimeCallConfig::from_environment_with_voice(voice)?;
         realtime.preferences = cccc_core::voice_notifications::preferences(home)?;
+        realtime.application_context = application_context;
         let offer_digest: [u8; 32] = Sha256::digest(offer_sdp.as_bytes()).into();
         // The manager lock intentionally serializes the slow launch. Releasing it would require a
         // second reservation state and could create two provider calls for one microphone lease.
         let mut state = self.state.lock().await;
         if let Some(session) = state.active.as_ref() {
-            if session.client_session_id == client_session_id
-                && session.offer_digest == offer_digest
-                && session.voice == realtime.voice
-            {
+            if session.matches_start(
+                &client_session_id,
+                &offer_digest,
+                &realtime.voice,
+                realtime.application_context.as_ref(),
+            ) {
                 return Ok(StartOutcome::Started(StartedSession {
                     session: Arc::clone(session),
                     answer_sdp: session.answer_sdp.clone(),
@@ -98,9 +102,13 @@ impl CodexVoiceSessions {
             Ok::<_, anyhow::Error>(analyst)
         }.await.context(StartStage::Analyst)?;
 
-        let call = CodexVoiceCall::start(home, analyst.analyst())
-            .await
-            .context(StartStage::Recording)?;
+        let call = CodexVoiceCall::start(
+            home,
+            analyst.analyst(),
+            realtime.application_context.clone(),
+        )
+        .await
+        .context(StartStage::Recording)?;
         let generation = call.generation().to_owned();
         let answer_sdp =
             match create_realtime_answer_with_heartbeat(&call, &realtime, offer_sdp).await {

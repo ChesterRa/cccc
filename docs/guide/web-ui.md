@@ -388,6 +388,18 @@ every Group, Actor, task, ledger, or repository operation must resolve and pass 
 Repository modification remains work for the target Group's Foreman or peer rather than work rooted
 in the neutral Voice directory.
 
+An embedding application can provide optional `application_context` in
+`POST /api/v1/codex_voice/calls`: `{ "id": "work:123", "instructions": "Reply in Japanese for the current work." }`.
+The ID is 1–128 ASCII letters, digits, `-`, `_`, `.`, or `:`; instructions are
+nonempty UTF-8 text up to 8192 bytes, without control characters except newline and tab.
+CCCC holds this context unchanged for that call, includes it in Realtime startup
+instructions and every Voice Analyst delegation, and uses a context-aware greeting.
+Replaying the same client session and SDP with different context returns busy rather
+than silently reusing the old call. Omitting the field preserves the global Voice behavior.
+Context is not authentication, a selected CCCC Group, a tool permission, or an isolated
+Analyst session. The host application remains responsible for authorization, business
+records and any session reset needed when changing subjects. Do not include credentials.
+
 CCCC reads the existing Codex credential only in the native process that creates the provider call;
 the browser receives the WebRTC answer and bounded session events, not the credential. Use the
 console header to mute the microphone, resume browser-blocked playback, or stop the call. The

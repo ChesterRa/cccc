@@ -26,6 +26,7 @@ async fn call_generation_coalesces_delegations_and_projects_progress_once() {
     let lease =
         CallLease::acquire(&home, "g_voice", "Voice", "codex-voice:call-a").expect("call lease");
     let call = CodexVoiceCall {
+        application_context: None,
         generation: "call-a".into(),
         analyst: Arc::new(CodexVoiceAnalyst::from_session(analyst)),
         lease,

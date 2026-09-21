@@ -307,6 +307,7 @@ async fn realtime_answer_rejects_an_oversized_chunked_body_while_streaming() {
             base_url: format!("http://{address}"),
             voice: "cove".into(),
             preferences: Default::default(),
+            application_context: None,
         },
         "v=0\r\n",
     )

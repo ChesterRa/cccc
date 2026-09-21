@@ -103,7 +103,7 @@ pub(super) async fn serve(
         finish(&state, attachment).await;
         return;
     }
-    for command in realtime_greeting_commands() {
+    for command in realtime_greeting_commands(call.application_context()) {
         if !send_provider_command(&mut socket, command).await {
             log_disconnect(
                 &generation,

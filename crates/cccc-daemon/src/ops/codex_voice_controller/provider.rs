@@ -48,6 +48,7 @@ pub struct RealtimeCallConfig {
     pub base_url: String,
     pub voice: String,
     pub preferences: cccc_contracts::voice_notifications::VoicePreferences,
+    pub application_context: Option<cccc_contracts::codex_voice::VoiceApplicationContext>,
 }
 
 pub const DEFAULT_REALTIME_VOICE: &str = "cove";
@@ -79,6 +80,7 @@ impl RealtimeCallConfig {
                 .unwrap_or_else(|_| "https://chatgpt.com/backend-api/codex".into()),
             voice,
             preferences: Default::default(),
+            application_context: None,
         })
     }
 }
@@ -92,9 +94,17 @@ fn realtime_instructions(config: &RealtimeCallConfig) -> String {
         VoiceStyle::Direct => "Be direct and matter-of-fact; avoid unnecessary filler.",
         VoiceStyle::Patient => "Be patient and explain unfamiliar ideas at the user's pace.",
     };
-    format!(
+    let mut instructions = format!(
         "{REALTIME_INSTRUCTIONS}\n\n# User expression preferences\n{detail}\n{style}\nThe user's explicit spoken preferences take priority over these defaults. Do not change factual qualifications, routing, or authorization."
-    )
+    );
+    if let Some(context) = &config.application_context {
+        instructions.push_str(&format!(
+            "\n\n# Host application context for this call\nContext ID: {}\n{}",
+            context.id(),
+            context.instructions()
+        ));
+    }
+    instructions
 }
 
 pub(super) fn configured_auth_path(
@@ -196,10 +206,14 @@ pub(super) fn validated_realtime_offer(offer: &str) -> Result<&str> {
     Ok(offer)
 }
 
-pub fn realtime_greeting_commands() -> Vec<Value> {
-    session_context_commands(
-        "The global voice session has started. Give the user one short, natural greeting, then wait for them to speak. Do not imply that a Working Group is already selected.",
-    )
+pub fn realtime_greeting_commands(
+    application_context: Option<&cccc_contracts::codex_voice::VoiceApplicationContext>,
+) -> Vec<Value> {
+    session_context_commands(if application_context.is_some() {
+        "The voice session has started. Follow the host application context, including its language and current subject. Give one short, natural greeting, then wait for the user to speak."
+    } else {
+        "The global voice session has started. Give the user one short, natural greeting, then wait for them to speak. Do not imply that a Working Group is already selected."
+    })
 }
 
 pub fn realtime_notice_commands(message: &str) -> Vec<Value> {
@@ -212,12 +226,45 @@ mod preference_tests {
     use cccc_contracts::voice_notifications::{VoiceStyle, VoiceVerbosity};
 
     #[test]
+    fn embedded_call_context_reaches_realtime_and_uses_a_contextual_greeting() {
+        let context = cccc_contracts::codex_voice::VoiceApplicationContext::new(
+            "work:alpha".into(),
+            "日本語で応答し、現在の仕事に対応する。".into(),
+        )
+        .expect("valid context");
+        let config = RealtimeCallConfig {
+            auth_path: "unused".into(),
+            base_url: "http://unused.invalid".into(),
+            voice: "cove".into(),
+            preferences: Default::default(),
+            application_context: Some(context.clone()),
+        };
+        let instructions = realtime_instructions(&config);
+        assert!(instructions.starts_with(REALTIME_INSTRUCTIONS));
+        assert!(instructions.contains(context.id()));
+        assert!(instructions.contains(context.instructions()));
+        assert!(
+            realtime_greeting_commands(Some(&context))[0]["content"][0]["text"]
+                .as_str()
+                .expect("embedded greeting text")
+                .contains("host application context")
+        );
+        assert!(
+            realtime_greeting_commands(None)[0]["content"][0]["text"]
+                .as_str()
+                .expect("global greeting text")
+                .contains("Do not imply that a Working Group")
+        );
+    }
+
+    #[test]
     fn preferences_extend_instructions_without_changing_routing_or_credentials() {
         let mut config = RealtimeCallConfig {
             auth_path: "unused-auth-fixture".into(),
             base_url: "http://unused.invalid".into(),
             voice: "cove".into(),
             preferences: Default::default(),
+            application_context: None,
         };
         for (verbosity, detail) in [
             (VoiceVerbosity::Concise, "essential qualifications"),

@@ -208,7 +208,11 @@ async fn connect_acp(
                 json!({
                     "protocolVersion":1,
                     "clientCapabilities":{
-                        "fs":{"readTextFile":false,"writeTextFile":false}
+                        "fs":{"readTextFile":false,"writeTextFile":false},
+                        // Live user echoes are opt-in in current Grok. They are
+                        // our admission authority for controlled and native input;
+                        // without them long turns fill the pre-admission buffer.
+                        "_meta":{"x.ai/userMessageEcho":true}
                     },
                     "clientInfo":{"name":"cccc","version":env!("CARGO_PKG_VERSION")}
                 }),

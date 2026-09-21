@@ -31,7 +31,9 @@ pub(super) async fn initialize(
             // The native TUI reloads this same registry. A client-only entry
             // would be replaced on attach, potentially restoring an old MCP.
             "mcpServers":[],
-            "_meta":{"yoloMode":true},
+            // Grok's leader multiplexes clients behind a shared initialize.
+            // Bind the same live-echo capability to both new and loaded sessions.
+            "_meta":{"yoloMode":true,"clientUserMessageEcho":true},
         });
         if !rules.trim().is_empty() {
             params["_meta"]["rules"] = json!(rules);

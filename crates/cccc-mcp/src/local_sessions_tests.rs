@@ -41,6 +41,23 @@ impl Drop for Fixture {
     }
 }
 
+async fn wait_for_command_exit(command: &CommandSession) -> cccc_runtime::SessionStatus {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let command = command.clone();
+            let status = blocking(move || command.status().map_err(|error| error.to_string()))
+                .await
+                .expect("fixture command status");
+            if !status.running {
+                return status;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("fixture command did not exit within 10 seconds")
+}
+
 #[tokio::test]
 async fn waits_for_output_and_does_not_replay_consumed_bytes() {
     let f = Fixture::new();
@@ -116,8 +133,7 @@ async fn timeout_runs_without_polling_and_preserves_output() {
             .expect("fixture operation"),
     )
     .expect("fixture operation");
-    tokio::time::sleep(Duration::from_millis(1300)).await;
-    assert!(!owner.command.status().expect("fixture operation").running);
+    wait_for_command_exit(&owner.command).await;
     let final_output = f.poll(id, json!({})).await;
     assert_eq!(
         format!(
@@ -343,7 +359,7 @@ async fn termination_interrupts_a_pending_long_poll() {
 }
 
 #[tokio::test]
-async fn dropped_waits_keep_deadline_cleanup_and_large_output_reports_expiration() {
+async fn dropped_waits_keep_deadline_cleanup() {
     let f = Fixture::new();
     let args = json!({"group_id":f.group,"command":["sh","-c","sleep 30"],"timeout_s":1,"yield_time_ms":30000});
     assert!(
@@ -365,15 +381,13 @@ async fn dropped_waits_keep_deadline_cleanup_and_large_output_reports_expiration
         .find(|s| s.home == f.home.root())
         .cloned()
         .expect("fixture operation");
-    tokio::time::sleep(Duration::from_millis(1300)).await;
-    assert!(
-        !abandoned
-            .command
-            .status()
-            .expect("fixture operation")
-            .running
-    );
+    wait_for_command_exit(&abandoned.command).await;
     assert!(abandoned.timed_out.load(Ordering::Acquire));
+}
+
+#[tokio::test]
+async fn large_output_reports_expiration_without_consuming_the_cursor() {
+    let f = Fixture::new();
     let initial = f
         .start(
             "head -c 2200000 /dev/zero | tr '\\000' x",
@@ -381,13 +395,32 @@ async fn dropped_waits_keep_deadline_cleanup_and_large_output_reports_expiration
         )
         .await;
     let id = initial["session_id"].as_str().expect("fixture operation");
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    let (_, owner) = session(
+        &f.home,
+        json!({"session_id":id})
+            .as_object()
+            .expect("fixture operation"),
+    )
+    .expect("fixture operation");
+    // Elapsed time does not prove the PTY reader has filled the bounded buffer.
+    // Status drains completed output without advancing the MCP consumption cursor.
+    let status = wait_for_command_exit(&owner.command).await;
+    assert_eq!(status.exit_code, Some(0));
+    assert_eq!(
+        owner
+            .command
+            .history_since(2_200_000, 1)
+            .expect("fixture history")
+            .end_cursor,
+        2_200_000
+    );
+    assert_eq!(
+        *owner.cursor.lock().expect("fixture cursor"),
+        initial["cursor"].as_u64().expect("initial cursor")
+    );
     let page = f.poll(id, json!({"max_output_bytes":1000})).await;
     assert_eq!(page["cursor_expired"], true);
-    assert_eq!(
-        page["output"].as_str().expect("fixture operation").len(),
-        1000
-    );
+    assert_eq!(page["output"], "x".repeat(1000));
     assert_eq!(page["has_more"], true);
 }
 

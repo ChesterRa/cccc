@@ -1,6 +1,9 @@
 use crate::ActorRuntime;
 use serde::{Deserialize, Deserializer, Serialize};
 
+mod application_context;
+pub use application_context::VoiceApplicationContext;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexVoiceSettings {
     #[serde(default, skip_serializing_if = "AgentRuntimeSettings::is_default")]

@@ -44,6 +44,7 @@ pub struct CodexVoiceAnalyst {
 /// projection. Stopping it never stops the shared warm Analyst.
 pub struct CodexVoiceCall {
     generation: String,
+    application_context: Option<cccc_contracts::codex_voice::VoiceApplicationContext>,
     analyst: Arc<CodexVoiceAnalyst>,
     lease: CallLease,
     state: tokio::sync::Mutex<CallState>,

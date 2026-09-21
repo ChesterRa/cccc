@@ -34,6 +34,7 @@ async fn rejected_start_preserves_http_status_without_upstream_body_or_credentia
             base_url,
             voice: DEFAULT_REALTIME_VOICE.into(),
             preferences: Default::default(),
+            application_context: None,
         };
         let error = create_realtime_answer(&config, "private-offer")
             .await
@@ -61,6 +62,7 @@ async fn unreadable_invalid_and_incomplete_credentials_keep_the_auth_category() 
         base_url: "http://127.0.0.1:1".into(),
         voice: DEFAULT_REALTIME_VOICE.into(),
         preferences: Default::default(),
+        application_context: None,
     };
     for content in [
         None,

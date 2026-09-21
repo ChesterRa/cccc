@@ -29,17 +29,23 @@ Source builds require:
 - Python 3.11+ — for release packaging and repository-contract checks only;
   the product itself contains no Python implementation
 
-Build and run from source:
+Build and run from the repository root (Bash):
 
 ```bash
 npm ci --prefix web
 npm -C web run build
-cargo run --locked --features standalone -p cccc --bin cccc -- --port 0
+CCCC_HOME="$HOME/.cccc-dev" cargo run --locked --features standalone -p cccc --bin cccc -- --port 0
 ```
 
-The frontend bundle is embedded into the Rust executable. After web-only
-changes, rebuild the executable (or rerun `npm -C web run build` before a Cargo
-build) to see them in the native binary.
+Use a dedicated `CCCC_HOME` outside the checkout for development; `--port 0`
+selects a free port but does not isolate runtime data from your daily instance.
+In PowerShell, set `$env:CCCC_HOME = Join-Path $HOME '.cccc-dev'` before running
+these commands, and omit the Bash assignment before `cargo run`.
+
+Release executables embed the frontend bundle, so rebuild the executable after
+Web changes. Debug/source-run builds serve `web/dist` from disk; rebuild the Web
+bundle and reload the page for frontend-only changes. See the
+[Web toolchain guide](docs/guide/quality-gates.md#web-toolchain) for details.
 
 ## Project Layout
 
@@ -51,6 +57,9 @@ build) to see them in the native binary.
 | `scripts/`, `tests/` | Release packaging and repository-contract checks (Python) |
 
 ## Quality Gates
+
+The shell gates require Bash and [uv](https://docs.astral.sh/uv/getting-started/installation/),
+which provides the `uv` and `uvx` commands used for Python tooling.
 
 Run the checks selected by your changed files while developing:
 
@@ -64,9 +73,11 @@ Inspect the selection without running it:
 scripts/pre_commit_checks.sh --dry-run
 ```
 
-Before handing off a broad change, run:
+Before handing off a broad change, run the full gate. Install its isolated
+browser once after installing the Web dependencies:
 
 ```bash
+npm -C web exec -- playwright install --with-deps chromium
 scripts/quality_gate.sh full
 ```
 
@@ -75,7 +86,7 @@ Useful individual commands:
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo test --workspace --locked -- --test-threads=1
 npm -C web run check
 npm -C web test
 npm -C web run build
@@ -85,11 +96,12 @@ uv run --no-project --with pytest --with pyyaml python -m pytest -q
 
 Notes:
 
-- Combined daemon/Web process-lifecycle tests run with a single test thread to
-  avoid races; CI already does this, and `cargo test --workspace` locally
-  follows the same expectation for those binaries.
-- Local Cargo checks default to two build jobs to limit memory pressure.
-  Override with `CCCC_CARGO_JOBS=4` on larger machines.
+- Process-lifecycle tests need explicit serialization. The command above runs
+  all Rust tests serially for simplicity; CI separates the affected tests.
+  Plain `cargo test --workspace` does not inherit CI's serial settings.
+- Cargo checks invoked by the quality-gate scripts default to two build jobs.
+  Override with `CCCC_CARGO_JOBS=4 scripts/quality_gate.sh fast` on larger
+  machines. Direct Cargo commands use Cargo's own `--jobs` setting.
 - Changes to account linkage, embedded workbenches, or Group connections must
   also pass `python3 scripts/check_connect_browser.py`. See
   [docs/guide/quality-gates.md](docs/guide/quality-gates.md) for its setup.
@@ -122,19 +134,10 @@ Chinese are both accepted — keep the subject line short and specific.
    you verified it.
 5. Keep PRs focused — one logical change per PR makes review faster.
 
-CI runs these jobs on every PR:
-
-| Job | Responsibility |
-| --- | --- |
-| `quality` | Ruff plus release-tool, workflow, documentation, and packaging contract tests |
-| `web` | Frontend checks, TypeScript, all web tests, and the production bundle |
-| `package` | Native wheel/archive tooling and wheel layout checks |
-| `rust-linux` | Rust formatting, Clippy, workspace tests, Unix installer contracts |
-| `windows-smoke` | Native Windows process-lifecycle checks |
-| `ci-required` | Aggregate gate; fails when any required job fails or is skipped |
-
-Slower native-distribution checks run nightly and again on release artifacts;
-PRs only need to cover source correctness.
+Required CI jobs and their responsibilities are maintained in
+[Contributor Quality Gates](docs/guide/quality-gates.md#pull-request-jobs).
+New contributors may need a maintainer to approve the first workflow run.
+Slower native-distribution checks run nightly and again on release artifacts.
 
 ## Documentation
 

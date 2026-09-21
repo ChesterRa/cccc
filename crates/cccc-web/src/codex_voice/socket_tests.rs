@@ -119,6 +119,26 @@ async fn voice_sockets_revoke_idle_terminals_and_report_notification_failure() {
     let tokens = AccessTokenStore::new(home.clone()).expect("tokens");
     let owner = tokens.create("owner", vec![], true, None).expect("owner");
 
+    // Malformed host input is rejected before Runtime or provider startup.
+    let rejected = reqwest::Client::new()
+        .post(format!("http://{address}/api/v1/codex_voice/calls"))
+        .bearer_auth(&owner.token)
+        .json(
+            &json!({"client_session_id":"invalid-context", "offer_sdp":"v=0\r\n",
+            "application_context":{"id":"work", "instructions":"private".repeat(2000)}}),
+        )
+        .send()
+        .await
+        .expect("invalid context request");
+    assert_eq!(rejected.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert!(
+        !rejected
+            .text()
+            .await
+            .expect("safe rejection body")
+            .contains("private")
+    );
+
     for mode in ["viewer", "control"] {
         let token = tokens
             .create("temporary admin", vec![], true, None)
@@ -177,8 +197,13 @@ async fn voice_sockets_revoke_idle_terminals_and_report_notification_failure() {
         .expect("idle terminal must close after authorization is removed");
     }
 
+    let context = cccc_contracts::codex_voice::VoiceApplicationContext::new(
+        "work:one".into(),
+        "日本語で応答する".into(),
+    )
+    .expect("first context");
     let call = Arc::new(
-        CodexVoiceCall::start(&home, runtime.analyst())
+        CodexVoiceCall::start(&home, runtime.analyst(), Some(context.clone()))
             .await
             .expect("local call lease"),
     );
@@ -194,6 +219,20 @@ async fn voice_sockets_revoke_idle_terminals_and_report_notification_failure() {
         voice: "cove".into(),
         connection_state: AtomicU8::new(CONNECTION_UNATTACHED),
     });
+    assert!(session.matches_start("fixture", &[0; 32], "cove", Some(&context)));
+    assert!(!session.matches_start("fixture", &[0; 32], "cove", None));
+    let changed = cccc_contracts::codex_voice::VoiceApplicationContext::new(
+        "work:two".into(),
+        context.instructions().into(),
+    )
+    .expect("changed work context");
+    assert!(!session.matches_start("fixture", &[0; 32], "cove", Some(&changed)));
+    let changed = cccc_contracts::codex_voice::VoiceApplicationContext::new(
+        context.id().into(),
+        "日本語。別の資料範囲".into(),
+    )
+    .expect("changed instructions");
+    assert!(!session.matches_start("fixture", &[0; 32], "cove", Some(&changed)));
     state.codex_voice.state.lock().await.active = Some(Arc::clone(&session));
     // Corruption is a credible ingestion failure. It must be visible to the
     // connected owner without falsely declaring the Analyst disconnected.

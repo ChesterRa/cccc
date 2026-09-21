@@ -8,7 +8,13 @@ use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
 pub(super) async fn fake_analyst_server()
 -> (String, JoinHandle<()>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
-    fake_analyst_server_inner(None).await
+    fake_analyst_server_inner(None, None).await
+}
+
+pub(super) async fn context_analyst_server(
+    prefix: String,
+) -> (String, JoinHandle<()>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    fake_analyst_server_inner(None, Some(prefix)).await
 }
 
 pub(super) async fn gated_analyst_server() -> (
@@ -19,12 +25,13 @@ pub(super) async fn gated_analyst_server() -> (
     tokio::sync::oneshot::Sender<()>,
 ) {
     let (release, wait) = tokio::sync::oneshot::channel();
-    let (endpoint, server, starts, steers) = fake_analyst_server_inner(Some(wait)).await;
+    let (endpoint, server, starts, steers) = fake_analyst_server_inner(Some(wait), None).await;
     (endpoint, server, starts, steers, release)
 }
 
 async fn fake_analyst_server_inner(
     mut interrupt_gate: Option<tokio::sync::oneshot::Receiver<()>>,
+    expected_input_prefix: Option<String>,
 ) -> (String, JoinHandle<()>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
     let endpoint = format!("ws://{}", listener.local_addr().expect("address"));
@@ -46,6 +53,19 @@ async fn fake_analyst_server_inner(
                 continue;
             }
             let id = request["id"].as_u64().expect("id");
+            if matches!(
+                request["method"].as_str(),
+                Some("turn/start" | "turn/steer")
+            ) && let Some(prefix) = &expected_input_prefix
+            {
+                let text = request["params"]["input"][0]["text"]
+                    .as_str()
+                    .expect("input text");
+                assert!(
+                    text.starts_with(prefix),
+                    "current call context must reach every Runtime input"
+                );
+            }
             match request["method"].as_str().expect("method") {
                 "initialize" | "thread/name/set" => send_result(&mut socket, id, json!({})).await,
                 "thread/read" => {

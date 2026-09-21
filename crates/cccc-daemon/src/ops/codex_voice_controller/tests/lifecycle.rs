@@ -8,6 +8,55 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[tokio::test]
+async fn application_context_reaches_new_and_steered_delegations_without_replay() {
+    use cccc_contracts::codex_voice::VoiceApplicationContext;
+    use std::sync::atomic::Ordering;
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("isolated home");
+    home.initialize().expect("initialize home");
+    let context = VoiceApplicationContext::new(
+        "work:current".into(),
+        "日本語。現在の仕事の権限をツールで確認する。".into(),
+    )
+    .expect("valid context");
+    let (endpoint, server, starts, steers) =
+        super::fake_server::context_analyst_server(context.analyst_input("")).await;
+    let analyst = AnalystSession::connect_for_test(
+        WorkspaceBinding {
+            root: temp.path().to_path_buf(),
+        },
+        "context-analyst".into(),
+        endpoint,
+        "codex".into(),
+    )
+    .await
+    .expect("connect fixture Analyst");
+    let analyst = Arc::new(CodexVoiceAnalyst::from_session(analyst));
+    let call = CodexVoiceCall::start(&home, Arc::clone(&analyst), Some(context))
+        .await
+        .expect("start embedded call");
+    for id in ["first", "first", "second"] {
+        call.route_provider_event(
+            call.generation(),
+            &json!({
+                "type":"delegation.created", "item":{
+                    "type":"delegation", "target":"client", "id":id,
+                    "content":[{"type":"input_text","text":"現在の材料単価を比較する"}]
+                }
+            }),
+        )
+        .await
+        .expect("admit delegation")
+        .expect("delegation");
+    }
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    assert_eq!(steers.load(Ordering::SeqCst), 1);
+    call.stop(call.generation()).await.expect("stop call");
+    analyst.shutdown().await.expect("stop fixture Analyst");
+    server.await.expect("fixture server assertions");
+}
+
+#[tokio::test]
 async fn stopping_audio_keeps_the_shared_analyst_available_for_the_next_call() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -27,6 +76,7 @@ async fn stopping_audio_keeps_the_shared_analyst_available_for_the_next_call() {
     let first_lease = CallLease::acquire(&home, "g_voice", "Voice", "codex-voice:call-r1")
         .expect("first call lease");
     let first = CodexVoiceCall {
+        application_context: None,
         generation: "call-r1".into(),
         analyst: Arc::clone(&analyst),
         lease: first_lease,
@@ -38,6 +88,7 @@ async fn stopping_audio_keeps_the_shared_analyst_available_for_the_next_call() {
     let second_lease = CallLease::acquire(&home, "g_voice", "Voice", "codex-voice:call-r2")
         .expect("second call lease");
     let second = CodexVoiceCall {
+        application_context: None,
         generation: "call-r2".into(),
         analyst: Arc::clone(&analyst),
         lease: second_lease,
@@ -76,6 +127,7 @@ async fn analyst_disconnect_is_generation_bound_and_call_drop_releases_the_lease
     let lease =
         CallLease::acquire(&home, "g_voice", "Voice", "codex-voice:call-d").expect("call lease");
     let call = CodexVoiceCall {
+        application_context: None,
         generation: "call-d".into(),
         analyst: Arc::new(CodexVoiceAnalyst::from_session(analyst)),
         lease,

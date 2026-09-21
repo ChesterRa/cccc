@@ -7,10 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Added
+- Embedded Voice calls accept optional bounded application context, keeping the host's language and current subject attached to Realtime and each Analyst delegation. Context does not grant tool access or isolate the persistent Analyst.
 - Local PDF and PPTX reads hand off original files as native MCP resources for ChatGPT's own file reader, including attachments and code mode. CCCC performs no document extraction or rendering.
 - Local file reads deliver original PNG, JPEG and WebP bytes as native MCP images, including through code mode, with a 20 MiB image/result budget. Text previews honor their byte budget. The bridge performs no local media conversion; image understanding depends on the selected client/model.
 
 ### Fixed
+- Grok managed sessions subscribe to live input echoes, preventing long Voice Analyst turns from exhausting the admission buffer while waiting for a receipt.
 - Web Model delivery preserves unsent ChatGPT drafts and pauses after unverified submissions, with an explicit checked-chat resume action that never replays the uncertain message. Verified legacy drafts remain recoverable; unrelated or changed drafts stay protected.
 - Code-mode result deadlines now return while nested tools continue; subsequent waits collect their results, and termination cancels outstanding work.
 - Clarified that workspace paths and actor binding do not sandbox shell or Git subprocess permissions.
@@ -23,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Local command tool descriptions make direct execution explicit. `cccc_shell` honors workspace-relative `cwd`, child `env`, output limits and the documented default timeout; session commands share the same directory and environment handling.
 
 ### Changed
+- Voice Analyst notifications use shorter per-message reminders while retaining the full source message, attribution, speech preferences and instruction boundaries.
 - Web conversations, filters and the composer use the available workspace width. Long messages leave an opposite-side gutter that adapts to the message area, making sent and received messages easier to distinguish without fixed bubble-width caps. Short messages retain their natural sizing, and reading position is preserved when the message area resizes.
 - Voice diagnostics distinguish Realtime request/TLS failures and managed Codex WebSocket protocol failures, including an abrupt close without a closing handshake. Reports retain bounded categories and OS error codes without private error text; retry and session-lifecycle behavior is unchanged.
 
