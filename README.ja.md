@@ -614,6 +614,8 @@ Telegram コミュニティ: [t.me/ccccpair](https://t.me/ccccpair)
 3. 機能リクエスト：問題、提案する動作、運用への影響を記述
 4. ランタイム状態は `CCCC_HOME` に保持 — リポジトリにコミットしない
 
+開発環境・品質ゲート・PR プロセスの詳細は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+
 ## License
 
 [Apache-2.0](LICENSE)

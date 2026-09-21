@@ -606,6 +606,8 @@ Telegram 社区: [t.me/ccccpair](https://t.me/ccccpair)
 3. 功能建议：描述问题、期望行为和运维影响
 4. 运行时状态放在 `CCCC_HOME` — 不要提交到仓库
 
+开发环境、质量门与 PR 流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## License
 
 [Apache-2.0](LICENSE)
