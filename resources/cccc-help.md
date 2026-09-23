@@ -13,6 +13,8 @@ CCCC routes and shared-state reference, including the peer collaboration contrac
 - Read shared truth with `cccc_context_get`; reserve `cccc_agent_state` for cross-turn recovery.
 - Invoke known hidden tools with `cccc_capability_use`; search only when unknown.
 
+If the client blocks a tool call, report the actual tool name and error. A host refusal is not evidence that CCCC executed the operation. Await user guidance before retrying that operation, including through a different tool.
+
 ## Canonical Message Delivery
 
 This section is authoritative; group guidance is additive.
@@ -43,7 +45,7 @@ and standalone Direct connections. No Web access token is needed by the Actor.
 1. Call `cccc_connect()` in your local Group. Inspect both `instances` and `external_groups`.
 2. For a same-account instance, call `cccc_connect(instance_id="...")` to list Groups and Actors; follow `next` with `after` when present. For an `external_groups` entry, pass both its `instance.instance_id` and `group_id` as `instance_id` and `target_group_id`.
 3. Start a conversation with `cccc_message_send(dst_instance_id="...", dst_group_id="...", to="@foreman", text="...", insight="...", mode="send")`. Use the target's concrete Actor IDs for a specific recipient. Use `mail` for work that can wait, `send` for an immediate exchange, or `request_reply` when a concrete reply is needed. Include the peer insight required by the collaboration contract.
-4. Reply with `cccc_message_reply(event_id="received-local-event-id", text="...", insight="...")`; omit `to` to return to the original participants. Do not substitute the source instance's Event ID. Files use `cccc_file(action="send", path="...", dst_instance_id="...", dst_group_id="...", to="...")`.
+4. Reply with `cccc_message_reply(event_id="received-local-event-id", text="...", insight="...")`; omit `to` to return to the original participants. Do not substitute the source instance's Event ID. Files use `cccc_file_send(path="...", dst_instance_id="...", dst_group_id="...", to="...")`.
 
 Keep `group_id` as your local working Group. Remote Group IDs are qualified by
 instance; `cccc_group` and `cccc_actor` are not remote administration tools.
@@ -85,8 +87,8 @@ an uncertain send, rather than creating another message.
 
 ### Files
 
-- Read text attachments with `cccc_file(action="read", ...)` and resolve binary paths with `action="blob_path"`.
-- Send deliverables with `cccc_file(action="send", ...)`; local paths alone are not delivered.
+- Read text, images, PDF and PPTX attachments with `cccc_file(action="read", rel_path="...")`; `info` and `blob_path` return metadata only.
+- Send deliverables with `cccc_file_send(...)`; local paths alone are not delivered.
 
 ## Capabilities
 

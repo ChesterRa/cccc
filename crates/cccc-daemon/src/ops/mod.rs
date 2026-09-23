@@ -76,6 +76,7 @@ mod terminal;
 mod terminal_history_source;
 mod terminal_text;
 mod voice_notifications;
+mod web_model_connectors;
 mod working_state;
 #[cfg(test)]
 mod working_state_tests;
@@ -113,6 +114,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         memory::resolve_operation,
         context::resolve_operation,
         settings::resolve_operation,
+        web_model_connectors::resolve_operation,
         voice_notifications::resolve_operation,
         terminal::resolve_operation,
     ] {

@@ -35,6 +35,8 @@ import {
   type ActorSecretChanges,
   type ActorSecretSaveChanges,
 } from "./actorSecretManagerModel";
+import { WebModelActorSetup } from "../webModel/WebModelActorSetup";
+import { useModalStore } from "../../stores";
 import { ModalFrame } from "./ModalFrame";
 
 // Centered with equal breathing room above and below: the frame already pads
@@ -79,12 +81,14 @@ interface ActorConfigBaseProps {
 
 export interface EditActorConfigProps extends ActorConfigBaseProps {
   mode: "edit";
+  initialSection?: "chatgpt" | null;
   groupId: string;
   actorId: string;
   groupRole?: "foreman" | "peer" | string;
   avatarUrl?: string | null;
   hasCustomAvatar?: boolean;
   isRunning: boolean;
+  savedRuntime: string;
   runtime: SupportedRuntime;
   onChangeRuntime: (runtime: SupportedRuntime) => void;
   command: string;
@@ -192,14 +196,6 @@ const DEFAULT_SECRETS_PLACEHOLDER = {
   unset: "ANTHROPIC_AUTH_TOKEN\nANTHROPIC_BASE_URL",
 };
 
-function isWebModelProfile(profile: ActorProfile): boolean {
-  return (
-    String(profile.runtime || "")
-      .trim()
-      .toLowerCase() === "web_model"
-  );
-}
-
 function modeButtonClass(selected: boolean): string {
   return [
     "min-w-0 whitespace-normal px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-all ease-spring duration-300",
@@ -280,10 +276,7 @@ function CreateActorConfigModal({
     };
   }, [avatarPreviewUrl]);
 
-  const selectableActorProfiles = useMemo(
-    () => actorProfiles.filter((profile) => !isWebModelProfile(profile)),
-    [actorProfiles],
-  );
+  const selectableActorProfiles = actorProfiles;
 
   useEffect(() => {
     if (!isOpen || !useProfile || !String(profileId || "").trim()) return;
@@ -312,9 +305,9 @@ function CreateActorConfigModal({
   const sectionHintClass = "mt-1 text-xs text-[var(--color-text-muted)]";
   const createAdvancedTabIds: AdvancedTabId[] = [
     ...(showRuntimeSetup ? ["connection" as const] : []),
-    ...(!useProfile ? ["environment" as const] : []),
+    ...(!useProfile && runtime !== "web_model" ? ["environment" as const] : []),
     ...(previewRuntime ? ["capabilities" as const] : []),
-    ...(!useProfile && !webModelSetupIsActorBound ? ["profile" as const] : []),
+    ...(!useProfile ? ["profile" as const] : []),
   ];
   const activeAdvancedTab = createAdvancedTabIds.includes(advancedTab)
     ? advancedTab
@@ -607,13 +600,13 @@ function CreateActorConfigModal({
                       <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
                         <div className="font-medium">
                           {t("webModelActorBoundConnectorTitle", {
-                            defaultValue: "Single ChatGPT Web Model actor",
+                            defaultValue: "ChatGPT Web Model",
                           })}
                         </div>
                         <div className="mt-1">
                           {t("webModelActorBoundConnectorHint", {
                             defaultValue:
-                              "Manage the ChatGPT MCP URL and target conversation in Settings > ChatGPT Web Model. CCCC supports one ChatGPT Web Model actor in this instance.",
+                              "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
                           })}
                         </div>
                       </div>
@@ -658,7 +651,7 @@ function CreateActorConfigModal({
                         },
                       ]
                     : []),
-                  ...(!useProfile
+                  ...(!useProfile && runtime !== "web_model"
                     ? [
                         {
                           id: "environment",
@@ -707,13 +700,18 @@ function CreateActorConfigModal({
                         },
                       ]
                     : []),
-                  ...(!useProfile && !webModelSetupIsActorBound
+                  ...(!useProfile
                     ? [
                         {
                           id: "profile",
                           label: t("profileToolsSection"),
                           panel: (
                             <div className="flex flex-wrap gap-3">
+                              {runtime === "web_model" && (
+                                <p className="w-full text-sm text-[var(--color-text-secondary)]">
+                                  {t("webModelProfileHint")}
+                                </p>
+                              )}
                               <Button
                                 type="button"
                                 variant="secondary"
@@ -748,6 +746,7 @@ export function ActorConfigModal(props: ActorConfigModalProps) {
 
 function EditActorConfigModal({
   isOpen,
+  initialSection,
   isDark,
   busy,
   mode: _mode,
@@ -757,6 +756,7 @@ function EditActorConfigModal({
   avatarUrl,
   hasCustomAvatar = false,
   isRunning,
+  savedRuntime,
   runtimes,
   runtime,
   onChangeRuntime,
@@ -783,7 +783,22 @@ function EditActorConfigModal({
   onCancel,
 }: EditActorConfigProps) {
   const { t } = useTranslation("actors");
-  const { modalRef } = useModalA11y(isOpen, onCancel);
+  const conversationRef = useRef<HTMLDivElement>(null);
+  const settingsOpen = useModalStore((state) => state.modals.settings);
+  const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
+  const [sharedSettingsRequested, setSharedSettingsRequested] = useState(false);
+  const suspended = sharedSettingsRequested && settingsOpen;
+  const focusConversation = initialSection === "chatgpt" && savedRuntime === "web_model";
+  const { modalRef } = useModalA11y(isOpen && !suspended, onCancel, {
+    initialFocusRef: focusConversation ? conversationRef : undefined,
+  });
+  useEffect(() => {
+    setSharedSettingsRequested(false);
+  }, [groupId, actorId, isOpen]);
+  const openSharedSettings = () => {
+    setSharedSettingsRequested(true);
+    openSettingsTarget({ scope: "global", tab: "webModels" });
+  };
   const [secretKeys, setSecretKeys] = useState<string[]>([]);
   const [secretMasks, setSecretMasks] = useState<Record<string, string>>({});
   const [secretChanges, setSecretChanges] = useState<ActorSecretChanges>(emptyActorSecretChanges);
@@ -820,22 +835,14 @@ function EditActorConfigModal({
   const showRuntimeSetup = !effectiveLinked && editMode === "custom" && runtime === "custom";
   const editAdvancedTabIds: AdvancedTabId[] = [
     ...(showRuntimeSetup ? ["connection" as const] : []),
-    ...(editMode === "custom" ? ["environment" as const] : []),
+    ...(editMode === "custom" && runtime !== "web_model" ? ["environment" as const] : []),
     "capabilities",
     ...(editMode === "custom" ? ["profile" as const] : []),
   ];
   const activeAdvancedTab = editAdvancedTabIds.includes(advancedTab)
     ? advancedTab
     : editAdvancedTabIds[0];
-  const selectableActorProfiles = useMemo(
-    () =>
-      actorProfiles.filter(
-        (profile) =>
-          !isWebModelProfile(profile) ||
-          actorProfileIdentityKey(profile) === String(attachProfileId || "").trim(),
-      ),
-    [actorProfiles, attachProfileId],
-  );
+  const selectableActorProfiles = actorProfiles;
   const selectedProfile = useMemo(
     () =>
       selectableActorProfiles.find(
@@ -856,7 +863,7 @@ function EditActorConfigModal({
   }, [groupId, actorId, effectiveLinked, editMode, pendingConvertToCustom, linkedProfileId]);
 
   const refreshSecretKeys = async () => {
-    if (editMode !== "custom") {
+    if (editMode !== "custom" || runtime === "web_model") {
       setSecretsRefreshing(false);
       setSecretKeysLoadFailed(false);
       setSecretKeys([]);
@@ -998,7 +1005,7 @@ function EditActorConfigModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    if (editMode === "profile") {
+    if (editMode === "profile" || runtime === "web_model") {
       secretFetchSeqRef.current += 1;
       setSecretsRefreshing(false);
       setSecretKeysLoadFailed(false);
@@ -1008,7 +1015,7 @@ function EditActorConfigModal({
     }
     if (!effectiveLinked) void refreshSecretKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, groupId, actorId, editMode, effectiveLinked]);
+  }, [isOpen, groupId, actorId, editMode, effectiveLinked, runtime]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1021,7 +1028,10 @@ function EditActorConfigModal({
   const available = rtInfo?.available ?? false;
   const defaultCommand = rtInfo?.recommended_command || "";
   const requireCommand =
-    !effectiveLinked && editMode === "custom" && (runtime === "custom" || !available);
+    !effectiveLinked &&
+    editMode === "custom" &&
+    runtime !== "web_model" &&
+    (runtime === "custom" || !available);
   const selectAdvancedTab = (id: string) => {
     const next = id as AdvancedTabId;
     setAdvancedTab(next);
@@ -1040,7 +1050,11 @@ function EditActorConfigModal({
     setSecretsError("");
     setLocalNotice("");
     try {
-      const result = await onSaveAsProfile(buildActorSecretSaveChanges(secretChanges));
+      const result = await onSaveAsProfile(
+        buildActorSecretSaveChanges(
+          runtime === "web_model" ? emptyActorSecretChanges() : secretChanges,
+        ),
+      );
       const profileId = String(result?.profileId || "").trim();
       if (profileId && result?.useNow) {
         setPendingConvertToCustom(false);
@@ -1142,7 +1156,9 @@ function EditActorConfigModal({
     }
 
     setSecretsError("");
-    const secretSaveChanges = buildActorSecretSaveChanges(secretChanges);
+    const secretSaveChanges = buildActorSecretSaveChanges(
+      runtime === "web_model" ? emptyActorSecretChanges() : secretChanges,
+    );
 
     setSecretsBusy(true);
     try {
@@ -1189,7 +1205,7 @@ function EditActorConfigModal({
 
   return (
     <ModalFrame
-      isOpen={isOpen}
+      isOpen={isOpen && !suspended}
       isDark={isDark}
       onClose={onCancel}
       titleId="edit-actor-title"
@@ -1435,47 +1451,67 @@ function EditActorConfigModal({
                       <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
                         <div className="font-medium">
                           {t("webModelActorBoundConnectorTitle", {
-                            defaultValue: "Single ChatGPT Web Model actor",
+                            defaultValue: "ChatGPT Web Model",
                           })}
                         </div>
                         <div className="mt-1">
                           {t("webModelActorBoundConnectorHint", {
                             defaultValue:
-                              "Manage the ChatGPT MCP URL and target conversation in Settings > ChatGPT Web Model. CCCC supports one ChatGPT Web Model actor in this instance.",
+                              "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
                           })}
                         </div>
                       </div>
                     ) : null}
 
-                    <div>
-                      <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                        {t("command")}
-                      </label>
-                      <Input
-                        className="font-mono"
-                        value={command}
-                        onChange={(e) => onChangeCommand(e.target.value)}
-                        placeholder={defaultCommand || t("enterCommand")}
-                      />
-                      {isRunning ? (
-                        <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                          {t("runtimeChangesNote")}
-                        </div>
-                      ) : null}
-                      {defaultCommand.trim() ? (
-                        <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                          {t("default")}{" "}
-                          <code className="px-1 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
-                            {defaultCommand}
-                          </code>
-                        </div>
-                      ) : null}
-                    </div>
+                    {runtime !== "web_model" && (
+                      <div>
+                        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                          {t("command")}
+                        </label>
+                        <Input
+                          className="font-mono"
+                          value={command}
+                          onChange={(e) => onChangeCommand(e.target.value)}
+                          placeholder={defaultCommand || t("enterCommand")}
+                        />
+                        {isRunning ? (
+                          <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                            {t("runtimeChangesNote")}
+                          </div>
+                        ) : null}
+                        {defaultCommand.trim() ? (
+                          <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                            {t("default")}{" "}
+                            <code className="px-1 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
+                              {defaultCommand}
+                            </code>
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             </Surface>
           </div>
+
+          {runtime === "web_model" && savedRuntime === "web_model" && (
+            <div
+              ref={conversationRef}
+              tabIndex={-1}
+              className="scroll-mt-4 outline-none"
+              aria-label={t("settings:webModelActor.title")}
+            >
+              <WebModelActorSetup
+                key={`${groupId}/${actorId}`}
+                groupId={groupId}
+                actorId={actorId}
+                isDark={isDark}
+                isVisible={!suspended}
+                onOpenSharedSettings={openSharedSettings}
+              />
+            </div>
+          )}
 
           <Surface className={sectionCardClass}>
             <div className={sectionTitleClass}>{t("sectionAdvanced", "Advanced")}</div>
@@ -1516,7 +1552,7 @@ function EditActorConfigModal({
                         },
                       ]
                     : []),
-                  ...(editMode === "custom"
+                  ...(editMode === "custom" && runtime !== "web_model"
                     ? [
                         {
                           id: "environment",
@@ -1558,28 +1594,25 @@ function EditActorConfigModal({
                         {
                           id: "profile",
                           label: t("profileToolsSection", "Profile tools"),
-                          panel:
-                            runtime === "web_model" ? (
-                              <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
-                                ChatGPT Web Model is managed in Settings &gt; ChatGPT Web Model
-                                instead of being saved as a Runtime Profile.
-                              </div>
-                            ) : (
-                              <div className="flex flex-wrap gap-3">
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  onClick={() => void saveAsProfile()}
-                                  disabled={
-                                    busy === "actor-profile-save" || busy === "actor-update"
-                                  }
-                                >
-                                  {busy === "actor-profile-save"
-                                    ? t("savingProfile")
-                                    : t("addToActorProfiles")}
-                                </Button>
-                              </div>
-                            ),
+                          panel: (
+                            <div className="flex flex-wrap gap-3">
+                              {runtime === "web_model" && (
+                                <p className="w-full text-sm text-[var(--color-text-secondary)]">
+                                  {t("webModelProfileHint")}
+                                </p>
+                              )}
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => void saveAsProfile()}
+                                disabled={busy === "actor-profile-save" || busy === "actor-update"}
+                              >
+                                {busy === "actor-profile-save"
+                                  ? t("savingProfile")
+                                  : t("addToActorProfiles")}
+                              </Button>
+                            </div>
+                          ),
                         },
                       ]
                     : []),

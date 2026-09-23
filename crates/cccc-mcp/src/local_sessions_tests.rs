@@ -450,3 +450,41 @@ async fn timeout_breaks_backpressured_input_and_stops_descendants() {
     tokio::time::sleep(Duration::from_millis(1300)).await;
     assert!(!f.temp.path().join("child-leak").exists());
 }
+
+#[tokio::test]
+async fn session_output_and_stdin_remain_owned_by_the_original_actor_and_binding() {
+    let f = Fixture::new();
+    let started = f
+        .start(
+            "read value; printf '%s' \"$value\"",
+            json!({"yield_time_ms":0,"by":"alpha","_cccc_web_binding":{"revision":"r1"}}),
+        )
+        .await;
+    let id = started["session_id"].as_str().expect("session");
+    for (actor, revision) in [("beta", "r1"), ("alpha", "r2")] {
+        let args = json!({"group_id":f.group,"session_id":id,"by":actor,"_cccc_web_binding":{"revision":revision},"chars":"stolen\n"});
+        assert!(
+            write(&f.home, args.as_object().expect("valid test fixture"))
+                .await
+                .is_err()
+        );
+    }
+    let output = f
+        .poll(
+            id,
+            json!({"by":"alpha","_cccc_web_binding":{"revision":"r1"},"chars":"owned\n"}),
+        )
+        .await;
+    assert!(
+        output["output"]
+            .as_str()
+            .expect("valid test fixture")
+            .contains("owned")
+    );
+    assert!(
+        !output["output"]
+            .as_str()
+            .expect("valid test fixture")
+            .contains("stolen")
+    );
+}

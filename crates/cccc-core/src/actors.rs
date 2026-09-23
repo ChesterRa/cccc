@@ -1,10 +1,9 @@
-use cccc_contracts::{Actor, ActorRole, ActorRuntime, utc_now};
+use cccc_contracts::{Actor, ActorRole, utc_now};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
-use crate::profiles::ProfileStore;
-use crate::{GroupDoc, GroupStore};
+use crate::GroupDoc;
 
 const RESERVED: &[&str] = &[
     "user", "all", "system", "foreman", "peers", "admin", "root", "cccc",
@@ -20,75 +19,6 @@ pub const CROSS_GROUP_FOREMAN_RECIPIENT: &str = "@foreman";
 pub enum UniqueForemanError {
     NotFound,
     NotUnique,
-}
-
-/// Returns the conflict message for the ChatGPT Web Model actor registered
-/// anywhere in this instance, ignoring `exclude` (the actor being edited).
-/// A registry entry whose group document is gone is stale, not a live owner,
-/// so it is skipped; an unreadable document aborts the scan because it may
-/// still own the slot.
-pub fn web_model_singleton_conflict(
-    store: &GroupStore,
-    exclude: Option<(&str, &str)>,
-) -> io::Result<Option<String>> {
-    let profiles = ProfileStore::new(store.home().clone())?;
-    for meta in store.list()? {
-        let group = match store.load(&meta.group_id) {
-            Ok(group) => group,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                tracing::warn!(
-                    group_id = %meta.group_id,
-                    "skipping stale registry entry during ChatGPT Web Model singleton scan"
-                );
-                continue;
-            }
-            Err(error) => {
-                return Err(io::Error::other(format!(
-                    "could not read group {}: {error}",
-                    meta.group_id
-                )));
-            }
-        };
-        for actor in &group.actors {
-            if exclude == Some((group.group_id.as_str(), actor.id.as_str()))
-                || !reserves_web_model(&profiles, actor)?
-            {
-                continue;
-            }
-            let label = if actor.title.trim().is_empty() {
-                actor.id.as_str()
-            } else {
-                actor.title.as_str()
-            };
-            return Ok(Some(format!(
-                "ChatGPT Web Model is limited to one actor per CCCC instance (existing actor: {label} in group {}). Remove the existing ChatGPT Web Model actor before creating another.",
-                group.group_id
-            )));
-        }
-    }
-    Ok(None)
-}
-
-/// A linked profile may change before the Actor restarts and persists its new
-/// runtime. Reserve that future slot too; a still-applied Web Model keeps its
-/// slot until it has actually transitioned away.
-pub fn reserves_web_model(profiles: &ProfileStore, actor: &Actor) -> io::Result<bool> {
-    if actor.runtime == ActorRuntime::WebModel {
-        return Ok(true);
-    }
-    if actor.profile_id.is_empty() {
-        return Ok(false);
-    }
-    let Some(profile) = profiles.get_ref(
-        &actor.profile_id,
-        &actor.profile_scope,
-        &actor.profile_owner,
-    )?
-    else {
-        return Ok(false);
-    };
-    let runtime = crate::profiles::parse_profile_runtime(&profile)?;
-    Ok(runtime == ActorRuntime::WebModel)
 }
 
 pub fn validate_actor_id(value: &str) -> io::Result<String> {
@@ -118,6 +48,17 @@ pub fn visible(group: &GroupDoc) -> impl Iterator<Item = &Actor> {
 
 pub fn find<'a>(group: &'a GroupDoc, actor_id: &str) -> Option<&'a Actor> {
     group.actors.iter().find(|actor| actor.id == actor_id)
+}
+
+/// The original creation time identifies Actors that predate persisted UUIDs.
+/// Reads, browser ownership and pairing must agree without changing that
+/// identity midway through a live Actor's work.
+pub fn generation_identity(actor: &Actor) -> String {
+    if actor.generation.is_empty() {
+        format!("legacy:{}", actor.created_at)
+    } else {
+        actor.generation.clone()
+    }
 }
 
 pub fn unique_available_foreman(group: &GroupDoc) -> Result<&Actor, UniqueForemanError> {

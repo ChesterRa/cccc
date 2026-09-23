@@ -49,10 +49,9 @@ fn mutate(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                     return Err(invalid("Folder name must contain 1 to 80 characters"));
                 }
                 let folders = array(state, "folders");
-                if folders
-                    .iter()
-                    .any(|f| f["name"] == name && f["folder_id"] != folder_id)
-                {
+                if folders.iter().any(|f| {
+                    f["name"] == name && (action == "create_folder" || f["folder_id"] != folder_id)
+                }) {
                     return Err(invalid("Folder name already exists"));
                 }
                 if action == "create_folder" {

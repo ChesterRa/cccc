@@ -64,7 +64,7 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   custom: "",
 };
 
-const PROFILE_RUNTIME_OPTIONS = SUPPORTED_RUNTIMES.filter((runtime) => runtime !== "web_model");
+const PROFILE_RUNTIME_OPTIONS = SUPPORTED_RUNTIMES;
 
 function defaultCommandForRuntime(runtime: string): string {
   const key = String(runtime || "").trim();
@@ -159,10 +159,6 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
     () => supportsRuntimeDefaultCommand(editor.runtime),
     [editor.runtime],
   );
-  const editorIsWebModel = useMemo(
-    () => String(editor.runtime || "").trim() === "web_model",
-    [editor.runtime],
-  );
   const editorDefaultCommand = useMemo(
     () => defaultCommandForRuntime(editor.runtime),
     [editor.runtime],
@@ -248,15 +244,6 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
               <label className={labelClass()}>{t("actorProfiles.runtime")}</label>
               <SelectCombobox
                 items={[
-                  ...(editorIsWebModel
-                    ? [
-                        {
-                          value: "web_model",
-                          label: `${RUNTIME_INFO.web_model?.label || "ChatGPT Web Model"} (single actor)`,
-                          disabled: true,
-                        },
-                      ]
-                    : []),
                   ...PROFILE_RUNTIME_OPTIONS.map((rt) => ({
                     value: rt,
                     label: RUNTIME_INFO[rt]?.label || rt,
@@ -279,71 +266,71 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                 className={inputClass()}
                 searchable
               />
-              {editorIsWebModel ? (
-                <div className="mt-1.5 text-[0.625rem] leading-4 text-[var(--color-text-muted)]">
-                  ChatGPT Web Model is managed as one CCCC actor in Settings &gt; ChatGPT Web Model;
-                  new Runtime Profiles cannot use this runtime.
-                </div>
-              ) : null}
             </div>
           </div>
 
-          <div>
-            <label className={labelClass()}>{t("actorProfiles.commandOverrideOptional")}</label>
-            {editorSupportsDefaultCommand ? (
-              <label className="inline-flex items-center gap-2 text-xs mb-2 text-[var(--color-text-secondary)]">
-                <input
-                  type="checkbox"
-                  checked={editor.useDefaultCommand}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
+          {editor.runtime !== "web_model" && (
+            <>
+              <div>
+                <label className={labelClass()}>{t("actorProfiles.commandOverrideOptional")}</label>
+                {editorSupportsDefaultCommand ? (
+                  <label className="inline-flex items-center gap-2 text-xs mb-2 text-[var(--color-text-secondary)]">
+                    <input
+                      type="checkbox"
+                      checked={editor.useDefaultCommand}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setEditor((prev) => ({
+                          ...prev,
+                          useDefaultCommand: checked,
+                          command: checked ? "" : prev.command,
+                        }));
+                      }}
+                    />
+                    {t("actorProfiles.useRuntimeDefaultCommand")}
+                  </label>
+                ) : null}
+                {!editorSupportsDefaultCommand || !editor.useDefaultCommand ? (
+                  <input
+                    value={editor.command}
+                    onChange={(e) => setEditor((prev) => ({ ...prev, command: e.target.value }))}
+                    className={`${inputClass()} font-mono`}
+                    placeholder={editorDefaultCommand || "codex"}
+                  />
+                ) : null}
+                {editorSupportsDefaultCommand && editorDefaultCommand ? (
+                  <div className="text-[0.625rem] mt-1 text-[var(--color-text-muted)]">
+                    {editor.useDefaultCommand
+                      ? t("actorProfiles.usingRuntimeDefaultCommand")
+                      : t("actorProfiles.default")}{" "}
+                    <code className="px-1 rounded bg-[var(--color-bg-secondary)]">
+                      {editorDefaultCommand}
+                    </code>
+                  </div>
+                ) : null}
+              </div>
+
+              <div>
+                <label className={labelClass()}>{t("actorProfiles.submit")}</label>
+                <SelectCombobox
+                  items={[
+                    { value: "enter", label: "Enter" },
+                    { value: "newline", label: "Newline" },
+                    { value: "none", label: "None" },
+                  ]}
+                  value={editor.submit}
+                  onChange={(value) =>
                     setEditor((prev) => ({
                       ...prev,
-                      useDefaultCommand: checked,
-                      command: checked ? "" : prev.command,
-                    }));
-                  }}
+                      submit: value as "enter" | "newline" | "none",
+                    }))
+                  }
+                  ariaLabel={t("actorProfiles.submit")}
+                  className={inputClass()}
                 />
-                {t("actorProfiles.useRuntimeDefaultCommand")}
-              </label>
-            ) : null}
-            {!editorSupportsDefaultCommand || !editor.useDefaultCommand ? (
-              <input
-                value={editor.command}
-                onChange={(e) => setEditor((prev) => ({ ...prev, command: e.target.value }))}
-                className={`${inputClass()} font-mono`}
-                placeholder={editorDefaultCommand || "codex"}
-              />
-            ) : null}
-            {editorSupportsDefaultCommand && editorDefaultCommand ? (
-              <div className="text-[0.625rem] mt-1 text-[var(--color-text-muted)]">
-                {editor.useDefaultCommand
-                  ? t("actorProfiles.usingRuntimeDefaultCommand")
-                  : t("actorProfiles.default")}{" "}
-                <code className="px-1 rounded bg-[var(--color-bg-secondary)]">
-                  {editorDefaultCommand}
-                </code>
               </div>
-            ) : null}
-          </div>
-
-          <div>
-            <label className={labelClass()}>{t("actorProfiles.submit")}</label>
-            <SelectCombobox
-              items={[
-                { value: "enter", label: "Enter" },
-                { value: "newline", label: "Newline" },
-                { value: "none", label: "None" },
-              ]}
-              value={editor.submit}
-              onChange={(value) =>
-                setEditor((prev) => ({ ...prev, submit: value as "enter" | "newline" | "none" }))
-              }
-              ariaLabel={t("actorProfiles.submit")}
-              className={inputClass()}
-            />
-          </div>
-
+            </>
+          )}
           <div className={settingsWorkspaceSectionClass}>
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">
               {t("actorProfiles.capabilityDefaults")}
@@ -404,63 +391,65 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             </div>
           </div>
 
-          <div className={settingsWorkspaceSectionClass}>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("actorProfiles.env")}
-            </div>
-            <div className="text-xs mt-1 text-[var(--color-text-muted)]">
-              {t("actorProfiles.envHint")}
-            </div>
-            {duplicateSourceProfileId ? (
-              <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">
-                {t("actorProfiles.duplicateSecretsHint", { source: duplicateSourceLabel })}
+          {editor.runtime !== "web_model" && (
+            <div className={settingsWorkspaceSectionClass}>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {t("actorProfiles.env")}
               </div>
-            ) : null}
-            {secretKeys.length ? (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {secretKeys.map((key) => (
-                  <span
-                    key={key}
-                    title={secretMasks[key] ? `${key}=${secretMasks[key]}` : key}
-                    className="px-2 py-0.5 rounded text-xs bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]"
-                  >
-                    {key}
-                  </span>
-                ))}
+              <div className="text-xs mt-1 text-[var(--color-text-muted)]">
+                {t("actorProfiles.envHint")}
               </div>
-            ) : (
-              <div className="mt-2 text-xs text-[var(--color-text-muted)]">
-                {t("actorProfiles.noSecrets")}
-              </div>
-            )}
+              {duplicateSourceProfileId ? (
+                <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">
+                  {t("actorProfiles.duplicateSecretsHint", { source: duplicateSourceLabel })}
+                </div>
+              ) : null}
+              {secretKeys.length ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {secretKeys.map((key) => (
+                    <span
+                      key={key}
+                      title={secretMasks[key] ? `${key}=${secretMasks[key]}` : key}
+                      className="px-2 py-0.5 rounded text-xs bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]"
+                    >
+                      {key}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 text-xs text-[var(--color-text-muted)]">
+                  {t("actorProfiles.noSecrets")}
+                </div>
+              )}
 
-            <div className="mt-3">
-              <label className={labelClass()}>{t("actorProfiles.setSecrets")}</label>
-              <textarea
-                value={secretSetText}
-                onChange={(e) => setSecretSetText(e.target.value)}
-                className={`${inputClass()} min-h-[90px] font-mono`}
-                placeholder={t("actorProfiles.setSecretsPlaceholder")}
-              />
+              <div className="mt-3">
+                <label className={labelClass()}>{t("actorProfiles.setSecrets")}</label>
+                <textarea
+                  value={secretSetText}
+                  onChange={(e) => setSecretSetText(e.target.value)}
+                  className={`${inputClass()} min-h-[90px] font-mono`}
+                  placeholder={t("actorProfiles.setSecretsPlaceholder")}
+                />
+              </div>
+              <div className="mt-3">
+                <label className={labelClass()}>{t("actorProfiles.unsetSecrets")}</label>
+                <textarea
+                  value={secretUnsetText}
+                  onChange={(e) => setSecretUnsetText(e.target.value)}
+                  className={`${inputClass()} min-h-[70px] font-mono`}
+                  placeholder={t("actorProfiles.unsetSecretsPlaceholder")}
+                />
+              </div>
+              <label className="mt-3 inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+                <input
+                  type="checkbox"
+                  checked={secretClear}
+                  onChange={(e) => setSecretClear(e.target.checked)}
+                />
+                {t("actorProfiles.clearSecrets")}
+              </label>
             </div>
-            <div className="mt-3">
-              <label className={labelClass()}>{t("actorProfiles.unsetSecrets")}</label>
-              <textarea
-                value={secretUnsetText}
-                onChange={(e) => setSecretUnsetText(e.target.value)}
-                className={`${inputClass()} min-h-[70px] font-mono`}
-                placeholder={t("actorProfiles.unsetSecretsPlaceholder")}
-              />
-            </div>
-            <label className="mt-3 inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-              <input
-                type="checkbox"
-                checked={secretClear}
-                onChange={(e) => setSecretClear(e.target.checked)}
-              />
-              {t("actorProfiles.clearSecrets")}
-            </label>
-          </div>
+          )}
         </div>
         <div className={settingsDialogFooterClass}>
           <button type="button" onClick={closeEditor} className={secondaryButtonClass()}>
@@ -469,7 +458,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
           <button
             type="button"
             onClick={() => void handleSave()}
-            disabled={editorBusy || editorIsWebModel}
+            disabled={editorBusy}
             className={primaryButtonClass(editorBusy)}
           >
             {editorBusy ? t("common:saving") : t("common:save")}
@@ -584,16 +573,6 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   };
 
   const openDuplicate = async (profile: ActorProfile) => {
-    if (
-      String(profile.runtime || "")
-        .trim()
-        .toLowerCase() === "web_model"
-    ) {
-      setErr(
-        "ChatGPT Web Model is managed as a single actor and cannot be duplicated as a Runtime Profile. Configure it in Settings > ChatGPT Web Model.",
-      );
-      return;
-    }
     const sourceId = String(profile.id || "").trim();
     setEditor({
       ...buildEditor(profile),
@@ -742,16 +721,6 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   };
 
   const handleSave = async () => {
-    if (
-      String(editor.runtime || "")
-        .trim()
-        .toLowerCase() === "web_model"
-    ) {
-      setEditorErr(
-        "ChatGPT Web Model is managed in Settings > ChatGPT Web Model instead of being saved as a Runtime Profile.",
-      );
-      return;
-    }
     const name = editor.name.trim();
     if (!name) {
       setEditorErr(t("actorProfiles.nameRequired"));
@@ -765,12 +734,14 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
     setEditorBusy(true);
     setEditorErr("");
     try {
-      const setParsed = parsePrivateEnvSetText(secretSetText);
+      const setParsed = parsePrivateEnvSetText(editor.runtime === "web_model" ? "" : secretSetText);
       if (!setParsed.ok) {
         setEditorErr(setParsed.error);
         return;
       }
-      const unsetParsed = parsePrivateEnvUnsetText(secretUnsetText);
+      const unsetParsed = parsePrivateEnvUnsetText(
+        editor.runtime === "web_model" ? "" : secretUnsetText,
+      );
       if (!unsetParsed.ok) {
         setEditorErr(unsetParsed.error);
         return;
@@ -783,7 +754,10 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         owner_id: ownerId,
         runtime: editor.runtime,
         command:
-          editorSupportsDefaultCommand && editor.useDefaultCommand ? "" : editor.command.trim(),
+          editor.runtime === "web_model" ||
+          (editorSupportsDefaultCommand && editor.useDefaultCommand)
+            ? ""
+            : editor.command.trim(),
         submit: editor.submit,
         env: {},
         capability_defaults: {
@@ -793,6 +767,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         },
       };
       if (
+        editor.runtime !== "web_model" &&
         editorSupportsDefaultCommand &&
         !editor.useDefaultCommand &&
         !String(payload.command || "").trim()
@@ -807,11 +782,13 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         setEditorErr(t("actorProfiles.customRuntimeCommandRequired"));
         return;
       }
-      const copyFromProfileId = duplicateSourceProfileId.trim();
+      const copyFromProfileId =
+        editor.runtime === "web_model" ? "" : duplicateSourceProfileId.trim();
       const hasSecretOps =
-        secretClear ||
-        Object.keys(setParsed.setVars).length > 0 ||
-        unsetParsed.unsetKeys.length > 0;
+        editor.runtime !== "web_model" &&
+        (secretClear ||
+          Object.keys(setParsed.setVars).length > 0 ||
+          unsetParsed.unsetKeys.length > 0);
       const expectedRevision = editor.id ? editor.revision : undefined;
       const upsertResp = await api.saveProfile(payload, expectedRevision);
       if (!upsertResp.ok) {
@@ -968,11 +945,6 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                     </button>
                     <button
                       onClick={() => void openDuplicate(profile)}
-                      disabled={
-                        String(profile.runtime || "")
-                          .trim()
-                          .toLowerCase() === "web_model"
-                      }
                       className={secondaryButtonClass("sm")}
                     >
                       {t("actorProfiles.duplicate")}

@@ -52,11 +52,14 @@ mod terminal_ws_protocol;
 mod web_model_browser;
 mod web_model_connector_activity;
 mod web_model_connector_provisioning;
+mod web_model_connector_session;
 mod web_model_connector_store;
 mod web_model_connectors;
 mod web_model_delivery;
 mod web_model_delivery_completion;
 mod web_model_delivery_state;
+mod web_model_pairing;
+mod web_model_shared_browser;
 mod web_model_supervisor;
 
 use crate::AppState;
@@ -97,6 +100,8 @@ pub fn router() -> Router<AppState> {
         .merge(presentation_browser::routes())
         .merge(web_model_connectors::routes())
         .merge(web_model_browser::routes())
+        .merge(web_model_pairing::routes())
+        .merge(web_model_shared_browser::routes())
         .merge(nomcp::routes())
         .merge(context::routes())
         .merge(codex_voice::routes())

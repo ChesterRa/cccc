@@ -153,15 +153,26 @@ fn actor_remove_ledger_failure_restores_authority_before_runtime_cleanup() {
     );
     let connector = json!({
         "connector_id":"wmc_remove_rollback",
-        "group_id":group_id,
-        "actor_id":"web1",
+        "routing_mode":"session",
+        "bindings":{serde_json::json!([group_id,"web1"]).to_string():{"group_id":group_id,"actor_id":"web1","state":"bound"}},
         "provider":"chatgpt",
         "secret":"wmcs_remove_rollback",
         "created_at":"2026-08-12T00:00:00Z",
         "updated_at":"2026-08-12T00:00:00Z",
         "revoked":false
     });
-    cccc_core::web_model_connectors::replace_active(&home, &connector).expect("connector");
+    let configured = cccc_core::web_model_connectors::configure(&home).expect("configure fixture");
+    cccc_core::web_model_connectors::update_connector(
+        &home,
+        configured["connector"]["connector_id"]
+            .as_str()
+            .expect("valid test fixture"),
+        |v| {
+            v["connector_id"] = connector["connector_id"].clone();
+            v["bindings"] = connector["bindings"].clone();
+        },
+    )
+    .expect("seed fixture bindings");
 
     let store = cccc_core::GroupStore::new(home.clone()).expect("store");
     let headless_state = store
@@ -195,6 +206,13 @@ fn actor_remove_ledger_failure_restores_authority_before_runtime_cleanup() {
         "runtime state was cleaned before commit"
     );
     let connectors = cccc_core::web_model_connectors::load(&home).expect("connectors");
+    assert_eq!(
+        connectors[0]["bindings"]
+            .as_object()
+            .expect("bindings")
+            .len(),
+        1
+    );
     assert_eq!(
         connectors
             .iter()
@@ -377,16 +395,26 @@ fn actor_removal_retires_connectors_after_the_runtime_changes() {
     );
     let connector = json!({
         "connector_id":"wmc_former_web",
-        "group_id":group_id,
-        "actor_id":"former-web",
+        "routing_mode":"session",
+        "bindings":{serde_json::json!([group_id,"former-web"]).to_string():{"group_id":group_id,"actor_id":"former-web","state":"bound"}},
         "provider":"chatgpt",
         "secret":"wmcs_former_web",
         "created_at":"2026-08-12T00:00:00Z",
         "updated_at":"2026-08-12T00:00:00Z",
         "revoked":false
     });
-    cccc_core::web_model_connectors::replace_active(&home, &connector)
-        .expect("historical connector");
+    let configured = cccc_core::web_model_connectors::configure(&home).expect("configure fixture");
+    cccc_core::web_model_connectors::update_connector(
+        &home,
+        configured["connector"]["connector_id"]
+            .as_str()
+            .expect("valid test fixture"),
+        |v| {
+            v["connector_id"] = connector["connector_id"].clone();
+            v["bindings"] = connector["bindings"].clone();
+        },
+    )
+    .expect("seed fixture bindings");
 
     call(
         &home,
@@ -399,8 +427,8 @@ fn actor_removal_retires_connectors_after_the_runtime_changes() {
         connectors
             .iter()
             .find(|entry| entry["connector_id"] == "wmc_former_web")
-            .expect("retired connector")["revoked"],
-        json!(true)
+            .expect("retired connector")["bindings"],
+        json!({})
     );
 }
 

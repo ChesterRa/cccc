@@ -186,14 +186,25 @@ mod tests {
         });
         let connector = serde_json::json!({
             "connector_id":"wmc_restore",
-            "group_id":group_id,
-            "actor_id":"peer",
+            "routing_mode":"session",
+            "bindings":{serde_json::json!([group_id,"peer"]).to_string():{"group_id":group_id,"actor_id":"peer","state":"bound"}},
             "secret":"wmcs_restore",
             "created_at":"2026-08-11T00:00:00Z",
             "updated_at":"2026-08-11T00:00:00Z",
             "revoked":false
         });
-        web_model_connectors::replace_active(&home, &connector).expect("connector");
+        let configured = web_model_connectors::configure(&home).expect("configure fixture");
+        web_model_connectors::update_connector(
+            &home,
+            configured["connector"]["connector_id"]
+                .as_str()
+                .expect("valid test fixture"),
+            |v| {
+                v["connector_id"] = connector["connector_id"].clone();
+                v["bindings"] = connector["bindings"].clone();
+            },
+        )
+        .expect("seed fixture bindings");
         let retired = web_model_connectors::retire_actor(&home, &group_id, "peer")
             .expect("retired connector");
         super::super::actor_secrets::remove(&home, &group_id, "peer").expect("retire secrets");
@@ -233,6 +244,13 @@ mod tests {
             runtime_state
         );
         let connectors = web_model_connectors::load(&home).expect("connectors");
+        assert_eq!(
+            connectors[0]["bindings"]
+                .as_object()
+                .expect("bindings")
+                .len(),
+            1
+        );
         assert!(
             !connectors
                 .iter()

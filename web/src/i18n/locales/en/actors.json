@@ -283,5 +283,8 @@
   "actorControls": "Controls for {{actor}}",
   "takeControl": "Take control",
   "readOnlyConnection": "Read only",
-  "terminalReadOnlyNotice": "This terminal is read-only. Take control to type here."
+  "terminalReadOnlyNotice": "This terminal is read-only. Take control to type here.",
+  "webModelActorBoundConnectorTitle": "ChatGPT Web Model",
+  "webModelActorBoundConnectorHint": "Global Web Model settings manage shared login and one connector. Save this Actor and start it normally; its conversation connects automatically before task delivery.",
+  "webModelProfileHint": "Reuse the runtime type and default capabilities. ChatGPT login, conversation and pairing are configured separately."
 }

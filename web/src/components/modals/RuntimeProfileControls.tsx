@@ -97,7 +97,8 @@ export function RuntimeProfilePicker({
 }) {
   const { t } = useTranslation("actors");
   const selected = profiles.find((profile) => actorProfileIdentityKey(profile) === value);
-  const selectedCommand = selected ? formatRuntimeCommand(selected.command) : "";
+  const selectedCommand =
+    selected && selected.runtime !== "web_model" ? formatRuntimeCommand(selected.command) : "";
   return (
     <div className="space-y-3">
       <div>
@@ -120,6 +121,11 @@ export function RuntimeProfilePicker({
           searchable
         />
         <OpenCodeManagedModelHint runtime={selected?.runtime} />
+        {selected?.runtime === "web_model" && (
+          <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+            {t("webModelProfileHint")}
+          </p>
+        )}
         {!busy && profiles.length === 0 && emptyHint ? (
           <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">{emptyHint}</p>
         ) : null}

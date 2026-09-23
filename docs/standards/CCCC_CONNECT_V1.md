@@ -427,7 +427,7 @@ ordinary `send_files`. It accepts 1–16 files under the active source project
 scope and reads at most the 10 MiB total limit plus one detection byte. Symlink
 escape and files outside that scope fail. Its retry lookup precedes reading the
 original paths, so a deleted original file cannot break an already accepted retry.
-MCP `cccc_file(action=send, dst_instance_id, dst_group_id, idempotency_key?)`
+MCP `cccc_file_send(dst_instance_id, dst_group_id, idempotency_key?)`
 uses this daemon operation, reporting durable acceptance and queue status. It
 exposes no remote file-system tool. Local resource refs and composer suggestions
 are not shared; only message text and copied attachments cross instances.

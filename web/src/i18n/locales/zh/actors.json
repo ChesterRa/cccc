@@ -283,5 +283,8 @@
   "actorControls": "{{actor}} 的操作",
   "takeControl": "接管",
   "readOnlyConnection": "只读",
-  "terminalReadOnlyNotice": "此终端当前只读，接管后可以输入。"
+  "terminalReadOnlyNotice": "此终端当前只读，接管后可以输入。",
+  "webModelActorBoundConnectorTitle": "ChatGPT Web Model",
+  "webModelActorBoundConnectorHint": "全局 Web Model 设置管理共享登录和一个连接器。保存后正常启动此 Actor，CCCC 会先自动连接对话，再投递任务。",
+  "webModelProfileHint": "复用运行类型和默认能力。ChatGPT 登录、对话和配对关系单独设置。"
 }

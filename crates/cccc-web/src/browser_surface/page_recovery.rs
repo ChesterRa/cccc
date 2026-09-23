@@ -57,10 +57,12 @@ pub(super) async fn confirm_candidate_gone(
 }
 
 pub(super) async fn recover_page(session: &mut Session) -> Result<()> {
+    let owner = std::sync::Arc::clone(&session.owner);
+    let owner = owner.read().await;
     let mut stale_pages = Vec::new();
     let mut live_page = None;
-    for page in session.browser.pages().await? {
-        let Some(url) = candidate_page_url(&session.browser, &page).await? else {
+    for page in owner.browser.pages().await? {
+        let Some(url) = candidate_page_url(&owner.browser, &page).await? else {
             continue;
         };
         if is_internal_page(&url) {
@@ -72,7 +74,7 @@ pub(super) async fn recover_page(session: &mut Session) -> Result<()> {
     }
     let page = match live_page {
         Some(page) => page,
-        None => session
+        None => owner
             .browser
             .new_page(&session.url)
             .await

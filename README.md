@@ -292,7 +292,7 @@ For setup commands, interaction details, and troubleshooting for every supported
 
 ### ChatGPT Web as a local development actor
 
-CCCC delivers Group messages into a bound ChatGPT conversation. A connector-capable ChatGPT session calls back through an Actor-bound remote MCP connector to receive messages, reply, inspect or edit repository files, and run scoped shell/git commands. The instance currently supports one Web Model Actor.
+CCCC delivers Group messages into paired ChatGPT conversations. Multiple Web Model Actors share one dedicated browser login and one authenticated remote MCP connector, with a persistent window and confirmed conversation pairing for each Actor. They can receive messages, reply, inspect or edit repository files, and run scoped shell/git commands. Shared setup lives in instance settings; conversation setup lives in Actor settings. Normal Actor startup verifies its conversation automatically before delivering queued tasks; no preparatory pairing click is required.
 
 Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy). CCCC defaults to stable text-only delivery and also offers an experimental **GPT Pro** mode that attaches a tiny blank PNG when delivering each batch. This compatibility workaround does not switch ChatGPT models or guarantee connector availability, and may stop working when ChatGPT changes. Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
 
@@ -310,7 +310,7 @@ Every instance retains its own state and history. Cross-member and Direct connec
 
 The sidebar can open same-account remote workspaces for administrators, using **each target instance's own admin Access Token** and a reachable HTTPS route. Restricted access stays within one instance. Browser authority is separate from background collaboration grants.
 
-Agents discover qualified targets with `cccc_connect` and send through `cccc_message_send` or `cccc_file` using both `dst_instance_id` and `dst_group_id`. Replies use the received local Event ID. Selecting a remote **`#Group`** in the composer preserves that qualified identity for local Agents; it does not itself send remotely or grant access. See the [CCCC Connect guide](https://chesterra.github.io/cccc/guide/connect).
+Agents discover qualified targets with `cccc_connect` and send through `cccc_message_send` or `cccc_file_send` using both `dst_instance_id` and `dst_group_id`. Replies use the received local Event ID. Selecting a remote **`#Group`** in the composer preserves that qualified identity for local Agents; it does not itself send remotely or grant access. See the [CCCC Connect guide](https://chesterra.github.io/cccc/guide/connect).
 
 ## Messaging & Coordination
 
@@ -458,7 +458,7 @@ Ordinary Actors always see a compact collaboration core, including `cccc_connect
 | **Project context & memory (on demand)** | `cccc_project_info`, `cccc_tracked_send`, `cccc_memory`, `cccc_context_sync` |
 | **Group & actor control (on demand)** | `cccc_group`, `cccc_actor`, `cccc_runtime_list` |
 | **Workspace utilities (on demand)** | `cccc_repo`, `cccc_presentation`, `cccc_terminal`, `cccc_debug` |
-| **Instance discovery** | `cccc_connect`; qualified targets in `cccc_message_send` and `cccc_file` |
+| **Instance discovery** | `cccc_connect`; qualified targets in `cccc_message_send` and `cccc_file_send` |
 | **Other capability-backed tools** | `cccc_automation`, `cccc_space`, capability administration, `cccc_im_bind` |
 
 The reduced core preserves the collaboration protocol while leaving workflow, reasoning style, and optional machinery to the agent and current task.

@@ -3,6 +3,38 @@ use std::collections::BTreeSet;
 use serde_json::json;
 
 #[test]
+fn paired_catalog_describes_identity_without_changing_management_targets() {
+    let mut catalog = crate::tools::catalog();
+    let actor_target = catalog
+        .iter()
+        .find(|tool| tool["name"] == "cccc_actor")
+        .expect("actor tool")["inputSchema"]["properties"]["actor_id"]
+        .clone();
+    crate::describe_paired_identity(&mut catalog);
+    for tool in catalog {
+        let props = &tool["inputSchema"]["properties"];
+        if props.get("group_id").is_some() {
+            assert!(
+                props["group_id"]["description"]
+                    .as_str()
+                    .expect("description")
+                    .contains("paired CCCC Group")
+            );
+        }
+        if tool["name"] == "cccc_actor" {
+            assert_eq!(props["actor_id"], actor_target);
+        } else if props.get("actor_id").is_some() {
+            assert!(
+                props["actor_id"]["description"]
+                    .as_str()
+                    .expect("description")
+                    .contains("paired CCCC Actor")
+            );
+        }
+    }
+}
+
+#[test]
 fn initialize_negotiates_supported_legacy_protocol_versions() {
     for version in crate::SUPPORTED_LEGACY_PROTOCOL_VERSIONS {
         let request = json!({"params":{"protocolVersion":version}});
@@ -175,7 +207,7 @@ async fn daemon_error_details_survive_the_native_mcp_boundary() {
     assert!(
         error["details"]["recommended_action"]
             .as_str()
-            .is_some_and(|value| value.contains("Do not mechanically add"))
+            .is_some_and(|value| value.contains("Include insight"))
     );
 
     let success = crate::handle_request(
@@ -199,9 +231,11 @@ async fn daemon_error_details_survive_the_native_mcp_boundary() {
     )
     .await;
     assert_ne!(success["result"]["isError"], true);
-    assert_eq!(
-        success["result"]["structuredContent"]["post_message_nudge"]["kind"],
-        "whole_situation_reconstruction"
+    assert!(success["result"]["structuredContent"]["event"]["id"].is_string());
+    assert!(
+        success["result"]["structuredContent"]
+            .get("post_message_nudge")
+            .is_none()
     );
     daemon_task.abort();
 }
@@ -291,6 +325,7 @@ fn unscoped_fallback_includes_the_connect_directory() {
         "cccc_context_get",
         "cccc_coordination",
         "cccc_file",
+        "cccc_file_send",
         "cccc_help",
         "cccc_inbox_read",
         "cccc_message_history",

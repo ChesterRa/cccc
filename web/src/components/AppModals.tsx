@@ -94,14 +94,6 @@ function sortPresentationSlotIds(slotIds: string[]): string[] {
   });
 }
 
-function isStandardChatGptWebModelActor(actor?: Actor | null): boolean {
-  return (
-    String(actor?.runtime || "")
-      .trim()
-      .toLowerCase() === "web_model" && !String(actor?.internal_kind || "").trim()
-  );
-}
-
 function LazyModalFallback({ isDark: _ }: { isDark?: boolean }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
@@ -241,6 +233,7 @@ export function AppModals({
       clearContextTask: s.clearContextTask,
     })),
   );
+  const editingActorSection = useModalStore((state) => state.editingActorSection);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const contextTaskId = useModalStore((state) => state.contextTaskId);
 
@@ -900,7 +893,8 @@ export function AppModals({
     const setKeys = Object.keys(setVars);
     const unsetKeys = Array.isArray(payload?.unsetKeys) ? payload.unsetKeys : [];
     const clear = !!payload?.clear;
-    const canEditSecrets = mode === "custom" && (!linkedBefore || convertToCustom);
+    const canEditSecrets =
+      mode === "custom" && editActorRuntime !== "web_model" && (!linkedBefore || convertToCustom);
     const willChangeSecrets =
       canEditSecrets && (clear || setKeys.length > 0 || unsetKeys.length > 0);
 
@@ -913,7 +907,8 @@ export function AppModals({
     const currentActorNotes = String(editActorNotesBaselineRef.current || "").trim();
     const nextActorNotes = String(editActorNotes || "").trim();
     const nextRuntime = String(editActorRuntime || "codex").trim();
-    const nextCommand = String(editActorCommand || "").trim();
+    const nextCommand =
+      nextRuntime === "web_model" ? currentCommand : String(editActorCommand || "").trim();
     const nextTitle = String(editActorTitle || "").trim();
     const nextCapabilityAutoload = Array.isArray(payload.capabilityAutoload)
       ? normalizeCapabilityIdList(payload.capabilityAutoload)
@@ -1023,7 +1018,7 @@ export function AppModals({
             selectedGroupId,
             actorId,
             nextRuntime !== snapshotRuntime ? editActorRuntime : undefined,
-            nextCommand !== snapshotCommand ? editActorCommand : undefined,
+            nextCommand !== snapshotCommand ? nextCommand : undefined,
             nextTitle,
             { capabilityAutoload: nextCapabilityAutoload },
           );
@@ -1147,7 +1142,7 @@ export function AppModals({
           id: editProfileSaveRef.current?.profile.id,
           name: name.trim(),
           runtime: editActorRuntime,
-          command: editActorCommand.trim(),
+          command: editActorRuntime === "web_model" ? "" : editActorCommand.trim(),
           submit: String(editingActor.submit || "enter"),
           env: {},
           capability_defaults: {
@@ -1169,7 +1164,7 @@ export function AppModals({
           copied: editProfileSaveRef.current?.copied || false,
         };
       }
-      if (profileId && !editProfileSaveRef.current?.copied) {
+      if (profileId && editActorRuntime !== "web_model" && !editProfileSaveRef.current?.copied) {
         const copyResp = await api.copyActorPrivateEnvToProfile(
           profileId,
           selectedGroupId,
@@ -1183,6 +1178,7 @@ export function AppModals({
       }
       if (
         profileId &&
+        editActorRuntime !== "web_model" &&
         secrets &&
         (secrets.clear || secrets.unsetKeys.length || Object.keys(secrets.setVars).length)
       ) {
@@ -1257,7 +1253,7 @@ export function AppModals({
     }
 
     let secretsSetVars: Record<string, string> = {};
-    if (!newActorUseProfile) {
+    if (!newActorUseProfile && newActorRuntime !== "web_model") {
       const parsedSecrets = parsePrivateEnvSetText(secretsText);
       if (!parsedSecrets.ok) {
         setAddActorError(parsedSecrets.error);
@@ -1269,11 +1265,12 @@ export function AppModals({
     setBusy("actor-add");
     setAddActorError("");
     try {
-      const commandToUse = newActorUseProfile
-        ? ""
-        : newActorUseDefaultCommand
+      const commandToUse =
+        newActorUseProfile || newActorRuntime === "web_model"
           ? ""
-          : newActorCommand;
+          : newActorUseDefaultCommand
+            ? ""
+            : newActorCommand;
       const resp = await api.addActor(
         selectedGroupId,
         actorId,
@@ -1349,7 +1346,9 @@ export function AppModals({
 
   const handleSaveNewActorAsProfile = async () => {
     if (newActorUseProfile) return;
-    const parsed = parsePrivateEnvSetText(newActorSecretsSetText);
+    const parsed = parsePrivateEnvSetText(
+      newActorRuntime === "web_model" ? "" : newActorSecretsSetText,
+    );
     if (!parsed.ok) {
       setAddActorError(parsed.error);
       return;
@@ -1360,7 +1359,8 @@ export function AppModals({
     if (!name || !name.trim()) return;
     setBusy("actor-profile-save");
     try {
-      const commandToUse = newActorUseDefaultCommand ? "" : newActorCommand.trim();
+      const commandToUse =
+        newActorUseDefaultCommand || newActorRuntime === "web_model" ? "" : newActorCommand.trim();
       const resp = await api.upsertActorProfile(
         {
           id: newProfileSaveRef.current?.id,
@@ -1425,14 +1425,10 @@ export function AppModals({
     }
     return `${prefix}-${Date.now()}`;
   })();
-  const currentGroupHasChatGptWebModelActor = actors.some((actor) =>
-    isStandardChatGptWebModelActor(actor),
-  );
-
   const canAddActor = (() => {
     if (busy === "actor-add") return false;
     if (newActorUseProfile) return Boolean(String(newActorProfileId || "").trim());
-    if (newActorRuntime === "web_model" && currentGroupHasChatGptWebModelActor) return false;
+    if (newActorRuntime === "web_model") return true;
     const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
     const available = rtInfo?.available ?? false;
     if (!newActorUseDefaultCommand && !newActorCommand.trim()) return false;
@@ -1447,13 +1443,7 @@ export function AppModals({
     if (newActorUseProfile && !String(newActorProfileId || "").trim()) {
       return t("profileRequired");
     }
-    if (
-      !newActorUseProfile &&
-      newActorRuntime === "web_model" &&
-      currentGroupHasChatGptWebModelActor
-    ) {
-      return "This group already has the ChatGPT Web Model actor. Use Settings > ChatGPT Web Model to configure it.";
-    }
+    if (newActorRuntime === "web_model") return "";
     const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
     const available = rtInfo?.available ?? false;
     if (!newActorUseDefaultCommand && !newActorCommand.trim()) {
@@ -2066,6 +2056,7 @@ export function AppModals({
 
       <ActorConfigModal
         mode="edit"
+        initialSection={editingActorSection}
         isOpen={!!editingActor}
         isDark={isDark}
         busy={busy}
@@ -2075,6 +2066,7 @@ export function AppModals({
         avatarUrl={editingActor?.avatar_url || undefined}
         hasCustomAvatar={!!editingActor?.has_custom_avatar}
         isRunning={!!(editingActor && (editingActor.running ?? editingActor.enabled ?? false))}
+        savedRuntime={editingActor?.runtime || "codex"}
         runtimes={runtimes}
         runtime={editActorRuntime}
         onChangeRuntime={setEditActorRuntime}

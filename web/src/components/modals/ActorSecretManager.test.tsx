@@ -136,6 +136,7 @@ describe("ActorConfigModal secret manager integration", () => {
           groupId="group-1"
           actorId="actor-1"
           isRunning={false}
+          savedRuntime="codex"
           runtimes={[]}
           runtime="codex"
           onChangeRuntime={() => undefined}

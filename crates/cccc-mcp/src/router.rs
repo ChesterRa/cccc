@@ -6,13 +6,14 @@ use serde_json::{Map, Value, json};
 use crate::mapping;
 use crate::{RequestContext, ToolCallError};
 
-pub async fn call(
+#[cfg(test)]
+async fn call(
     home: &HomeLayout,
     client: &DaemonClient,
     name: &str,
-    arguments: Map<String, Value>,
+    args: Map<String, Value>,
 ) -> Result<Value, ToolCallError> {
-    call_with_context(home, client, name, arguments, None, false).await
+    call_with_context(home, client, name, args, None, false).await
 }
 
 pub(crate) async fn call_with_context(
@@ -25,8 +26,14 @@ pub(crate) async fn call_with_context(
 ) -> Result<Value, ToolCallError> {
     crate::tools::apply_default_action(name, &mut arguments);
     add_runtime_context(home, &mut arguments);
+    arguments.remove("_cccc_web_binding");
     if let Some(context) = context {
-        apply_request_context(&mut arguments, context);
+        if let Some(binding) = context.binding {
+            cccc_core::web_model_connectors::validate_binding(home, binding)
+                .map_err(|e| e.to_string())?;
+            arguments.insert("_cccc_web_binding".into(), binding.clone());
+        }
+        apply_request_context(name, &mut arguments, context);
     }
     if name == "cccc_task" {
         prepare_task_arguments(home, &mut arguments)?;
@@ -35,7 +42,7 @@ pub(crate) async fn call_with_context(
     if name == "cccc_capability_use" {
         return capability_use(home, client, arguments, context).await;
     }
-    let message_operation = is_message_operation(name, &arguments);
+    let message_operation = is_message_operation(name);
     let message_context = message_operation.then(|| {
         (
             arguments
@@ -756,17 +763,24 @@ fn apply_actor_context(args: &mut Map<String, Value>, actor: Option<&str>) {
     }
 }
 
-fn apply_request_context(args: &mut Map<String, Value>, context: RequestContext<'_>) {
+fn apply_request_context(name: &str, args: &mut Map<String, Value>, context: RequestContext<'_>) {
     // A remote connector is bound to exactly one actor and group. Its request
     // arguments are model-controlled, so the request-scoped binding is authoritative.
     args.insert(
         "group_id".into(),
         Value::String(context.group_id.to_owned()),
     );
-    args.insert(
-        "actor_id".into(),
-        Value::String(context.actor_id.to_owned()),
-    );
+    // Actor management addresses a target; `by` remains the authenticated caller.
+    // Identity-bearing tools must still use the bound Actor, including nested calls.
+    if name == "cccc_actor" {
+        args.entry("actor_id")
+            .or_insert_with(|| Value::String(context.actor_id.to_owned()));
+    } else {
+        args.insert(
+            "actor_id".into(),
+            Value::String(context.actor_id.to_owned()),
+        );
+    }
     args.insert("by".into(), Value::String(context.actor_id.to_owned()));
 }
 
@@ -775,11 +789,11 @@ pub(crate) fn tool_result(payload: Value) -> Value {
     json!({"content":[{"type":"text","text":text}],"structuredContent":payload})
 }
 
-fn is_message_operation(name: &str, arguments: &Map<String, Value>) -> bool {
+fn is_message_operation(name: &str) -> bool {
     matches!(
         name,
-        "cccc_message_send" | "cccc_tracked_send" | "cccc_message_reply"
-    ) || (name == "cccc_file" && arguments.get("action").and_then(Value::as_str) == Some("send"))
+        "cccc_message_send" | "cccc_tracked_send" | "cccc_message_reply" | "cccc_file_send"
+    )
 }
 
 fn with_post_message_context(
@@ -792,71 +806,11 @@ fn with_post_message_context(
         .get_mut("structuredContent")
         .and_then(Value::as_object_mut)
     {
-        if message_operation_succeeded(payload) {
-            payload.insert(
-                "post_message_nudge".into(),
-                json!({
-                    "kind":"whole_situation_reconstruction",
-                    "message":cccc_core::peer_insight::POST_MESSAGE_NUDGE
-                }),
-            );
-        }
         insert_mail_pending_context(home, payload, group_id, actor_id);
         let text = serde_json::to_string_pretty(payload).unwrap_or_else(|_| "{}".into());
         result["content"] = json!([{"type":"text","text":text}]);
     }
     result
-}
-
-fn message_operation_succeeded(payload: &Map<String, Value>) -> bool {
-    message_operation_outcome(payload) == Some(true)
-}
-
-fn message_operation_outcome(payload: &Map<String, Value>) -> Option<bool> {
-    if payload.get("error").is_some_and(Value::is_object)
-        || payload.get("partial_failure").and_then(Value::as_bool) == Some(true)
-        || payload.get("message_sent").and_then(Value::as_bool) == Some(false)
-    {
-        return Some(false);
-    }
-    if let Some(status) = receipt_status(payload) {
-        return Some(delivery_receipt_succeeded(status));
-    }
-    for key in ["result", "structuredContent"] {
-        if let Some(outcome) = payload
-            .get(key)
-            .and_then(Value::as_object)
-            .and_then(message_operation_outcome)
-        {
-            return Some(outcome);
-        }
-    }
-    if payload.get("event").is_some_and(Value::is_object)
-        || (payload.get("src_event").is_some_and(Value::is_object)
-            && payload.get("dst_event").is_some_and(Value::is_object))
-        || payload.get("message_sent").and_then(Value::as_bool) == Some(true)
-        || payload.get("sent").and_then(Value::as_bool) == Some(true)
-        || payload
-            .get("event_id")
-            .and_then(Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty())
-    {
-        return Some(true);
-    }
-    None
-}
-
-fn receipt_status(payload: &Map<String, Value>) -> Option<&str> {
-    payload
-        .get("receipt")
-        .and_then(Value::as_object)
-        .and_then(|receipt| receipt.get("status"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-}
-
-fn delivery_receipt_succeeded(status: &str) -> bool {
-    matches!(status, "queued" | "retrying" | "sent")
 }
 
 fn insert_mail_pending_context(
@@ -893,6 +847,7 @@ fn is_repo_tool(name: &str) -> bool {
             | "cccc_code_exec"
             | "cccc_code_wait"
             | "cccc_file"
+            | "cccc_file_send"
     )
 }
 
@@ -900,8 +855,8 @@ fn is_repo_tool(name: &str) -> bool {
 mod tests {
     use super::{
         apply_actor_context, apply_request_context, help_markdown, is_message_operation,
-        is_task_mail_boundary, message_operation_succeeded, postprocess_task_result,
-        prepare_task_arguments, runtime_group_id, with_post_message_context,
+        is_task_mail_boundary, postprocess_task_result, prepare_task_arguments, runtime_group_id,
+        with_post_message_context,
     };
     use crate::RequestContext;
     use serde_json::json;
@@ -1008,6 +963,7 @@ mod tests {
         }
 
         let context = Some(RequestContext {
+            binding: None,
             group_id: &group.group_id,
             actor_id: "user",
         });
@@ -1177,8 +1133,10 @@ mod tests {
             .expect("args");
 
         apply_request_context(
+            "cccc_message_send",
             &mut args,
             RequestContext {
+                binding: None,
                 group_id: "bound-group",
                 actor_id: "bound-actor",
             },
@@ -1187,6 +1145,42 @@ mod tests {
         assert_eq!(args["group_id"], "bound-group");
         assert_eq!(args["actor_id"], "bound-actor");
         assert_eq!(args["by"], "bound-actor");
+    }
+
+    #[test]
+    fn request_context_separates_management_targets_from_identity() {
+        for name in [
+            "cccc_actor",
+            "cccc_message_send",
+            "cccc_runtime_complete_turn",
+            "cccc_capability_use",
+            "cccc_inbox_read",
+        ] {
+            let mut args = json!({"group_id":"other","actor_id":"beta","by":"user"})
+                .as_object()
+                .expect("arguments")
+                .clone();
+            apply_request_context(
+                name,
+                &mut args,
+                RequestContext {
+                    group_id: "bound-group",
+                    actor_id: "alpha",
+                    binding: None,
+                },
+            );
+            assert_eq!(args["group_id"], "bound-group");
+            assert_eq!(args["by"], "alpha", "{name} cannot elevate the caller");
+            assert_eq!(
+                args["actor_id"],
+                if name == "cccc_actor" {
+                    "beta"
+                } else {
+                    "alpha"
+                },
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -1235,68 +1229,36 @@ mod tests {
 
     #[test]
     fn identifies_message_operations_for_compact_mail_context() {
-        assert!(is_message_operation(
-            "cccc_message_send",
-            &serde_json::Map::new()
-        ));
-        assert!(is_message_operation(
-            "cccc_file",
-            &json!({"action":"send"})
-                .as_object()
-                .cloned()
-                .expect("send args")
-        ));
-        assert!(!is_message_operation(
-            "cccc_file",
-            &json!({"action":"read"})
-                .as_object()
-                .cloned()
-                .expect("read args")
-        ));
+        assert!(is_message_operation("cccc_message_send"));
+        assert!(is_message_operation("cccc_file_send"));
+        assert!(!is_message_operation("cccc_file"));
     }
 
     #[test]
-    fn successful_message_results_restore_the_reconstruction_nudge() {
+    fn message_results_preserve_receipts_and_errors_without_behavior_instructions() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
         for payload in [
             json!({"event":{"id":"event-1"}}),
             json!({"receipt":{"status":"retrying"}}),
             json!({"sent":true,"result":{"event":{"id":"event-2"}}}),
-            json!({"result":{"structuredContent":{"receipt":{"status":"sent"}}}}),
-        ] {
-            assert!(message_operation_succeeded(
-                payload.as_object().expect("payload")
-            ));
-            let result = with_post_message_context(&home, super::tool_result(payload), "", "");
-            assert_eq!(
-                result["structuredContent"]["post_message_nudge"]["kind"],
-                "whole_situation_reconstruction"
-            );
-            assert_eq!(
-                result["structuredContent"]["post_message_nudge"]["message"],
-                cccc_core::peer_insight::POST_MESSAGE_NUDGE
-            );
-        }
-    }
-
-    #[test]
-    fn incomplete_message_results_do_not_claim_completion() {
-        for payload in [
-            json!({}),
             json!({"partial_failure":true,"event":{"id":"event-1"}}),
             json!({"message_sent":false}),
             json!({"receipt":{"status":"failed"}}),
-            json!({"sent":true,"result":{"partial_failure":true}}),
+            json!({"error":{"code":"invalid_recipient","message":"unknown actor"}}),
         ] {
-            assert!(!message_operation_succeeded(
-                payload.as_object().expect("payload")
-            ));
+            let result =
+                with_post_message_context(&home, super::tool_result(payload.clone()), "", "");
+            assert_eq!(result["structuredContent"], payload);
+            let text: serde_json::Value =
+                serde_json::from_str(result["content"][0]["text"].as_str().expect("text"))
+                    .expect("payload JSON");
+            assert_eq!(text, payload);
         }
     }
 
     #[test]
-    fn reconstruction_and_pending_mail_context_remain_independent() {
+    fn pending_mail_context_preserves_message_outcome() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = cccc_core::GroupStore::new(home.clone()).expect("store");
@@ -1318,7 +1280,12 @@ mod tests {
             &group.group_id,
             "peer1",
         );
-        assert!(success["structuredContent"]["post_message_nudge"].is_object());
+        assert_eq!(success["structuredContent"]["event"]["id"], "event-1");
+        assert!(
+            success["structuredContent"]
+                .get("post_message_nudge")
+                .is_none()
+        );
         assert_eq!(success["structuredContent"]["mail_pending"]["count"], 1);
 
         let incomplete = with_post_message_context(

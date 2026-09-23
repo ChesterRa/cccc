@@ -128,10 +128,33 @@
     "mcpCopyFailed": "无法读取或复制 MCP URL，请重试。",
     "mcpStartFirst": "启动后复制 MCP",
     "mcpStartFirstHint": "请先启动这个 Web Model Actor，再复制 MCP URL。",
-    "actorStoppedSurface": "Web Model Actor 已停止。请先点击下方“启动”，再打开 ChatGPT 或复制 MCP URL。",
+    "actorStoppedSurface": "此 Actor 已停止。启动后可恢复投递，也可以打开“ChatGPT 对话”查看或更换工作对话。",
     "browserReadOnly": "只读模式下无法打开 ChatGPT 浏览器。",
     "permissionHint": "ChatGPT 可能正在等待你批准 CCCC app 权限。请切到 ChatGPT 页面，点击 Allow；如果看到 Always allow，建议选择它。批准后回到这里继续。",
-    "permissionHintDismiss": "不再提示"
+    "permissionHintDismiss": "不再提示",
+    "recovery": {
+      "open": "检查并恢复",
+      "title": "ChatGPT 投递 · {{actor}}",
+      "instructions": "请检查下方对话。如果消息仍在输入框中，请发送或清除，并等待 ChatGPT 回答结束。",
+      "noReplay": "CCCC 核实本批消息已发送后会自动恢复。手动继续只放行后续排队消息，不会重发本批消息，也不会清空会话。",
+      "observing": "正在检查投递确认…",
+      "resolved": "队列可以继续，本批消息不会重发。",
+      "changed": "当前投递已变化，不能用这条旧消息解除另一条投递的暂停。",
+      "resume": "已检查，继续后续投递",
+      "resuming": "正在恢复…",
+      "browserClosed": "此 Actor 的浏览器已关闭，请从 Actor 面板打开浏览器检查对话。"
+    },
+    "refreshPage": "刷新 ChatGPT 页面",
+    "reloadFailed": "无法刷新 ChatGPT 页面。",
+    "statusFailed": "无法加载 ChatGPT 浏览器状态。",
+    "activity": {
+      "ambiguous": "投递尚未确认",
+      "blocked": "投递已暂停",
+      "failed": "投递失败",
+      "queued": "{{count}} 条消息排队中",
+      "submitting": "正在投递消息…",
+      "last": "最近投递 {{time}}"
+    }
   },
   "slashCommandAttachmentUnsupported": "斜杠命令不支持附件。",
   "slashCommandReplyUnsupported": "斜杠命令暂不支持回复某条消息。",

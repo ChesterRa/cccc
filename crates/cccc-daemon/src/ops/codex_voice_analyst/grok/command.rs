@@ -17,6 +17,12 @@ pub(super) fn parse_arguments(arguments: &[String]) -> io::Result<ParsedArgument
             "--always-approve" | "--yolo" | "--dangerously-skip-permissions" => {
                 index += 1;
             }
+            "--trust" => {
+                // Explicit caller approval for the native TUI folder gate.
+                // `grok agent` does not accept this TUI-only flag.
+                parsed.tui_arguments.push(argument.into());
+                index += 1;
+            }
             "--model" | "-m" | "--reasoning-effort" => {
                 let value = following(arguments, index, argument)?;
                 parsed
@@ -76,7 +82,7 @@ pub(super) fn parse_arguments(arguments: &[String]) -> io::Result<ParsedArgument
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!(
-                        "Grok runtime command contains an unsupported managed-session argument: {argument}. Configure model, reasoning effort, agent profile, plugin directories, provider URLs, rules, or environment only; CCCC owns agent/leader/session/permission flags."
+                        "Grok runtime command contains an unsupported managed-session argument: {argument}. Configure model, reasoning effort, agent profile, plugin directories, provider URLs, rules, folder trust, or environment only; CCCC owns agent/leader/session/permission flags."
                     ),
                 ));
             }
@@ -130,6 +136,7 @@ mod tests {
             "--rules".into(),
             "Be concise".into(),
             "--always-approve".into(),
+            "--trust".into(),
         ])
         .expect("managed arguments");
         assert!(parsed.agent_arguments.contains(&"grok-4.6".into()));
@@ -140,6 +147,11 @@ mod tests {
         );
         assert!(!parsed.agent_arguments.contains(&"--always-approve".into()));
         assert_eq!(parsed.rules, ["Be concise"]);
+        assert!(!parsed.agent_arguments.contains(&"--trust".into()));
+        assert!(parsed.tui_arguments.contains(&"--trust".into()));
+        let defaults = parse_arguments(&[]).expect("defaults");
+        assert!(!defaults.agent_arguments.contains(&"--trust".into()));
+        assert!(!defaults.tui_arguments.contains(&"--trust".into()));
     }
 
     #[test]

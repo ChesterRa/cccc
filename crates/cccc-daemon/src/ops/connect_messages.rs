@@ -171,11 +171,7 @@ pub(super) fn deliver(
 }
 
 pub(super) fn actor_generation(actor: &cccc_contracts::Actor) -> String {
-    if actor.generation.is_empty() {
-        format!("legacy:{}", actor.created_at)
-    } else {
-        actor.generation.clone()
-    }
+    cccc_core::actors::generation_identity(actor)
 }
 
 fn check_scope(scope: &PeerScope, source: &str, target: &str) -> Result<(), OpError> {

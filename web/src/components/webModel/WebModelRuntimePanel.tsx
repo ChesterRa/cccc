@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { Actor } from "../../types";
 import * as api from "../../services/api";
-import type { WebModelBrowserSession, WebModelDeliveryMode } from "../../services/api";
+import type {
+  WebModelBrowserSession,
+  WebModelDeliveryMode,
+  WebModelPairing,
+} from "../../services/api";
 import { classNames } from "../../utils/classNames";
 import { formatTime } from "../../utils/time";
 import { matchesWebModelActorSelection } from "../../utils/webModelSelection";
@@ -12,11 +16,7 @@ import { HoverTooltip } from "../HoverTooltip";
 import { InfoIcon, RefreshIcon, SettingsIcon } from "../Icons";
 import { ProjectedBrowserSurfacePanel } from "../browser/ProjectedBrowserSurfacePanel";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import { WebModelMcpShortcut } from "./WebModelMcpShortcut";
-
-type Tone = "ready" | "needs" | "neutral" | "error";
-
-type StatusBlock = { label: string; value: string; detail: string; tone: Tone };
+import { WebModelConnectionStatus } from "./WebModelConnectionStatus";
 
 interface WebModelRuntimePanelProps {
   groupId: string;
@@ -25,34 +25,6 @@ interface WebModelRuntimePanelProps {
   isDark: boolean;
   isVisible: boolean;
   readOnly?: boolean;
-}
-
-function tonePillClass(tone: Tone): string {
-  switch (tone) {
-    case "ready":
-      return "border-emerald-500/25 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300";
-    case "needs":
-      return "border-amber-500/30 bg-amber-500/12 text-amber-700 dark:text-amber-300";
-    case "error":
-      return "border-rose-500/30 bg-rose-500/12 text-rose-700 dark:text-rose-300";
-    case "neutral":
-    default:
-      return "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]";
-  }
-}
-
-function shortChatGptUrl(value?: string): string {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = new URL(raw);
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const chatId = parts[0] === "c" ? parts[1] || "" : "";
-    if (chatId) return `${parsed.hostname}/c/${chatId.slice(0, 8)}...`;
-    return parsed.hostname || raw;
-  } catch {
-    return raw.length > 42 ? `${raw.slice(0, 39)}...` : raw;
-  }
 }
 
 function iconButtonClass(primary = false): string {
@@ -64,254 +36,6 @@ function iconButtonClass(primary = false): string {
   );
 }
 
-function buildChatGptBlock(session: WebModelBrowserSession | null): StatusBlock {
-  const health = session?.health_snapshot;
-  if (health?.browser?.state) {
-    const state = String(health.browser.state || "").trim();
-    return {
-      label: "ChatGPT",
-      value:
-        String(health.browser.label || "").trim() || (state === "ready" ? "Ready" : "Check status"),
-      detail:
-        String(health.browser.reason || health.browser.url || "").trim() ||
-        "ChatGPT browser state.",
-      tone:
-        state === "ready"
-          ? "ready"
-          : state === "failed"
-            ? "error"
-            : state === "closed"
-              ? "neutral"
-              : "needs",
-    };
-  }
-  const error = String(session?.error || "").trim();
-  if (error) {
-    return { label: "ChatGPT", value: "Check failed", detail: error, tone: "error" };
-  }
-  if (session?.ready) {
-    return { label: "ChatGPT", value: "Ready", detail: "Signed in and reachable.", tone: "ready" };
-  }
-  if (session?.active) {
-    return {
-      label: "ChatGPT",
-      value: "Needs sign-in",
-      detail: shortChatGptUrl(session.tab_url || session.last_tab_url) || "Browser is open.",
-      tone: "needs",
-    };
-  }
-  return {
-    label: "ChatGPT",
-    value: "Not open",
-    detail: "Open settings to sign in or inspect the page.",
-    tone: "neutral",
-  };
-}
-
-function targetLabelValue(raw: string, state: string): string {
-  const label = raw.trim();
-  if (state === "missing") return "No target";
-  if (state === "invalid") return "Rebind chat";
-  if (state === "unavailable") return "Chat unavailable";
-  if (state === "new_chat_pending") {
-    if (label.toLowerCase().includes("binding")) return "Binding new chat";
-    return "New chat next";
-  }
-  if (state === "bound") return "Existing chat";
-  if (!label) return state ? "Target selected" : "No target";
-  return label
-    .replace(/\bChatGPT\b/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function buildTargetBlock(session: WebModelBrowserSession | null): StatusBlock {
-  const health = session?.health_snapshot;
-  if (health?.target?.state) {
-    const state = String(health.target.state || "").trim();
-    return {
-      label: "Target",
-      value: targetLabelValue(String(health.target.label || ""), state),
-      detail: String(health.target.reason || "").trim() || "ChatGPT delivery target.",
-      tone: ["missing", "invalid", "unavailable"].includes(state) ? "needs" : "ready",
-    };
-  }
-  if (session?.conversation_url) {
-    return {
-      label: "Target",
-      value: "Existing chat",
-      detail: "Next delivery goes to the saved ChatGPT conversation.",
-      tone: "ready",
-    };
-  }
-  if (session?.pending_new_chat_bind) {
-    return {
-      label: "Target",
-      value: "New chat next",
-      detail: "Next delivery starts a fresh ChatGPT chat and binds it.",
-      tone: "ready",
-    };
-  }
-  return {
-    label: "Target",
-    value: "No target",
-    detail: "Choose a target chat in settings.",
-    tone: "needs",
-  };
-}
-
-function buildActivityBlock(
-  session: WebModelBrowserSession | null,
-  queuedCount: number,
-): StatusBlock {
-  const health = session?.health_snapshot;
-  if (health?.delivery?.state) {
-    const state = String(health.delivery.state || "").trim();
-    if (state === "failed") {
-      return {
-        label: "Activity",
-        value: String(health.delivery.label || "").trim() || "Delivery failed",
-        detail:
-          String(health.delivery.reason || health.delivery.last_error || "").trim() ||
-          "The last ChatGPT delivery did not complete.",
-        tone: "error",
-      };
-    }
-    if (state === "pending_bind") {
-      return {
-        label: "Activity",
-        value: String(health.delivery.label || "").trim() || "Binding chat",
-        detail:
-          String(health.delivery.reason || "").trim() ||
-          "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
-        tone: "needs",
-      };
-    }
-    if (state === "submitting") {
-      return {
-        label: "Activity",
-        value: String(health.delivery.label || "").trim() || "Submitting",
-        detail:
-          String(health.delivery.reason || "").trim() ||
-          "CCCC is injecting this batch into ChatGPT.",
-        tone: "needs",
-      };
-    }
-    if (state === "ambiguous" || state === "blocked") {
-      return {
-        label: "Activity",
-        value: String(health.delivery.label || "").trim() || "Delivery unverified",
-        detail:
-          String(health.delivery.reason || health.delivery.last_error || "").trim() ||
-          "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it.",
-        tone: "needs",
-      };
-    }
-    if (queuedCount > 0) {
-      return {
-        label: "Activity",
-        value: `${queuedCount} queued`,
-        detail: "Waiting for browser delivery.",
-        tone: "needs",
-      };
-    }
-    if ((state === "submitted" || state === "bound") && health.delivery.last_delivery_at) {
-      const evidence = String(health.delivery.last_submission_evidence || "").trim();
-      return {
-        label: "Activity",
-        value: `Last ${formatTime(health.delivery.last_delivery_at)}`,
-        detail:
-          state === "bound"
-            ? String(health.delivery.reason || "").trim() || "ChatGPT chat binding completed."
-            : evidence
-              ? `Submitted: ${evidence}`
-              : String(health.delivery.reason || "").trim() || "Browser delivery completed.",
-        tone: "neutral",
-      };
-    }
-  }
-  const deliveryStatus = String(session?.last_delivery_status || "").trim();
-  const lastError = String(session?.last_error || "").trim();
-  if (deliveryStatus === "pending") {
-    return {
-      label: "Activity",
-      value: "Binding chat",
-      detail:
-        lastError === "conversation_url_pending"
-          ? "Prompt was submitted; waiting for ChatGPT to assign the chat URL."
-          : lastError || "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
-      tone: "needs",
-    };
-  }
-  if (deliveryStatus === "submitting") {
-    return {
-      label: "Activity",
-      value: "Submitting",
-      detail: "CCCC is injecting this batch into ChatGPT.",
-      tone: "needs",
-    };
-  }
-  if (deliveryStatus === "ambiguous") {
-    return {
-      label: "Activity",
-      value: "Delivery unverified",
-      detail:
-        lastError ||
-        "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it.",
-      tone: "needs",
-    };
-  }
-  if (deliveryStatus === "failed" || lastError) {
-    return {
-      label: "Activity",
-      value: "Delivery failed",
-      detail: lastError || "The last ChatGPT delivery did not complete.",
-      tone: "error",
-    };
-  }
-  if (deliveryStatus === "bound") {
-    return {
-      label: "Activity",
-      value: "Chat bound",
-      detail: "ChatGPT chat binding completed.",
-      tone: "neutral",
-    };
-  }
-  if (queuedCount > 0) {
-    return {
-      label: "Activity",
-      value: `${queuedCount} queued`,
-      detail: "Waiting for browser delivery.",
-      tone: "needs",
-    };
-  }
-  if (session?.last_delivery_at) {
-    const evidence = String(session.last_submission_evidence || "").trim();
-    return {
-      label: "Activity",
-      value: `Last ${formatTime(session.last_delivery_at)}`,
-      detail: evidence
-        ? `Submitted: ${evidence}`
-        : session.last_turn_id
-          ? String(session.last_turn_id)
-          : "Browser delivery completed.",
-      tone: "neutral",
-    };
-  }
-  return {
-    label: "Activity",
-    value: "No recent delivery",
-    detail: "This actor has no browser delivery record yet.",
-    tone: "neutral",
-  };
-}
-
-function shouldShowActivity(block: StatusBlock, queuedCount: number): boolean {
-  if (queuedCount > 0) return true;
-  if (block.tone !== "neutral") return true;
-  return block.value !== "No recent delivery";
-}
-
 export function WebModelRuntimePanel({
   groupId,
   actor,
@@ -321,7 +45,8 @@ export function WebModelRuntimePanel({
   readOnly,
 }: WebModelRuntimePanelProps) {
   const { t } = useTranslation("chat");
-  const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
+  const openActorEditor = useModalStore((state) => state.openActorEditor);
+  const [pairing, setPairing] = useState<WebModelPairing>();
   const [session, setSession] = useState<WebModelBrowserSession | null>(null);
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
@@ -335,11 +60,13 @@ export function WebModelRuntimePanel({
   useEffect(() => {
     if (!isVisible || !groupId || !actorId) {
       setSession(null);
+      setPairing(undefined);
       setError("");
       return;
     }
     let cancelled = false;
     setSession(null);
+    setPairing(undefined);
     setError("");
     setBusyAction("load");
     let loading = false;
@@ -351,14 +78,15 @@ export function WebModelRuntimePanel({
         .then((resp) => {
           if (cancelled) return;
           if (!resp.ok) {
-            setError(resp.error?.message || "Failed to load ChatGPT browser status.");
+            setError(resp.error?.message || t("webModelDelivery.statusFailed"));
             return;
           }
           setSession(resp.result.browser_session || {});
+          setPairing(resp.result.pairing);
           setError("");
         })
         .catch(() => {
-          if (!cancelled) setError("Failed to load ChatGPT browser status.");
+          if (!cancelled) setError(t("webModelDelivery.statusFailed"));
         })
         .finally(() => {
           loading = false;
@@ -371,28 +99,32 @@ export function WebModelRuntimePanel({
       window.clearInterval(interval);
       cancelled = true;
     };
-  }, [actorId, groupId, isVisible]);
+  }, [actorId, groupId, isVisible, t]);
 
   const reloadChatGptPage = async () => {
     if (!groupId || !actorId) return;
     if (!canControlSurface) {
       const message = readOnly
-        ? "ChatGPT page reload is disabled in read-only mode."
-        : "Open ChatGPT Web Model settings to inspect the browser page.";
+        ? t("webModelDelivery.browserReadOnly")
+        : t("webModelDelivery.actorStoppedSurface");
       setError(message);
       return;
     }
     setBusyAction("reload");
     setError("");
     try {
-      const resp = await api.closeWebModelBrowserSurfaceSession(groupId, actorId);
+      const resp = await api.reloadWebModelBrowserSession(groupId, actorId);
       if (!matchesWebModelActorSelection(currentSelectionRef.current, groupId, actorId)) return;
       if (!resp.ok) {
-        setError(resp.error?.message || "Failed to restart ChatGPT browser.");
+        setError(resp.error?.message || t("webModelDelivery.reloadFailed"));
         return;
       }
       setSession(resp.result.browser_session || {});
+      setPairing(resp.result.pairing);
       setSurfaceRestartNonce((value) => value + 1);
+    } catch {
+      if (matchesWebModelActorSelection(currentSelectionRef.current, groupId, actorId))
+        setError(t("webModelDelivery.reloadFailed"));
     } finally {
       if (matchesWebModelActorSelection(currentSelectionRef.current, groupId, actorId))
         setBusyAction("");
@@ -400,7 +132,7 @@ export function WebModelRuntimePanel({
   };
 
   const openSettings = () => {
-    openSettingsTarget({ scope: "global", tab: "webModels" });
+    openActorEditor(actor, "chatgpt");
   };
 
   const updateDeliveryMode = async (mode: WebModelDeliveryMode) => {
@@ -416,6 +148,7 @@ export function WebModelRuntimePanel({
         return;
       }
       setSession(resp.result.browser_session || {});
+      setPairing(resp.result.pairing);
     } catch {
       if (matchesWebModelActorSelection(currentSelectionRef.current, groupId, actorId))
         setError(t("webModelDelivery.modeSaveFailed"));
@@ -430,19 +163,20 @@ export function WebModelRuntimePanel({
     if (!matchesWebModelActorSelection(currentSelectionRef.current, groupId, actorId)) return resp;
     if (resp.ok) {
       setSession(resp.result.browser_session || {});
+      setPairing(resp.result.pairing);
       setError("");
     } else {
-      setError(resp.error?.message || "Failed to load ChatGPT browser surface.");
+      setError(resp.error?.message || t("webModelDelivery.statusFailed"));
     }
     return resp;
-  }, [actorId, groupId]);
+  }, [actorId, groupId, t]);
 
   const startBrowserSurfaceSession = useCallback(
     async ({ width, height }: { width: number; height: number }) => {
       if (!canControlSurface) {
         const message = readOnly
-          ? "ChatGPT browser control is disabled in read-only mode."
-          : "Open ChatGPT Web Model settings to inspect the browser page.";
+          ? t("webModelDelivery.browserReadOnly")
+          : t("webModelDelivery.actorStoppedSurface");
         setError(message);
         return {
           ok: false as const,
@@ -460,25 +194,28 @@ export function WebModelRuntimePanel({
         return resp;
       if (resp.ok) {
         setSession(resp.result.browser_session || {});
+        setPairing(resp.result.pairing);
         setError("");
       } else {
-        setError(resp.error?.message || "Failed to open ChatGPT browser surface.");
+        setError(resp.error?.message || t("webModelDelivery.statusFailed"));
       }
       return resp;
     },
-    [actorId, canControlSurface, groupId, readOnly],
+    [actorId, canControlSurface, groupId, readOnly, t],
   );
 
-  const chatGptBlock = useMemo(() => buildChatGptBlock(session), [session]);
-  const targetBlock = useMemo(() => buildTargetBlock(session), [session]);
-  const activityBlock = useMemo(
-    () => buildActivityBlock(session, queuedCount),
-    [queuedCount, session],
-  );
-  const primaryActionNeeded =
-    !session?.ready || (!session?.conversation_url && !session?.pending_new_chat_bind);
-  const nextAction = session?.health_snapshot?.next_action;
-  const recommendedAction = String(nextAction?.recommended || "none").trim();
+  const deliveryState =
+    session?.health_snapshot?.delivery?.state || session?.last_delivery_status || "";
+  const deliveryNeedsAttention = ["ambiguous", "blocked", "failed"].includes(deliveryState);
+  const activity = deliveryNeedsAttention
+    ? t(`webModelDelivery.activity.${deliveryState}`)
+    : queuedCount > 0
+      ? t("webModelDelivery.activity.queued", { count: queuedCount })
+      : ["pending", "pending_bind", "submitting"].includes(deliveryState)
+        ? t("webModelDelivery.activity.submitting")
+        : session?.last_delivery_at
+          ? t("webModelDelivery.activity.last", { time: formatTime(session.last_delivery_at) })
+          : "";
   const surfaceDisabledMessage = !isVisible
     ? ""
     : readOnly
@@ -486,11 +223,6 @@ export function WebModelRuntimePanel({
       : !isRunning
         ? t("webModelDelivery.actorStoppedSurface")
         : "";
-  const showActivity = shouldShowActivity(activityBlock, queuedCount);
-  const nextSummary =
-    recommendedAction && recommendedAction !== "none"
-      ? String(nextAction?.label || "").trim() || recommendedAction
-      : "";
   const deliveryMode: WebModelDeliveryMode =
     session?.delivery_mode === "image_compat" ? "image_compat" : "standard";
   const deliveryModeDisabled = Boolean(readOnly || busyAction);
@@ -511,44 +243,21 @@ export function WebModelRuntimePanel({
       >
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-2 px-1">
-            <span
-              className={classNames(
-                "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
-                tonePillClass(chatGptBlock.tone),
-              )}
-            >
-              ChatGPT {chatGptBlock.value}
-            </span>
-            <span
-              className={classNames(
-                "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
-                tonePillClass(targetBlock.tone),
-              )}
-              title={targetBlock.detail}
-            >
-              Target {targetBlock.value}
-            </span>
-            {showActivity ? (
+            <WebModelConnectionStatus pairing={pairing} session={session} />
+            {activity && (
               <span
                 className={classNames(
-                  "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
-                  tonePillClass(activityBlock.tone),
+                  "text-xs",
+                  deliveryNeedsAttention
+                    ? "text-amber-700 dark:text-amber-300"
+                    : "text-[var(--color-text-secondary)]",
                 )}
-                title={activityBlock.detail}
               >
-                {activityBlock.value}
+                {activity}
               </span>
-            ) : null}
-            {nextSummary ? (
-              <span
-                className="min-w-0 max-w-[min(54vw,520px)] truncate text-xs text-[var(--color-text-tertiary)]"
-                title={nextAction?.reason ? `${nextSummary}: ${nextAction.reason}` : nextSummary}
-              >
-                Next: {nextSummary}
-              </span>
-            ) : null}
+            )}
           </div>
-          <div className="flex min-w-0 shrink-0 items-center justify-end gap-1.5">
+          <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-1.5">
             <fieldset
               className={classNames(
                 "flex min-w-0 items-center",
@@ -670,32 +379,25 @@ export function WebModelRuntimePanel({
                 </dl>
               </PopoverContent>
             </Popover>
-            <WebModelMcpShortcut
-              groupId={groupId}
-              actorId={actorId}
-              actorRunning={isRunning}
-              isVisible={isVisible}
-              readOnly={readOnly}
-              onOpenSettings={openSettings}
-            />
+            {!readOnly && (
+              <button
+                type="button"
+                className="glass-btn px-3 py-2 inline-flex items-center gap-2"
+                onClick={openSettings}
+              >
+                <SettingsIcon size={17} aria-hidden="true" />
+                {t("settings:webModelActor.title")}
+              </button>
+            )}
             <button
               type="button"
               onClick={reloadChatGptPage}
-              disabled={Boolean(busyAction) || !isRunning}
+              disabled={Boolean(busyAction) || !canControlSurface}
               className={iconButtonClass(false)}
-              title="Restart ChatGPT browser"
-              aria-label="Restart ChatGPT browser"
+              title={t("webModelDelivery.refreshPage")}
+              aria-label={t("webModelDelivery.refreshPage")}
             >
               <RefreshIcon size={17} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              onClick={openSettings}
-              className={iconButtonClass(primaryActionNeeded)}
-              title="Open ChatGPT Web Model settings"
-              aria-label="Open ChatGPT Web Model settings"
-            >
-              <SettingsIcon size={17} aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -714,16 +416,6 @@ export function WebModelRuntimePanel({
             startSession={startBrowserSurfaceSession}
             webSocketUrl={api.getWebModelBrowserSurfaceWebSocketUrl(groupId, actorId)}
             fallbackUrl="https://chatgpt.com/"
-            labels={{
-              starting: "Opening ChatGPT...",
-              waiting: "Waiting for ChatGPT...",
-              ready: "ChatGPT surface ready",
-              failed: "ChatGPT surface failed",
-              closed: "ChatGPT surface closed.",
-              reconnecting: "Reconnecting ChatGPT surface...",
-              reconnect: "Reconnect",
-              frameAlt: "ChatGPT browser frame",
-            }}
           />
         </div>
       ) : surfaceDisabledMessage ? (

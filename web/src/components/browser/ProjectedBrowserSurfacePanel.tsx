@@ -777,7 +777,7 @@ export function ProjectedBrowserSurfacePanel({
       target.replaceChildren();
       setVncConnected(false);
     };
-  }, [sessionState.state, vncAvailable, webSocketUrl]);
+  }, [isExpanded, sessionState.state, vncAvailable, webSocketUrl]);
 
   useEffect(() => {
     const container = containerRef.current;

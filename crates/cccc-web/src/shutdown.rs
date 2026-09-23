@@ -1,7 +1,9 @@
 use crate::browser_surface::BrowserSurfaces;
 use std::time::Duration;
 
-const BROWSER_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
+// Allow the owner's bounded close/wait/kill sequence to release the shared
+// profile and auxiliaries before Web exits. The outer bound still handles stalls.
+const BROWSER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 
 pub(super) async fn browser_surfaces(surfaces: &BrowserSurfaces) {
     match browser_surfaces_with_timeout(surfaces, BROWSER_SHUTDOWN_TIMEOUT).await {
@@ -31,12 +33,12 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
-    async fn stalled_browser_lock_cannot_block_web_shutdown() {
+    async fn empty_owner_registry_does_not_wait_for_a_page_registry_lock() {
         let surfaces = BrowserSurfaces::default();
         let _sessions = surfaces.sessions.lock().await;
 
         let result = browser_surfaces_with_timeout(&surfaces, Duration::from_millis(10)).await;
 
-        assert!(result.is_err(), "stalled browser shutdown must time out");
+        assert_eq!(result.expect("no process resources").expect("shutdown"), 0);
     }
 }

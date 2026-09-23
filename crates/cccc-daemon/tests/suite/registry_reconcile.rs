@@ -90,7 +90,7 @@ fn ok(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
 }
 
 #[test]
-fn web_model_registration_ignores_missing_groups_but_preserves_singleton_checks() {
+fn web_model_registration_does_not_scan_unrelated_groups() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
@@ -111,31 +111,16 @@ fn web_model_registration_ignores_missing_groups_but_preserves_singleton_checks(
         "the stale entry is skipped, not reconciled"
     );
     let second = call(&home, "actor_add", args("web-two"));
-    assert_eq!(
-        second.error.expect("singleton rejection").code,
-        "chatgpt_web_model_singleton"
-    );
+    assert!(second.ok, "{:?}", second.error);
     ok(
         &home,
         "actor_remove",
         json!({"group_id":active.group_id,"actor_id":"web-one","by":"user"}),
     );
     std::fs::write(missing_file, "not: [valid").expect("corrupt group document");
-    let corrupt = call(&home, "actor_add", args("web-two"));
-    let error = corrupt
-        .error
-        .expect("an unreadable group document aborts the scan");
-    assert_eq!(error.code, "io_error");
-    assert!(
-        error.message.contains(&missing.group_id),
-        "{}",
-        error.message
-    );
-    assert!(
-        store
-            .load(&active.group_id)
-            .expect("active group")
-            .actors
-            .is_empty()
-    );
+    ok(&home, "actor_add", args("web-three"));
+    let actors = store.load(&active.group_id).expect("active group").actors;
+    assert_eq!(actors.len(), 2);
+    assert!(actors.iter().any(|a| a.id == "web-two"));
+    assert!(actors.iter().any(|a| a.id == "web-three"));
 }

@@ -89,7 +89,7 @@ Files use native authenticated endpoints and Group Blob storage. Verify file-to-
 
 Enforce the shared 10 MiB file limit and a lower Group `files.max_mb` before Blob writes; `files.enabled=false` disables forwarding. Images, files, PDFs, audio/video and attachment-only input are transport capabilities, not OCR/transcription promises. Incoming MIME comes from Mattermost. Outgoing upload preserves names and bytes; Mattermost classifies the resulting MIME.
 
-Only `attachments` are uploaded. Plain text and `refs` are not converted into files. Agent file delivery uses `cccc_file(action="send", ...)` and must respect its working-directory scope.
+Only `attachments` are uploaded. Plain text and `refs` are not converted into files. Agent file delivery uses `cccc_file_send(...)` and must respect its working-directory scope.
 
 ## Outbound, streaming and reactions
 

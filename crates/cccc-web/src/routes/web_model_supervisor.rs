@@ -39,28 +39,27 @@ pub(crate) fn spawn(state: AppState) {
     });
 }
 
-async fn ensure_running_actor(
+pub(super) async fn ensure_running_actor(
     state: &AppState,
     preferred_group: Option<&str>,
     event_trigger: bool,
 ) {
-    for (group_id, actor_id) in running_browser_actors(state, preferred_group) {
-        ensure_actor(state, group_id, actor_id, event_trigger).await;
-    }
+    use futures_util::{StreamExt, stream};
+    stream::iter(running_browser_actors(state, preferred_group))
+        .for_each_concurrent(4, |(group_id, actor_id)| {
+            ensure_actor(state, group_id, actor_id, event_trigger)
+        })
+        .await;
 }
 
 async fn ensure_actor(state: &AppState, group_id: String, actor_id: String, event_trigger: bool) {
     let session_key = super::web_model_browser::key(&group_id, &actor_id);
     let surface = state.browser_surfaces.info(&session_key).await;
     if surface["active"].as_bool().unwrap_or(false) {
-        if event_trigger {
-            super::web_model_delivery::ensure_worker(
-                state.clone(),
-                group_id.clone(),
-                actor_id.clone(),
-            )
-            .await;
-        }
+        prepare_delivery(state, group_id, actor_id, event_trigger).await;
+        return;
+    }
+    if surface["state"] == "closed" {
         return;
     }
     if !warmup_due(&session_key) {
@@ -77,11 +76,19 @@ async fn ensure_actor(state: &AppState, group_id: String, actor_id: String, even
     {
         Ok(_) => {
             clear_warmup_attempt(&session_key);
-            super::web_model_delivery::ensure_worker(state.clone(), group_id, actor_id).await;
+            prepare_delivery(state, group_id, actor_id, true).await;
         }
         Err(error) => {
             tracing::warn!(%error, group_id, actor_id, "Web-model browser warmup failed");
         }
+    }
+}
+
+async fn prepare_delivery(state: &AppState, group: String, actor: String, event_trigger: bool) {
+    if super::web_model_connector_store::for_actor(state, &group, &actor).is_none() {
+        super::web_model_pairing::ensure_automatic(state, &group, &actor).await;
+    } else if event_trigger {
+        super::web_model_delivery::ensure_worker(state.clone(), group, actor).await;
     }
 }
 
@@ -95,7 +102,8 @@ pub(super) fn actor_delivery_enabled(state: &AppState, group_id: &str, actor_id:
     let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
         return false;
     };
-    group_actor_delivery_enabled(state, &group, actor)
+    group_actor_ready_to_start(state, &group, actor)
+        && super::web_model_connector_store::for_actor(state, group_id, actor_id).is_some()
 }
 
 fn running_browser_actors(
@@ -122,14 +130,14 @@ fn running_browser_actors(
             group
                 .actors
                 .iter()
-                .filter(|actor| group_actor_delivery_enabled(state, &group, actor))
+                .filter(|actor| group_actor_ready_to_start(state, &group, actor))
                 .map(|actor| (group.group_id.clone(), actor.id.clone()))
                 .collect::<Vec<_>>()
         })
         .collect()
 }
 
-fn group_actor_delivery_enabled(state: &AppState, group: &GroupDoc, actor: &Actor) -> bool {
+fn group_actor_ready_to_start(state: &AppState, group: &GroupDoc, actor: &Actor) -> bool {
     if actor.runtime != ActorRuntime::WebModel
         || actor.runner != RunnerKind::Headless
         || !actor.enabled
@@ -142,7 +150,9 @@ fn group_actor_delivery_enabled(state: &AppState, group: &GroupDoc, actor: &Acto
         &["CCCC_WEB_MODEL_PROVIDER", "CCCC_WEB_MODEL_BROWSER_PROVIDER"],
     );
     let provider = if provider.is_empty() {
-        super::web_model_connector_store::for_actor(state, &group.group_id, &actor.id)
+        super::web_model_connector_store::load(state)
+            .ok()
+            .and_then(|items| items.into_iter().find(|c| c["revoked"] != true))
             .and_then(|connector| connector["provider"].as_str().map(normalize))
             .unwrap_or_default()
     } else {

@@ -1,6 +1,6 @@
 use super::super::page_recovery::{candidate_page_url, confirm_candidate_gone};
 use super::*;
-use chromiumoxide::cdp::browser_protocol::target::CloseTargetParams;
+use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, EventTargetDestroyed};
 use futures_util::StreamExt;
 use std::time::Duration;
 
@@ -71,39 +71,57 @@ async fn candidate_enumeration_skips_only_confirmed_disappeared_targets() {
         let session = sessions
             .get_mut("candidate-pages")
             .expect("fixture operation");
-        let candidate = session
+        let owner = session.owner.read().await;
+        let candidate = owner
             .browser
             .new_page("about:blank")
             .await
             .expect("candidate");
-        let canceled = canceled_url_request(&session.browser, &candidate).await;
+        let canceled = canceled_url_request(&owner.browser, &candidate).await;
         assert!(format!("{canceled:#}").contains("oneshot canceled"));
-        let error = confirm_candidate_gone(&session.browser, &candidate, canceled)
+        let error = confirm_candidate_gone(&owner.browser, &candidate, canceled)
             .await
             .expect_err("live target error must not be hidden");
-        session
+        let mut destroyed = owner
+            .browser
+            .event_listener::<EventTargetDestroyed>()
+            .await
+            .expect("listen for target destruction");
+        owner
             .browser
             .execute(CloseTargetParams::new(candidate.target_id().clone()))
             .await
             .expect("close target");
-        confirm_candidate_gone(&session.browser, &candidate, error)
+        // CloseTarget acknowledges the request before teardown completes. Wait
+        // for this target's destruction, not an assumed delay or another tab.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = destroyed.next().await {
+                if &event.target_id == candidate.target_id() {
+                    return;
+                }
+            }
+            panic!("browser closed before candidate target was destroyed");
+        })
+        .await
+        .expect("candidate target destroyed");
+        confirm_candidate_gone(&owner.browser, &candidate, error)
             .await
             .expect("disappeared target is skippable");
         assert!(
-            candidate_page_url(&session.browser, &candidate)
+            candidate_page_url(&owner.browser, &candidate)
                 .await
                 .expect("stale page")
                 .is_none()
         );
         assert_eq!(
-            candidate_page_url(&session.browser, &session.page)
+            candidate_page_url(&owner.browser, &session.page)
                 .await
                 .expect("fixture operation"),
             Some(url.clone())
         );
         assert!(
             confirm_candidate_gone(
-                &session.browser,
+                &owner.browser,
                 &candidate,
                 anyhow::anyhow!("unrelated navigation error")
             )
@@ -111,21 +129,21 @@ async fn candidate_enumeration_skips_only_confirmed_disappeared_targets() {
             .is_err()
         );
         assert!(
-            reusable_page(&session.browser)
+            reusable_page(&owner.browser)
                 .await
                 .expect("enumeration")
                 .is_none()
         );
-        close_internal_pages(&session.browser, &session.page)
+        close_internal_pages(&owner.browser, &session.page)
             .await
             .expect("cleanup");
         assert_eq!(
             session.page.url().await.expect("fixture operation"),
             Some(url)
         );
-        session.handler.abort();
+        owner.handler.abort();
         assert!(
-            candidate_page_url(&session.browser, &session.page)
+            candidate_page_url(&owner.browser, &session.page)
                 .await
                 .is_err(),
             "whole connection loss must remain an error"

@@ -84,7 +84,7 @@ Channel subscription output appears in the main timeline. Separately approved th
 
 Filenames, local paths and `refs` in message text are not automatically uploaded. Like other native IM connectors, Mattermost sends only the message's `attachments`.
 
-To deliver a file, an Agent should call `cccc_file(action="send", ...)` and check the result. The file must be in the current working directory's scope. For an incoming `state/blobs/...` attachment, read or resolve it through the file tools, then copy the file into the working directory before sending it back. A failed tool call must not be replaced by a plain-text claim that the file was sent.
+To deliver a file, an Agent should call `cccc_file_send(...)` and check the result. The file must be in the current working directory's scope. For an incoming `state/blobs/...` attachment, read or resolve it through the file tools, then copy the file into the working directory before sending it back. A failed tool call must not be replaced by a plain-text claim that the file was sent.
 
 When diagnosing delivery, inspect both CCCC `attachments` and the Mattermost post's `file_ids`. Text saying that a file was sent is not delivery evidence.
 

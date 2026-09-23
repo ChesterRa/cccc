@@ -284,7 +284,7 @@ Antigravity 配置还会在其用户设置中关闭原生评分问卷，避免�
 
 ### ChatGPT Web 作为本地开发 actor
 
-CCCC 通过浏览器投递把 Group 消息送入绑定的 ChatGPT 对话。支持 connector 的 ChatGPT 会话经由 Actor 绑定的远程 MCP 接收消息、回复、查看或编辑仓库文件，以及运行受 scope 限制的 shell/git 命令。当前每个实例支持一个 Web Model Actor。
+CCCC 通过浏览器投递把 Group 消息送入配对的 ChatGPT 对话。多个 Web Model Actor 共用一次专用浏览器登录和一个带认证的远程 MCP 连接器，各自拥有持续打开的独立窗口和明确确认的对话配对，可接收消息、回复、查看或编辑仓库文件，以及运行受 scope 限制的 shell/git 命令。全局设置管理共享登录和连接器，Actor 设置管理各自的对话。正常启动 Actor 后会先自动核验对话，再投递排队中的任务，无需提前点击配对。
 
 配置需要通过公网 HTTPS URL 暴露 MCP connector（Cloudflare Tunnel、ngrok、Tailscale Funnel 或反向代理）。CCCC 默认使用稳定的纯文本投递，也提供实验性的 **GPT Pro** 模式：每次投递会附带一张极小的空白 PNG，以兼容部分账户中由此开放第三方 MCP 的 ChatGPT 行为。CCCC 不会替你切换模型，也不保证该兼容方式在 ChatGPT 改版后继续有效。完整配置与排障见 [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime)。
 
@@ -302,7 +302,7 @@ CCCC 通过浏览器投递把 Group 消息送入绑定的 ChatGPT 对话。支�
 
 管理员可以在侧边栏打开同账户远端工作区，但需使用**各目标实例自己的管理员 Access Token** 和可达的 HTTPS 地址。受限访问保持单实例；网页权限与后台协作授权彼此独立。
 
-Agent 使用 `cccc_connect` 发现目标，再通过 `cccc_message_send` 或 `cccc_file` 同时指定 `dst_instance_id` 与 `dst_group_id`；回复使用收到的本地 Event ID。在输入框中选择远端 **`#Group`** 会为本地 Agent 保留这一准确身份，本身不会远程发信或授予权限。详见 [CCCC Connect 指南](https://chesterra.github.io/cccc/guide/connect)。
+Agent 使用 `cccc_connect` 发现目标，再通过 `cccc_message_send` 或 `cccc_file_send` 同时指定 `dst_instance_id` 与 `dst_group_id`；回复使用收到的本地 Event ID。在输入框中选择远端 **`#Group`** 会为本地 Agent 保留这一准确身份，本身不会远程发信或授予权限。详见 [CCCC Connect 指南](https://chesterra.github.io/cccc/guide/connect)。
 
 ## 消息与协调
 
@@ -450,7 +450,7 @@ cccc im start|stop|status
 | **项目上下文与记忆（按需）** | `cccc_project_info`、`cccc_tracked_send`、`cccc_memory`、`cccc_context_sync` |
 | **Group 与 Actor 控制（按需）** | `cccc_group`、`cccc_actor`、`cccc_runtime_list` |
 | **工作区工具（按需）** | `cccc_repo`、`cccc_presentation`、`cccc_terminal`、`cccc_debug` |
-| **实例发现** | `cccc_connect`；在 `cccc_message_send` 和 `cccc_file` 中指定准确的跨实例目标 |
+| **实例发现** | `cccc_connect`；在 `cccc_message_send` 和 `cccc_file_send` 中指定准确的跨实例目标 |
 | **其它能力工具** | `cccc_automation`、`cccc_space`、能力管理、`cccc_im_bind` |
 
 协作核心保留必要的协议，把工作流、推理方式与可选工具留给 Agent 和当前任务决定。`cccc_help` 提供 CCCC 状态、恢复、委派和能力路由的按需参考，不规定通用的推理或写作方法。

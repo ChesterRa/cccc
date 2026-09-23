@@ -2,7 +2,7 @@ use super::operation::{
     Operation,
     Policy::{Read, Write},
 };
-use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, Event};
+use cccc_contracts::{Actor, DaemonRequest, Event};
 use cccc_core::actors;
 use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
@@ -86,9 +86,6 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             ));
         }
         actor = actor_profile_runtime::link(home, &actor, &actor.profile_id)?;
-    }
-    if actor.runtime == ActorRuntime::WebModel {
-        require_single_web_model_actor(home, &group_id, &actor.id)?;
     }
     actor.normalize_runtime_constraints();
     actor.default_scope_key = normalize_default_scope_key(&group, &actor.default_scope_key)?;
@@ -219,13 +216,6 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     };
     final_preview.role = None;
     final_preview.normalize_runtime_constraints();
-    // The scan only rejects; re-running it for an actor that already holds
-    // the slot cannot change the outcome.
-    if original_actor.runtime != ActorRuntime::WebModel
-        && final_preview.runtime == ActorRuntime::WebModel
-    {
-        require_single_web_model_actor(home, &group_id, &actor_id)?;
-    }
     let original_secrets = if profile_action == "convert_to_custom" {
         Some(actor_secrets::values(home, &group_id, &actor_id)?)
     } else {
@@ -912,19 +902,6 @@ fn normalize_default_scope_key(group: &GroupDoc, reference: &str) -> Result<Stri
                 format!("scope not attached: {reference}"),
             )
         })
-}
-
-fn require_single_web_model_actor(
-    home: &HomeLayout,
-    group_id: &str,
-    actor_id: &str,
-) -> Result<(), OpError> {
-    match actors::web_model_singleton_conflict(&store(home)?, Some((group_id, actor_id)))
-        .map_err(OpError::io)?
-    {
-        Some(message) => Err(OpError::new("chatgpt_web_model_singleton", message)),
-        None => Ok(()),
-    }
 }
 
 fn private_env_arg(request: &DaemonRequest) -> Result<Option<BTreeMap<String, String>>, OpError> {

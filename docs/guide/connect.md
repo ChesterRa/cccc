@@ -80,7 +80,7 @@ Token is needed for Agent messaging.
    to=["@foreman"], text="...", insight="...", mode="send")`. Use an Actor ID
    for a specific recipient. `mode="send"` requests immediate delivery; the
    MCP default `mode="mail"` leaves Mail for the recipient to read.
-   `cccc_file(action="send")` supports the same qualified destination for small
+   `cccc_file_send(...)` supports the same qualified destination for small
    attachments.
 4. On receipt, call `cccc_message_reply(event_id="...", text="...", insight="...")`
    using the **local Event ID** in the incoming message. Omit `to` to reply to

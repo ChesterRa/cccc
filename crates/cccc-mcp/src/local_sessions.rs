@@ -14,6 +14,8 @@ const FINISHED_RETENTION: Duration = Duration::from_secs(600);
 struct LocalSession {
     home: PathBuf,
     group_id: String,
+    actor_id: String,
+    binding_revision: Value,
     command: CommandSession,
     io: tokio::sync::Mutex<()>,
     cursor: Mutex<u64>,
@@ -61,6 +63,16 @@ pub async fn start(
         let session = Arc::new(LocalSession {
             home: home.root().to_owned(),
             group_id,
+            actor_id: args
+                .get("by")
+                .or_else(|| args.get("actor_id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            binding_revision: args
+                .get("_cccc_web_binding")
+                .map(|b| b["revision"].clone())
+                .unwrap_or(Value::Null),
             command: CommandSession::start(spec).map_err(|e| e.to_string())?,
             io: tokio::sync::Mutex::new(()),
             cursor: Mutex::new(0),
@@ -230,6 +242,18 @@ fn session(
         .is_some_and(|group| group != owner.group_id)
     {
         return Err("session does not belong to the requested group".into());
+    }
+    let actor = args
+        .get("by")
+        .or_else(|| args.get("actor_id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let revision = args
+        .get("_cccc_web_binding")
+        .map(|b| b["revision"].clone())
+        .unwrap_or(Value::Null);
+    if owner.actor_id != actor || owner.binding_revision != revision {
+        return Err("session does not belong to this Actor conversation".into());
     }
     Ok((id, owner))
 }

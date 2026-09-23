@@ -21,6 +21,7 @@ pub const CORE_TOOL_NAMES: &[&str] = &[
     "cccc_message_deliver",
     "cccc_reply_request_cancel",
     "cccc_file",
+    "cccc_file_send",
     "cccc_context_get",
     "cccc_coordination",
     "cccc_task",

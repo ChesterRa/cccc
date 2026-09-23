@@ -256,11 +256,15 @@ fn catalog(
     let mut groups = Vec::new();
     for id in eligible.iter().take(CATALOG_PAGE_GROUPS) {
         let group = store.load(id).map_err(OpError::io)?;
-        let recipients = actors::visible(&group).map(|actor| json!({
-            "id":actor.id,"title":actor.title,"enabled":actor.enabled,
-            "role":actors::effective_role(&group, &actor.id),
-            "generation":if actor.generation.is_empty() {format!("legacy:{}",actor.created_at)} else {actor.generation.clone()},
-        })).collect::<Vec<_>>();
+        let recipients = actors::visible(&group)
+            .map(|actor| {
+                json!({
+                    "id":actor.id,"title":actor.title,"enabled":actor.enabled,
+                    "role":actors::effective_role(&group, &actor.id),
+                    "generation":cccc_core::actors::generation_identity(actor),
+                })
+            })
+            .collect::<Vec<_>>();
         groups.push(json!({"group_id":group.group_id,"title":group.title,"actors":recipients}));
     }
     let next =

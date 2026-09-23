@@ -147,6 +147,8 @@ async fn source_literals_and_comments_are_not_module_loads() {
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let client = DaemonClient::new(home.clone());
     let owner = Owner {
+        binding: None,
+        generation: String::new(),
         home: home.root().into(),
         group_id: "g_source".into(),
         actor_id: "web1".into(),
@@ -182,6 +184,8 @@ async fn runtime_rejects_module_access_including_template_expressions() {
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let client = DaemonClient::new(home.clone());
     let owner = Owner {
+        binding: None,
+        generation: String::new(),
         home: home.root().into(),
         group_id: "g_source".into(),
         actor_id: "web1".into(),
@@ -237,6 +241,8 @@ async fn shared_runtime_is_sandboxed_and_persists_actor_store() {
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let client = DaemonClient::new(home.clone());
     let owner = Owner {
+        binding: None,
+        generation: String::new(),
         home: home.root().to_path_buf(),
         group_id: "g_test".into(),
         actor_id: "peer1".into(),
@@ -286,6 +292,8 @@ async fn shutdown_terminates_running_cells_for_the_home() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let owner = Owner {
+        binding: None,
+        generation: String::new(),
         home: home.root().to_path_buf(),
         group_id: "g_shutdown".into(),
         actor_id: "peer1".into(),
@@ -323,6 +331,8 @@ async fn idle_cell_expires_without_another_start_request() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let owner = Owner {
+        binding: None,
+        generation: String::new(),
         home: home.root().to_path_buf(),
         group_id: "g_expiry".into(),
         actor_id: "peer1".into(),
@@ -350,4 +360,180 @@ async fn node_available() -> bool {
         .output()
         .await
         .is_ok()
+}
+
+#[tokio::test]
+async fn nested_management_preserves_target_and_authenticated_caller() {
+    use cccc_contracts::{Actor, ActorRuntime, DaemonRequest};
+    use cccc_core::GroupStore;
+    use serde_json::json;
+
+    let temp = tempfile::tempdir().expect("temp");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("nested management", "").expect("group");
+    for id in ["alpha", "beta"] {
+        let mut actor = Actor::new(id);
+        actor.runtime = ActorRuntime::WebModel;
+        actor.enabled = true;
+        cccc_core::actors::add(&mut group, actor).expect("actor");
+    }
+    store.save(&group).expect("save");
+    let owner = Owner {
+        home: home.root().into(),
+        group_id: group.group_id.clone(),
+        actor_id: "alpha".into(),
+        generation: group.actors[0].generation.clone(),
+        binding: None,
+    };
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = DaemonClient::new(home.clone());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while client
+            .call(&DaemonRequest {
+                v: 1,
+                op: "ping".into(),
+                args: Default::default(),
+            })
+            .await
+            .is_err()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("daemon ready");
+
+    let result = super::call_nested(&home, &client, &owner, "cccc_capability_use", Some(&json!({
+        "tool_name":"cccc_actor", "tool_arguments":{"action":"stop", "actor_id":"beta", "by":"user"}
+    }))).await;
+    let saved = store.load(&group.group_id).expect("saved actors");
+    // Also ensure nested arguments cannot elevate a peer to user authority.
+    let peer = Owner {
+        actor_id: "beta".into(),
+        generation: group.actors[1].generation.clone(),
+        ..owner
+    };
+    let denied = super::call_nested(&home, &client, &peer, "cccc_capability_use", Some(&json!({
+        "tool_name":"cccc_actor", "tool_arguments":{"action":"stop", "actor_id":"alpha", "by":"user"}
+    }))).await;
+    daemon.abort();
+    let _ = daemon.await;
+    result.expect("foreman may stop peer");
+    assert!(saved.actors[0].enabled, "caller alpha must remain enabled");
+    assert!(
+        !saved.actors[1].enabled,
+        "explicit target beta must be stopped"
+    );
+    assert!(
+        denied.is_err(),
+        "peer cannot impersonate user in nested calls"
+    );
+}
+
+#[tokio::test]
+async fn deferred_nested_calls_reject_replaced_binding_and_actor_generation() {
+    use cccc_contracts::{Actor, ActorRuntime};
+    use cccc_core::{GroupStore, web_model_connectors as bindings};
+    use serde_json::json;
+    let temp = tempfile::tempdir().expect("valid test fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("valid test fixture");
+    home.initialize().expect("valid test fixture");
+    let store = GroupStore::new(home.clone()).expect("valid test fixture");
+    let mut group = store.create("deferred", " ").expect("valid test fixture");
+    let mut actor = Actor::new("a");
+    actor.runtime = ActorRuntime::WebModel;
+    actor.enabled = true;
+    cccc_core::actors::add(&mut group, actor).expect("valid test fixture");
+    store.save(&group).expect("valid test fixture");
+    let generation = group.actors[0].generation.clone();
+    let c = bindings::configure(&home).expect("valid test fixture");
+    let id = c["connector"]["connector_id"]
+        .as_str()
+        .expect("valid test fixture");
+    let pair = bindings::begin_pairing(&home, id, &group.group_id, "a", &generation, false)
+        .expect("valid test fixture");
+    bindings::accept_pairing(
+        &home,
+        id,
+        pair["code"].as_str().expect("valid test fixture"),
+        "host-a",
+    )
+    .expect("valid test fixture");
+    let mut binding = bindings::confirm_pairing(
+        &home,
+        id,
+        &group.group_id,
+        "a",
+        &generation,
+        pair["pairing_id"].as_str().expect("valid test fixture"),
+        "https://chatgpt.com/c/a",
+    )
+    .expect("valid test fixture");
+    binding["connector_id"] = json!(id);
+    let owner = Owner {
+        home: home.root().into(),
+        group_id: group.group_id.clone(),
+        actor_id: "a".into(),
+        generation: generation.clone(),
+        binding: Some(binding),
+    };
+    bindings::validate_binding(&home, owner.binding.as_ref().expect("valid test fixture"))
+        .expect("valid test fixture");
+    let mut args = json!({"group_id":group.group_id,"by":"a","_cccc_web_binding":owner.binding});
+    let before = super::resolve_owner(&home, args.as_object().expect("valid test fixture"))
+        .expect("valid test fixture");
+    args["_cccc_web_binding"]["last_activity_at"] = json!("later");
+    args["_cccc_web_binding"]["last_tool_name"] = json!("cccc_file");
+    assert_eq!(
+        before,
+        super::resolve_owner(&home, args.as_object().expect("valid test fixture"))
+            .expect("valid test fixture"),
+        "activity must not invalidate code_wait ownership"
+    );
+
+    let pair = bindings::begin_pairing(&home, id, &group.group_id, "a", &generation, false)
+        .expect("valid test fixture");
+    bindings::accept_pairing(
+        &home,
+        id,
+        pair["code"].as_str().expect("valid test fixture"),
+        "host-new",
+    )
+    .expect("valid test fixture");
+    bindings::confirm_pairing(
+        &home,
+        id,
+        &group.group_id,
+        "a",
+        &generation,
+        pair["pairing_id"].as_str().expect("valid test fixture"),
+        "https://chatgpt.com/c/new",
+    )
+    .expect("valid test fixture");
+    let client = DaemonClient::new(home.clone());
+    let error = super::call_nested(
+        &home,
+        &client,
+        &owner,
+        "cccc_file",
+        Some(&json!({"action":"info","rel_path":"private.txt"})),
+    )
+    .await
+    .expect_err("old code must not borrow new binding");
+    assert!(
+        error.to_string().contains("conversation_pairing_changed"),
+        "{error}"
+    );
+    store
+        .mutate(&group.group_id, |g| {
+            g.actors[0].generation = "recreated".into();
+            Ok(())
+        })
+        .expect("valid test fixture");
+    let error = super::call_nested(&home, &client, &owner, "cccc_file", None)
+        .await
+        .expect_err("old Actor");
+    assert!(error.to_string().contains("Actor changed"));
 }

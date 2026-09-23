@@ -19,7 +19,29 @@ pub(super) fn record(
     connector_id: &str,
     activity: Activity<'_>,
 ) -> Result<(), ApiError> {
-    web_model_connector_store::update_connector(state, connector_id, |item| {
+    record_route(state, connector_id, None, activity)
+}
+
+pub(super) fn record_route(
+    state: &AppState,
+    connector_id: &str,
+    route: Option<&Value>,
+    activity: Activity<'_>,
+) -> Result<(), ApiError> {
+    web_model_connector_store::update_connector(state, connector_id, |connector| {
+        let item = if let Some(route) = route {
+            let key = json!([route["group_id"], route["actor_id"]]).to_string();
+            let Some(item) = connector["bindings"].get_mut(key) else {
+                return;
+            };
+            if item["revision"] != route["revision"] {
+                return;
+            }
+            item
+        } else {
+            connector
+        };
+
         item["last_activity_at"] = json!(cccc_contracts::utc_now());
         item["last_method"] = json!(activity.method);
         item["last_tool_name"] = json!(activity.tool_name);
@@ -27,7 +49,9 @@ pub(super) fn record(
         item["last_wait_status"] = json!(activity.wait_status);
         item["last_turn_id"] = json!(activity.turn_id);
         item["last_error"] = json!(activity.error);
-        item["updated_at"] = json!(cccc_contracts::utc_now());
+        if route.is_none() {
+            item["updated_at"] = json!(cccc_contracts::utc_now());
+        }
     })
     .map(|_| ())
 }

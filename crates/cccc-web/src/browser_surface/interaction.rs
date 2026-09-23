@@ -16,10 +16,16 @@ use super::BrowserSurfaces;
 
 impl BrowserSurfaces {
     pub async fn command(&self, key: &str, command: &Value) -> Result<()> {
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(key)
+        let operation = self.key_operation(key).await;
+        let _operation = operation.lock().await;
+        let mut session = self
+            .sessions
+            .lock()
+            .await
+            .get(key)
+            .cloned()
             .context("browser surface is not active")?;
+        let original_target = session.page.target_id().clone();
         match command.get("t").and_then(Value::as_str).unwrap_or("") {
             "ping" => return Ok(()),
             "navigate" => {
@@ -45,13 +51,20 @@ impl BrowserSurfaces {
                     "right" => (MouseButton::Right, 2),
                     value => bail!("unsupported browser mouse button: {value}"),
                 };
-                let existing_pages = session
-                    .browser
-                    .pages()
-                    .await?
-                    .into_iter()
-                    .map(|page| page.target_id().clone())
-                    .collect::<HashSet<_>>();
+                let existing_pages = if session.shared_browser {
+                    HashSet::new()
+                } else {
+                    session
+                        .owner
+                        .read()
+                        .await
+                        .browser
+                        .pages()
+                        .await?
+                        .into_iter()
+                        .map(|page| page.target_id().clone())
+                        .collect::<HashSet<_>>()
+                };
                 let x = number(command, "x");
                 let y = number(command, "y");
                 if button == MouseButton::Left {
@@ -72,15 +85,23 @@ impl BrowserSurfaces {
                 released.buttons = Some(0);
                 released.click_count = Some(1);
                 session.page.execute(released).await?;
-                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                if let Some(page) = session
-                    .browser
-                    .pages()
-                    .await?
-                    .into_iter()
-                    .find(|page| !existing_pages.contains(page.target_id()))
-                {
-                    session.page = page;
+                // A shared browser may gain another Actor's window concurrently.
+                // Keep this surface on its registered target; shared login popups
+                // belong to the explicit browser viewer, not implicit retargeting.
+                if !session.shared_browser {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    if let Some(page) = session
+                        .owner
+                        .read()
+                        .await
+                        .browser
+                        .pages()
+                        .await?
+                        .into_iter()
+                        .find(|page| !existing_pages.contains(page.target_id()))
+                    {
+                        session.page = page;
+                    }
                 }
             }
             "text" => {
@@ -119,7 +140,7 @@ impl BrowserSurfaces {
                 let width = number(command, "width").round().clamp(320.0, 3840.0) as u32;
                 let height = number(command, "height").round().clamp(240.0, 2160.0) as u32;
                 if !should_override_viewport(
-                    session.system_browser.is_some(),
+                    session.is_system_browser,
                     (session.width, session.height),
                     (width, height),
                 ) {
@@ -146,6 +167,19 @@ impl BrowserSurfaces {
             .await?
             .unwrap_or_else(|| session.url.clone());
         session.updated_at = utc_now();
+        let mut sessions = self.sessions.lock().await;
+        let current = sessions
+            .get_mut(key)
+            .filter(|s| {
+                s.page.target_id() == &original_target
+                    && std::sync::Arc::ptr_eq(&s.owner, &session.owner)
+            })
+            .context("browser surface changed during command")?;
+        current.page = session.page;
+        current.url = session.url;
+        current.width = session.width;
+        current.height = session.height;
+        current.updated_at = session.updated_at;
         Ok(())
     }
 }

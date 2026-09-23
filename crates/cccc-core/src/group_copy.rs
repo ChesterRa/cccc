@@ -209,7 +209,6 @@ pub fn import(
     }
     scrub_group(&mut group);
     sanitize_import_profiles(store, &mut group)?;
-    require_web_model_singleton(store, &group)?;
     let imported = store.import(group.clone())?;
     let target = store.group_dir(&final_group_id)?;
     let result = (|| {
@@ -548,29 +547,6 @@ fn scrub_group(group: &mut GroupDoc) {
     }
 }
 
-/// Imported packages must respect the same instance-wide ChatGPT Web Model
-/// limit as actor_add; this runs before the group is registered so a rejected
-/// package leaves nothing behind.
-fn require_web_model_singleton(store: &GroupStore, group: &GroupDoc) -> io::Result<()> {
-    let profiles = crate::profiles::ProfileStore::new(store.home().clone())?;
-    let mut imported = 0;
-    for actor in &group.actors {
-        imported += usize::from(crate::actors::reserves_web_model(&profiles, actor)?);
-    }
-    if imported == 0 {
-        return Ok(());
-    }
-    if imported > 1 {
-        return Err(io::Error::other(
-            "ChatGPT Web Model is limited to one actor per CCCC instance; the package contains more than one",
-        ));
-    }
-    match crate::actors::web_model_singleton_conflict(store, None)? {
-        Some(message) => Err(io::Error::other(message)),
-        None => Ok(()),
-    }
-}
-
 fn sanitize_import_profiles(store: &GroupStore, group: &mut GroupDoc) -> io::Result<()> {
     let profiles = crate::profiles::ProfileStore::new(store.home().clone())?;
     for actor in &mut group.actors {
@@ -777,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn import_rejects_a_second_web_model_actor() {
+    fn import_allows_independent_web_model_actors() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home).expect("store");
@@ -798,22 +774,18 @@ mod tests {
         set_web_model(true);
         let (bytes, _, _) = export(&store, &source.group_id).expect("export");
 
-        let error = import(&store, &bytes, "", "").expect_err("second owner must be rejected");
-        assert!(
-            error
-                .to_string()
-                .contains("ChatGPT Web Model is limited to one actor"),
-            "{error}"
-        );
-        assert_eq!(
-            store.list().expect("registry").len(),
-            1,
-            "a rejected package must not register a group"
-        );
-
-        set_web_model(false);
-        import(&store, &bytes, "", "").expect("import succeeds once the slot is free");
+        let imported = import(&store, &bytes, "", "").expect("independent Actor import");
         assert_eq!(store.list().expect("registry").len(), 2);
+        assert_eq!(
+            store.load(&imported.group_id).expect("imported").actors[0].runtime,
+            cccc_contracts::ActorRuntime::WebModel
+        );
+        assert!(
+            crate::web_model_connectors::load(store.home())
+                .expect("connectors")
+                .is_empty(),
+            "import does not copy conversation authority"
+        );
     }
 
     #[test]
@@ -874,15 +846,9 @@ mod tests {
             .expect("actor");
         let (bytes, _, _) = export(&store, &source.group_id).expect("export");
         upsert("web_model");
-        let error = import(&store, &bytes, "", "").expect_err("linked runtime owns slot");
-        assert!(
-            error.to_string().contains("limited to one actor"),
-            "{error}"
-        );
-        assert_eq!(store.list().expect("registry").len(), 1);
-        store.delete(&source.group_id).expect("remove owner");
-        import(&store, &bytes, "", "").expect("free slot");
-        assert_eq!(store.list().expect("registry").len(), 1);
+        import(&store, &bytes, "", "")
+            .expect("linked Profile does not impose an instance singleton");
+        assert_eq!(store.list().expect("registry").len(), 2);
     }
 
     #[test]

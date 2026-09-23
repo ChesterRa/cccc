@@ -2,9 +2,6 @@ use super::*;
 use base64::Engine;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-mod chrome_test_guard;
-use chrome_test_guard::chrome_test_guard;
-
 macro_rules! require_chrome {
     () => {
         if !chrome_available() {
@@ -112,7 +109,7 @@ async fn interactive_system_browser_keeps_native_mode_and_reuses_its_session() {
     let manager = BrowserSurfaces::default();
     let profile = temp.path().join("profile");
     let opened = manager
-        .ensure_open_system("interactive", &profile, &url, 800, 600)
+        .ensure_open_shared_system("interactive", &profile, &url, 800, 600)
         .await
         .expect("system browser");
     let page = manager
@@ -144,7 +141,7 @@ async fn interactive_system_browser_keeps_native_mode_and_reuses_its_session() {
     .await
     .expect("interact");
     let reused = manager
-        .ensure_open_system("interactive", &profile, &url, 800, 600)
+        .ensure_open_shared_system("interactive", &profile, &url, 800, 600)
         .await
         .expect("reuse");
     assert_eq!(opened["metadata"]["pid"], reused["metadata"]["pid"]);
@@ -154,6 +151,7 @@ async fn interactive_system_browser_keeps_native_mode_and_reuses_its_session() {
         "reopening the surface must preserve the page and draft"
     );
     manager.close("interactive").await.expect("close");
+    manager.shutdown_all().await.expect("shared owner cleanup");
     server.abort();
 }
 
@@ -296,6 +294,9 @@ async fn info_reaps_a_finished_browser_handler_instead_of_reporting_active() {
         .await
         .get_mut(key)
         .expect("session")
+        .owner
+        .read()
+        .await
         .handler
         .abort();
     tokio::task::yield_now().await;
@@ -849,3 +850,6 @@ mod local_page_tests;
 mod resource_cleanup;
 
 mod page_enumeration;
+
+#[cfg(target_os = "linux")]
+mod shared_owner;

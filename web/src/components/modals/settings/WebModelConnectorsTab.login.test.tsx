@@ -2,164 +2,204 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
+import type { WebModelConnector } from "../../../services/api";
 const mocks = vi.hoisted(() => ({
-  translate: (key: string) => key,
+  browser: vi.fn(),
+  connectors: vi.fn(),
+  create: vi.fn(),
+  revoke: vi.fn(),
   panel: vi.fn(),
-  fetchSession: vi.fn(),
-  resume: vi.fn(),
-  session: {
-    active: true,
-    ready: false,
-    login_required: true,
-    verification_required: true,
-  } as Record<string, unknown>,
+  copy: vi.fn(),
 }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: mocks.translate }) }));
+vi.mock("../../../utils/copy", () => ({ copyTextToClipboard: mocks.copy }));
+vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
 vi.mock("../../../services/api", () => ({
-  fetchGroups: async () => ({
-    ok: true,
-    result: { groups: [{ group_id: "g_login", title: "Login" }] },
-  }),
-  fetchActors: async () => ({
-    ok: true,
-    result: { actors: [{ id: "browser", runtime: "web_model", title: "Browser" }] },
-  }),
-  fetchRemoteAccessState: async () => ({ ok: true, result: {} }),
-  fetchWebModelConnectors: async () => ({ ok: true, result: { connectors: [] } }),
-  fetchWebModelBrowserSession: (...args: unknown[]) => mocks.fetchSession(...args),
-  resumeWebModelBrowserDelivery: (...args: unknown[]) => mocks.resume(...args),
-  fetchWebModelBrowserSurfaceSession: async () => ({
-    ok: true,
-    result: { browser_session: mocks.session },
-  }),
-  getWebModelBrowserSurfaceWebSocketUrl: () => "ws://localhost/fixture",
+  fetchWebModelConnectors: () => mocks.connectors(),
+  sharedWebModelBrowser: (...args: unknown[]) => mocks.browser(...args),
+  createWebModelConnector: () => mocks.create(),
+  revokeWebModelConnector: (...args: unknown[]) => mocks.revoke(...args),
+  sharedWebModelBrowserWebSocketUrl: () => "ws://fixture/shared",
 }));
 vi.mock("../../browser/ProjectedBrowserSurfacePanel", () => ({
-  ProjectedBrowserSurfacePanel: (props: { refreshNonce: number }) => {
+  ProjectedBrowserSurfacePanel: (props: unknown) => {
     mocks.panel(props);
-    return <div data-testid="browser-viewer">Browser</div>;
+    return <div data-testid="viewer" />;
   },
 }));
 import WebModelConnectorsTab from "./WebModelConnectorsTab";
-
-describe("Web Model manual sign-in", () => {
-  let host: HTMLDivElement;
-  let root: Root;
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+const empty = { ok: true, result: { connectors: [] as WebModelConnector[] } };
+const existing = { connector_id: "shared", bound_actor_count: 2 };
+const created = {
+  ok: true,
+  result: {
+    connector: { ...existing, connector_url_path_token: "https://fixture.test/token/test-only" },
+  },
+};
+describe("shared Web Model login and connector", () => {
+  let host: HTMLDivElement, root: Root;
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-    vi.useFakeTimers();
-    mocks.panel.mockClear();
-    mocks.session = {
-      active: true,
-      ready: false,
-      login_required: true,
-      verification_required: true,
-    };
-    mocks.resume.mockReset();
-    mocks.fetchSession
-      .mockReset()
-      .mockResolvedValue({ ok: true, result: { browser_session: mocks.session } });
-    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    vi.resetAllMocks();
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
+    mocks.connectors.mockResolvedValue({ ok: true, result: { connectors: [] } });
+    mocks.browser.mockResolvedValue({ ok: true, result: { browser_session: { active: false } } });
+    mocks.create.mockResolvedValue(created);
+    mocks.copy.mockResolvedValue(true);
   });
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
-    vi.clearAllTimers();
-    vi.useRealTimers();
-    vi.restoreAllMocks();
   });
-
-  it("keeps repeated Open actions from reloading the verification page", async () => {
-    await act(async () => {
-      root.render(<WebModelConnectorsTab isDark={false} currentGroupId="g_login" />);
-    });
-    const open = Array.from(host.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("webModels.chatgpt.buttons.openChatGpt"),
-    );
-    expect(open).toBeDefined();
-    expect(host.textContent).toContain("webModels.chatgpt.browser.verificationRequired");
-    expect(host.textContent).toContain("webModels.chatgpt.chatSetup.verificationHint");
-    await act(async () => open!.click());
-    const viewer = host.querySelector('[data-testid="browser-viewer"]');
-    expect(viewer).not.toBeNull();
-    const refreshNonce = mocks.panel.mock.lastCall?.[0].refreshNonce;
-    await act(async () => open!.click());
-    expect(host.querySelector('[data-testid="browser-viewer"]')).toBe(viewer);
-    expect(mocks.panel.mock.lastCall?.[0].refreshNonce).toBe(refreshNonce);
-    expect(host.textContent).not.toContain("webModels.chatgpt.browser.signedIn");
-  });
-
-  it("keeps the recovery action after a failed check and removes it after explicit resume", async () => {
-    mocks.session = {
-      active: true,
-      ready: true,
-      can_resume_delivery: true,
-      last_delivery_id: "receipt-1",
-      last_delivery_status: "ambiguous",
-    };
-    mocks.fetchSession.mockResolvedValue({ ok: true, result: { browser_session: mocks.session } });
-    mocks.resume.mockResolvedValueOnce({
-      ok: false,
-      error: { message: "An unsent draft remains" },
-    });
-    await act(async () =>
-      root.render(<WebModelConnectorsTab isDark={false} currentGroupId="g_login" />),
-    );
-    const button = () =>
-      Array.from(host.querySelectorAll("button")).find((b) =>
-        b.textContent?.includes("webModels.chatgpt.buttons.resumeDelivery"),
-      );
-    expect(host.textContent).toContain("webModels.chatgpt.target.reviewBeforeResume");
-    expect(button()).toBeDefined();
-    await act(async () => button()!.click());
-    expect(mocks.resume).toHaveBeenCalledWith("g_login", "browser", "receipt-1");
-    expect(host.textContent).toContain("An unsent draft remains");
-    expect(button()).toBeDefined();
-    mocks.resume.mockResolvedValueOnce({
+  const button = (name: string) =>
+    Array.from(host.querySelectorAll("button")).find(
+      (b) => b.textContent === `webModelShared.${name}`,
+    )!;
+  it("can set up shared login without any Actor and does not start a browser on mount", async () => {
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    expect(mocks.browser).toHaveBeenCalledExactlyOnceWith();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(host.querySelector("[data-testid=viewer]")).toBeNull();
+    mocks.browser.mockResolvedValue({
       ok: true,
-      result: {
-        browser_session: {
-          active: true,
-          ready: true,
-          can_resume_delivery: false,
-          last_delivery_status: "resolved",
-        },
-      },
+      result: { browser_session: { active: true, verification_required: true } },
     });
-    await act(async () => button()!.click());
-    expect(button()).toBeUndefined();
-    expect(host.textContent).toContain("webModels.chatgpt.notices.deliveryResumed");
+    await act(async () => button("open").click());
+    expect(mocks.browser).toHaveBeenLastCalledWith("open", false);
+    expect(host.textContent).toContain("webModelShared.verification");
+    expect(host.querySelector("[data-testid=viewer]")).not.toBeNull();
+    await act(async () => button("open").click());
+    expect(mocks.browser.mock.calls.every((c) => c[0] !== "close")).toBe(true);
   });
-
-  it("does not stack slow background inspections or poll a hidden page", async () => {
-    await act(async () =>
-      root.render(<WebModelConnectorsTab isDark={false} currentGroupId="g_login" />),
-    );
-    mocks.fetchSession.mockClear();
-    const pending: (() => void)[] = [];
-    mocks.fetchSession.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          pending.push(() => resolve({ ok: true, result: { browser_session: mocks.session } }));
-        }),
-    );
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(12_000);
+  it("checking login does not refresh or replace the browser viewer", async () => {
+    mocks.browser.mockResolvedValue({ ok: true, result: { browser_session: { active: true } } });
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    const viewer = host.querySelector("[data-testid=viewer]");
+    await act(async () => button("check").click());
+    expect(mocks.browser).toHaveBeenLastCalledWith("status", true);
+    expect(host.querySelector("[data-testid=viewer]")).toBe(viewer);
+    expect(mocks.panel.mock.calls.every(([props]) => props.refreshNonce === 0)).toBe(true);
+  });
+  it("requires explicit confirmation for credential rotation and preserves error visibility", async () => {
+    mocks.connectors.mockResolvedValue({
+      ok: true,
+      result: { connectors: [{ connector_id: "shared", bound_actor_count: 2 }] },
     });
-    expect(mocks.fetchSession).toHaveBeenCalledTimes(1);
-    await act(async () => pending.splice(0).forEach((resolve) => resolve()));
-    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    mocks.create.mockResolvedValue({ ok: false, error: { message: "Save failed" } });
+    await act(async () => root.render(<WebModelConnectorsTab isDark={true} />));
+    expect(host.textContent).toContain("webModelShared.notSeen");
+    expect(host.querySelector("details")?.open).toBe(false);
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(12_000);
+      host.querySelector("summary")!.click();
     });
-    expect(mocks.fetchSession).toHaveBeenCalledTimes(1);
-    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
-    expect(mocks.fetchSession).toHaveBeenCalledTimes(2);
-    await act(async () => pending.splice(0).forEach((resolve) => resolve()));
+    await act(async () => button("rotate").click());
+    expect(mocks.create).not.toHaveBeenCalled();
+    await act(async () => button("confirm").click());
+    expect(mocks.create).toHaveBeenCalledOnce();
+    expect(host.textContent).toContain("Save failed");
+    expect(host.textContent).toContain("2 webModelShared.pairedActors");
+  });
+  it("unmounts the viewer when this settings tab is inactive", async () => {
+    mocks.browser.mockResolvedValue({ ok: true, result: { browser_session: { active: true } } });
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    expect(host.querySelector("[data-testid=viewer]")).not.toBeNull();
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} isActive={false} />));
+    expect(host.querySelector("[data-testid=viewer]")).toBeNull();
+    expect(mocks.browser).toHaveBeenCalledOnce();
+  });
+  it("blocks creation while the initial connector list is unknown, then requires rotation confirmation", async () => {
+    const read = deferred<typeof empty>();
+    mocks.connectors.mockReturnValueOnce(read.promise);
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    expect(button("create").disabled).toBe(true);
+    await act(async () => button("create").click());
+    expect(mocks.create).not.toHaveBeenCalled();
+    await act(async () => read.resolve({ ok: true, result: { connectors: [existing] } }));
+    expect(button("create")).toBeUndefined();
+    await act(async () => host.querySelector("summary")!.click());
+    await act(async () => button("rotate").click());
+    expect(mocks.create).not.toHaveBeenCalled();
+    await act(async () => button("cancel").click());
+    expect(mocks.create).not.toHaveBeenCalled();
+    await act(async () => button("rotate").click());
+    await act(async () => button("confirm").click());
+    expect(mocks.create).toHaveBeenCalledOnce();
+    await act(async () => button("copy").click());
+    expect(mocks.copy).toHaveBeenCalledExactlyOnceWith(
+      created.result.connector.connector_url_path_token,
+    );
+  });
+  it.each(["response", "network"])(
+    "keeps a failed %s load closed to writes until a successful retry",
+    async (failure) => {
+      if (failure === "network") mocks.connectors.mockRejectedValueOnce(new Error("Read failed"));
+      else mocks.connectors.mockResolvedValueOnce({ ok: false, error: { message: "Read failed" } });
+      await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+      expect(host.textContent).toContain("Read failed");
+      expect(button("create").disabled).toBe(true);
+      await act(async () => button("create").click());
+      expect(mocks.create).not.toHaveBeenCalled();
+      await act(async () => {
+        Array.from(host.querySelectorAll("button"))
+          .find((b) => b.textContent === "common:retry")!
+          .click();
+      });
+      expect(host.textContent).not.toContain("Read failed");
+      expect(button("create").disabled).toBe(false);
+      await act(async () => button("create").click());
+      expect(mocks.create).toHaveBeenCalledOnce();
+      expect(button("copy")).toBeDefined();
+    },
+  );
+  it("preserves a pending creation across tab reactivation without a read overwriting its one-time URL", async () => {
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    const write = deferred<typeof created>();
+    const read = deferred<typeof empty>();
+    mocks.create.mockReturnValueOnce(write.promise);
+    mocks.connectors.mockReturnValueOnce(read.promise);
+    await act(async () => button("create").click());
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} isActive={false} />));
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    await act(async () => write.resolve(created));
+    expect(button("copy")).toBeDefined();
+    await act(async () => read.resolve(empty));
+    expect(button("copy")).toBeDefined();
+    expect(mocks.connectors).toHaveBeenCalledOnce();
+    await act(async () => button("copy").click());
+    expect(mocks.copy).toHaveBeenCalledExactlyOnceWith(
+      created.result.connector.connector_url_path_token,
+    );
+  });
+  it("ignores a superseded activation's read after a new credential is created", async () => {
+    const old = deferred<typeof empty>();
+    mocks.connectors.mockReturnValueOnce(old.promise);
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} isActive={false} />));
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    await act(async () => button("create").click());
+    await act(async () => old.resolve(empty));
+    expect(button("copy")).toBeDefined();
+    expect(button("create")).toBeUndefined();
+  });
+  it("submits only one credential mutation before React renders the busy state", async () => {
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    const write = deferred<typeof created>();
+    mocks.create.mockReturnValue(write.promise);
+    await act(async () => {
+      button("create").click();
+      button("create").click();
+    });
+    expect(mocks.create).toHaveBeenCalledOnce();
+    await act(async () => write.resolve(created));
   });
 });

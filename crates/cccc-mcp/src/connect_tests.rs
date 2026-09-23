@@ -133,6 +133,7 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
             name,
             args.as_object().expect("args").clone(),
             Some(crate::RequestContext {
+                binding: None,
                 group_id: &group.group_id,
                 actor_id: "worker",
             }),
@@ -195,8 +196,10 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
     );
     let file = root.join("note.txt");
     std::fs::write(&file, "file payload").expect("file");
-    let args = json!({"action":"send","path":"note.txt","dst_instance_id":remote.peer_id,"dst_group_id":group.group_id,"idempotency_key":"stable-file","insight":"The remote task needs this attachment."});
-    let file_sent = call("cccc_file", args.clone()).await.expect("file send");
+    let args = json!({"path":"note.txt","dst_instance_id":remote.peer_id,"dst_group_id":group.group_id,"idempotency_key":"stable-file","insight":"The remote task needs this attachment."});
+    let file_sent = call("cccc_file_send", args.clone())
+        .await
+        .expect("file send");
     assert_eq!(file_sent["structuredContent"]["accepted"], true);
     assert!(
         file_sent["structuredContent"]["result"]["delivery_id"]
@@ -208,7 +211,7 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
         12
     );
     std::fs::remove_file(file).expect("remove original");
-    let file_retry = call("cccc_file", args)
+    let file_retry = call("cccc_file_send", args)
         .await
         .expect("file retry after original removed");
     assert_eq!(

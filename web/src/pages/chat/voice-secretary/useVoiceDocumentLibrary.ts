@@ -12,13 +12,14 @@ export function useVoiceDocumentLibrary(groupId: string, documents: unknown, act
   const [busy, setBusy] = useState(false);
   const requests = useRef({ generation: 0, mutating: false }).current;
   useEffect(() => {
-    const ticket = ++requests.generation;
+    requests.generation++;
     setData(empty);
     setError("");
     setBusy(false);
     requests.mutating = false;
     return () => {
-      if (requests.generation === ticket) requests.generation++;
+      // Retire reads and mutations owned by this mounted group, including callbacks.
+      requests.generation++;
     };
   }, [groupId, requests]);
   useEffect(() => {

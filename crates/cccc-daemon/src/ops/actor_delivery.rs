@@ -457,7 +457,7 @@ pub(super) fn delivery_transport(
 
 fn web_model_delivery_transport(
     home: &HomeLayout,
-    group: &GroupDoc,
+    _group: &GroupDoc,
     actor: &Actor,
 ) -> &'static str {
     let setting = |names: &[&str]| {
@@ -493,11 +493,7 @@ fn web_model_delivery_transport(
         provider = cccc_core::web_model_connectors::load(home)
             .unwrap_or_default()
             .into_iter()
-            .find(|connector| {
-                !connector["revoked"].as_bool().unwrap_or(false)
-                    && connector["group_id"].as_str() == Some(group.group_id.as_str())
-                    && connector["actor_id"].as_str() == Some(actor.id.as_str())
-            })
+            .find(|connector| connector["revoked"] != true)
             .and_then(|connector| connector["provider"].as_str().map(str::to_owned))
             .map(|value| value.trim().to_ascii_lowercase())
             .unwrap_or_default();
@@ -684,6 +680,29 @@ fn deferred_retry_delay(failures: u32) -> std::time::Duration {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn configured_browser_transport_does_not_require_a_completed_pairing() {
+        let temp = tempfile::tempdir().expect("temp");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("init");
+        let groups = GroupStore::new(home.clone()).expect("groups");
+        let group = groups.create("transport", "").expect("group");
+        cccc_core::web_model_connectors::configure(&home).expect("connector");
+        let mut actor = Actor::new("a");
+        actor.runtime = ActorRuntime::WebModel;
+        assert_eq!(
+            web_model_delivery_transport(&home, &group, &actor),
+            "web_model_browser"
+        );
+        actor
+            .env
+            .insert("CCCC_WEB_MODEL_DELIVERY_MODE".into(), "pull".into());
+        assert_eq!(
+            web_model_delivery_transport(&home, &group, &actor),
+            "web_model_pull"
+        );
+    }
+
     use super::*;
     use cccc_core::{GroupStore, ledger};
     use serde_json::json;

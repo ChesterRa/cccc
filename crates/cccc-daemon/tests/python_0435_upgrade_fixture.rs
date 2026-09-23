@@ -515,15 +515,11 @@ fn rust_reads_the_frozen_python_0435_identity_and_integration_state_without_pyth
         "existing_chat"
     );
     let connectors = web_model_connectors::load(&home).expect("Python connector store");
-    let connector = connectors
-        .iter()
-        .find(|item| item["connector_id"] == "wmc_fixture")
-        .expect("fixture connector");
-    assert!(!connector["revoked"].as_bool().unwrap_or(true));
-    assert!(web_model_connectors::secret_matches(
-        connector,
-        "wmcs_fixture_secret"
-    ));
+    assert!(
+        connectors.is_empty(),
+        "old Actor credential must not gain instance authority"
+    );
+    assert!(web_model_connectors::requires_reconfiguration(&home).expect("reconfiguration state"));
 
     let receipts: Value = cccc_core::fs::read_yaml(&root.join("group_bridge_receipts.yaml"))
         .expect("original receipts");
@@ -723,9 +719,7 @@ fn rust_preserves_python_0435_terminal_state_and_retires_legacy_shadows() {
     assert_eq!(im["subscribers"], json!([]));
 
     let connectors = web_model_connectors::load(&home).expect("retired connector store");
-    assert_eq!(connectors.len(), 1);
-    assert_eq!(connectors[0]["connector_id"], "wmc_fixture");
-    assert_eq!(connectors[0]["revoked"], true);
+    assert!(connectors.is_empty());
     // This frozen old receipt lacks source provenance. Retain it for inspection
     // instead of discarding it or reviving a manual connection.
     let receipts_before = std::fs::read(root.join("group_bridge_receipts.yaml")).expect("receipts");
@@ -735,7 +729,10 @@ fn rust_preserves_python_0435_terminal_state_and_retires_legacy_shadows() {
         receipts_before
     );
     let global = settings::load(&home).expect("settings after legacy retirement");
-    assert!(!global.extra.contains_key("web_model_connectors"));
+    assert!(
+        global.extra.contains_key("web_model_connectors"),
+        "legacy configuration is preserved but never accepted as authority"
+    );
 
     let nomcp = nomcp::Store::new(home.clone()).expect("No-MCP store");
     assert!(

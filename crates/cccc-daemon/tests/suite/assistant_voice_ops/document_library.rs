@@ -122,13 +122,14 @@ fn archive_is_viewable_and_restorable_but_deleted_documents_are_excluded() {
 #[test]
 fn library_rejects_invalid_actions_without_mutating_state() {
     let (_temp, home, _store, group) = enabled_voice_group();
-    library_update(
+    let created = library_update(
         &home,
         &group,
         json!({"action":"create_folder","name":"会议"}),
     );
     for mut args in [
         json!({"action":"create_folder","name":"会议"}),
+        json!({"action":"create_folder","name":"会议","folder_id":created.result["folders"][0]["folder_id"]}),
         json!({"action":"create_folder","name":"  "}),
         json!({"action":"move","folder_id":"missing","document_path":"voice/a.md"}),
         json!({"action":"remove_folder","folder_id":"missing"}),

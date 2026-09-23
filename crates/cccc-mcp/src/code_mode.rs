@@ -35,6 +35,8 @@ struct Owner {
     home: PathBuf,
     group_id: String,
     actor_id: String,
+    binding: Option<Value>,
+    generation: String,
 }
 
 struct CodeCell {
@@ -241,6 +243,15 @@ fn resolve_owner(home: &HomeLayout, args: &Map<String, Value>) -> Result<Owner, 
         home: home.root().to_path_buf(),
         group_id: group_id.to_owned(),
         actor_id: actor_id.to_owned(),
+        generation: cccc_core::actors::generation_identity(actor),
+        // Activity timestamps are diagnostics, not execution ownership. A normal
+        // tool call between exec and wait must not invalidate the same cell.
+        binding: args.get("_cccc_web_binding").map(|b| {
+            json!({
+                "connector_id":b["connector_id"],"group_id":b["group_id"],
+                "actor_id":b["actor_id"],"generation":b["generation"],"revision":b["revision"]
+            })
+        }),
     })
 }
 
@@ -297,8 +308,12 @@ fn integer_arg(value: Option<&Value>, default: u64, minimum: u64, maximum: u64) 
 }
 
 async fn nested_tools(home: &HomeLayout, client: &DaemonClient, owner: &Owner) -> Vec<Value> {
-    crate::visible_tools_for_actor(home, client, &owner.group_id, &owner.actor_id)
-        .await
+    let mut catalog =
+        crate::visible_tools_for_actor(home, client, &owner.group_id, &owner.actor_id).await;
+    if owner.binding.is_some() {
+        crate::describe_paired_identity(&mut catalog);
+    }
+    catalog
         .into_iter()
         .filter_map(|tool| {
             let name = tool.get("name")?.as_str()?;
@@ -695,7 +710,27 @@ async fn call_nested(
     args.insert("by".into(), Value::String(owner.actor_id.clone()));
     args.entry("actor_id")
         .or_insert_with(|| Value::String(owner.actor_id.clone()));
-    Box::pin(crate::router::call(home, client, name, args)).await
+    let group = GroupStore::new(home.clone())
+        .and_then(|store| store.load(&owner.group_id))
+        .map_err(|e| e.to_string())?;
+    if !group.actors.iter().any(|a| {
+        a.id == owner.actor_id && cccc_core::actors::generation_identity(a) == owner.generation
+    }) {
+        return Err("Actor changed during code execution".into());
+    }
+    Box::pin(crate::router::call_with_context(
+        home,
+        client,
+        name,
+        args,
+        Some(crate::RequestContext {
+            group_id: &owner.group_id,
+            actor_id: &owner.actor_id,
+            binding: owner.binding.as_ref(),
+        }),
+        false,
+    ))
+    .await
 }
 
 fn capture_nested_result(

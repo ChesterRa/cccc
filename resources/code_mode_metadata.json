@@ -28,7 +28,7 @@
         "cccc_file(action='read', rel_path=...) for UTF-8 text, original PNG/JPEG/WebP files and delivered blobs; images and original PDF/PPTX resources are emitted automatically, JS receives metadata",
         "cccc_file(action='blob_path', rel_path=...) for binary/local inspection",
         "create output files under the active scope",
-        "cccc_file(action='send', path=..., text=..., dst_group_id=...) to return files as local or remote CCCC attachments"
+        "cccc_file_send(path=..., to='user', mode='send') to send an attachment to the human user"
       ]
     },
     {
@@ -128,7 +128,7 @@
       "CCCC attachments are blob references, not browser uploads.",
       "Use cccc_file(action='read', rel_path=...) for UTF-8 text or PNG/JPEG/WebP files/attachments. Images (up to 20 MiB) are automatically emitted to the model; JS receives metadata only. No image() helper or base64 text is needed. PDF and PPTX reads emit embedded resources containing original bytes for the client's native file reader. For image-only PDF pages, use the client's native page/image viewing; an empty text layer does not mean an empty document. Images and documents share four binary items and 20 MiB total per exec/wait result; yield before reading more.",
       "The file bridge performs no local conversion, cropping, OCR or PDF/Office/audio/video parsing. Resource delivery alone is not proof of model access; use the client's native file reader and report unavailable content explicitly. Use info/blob_path for other file metadata/paths; those do not expose interpreted file content to the model. Do not claim unsupported media was read.",
-      "Use cccc_file(action='send', path=..., text=..., dst_group_id=...) to return active-scope files as local or remote chat attachments."
+      "Use cccc_file_send(path=..., to='user', mode='send') to send an active-scope file. Connect destinations require both dst_instance_id and dst_group_id."
     ],
     "shell": [
       "Use cccc_shell for short one-shot commands.",
@@ -207,6 +207,7 @@
       "cccc_shell"
     ],
     "attachment": [
+      "cccc_file_send",
       "cccc_file",
       "cccc_message_reply",
       "cccc_message_send"

@@ -287,7 +287,7 @@ Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Clau
 
 ### ChatGPT Web をローカル開発 actor として
 
-CCCC は Group メッセージを紐付けた ChatGPT 会話へ届けます。connector 対応の ChatGPT セッションは、Actor に紐付いた Remote MCP を通じてメッセージの受信、返信、リポジトリの閲覧・編集、scope 内の shell/git 実行ができます。現在、Web Model Actor はインスタンスごとに一つです。
+CCCC は Group メッセージをペアリング済みの ChatGPT 会話へ届けます。複数の Web Model Actor が専用ブラウザのログインと一つの認証付き Remote MCP connector を共有し、各 Actor は独立した常設ウィンドウと確認済みの会話を持ちます。メッセージの受信・返信、リポジトリの閲覧・編集、scope 内の shell/git 実行ができます。共有ログインと connector は全体設定、各会話は Actor 設定で管理します。通常の Actor 起動時に会話を自動確認してから待機中のタスクを配信するため、事前のペアリング操作は不要です。
 
 セットアップには MCP connector 用の public HTTPS URL（Cloudflare Tunnel、ngrok、Tailscale Funnel、またはリバースプロキシ）が必要です。CCCC は安定したテキストのみの配信を既定とし、実験的な **GPT Pro** モードも提供します。このモードは、画像添付によって第三者 MCP が利用可能になる一部アカウント向けに、ごく小さな空白 PNG を各配信へ添付します。CCCC はモデルを切り替えず、ChatGPT の変更後もこの互換手段が動作し続けることを保証しません。詳細な設定とトラブルシュート: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime)。
 
@@ -305,7 +305,7 @@ CCCC は Group メッセージを紐付けた ChatGPT 会話へ届けます。co
 
 管理者はサイドバーから同一アカウントのリモートワークスペースを開けますが、**各対象インスタンス自身の管理者 Access Token** と到達可能な HTTPS アドレスが必要です。制限付きアクセスは単一インスタンスに留まり、Web の権限とバックグラウンド連携の権限は独立しています。
 
-Agent は `cccc_connect` で対象を検出し、`cccc_message_send` または `cccc_file` に `dst_instance_id` と `dst_group_id` を指定します。返信には受信したローカル Event ID を使います。入力欄でリモート **`#Group`** を選ぶと、ローカル Agent に正確な識別情報を渡せます。それだけでリモート送信や権限付与は行いません。詳しくは [CCCC Connect ガイド](https://chesterra.github.io/cccc/guide/connect)を参照してください。
+Agent は `cccc_connect` で対象を検出し、`cccc_message_send` または `cccc_file_send` に `dst_instance_id` と `dst_group_id` を指定します。返信には受信したローカル Event ID を使います。入力欄でリモート **`#Group`** を選ぶと、ローカル Agent に正確な識別情報を渡せます。それだけでリモート送信や権限付与は行いません。詳しくは [CCCC Connect ガイド](https://chesterra.github.io/cccc/guide/connect)を参照してください。
 
 ## メッセージングと協調
 
@@ -355,7 +355,7 @@ CCCC は IM グレードのメッセージングセマンティクスを実装 �
 - **オートメーション編集** — トリガー、スケジュール、アクションの視覚的な設定
 - **Project Context** — 共有の協調情報、タスク、Agent 状態、自己進化スキル
 - **Group Space** — NotebookLM による共有ナレッジ管理
-- **ChatGPT Web Model 設定** — 一つの ChatGPT Web 会話を CCCC Actor として接続
+- **ChatGPT Web Model 設定** — 共有ログインと各 Actor の ChatGPT 会話を接続
 - **Voice Secretary と Codex Voice** — 音声から文書・入力欄の下書きを作成し、実験的なリアルタイム Voice では Analyst を保持
 - **CCCC Connect 設定** — アカウント経由の検出、指定 Group の接続、Direct ペアリング
 - **IM ブリッジ設定** — Telegram、Slack、Discord、Mattermost、Feishu、DingTalk、WeCom、Weixin
@@ -453,7 +453,7 @@ cccc im start|stop|status
 | **プロジェクト情報と記憶（必要時）** | `cccc_project_info`、`cccc_tracked_send`、`cccc_memory`、`cccc_context_sync` |
 | **Group と Actor 制御（必要時）** | `cccc_group`、`cccc_actor`、`cccc_runtime_list` |
 | **ワークスペースツール（必要時）** | `cccc_repo`、`cccc_presentation`、`cccc_terminal`、`cccc_debug` |
-| **インスタンス検出** | `cccc_connect`、`cccc_message_send` と `cccc_file` の正確なインスタンス間宛先 |
+| **インスタンス検出** | `cccc_connect`、`cccc_message_send` と `cccc_file_send` の正確なインスタンス間宛先 |
 | **その他の機能ツール** | `cccc_automation`、`cccc_space`、機能管理、`cccc_im_bind` |
 
 協調コアは必要なプロトコルを維持し、ワークフローや推論方法、任意のツール選択は Agent と現在のタスクに委ねます。`cccc_help` は CCCC の状態、復旧、委任、機能ルートを調べるためのもので、一般的な推論・文章作成方法は規定しません。

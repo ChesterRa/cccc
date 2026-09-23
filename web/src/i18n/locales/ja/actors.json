@@ -283,5 +283,8 @@
   "actorControls": "{{actor}} の操作",
   "takeControl": "操作権を取得",
   "readOnlyConnection": "読み取り専用",
-  "terminalReadOnlyNotice": "この端末は読み取り専用です。入力するには操作権を取得してください。"
+  "terminalReadOnlyNotice": "この端末は読み取り専用です。入力するには操作権を取得してください。",
+  "webModelActorBoundConnectorTitle": "ChatGPT Web Model",
+  "webModelActorBoundConnectorHint": "共通 Web モデル設定で共有ログインとコネクターを管理します。この Actor を保存して通常どおり起動すると、会話に自動接続してからタスクを配信します。",
+  "webModelProfileHint": "ランタイムの種類と既定の機能を再利用します。ChatGPT のログイン、会話、接続関係は別途設定します。"
 }

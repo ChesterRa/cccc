@@ -76,10 +76,69 @@ mod tests {
             .filter_map(|tool| tool["name"].as_str())
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(catalog.len(), 53);
+        assert_eq!(catalog.len(), 54);
         assert!(names.contains("cccc_connect"));
         assert_eq!(names.len(), catalog.len());
         assert!(names.contains("cccc_code_exec"));
         assert!(names.contains("cccc_memory_admin"));
+    }
+
+    #[test]
+    fn tool_permissions_are_explicit_and_file_reads_cannot_advertise_sending() {
+        let catalog = super::catalog();
+        for tool in &catalog {
+            for hint in [
+                "readOnlyHint",
+                "destructiveHint",
+                "idempotentHint",
+                "openWorldHint",
+            ] {
+                assert!(
+                    tool["annotations"][hint].is_boolean(),
+                    "{}: missing {hint}",
+                    tool["name"]
+                );
+            }
+            if let Some(insight) = tool["inputSchema"]["properties"].get("insight") {
+                assert_eq!(
+                    insight["description"],
+                    cccc_core::peer_insight::PEER_INSIGHT_FIELD_DESCRIPTION
+                );
+            }
+        }
+        for name in ["cccc_file", "cccc_capability_search", "cccc_repo"] {
+            let tool = catalog.iter().find(|t| t["name"] == name).expect("tool");
+            assert_eq!(tool["annotations"]["readOnlyHint"], true, "{name}");
+            assert_eq!(tool["annotations"]["openWorldHint"], false, "{name}");
+        }
+        for name in [
+            "cccc_file_send",
+            "cccc_message_reply",
+            "cccc_inbox_read",
+            "cccc_code_exec",
+            "cccc_shell",
+        ] {
+            let tool = catalog.iter().find(|t| t["name"] == name).expect("tool");
+            assert_eq!(tool["annotations"]["readOnlyHint"], false, "{name}");
+        }
+        let read = catalog
+            .iter()
+            .find(|t| t["name"] == "cccc_file")
+            .expect("read");
+        assert_eq!(
+            read["inputSchema"]["properties"]["action"]["enum"],
+            serde_json::json!(["read", "info", "blob_path"])
+        );
+        assert_eq!(
+            read["inputSchema"]["properties"]["action"]["default"],
+            "read"
+        );
+        assert!(read["inputSchema"]["properties"].get("to").is_none());
+        let send = catalog
+            .iter()
+            .find(|t| t["name"] == "cccc_file_send")
+            .expect("send");
+        assert!(send["inputSchema"]["properties"].get("action").is_none());
+        assert_eq!(send["inputSchema"]["required"], serde_json::json!(["path"]));
     }
 }

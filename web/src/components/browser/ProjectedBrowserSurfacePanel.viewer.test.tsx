@@ -19,6 +19,12 @@ vi.mock("@novnc/novnc", () => ({
     clipViewport = false;
     background = "";
 
+    constructor(target: HTMLElement) {
+      const canvas = document.createElement("canvas");
+      canvas.dataset.fixtureVnc = "true";
+      target.append(canvas);
+    }
+
     disconnect() {}
 
     addEventListener(type: string, listener: (event: Event) => void) {
@@ -142,6 +148,34 @@ describe("ProjectedBrowserSurfacePanel viewer switching", () => {
     expect(loadSession).toHaveBeenCalledTimes(2);
     expect(startSession).toHaveBeenCalledTimes(1);
     expect(FakeWebSocket.instances.at(-1)?.url).toContain("viewer_mode=auto");
+  });
+
+  it("keeps the VNC canvas attached when entering and leaving fullscreen", async () => {
+    const loadSession = vi.fn(async () => ({
+      ok: true as const,
+      result: { browser_surface: readySurface },
+    }));
+    await act(async () =>
+      root.render(
+        <ProjectedBrowserSurfacePanel
+          isDark={false}
+          refreshNonce={0}
+          defaultViewerMode="browser"
+          loadSession={loadSession}
+          webSocketUrl="ws://localhost/browser"
+        />,
+      ),
+    );
+    expect(host.querySelector("canvas[data-fixture-vnc]")).not.toBeNull();
+    const expand = host.querySelector<HTMLButtonElement>('button[title="Full screen"]');
+    expect(expand).not.toBeNull();
+    await act(async () => expand?.click());
+    expect(document.querySelector("canvas[data-fixture-vnc]")).not.toBeNull();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[title="Exit full screen"]')?.click(),
+    );
+    expect(host.querySelector("canvas[data-fixture-vnc]")).not.toBeNull();
+    expect(loadSession).toHaveBeenCalledTimes(1);
   });
 
   it("shows an actionable hint when the websocket handshake is rejected", async () => {

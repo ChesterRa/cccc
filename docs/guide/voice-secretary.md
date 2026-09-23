@@ -107,7 +107,7 @@ change Markdown paths or quoted references.
 `GET /api/v1/groups/{group_id}/assistants/voice_secretary/documents/library`
 returns folders and non-deleted documents, including archived content. POST to
 the same endpoint accepts `create_folder`, `rename_folder`, `remove_folder`,
-`move`, and `restore`, with `name`, `folder_id`, or `document_path` as appropriate.
+`rename`, `move`, and `restore`, with `name`, `folder_id`, or `document_path` as appropriate.
 Empty/duplicate names, missing folders, unauthorized writers, and attempts to
 restore a deleted document are rejected. Read responses from a previous group
 cannot overwrite the current group's library.

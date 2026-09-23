@@ -11,6 +11,7 @@ use crate::api::ApiError;
 
 use super::web_model_connector_activity::{self as activity, Activity};
 use super::web_model_connector_provisioning as provisioning;
+use super::web_model_connector_session as session;
 use super::web_model_connector_store as store;
 
 #[derive(Default, serde::Deserialize)]
@@ -120,26 +121,10 @@ async fn run_connector_mcp(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    let mut tool_name = String::new();
-    if request.get("method").and_then(Value::as_str) == Some("tools/call") {
-        if let Some(params) = request.get("params").and_then(Value::as_object) {
-            tool_name = params
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned();
-            if let Some(arguments) = params.get("arguments").and_then(Value::as_object) {
-                let bound_group = connector["group_id"].as_str().unwrap_or("");
-                if arguments
-                    .get("group_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|group_id| group_id != bound_group)
-                {
-                    return Err(ApiError::forbidden("connector cannot access another group"));
-                }
-            }
-        }
-    }
+    let tool_name = request["params"]["name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     if request.get("id").is_none() && method.starts_with("notifications/") {
         activity::record(
             state,
@@ -155,13 +140,32 @@ async fn run_connector_mcp(
         )?;
         return Ok(StatusCode::ACCEPTED.into_response());
     }
-    let response = cccc_mcp::handle_request_for_actor(
-        &state.home,
-        &request,
-        connector["group_id"].as_str().unwrap_or(""),
-        connector["actor_id"].as_str().unwrap_or(""),
-    )
-    .await;
+    let mut bound_route = None;
+    let mut response = if let Some(response) = session::handle(state, connector, &request).await {
+        response
+    } else if method == "tools/call" {
+        match store::resolve(state, connector, &request) {
+            Ok(binding) => {
+                let response =
+                    cccc_mcp::handle_request_for_binding(&state.home, &request, &binding).await;
+                bound_route = Some(binding);
+                response
+            }
+            Err(error) => session::result(
+                &request,
+                serde_json::json!({"error":error.to_string()}),
+                true,
+            ),
+        }
+    } else if method == "tools/list" {
+        serde_json::json!({"jsonrpc":"2.0","id":request["id"],"result":{"tools":cccc_mcp::web_model_catalog()}})
+    } else {
+        // initialize/ping do not resolve an Actor or require conversation metadata.
+        cccc_mcp::handle_request_for_actor(&state.home, &request, "", "").await
+    };
+    if method == "tools/list" {
+        session::extend_catalog(&mut response);
+    }
     let call_status = if response.get("error").is_some()
         || response["result"]["isError"].as_bool().unwrap_or(false)
     {
@@ -170,9 +174,10 @@ async fn run_connector_mcp(
         "ok"
     };
     let (wait_status, turn_id, error) = activity::details(&tool_name, &response);
-    activity::record(
+    activity::record_route(
         state,
         connector["connector_id"].as_str().unwrap_or(""),
+        bound_route.as_ref(),
         Activity {
             method: &method,
             tool_name: &tool_name,

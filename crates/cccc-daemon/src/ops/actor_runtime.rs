@@ -27,6 +27,16 @@ pub fn apply(
         .ok_or_else(|| OpError::new("not_found", format!("actor not found: {actor_id}")))?;
     // Configuration may already name a different backend. Lifecycle ownership
     // comes from the registries, not from the next launch configuration.
+    if stored_actor.runtime == ActorRuntime::WebModel
+        && matches!(kind, "actor.stop" | "actor.restart" | "actor.new_session")
+    {
+        cccc_core::web_model_connectors::interrupt_automatic_pairings(
+            home,
+            &group.group_id,
+            Some(actor_id),
+        )
+        .map_err(OpError::io)?;
+    }
     if kind == "actor.stop" {
         return stop_registered(group, actor_id);
     }

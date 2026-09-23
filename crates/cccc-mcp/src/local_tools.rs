@@ -13,6 +13,42 @@ pub async fn call(
     name: &str,
     args: Map<String, Value>,
 ) -> Result<Value, ToolCallError> {
+    let file_action = match name {
+        "cccc_file" => {
+            if [
+                "to",
+                "text",
+                "mode",
+                "insight",
+                "dst_group_id",
+                "dst_instance_id",
+                "idempotency_key",
+            ]
+            .iter()
+            .any(|key| args.contains_key(*key))
+            {
+                return Err("cccc_file does not accept delivery arguments; use cccc_file_send to send an attachment".into());
+            }
+            let action = match args.get("action") {
+                None => "read",
+                Some(Value::String(action)) => action.as_str(),
+                Some(_) => return Err("file action must be read, info or blob_path".into()),
+            };
+            if !matches!(action, "read" | "info" | "blob_path") {
+                return Err(
+                    "cccc_file only reads files; use cccc_file_send to send an attachment".into(),
+                );
+            }
+            Some(action)
+        }
+        "cccc_file_send" => {
+            if args.contains_key("action") {
+                return Err("cccc_file_send sends an attachment and does not accept action; use cccc_file for reads".into());
+            }
+            Some("send")
+        }
+        _ => None,
+    };
     let root = scope(client, &args).await?;
     let payload = match name {
         "cccc_repo" | "cccc_repo_edit" => {
@@ -31,7 +67,16 @@ pub async fn call(
         "cccc_code_exec" => crate::code_mode::start(home, client, &root, &args).await?,
         "cccc_code_wait" => crate::code_mode::wait(home, client, &args).await?,
         "cccc_apply_patch" => apply_patch(&root, &args).await?,
-        "cccc_file" => return file(home, client, &root, &args).await,
+        "cccc_file" | "cccc_file_send" => {
+            return file(
+                home,
+                client,
+                &root,
+                &args,
+                file_action.expect("file action"),
+            )
+            .await;
+        }
         _ => return Err(format!("unsupported local tool: {name}").into()),
     };
     Ok(if matches!(name, "cccc_code_exec" | "cccc_code_wait") {
@@ -216,11 +261,8 @@ async fn file(
     client: &DaemonClient,
     root: &Path,
     args: &Map<String, Value>,
+    action: &str,
 ) -> Result<Value, ToolCallError> {
-    let action = action(args);
-    if !matches!(action, "read" | "info" | "blob_path" | "send") {
-        return Err(format!("unsupported file action: {action}").into());
-    }
     let raw = first_non_blank(args, &["path", "rel_path"]).ok_or("path is required")?;
     if args.contains_key("dst_instance_id") {
         if action != "send" {
@@ -267,6 +309,7 @@ async fn file(
         request.remove("mode");
         request.insert("message_mode".into(), Value::String(message_mode));
         crate::argument_normalization::normalize_message_author(&mut request);
+        crate::argument_normalization::normalize_recipients(&mut request);
         if request
             .get("dst_group_id")
             .and_then(Value::as_str)

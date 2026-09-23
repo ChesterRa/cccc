@@ -172,7 +172,60 @@ pub async fn handle_request_for_actor(
         home,
         &client,
         request,
-        Some(RequestContext { group_id, actor_id }),
+        Some(RequestContext {
+            group_id,
+            actor_id,
+            binding: None,
+        }),
+    )
+    .await
+}
+
+/// Fixed shared-connector catalog; discovery must not depend on which Actor's
+/// conversation happens to make the request.
+pub fn web_model_catalog() -> Vec<Value> {
+    let mut catalog = tools::catalog()
+        .into_iter()
+        .filter(|t| {
+            t["name"]
+                .as_str()
+                .is_some_and(|name| cccc_core::web_model_tool_names().any(|n| n == name))
+        })
+        .collect();
+    hide_disabled_code_mode_tools(&mut catalog);
+    describe_paired_identity(&mut catalog);
+    catalog
+}
+
+pub(crate) fn describe_paired_identity(catalog: &mut [Value]) {
+    for tool in catalog {
+        let actor_is_target = tool["name"] == "cccc_actor";
+        if let Some(properties) = tool["inputSchema"]["properties"].as_object_mut() {
+            if let Some(group) = properties.get_mut("group_id") {
+                group["description"] = Value::String("The paired CCCC Group is supplied by the connector. Omit this field; a caller cannot change the Group with this argument.".into());
+            }
+            if !actor_is_target && let Some(actor) = properties.get_mut("actor_id") {
+                actor["description"] = Value::String("The paired CCCC Actor is supplied by the connector. Omit this field; a caller cannot change its identity with this argument.".into());
+            }
+        }
+    }
+}
+
+pub async fn handle_request_for_binding(
+    home: &HomeLayout,
+    request: &Value,
+    binding: &Value,
+) -> Value {
+    let client = DaemonClient::new(home.clone());
+    handle(
+        home,
+        &client,
+        request,
+        Some(RequestContext {
+            group_id: binding["group_id"].as_str().unwrap_or_default(),
+            actor_id: binding["actor_id"].as_str().unwrap_or_default(),
+            binding: Some(binding),
+        }),
     )
     .await
 }
@@ -181,6 +234,7 @@ pub async fn handle_request_for_actor(
 pub(crate) struct RequestContext<'a> {
     group_id: &'a str,
     actor_id: &'a str,
+    binding: Option<&'a Value>,
 }
 
 async fn handle(
@@ -280,7 +334,16 @@ pub(crate) async fn visible_tools_for_actor(
     group_id: &str,
     actor_id: &str,
 ) -> Vec<Value> {
-    visible_tools_with_context(home, client, Some(RequestContext { group_id, actor_id })).await
+    visible_tools_with_context(
+        home,
+        client,
+        Some(RequestContext {
+            group_id,
+            actor_id,
+            binding: None,
+        }),
+    )
+    .await
 }
 
 async fn visible_tools_with_context(

@@ -3,12 +3,11 @@ use axum::extract::{Query, State};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use cccc_contracts::{ActorRuntime, utc_now};
+use cccc_contracts::ActorRuntime;
 use cccc_core::GroupStore;
 use cccc_core::integration_state;
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
-use std::fs;
+use serde_json::{Value, json};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -29,8 +28,6 @@ struct SessionQuery {
     inspect: bool,
     #[serde(default)]
     mode: String,
-    #[serde(default)]
-    viewer_mode: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -44,6 +41,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/web-model/browser-session", get(info))
         .route("/api/v1/web-model/browser-session/open", post(open))
         .route("/api/v1/web-model/browser-session/close", post(close))
+        .route("/api/v1/web-model/browser-session/reload", post(reload))
         .route(
             "/api/v1/web-model/browser-session/bind-current",
             post(bind_current),
@@ -91,6 +89,17 @@ pub(super) async fn ensure_open_for_actor(
     height: u32,
 ) -> Result<Value, ApiError> {
     validate_actor(state, group_id, actor_id)?;
+    let group = GroupStore::new(state.home.clone())
+        .map_err(io_error)?
+        .load(group_id)
+        .map_err(io_error)?;
+    let generation = cccc_core::actors::generation_identity(
+        group
+            .actors
+            .iter()
+            .find(|a| a.id == actor_id)
+            .ok_or_else(|| ApiError::not_found("Web Model Actor was removed"))?,
+    );
     let provider = super::web_model_connector_store::for_actor(state, group_id, actor_id)
         .and_then(|item| item["provider"].as_str().map(str::to_owned))
         .unwrap_or_else(|| "chatgpt".into());
@@ -99,18 +108,28 @@ pub(super) async fn ensure_open_for_actor(
     let profile = browser_profile_path(state.home.root(), group_id, actor_id)?;
     state
         .browser_surfaces
-        .ensure_open_system(&key(group_id, actor_id), &profile, &open_url, width, height)
+        .ensure_open_shared_actor(
+            &key(group_id, actor_id),
+            &profile,
+            &open_url,
+            (width, height),
+            &generation,
+        )
         .await
         .map_err(|error| ApiError::bad(format!("{error:#}")))?;
     let session_key = key(group_id, actor_id);
     // An existing surface may be midway through sign-in or navigation. Opening
     // its viewer must not send it away from that page to the saved conversation.
-    let ready = state
+    let readiness = state
         .browser_surfaces
         .prompt_readiness(&session_key)
         .await
-        .is_ok_and(|readiness| readiness["ready"] == true);
-    if !ready {
+        .unwrap_or_default();
+    if readiness["ready"] != true
+        || readiness["composer_chars"].as_u64().unwrap_or_default() > 0
+        || readiness["composer_has_attachments"] == true
+        || readiness["running"] == true
+    {
         return Ok(state.browser_surfaces.info(&session_key).await);
     }
     match target["kind"].as_str() {
@@ -146,6 +165,8 @@ async fn close(State(state): State<AppState>, Json(body): Json<Value>) -> ApiRes
     let group_id = required(&body, "group_id")?;
     let actor_id = required(&body, "actor_id")?;
     validate_actor(&state, &group_id, &actor_id)?;
+    require_stopped(&state, &group_id, &actor_id)?;
+    let _control = super::web_model_delivery::control_guard(&group_id, &actor_id)?;
     state
         .browser_surfaces
         .close(&key(&group_id, &actor_id))
@@ -154,63 +175,84 @@ async fn close(State(state): State<AppState>, Json(body): Json<Value>) -> ApiRes
     payload(&state, &group_id, &actor_id, false).await
 }
 
+// Opening a proposed conversation does not authorize it. Pair and confirm it
+// separately; never let a URL edit silently move an existing Actor binding.
 async fn bind_current(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     let actor_id = required(&body, "actor_id")?;
     validate_actor(&state, &group_id, &actor_id)?;
-    let clear = body.get("clear").and_then(Value::as_bool).unwrap_or(false);
-    let current = state
-        .browser_surfaces
-        .info(&key(&group_id, &actor_id))
-        .await;
-    let mut url = body
-        .get("conversation_url")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_owned();
-    if url.is_empty() {
-        url = current["url"].as_str().unwrap_or("").to_owned();
-    }
-    let new_chat = body
-        .get("new_chat")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let target = if clear {
-        json!({})
-    } else if new_chat {
-        let provider = super::web_model_connector_store::for_actor(&state, &group_id, &actor_id)
-            .and_then(|item| item["provider"].as_str().map(str::to_owned))
-            .unwrap_or_else(|| "chatgpt".into());
-        json!({"state":"new_chat_armed","kind":"new_chat","url":provider_url(&provider),"saved_at":utc_now(),"next_delivery":"new_chat"})
+    let _control = super::web_model_delivery::control_guard(&group_id, &actor_id)?;
+    require_stopped(&state, &group_id, &actor_id)?;
+    let url = if body["new_chat"] == true {
+        "https://chatgpt.com/".to_owned()
     } else {
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            return Err(ApiError::bad("a browser conversation URL is required"));
-        }
-        if is_chatgpt_url(&url) {
-            url = normalized_chatgpt_conversation_url(&url).ok_or_else(|| {
-                ApiError::bad(
-                    "ChatGPT is still assigning the final conversation URL; wait for a stable /c/... address and save again",
-                )
-            })?;
-        }
-        json!({"state":"bound_existing_chat","kind":"existing_chat","url":url,"saved_at":utc_now(),"next_delivery":"existing_chat"})
+        cccc_core::web_model_connectors::conversation_url(
+            body["conversation_url"].as_str().unwrap_or_default(),
+        )
+        .map_err(io_error)?
     };
-    let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
-    integration_state::group_update(&store, &group_id, TARGETS_KEY, |value| {
-        let targets = ensure_object(value);
-        if clear {
-            targets.remove(&actor_id);
-        } else {
-            targets.insert(actor_id.clone(), target);
-        }
-        Ok(())
-    })
-    .map_err(io_error)?;
-    if !clear && current["active"].as_bool().unwrap_or(false) {
-        super::web_model_delivery::ensure_worker(state.clone(), group_id.clone(), actor_id.clone())
-            .await;
+    ensure_open_for_actor(&state, &group_id, &actor_id, 1366, 900).await?;
+    let key = key(&group_id, &actor_id);
+    let readiness = state
+        .browser_surfaces
+        .prompt_readiness(&key)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    if readiness["composer_chars"].as_u64().unwrap_or_default() > 0
+        || readiness["composer_has_attachments"] == true
+        || readiness["running"] == true
+    {
+        return Err(ApiError::bad(
+            "Send or clear the existing draft before opening another conversation",
+        ));
     }
+    state
+        .browser_surfaces
+        .navigate_to_url(&key, &url)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    // A proposed URL is only a startup destination, never routing authority.
+    // Keep it across restarts without overwriting historical delivery evidence.
+    if super::web_model_connector_store::for_actor(&state, &group_id, &actor_id).is_none() {
+        let groups = GroupStore::new(state.home.clone()).map_err(io_error)?;
+        integration_state::group_update(&groups, &group_id, TARGETS_KEY, |targets| {
+            if !targets.is_object() {
+                *targets = json!({});
+            }
+            if !targets[&actor_id].is_object() {
+                targets[&actor_id] = json!({});
+            }
+            targets[&actor_id]["setup_url"] = json!(url);
+            Ok(())
+        })
+        .map_err(io_error)?;
+    }
+    payload(&state, &group_id, &actor_id, false).await
+}
+
+fn require_stopped(state: &AppState, group_id: &str, actor_id: &str) -> Result<(), ApiError> {
+    let group = GroupStore::new(state.home.clone())
+        .map_err(io_error)?
+        .load(group_id)
+        .map_err(io_error)?;
+    if group.actors.iter().any(|a| a.id == actor_id && a.enabled) {
+        return Err(ApiError::bad(
+            "Stop this Actor before changing its browser window",
+        ));
+    }
+    Ok(())
+}
+
+async fn reload(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
+    let group_id = required(&body, "group_id")?;
+    let actor_id = required(&body, "actor_id")?;
+    validate_actor(&state, &group_id, &actor_id)?;
+    let _control = super::web_model_delivery::control_guard(&group_id, &actor_id)?;
+    state
+        .browser_surfaces
+        .command(&key(&group_id, &actor_id), &json!({"t":"refresh"}))
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
     payload(&state, &group_id, &actor_id, false).await
 }
 
@@ -255,8 +297,13 @@ async fn upgrade(
     let actor_id = required_identifier(&query.actor_id, "actor_id")?;
     validate_actor(&state, group_id, actor_id)?;
     let session_key = key(group_id, actor_id);
-    let vnc = query.mode.trim().eq_ignore_ascii_case("vnc");
-    let viewer_mode = query.viewer_mode;
+    if query.mode.trim().eq_ignore_ascii_case("vnc") {
+        return Err(ApiError::forbidden(
+            "Use global Web Model settings for the shared browser desktop",
+        ));
+    }
+    let vnc = false;
+    let viewer_mode = "screencast".to_owned();
     if state.web_mode.is_read_only() {
         return Ok(ws.on_upgrade(|socket| async move {
             crate::readonly::reject_socket(
@@ -293,8 +340,7 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
     let session_key = key(group_id, actor_id);
     let mut surface = state.browser_surfaces.info(&session_key).await;
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
-    let targets = integration_state::group_get(&store, group_id, TARGETS_KEY).map_err(io_error)?;
-    let mut target = targets.get(actor_id).cloned().unwrap_or_else(|| json!({}));
+    let mut target = super::web_model_delivery_state::target(state, group_id, actor_id)?;
     let preferences = integration_state::group_get(&store, group_id, DELIVERY_PREFERENCES_KEY)
         .map_err(io_error)?;
     let stored_preference = preferences
@@ -331,6 +377,7 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
     } else {
         json!({"ready":false,"login_required":false,"tab_url":surface["url"]})
     };
+    surface["viewer"] = json!({"kind":"screencast"});
     let metadata = surface
         .get("metadata")
         .cloned()
@@ -639,7 +686,8 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
             .expect("browser session details"),
         );
     Ok(success(json!({
-        "browser_session":browser,"browser_surface":surface,"health_snapshot":health
+        "browser_session":browser,"browser_surface":surface,"health_snapshot":health,
+        "pairing":pairing_state(state,group_id,actor_id)?
     })))
 }
 
@@ -679,25 +727,58 @@ fn validate_actor(state: &AppState, group_id: &str, actor_id: &str) -> Result<()
 }
 
 fn browser_profile_path(home: &Path, group_id: &str, actor_id: &str) -> Result<PathBuf, ApiError> {
-    let group_id = safe_segment(group_id)?;
-    let actor_id = safe_segment(actor_id)?;
-    let shared = home.join("state/web_model_browser/_shared/chatgpt_web/chrome_profile");
-    let legacy = home
-        .join("browser-profiles/web-model")
-        .join(group_id)
-        .join(actor_id);
-    if directory_has_content(&shared) || !directory_has_content(&legacy) {
-        Ok(shared)
-    } else {
-        Ok(legacy)
-    }
+    safe_segment(group_id)?;
+    safe_segment(actor_id)?;
+    Ok(home.join("state/web_model_browser/_shared/chatgpt_web/chrome_profile"))
 }
 
-fn directory_has_content(path: &Path) -> bool {
-    fs::read_dir(path)
-        .ok()
-        .and_then(|mut entries| entries.next())
-        .is_some()
+fn pairing_state(state: &AppState, group: &str, actor: &str) -> Result<Value, ApiError> {
+    let groups = GroupStore::new(state.home.clone()).map_err(io_error)?;
+    let doc = groups.load(group).map_err(io_error)?;
+    let active = doc.running
+        && !matches!(
+            doc.state,
+            cccc_contracts::GroupState::Paused | cccc_contracts::GroupState::Stopped
+        );
+    let enabled = doc
+        .actors
+        .iter()
+        .find(|a| a.id == actor)
+        .is_some_and(|a| a.enabled);
+    let connector = super::web_model_connector_store::load(state)?
+        .into_iter()
+        .find(|c| c["revoked"] != true);
+    let Some(connector) = connector else {
+        return Ok(json!({"state":"connector_required","actor_enabled":enabled}));
+    };
+    let pair = cccc_core::web_model_connectors::pairing_for_actor(&connector, group, actor);
+    let binding = super::web_model_connector_store::for_actor(state, group, actor);
+    let groups = GroupStore::new(state.home.clone()).map_err(io_error)?;
+    let saved = integration_state::group_get(&groups, group, TARGETS_KEY).map_err(io_error)?;
+    let expired = pair.as_ref().is_some_and(|p| {
+        matches!(
+            p["state"].as_str(),
+            Some("waiting" | "awaiting_confirmation")
+        ) && p["expires_at_ms"]
+            .as_i64()
+            .is_none_or(|t| t <= chrono::Utc::now().timestamp_millis())
+    });
+    let interrupted = pair.as_ref().is_some_and(|p| {
+        matches!(
+            p["state"].as_str(),
+            Some("waiting" | "awaiting_confirmation")
+        ) && !super::web_model_pairing::is_connecting(
+            state,
+            p["pairing_id"].as_str().unwrap_or_default(),
+        )
+    });
+    Ok(
+        json!({"state":if expired {json!("failed")} else if interrupted { json!("interrupted") } else { pair.as_ref().map(|p|p["state"].clone()).unwrap_or_else(||json!(if binding.is_some(){"bound"}else if enabled && active {"waiting_to_connect"}else{"unpaired"})) },
+        "error_code":if expired {json!("pairing_timeout")} else if interrupted {json!("pairing_interrupted")} else {pair.as_ref().map(|p|p["error_code"].clone()).unwrap_or(Value::Null)},
+        "previous_url":saved[actor]["url"],
+        "pairing_id":pair.as_ref().map(|p|&p["pairing_id"]),"expires_at_ms":pair.as_ref().map(|p|&p["expires_at_ms"]),
+        "url":binding.as_ref().map(|b|&b["url"]),"actor_enabled":enabled}),
+    )
 }
 
 fn provider_url(provider: &str) -> &'static str {
@@ -710,6 +791,11 @@ fn provider_url(provider: &str) -> &'static str {
 }
 
 fn browser_open_url(target: &Value, provider_url: &str) -> String {
+    if target["kind"] == "none" {
+        let setup = target["setup_url"].as_str().unwrap_or_default();
+        return cccc_core::web_model_connectors::conversation_url(setup)
+            .unwrap_or_else(|_| provider_url.to_owned());
+    }
     let stored = target["url"].as_str().map(str::trim).unwrap_or_default();
     let stored_is_http =
         reqwest::Url::parse(stored).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
@@ -763,19 +849,45 @@ fn dimension(body: &Value, key: &str, default: u32, min: u32, max: u32) -> u32 {
         .clamp(min, max)
 }
 
-fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
-    if !value.is_object() {
-        *value = json!({});
-    }
-    value.as_object_mut().expect("object initialized")
-}
-
 fn io_error(error: io::Error) -> ApiError {
     ApiError::bad(error.to_string())
 }
 
 #[cfg(test)]
 mod safe_segment_tests {
+    #[test]
+    fn unpaired_startup_destination_never_uses_historical_delivery_url() {
+        let fallback = "https://chatgpt.com/";
+        assert_eq!(
+            super::browser_open_url(
+                &serde_json::json!({"kind":"none","url":"https://chatgpt.com/c/old"}),
+                fallback
+            ),
+            fallback
+        );
+        assert_eq!(
+            super::browser_open_url(
+                &serde_json::json!({"kind":"none","setup_url":"https://chatgpt.com/c/chosen"}),
+                fallback
+            ),
+            "https://chatgpt.com/c/chosen"
+        );
+        assert_eq!(
+            super::browser_open_url(
+                &serde_json::json!({"kind":"none","setup_url":"https://other.example/c/a"}),
+                fallback
+            ),
+            fallback
+        );
+        assert_eq!(
+            super::browser_open_url(
+                &serde_json::json!({"kind":"existing_chat","url":"https://chatgpt.com/c/bound","setup_url":"https://chatgpt.com/c/chosen"}),
+                fallback
+            ),
+            "https://chatgpt.com/c/bound"
+        );
+    }
+
     use super::safe_segment;
 
     #[test]
@@ -788,3 +900,7 @@ mod safe_segment_tests {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "web_model_browser/draft_tests.rs"]
+mod draft_tests;

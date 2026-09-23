@@ -814,3 +814,562 @@ test("explicit Weixin login completes once and a failed bridge start remains ret
     ),
   ).toBe(2);
 });
+
+// Shared login setup must not trigger runtime work; pairing stays Actor-scoped.
+for (const [lang, theme, width] of [
+  ["en", "light", 1280],
+  ["ja", "dark", 390],
+]) {
+  test(`Web Model automatic pairing preserves drafts and offers explicit retry (${lang}, ${width})`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: width === 1280 ? 900 : 667 });
+    await page.goto(
+      `/ui/tests/browser/web-model-setup.html?lang=${lang}&theme=${theme}&scale=${width === 390 ? 125 : 100}`,
+    );
+    await expect(page.locator("section")).toHaveCount(2);
+    expect(await page.evaluate(() => webModelProbe.requests.every((r) => r.method === "GET"))).toBe(
+      true,
+    );
+    const sharedLabels = await page.evaluate(async () => {
+      const { default: i } = await import("/ui/src/i18n/index.ts");
+      return i.getResourceBundle(i.language, "settings").webModelShared;
+    });
+    await page.getByRole("button", { name: sharedLabels.open, exact: true }).click();
+    const viewer = page.locator("[data-browser-input-relay]").locator("..");
+    await expect.poll(async () => (await viewer.boundingBox())?.height || 0).toBeGreaterThan(300);
+    await page.getByRole("button", { name: sharedLabels.close, exact: true }).click();
+    await expect(viewer).toHaveCount(0);
+    await page.getByRole("button", { name: "Actor A", exact: true }).click();
+    const input = page.locator("input");
+    await expect(input).toBeVisible();
+    await input.fill("https://chatgpt.com/c/draft");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => webModelProbe.requests.filter((r) => r.path.endsWith("/browser-session")).length,
+        ),
+      )
+      .toBeGreaterThan(1);
+    await expect(input).toHaveValue("https://chatgpt.com/c/draft");
+    const labels = await page.evaluate(async () => {
+      const { default: i } = await import("/ui/src/i18n/index.ts");
+      return i.getResourceBundle(i.language, "settings").webModelActor;
+    });
+    await page.getByRole("button", { name: labels.open, exact: true }).click();
+    await expect.poll(async () => (await viewer.boundingBox())?.height || 0).toBeGreaterThan(300);
+    await expect(page.getByRole("button", { name: labels.retry, exact: true })).toHaveCount(0);
+    await expect(page.locator("textarea[readonly]")).toHaveCount(0);
+    // Actor startup is the trigger; opening this settings page only reads status.
+    await page.evaluate(() => {
+      webModelProbe.state = "waiting";
+      webModelProbe.enabled = true;
+    });
+    await expect(page.getByText(labels.states.waiting, { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: labels.cancel, exact: true })).toBeVisible();
+    await page.evaluate(() => {
+      webModelProbe.state = "failed";
+      webModelProbe.errorCode = "pairing_target_changed";
+    });
+    await expect(page.getByRole("alert")).toHaveText(labels.errors.pairing_target_changed);
+    await expect(input).toHaveCount(0);
+    await page.getByRole("button", { name: labels.retry, exact: true }).click();
+    await page.evaluate(() => webModelProbe.receive());
+    await expect(page.getByText(labels.done, { exact: true })).toBeVisible();
+    expect(
+      await page.evaluate(() =>
+        webModelProbe.requests.filter((r) => r.path.endsWith("/pairing")).map((r) => r.body.action),
+      ),
+    ).toEqual(["connect"]);
+    expect(
+      await page.evaluate(() =>
+        webModelProbe.requests
+          .filter((r) => r.path.endsWith("/pairing"))
+          .every((r) => r.body.group_id === "g_fixture" && r.body.actor_id === "alpha"),
+      ),
+    ).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+      true,
+    );
+    expect(await page.evaluate(() => webModelProbe.errors)).toEqual([]);
+    await page.evaluate(() => {
+      webModelProbe.enabled = false;
+      webModelProbe.state = "unpaired";
+      webModelProbe.boundUrl = "";
+    });
+    await page.getByRole("button", { name: "Actor B", exact: true }).click();
+    await expect(input).toHaveValue("");
+    await expect
+      .poll(() => page.evaluate(() => webModelProbe.requests.at(-1)?.path))
+      .toBe("/api/v1/web-model/browser-session");
+  });
+}
+
+for (const [lang, theme, width] of [
+  ["en", "light", 1280],
+  ["zh", "light", 390],
+  ["ja", "dark", 390],
+]) {
+  test(`Web Model connector initialization protects credentials and allows read retry (${lang})`, async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/ui/tests/browser/web-model-setup.html?lang=${lang}&theme=${theme}`);
+    await page.getByRole("button", { name: "Actor A", exact: true }).click();
+    const labels = await page.evaluate(async () => {
+      const original = window.fetch;
+      window.connectorReadProbe = { reads: 0, writes: 0, resolve: null };
+      window.fetch = async (...args) => {
+        if (String(args[0]).endsWith("/connectors")) {
+          if (!args[1]?.method || args[1].method === "GET") {
+            connectorReadProbe.reads++;
+            return new Promise((resolve) => {
+              connectorReadProbe.resolve = (body) => resolve(Response.json(body));
+            });
+          }
+          connectorReadProbe.writes++;
+        }
+        return original(...args);
+      };
+      const { default: i } = await import("/ui/src/i18n/index.ts");
+      return {
+        shared: i.getResourceBundle(i.language, "settings").webModelShared,
+        common: i.getResourceBundle(i.language, "common"),
+      };
+    });
+    await page.getByRole("button", { name: "Global", exact: true }).click();
+    const create = page.getByRole("button", { name: labels.shared.create, exact: true });
+    await expect(page.getByRole("status")).toHaveText(labels.common.loading);
+    await expect(create).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: labels.shared.open, exact: true }),
+    ).toBeDisabled();
+    await create.evaluate((button) => button.click());
+    expect(await page.evaluate(() => connectorReadProbe.writes)).toBe(0);
+    await page.evaluate(() =>
+      connectorReadProbe.resolve({
+        ok: false,
+        error: { code: "unavailable", message: "Read failed" },
+      }),
+    );
+    await expect(page.getByRole("alert")).toHaveText("Read failed");
+    await expect(create).toBeDisabled();
+    const retry = page.getByRole("button", { name: labels.common.retry, exact: true });
+    await retry.focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.evaluate(() => connectorReadProbe.reads)).toBe(2);
+    await page.evaluate(() =>
+      connectorReadProbe.resolve({
+        ok: true,
+        result: { connectors: [{ connector_id: "shared", bound_actor_count: 2 }] },
+      }),
+    );
+    await expect(create).toHaveCount(0);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.locator("summary").click();
+    await page.getByRole("button", { name: labels.shared.rotate, exact: true }).click();
+    expect(await page.evaluate(() => connectorReadProbe.writes)).toBe(0);
+    await page.getByRole("button", { name: labels.shared.confirm, exact: true }).click();
+    expect(await page.evaluate(() => connectorReadProbe.writes)).toBe(1);
+    await page.getByRole("button", { name: labels.shared.copy, exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: labels.shared.copied, exact: true }),
+    ).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      "https://fixture.invalid/mcp/shared/token/synthetic",
+    );
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+      true,
+    );
+    expect(await page.evaluate(() => webModelProbe.errors)).toEqual([]);
+  });
+}
+
+for (const surface of ["create-actor", "edit-actor"]) {
+  test(`Web Model effective configuration ${surface}`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 667 });
+    await page.goto(
+      `/ui/tests/browser/configuration-work.html?surface=${surface}&runtime=web_model&lang=en&theme=dark`,
+    );
+    await page.locator("#open-configuration").click();
+    const dialog = page.getByRole("dialog");
+    await expect(
+      dialog.getByRole("tab", { name: "Environment variables", exact: true }),
+    ).toHaveCount(0);
+    await expect(dialog.getByText("Command", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("tab", { name: "Capabilities", exact: true })).toBeVisible();
+    await dialog.getByRole("tab", { name: "Runtime profile tools", exact: true }).click();
+    await expect(
+      dialog.getByText(
+        "Reuse the runtime type and default capabilities. ChatGPT login, conversation and pairing are configured separately.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() =>
+        configurationWorkProbe.requests.some((r) => r.includes("env_private")),
+      ),
+    ).toBe(false);
+    await expect(dialog.getByText("Actor Notes", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+      true,
+    );
+  });
+}
+
+test("Web Model Profile ignores hidden launch drafts and retains capabilities", async ({
+  page,
+}) => {
+  await page.goto(
+    "/ui/tests/browser/configuration-work.html?surface=runtime-profiles&lang=en&theme=light",
+  );
+  await page.getByRole("button", { name: "New Profile", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator("input").first().fill("Browser assistant");
+  await dialog.getByPlaceholder("SECRET_KEY=value", { exact: true }).fill("not valid env syntax");
+  const runtime = dialog.getByRole("combobox", { name: "Runtime", exact: true });
+  await runtime.click();
+  await page.getByRole("option", { name: "ChatGPT Web Model", exact: true }).click();
+  await expect(dialog.getByText("Command Override (optional)", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByText("Submit Mode", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByPlaceholder("SECRET_KEY=value", { exact: true })).toHaveCount(0);
+  await runtime.click();
+  await page.getByRole("option", { name: "Codex CLI", exact: true }).click();
+  await expect(dialog.getByPlaceholder("SECRET_KEY=value", { exact: true })).toHaveValue(
+    "not valid env syntax",
+  );
+  await runtime.click();
+  await page.getByRole("option", { name: "ChatGPT Web Model", exact: true }).click();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  const writes = await page.evaluate(() => configurationWorkProbe.writes);
+  expect(writes).toHaveLength(1);
+  expect(writes[0].body.profile).toMatchObject({
+    runtime: "web_model",
+    command: "",
+    env: {},
+    capability_defaults: { autoload_capabilities: [] },
+  });
+  expect(await page.evaluate(() => configurationWorkProbe.errors)).toEqual([]);
+});
+
+for (const [lang, theme, width, height] of [
+  ["en", "light", 1280, 900],
+  ["zh", "light", 390, 667],
+  ["ja", "dark", 320, 568],
+]) {
+  test(`message delivery recovery is reachable without settings (${lang}, ${width})`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height });
+    await page.goto(
+      `/ui/tests/browser/web-model-setup.html?surface=recovery&lang=${lang}&theme=${theme}&scale=${width < 500 ? 125 : 100}`,
+    );
+    const labels = await page.evaluate(async () => {
+      const { default: i, i18nReady } = await import("/ui/src/i18n/index.ts");
+      await i18nReady;
+      return i.getResourceBundle(i.language, "chat").webModelDelivery.recovery;
+    });
+    const open = page.getByRole("button", { name: labels.open, exact: true });
+    await expect(open).toBeVisible();
+    expect(await page.evaluate(() => webModelProbe.requests.length)).toBe(0);
+    await open.click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("P0");
+    const resume = dialog.getByRole("button", { name: labels.resume, exact: true });
+    await expect(resume).toBeEnabled();
+    const box = await resume.boundingBox();
+    expect(box.y + box.height).toBeLessThanOrEqual(height);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    );
+    expect(await page.evaluate(() => webModelProbe.requests.every((r) => r.method === "GET"))).toBe(
+      true,
+    );
+    await page.evaluate(() => (webModelProbe.resumeBlocked = true));
+    await resume.click();
+    await expect(dialog.getByRole("alert")).toContainText("Send or clear");
+    await page.evaluate(() => (webModelProbe.resumeBlocked = false));
+    await resume.click();
+    await expect(dialog.getByRole("status").filter({ hasText: labels.resolved })).toBeVisible();
+    await expect(resume).toBeDisabled();
+    expect(
+      await page.evaluate(() =>
+        webModelProbe.requests.filter((r) => r.method === "POST").map((r) => r.body),
+      ),
+    ).toEqual([
+      { group_id: "g_fixture", actor_id: "P0", delivery_id: "batch-one" },
+      { group_id: "g_fixture", actor_id: "P0", delivery_id: "batch-one" },
+    ]);
+    expect(
+      await page.evaluate(() =>
+        webModelProbe.commands.some((c) =>
+          ["navigate", "refresh", "text", "key", "click"].includes(c.t),
+        ),
+      ),
+    ).toBe(false);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(open).toBeFocused();
+  });
+}
+
+for (const [lang, width] of [
+  ["en", 1280],
+  ["zh", 390],
+  ["ja", 320],
+]) {
+  test(`Web Model replacement preserves the binding until verified (${lang}, ${width})`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: width === 1280 ? 900 : 568 });
+    await page.goto(
+      `/ui/tests/browser/web-model-setup.html?lang=${lang}&scale=${width === 320 ? 125 : 100}`,
+    );
+    await page.waitForFunction(() => Boolean(window.webModelProbe));
+    const labels = await page.evaluate(async () => {
+      const { default: i } = await import("/ui/src/i18n/index.ts");
+      webModelProbe.state = "bound";
+      webModelProbe.enabled = true;
+      webModelProbe.active = true;
+      webModelProbe.boundUrl = "https://chatgpt.com/c/alpha";
+      return i.getResourceBundle(i.language, "settings").webModelActor;
+    });
+    await page.getByRole("button", { name: "Actor A", exact: true }).click();
+    await expect(page.getByText(labels.done, { exact: true })).toBeVisible();
+    await expect(page.locator("[data-browser-input-relay]")).toHaveCount(0);
+    await expect(page.getByText(labels.pairHint, { exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: labels.changeConversation, exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: labels.useConversation, exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: labels.stop, exact: true }).click();
+    await page.locator("input").fill("https://chatgpt.com/c/beta");
+    await page.getByRole("button", { name: labels.openUrl, exact: true }).click();
+    await expect(page.locator("[data-browser-input-relay]")).toBeVisible();
+    expect(await page.evaluate(() => webModelProbe.boundUrl)).toBe("https://chatgpt.com/c/alpha");
+    expect(
+      await page.evaluate(() => webModelProbe.requests.filter((r) => r.path.endsWith("/pairing"))),
+    ).toEqual([]);
+    // Preview is not authority. A draft rejection also leaves the old route intact.
+    await page.evaluate(() => {
+      webModelProbe.rejectConnect = true;
+    });
+    await page.getByRole("button", { name: labels.useConversation, exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveText(labels.errors.pairing_composer_occupied);
+    expect(await page.evaluate(() => webModelProbe.boundUrl)).toBe("https://chatgpt.com/c/alpha");
+    await page.evaluate(() => {
+      webModelProbe.rejectConnect = false;
+    });
+    await page.getByRole("button", { name: labels.useConversation, exact: true }).click();
+    await expect(page.getByText(labels.states.waiting, { exact: true })).toBeVisible();
+    await expect(page.getByText(labels.bindingRetained, { exact: true })).toBeVisible();
+    await page.evaluate(() => {
+      webModelProbe.state = "failed";
+      webModelProbe.errorCode = "pairing_target_changed";
+    });
+    await expect(page.getByRole("alert")).toHaveText(labels.errors.pairing_target_changed);
+    expect(await page.evaluate(() => webModelProbe.boundUrl)).toBe("https://chatgpt.com/c/alpha");
+    await page.getByRole("button", { name: labels.useConversation, exact: true }).click();
+    await page.getByRole("button", { name: labels.cancel, exact: true }).click();
+    await expect(
+      page.getByText(labels.states.replacement_cancelled, { exact: true }),
+    ).toBeVisible();
+    expect(await page.evaluate(() => webModelProbe.boundUrl)).toBe("https://chatgpt.com/c/alpha");
+    await page.getByRole("button", { name: labels.useConversation, exact: true }).click();
+    await page.evaluate(() => webModelProbe.receive());
+    await expect(page.getByText(labels.done, { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(`${labels.pairedUrl}: https://chatgpt.com/c/beta`, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: labels.useConversation, exact: true }),
+    ).toHaveCount(0);
+    expect(await page.evaluate(() => webModelProbe.enabled)).toBe(false);
+    expect(
+      await page.evaluate(() =>
+        webModelProbe.requests
+          .filter((r) => r.method !== "GET")
+          .every(
+            (r) =>
+              r.path === "/api/v1/groups/g_fixture/actors/alpha/stop" ||
+              (r.body.group_id === "g_fixture" && r.body.actor_id === "alpha"),
+          ),
+      ),
+    ).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+      true,
+    );
+    expect(await page.evaluate(() => webModelProbe.errors)).toEqual([]);
+  });
+}
+
+test("Web Model runtime shows pairing before old binding and has one targeted settings entry", async ({
+  page,
+}) => {
+  await page.goto("/ui/tests/browser/web-model-setup.html?surface=runtime&lang=zh");
+  await page.waitForFunction(() => Boolean(window.webModelProbe));
+  const labels = await page.evaluate(async () => {
+    const { default: i } = await import("/ui/src/i18n/index.ts");
+    webModelProbe.boundUrl = "https://chatgpt.com/c/alpha";
+    webModelProbe.state = "waiting";
+    return i.getResourceBundle(i.language, "settings").webModelActor;
+  });
+  await expect(page.getByText(labels.states.waiting, { exact: true })).toBeVisible();
+  await expect(page.getByText(labels.bindingRetained, { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: labels.title, exact: true })).toHaveCount(1);
+  await page.getByRole("button", { name: labels.title, exact: true }).click();
+  await expect(page.locator("output")).toHaveText("alpha/chatgpt");
+  await page.evaluate(() => {
+    webModelProbe.state = "failed";
+  });
+  await expect(page.getByText(labels.states.replacement_failed, { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => webModelProbe.requests.every((r) => r.method === "GET"))).toBe(
+    true,
+  );
+  expect(await page.evaluate(() => webModelProbe.errors)).toEqual([]);
+});
+
+test("Web Model conversation entry focuses its section and shared settings preserves the Actor draft", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 667 });
+  await page.goto(
+    "/ui/tests/browser/configuration-work.html?surface=edit-actor&runtime=web_model&focus=chatgpt&lang=zh",
+  );
+  await page.locator("#open-configuration").click();
+  const labels = await page.evaluate(async () => {
+    const { default: i } = await import("/ui/src/i18n/index.ts");
+    return {
+      actor: i.getResourceBundle(i.language, "actors"),
+      wm: i.getResourceBundle(i.language, "settings").webModelActor,
+    };
+  });
+  const section = page
+    .locator('div[tabindex="-1"]')
+    .filter({ has: page.getByRole("heading", { name: labels.wm.title, exact: true }) })
+    .last();
+  await expect(section).toBeFocused();
+  await expect(page.getByRole("heading", { name: labels.wm.title, exact: true })).toBeInViewport();
+  const notes = page.locator("textarea").first();
+  await notes.fill("Keep my unsaved Actor draft");
+  await page.getByRole("button", { name: labels.wm.sharedSettings, exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(page.getByRole("dialog")).toHaveAccessibleName("Shared settings fixture");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(notes).toHaveValue("Keep my unsaved Actor draft");
+  await expect(page.getByRole("heading", { name: labels.wm.title, exact: true })).toBeInViewport();
+  expect(await page.evaluate(() => configurationWorkProbe.writes)).toEqual([]);
+  expect(await page.evaluate(() => configurationWorkProbe.errors)).toEqual([]);
+});
+
+test("Web Model settings shortcut loads saved Actor fields and saves without changing runtime", async ({
+  page,
+}) => {
+  await page.goto("/ui/tests/browser/web-model-setup.html?surface=runtime&editor=1&lang=en");
+  const shortcut = page.getByRole("button", { name: "ChatGPT conversation", exact: true });
+  await shortcut.click();
+  const dialog = page.getByRole("dialog");
+  const runtime = dialog.getByRole("combobox", { name: "Runtime", exact: true });
+  const title = dialog.getByRole("textbox", { name: /^(alpha|beta)$/ });
+  await expect(runtime).toHaveText("ChatGPT Web Model");
+  await expect(title).toHaveValue("Web reviewer");
+  await expect(dialog.locator("input.font-mono")).toHaveCount(0);
+  await expect(
+    dialog.getByRole("heading", { name: "ChatGPT conversation", exact: true }),
+  ).toBeInViewport();
+  expect(await page.evaluate(() => webModelProbe.requests.every((r) => r.method === "GET"))).toBe(
+    true,
+  );
+  await title.fill("Updated Web reviewer");
+  // A separately saved avatar may refresh while the editor draft is open.
+  await page.evaluate(async () => {
+    const { useGroupStore } = await import("/ui/src/stores/useGroupStore.ts");
+    useGroupStore.setState((state) => ({
+      actors: state.actors.map((actor) => ({ ...actor, has_custom_avatar: true })),
+    }));
+  });
+  await expect(title).toHaveValue("Updated Web reviewer");
+  await expect(runtime).toHaveText("ChatGPT Web Model");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  const writes = await page.evaluate(() =>
+    webModelProbe.requests.filter((r) => r.method !== "GET"),
+  );
+  expect(writes).toEqual([
+    {
+      path: "/api/v1/groups/g_fixture/actors/alpha",
+      method: "POST",
+      body: { by: "user", title: "Updated Web reviewer", capability_autoload: ["pack:analysis"] },
+    },
+  ]);
+
+  // Leave another Actor's edited fields in memory, then reopen from the shortcut.
+  await page.getByRole("button", { name: "Edit CLI Actor", exact: true }).click();
+  await expect(runtime).toHaveText("Codex CLI");
+  await expect(title).toHaveValue("CLI reviewer");
+  await expect(dialog.locator("input.font-mono")).toHaveValue("codex --model fixture");
+  await title.fill("Unsaved CLI draft");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await shortcut.click();
+  await expect(runtime).toHaveText("ChatGPT Web Model");
+  await expect(title).toHaveValue("Updated Web reviewer");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Edit Web Actor", exact: true }).click();
+  await expect(runtime).toHaveText("ChatGPT Web Model");
+  await expect(title).toHaveValue("Updated Web reviewer");
+  expect(await page.evaluate(() => webModelProbe.errors)).toEqual([]);
+});
+
+for (const [lang, width] of [
+  ["en", 1280],
+  ["zh", 390],
+  ["ja", 320],
+]) {
+  test(`Web Model unpaired recovery keeps manual reconnection reachable (${lang})`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: width === 1280 ? 900 : 667 });
+    await page.goto(
+      `/ui/tests/browser/web-model-setup.html?lang=${lang}&scale=${lang === "ja" ? 125 : 100}`,
+    );
+    await page.getByRole("button", { name: "Actor A", exact: true }).click();
+    const labels = await page.evaluate(async () => {
+      const { default: i } = await import("/ui/src/i18n/index.ts");
+      return i.getResourceBundle(i.language, "settings").webModelActor;
+    });
+    await page.evaluate(() => {
+      webModelProbe.previousUrl = "https://chatgpt.com/c/saved";
+      webModelProbe.currentUrl = webModelProbe.previousUrl;
+      webModelProbe.enabled = true;
+      webModelProbe.active = true;
+      webModelProbe.pairingId = "";
+      webModelProbe.deliveryState = "completion_conflict";
+    });
+    await expect(page.getByText(labels.restoreHint, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: labels.stop, exact: true }).click();
+    const connect = page.getByRole("button", { name: labels.useConversation, exact: true });
+    await connect.scrollIntoViewIfNeeded();
+    await expect(connect).toBeEnabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    );
+    await page.screenshot({ path: testInfo.outputPath("unpaired-recovery.png") });
+    await connect.click();
+    await expect.poll(() => page.evaluate(() => webModelProbe.state)).toBe("waiting");
+    await page.evaluate(() => webModelProbe.receive());
+    await expect(
+      page.getByText(`${labels.pairedUrl}: https://chatgpt.com/c/saved`, { exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() =>
+        webModelProbe.requests.filter((r) => r.method === "POST").map((r) => r.path),
+      ),
+    ).toEqual(["/api/v1/groups/g_fixture/actors/alpha/stop", "/api/v1/web-model/pairing"]);
+    expect(await page.evaluate(() => webModelProbe.deliveryState)).toBe("completion_conflict");
+  });
+}

@@ -132,7 +132,7 @@ fn attachment_lines(event: &Event) -> Vec<String> {
         return Vec::new();
     }
     let mut lines = vec![format!(
-        "[cccc] Attachments: use cccc_file(action=\"read\", group_id=\"{}\", rel_path=...) for text; use action=\"blob_path\" for images/binary files.",
+        "[cccc] Attachments: use cccc_file(action=\"read\", group_id=\"{}\", rel_path=...) for text, PNG/JPEG/WebP images, PDF and PPTX; use action=\"info\" for other file metadata.",
         event.group_id
     )];
     for item in attachments {

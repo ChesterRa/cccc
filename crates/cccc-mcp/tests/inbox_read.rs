@@ -118,8 +118,8 @@ async fn file_send_uses_daemon_owned_preflight_before_blob_storage() {
         &home,
         &group.group_id,
         10,
-        "cccc_file",
-        json!({"action":"send","path":"note.txt","to":["user"],"mode":"mail"}),
+        "cccc_file_send",
+        json!({"path":"note.txt","to":["user"],"mode":"mail"}),
     )
     .await;
     assert_eq!(rejected["result"]["isError"], true, "{rejected}");
@@ -135,7 +135,7 @@ async fn file_send_uses_daemon_owned_preflight_before_blob_storage() {
         &home,
         &group.group_id,
         11,
-        "cccc_file",
+        "cccc_file_send",
         json!({
             "path":"note.txt","text":"attached",
             "to":["user"],"mode":"send"

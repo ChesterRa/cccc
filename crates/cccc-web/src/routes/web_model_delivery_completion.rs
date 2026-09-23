@@ -200,6 +200,36 @@ pub(super) async fn record_delivery(
     detail: &str,
     metadata: Value,
 ) {
+    if let Err(error) = try_record_delivery(
+        state,
+        group_id,
+        actor_id,
+        turn_id,
+        event_ids,
+        delivery_id,
+        delivery_state,
+        detail,
+        metadata,
+    )
+    .await
+    {
+        tracing::warn!(group_id, actor_id, turn_id, delivery_id, delivery_state, %error,
+            "Failed to record Web Model browser delivery status");
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn try_record_delivery(
+    state: &AppState,
+    group_id: &str,
+    actor_id: &str,
+    turn_id: &str,
+    event_ids: Value,
+    delivery_id: &str,
+    delivery_state: &str,
+    detail: &str,
+    metadata: Value,
+) -> Result<(), ApiError> {
     let mut browser_delivery = json!({
         "state":delivery_state,
         "detail":detail,
@@ -230,17 +260,8 @@ pub(super) async fn record_delivery(
     .as_object()
     .cloned()
     .expect("browser delivery request");
-    if let Err(error) = call(state, "web_model_browser_delivery_record", request).await {
-        tracing::warn!(
-            group_id,
-            actor_id,
-            turn_id,
-            delivery_id,
-            delivery_state,
-            %error,
-            "Failed to record Web Model browser delivery status"
-        );
-    }
+    call(state, "web_model_browser_delivery_record", request).await?;
+    Ok(())
 }
 
 struct Evidence {

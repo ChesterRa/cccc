@@ -288,14 +288,11 @@ fn legacy_profile_without_runtime_does_not_block_web_model_creation() {
         "actor_add",
         json!({"group_id":gid,"actor_id":"second-web","runtime":"web_model","by":"user"}),
     );
-    assert_eq!(
-        duplicate.error.expect("second Web Model rejected").code,
-        "chatgpt_web_model_singleton"
-    );
+    assert!(duplicate.ok, "{:?}", duplicate.error);
 }
 
 #[test]
-fn profile_switching_to_web_model_respects_the_singleton() {
+fn profile_switching_to_web_model_allows_independent_actors() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let group_a = call(&home, "group_create", json!({"title":"a"})).result["group"]["group_id"]
@@ -325,10 +322,7 @@ fn profile_switching_to_web_model_respects_the_singleton() {
         );
     }
     let two_linked = upsert("web_model");
-    assert_eq!(
-        two_linked.error.expect("two linked actors").code,
-        "chatgpt_web_model_singleton"
-    );
+    assert!(two_linked.ok, "{:?}", two_linked.error);
     call(
         &home,
         "actor_remove",
@@ -340,10 +334,7 @@ fn profile_switching_to_web_model_respects_the_singleton() {
         json!({"group_id":group_b,"actor_id":"web","runtime":"web_model","by":"user"}),
     );
     let slot_taken = upsert("web_model");
-    assert_eq!(
-        slot_taken.error.expect("slot already owned").code,
-        "chatgpt_web_model_singleton"
-    );
+    assert!(slot_taken.ok, "{:?}", slot_taken.error);
     call(
         &home,
         "actor_remove",
@@ -355,13 +346,7 @@ fn profile_switching_to_web_model_respects_the_singleton() {
         "actor_add",
         json!({"group_id":group_b,"actor_id":"second-web","runtime":"web_model","by":"user"}),
     );
-    assert_eq!(
-        duplicate
-            .error
-            .expect("profile runtime owns the slot even before restart")
-            .code,
-        "chatgpt_web_model_singleton"
-    );
+    assert!(duplicate.ok, "{:?}", duplicate.error);
 }
 
 #[test]

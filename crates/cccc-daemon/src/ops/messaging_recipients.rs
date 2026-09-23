@@ -311,7 +311,7 @@ fn require_peer_insight(
             .insert("new_side_effects".into(), Value::Bool(false));
         error.details.insert(
             "recommended_action".into(),
-            Value::String(cccc_core::peer_insight::PEER_INSIGHT_REQUIRED_ACTION.clone()),
+            Value::String(cccc_core::peer_insight::PEER_INSIGHT_REQUIRED_ACTION.into()),
         );
         return Err(error);
     }

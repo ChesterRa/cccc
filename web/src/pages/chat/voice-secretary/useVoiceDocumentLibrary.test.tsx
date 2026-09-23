@@ -65,3 +65,29 @@ it("ignores a previous group's late library response", async () => {
   );
   expect(state.data).toEqual(empty);
 });
+
+it("does not run a completed mutation's consumer after the keyed group unmounts", async () => {
+  await act(async () => root.render(<Harness key="a" group="a" />));
+  let resolve!: (value: Awaited<ReturnType<typeof voiceDocumentLibrary>>) => void;
+  vi.mocked(voiceDocumentLibrary).mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  const onRestored = vi.fn();
+  let pending!: Promise<void>;
+  await act(async () => {
+    pending = state.mutate({ action: "restore", document_path: "notes.md" }).then((saved) => {
+      if (saved) onRestored();
+    });
+  });
+  await act(async () => root.render(<Harness key="b" group="b" />));
+  await act(async () => {
+    resolve({ ok: true, result: empty });
+    await pending;
+  });
+  expect(onRestored).not.toHaveBeenCalled();
+  expect(state.data).toEqual(empty);
+  expect(state.busy).toBe(false);
+});

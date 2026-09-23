@@ -124,10 +124,33 @@
     "mcpCopyFailed": "MCP URL の読み込みまたはコピーに失敗しました。再試行してください。",
     "mcpStartFirst": "起動後に MCP をコピー",
     "mcpStartFirstHint": "MCP URL をコピーする前に、この Web Model actor を起動してください。",
-    "actorStoppedSurface": "Web Model actor は停止中です。下の「起動」を選んでから ChatGPT を開くか、MCP URL をコピーしてください。",
+    "actorStoppedSurface": "この Actor は停止中です。開始すると配信が再開します。「ChatGPT の会話」から作業用の会話を表示・変更することもできます。",
     "browserReadOnly": "読み取り専用モードでは ChatGPT ブラウザを開けません。",
     "permissionHint": "ChatGPT が CCCC app の許可待ちになっている可能性があります。ChatGPT 画面に切り替えて Allow をクリックしてください。Always allow が表示される場合は選択することをおすすめします。許可後、この画面に戻って続行してください。",
-    "permissionHintDismiss": "今後表示しない"
+    "permissionHintDismiss": "今後表示しない",
+    "recovery": {
+      "open": "確認して再開",
+      "title": "ChatGPT への配信 · {{actor}}",
+      "instructions": "下の会話を確認してください。メッセージが入力欄に残っている場合は送信または削除し、ChatGPT の応答が終わるまで待ってください。",
+      "noReplay": "CCCC はこのバッチの送信を確認すると自動で再開します。手動での再開は後続の待機メッセージだけを進めます。このバッチの再送や会話の消去は行いません。",
+      "observing": "配信確認を待っています…",
+      "resolved": "キューを続行できます。このバッチは再送されません。",
+      "changed": "現在の配信が変わりました。この古いメッセージから別の配信を再開することはできません。",
+      "resume": "確認済み、後続の配信を再開",
+      "resuming": "再開しています…",
+      "browserClosed": "この Actor のブラウザーは閉じています。Actor パネルから開いて会話を確認してください。"
+    },
+    "refreshPage": "ChatGPT ページを更新",
+    "reloadFailed": "ChatGPT ページを更新できませんでした。",
+    "statusFailed": "ChatGPT ブラウザーの状態を取得できませんでした。",
+    "activity": {
+      "ambiguous": "配信を確認できません",
+      "blocked": "配信を一時停止中",
+      "failed": "配信に失敗",
+      "queued": "{{count}} 件のメッセージが待機中",
+      "submitting": "メッセージを配信中…",
+      "last": "最終配信 {{time}}"
+    }
   },
   "slashCommandAttachmentUnsupported": "スラッシュコマンドは添付ファイルに対応していません。",
   "slashCommandReplyUnsupported": "スラッシュコマンドは特定のメッセージへの返信にはまだ対応していません。",
