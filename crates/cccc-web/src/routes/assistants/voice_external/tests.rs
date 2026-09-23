@@ -46,6 +46,32 @@ fn rejects_foreign_tasks_malformed_packets_and_provider_errors_without_echoing_s
     }
     let error=bailian::parse(br#"{"header":{"task_id":"owned","event":"task-failed","error_message":"secret-test-key"}}"#,"owned").err().expect("provider error");
     assert!(!error.message.contains("secret-test-key"));
+    assert!(error.message.contains("error code unknown"));
+    let error=bailian::parse(br#"{"header":{"task_id":"owned","event":"task-failed","error_code":"Model.NotFound","error_message":"secret-test-key"}}"#,"owned").err().expect("provider error");
+    assert_eq!(error.code, "external_asr_provider_error");
+    assert!(error.message.contains("error code Model.NotFound"));
+    assert!(!error.message.contains("secret-test-key"));
+    let error = bailian::parse(
+        br#"{"header":{"task_id":"owned","event":"task-failed","error_code":"Arrearage"}}"#,
+        "owned",
+    )
+    .err()
+    .expect("account error");
+    assert_eq!(error.code, "external_asr_quota");
+    let error=bailian::parse(br#"{"header":{"task_id":"owned","event":"task-failed","error_code":"InvalidApiKey <script>secret key</script>"}}"#,"owned").err().expect("auth error");
+    assert_eq!(error.code, "external_asr_auth_failed");
+    assert!(error.message.contains("error code unknown"));
+    assert!(!error.message.contains("secret"));
+    assert_eq!(super::bounded_provider_code(&"x".repeat(65)), "unknown");
+    assert!(!error.message.contains('<'));
+    let mut frame = vec![0x11, 0xf0, 0x10, 0];
+    frame.extend(45_000_000u32.to_be_bytes());
+    frame.extend(0u32.to_be_bytes());
+    let error = volcengine::parse(&frame)
+        .err()
+        .expect("volcengine error frame");
+    assert_eq!(error.code, "external_asr_provider_error");
+    assert!(error.message.contains("error code 45000000"));
 }
 
 #[test]

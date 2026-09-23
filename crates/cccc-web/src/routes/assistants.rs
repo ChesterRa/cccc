@@ -17,6 +17,8 @@ mod voice_asr;
 mod voice_audio_upload;
 mod voice_backend_access;
 mod voice_diarization;
+mod voice_document_delete;
+mod voice_document_library;
 mod voice_external;
 mod voice_final_asr;
 mod voice_inference;
@@ -54,6 +56,7 @@ struct TranscriptionQuery {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .merge(voice_document_library::routes())
         .merge(voice_external::routes())
         .route("/api/v1/groups/{group_id}/assistants", get(list))
         .route(
@@ -118,7 +121,11 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/groups/{group_id}/assistants/voice_secretary/documents/archive",
-            post(document_archive),
+            post(voice_document_delete::archive),
+        )
+        .route(
+            "/api/v1/groups/{group_id}/assistants/voice_secretary/documents/delete",
+            post(voice_document_delete::delete),
         )
         .route(
             "/api/v1/groups/{group_id}/assistants/voice_secretary/inputs",
@@ -372,16 +379,6 @@ async fn document_instruction(
     args.insert("group_id".into(), json!(group_id));
     args.entry("by").or_insert_with(|| json!("user"));
     call(&state, "assistant_voice_document_instruction", args).await
-}
-async fn document_archive(
-    State(state): State<AppState>,
-    Path(group_id): Path<String>,
-    Json(body): Json<Value>,
-) -> ApiResult {
-    let mut args = object(body);
-    args.insert("group_id".into(), json!(group_id));
-    args.entry("by").or_insert_with(|| json!("user"));
-    call(&state, "assistant_voice_document_archive", args).await
 }
 async fn input(
     State(state): State<AppState>,

@@ -87,6 +87,10 @@ export function AppHeader({
         ),
       })
     : "";
+  const statusControlLabel =
+    sseStatus === "connected"
+      ? runLabel
+      : `${runLabel} · ${t(sseStatus === "connecting" ? "reconnecting" : "disconnected")}. ${t("connectionInterruptedHint")}`;
   const runMenu = useGroupMenu(
     runLabel,
     selectedStatus && onControlGroup && !webReadOnly
@@ -122,15 +126,6 @@ export function AppHeader({
             >
               {groupTitle}
             </h1>
-            {!!selectedGroupId && sseStatus !== "connected" && (
-              <p
-                role="status"
-                className="hidden truncate text-xs leading-tight text-[var(--color-text-secondary)] @min-[760px]/group-work-header:block"
-                title={t("connectionInterruptedHint")}
-              >
-                {sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}
-              </p>
-            )}
           </div>
           {canEditGroup && (
             <IconButton
@@ -146,17 +141,6 @@ export function AppHeader({
               <EditIcon size={16} />
             </IconButton>
           )}
-          {!!selectedGroupId && sseStatus !== "connected" && (
-            <span
-              role="status"
-              className={`h-2 w-2 shrink-0 rounded-full @min-[760px]/group-work-header:hidden ${sseStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500"}`}
-              title={`${sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}. ${t("connectionInterruptedHint")}`}
-            >
-              <span className="sr-only">
-                {sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}
-              </span>
-            </span>
-          )}
           {selectedStatus && (
             <span className="inline-flex shrink-0">
               {runMenu.available ? (
@@ -164,8 +148,8 @@ export function AppHeader({
                   type="button"
                   data-group-run-controls
                   data-group-run-control={selectedGroupId}
-                  aria-label={runLabel}
-                  title={runLabel}
+                  aria-label={statusControlLabel}
+                  title={statusControlLabel}
                   className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg pointer-coarse:min-h-10 pointer-coarse:min-w-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]"
                   aria-haspopup="menu"
                   aria-expanded={runMenu.open}
@@ -179,12 +163,17 @@ export function AppHeader({
                 >
                   <GroupStatusIndicator
                     status={selectedStatus}
+                    connectionStatus={sseStatus}
                     variant="badge"
                     className="min-h-8 min-w-8 justify-center pointer-coarse:min-h-10 pointer-coarse:min-w-10 [&>span:last-child]:hidden @min-[480px]/group-work-header:[&>span:last-child]:inline cursor-pointer transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
                   />
                 </button>
               ) : (
-                <GroupStatusIndicator status={selectedStatus} variant="badge" />
+                <GroupStatusIndicator
+                  status={selectedStatus}
+                  connectionStatus={sseStatus}
+                  variant="badge"
+                />
               )}
             </span>
           )}

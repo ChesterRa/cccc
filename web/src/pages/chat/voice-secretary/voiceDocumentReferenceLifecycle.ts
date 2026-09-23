@@ -55,7 +55,13 @@ export function archivedVoiceDocumentFromEvent(
   const status = String(data.status || "")
     .trim()
     .toLowerCase();
-  if (!(["archive", "archived"].includes(action) || status === "archived")) return null;
+  if (
+    !(
+      ["archive", "archived", "deleted"].includes(action) ||
+      ["archived", "deleted"].includes(status)
+    )
+  )
+    return null;
   const nested =
     data.document && typeof data.document === "object"
       ? (data.document as Record<string, unknown>)

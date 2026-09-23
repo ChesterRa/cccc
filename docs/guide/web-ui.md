@@ -23,6 +23,12 @@ The Web UI has these main areas:
 - **Main Area**: Group message history or a paginated terminal view
 - **Input**: Message composer with @mention support
 
+The header uses its existing Group status dot for page-connection health: red
+means disconnected, pulsing amber means reconnecting, and a connected page uses
+the normal Group lifecycle color. The badge text still describes the Group's
+runtime state (for example, Idle); hover or focus exposes connection details.
+No separate connection subtitle or extra dot is shown on desktop or mobile.
+
 ### Group message and terminal views
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.

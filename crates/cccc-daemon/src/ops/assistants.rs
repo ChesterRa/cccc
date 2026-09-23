@@ -11,9 +11,14 @@ use std::fs::OpenOptions;
 use std::io;
 use uuid::Uuid;
 mod document_reconcile;
+mod voice_document_archive;
+mod voice_document_delete;
+mod voice_document_library;
+use voice_document_archive::archive;
 mod prompt_refine;
 mod voice_ask;
 mod voice_document_state;
+mod voice_document_status;
 mod voice_input;
 mod voice_input_dedupe;
 mod voice_input_delivery;
@@ -57,6 +62,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "assistant_voice_document_save" => Operation::new(Write, save),
         "assistant_voice_document_instruction" => Operation::new(Write, voice_ask::input),
         "assistant_voice_document_archive" => Operation::new(Write, archive),
+        "assistant_voice_document_delete" => Operation::new(Write, voice_document_delete::delete),
         "assistant_voice_input_append"
             if string_arg(request, "kind")
                 .or_else(|| string_arg(request, "input_kind"))
@@ -71,7 +77,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "assistant_voice_instruction_feedback" => Operation::new(Write, voice_ask::feedback),
         "assistant_voice_ask_requests_clear" => Operation::new(Write, voice_ask::clear),
         "assistant_voice_request" => Operation::new(Write, voice_request),
-        _ => return None,
+        _ => return voice_document_library::resolve(request),
     })
 }
 
@@ -217,6 +223,7 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .and_then(|index| docs.get(index))
             .cloned()
             .unwrap_or_else(|| json!({}));
+        voice_document_status::ensure_writable(&old)?;
         let text = if let Some(content) = content.as_deref() {
             previous_file = Some(std::fs::read(&storage_path).ok());
             write_document(&storage_path, content)?;
@@ -245,7 +252,7 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         let changed = is_new
             || old["content"].as_str() != Some(text.as_str())
             || old["title"].as_str() != Some(effective_title);
-        let document = json!({"document_id":old["document_id"].as_str().map(str::to_owned).unwrap_or_else(||format!("vdoc_{}",short_id())),"document_path":path,"workspace_path":path,"absolute_path":storage_path,"filename":path.rsplit('/').next().unwrap_or(&path),"assistant_id":"voice_secretary","title":effective_title,"status":old["status"].as_str().unwrap_or("active"),"storage_kind":storage_kind,"content":text,"content_sha256":format!("{:x}",Sha256::digest(text.as_bytes())),"content_chars":text.chars().count(),"revision_count":old["revision_count"].as_u64().unwrap_or(0)+u64::from(changed),"created_at":created_at,"updated_at":utc_now(),"created_by":string_arg(request,"by").unwrap_or_else(||"user".into())});
+        let document = json!({"document_id":old["document_id"].as_str().map(str::to_owned).unwrap_or_else(||format!("vdoc_{}",short_id())),"folder_id":old["folder_id"].as_str().unwrap_or(""),"document_path":path,"workspace_path":path,"absolute_path":storage_path,"filename":path.rsplit('/').next().unwrap_or(&path),"assistant_id":"voice_secretary","title":effective_title,"status":old["status"].as_str().unwrap_or("active"),"storage_kind":storage_kind,"content":text,"content_sha256":format!("{:x}",Sha256::digest(text.as_bytes())),"content_chars":text.chars().count(),"revision_count":old["revision_count"].as_u64().unwrap_or(0)+u64::from(changed),"created_at":created_at,"updated_at":utc_now(),"created_by":string_arg(request,"by").unwrap_or_else(||"user".into())});
         if let Some(index) = index {
             docs[index] = document.clone();
         } else {
@@ -360,33 +367,6 @@ fn read_or_create_empty_document(path: &std::path::Path) -> io::Result<(String, 
 
 fn write_document_bytes(path: &std::path::Path, content: &[u8]) -> io::Result<()> {
     cccc_core::fs::atomic_write(path, content)
-}
-fn archive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let path = document_path(request)?;
-    let document = voice_document_state::update(home, &group_id, |state| {
-        let document = {
-            let item = array(state, "documents")
-                .iter_mut()
-                .find(|item| item["document_path"] == path)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "document not found"))?;
-            item["status"] = json!("archived");
-            item["updated_at"] = json!(utc_now());
-            item.clone()
-        };
-        let archived_id = document["document_id"].as_str().unwrap_or_default();
-        let was_active =
-            state["active_document_id"] == archived_id || state["active_document_path"] == path;
-        if was_active {
-            let next =
-                voice_document_state::latest_active(array(state, "documents"), Some(archived_id))
-                    .cloned();
-            voice_document_state::set_active(state, next.as_ref());
-        }
-        Ok(document)
-    })
-    .map_err(OpError::io)?;
-    document_result(home, request, &group_id, document, "archived")
 }
 fn voice_request(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;

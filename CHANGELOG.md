@@ -7,11 +7,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Added
+- Voice Secretary gains persistent document folders, a separate archive directory with previews and restore, and context-menu actions for moving, archiving and deleting documents.
+- **Voice Secretary documents can be renamed.** The document row menu gains Rename, which changes the display title only; the Markdown file keeps its path.
 - Embedded Voice calls accept optional bounded application context, keeping the host's language and current subject attached to Realtime and each Analyst delegation. Context does not grant tool access or isolate the persistent Analyst.
 - Local PDF and PPTX reads hand off original files as native MCP resources for ChatGPT's own file reader, including attachments and code mode. CCCC performs no document extraction or rendering.
 - Local file reads deliver original PNG, JPEG and WebP bytes as native MCP images, including through code mode, with a 20 MiB image/result budget. Text previews honor their byte budget. The bridge performs no local media conversion; image understanding depends on the selected client/model.
 
 ### Fixed
+- Voice Secretary displays live original transcription in the document workspace and reconciles restores made by other clients. Document menus support native Enter/Space activation without selecting the row.
+- Deleted voice documents reject stale saves, transcript writes and archive requests. Cross-filesystem deletion retains a complete transaction backup until both index and ledger writes succeed; failures restore the file and index and permit retry.
+- **Voice Secretary documents no longer stay on "Loading document content...".** When two workspace refreshes overlapped (the periodic poll and a stop- or error-triggered refresh), the superseded one skipped clearing the loading indicator it had raised, and the newer one had no content to load, so the document view stayed blank until reload. The indicator is now cleared by whichever content load finished last.
+- **Codex Actors survive delegating to sub-agents.** A managed Codex Actor stopped itself within a second of the model calling `spawn_agent`: the sub-agent's own `turn/started` (on its own thread) was read as an overlapping terminal turn, and the same event could trip the competing-turn guard while a `turn/start` was pending. Both checks now ignore turns announced on other threads.
 - Grok managed sessions subscribe to live input echoes, preventing long Voice Analyst turns from exhausting the admission buffer while waiting for a receipt.
 - Web Model delivery preserves unsent ChatGPT drafts and pauses after unverified submissions, with an explicit checked-chat resume action that never replays the uncertain message. Verified legacy drafts remain recoverable; unrelated or changed drafts stay protected.
 - Code-mode result deadlines now return while nested tools continue; subsequent waits collect their results, and termination cancels outstanding work.
@@ -25,7 +31,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Local command tool descriptions make direct execution explicit. `cccc_shell` honors workspace-relative `cwd`, child `env`, output limits and the documented default timeout; session commands share the same directory and environment handling.
 
 ### Changed
+- **External ASR failures name the provider error code.** When Bailian or Volcengine rejects a recognition task, the stop banner and the server log now include the provider's bounded error code (for example `Model.NotFound` or `45000000`) instead of only a generic hint; provider free-text messages are still never shown. Bailian arrearage and free-tier codes are reported as quota problems.
+- **Deleting a Voice Secretary document removes its file.** Delete no longer parks the Markdown file in a local recovery folder; the confirmation says the file cannot be recovered, and the index entry stays marked `deleted` so workspace discovery does not bring the document back. A temporary copy remains until the index and deletion event commit, for rollback.
+- Header connection feedback shares the Group status dot: red when disconnected, pulsing amber while reconnecting, and the normal lifecycle color after recovery; connection details remain available on hover and to assistive technology.
 - Voice Analyst notifications use shorter per-message reminders while retaining the full source message, attribution, speech preferences and instruction boundaries.
+- **Voice Secretary document rows are lighter.** The boxed per-row "default document" button is gone; the default document now carries a small badge, "Use by default" joins the row menu (right-click, keyboard, or the row's `⋮` trigger, which stays visible on touch screens), and titles get the reclaimed width.
+- **Actors can be removed while running.** The Remove button in the Actor view and the quick-controls menu no longer requires stopping the Actor first; removal stops it and then deletes it, and the confirmation says so.
 - Web conversations, filters and the composer use the available workspace width. Long messages leave an opposite-side gutter that adapts to the message area, making sent and received messages easier to distinguish without fixed bubble-width caps. Short messages retain their natural sizing, and reading position is preserved when the message area resizes.
 - Voice diagnostics distinguish Realtime request/TLS failures and managed Codex WebSocket protocol failures, including an abrupt close without a closing handshake. Reports retain bounded categories and OS error codes without private error text; retry and session-lifecycle behavior is unchanged.
 

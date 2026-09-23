@@ -1,16 +1,27 @@
 import { test, expect, groupPage, wheelTo } from "./helpers.js";
+import "./voice-archive-sync.pw.js";
 
 test("connection feedback preserves the draft and clears after reconnection", async ({ page }) => {
   await groupPage(page);
   const input = page.getByRole("textbox", { name: "Message input" });
   await input.fill("Keep this draft");
+  const badge = page.locator("header [data-connection-state]");
+  const runtimeLabel = await badge.textContent();
   await page.evaluate("groupWorkProbe.setConnectionStatus('disconnected')");
-  await expect(page.locator("header [role=status]:visible")).toHaveText("Disconnected");
+  await expect(badge).toHaveAttribute("data-connection-state", "disconnected");
+  await expect(badge).toHaveAccessibleName(/Disconnected/);
+  await expect(badge).toHaveText(runtimeLabel);
+  await expect(badge.locator("span").first()).toHaveClass(/bg-rose-500/);
+  await expect(page.locator("header h1 + p")).toHaveCount(0);
   await expect(input).toBeFocused();
   await page.evaluate("groupWorkProbe.setConnectionStatus('connecting')");
-  await expect(page.locator("header [role=status]:visible")).toHaveText("Reconnecting…");
+  await expect(badge).toHaveAttribute("data-connection-state", "connecting");
+  await expect(badge).toHaveAccessibleName(/Reconnecting/);
+  await expect(badge.locator("span").first()).toHaveClass(/animate-pulse/);
   await page.evaluate("groupWorkProbe.setConnectionStatus('connected')");
-  await expect(page.locator("header [role=status]:visible")).toHaveCount(0);
+  await expect(badge).toHaveAttribute("data-connection-state", "connected");
+  await expect(badge).toHaveText(runtimeLabel);
+  await expect(badge.locator("span").first()).not.toHaveClass(/bg-rose-500|animate-pulse/);
   await expect(input).toHaveValue("Keep this draft");
   await expect(input).toBeFocused();
 });

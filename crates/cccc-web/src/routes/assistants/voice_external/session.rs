@@ -157,6 +157,12 @@ pub(in crate::routes::assistants) async fn serve(
         }
     }
     if let Some(error) = failure {
+        // Bounded category plus provider code only; never the provider's free text.
+        tracing::warn!(
+            code = error.code,
+            message = %error.message,
+            "external ASR recording ended with a provider error"
+        );
         let recovered = active
             .as_ref()
             .filter(|run| !run.persist)

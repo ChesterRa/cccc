@@ -39,7 +39,7 @@
   "inbox": "收件箱",
   "openInbox": "打开收件箱",
   "unreadMessages": "，{{count}} 条未读 Mail",
-  "stopBeforeRemoving": "请先停止智能体再移除",
+  "removeAgentConfirm": "移除智能体“{{name}}”？如果它正在运行，会先被停止。",
   "removeAgent": "移除智能体",
   "addAiAgent": "添加 AI 智能体",
   "chooseRuntime": "选择一个 AI 运行时添加到团队",

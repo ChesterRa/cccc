@@ -39,7 +39,7 @@
   "inbox": "Inbox",
   "openInbox": "Open inbox",
   "unreadMessages": ", {{count}} unread Mail",
-  "stopBeforeRemoving": "Stop the agent before removing",
+  "removeAgentConfirm": "Remove agent \"{{name}}\"? If it is running, it will be stopped first.",
   "removeAgent": "Remove agent",
   "addAiAgent": "Add AI Agent",
   "chooseRuntime": "Choose an AI runtime to add to your team",

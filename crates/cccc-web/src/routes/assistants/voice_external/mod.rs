@@ -67,3 +67,20 @@ pub(super) use session::serve;
 
 #[cfg(test)]
 mod tests;
+
+/// Provider error codes are bounded identifiers (`InvalidParameter`, `45000000`),
+/// safe to surface. Anything else in a provider failure (free-text messages,
+/// request ids) stays out of user-facing errors and logs.
+pub(super) fn bounded_provider_code(raw: &str) -> String {
+    let code = raw.trim();
+    if code.is_empty()
+        || code.len() > 64
+        || !code
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        "unknown".into()
+    } else {
+        code.to_owned()
+    }
+}

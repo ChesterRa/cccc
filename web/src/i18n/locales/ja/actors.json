@@ -39,7 +39,7 @@
   "inbox": "受信トレイ",
   "openInbox": "受信トレイを開く",
   "unreadMessages": "、未読 Mail {{count}} 件",
-  "stopBeforeRemoving": "削除する前にエージェントを停止してください",
+  "removeAgentConfirm": "エージェント「{{name}}」を削除しますか？実行中の場合は先に停止されます。",
   "removeAgent": "エージェントの削除",
   "addAiAgent": "AI エージェントを追加",
   "chooseRuntime": "チームに追加する AI ランタイムを選択してください",

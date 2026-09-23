@@ -42,9 +42,19 @@ pub(super) fn parse(bytes: &[u8]) -> Result<(Event, bool), AsrError> {
     let kind = bytes[1] >> 4;
     let flags = bytes[1] & 15;
     if kind == 15 {
+        // Error frame: a 4-byte error code precedes the payload size.
+        let code = bytes
+            .get(offset..offset + 4)
+            .and_then(|raw| raw.try_into().ok())
+            .map(u32::from_be_bytes)
+            .map(|code| code.to_string())
+            .unwrap_or_default();
         return Err(AsrError::new(
             "external_asr_provider_error",
-            "Volcengine rejected the recognition task; check the resource, quota and credentials",
+            format!(
+                "Volcengine rejected the recognition task (error code {}); check the resource, quota and credentials",
+                super::bounded_provider_code(&code)
+            ),
         ));
     }
     if kind != 9 {

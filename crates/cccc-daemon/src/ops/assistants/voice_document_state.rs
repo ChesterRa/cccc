@@ -1,3 +1,4 @@
+pub(super) use super::voice_document_status::{is_active, is_deleted};
 use cccc_core::{HomeLayout, assistant_state};
 use fs2::FileExt;
 use serde_json::{Map, Value, json};
@@ -210,6 +211,7 @@ fn flat_from_index(index: &Value) -> Value {
         .unwrap_or_default();
     json!({
         "documents":documents,
+        "folders":index["folders"].as_array().cloned().unwrap_or_default(),
         "active_document_id":active_id,
         "active_document_path":active_path
     })
@@ -241,6 +243,7 @@ fn index_from_flat(group_id: &str, state: &mut Map<String, Value>) -> Value {
     json!({
         "schema":SCHEMA,
         "group_id":group_id,
+        "folders":state.get("folders").cloned().unwrap_or_else(||json!([])),
         "active_document_id":state.get("active_document_id").cloned().unwrap_or_else(||json!("")),
         "documents":documents
     })
@@ -298,22 +301,6 @@ pub(super) fn update<T>(
         save_index_unlocked(home, group_id, &index)?;
         Ok(result)
     })
-}
-
-pub(super) fn is_active(document: &Value) -> bool {
-    document["status"]
-        .as_str()
-        .unwrap_or("active")
-        .trim()
-        .eq_ignore_ascii_case("active")
-}
-
-pub(super) fn is_deleted(document: &Value) -> bool {
-    document["status"]
-        .as_str()
-        .unwrap_or_default()
-        .trim()
-        .eq_ignore_ascii_case("deleted")
 }
 
 pub(super) fn resolved_active<'a>(

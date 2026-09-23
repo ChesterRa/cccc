@@ -199,7 +199,7 @@ export function ActorQuickControls({
                 ) : null}
                 <button
                   className={`${item} text-rose-600 dark:text-rose-400`}
-                  disabled={busy || running}
+                  disabled={busy}
                   onClick={() => run(onRemove)}
                 >
                   {t("removeAgent")}

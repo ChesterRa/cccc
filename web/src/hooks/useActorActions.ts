@@ -8,6 +8,7 @@ import { formatCapabilityIdInput } from "../utils/capabilityAutoload";
 import { beginActorAction, endActorAction } from "./actorActionInFlight";
 import { resolveActorLifecycleRunning } from "./actorLifecycleAction";
 import { useShallow } from "zustand/react/shallow";
+import i18n from "../i18n";
 
 function latestActorHasResumeFailure(groupId: string, actorId: string): boolean {
   if (useGroupStore.getState().selectedGroupId !== groupId) return false;
@@ -182,7 +183,8 @@ export function useActorActions(groupId: string) {
   const removeActor = useCallback(
     async (actor: Actor, currentActiveTab: string) => {
       if (!actor || !groupId) return;
-      if (!window.confirm(`Remove actor "${actor.title || actor.id}"?`)) return;
+      if (!window.confirm(i18n.t("actors:removeAgentConfirm", { name: actor.title || actor.id })))
+        return;
       changeActorBusy(groupId, actor.id, 1);
       try {
         const resp = await api.removeActor(groupId, actor.id);

@@ -53,6 +53,8 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let language = string_arg(request, "language").unwrap_or_default();
     let is_final = bool_arg(request, "is_final", true);
     let document_path = effective_document_path(home, &group_id, request)?;
+    super::voice_document_status::ensure_path_writable(home, &group_id, &document_path)
+        .map_err(OpError::io)?;
     let revision = voice_transcript_revision::resolve(request, &segment_id)?;
     let mut segment = voice_transcript_revision::build_segment(
         request,

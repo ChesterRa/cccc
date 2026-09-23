@@ -11,6 +11,22 @@ import {
 } from "./voiceDocumentReferenceLifecycle";
 
 describe("voice document reference lifecycle", () => {
+  it("clears references when another client deletes the document", () => {
+    const clear = vi.fn();
+    const event = {
+      kind: "assistant.voice.document",
+      group_id: "group",
+      data: {
+        action: "deleted",
+        document: { document_id: "doc", document_path: "voice/deleted.md", status: "deleted" },
+      },
+    } as unknown as LedgerEvent;
+    clearArchivedVoiceDocumentReference(clear, event, "fallback");
+    expect(clear).toHaveBeenCalledWith(
+      "group",
+      expect.objectContaining({ document_id: "doc", document_path: "voice/deleted.md" }),
+    );
+  });
   it("detects documents removed by a workspace refresh without treating a path rename as removal", () => {
     const removed = findRemovedVoiceDocuments(
       [

@@ -29,6 +29,12 @@ fn respond_unsupported_server_request(session: &Session, message: &Value) {
 }
 
 fn handle_announced_message(session: &Session, message: Value) {
+    // Codex sub-agents run on their own threads and announce their own turns.
+    // Those are not this Actor's terminal turn; treating one as an overlap
+    // would stop a healthy session the moment the model delegates work.
+    if is_foreign_thread(session.managed.thread_id(), &message) {
+        return;
+    }
     if message.get("method").and_then(Value::as_str) == Some("turn/started") {
         handle_managed_turn_started(session, &message);
         return;
@@ -66,6 +72,18 @@ fn handle_announced_message(session: &Session, message: Value) {
             session.set_status("working", task);
         }
     }
+}
+
+/// True when the notification names a thread other than the session's own.
+/// Notifications without a `threadId` (non-Codex providers, lifecycle
+/// messages) always belong to the session.
+fn is_foreign_thread(session_thread_id: &str, message: &Value) -> bool {
+    !session_thread_id.is_empty()
+        && message
+            .pointer("/params/threadId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|thread_id| !thread_id.is_empty() && thread_id != session_thread_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +193,25 @@ mod tests {
         let active = active_turn.lock().expect("active turn");
         let active = active.as_ref().expect("adopted turn");
         assert_eq!(active.turn_id, "turn-terminal");
+    }
+
+    #[test]
+    fn only_turns_on_other_threads_are_foreign() {
+        let sub_agent = json!({
+            "method":"turn/started",
+            "params":{"threadId":"thread-sub-agent","turn":{"id":"turn-sub"}}
+        });
+        let own = json!({
+            "method":"turn/started",
+            "params":{"threadId":"thread-main","turn":{"id":"turn-main"}}
+        });
+        let untagged = json!({"method":"turn/completed","params":{"turn":{"id":"turn-main"}}});
+
+        assert!(is_foreign_thread("thread-main", &sub_agent));
+        assert!(!is_foreign_thread("thread-main", &own));
+        assert!(!is_foreign_thread("thread-main", &untagged));
+        // A session without a known thread cannot tell threads apart.
+        assert!(!is_foreign_thread("", &sub_agent));
     }
 
     #[test]

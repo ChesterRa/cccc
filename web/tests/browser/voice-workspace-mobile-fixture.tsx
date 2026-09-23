@@ -78,6 +78,11 @@ for (let i = 0; i < extraRows; i++)
     created_at: "2025-12-01T08:00:00Z",
     updated_at: "2025-12-01T08:00:00Z",
   });
+const fixtureDocuments: Array<typeof documentFixture & { folder_id?: string }> = [
+  documentFixture,
+  linkedDocumentFixture,
+];
+let fixtureFolders: Array<{ folder_id: string; name: string }> = [];
 window.fetch = async (input, options) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const body = options?.body ? JSON.parse(String(options.body)) : {};
@@ -89,13 +94,55 @@ window.fetch = async (input, options) => {
   }
   if (url.includes("recording_lease"))
     return Response.json({ ok: true, result: { lease_id: "fixture", lost: false } });
+  if (url.endsWith("/documents/library")) {
+    const target = fixtureDocuments.find(
+      (document) => document.workspace_path === body.document_path,
+    );
+    if (body.action === "create_folder")
+      fixtureFolders.push({ folder_id: `folder-${fixtureFolders.length + 1}`, name: body.name });
+    if (body.action === "rename_folder") {
+      const folder = fixtureFolders.find((folder) => folder.folder_id === body.folder_id);
+      if (folder) folder.name = body.name;
+    }
+    if (body.action === "move" && target) target.folder_id = body.folder_id;
+    if (body.action === "restore" && target) target.status = "active";
+    if (body.action === "remove_folder") {
+      fixtureFolders = fixtureFolders.filter((folder) => folder.folder_id !== body.folder_id);
+      fixtureDocuments.forEach((document) => {
+        if (document.folder_id === body.folder_id) document.folder_id = "";
+      });
+    }
+    return Response.json({
+      ok: true,
+      result: {
+        folders: fixtureFolders,
+        documents: fixtureDocuments
+          .filter((document) => document.status !== "deleted")
+          .map((document) => ({
+            ...document,
+            document_id: document.doc_id,
+            document_path: document.workspace_path,
+          })),
+      },
+    });
+  }
+  if (/documents\/(archive|delete)$/.test(url)) {
+    const target = fixtureDocuments.find(
+      (document) => document.workspace_path === body.document_path,
+    );
+    if (target) target.status = url.endsWith("delete") ? "deleted" : "archived";
+    return Response.json({
+      ok: true,
+      result: { document: { ...target, status: url.endsWith("delete") ? "deleted" : "archived" } },
+    });
+  }
   return Response.json({
     ok: true,
     result: {
       assistant,
       active_document_path: documentFixture.workspace_path,
       capture_target_document_path: documentFixture.workspace_path,
-      documents: [documentFixture, linkedDocumentFixture],
+      documents: fixtureDocuments.filter((document) => document.status === "active"),
       sessions: [],
       ask_requests: replies,
     },
@@ -133,6 +180,7 @@ class AsrSocket {
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
   constructor() {
+    Object.assign(window, { voiceWorkspaceAsr: this });
     setTimeout(() => {
       this.readyState = 1;
       this.onopen?.();

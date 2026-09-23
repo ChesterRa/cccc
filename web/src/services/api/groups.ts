@@ -568,7 +568,7 @@ function normalizeAssistantVoicePromptDraftMutationResult(
   };
 }
 
-function clearAssistantStateRequest(groupId: string): void {
+export function clearAssistantStateRequest(groupId: string): void {
   clearSharedReadRequest(assistantStateRequestKey(groupId));
 }
 

@@ -1,6 +1,7 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { TFunction } from "i18next";
 import { archiveVoiceAssistantDocument } from "../../../services/api";
+import { deleteVoiceAssistantDocument } from "../../../services/api/voiceDocumentDelete";
 import type { AssistantVoiceDocument } from "../../../types";
 import { findVoiceDocument, voiceDocumentPath } from "./voiceComposerUtils";
 import {
@@ -60,7 +61,7 @@ export function useVoiceDocumentArchive({
   t: TFunction;
 }) {
   return useCallback(
-    async (targetDocument?: AssistantVoiceDocument | null) => {
+    async (targetDocument?: AssistantVoiceDocument | null, remove = false) => {
       const groupId = String(selectedGroupId || "").trim();
       const documentPath = targetDocument
         ? voiceDocumentPath(targetDocument)
@@ -70,10 +71,15 @@ export function useVoiceDocumentArchive({
       const title = String(archivedDocument?.title || documentPath).trim();
       if (
         !window.confirm(
-          t("voiceSecretaryArchiveDocumentConfirm", {
-            title,
-            defaultValue: 'Archive document "{{title}}"?',
-          }),
+          t(
+            remove ? "voiceSecretaryDeleteDocumentConfirm" : "voiceSecretaryArchiveDocumentConfirm",
+            {
+              title,
+              defaultValue: remove
+                ? 'Delete document "{{title}}"? Its file will be deleted and cannot be recovered.'
+                : 'Archive document "{{title}}"?',
+            },
+          ),
         )
       )
         return;
@@ -92,7 +98,7 @@ export function useVoiceDocumentArchive({
           documentPath,
           fallbackDocument,
           clearReferences,
-          archiveDocument: archiveVoiceAssistantDocument,
+          archiveDocument: remove ? deleteVoiceAssistantDocument : archiveVoiceAssistantDocument,
         });
         if (!isCurrentGroup(groupId)) return;
         if (!response.ok) {
@@ -113,16 +119,20 @@ export function useVoiceDocumentArchive({
           setCaptureTargetDocumentPath("");
         }
         showNotice({
-          message: t("voiceSecretaryDocumentArchived", {
-            defaultValue: "Voice Secretary working document archived.",
+          message: t(remove ? "voiceSecretaryDocumentDeleted" : "voiceSecretaryDocumentArchived", {
+            defaultValue: remove
+              ? "Document deleted."
+              : "Voice Secretary working document archived.",
           }),
         });
         await refreshAssistant({ quiet: true });
       } catch {
         if (!isCurrentGroup(groupId)) return;
         showError(
-          t("voiceSecretaryDocumentArchiveFailed", {
-            defaultValue: "Failed to archive the Voice Secretary document.",
+          t(remove ? "voiceSecretaryDocumentDeleteFailed" : "voiceSecretaryDocumentArchiveFailed", {
+            defaultValue: remove
+              ? "Failed to delete the Voice Secretary document."
+              : "Failed to archive the Voice Secretary document.",
           }),
         );
       } finally {

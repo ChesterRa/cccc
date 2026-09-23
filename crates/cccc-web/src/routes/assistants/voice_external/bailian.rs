@@ -40,10 +40,9 @@ pub(super) fn parse(bytes: &[u8], task: &str) -> Result<Event, AsrError> {
         "task-started" => Ok(Event::Ready),
         "task-finished" => Ok(Event::Finished),
         "task-failed" => {
-            let code = value["header"]["error_code"]
-                .as_str()
-                .unwrap_or_default()
-                .to_ascii_lowercase();
+            let raw_code = value["header"]["error_code"].as_str().unwrap_or_default();
+            let code = raw_code.to_ascii_lowercase();
+            let shown = super::bounded_provider_code(raw_code);
             let (kind, message) = if code.contains("apikey")
                 || code.contains("unauthorized")
                 || code.contains("forbidden")
@@ -51,17 +50,29 @@ pub(super) fn parse(bytes: &[u8], task: &str) -> Result<Event, AsrError> {
             {
                 (
                     "external_asr_auth_failed",
-                    "Bailian authentication failed; check the API key and region",
+                    format!(
+                        "Bailian authentication failed (error code {shown}); check the API key and region"
+                    ),
                 )
-            } else if code.contains("quota") || code.contains("throttl") || code.contains("rate") {
+            } else if code.contains("quota")
+                || code.contains("throttl")
+                || code.contains("rate")
+                || code.contains("arrearage")
+                || code.contains("balance")
+                || code.contains("tier")
+            {
                 (
                     "external_asr_quota",
-                    "Bailian ASR quota or rate limit was reached",
+                    format!(
+                        "Bailian ASR quota, rate limit or account balance blocked the task (error code {shown})"
+                    ),
                 )
             } else {
                 (
                     "external_asr_provider_error",
-                    "Bailian rejected the recognition task; check the model and account configuration",
+                    format!(
+                        "Bailian rejected the recognition task (error code {shown}); check the model and account configuration"
+                    ),
                 )
             };
             Err(AsrError::new(kind, message))

@@ -75,7 +75,7 @@ with tempfile.TemporaryDirectory(prefix='cccc-voice-work-browser-') as profile:
     assert js('voiceWorkspaceProbe.stops')==0
     assert js('voiceWorkspaceProbe.writes.length')==writes
     if width>=1024:
-     assert js("document.querySelector('[data-voice-document-target][data-state=default]').closest('[role=button]').textContent.includes('voice/9e141dcf216f49d7.md')")
+     assert js("document.querySelector('[data-voice-document-default]').closest('[role=button]').textContent.includes('voice/9e141dcf216f49d7.md')")
     shot('linked-'+mode+'-'+str(width))
     click('[data-voice-back-to-activity]')
     wait("!document.querySelector('[data-voice-document-panel]')")

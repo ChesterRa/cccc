@@ -193,6 +193,54 @@ The Codex/Claude empty-session probes and Kilo local-model/session/model-sync pr
 |---|---|---|---|---:|---|---|
 | `crates/cccc-daemon/src/ops/codex_voice_analyst/tests/live_kilo.rs` | CCCC Rust maintainers | Offline Actor/Analyst sessions share a local model fixture. | Restore existing offline coverage without adding scenarios. | 299 | Before another local-model scenario. | Extract the loopback model server from shared session lifecycle assertions. |
 
+## Voice transcript and document actions (2026-09-20)
+
+This change extracts final transcript rows, live original text, document menus,
+download handling, and archive/delete operations. Existing entrypoints shrink;
+new behavior lives in focused modules. These entries supersede earlier scope and
+expiry entries for the listed files.
+
+| File | Owner | Reason | Allowed scope | Current lines | Expiry / removal condition | Split plan |
+|---|---|---|---|---:|---|---|
+| `web/src/pages/chat/VoiceSecretaryComposerControl.tsx` | CCCC frontend maintainers | Legacy capture and workspace orchestration | Wire extracted document operations and transcript props; no growth | 6546 | Before further capture/document behavior is added | Extract capture lifecycle and workspace composition |
+| `web/src/pages/chat/voice-secretary/VoiceSecretaryWorkspacePanel.tsx` | CCCC frontend maintainers | Legacy document toolbar and editor | Compose extracted transcript rows and live preview; no growth | 474 | Before another document toolbar action | Extract document toolbar and transcript view |
+| `crates/cccc-daemon/src/ops/assistants.rs` | CCCC Rust maintainers | Legacy assistant dispatch and storage helpers | Register extracted document operations; no growth | 517 | Before another assistant operation | Extract document save and storage helpers |
+| `crates/cccc-web/src/routes/assistants.rs` | CCCC Rust maintainers | Legacy HTTP routes | Wire extracted archive/delete handlers; no growth | 548 | Before another document HTTP action | Extract document routes as a module |
+| `web/src/services/api/groups.ts` | CCCC frontend maintainers | Legacy group API bundle | Export existing cache invalidation for deletion, no new behavior or growth | 1663 | Before additional voice API logic | Extract assistant read cache and document services |
+
+The 236-line document list remains below the hard limit; extract its creation form
+before adding more list controls. No new dependencies or UI framework were added.
+
+Folder navigation, archive previews, and library requests now live in separate
+components/hooks under 220 lines. The legacy document-index module is 426 lines
+after extracting active/deleted status predicates; its only new responsibility
+is preserving folder metadata in the existing index serialization. Owner: CCCC
+Rust maintainers. Before further index-schema changes, extract flat/index
+projection and migration into dedicated modules. Existing mutation/locking
+behavior remains in the index module and its line count decreases in this scope.
+
+## Submission review (2026-09-23)
+
+The Codex pending-turn correlation model, thread comparison and regression tests
+are now in `protocol_turn_scope.rs` (106 lines); `protocol.rs` is 441 lines, smaller
+than before this change. Its existing exception remains limited to protocol
+correctness; extract transport lifecycle before adding another operation.
+
+Soft-limit split plans (existing files, no new feature responsibility): split
+provider event projection from turn settlement in `local_headless/output.rs`
+(232 lines); extract failure finalization from `voice_external/session.rs`
+(226 lines); extract identity/status controls from `AppHeader.tsx` (257 lines);
+split action-specific handlers from `useActorActions.ts` (260 lines) before adding
+more controls. Owners remain the CCCC Rust/frontend maintainers respectively.
+
+`AgentTab.tsx` (1231 lines) changes only removal-button availability without
+growth; its next control change must extract the terminal toolbar. The large
+voice-input and integration-test entrypoints receive only the deleted-path guard
+call and module registration respectively; all new behavior and regression cases
+are in focused modules. The browser critical entrypoint imports its new voice
+regressions and updates the connection assertion to the current badge contract.
+No second UI library, routing model, state library, or database layer is added.
+
 ## Grok test socket roots (2026-09-14)
 
 The five fake-Grok session fixtures now allocate private, automatically cleaned temporary directories under `/tmp`, keeping the leader socket below the Unix path limit independently of macOS's long default `TMPDIR`. This choice is local to the fixture and does not modify process-wide environment variables. A subprocess regression forces a long system temporary directory, runs the real Grok preparation path and binds the resulting Unix socket; the child must execute one test, not merely exit successfully with an empty filter. Existing session/admission assertions remain unchanged.

@@ -43,6 +43,75 @@ unsaved document draft and typed Ask request; an unsaved-document notice remains
 visible outside Doc. Recording still locks mode changes and keeps its original
 target. Collapsing a section does not stop recording or background processing.
 
+## Live transcript and document actions
+
+The Transcript view shows the current document's live original ASR text below the
+recording indicator. This preview is scoped to the recording group and document;
+it is separate from saved entries and disappears on stop, when final transcript
+processing takes over. The saved-entry count continues to count final entries.
+
+Right-click a working-document row (or press Shift+F10 with the row focused) to
+select, archive, or delete that exact document. Archive keeps the file and marks
+the document archived. Delete removes it from the active and archived lists,
+clears its quoted references and capture target, and chooses another active
+document. A confirmation names the document before either mutation. Rename changes
+only the display title; the file keeps its path. During
+recording these menu actions are disabled; the server also rejects deletion while
+the group holds a recording lease.
+
+The row's menu button also opens with Enter or Space without selecting the
+document; Enter or Space on the row itself still selects it. Deleted index
+entries cannot be archived, so a stale client's archive request cannot make a
+deleted document available for restoration.
+Saving or appending transcript to a deleted path is also rejected before any
+Markdown, session, transcript-log, or ledger write. Clients receive a deletion
+error instead of a successful save to an invisible document.
+
+Deletion uses `POST /api/v1/groups/{group_id}/assistants/voice_secretary/documents/delete`
+with `document_path`. The document must be registered; traversal and symlink paths
+are rejected. Its Markdown file is removed from disk; the index entry is kept with
+status `deleted` so the document never reappears through workspace discovery.
+Transcripts and historical ledger events are retained. There is no recovery folder:
+the confirmation names the document because the file cannot be restored afterwards.
+An API failure keeps the document visible, its file in place, and its references intact.
+
+Internally the file is first moved to `CCCC_HOME/voice-secretary/<group_id>/trash/`
+so a failed index update or deletion-event append can be rolled back. The temporary
+copy remains until both the index and ledger writes succeed. On failure, rollback
+copies the file back without consuming its backup, restores the previous index
+(including the active document), then removes the backup. If rollback itself fails,
+the error reports the retained backup path rather than discarding the last copy.
+Only after the index and ledger commit is the file permanently removed; if that
+final cleanup fails, the copy is left behind and a warning is logged. Copying and
+rollback also work across filesystems through a synced destination-side temporary
+file.
+
+The working-document sidebar displays titles only, with full titles available on
+hover. Its footer opens the archive directory: click an archived title for a
+read-only preview, Restore to return it to its previous folder, or Delete to
+remove it from both working and archived lists. Deletion is visually separated
+from Archive in the context menu.
+
+The normal workspace poll reconciles local archive guards with server-visible
+documents. A restore by another client therefore reappears without reloading or
+switching groups. Stale or failed refresh responses cannot clear these guards.
+
+Folders are single-level, group-wide persistent organization, stored in the voice
+document index. Create or rename a folder in the sidebar and use a document's
+Move to folder menu action to organize it. Enter a folder to see its documents;
+the back button returns to the root's unfiled list. New documents are created at
+the root. Removing a folder moves its documents to the root without deleting
+them. Folder assignment survives editing, archiving and restoring; it does not
+change Markdown paths or quoted references.
+
+`GET /api/v1/groups/{group_id}/assistants/voice_secretary/documents/library`
+returns folders and non-deleted documents, including archived content. POST to
+the same endpoint accepts `create_folder`, `rename_folder`, `remove_folder`,
+`move`, and `restore`, with `name`, `folder_id`, or `document_path` as appropriate.
+Empty/duplicate names, missing folders, unauthorized writers, and attempts to
+restore a deleted document are rejected. Read responses from a previous group
+cannot overwrite the current group's library.
+
 ## External realtime ASR: Bailian and Volcengine
 
 Select **Settings > Assistants > Recognition location > External provider ASR**.
