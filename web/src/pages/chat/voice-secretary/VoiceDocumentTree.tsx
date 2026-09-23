@@ -1,65 +1,34 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import {
   DndContext,
   DragOverlay,
   MouseSensor,
   TouchSensor,
-  closestCenter,
-  pointerWithin,
-  useDraggable,
-  useDroppable,
   useSensor,
   useSensors,
-  type CollisionDetection,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import {
-  SortableContext,
-  arrayMove,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { ChevronRight, FileText, Folder, FolderOpen, Pencil, X } from "lucide-react";
-import { IconButton } from "../../../components/ui/icon-button";
+import { SortableContext, arrayMove, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { FileText, Folder } from "lucide-react";
 import { getSidebarSensorActivationConstraints } from "../../../components/layout/groupSidebarModel";
 import type { VoiceFolder } from "../../../services/api/voiceDocumentLibrary";
 import type { AssistantVoiceDocument } from "../../../types";
 import { classNames } from "../../../utils/classNames";
-import { VoiceDocumentRow, type VoiceDocumentRowContext } from "./VoiceDocumentRow";
+import type { VoiceDocumentRowContext } from "./VoiceDocumentRow";
 import { VoiceDocumentListEmpty } from "./VoiceSecretaryDocumentListPanel";
-
-const ROOT_DROP_ID = "voice-folder-root";
-const folderRootKey = (folderId: string) => `folder:${folderId}`;
-
-/** What a drag carries: a document to file, or a folder to reorder among root items. */
-type DragItem = { document: AssistantVoiceDocument } | { folder: VoiceFolder; rootKey: string };
-/** Where it lands: a folder or the root to file into, and/or a root slot to reorder against. */
-type DropTarget = { folderId?: string; rootKey?: string };
-type RootItem =
-  | { key: string; folder: VoiceFolder }
-  | { key: string; document: AssistantVoiceDocument };
-
-const dropTarget = (container: { data: { current?: unknown } } | undefined) =>
-  container?.data.current as DropTarget | undefined;
-
-// Folders reorder against the nearest root item. Documents file into the folder under the
-// pointer, else the root; root document slots only serve folder reordering.
-const collisionDetection: CollisionDetection = (args) => {
-  if (args.active.data.current?.folder)
-    return closestCenter({
-      ...args,
-      droppableContainers: args.droppableContainers.filter((c) => dropTarget(c)?.rootKey),
-    });
-  const hits = pointerWithin(args).filter(
-    (hit) => dropTarget(hit.data?.droppableContainer)?.folderId !== undefined,
-  );
-  return [...hits].sort(
-    (a, b) =>
-      Number(!!dropTarget(b.data?.droppableContainer)?.folderId) -
-      Number(!!dropTarget(a.data?.droppableContainer)?.folderId),
-  );
-};
+import {
+  DraggableDocumentRow,
+  RootSlot,
+  SortableFolder,
+  RootDropZone,
+} from "./VoiceDocumentTreeParts";
+import {
+  collisionDetection,
+  dropTarget,
+  folderRootKey,
+  type DragItem,
+  type RootItem,
+} from "./voiceDocumentTreeModel";
 
 type Props = {
   ctx: VoiceDocumentRowContext;
@@ -223,214 +192,5 @@ export function VoiceDocumentTree(props: Props) {
         ) : null}
       </DragOverlay>
     </DndContext>
-  );
-}
-
-function DraggableDocumentRow({
-  ctx,
-  document,
-  depth,
-  disabled,
-}: {
-  ctx: VoiceDocumentRowContext;
-  document: AssistantVoiceDocument;
-  depth: number;
-  disabled: boolean;
-}) {
-  const id = ctx.documentPath(document) || ctx.documentKey(document);
-  const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
-    id,
-    data: { document } satisfies DragItem,
-    disabled: disabled || !ctx.documentPath(document),
-  });
-  return (
-    <VoiceDocumentRow
-      ctx={ctx}
-      document={document}
-      depth={depth}
-      drag={{ ref: setNodeRef, props: { ...attributes, ...listeners }, dragging: isDragging }}
-    />
-  );
-}
-
-/** A root document's place in the sortable order: a folder can land here, it never drags. */
-function RootSlot({ rootKey, children }: { rootKey: string; children: ReactNode }) {
-  const { setNodeRef, transform, transition } = useSortable({
-    id: rootKey,
-    data: { rootKey } satisfies DropTarget,
-    disabled: { draggable: true },
-  });
-  return (
-    <div
-      ref={setNodeRef}
-      data-voice-root-slot
-      style={{ transform: CSS.Translate.toString(transform), transition }}
-    >
-      {children}
-    </div>
-  );
-}
-
-/** A folder header plus its expanded documents, moved together when reordering. */
-function SortableFolder({
-  ctx,
-  folder,
-  rootKey,
-  count,
-  open,
-  busy,
-  acceptsDocument,
-  onToggle,
-  onRename,
-  onRemove,
-  children,
-}: {
-  ctx: VoiceDocumentRowContext;
-  folder: VoiceFolder;
-  rootKey: string;
-  count: number;
-  open: boolean;
-  busy: boolean;
-  acceptsDocument: boolean;
-  onToggle: () => void;
-  onRename: () => void;
-  onRemove: () => void;
-  children: ReactNode;
-}) {
-  const { isDark, t } = ctx;
-  const {
-    setNodeRef,
-    setActivatorNodeRef,
-    attributes,
-    listeners,
-    transform,
-    transition,
-    isDragging,
-    isOver,
-  } = useSortable({
-    id: rootKey,
-    data: { folder, rootKey, folderId: folder.folder_id } satisfies DragItem & DropTarget,
-    disabled: busy,
-  });
-  const highlighted = isOver && acceptsDocument;
-  const FolderIcon = open || highlighted ? FolderOpen : Folder;
-  return (
-    <div
-      ref={setNodeRef}
-      data-voice-folder-group
-      style={{ transform: CSS.Translate.toString(transform), transition }}
-      className={classNames("space-y-0.5", isDragging && "opacity-40")}
-    >
-      <div
-        data-voice-folder
-        className={classNames(
-          "group/folder flex min-w-0 items-center rounded-lg pr-1 transition-colors",
-          highlighted
-            ? isDark
-              ? "bg-sky-400/20 ring-1 ring-sky-300/60"
-              : "bg-sky-50 ring-1 ring-sky-400/70"
-            : isDark
-              ? "hover:bg-white/8"
-              : "hover:bg-black/[0.04]",
-        )}
-      >
-        <button
-          ref={setActivatorNodeRef}
-          {...attributes}
-          {...listeners}
-          type="button"
-          aria-expanded={open}
-          title={folder.name}
-          onClick={onToggle}
-          className={classNames(
-            "flex min-w-0 flex-1 items-center gap-1 py-1.5 pl-0.5 text-left text-sm font-medium outline-none focus-visible:ring-2 rounded-lg pointer-coarse:py-2.5",
-            isDark
-              ? "text-slate-200 focus-visible:ring-white/35"
-              : "text-gray-800 focus-visible:ring-black/25",
-          )}
-        >
-          <ChevronRight
-            size={14}
-            aria-hidden="true"
-            className={classNames("shrink-0 opacity-50 transition-transform", open && "rotate-90")}
-          />
-          <FolderIcon size={15} aria-hidden="true" className="shrink-0 opacity-70" />
-          <span className="min-w-0 flex-1 truncate pl-0.5">{folder.name}</span>
-          <span className="shrink-0 px-1 text-xs font-normal text-[var(--color-text-muted)]">
-            {count}
-          </span>
-        </button>
-        <FolderAction
-          label={t("voiceFolderRename", { defaultValue: "Rename folder" })}
-          disabled={busy}
-          onClick={onRename}
-        >
-          <Pencil size={13} />
-        </FolderAction>
-        <FolderAction
-          label={t("voiceFolderRemove", { defaultValue: "Remove folder" })}
-          disabled={busy}
-          onClick={onRemove}
-        >
-          <X size={13} />
-        </FolderAction>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function FolderAction({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <IconButton
-      variant="ghost"
-      size="sm"
-      label={label}
-      disabled={disabled}
-      onClick={onClick}
-      // Revealed on hover like row menus; always visible where there is no hover.
-      className="shrink-0 text-[var(--color-text-tertiary)] opacity-0 group-hover/folder:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
-    >
-      {children}
-    </IconButton>
-  );
-}
-
-function RootDropZone({
-  isDark,
-  active,
-  children,
-}: {
-  isDark: boolean;
-  active: boolean;
-  children: ReactNode;
-}) {
-  const { setNodeRef, isOver } = useDroppable({
-    id: ROOT_DROP_ID,
-    data: { folderId: "" } satisfies DropTarget,
-    disabled: !active,
-  });
-  return (
-    <div
-      ref={setNodeRef}
-      data-voice-folder-root
-      className={classNames(
-        "min-h-16 space-y-0.5 rounded-lg pb-6 transition-colors",
-        active && "outline-1 -outline-offset-1 outline-dashed outline-[var(--glass-border-subtle)]",
-        active && isOver && (isDark ? "bg-sky-400/15" : "bg-sky-50"),
-      )}
-    >
-      {children}
-    </div>
   );
 }

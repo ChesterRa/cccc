@@ -241,6 +241,16 @@ are in focused modules. The browser critical entrypoint imports its new voice
 regressions and updates the connection assertion to the current badge contract.
 No second UI library, routing model, state library, or database layer is added.
 
+## Voice tree and audio outline (2026-09-23)
+
+The new document tree is split into orchestration (`VoiceDocumentTree.tsx`, 196
+lines), row/drop-zone presentation (`VoiceDocumentTreeParts.tsx`, 220 lines), and
+collision contracts (`voiceDocumentTreeModel.ts`, 37 lines). Audio-outline
+composition lives in `VoiceWorkspaceFrame.tsx`; the legacy workspace panel stays
+at 474 lines and its existing toolbar-extraction plan still applies. Existing
+document-library interaction tests cover the same components after extraction;
+real browser dragging covers folder filing, unfiling, and mixed root ordering.
+
 ## Grok test socket roots (2026-09-14)
 
 The five fake-Grok session fixtures now allocate private, automatically cleaned temporary directories under `/tmp`, keeping the leader socket below the Unix path limit independently of macOS's long default `TMPDIR`. This choice is local to the fixture and does not modify process-wide environment variables. A subprocess regression forces a long system temporary directory, runs the real Grok preparation path and binds the resulting Unix socket; the child must execute one test, not merely exit successfully with an empty filter. Existing session/admission assertions remain unchanged.

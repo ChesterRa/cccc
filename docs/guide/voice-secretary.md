@@ -45,10 +45,15 @@ target. Collapsing a section does not stop recording or background processing.
 
 ## Live transcript and document actions
 
-The Transcript view shows the current document's live original ASR text below the
-recording indicator. This preview is scoped to the recording group and document;
+Wide layouts show live original ASR text in the activity feed. When that feed is
+hidden on narrow screens, the Transcript view shows it below the recording
+indicator. This preview is scoped to the recording group and document;
 it is separate from saved entries and disappears on stop, when final transcript
 processing takes over. The saved-entry count continues to count final entries.
+
+The workspace outline reacts to microphone volume during recording and indicates
+processing during final audio analysis. Reading the current audio level does not
+re-render the composer for each incoming audio frame.
 
 Right-click a working-document row (or press Shift+F10 with the row focused) to
 select, archive, or delete that exact document. Archive keeps the file and marks

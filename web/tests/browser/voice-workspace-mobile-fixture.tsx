@@ -83,6 +83,7 @@ const fixtureDocuments: Array<typeof documentFixture & { folder_id?: string }> =
   linkedDocumentFixture,
 ];
 let fixtureFolders: Array<{ folder_id: string; name: string }> = [];
+let fixtureRootOrder: string[] = [];
 window.fetch = async (input, options) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const body = options?.body ? JSON.parse(String(options.body)) : {};
@@ -95,6 +96,7 @@ window.fetch = async (input, options) => {
   if (url.includes("recording_lease"))
     return Response.json({ ok: true, result: { lease_id: "fixture", lost: false } });
   if (url.endsWith("/documents/library")) {
+    if (body.action === "reorder_root") fixtureRootOrder = body.root_order;
     const target = fixtureDocuments.find(
       (document) => document.workspace_path === body.document_path,
     );
@@ -116,6 +118,7 @@ window.fetch = async (input, options) => {
       ok: true,
       result: {
         folders: fixtureFolders,
+        root_order: fixtureRootOrder,
         documents: fixtureDocuments
           .filter((document) => document.status !== "deleted")
           .map((document) => ({
