@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 
 pub(super) fn resolve(request: &DaemonRequest) -> Option<Operation> {
     match request.op.as_str() {
@@ -10,6 +11,7 @@ pub(super) fn resolve(request: &DaemonRequest) -> Option<Operation> {
 
 fn projection(state: &Value) -> Value {
     json!({"folders":state["folders"].as_array().cloned().unwrap_or_default(),
+        "root_order":state["root_order"].as_array().cloned().unwrap_or_default(),
         "documents":items(state,"documents").iter().filter(|d| !voice_document_state::is_deleted(d)).collect::<Vec<_>>()})
 }
 
@@ -74,6 +76,36 @@ fn mutate(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                         document["folder_id"] = json!("");
                     }
                 }
+            }
+            "reorder_root" => {
+                // Mixed order of root items, keyed `folder:<id>` / `document:<path>`;
+                // entries for items that no longer exist are dropped.
+                let order = request
+                    .args
+                    .get("root_order")
+                    .and_then(Value::as_array)
+                    .filter(|keys| keys.iter().all(Value::is_string))
+                    .ok_or_else(|| invalid("root_order must be a list of item keys"))?;
+                let mut known = array(state, "folders")
+                    .iter()
+                    .filter_map(|f| f["folder_id"].as_str())
+                    .map(|id| format!("folder:{id}"))
+                    .collect::<HashSet<_>>();
+                known.extend(
+                    array(state, "documents")
+                        .iter()
+                        .filter(|d| !voice_document_state::is_deleted(d))
+                        .filter_map(|d| d["document_path"].as_str())
+                        .map(|path| format!("document:{path}")),
+                );
+                let mut seen = HashSet::new();
+                let order = order
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|key| known.contains(*key) && seen.insert(*key))
+                    .map(|key| json!(key))
+                    .collect::<Vec<_>>();
+                state.insert("root_order".into(), Value::Array(order));
             }
             "rename" => {
                 if name.is_empty() || name.chars().count() > 80 {

@@ -11,7 +11,9 @@ pub(crate) fn test_guard() -> MutexGuard<'static, ()> {
     TEST_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("test lock")
+        // The lock only serializes tests and guards no data, so one failing test
+        // must not poison it and fail every later test.
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(unix)]

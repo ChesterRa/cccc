@@ -212,6 +212,7 @@ fn flat_from_index(index: &Value) -> Value {
     json!({
         "documents":documents,
         "folders":index["folders"].as_array().cloned().unwrap_or_default(),
+        "root_order":index["root_order"].as_array().cloned().unwrap_or_default(),
         "active_document_id":active_id,
         "active_document_path":active_path
     })
@@ -244,6 +245,7 @@ fn index_from_flat(group_id: &str, state: &mut Map<String, Value>) -> Value {
         "schema":SCHEMA,
         "group_id":group_id,
         "folders":state.get("folders").cloned().unwrap_or_else(||json!([])),
+        "root_order":state.get("root_order").cloned().unwrap_or_else(||json!([])),
         "active_document_id":state.get("active_document_id").cloned().unwrap_or_else(||json!("")),
         "documents":documents
     })

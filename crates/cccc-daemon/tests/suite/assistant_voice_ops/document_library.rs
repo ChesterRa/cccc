@@ -205,3 +205,45 @@ fn renaming_a_document_changes_only_its_title() {
     );
     assert_eq!(listed.result["documents"][0]["title"], "After");
 }
+
+#[test]
+fn root_order_mixes_folders_with_documents_and_persists() {
+    let (_temp, home, _store, group) = enabled_voice_group();
+    let created = library_update(
+        &home,
+        &group,
+        json!({"action":"create_folder","name":"会议"}),
+    );
+    let folder = format!(
+        "folder:{}",
+        created.result["folders"][0]["folder_id"]
+            .as_str()
+            .expect("id")
+    );
+    for path in ["voice/a.md", "voice/b.md"] {
+        ok(
+            &home,
+            "assistant_voice_document_save",
+            json!({"group_id":group,"document_path":path,"content":"# note"}),
+        );
+    }
+    let reordered = library_update(
+        &home,
+        &group,
+        json!({"action":"reorder_root","root_order":[
+            "document:voice/a.md", folder, "document:voice/missing.md", "document:voice/b.md", folder
+        ]}),
+    );
+    let expected = json!(["document:voice/a.md", folder, "document:voice/b.md"]);
+    assert_eq!(reordered.result["root_order"], expected);
+    let read = ok(
+        &home,
+        "assistant_voice_document_library",
+        json!({"group_id":group}),
+    );
+    assert_eq!(read.result["root_order"], expected);
+    for root_order in [json!("folder"), json!([1])] {
+        let args = json!({"group_id":group,"action":"reorder_root","root_order":root_order});
+        assert!(!call(&home, "assistant_voice_document_library_update", args).ok);
+    }
+}

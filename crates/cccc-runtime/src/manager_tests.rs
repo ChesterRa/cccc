@@ -450,17 +450,18 @@ fn stop_is_bounded_when_a_background_child_keeps_the_pty_open() {
     ))
     .expect("start");
     let pid_path = temp.path().join("background.pid");
+    // The shell creates the file before `echo` writes it, so wait for a full pid.
+    let mut background_pid = None;
     for _ in 0..100 {
-        if pid_path.exists() {
+        background_pid = std::fs::read_to_string(&pid_path)
+            .ok()
+            .and_then(|text| text.trim().parse::<i32>().ok());
+        if background_pid.is_some() {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    let background_pid = std::fs::read_to_string(&pid_path)
-        .expect("background pid")
-        .trim()
-        .parse::<i32>()
-        .expect("numeric background pid");
+    let background_pid = background_pid.expect("numeric background pid");
     for _ in 0..100 {
         if !status("g_background_child", "peer1")
             .expect("status")

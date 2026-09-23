@@ -41,6 +41,7 @@
     "react-dom": "^19.2.7",
     "react-i18next": "^17.0.9",
     "tailwind-merge": "^3.6.0",
+    "voice-glow": "^0.2.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

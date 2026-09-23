@@ -97,9 +97,14 @@ documents. A restore by another client therefore reappears without reloading or
 switching groups. Stale or failed refresh responses cannot clear these guards.
 
 Folders are single-level, group-wide persistent organization, stored in the voice
-document index. Create or rename a folder in the sidebar and use a document's
-Move to folder menu action to organize it. Enter a folder to see its documents;
-the back button returns to the root's unfiled list. New documents are created at
+document index. The sidebar shows them as a tree: click a folder to expand its
+documents in place, and unfiled documents are listed below the folders. Create a
+folder from the header's folder button. Drag a document onto a folder to file it,
+or onto the unfiled area to take it out; the Move to folder menu action does the
+same without dragging. Drag a folder anywhere among the folders and unfiled
+documents; the mixed order is saved, and new folders and documents appear at the
+top. On
+touch screens, long-press a row to start dragging. New documents are created at
 the root. Removing a folder moves its documents to the root without deleting
 them. Folder assignment survives editing, archiving and restoring; it does not
 change Markdown paths or quoted references.
@@ -107,7 +112,9 @@ change Markdown paths or quoted references.
 `GET /api/v1/groups/{group_id}/assistants/voice_secretary/documents/library`
 returns folders and non-deleted documents, including archived content. POST to
 the same endpoint accepts `create_folder`, `rename_folder`, `remove_folder`,
-`rename`, `move`, and `restore`, with `name`, `folder_id`, or `document_path` as appropriate.
+`rename`, `reorder_root`, `move`, and `restore`, with `name`, `folder_id`, `document_path`,
+or `root_order` as appropriate. `root_order` is the mixed order of root items as
+`folder:<id>` / `document:<path>` keys; keys for missing items are dropped.
 Empty/duplicate names, missing folders, unauthorized writers, and attempts to
 restore a deleted document are rejected. Read responses from a previous group
 cannot overwrite the current group's library.

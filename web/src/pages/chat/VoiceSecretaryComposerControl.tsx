@@ -506,12 +506,11 @@ export function VoiceSecretaryComposerControl({
   const [activityClockMs, setActivityClockMs] = useState(() => Date.now());
   const [voiceReplyBubbleRequestId, setVoiceReplyBubbleRequestId] = useState("");
   const [copiedVoiceReplyRequestId, setCopiedVoiceReplyRequestId] = useState("");
-  const voiceAudioMeter = useVoiceAudioLevelMeter();
   const {
-    levels: voiceAudioLevels,
-    stopBrowserMeter,
+    getLevel: getVoiceAudioLevel,
+    reset: resetVoiceAudioLevel,
     updateFromSamples: updateVoiceAudioLevelsFromSamples,
-  } = voiceAudioMeter;
+  } = useVoiceAudioLevelMeter();
   const setRecordingStartingFlag = useCallback((next: boolean) => {
     recordingStartingRef.current = next;
     setRecordingStarting(next);
@@ -1528,7 +1527,7 @@ export function VoiceSecretaryComposerControl({
       const cleanupBrowserSpeechMedia = browserSpeechMediaCleanupRef.current;
       browserSpeechMediaCleanupRef.current = null;
       if (cleanupBrowserSpeechMedia) cleanupBrowserSpeechMedia();
-      stopBrowserMeter();
+      resetVoiceAudioLevel();
       stopMediaStream(mediaStreamRef.current);
       mediaStreamRef.current = null;
       mediaChunksRef.current = [];
@@ -1613,7 +1612,7 @@ export function VoiceSecretaryComposerControl({
     loadDocumentDraft,
     releaseVoiceRecordingGuards,
     selectedGroupId,
-    stopBrowserMeter,
+    resetVoiceAudioLevel,
   ]);
 
   useEffect(() => {
@@ -2360,7 +2359,7 @@ export function VoiceSecretaryComposerControl({
         recorder.onstop = null;
       }
       clearBrowserSpeechMediaHandlers();
-      stopBrowserMeter();
+      resetVoiceAudioLevel();
       stopMediaStream(mediaStreamRef.current);
       mediaStreamRef.current = null;
       mediaChunksRef.current = [];
@@ -2391,16 +2390,16 @@ export function VoiceSecretaryComposerControl({
       isActiveRecordingRun,
       releaseVoiceRecordingGuards,
       reportRecordingStopReason,
-      stopBrowserMeter,
+      resetVoiceAudioLevel,
     ],
   );
 
   const releaseLocalMicrophoneCapture = useCallback(() => {
     clearBrowserSpeechMediaHandlers();
-    stopBrowserMeter();
+    resetVoiceAudioLevel();
     stopMediaStream(mediaStreamRef.current);
     mediaStreamRef.current = null;
-  }, [clearBrowserSpeechMediaHandlers, stopBrowserMeter]);
+  }, [clearBrowserSpeechMediaHandlers, resetVoiceAudioLevel]);
 
   const finalizeBrowserRecordingRun = useCallback(
     async (runId: number, triggerKind: string) => {
@@ -2705,7 +2704,7 @@ export function VoiceSecretaryComposerControl({
     clearBrowserSpeechRestartTimer();
     clearBrowserSpeechStopFinalizeTimer();
     clearBrowserSpeechMediaHandlers();
-    stopBrowserMeter();
+    resetVoiceAudioLevel();
     abortBrowserSpeechRecognition(existingRecognition);
     stopMediaStream(mediaStreamRef.current);
     mediaStreamRef.current = null;
@@ -2783,7 +2782,7 @@ export function VoiceSecretaryComposerControl({
       clearBrowserSpeechRestartTimer();
       clearBrowserSpeechStopFinalizeTimer();
       clearBrowserSpeechMediaHandlers();
-      stopBrowserMeter();
+      resetVoiceAudioLevel();
       if (recognition && recognitionRef.current === recognition) recognitionRef.current = null;
       abortBrowserSpeechRecognition(recognition);
       stopMediaStream(mediaStreamRef.current);
@@ -3085,7 +3084,7 @@ export function VoiceSecretaryComposerControl({
     showError,
     t,
     updateLiveTranscriptPreview,
-    stopBrowserMeter,
+    resetVoiceAudioLevel,
   ]);
 
   const handleServiceStreamingFinal = useCallback(
@@ -5463,10 +5462,14 @@ export function VoiceSecretaryComposerControl({
                       documentRemoteChanged={documentRemoteChanged}
                       isDark={isDark}
                       recording={recording}
-                      recordingAudioLevels={voiceAudioLevels}
+                      recordingAudioLevel={getVoiceAudioLevel}
                       t={t}
                       transcriptItems={visibleVoiceTranscriptItems}
-                      livePreview={currentLiveTranscript}
+                      // Live text lives in the activity feed; the workspace only
+                      // shows it where that feed is hidden (small screens).
+                      livePreview={
+                        workspaceVisibility.showActivityFeed ? null : currentLiveTranscript
+                      }
                       view={voiceWorkspaceView}
                       onChangeView={setVoiceWorkspaceView}
                       onArchiveDocument={() => void archiveDocument(activeDocument)}

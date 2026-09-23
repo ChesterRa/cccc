@@ -106,6 +106,36 @@ describe("Voice Secretary document panels", () => {
     expect(host.textContent).toContain("最终原文");
   });
 
+  it("glows the whole workspace while recording and sweeps a beam while analyzing", async () => {
+    const glow = () => host.querySelector("[data-voice-workspace-glow]");
+    await act(async () => root.render(workspacePanel({ recording: false })));
+    expect(glow()?.querySelector("[data-voice-document-panel]")).toBeTruthy();
+    expect(glow()?.hasAttribute("data-active")).toBe(false);
+    await act(async () => root.render(workspacePanel({ recording: true })));
+    expect(glow()?.hasAttribute("data-active")).toBe(true);
+    expect(glow()?.hasAttribute("data-processing")).toBe(false);
+    await act(async () =>
+      root.render(
+        workspacePanel({
+          recording: false,
+          view: "transcript",
+          transcriptItems: [
+            {
+              id: "final",
+              mode: "document",
+              phase: "final",
+              text: "",
+              updatedAt: 1,
+              createdAt: 1,
+              processingPhase: "separating_speakers",
+            },
+          ],
+        }),
+      ),
+    );
+    expect(glow()?.hasAttribute("data-processing")).toBe(true);
+  });
+
   it("marks the default document with a badge and sets a default from the row menu", async () => {
     const onSelectDocument = vi.fn();
     const onSetCaptureTargetDocument = vi.fn();
@@ -222,7 +252,7 @@ function workspacePanel(
       documentRemoteChanged={false}
       isDark={false}
       recording={false}
-      recordingAudioLevels={[]}
+      recordingAudioLevel={() => 0}
       t={t}
       transcriptItems={[]}
       view="document"

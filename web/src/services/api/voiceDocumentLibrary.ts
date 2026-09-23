@@ -4,10 +4,23 @@ import { clearAssistantStateRequest } from "./groups";
 
 export type VoiceFolder = { folder_id: string; name: string };
 export type LibraryDocument = AssistantVoiceDocument & { folder_id?: string };
-export type VoiceLibrary = { folders: VoiceFolder[]; documents: LibraryDocument[] };
+export type VoiceLibrary = {
+  folders: VoiceFolder[];
+  documents: LibraryDocument[];
+  /** Mixed order of root items, keyed `folder:<id>` / `document:<path>`. */
+  root_order?: string[];
+};
 export type LibraryAction = {
-  action: "create_folder" | "rename_folder" | "remove_folder" | "move" | "restore" | "rename";
+  action:
+    | "create_folder"
+    | "rename_folder"
+    | "remove_folder"
+    | "reorder_root"
+    | "move"
+    | "restore"
+    | "rename";
   folder_id?: string;
+  root_order?: string[];
   name?: string;
   document_path?: string;
 };
