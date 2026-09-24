@@ -1,10 +1,11 @@
 import { cloneElement, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, ChevronRight, MessageSquare, LayoutGrid } from "lucide-react";
+import { Activity, ChevronLeft, ChevronRight, MessageSquare, LayoutGrid } from "lucide-react";
 import type { Actor } from "../../types";
 import { useUIStore } from "../../stores";
-import { getChatSession } from "../../stores/useUIStore";
+import { getChatSession, type GroupWorkView } from "../../stores/useUIStore";
+import { GroupOverview } from "./GroupOverview";
 import { RuntimeInspectorModal } from "../../components/modals/RuntimeInspectorModal";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { terminalPageLayout } from "./groupWorkLayout";
@@ -25,6 +26,7 @@ type Props = {
   workControlsHost: HTMLElement | null;
   sidePanelControlsHost: HTMLElement | null;
   isSmallScreen: boolean;
+  actorStatusProvisional?: boolean;
   sidePanelControls?: ReactNode;
   onInspectActor: (actorId: string) => void;
   renderActor: RuntimeActorRenderer;
@@ -44,6 +46,7 @@ export function GroupWorkArea({
   workControlsHost,
   sidePanelControlsHost,
   isSmallScreen,
+  actorStatusProvisional,
   sidePanelControls,
   onInspectActor,
   renderActor,
@@ -56,6 +59,10 @@ export function GroupWorkArea({
   const root = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const tiled = session.workView === "terminals";
+  const overview = session.workView === "overview";
+  const workViewOrder: GroupWorkView[] = ["messages", "terminals", "overview"];
+  const nextWorkView =
+    workViewOrder[(workViewOrder.indexOf(session.workView) + 1) % workViewOrder.length];
   const { page, pageCount, pageSize, start } = terminalPageLayout(
     actors.length,
     session.terminalPage,
@@ -209,7 +216,7 @@ export function GroupWorkArea({
                 aria-label={t("workView.label")}
                 data-group-view-switch
               >
-                {(["messages", "terminals"] as const).map((view) => (
+                {(["messages", "terminals", "overview"] as const).map((view) => (
                   <button
                     key={view}
                     type="button"
@@ -226,15 +233,17 @@ export function GroupWorkArea({
                 type="button"
                 className={`${buttonClass} @min-[600px]/group-work-header:hidden`}
                 data-group-view-toggle
-                aria-label={t("workView.switchTo", {
-                  view: t(tiled ? "workView.messages" : "workView.terminals"),
-                })}
-                title={t("workView.switchTo", {
-                  view: t(tiled ? "workView.messages" : "workView.terminals"),
-                })}
-                onClick={() => setView(groupId, tiled ? "messages" : "terminals")}
+                aria-label={t("workView.switchTo", { view: t(`workView.${nextWorkView}`) })}
+                title={t("workView.switchTo", { view: t(`workView.${nextWorkView}`) })}
+                onClick={() => setView(groupId, nextWorkView)}
               >
-                {tiled ? <LayoutGrid size={17} /> : <MessageSquare size={17} />}
+                {tiled ? (
+                  <LayoutGrid size={17} />
+                ) : overview ? (
+                  <Activity size={17} />
+                ) : (
+                  <MessageSquare size={17} />
+                )}
                 {unread}
               </button>
               {!isSmallScreen ? pager : null}
@@ -245,12 +254,31 @@ export function GroupWorkArea({
       {sidePanelControlsHost ? createPortal(sidePanelControls, sidePanelControlsHost) : null}
       <div
         key={groupId}
-        className={tiled ? "hidden" : "relative flex min-h-0 flex-1 flex-col"}
-        inert={tiled ? true : undefined}
-        aria-hidden={tiled ? true : undefined}
+        className={
+          session.workView === "messages" ? "relative flex min-h-0 flex-1 flex-col" : "hidden"
+        }
+        inert={session.workView !== "messages" ? true : undefined}
+        aria-hidden={session.workView !== "messages" ? true : undefined}
         data-group-message-view
       >
         {children}
+      </div>
+      <div
+        className={overview ? "relative flex min-h-0 flex-1 flex-col" : "hidden"}
+        inert={!overview}
+        aria-hidden={!overview}
+        data-group-overview-view
+      >
+        {overview ? (
+          <GroupOverview
+            groupId={groupId}
+            actors={actors}
+            isDark={isDark}
+            loading={loading}
+            actorStatusProvisional={actorStatusProvisional}
+            onOpenActor={onInspectActor}
+          />
+        ) : null}
       </div>
       <div
         className={tiled ? "grid min-h-0 min-w-0 flex-1 gap-2 p-2" : "contents"}

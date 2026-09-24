@@ -113,7 +113,7 @@ describe("Group work area", () => {
   it("paginates at four and keeps each group's view and page through switching", async () => {
     await render();
     expect(host.querySelectorAll("[data-terminal]")).toHaveLength(0);
-    await click('[aria-label="workView.label"] button:last-child');
+    await click('[aria-label="workView.label"] button:nth-child(2)');
     expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(4);
     const first = host.querySelector<HTMLTextAreaElement>('[data-terminal="actor-1"]')!;
     first.value = "retained input";
@@ -123,7 +123,7 @@ describe("Group work area", () => {
     expect(first.closest("[inert]")).not.toBeNull();
     await render({ groupId: "g2" });
     expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(0);
-    await click('[aria-label="workView.label"] button:last-child');
+    await click('[aria-label="workView.label"] button:nth-child(2)');
     const second = host.querySelector('[data-runtime-group-id="g2"] [data-terminal="actor-1"]');
     expect(second).not.toBe(first);
     expect(second).not.toBeNull();
@@ -166,7 +166,7 @@ describe("Group work area", () => {
     await click('[aria-label="workView.label"] button:first-child');
     expect(host.querySelector('[data-terminal="actor-1"]')).toBe(terminal);
     expect(host.querySelectorAll('[data-visible="true"]')).toHaveLength(0);
-    await click('[aria-label="workView.label"] button:last-child');
+    await click('[aria-label="workView.label"] button:nth-child(2)');
     expect(host.querySelector('[data-terminal="actor-1"]')).toBe(terminal);
   });
 
@@ -185,6 +185,18 @@ describe("Group work area", () => {
     expect(controlsHost.textContent).not.toContain("presentation");
     expect(host.querySelector('[data-terminal="actor-5"]')).not.toBeNull();
     expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(4);
+  });
+
+  it("switches to the overview view and back to messages", async () => {
+    await render({ count: 3 });
+    await click('[aria-label="workView.label"] button:nth-child(3)');
+    expect(useUIStore.getState().chatSessions.g1.workView).toBe("overview");
+    expect(host.querySelector("[data-group-overview]")).not.toBeNull();
+    expect(host.querySelector("[data-group-message-view]")?.getAttribute("inert")).not.toBeNull();
+    expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(0);
+    await click('[aria-label="workView.label"] button:first-child');
+    expect(useUIStore.getState().chatSessions.g1.workView).toBe("messages");
+    expect(host.querySelector("[data-group-overview]")).toBeNull();
   });
 });
 

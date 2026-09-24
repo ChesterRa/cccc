@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Mail } from "lucide-react";
 
@@ -16,6 +16,7 @@ import { fetchLedgerTailAll } from "../../services/api/messaging";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
 import { buildActorStoppedSinceMap, buildRuntimeDockMailInfo } from "./runtimeDockMail";
+import { useElapsedNow, useStateSinceMs } from "./runtimeDockElapsed";
 import { formatElapsedCompact } from "../../utils/time";
 
 type RuntimeRingPresentation = {
@@ -29,7 +30,6 @@ const RUNTIME_RING_GEOMETRY_CLASS = "absolute -inset-[0.5px] rounded-full";
 const RUNTIME_RING_STROKE_PX = 7;
 const RUNTIME_STATIC_RING_STROKE_CLASS = "border-[4px]";
 const RUNTIME_ELAPSED_CAP_MS = 60 * 60 * 1000;
-const RUNTIME_ELAPSED_TICK_MS = 10_000;
 const RUNTIME_ARC_STROKE_PX = 1.8;
 
 const EMPTY_STOPPED_MAP: Map<string, number | null> = new Map();
@@ -39,47 +39,6 @@ const RUNTIME_ARC_COLORS: Record<"active" | "attention" | "idle", string> = {
   attention: "rgba(251, 113, 133, 0.9)",
   idle: "rgba(52, 211, 153, 0.85)",
 };
-
-function useElapsedNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    setNow(Date.now());
-    const id = window.setInterval(() => setNow(Date.now()), RUNTIME_ELAPSED_TICK_MS);
-    return () => window.clearInterval(id);
-  }, [active]);
-  return now;
-}
-
-function useStateSinceMs(
-  isRunning: boolean,
-  workingState: string,
-  backendSinceIso: string | null | undefined,
-  stoppedSinceLedgerMs: number,
-): { ms: number; stopped: boolean } | null {
-  const stateKey = isRunning ? String(workingState || "running") : "stopped";
-  const prevKeyRef = useRef<string | null>(null);
-  const baselineRef = useRef<{ key: string; at: number } | null>(null);
-  const flipRef = useRef<{ key: string; at: number } | null>(null);
-  if (prevKeyRef.current === null) {
-    baselineRef.current = { key: stateKey, at: Date.now() };
-  } else if (prevKeyRef.current !== stateKey) {
-    const at = Date.now();
-    baselineRef.current = { key: stateKey, at };
-    flipRef.current = { key: stateKey, at };
-  }
-  prevKeyRef.current = stateKey;
-
-  if (stateKey === "stopped") {
-    const flipMs = flipRef.current?.key === "stopped" ? flipRef.current.at : 0;
-    const ms = Math.max(stoppedSinceLedgerMs > 0 ? stoppedSinceLedgerMs : 0, flipMs);
-    return ms > 0 ? { ms, stopped: true } : null;
-  }
-  const backendSinceMs = Date.parse(String(backendSinceIso || ""));
-  const baseline = baselineRef.current?.at ?? Date.now();
-  const ms = Number.isFinite(backendSinceMs) ? Math.min(backendSinceMs, baseline) : baseline;
-  return { ms, stopped: false };
-}
 
 function buildFlowRingStyle(args: {
   tone: "active" | "attention";
