@@ -58,6 +58,8 @@
   "liveWorkHint": "Structured runtime activity appears here while work is in progress. Formal replies are sent through message tools.",
   "runtimeDockOpenLiveWork": "Open live work for {{name}}",
   "runtimeDockOpenTerminal": "Open terminal for {{name}}",
+  "runtimeDockUnreadMail": "{{count}} unread mail, oldest {{age}}",
+  "runtimeDockUnreadMailNoAge": "{{count}} unread mail",
   "runtimeInspectorTitle": "Runtime inspector",
   "runtimeInspectorClose": "Close runtime inspector",
   "liveWorkPhaseQueued": "Queued",
