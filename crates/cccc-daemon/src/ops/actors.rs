@@ -421,6 +421,7 @@ fn rollback_actor_update(
     if matches!(effect, ActorUpdateEffect::Stopped)
         && let Err(error) =
             actor_runtime::apply(home, original_group, &original_actor.id, "actor.start")
+        && !actor_runtime::same_untrusted_workspace(&original, &error)
     {
         failures.push(format!(
             "restart previously running actor: {}",

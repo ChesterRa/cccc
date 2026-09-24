@@ -79,6 +79,10 @@ it("does not mutate on initial status polling or claim a listener is ready from 
   expect(host.textContent).toContain("direct.listenerPending");
   await act(async () => button("direct.inviteGroup").click());
   expect(button("direct.create").disabled).toBe(false);
+  expect(button("direct.cancel")).toBeUndefined();
+  await act(async () => button("direct.back").click());
+  expect(button("direct.create")).toBeUndefined();
+  expect(button("direct.inviteGroup")).toBeTruthy();
   expect(mocks.request.mock.calls.every(([, init]) => !init?.method)).toBe(true);
 });
 it("creates an invitation for this Group only after verified listener status", async () => {

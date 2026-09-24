@@ -87,31 +87,14 @@ CI pins Node 24.19.0. `npm run check` runs Vite+ Oxfmt/Oxlint followed by the
 independent TypeScript 5.9 `tsc --noEmit` check. Type-aware Vite+ checks remain
 disabled until their diagnostics and supported scope match this project.
 
-## Connect Browser Acceptance
+## Browser Acceptance
 
-For changes to account linkage, embedded workbenches or Group connections, run:
-
-```bash
-python3 scripts/check_connect_browser.py
-```
-
-Check out `cccc-homepage` beside this repository and install its account
-fixture dependencies (`npm ci --prefix ../cccc-homepage/account`) as well as
-`web` dependencies first. The Linux runner requires Rust, Node/npm, Python 3.11+,
-OpenSSL and Google Chrome. It builds current Web/CLI/test artifacts and exercises
-both the native workbench and cross-member Group connection journeys. Its output
-records both Git revisions, dirty-worktree status and the CLI digest.
-`--journey workbench` or `--journey groups` runs only the selected journey.
-The workbench journey observes the native shared event WebSocket: all three
-subscriptions, headless snapshots, live ledger delivery and frame-bound resource
-URLs. It also verifies that revocation closes independent event and terminal
-sockets, rather than relying only on the UI to unmount them.
-
-This is an explicit cross-repository acceptance gate, not part of every fast
-check. It uses temporary Homes, local account databases, fixture Actors and a
-separate browser. It does not use the production account service or paid
-Providers. Passing it does not establish Cloudflare, WAN or native Windows/macOS
-acceptance; those remain deployment/release checks.
+The repository no longer carries the Playwright fixture harness or browser-test
+CI jobs. For UI changes, verify the affected flow in a real browser (prefer
+ego-browser), including desktop, narrow layouts, and keyboard interaction as
+appropriate. Record the observed behavior and any integration boundaries in the
+handoff. Do not describe unit tests or a successful bundle build as browser
+acceptance. Native Rust browser/session tests remain part of their crate tests.
 
 ## Pull-Request Jobs
 

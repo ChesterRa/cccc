@@ -9,6 +9,8 @@ mod session;
 mod supervisor;
 #[cfg(test)]
 mod supervisor_managed_tests;
+mod workspace_trust;
+mod workspace_trust_recovery;
 
 #[cfg(test)]
 pub(crate) use managed_reader::verify_claude_reader_release;

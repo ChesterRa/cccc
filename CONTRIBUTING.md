@@ -73,11 +73,9 @@ Inspect the selection without running it:
 scripts/pre_commit_checks.sh --dry-run
 ```
 
-Before handing off a broad change, run the full gate. Install its isolated
-browser once after installing the Web dependencies:
+Before handing off a broad change, run the full gate:
 
 ```bash
-npm -C web exec -- playwright install --with-deps chromium
 scripts/quality_gate.sh full
 ```
 
@@ -102,9 +100,6 @@ Notes:
 - Cargo checks invoked by the quality-gate scripts default to two build jobs.
   Override with `CCCC_CARGO_JOBS=4 scripts/quality_gate.sh fast` on larger
   machines. Direct Cargo commands use Cargo's own `--jobs` setting.
-- Changes to account linkage, embedded workbenches, or Group connections must
-  also pass `python3 scripts/check_connect_browser.py`. See
-  [docs/guide/quality-gates.md](docs/guide/quality-gates.md) for its setup.
 - Repository-contract tests in `tests/` validate docs against code (for
   example, the MCP architecture surface). Editing the MCP tool list, IPC
   standards, or workflow contracts usually requires updating the matching

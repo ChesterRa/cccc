@@ -20,8 +20,15 @@ mod transcript_continuity;
 #[cfg(all(test, unix))]
 mod transcript_move_client_tests;
 mod transcript_path;
+mod workspace_trust;
 
 pub(super) use command::prepare;
+pub(super) use workspace_trust::untrusted_workspace;
+
+#[cfg(test)]
+pub(super) fn workspace_refusal(detail: &str, workspace: &Path) -> Option<io::Error> {
+    workspace_trust::WorkspaceUntrusted::from_refusal(detail, workspace, "claude", workspace)
+}
 
 pub(super) fn remove_actor_settings(
     home: &cccc_core::HomeLayout,
@@ -156,6 +163,14 @@ async fn launch_inner(
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
         let detail = nonempty_detail(&stderr, &stdout);
+        if let Some(error) = workspace_trust::WorkspaceUntrusted::from_refusal(
+            detail,
+            cwd,
+            &prepared.executable,
+            &prepared.config_dir,
+        ) {
+            return Err(error);
+        }
         let guidance = if detail
             .contains("--bg with bypassPermissions requires accepting the disclaimer first")
         {

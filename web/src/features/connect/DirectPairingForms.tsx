@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
-import { copyTextToClipboard } from "../../utils/copy";
+export { DirectInvitationShare } from "./DirectInvitationShare";
 import {
   readDirectInvitation,
   type DirectAddress,
@@ -17,7 +17,6 @@ export function DirectReceiveForm({
   name: initialName,
   busy,
   onSave,
-  onCancel,
   onStop,
 }: {
   listener: DirectListener | null;
@@ -26,7 +25,6 @@ export function DirectReceiveForm({
   name: string;
   busy: boolean;
   onSave: (listener: DirectListener, name: string, previous: DirectListener | null) => void;
-  onCancel: () => void;
   onStop: () => void;
 }) {
   const { t } = useTranslation("layout");
@@ -55,29 +53,17 @@ export function DirectReceiveForm({
         onSave({ bind: bind.trim(), address: address.trim() }, name.trim(), savedListener);
       }}
     >
-      <fieldset disabled={busy} className="space-y-3 min-w-0">
+      <fieldset disabled={busy} className="space-y-4 min-w-0">
         <p className="text-[var(--color-text-secondary)]">
           {t(inviteMode ? "direct.inviteHint" : "direct.setupHint")}
         </p>
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <label
-              className="block font-medium"
-              htmlFor={changingAddress ? `${id}-address` : undefined}
-            >
-              {t("direct.address")}
-            </label>
-            {!changingAddress && (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setChangingAddress(true)}
-              >
-                {t("direct.changeAddress")}
-              </Button>
-            )}
-          </div>
+          <label
+            className="block font-medium"
+            htmlFor={changingAddress ? `${id}-address` : undefined}
+          >
+            {t("direct.address")}
+          </label>
           {changingAddress ? (
             <>
               {addresses.length > 0 && (
@@ -128,7 +114,17 @@ export function DirectReceiveForm({
               </p>
             </>
           ) : (
-            <p className="break-all font-mono">{address}</p>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--glass-border-subtle)] py-1 pl-3 pr-1">
+              <span className="min-w-0 break-all font-mono">{address}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setChangingAddress(true)}
+              >
+                {t("direct.changeAddress")}
+              </Button>
+            </div>
           )}
           {inviteMode && (
             <p className="text-xs text-[var(--color-text-secondary)]">
@@ -136,11 +132,10 @@ export function DirectReceiveForm({
             </p>
           )}
         </div>
-        {inviteMode && !savedListener && (
-          <p className="text-xs text-[var(--color-text-secondary)]">{t("direct.createEffect")}</p>
-        )}
         <details className="space-y-3">
-          <summary className="cursor-pointer">{t("direct.advanced")}</summary>
+          <summary className="cursor-pointer text-xs text-[var(--color-text-secondary)]">
+            {t("direct.advanced")}
+          </summary>
           <div className="space-y-2">
             <p className="text-xs text-[var(--color-text-secondary)]">
               {t("direct.listenEffect", { bind })}
@@ -166,7 +161,7 @@ export function DirectReceiveForm({
             />
           </div>
         </details>
-        <div className="flex flex-wrap gap-2">
+        <div className="space-y-2">
           <Button type="submit" disabled={busy || !address.trim() || !bind.trim()}>
             {t(
               busy
@@ -178,9 +173,9 @@ export function DirectReceiveForm({
                   : "direct.saveChanges",
             )}
           </Button>
-          <Button type="button" variant="ghost" disabled={busy} onClick={onCancel}>
-            {t("direct.cancel")}
-          </Button>
+          {inviteMode && !savedListener && (
+            <p className="text-xs text-[var(--color-text-secondary)]">{t("direct.createEffect")}</p>
+          )}
         </div>
         {!inviteMode && listener && (
           <div className="border-t border-[var(--glass-border-subtle)] pt-3">
@@ -284,43 +279,5 @@ export function DirectJoinForm({
         {t(busy ? "direct.requesting" : "direct.request")}
       </Button>
     </form>
-  );
-}
-
-export function DirectInvitationShare({ text }: { text: string }) {
-  const { t, i18n } = useTranslation("layout");
-  const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
-  const preview = readDirectInvitation(text);
-  if (!preview) return null;
-  if (Date.parse(preview.expires_at) <= Date.now()) return <p>{t("direct.expiredHint")}</p>;
-  return (
-    <div className="space-y-2">
-      <p>{t("direct.shareHint")}</p>
-      <p className="text-xs text-[var(--color-text-secondary)]">
-        {t("direct.expiresAt", {
-          time: new Date(preview.expires_at).toLocaleString(i18n.language),
-        })}
-      </p>
-      <Textarea
-        aria-label={t("direct.invitation")}
-        rows={2}
-        readOnly
-        value={text}
-        onFocus={(e) => e.target.select()}
-      />
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={async () => {
-          const focus = document.activeElement as HTMLElement | null;
-          setCopy((await copyTextToClipboard(text)) ? "copied" : "failed");
-          if (focus?.isConnected) focus.focus();
-        }}
-      >
-        {t(copy === "copied" ? "direct.copied" : "direct.copy")}
-      </Button>
-      {copy === "failed" && <p role="alert">{t("direct.copyFailed")}</p>}
-      <p className="text-xs text-[var(--color-text-secondary)]">{t("direct.keepInvitation")}</p>
-    </div>
   );
 }

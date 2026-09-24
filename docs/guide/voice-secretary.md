@@ -20,13 +20,6 @@ keyboard focus into it; closing it returns focus to the Voice options button.
 Transcription and prompt-processing status appear above the input instead of
 competing with action buttons. The wider-screen controls remain inline.
 
-For an isolated browser regression, start a Vite dev server on port 15559 and run
-`python3 web/tests/browser/voice-mobile.py` (see the script for configuration).
-It checks production controls at 390×844, 844×390, and 1280×900 in English,
-Chinese and Japanese, menu lifecycle and focus, and real xterm touch protocols.
-It uses a temporary Chrome profile and synthetic HTTP, with no microphone,
-provider or daemon calls. These checks do not replace iPhone Safari QA.
-
 ## Workspace modes
 
 **Doc** keeps the document list, document/transcript view and recent activity

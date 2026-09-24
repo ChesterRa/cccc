@@ -7,6 +7,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
+mod bridge_log;
 mod commands;
 mod dingtalk;
 mod dingtalk_inbound;
@@ -46,6 +47,7 @@ mod wecom_message;
 mod wecom_outbound;
 mod weixin;
 mod weixin_authorization;
+mod weixin_context_tokens;
 mod weixin_inbound;
 mod weixin_login;
 mod weixin_outbound;

@@ -10,9 +10,14 @@ mod environment;
 mod persistence;
 mod reconcile;
 pub(crate) mod terminal_history;
+#[cfg(test)]
+mod untrusted_workspace_tests;
 pub use persistence::persist_lifecycle;
 pub(crate) use reconcile::record_process_exit;
 pub use reconcile::{reap_exited, reconcile_exited};
+
+/// Claude Code refused the Actor's workspace; only the operator can accept its trust prompt.
+pub(crate) const CLAUDE_WORKSPACE_UNTRUSTED: &str = "claude_workspace_untrusted";
 
 pub fn apply(
     home: &HomeLayout,
@@ -84,7 +89,26 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
     actor.env = env;
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
-    super::local_headless::start(home, group, &actor).map_err(OpError::io)
+    super::local_headless::start(home, group, &actor).map_err(launch_error)
+}
+
+fn launch_error(error: std::io::Error) -> OpError {
+    let Some(workspace) = super::codex_voice_analyst::untrusted_claude_workspace(&error) else {
+        return OpError::io(error);
+    };
+    let mut op_error = OpError::new(CLAUDE_WORKSPACE_UNTRUSTED, error.to_string());
+    op_error
+        .details
+        .insert("workspace".into(), serde_json::json!(workspace));
+    op_error
+}
+
+/// A rollback restart refused for the same untrusted workspace is not a separate failure: the
+/// original error already names the workspace to trust, and the Actor simply stays stopped.
+pub(super) fn same_untrusted_workspace(original: &OpError, restart: &OpError) -> bool {
+    original.code == CLAUDE_WORKSPACE_UNTRUSTED
+        && restart.code == original.code
+        && restart.details.get("workspace") == original.details.get("workspace")
 }
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {

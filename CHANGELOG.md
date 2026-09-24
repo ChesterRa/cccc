@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Added
+- Claude Actors can present Claude's interactive workspace-trust prompt and retry managed startup after approval, including Windows homes resolved through `USERPROFILE`.
 - Voice Secretary displays folders as an expandable tree, supports dragging documents between folders and the unfiled area, and persists a mixed root order of folders and documents. Touch dragging uses a long press.
 - Voice Secretary gains persistent document folders, a separate archive directory with previews and restore, and context-menu actions for moving, archiving and deleting documents.
 - **Voice Secretary documents can be renamed.** The document row menu gains Rename, which changes the display title only; the Markdown file keeps its path.
@@ -17,6 +18,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Local file reads deliver original PNG, JPEG and WebP bytes as native MCP images, including through code mode, with a 20 MiB image/result budget. Text previews honor their byte budget. The bridge performs no local media conversion; image understanding depends on the selected client/model.
 
 ### Fixed
+- Trust recovery follows the normal startup lock order and cancels pending launches when an Actor or Group stops, preventing deadlocks and late session reattachment.
+- Weixin reply context tokens survive restarts in owner-only storage. Outbound delivery failures are recorded in the rotating per-Group IM bridge log.
 - Runtime process-cleanup tests wait for a complete PID file instead of racing its creation; a failed test no longer poisons the shared serialization lock for later tests.
 - Shared connector setup waits for a successful initial read before enabling changes. Failed reads can be retried without rotating credentials; stale reads and duplicate clicks no longer erase a newly created connector URL or bypass rotation confirmation.
 - Voice document library operations stop updating the UI after their owning Group view closes or changes, while ordinary list refreshes preserve pending edits.
@@ -48,6 +51,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Local command tool descriptions make direct execution explicit. `cccc_shell` honors workspace-relative `cwd`, child `env`, output limits and the documented default timeout; session commands share the same directory and environment handling.
 
 ### Changed
+- Direct-connection setup uses one Back action, a clearer address editor, and a compact invitation-sharing card.
+- Retire the checked-in browser fixture/Playwright harness and its CI/nightly jobs. Frontend unit/component checks, native Rust checks, and manual real-browser acceptance remain available.
 - Voice Secretary uses an audio-reactive workspace outline without re-rendering the composer on every audio frame. Desktop live transcription stays in the activity feed; narrow layouts show it inside the transcript workspace.
 - **External ASR failures name the provider error code.** When Bailian or Volcengine rejects a recognition task, the stop banner and the server log now include the provider's bounded error code (for example `Model.NotFound` or `45000000`) instead of only a generic hint; provider free-text messages are still never shown. Bailian arrearage and free-tier codes are reported as quota problems.
 - **Deleting a Voice Secretary document removes its file.** Delete no longer parks the Markdown file in a local recovery folder; the confirmation says the file cannot be recovered, and the index entry stays marked `deleted` so workspace discovery does not bring the document back. A temporary copy remains until the index and deletion event commit, for rollback.

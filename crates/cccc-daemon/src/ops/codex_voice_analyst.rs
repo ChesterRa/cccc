@@ -26,6 +26,19 @@ mod protocol;
 mod tests;
 mod turns;
 
+/// The workspace Claude Code refused to launch in because its trust prompt was never accepted.
+pub(crate) fn untrusted_claude_workspace(error: &io::Error) -> Option<&std::path::Path> {
+    claude::untrusted_workspace(error)
+}
+
+#[cfg(test)]
+pub(crate) fn claude_workspace_refusal(
+    detail: &str,
+    workspace: &std::path::Path,
+) -> Option<io::Error> {
+    claude::workspace_refusal(detail, workspace)
+}
+
 pub(crate) fn remove_claude_actor_settings(
     home: &HomeLayout,
     group_id: &str,

@@ -628,6 +628,19 @@ Switch to **Terminals** for the paged multi-Agent view, or open one Agent's
 inspector from its entry. Runtime restart and session-reset actions have different
 semantics; use the action's explanation before discarding a session.
 
+### Claude workspace trust
+
+If managed Claude startup requires workspace trust, the Actor terminal opens
+Claude's own interactive prompt. Only Claude records the approval. Once its
+configuration changes, CCCC can retry the managed launch. Stopping, removing, or
+restarting the Actor cancels the pending recovery; an in-flight launch is cleaned
+up instead of attaching after stop. Group shutdown also includes pending trust
+prompts that do not yet have a managed session.
+
+Trust-record monitoring uses the configured Claude directory and the home
+directory, falling back from `HOME` to `USERPROFILE` on Windows in both Actor
+environment overrides and the inherited environment.
+
 ## Messaging
 
 ### Sending Messages

@@ -1,3 +1,4 @@
+use super::bridge_log::append as append_log;
 use super::mattermost_inbound::MattermostInbound;
 use super::mattermost_outbound::MattermostOutbound;
 use super::processing_reactions::{Active, reaction_request, spawn_processing_cleanup};
@@ -10,7 +11,6 @@ use cccc_core::{GroupStore, HomeLayout};
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Method, StatusCode};
 use serde_json::{Map, Value, json};
-use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
@@ -653,30 +653,6 @@ pub(super) fn log_error(
     if let Err(error) = append_log(home, group_id, &line) {
         eprintln!("Mattermost group log write failed ({:?})", error.kind());
     }
-}
-
-fn append_log(home: &HomeLayout, group_id: &str, line: &str) -> std::io::Result<()> {
-    let dir = GroupStore::new(home.clone())?.state_dir(group_id)?;
-    cccc_core::fs::with_exclusive_lock(&dir.join("im_bridge.log.lock"), || {
-        let path = dir.join("im_bridge.log");
-        if path.exists() && path.metadata()?.len() + line.len() as u64 + 1 > 1024 * 1024 {
-            let backup = dir.join("im_bridge.log.1");
-            if backup.exists() {
-                std::fs::remove_file(&backup)?;
-            }
-            std::fs::rename(&path, backup)?;
-        }
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true).append(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(path)?;
-        writeln!(file, "{line}")?;
-        file.sync_data()
-    })
 }
 
 impl MattermostApi {

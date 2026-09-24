@@ -39,6 +39,12 @@ pub(super) async fn start(
             .build()
             .map_err(|error| format!("Weixin client setup failed: {error}"))?,
     );
+    // Replies need each user's latest context token; restore those saved before a restart.
+    sdk.context_tokens().import(
+        super::weixin_context_tokens::load(&home, group_id)
+            .into_iter()
+            .collect(),
+    );
     let connection_sdk = Arc::clone(&sdk);
     let sync_buf = load_optional_string(
         &home
@@ -81,6 +87,26 @@ struct Handler {
 #[async_trait]
 impl MessageHandler for Handler {
     async fn on_message(&self, context: &MessageContext) -> weixin_agent::Result<()> {
+        if let Some(token) = context
+            .context_token
+            .clone()
+            .filter(|token| !token.is_empty())
+        {
+            let (home, group_id, user_id) = (
+                self.home.clone(),
+                self.group_id.clone(),
+                context.from.clone(),
+            );
+            let saved = tokio::task::spawn_blocking(move || {
+                super::weixin_context_tokens::remember(&home, &group_id, &user_id, &token)
+            })
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|result| result);
+            if let Err(error) = saved {
+                tracing::warn!(%error, "failed to persist Weixin context token");
+            }
+        }
         let text = context.body.as_deref().unwrap_or("").trim();
         if text.is_empty() && !has_media(context) {
             return Ok(());

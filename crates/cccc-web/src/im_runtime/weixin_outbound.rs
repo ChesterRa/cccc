@@ -63,7 +63,13 @@ impl WeixinOutbound {
                         .send_text(user_id, &chunk, context_token.as_deref())
                         .await
                     {
-                        tracing::warn!(%error, %user_id, "failed to send Weixin IM message");
+                        self.report_failure(
+                            "send_text",
+                            user_id,
+                            context_token.is_some(),
+                            None,
+                            &error,
+                        );
                     }
                 }
             }
@@ -72,14 +78,38 @@ impl WeixinOutbound {
                     .send_media(user_id, &attachment.path, context_token.as_deref())
                     .await
                 {
-                    tracing::warn!(
-                        %error,
-                        %user_id,
-                        file = %attachment.title,
-                        "failed to send Weixin attachment"
+                    self.report_failure(
+                        "send_media",
+                        user_id,
+                        context_token.is_some(),
+                        Some(&attachment.title),
+                        &error,
                     );
                 }
             }
+        }
+    }
+
+    /// Delivery failures are otherwise invisible outside the daemon's terminal, so record them
+    /// in the group's IM log as well.
+    fn report_failure(
+        &self,
+        operation: &str,
+        user_id: &str,
+        has_context_token: bool,
+        file: Option<&str>,
+        error: &str,
+    ) {
+        tracing::warn!(%error, %user_id, operation, "failed to send Weixin IM message");
+        let line = serde_json::json!({
+            "ts": cccc_contracts::utc_now(), "level": "WARN", "platform": "weixin",
+            "group_id": self.group_id, "operation": operation, "user_id": user_id,
+            "has_context_token": has_context_token, "file": file,
+            "error": error.chars().take(4096).collect::<String>(),
+        })
+        .to_string();
+        if let Err(error) = super::bridge_log::append(&self.home, &self.group_id, &line) {
+            tracing::warn!(%error, "failed to write the Weixin IM log");
         }
     }
 
@@ -170,150 +200,5 @@ impl WeixinSender for WeixinClient {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use cccc_core::GroupStore;
-    use std::sync::Mutex;
-
-    #[derive(Default)]
-    struct FakeSender {
-        calls: Mutex<Vec<String>>,
-    }
-
-    #[async_trait]
-    impl WeixinSender for FakeSender {
-        fn context_token(&self, user_id: &str) -> Option<String> {
-            Some(format!("token:{user_id}"))
-        }
-
-        async fn send_text(
-            &self,
-            user_id: &str,
-            text: &str,
-            context_token: Option<&str>,
-        ) -> Result<(), String> {
-            self.calls.lock().expect("calls").push(format!(
-                "text:{user_id}:{text}:{}",
-                context_token.unwrap_or_default()
-            ));
-            Ok(())
-        }
-
-        async fn send_media(
-            &self,
-            user_id: &str,
-            path: &Path,
-            context_token: Option<&str>,
-        ) -> Result<(), String> {
-            assert!(path.exists());
-            self.calls.lock().expect("calls").push(format!(
-                "media:{user_id}:{}:{}",
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(""),
-                context_token.unwrap_or_default()
-            ));
-            Ok(())
-        }
-    }
-
-    fn setup() -> (tempfile::TempDir, WeixinOutbound, String) {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let group = GroupStore::new(home.clone())
-            .expect("store")
-            .create("weixin", "")
-            .expect("group");
-        let attachment = super::super::inbound_attachments::store_bytes(
-            &home,
-            &group.group_id,
-            b"image",
-            super::super::inbound_attachments::AttachmentSpec::new(
-                "image",
-                "source.png",
-                "image/png",
-            ),
-        )
-        .expect("blob");
-        (
-            temp,
-            WeixinOutbound {
-                home,
-                group_id: group.group_id,
-                sdk: None,
-            },
-            attachment["path"].as_str().expect("path").to_owned(),
-        )
-    }
-
-    #[tokio::test]
-    async fn sends_sender_title_then_attachment_with_original_filename() {
-        let (_temp, outbound, path) = setup();
-        let sender = FakeSender::default();
-        let event: Event = serde_json::from_value(serde_json::json!({
-            "v":1,"id":"event","ts":"now","kind":"chat.message",
-            "group_id":"group","scope_key":"","by":"assistant",
-            "data":{"text":"result","sender_title":"Helpful Assistant","attachments":[{
-                "path":path,"title":"photo.png","mime_type":"image/png","bytes":5
-            }]}
-        }))
-        .expect("event");
-
-        outbound
-            .send_with(&sender, &["wx-user".into()], &event)
-            .await;
-
-        assert_eq!(
-            *sender.calls.lock().expect("calls"),
-            vec![
-                "text:wx-user:Helpful Assistant\n\nresult:token:wx-user",
-                "media:wx-user:photo.png:token:wx-user"
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_attachment_title_with_path_components() {
-        let (_temp, outbound, path) = setup();
-        let prepared = outbound
-            .prepare(&serde_json::json!({"path":path,"title":"../photo.png"}))
-            .await
-            .expect("prepared");
-
-        assert_eq!(prepared.title, "file");
-        assert_eq!(
-            prepared.path.file_name().and_then(|name| name.to_str()),
-            Some("file")
-        );
-    }
-
-    #[tokio::test]
-    async fn long_unicode_reply_is_sent_in_lossless_chunks() {
-        let (_temp, outbound, _path) = setup();
-        let sender = FakeSender::default();
-        let text = "你".repeat(5_000);
-        let event: Event = serde_json::from_value(serde_json::json!({
-            "v":1,"id":"event","ts":"now","kind":"chat.message",
-            "group_id":"group","scope_key":"","by":"assistant",
-            "data":{"text":text,"sender_title":"Helpful Assistant","to":["user"]}
-        }))
-        .expect("event");
-
-        outbound
-            .send_with(&sender, &["wx-user".into()], &event)
-            .await;
-
-        let calls = sender.calls.lock().expect("calls");
-        let chunks = calls
-            .iter()
-            .map(|call| {
-                call.strip_prefix("text:wx-user:")
-                    .and_then(|call| call.strip_suffix(":token:wx-user"))
-                    .expect("text call")
-            })
-            .collect::<Vec<_>>();
-        assert!(chunks.len() > 1);
-        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 4_000));
-        assert_eq!(chunks.concat(), format!("Helpful Assistant\n\n{text}"));
-    }
-}
+#[path = "weixin_outbound_tests.rs"]
+mod tests;

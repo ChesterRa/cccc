@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ChevronLeft } from "lucide-react";
 import { apiJson } from "../../services/api/base";
 import { Button } from "../../components/ui/button";
 import { DirectConnectionRow } from "./DirectConnectionRow";
@@ -214,7 +215,7 @@ export function DirectConnectionsPanel({
 
   return (
     <div ref={panel} className="space-y-4 text-sm">
-      <p className="text-[var(--color-text-secondary)]">{t("direct.description")}</p>
+      {!task && <p className="text-[var(--color-text-secondary)]">{t("direct.description")}</p>}
       {(error || pollFailed) && (
         <p role="alert" className="break-words text-[var(--color-danger)]">
           {error || t("direct.statusUnavailable")}
@@ -230,8 +231,9 @@ export function DirectConnectionsPanel({
         .map(([id, text]) => (
           <DirectInvitationShare key={id} text={text} />
         ))}
+      {/* Live relations stay visible in a task: approvals and uncertain outcomes surface here. */}
       {current.length > 0 && rows(current)}
-      {history.length > 0 && (
+      {!task && history.length > 0 && (
         <details>
           <summary className="cursor-pointer text-[var(--color-text-secondary)]">
             {t("direct.history", { count: history.length })}
@@ -240,9 +242,25 @@ export function DirectConnectionsPanel({
         </details>
       )}
       {task ? (
-        <section className="space-y-3 border-t border-[var(--glass-border-subtle)] pt-4">
-          <div className="flex items-start justify-between gap-3">
-            <h3 ref={taskHeading} tabIndex={-1} className="font-medium outline-none">
+        <section
+          className={
+            current.length > 0
+              ? "space-y-3 border-t border-[var(--glass-border-subtle)] pt-3"
+              : "space-y-3"
+          }
+        >
+          <div className="space-y-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="-ml-3 gap-1"
+              disabled={busy}
+              onClick={closeTask}
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+              {t("direct.back")}
+            </Button>
+            <h3 ref={taskHeading} tabIndex={-1} className="text-base font-semibold outline-none">
               {t(
                 task === "invite"
                   ? "direct.inviteGroup"
@@ -251,9 +269,6 @@ export function DirectConnectionsPanel({
                     : "direct.configure",
               )}
             </h3>
-            <Button size="sm" variant="ghost" disabled={busy} onClick={closeTask}>
-              {t("direct.back")}
-            </Button>
           </div>
           {task === "join" ? (
             <DirectJoinForm
@@ -286,7 +301,6 @@ export function DirectConnectionsPanel({
                     expected_listener: previous,
                   })
                 }
-                onCancel={closeTask}
                 onStop={() =>
                   void act("configure", { listener: null, expected_listener: status?.listener })
                 }
