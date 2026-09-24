@@ -1,12 +1,4 @@
-import {
-  memo,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Mail } from "lucide-react";
 
@@ -48,22 +40,37 @@ function toneFor(isRunning: boolean, workingState: string): OverviewTone {
   return "running";
 }
 
-const TONE_CLASSES: Record<OverviewTone, { ring: string; labelKey: string }> = {
-  stopped: { ring: "ring-2 ring-slate-400/50", labelKey: "stopped" },
-  idle: { ring: "ring-2 ring-emerald-500/75", labelKey: "idle" },
-  running: { ring: "ring-2 ring-emerald-500/75", labelKey: "running" },
-  working: { ring: "ring-2 ring-violet-400/85", labelKey: "working" },
-  waiting: { ring: "ring-2 ring-amber-400/85", labelKey: "waiting" },
-  stuck: { ring: "ring-2 ring-rose-500/85", labelKey: "stuck" },
-};
-
-const TONE_PILL_CLASSES: Record<OverviewTone, string> = {
-  stopped: "bg-slate-600/60 text-slate-200 ring-slate-400/30",
-  idle: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
-  running: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
-  working: "bg-white/95 text-black ring-black/10",
-  waiting: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
-  stuck: "bg-rose-500/20 text-rose-200 ring-rose-400/40",
+const TONE: Record<OverviewTone, { ring: string; pill: string; labelKey: string }> = {
+  stopped: {
+    ring: "ring-2 ring-slate-400/50",
+    pill: "bg-slate-600/60 text-slate-200 ring-slate-400/30",
+    labelKey: "stopped",
+  },
+  idle: {
+    ring: "ring-2 ring-emerald-500/75",
+    pill: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
+    labelKey: "idle",
+  },
+  running: {
+    ring: "ring-2 ring-emerald-500/75",
+    pill: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
+    labelKey: "running",
+  },
+  working: {
+    ring: "ring-2 ring-violet-400/85",
+    pill: "bg-white/95 text-black ring-black/10",
+    labelKey: "working",
+  },
+  waiting: {
+    ring: "ring-2 ring-amber-400/85",
+    pill: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
+    labelKey: "waiting",
+  },
+  stuck: {
+    ring: "ring-2 ring-rose-500/85",
+    pill: "bg-rose-500/20 text-rose-200 ring-rose-400/40",
+    labelKey: "stuck",
+  },
 };
 
 const GRID_SLOTS = [0, 1, 2, 5, 8, 7, 6, 3]; // actor index -> cell; cell 4 = foreman
@@ -141,8 +148,8 @@ const ActorOverviewCard = memo(function ActorOverviewCard({
     stoppedSinceMs,
   );
   const mailCount = mail?.count ?? 0;
-  const now = useElapsedNow(stateSince !== null || mailCount > 0);
-  const toneClasses = TONE_CLASSES[tone];
+  const now = useElapsedNow(true);
+  const toneClasses = TONE[tone];
   const actorTitle = String(actor.title || actor.id || "").trim() || String(actor.id || "");
   const elapsedLabel =
     stateSince !== null ? formatElapsedCompact(Math.max(0, now - stateSince.ms)) : "";
@@ -221,7 +228,7 @@ const ActorOverviewCard = memo(function ActorOverviewCard({
           <span
             className={classNames(
               "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ring-1 ring-inset",
-              TONE_PILL_CLASSES[tone],
+              TONE[tone].pill,
             )}
           >
             {pillText}
@@ -305,58 +312,51 @@ const ActorOverviewCard = memo(function ActorOverviewCard({
   );
 });
 
-function buildDirectEdges(
+/*
+ * Single scan over the event window (newest→oldest): collects up to `depth`
+ * inbound messages per actor for card excerpts, and one edge per direct 1:1
+ * pair (latest message wins) for the gutter pipes.
+ */
+function scanChatEvents(
   events: LedgerEvent[],
   actors: Actor[],
   actorTitleById: Map<string, string>,
   you: string,
-): DirectEdge[] {
+  depth: number,
+): { inbound: Map<string, LedgerEvent[]>; edges: DirectEdge[] } {
+  const inbound = new Map<string, LedgerEvent[]>();
   const edges: DirectEdge[] = [];
   const seen = new Set<string>();
-  for (let i = events.length - 1; i >= 0 && edges.length < MAX_EDGES; i -= 1) {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
     const ev = events[i];
     if (!isChatMessageEvent(ev)) continue;
+    const recipients = getRecipientActorIdsForEvent(ev, actors);
+    for (const recipientId of recipients) {
+      const list = inbound.get(recipientId);
+      if (!list) {
+        inbound.set(recipientId, [ev]);
+      } else if (list.length < depth) {
+        list.push(ev);
+      }
+    }
+    if (edges.length >= MAX_EDGES || recipients.length !== 1) continue;
     const data = ev.data as ChatMessageData | undefined;
     if (typeof data?.dst_group_id === "string" && data.dst_group_id.trim()) continue;
-    const recipients = getRecipientActorIdsForEvent(ev, actors);
-    if (recipients.length !== 1) continue;
     const fromId = String(ev.by || "").trim();
     const toId = recipients[0];
     if (!fromId || fromId === toId) continue;
     const pairKey = `${fromId}→${toId}`;
     if (seen.has(pairKey)) continue;
     seen.add(pairKey);
-    const preview = getMessagePreview(ev);
     edges.push({
       fromId,
       toId,
-      label: `${getSenderLabel(ev, actorTitleById, you)} → ${actorTitleById.get(toId) || toId}: ${preview}`,
+      label: `${getSenderLabel(ev, actorTitleById, you)} → ${actorTitleById.get(toId) || toId}: ${getMessagePreview(ev)}`,
       isMail: data?.message_mode === "mail",
       rank: edges.length,
     });
   }
-  return edges;
-}
-
-function lastInboundByActor(
-  events: LedgerEvent[],
-  actors: Actor[],
-  depth: number,
-): Map<string, LedgerEvent[]> {
-  const map = new Map<string, LedgerEvent[]>();
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const ev = events[i];
-    if (!isChatMessageEvent(ev)) continue;
-    for (const recipientId of getRecipientActorIdsForEvent(ev, actors)) {
-      const list = map.get(recipientId);
-      if (!list) {
-        map.set(recipientId, [ev]);
-      } else if (list.length < depth) {
-        list.push(ev);
-      }
-    }
-  }
-  return map;
+  return { inbound, edges };
 }
 
 function tailLines(text: string, count: number): string[] {
@@ -381,7 +381,7 @@ export function GroupOverview({
   const [page, setPage] = useState(0);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const cellRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const [cellRects, setCellRects] = useState<CellRect[]>([]);
+  const [cellRects, setCellRects] = useState<(CellRect | null)[]>([]);
 
   const actorTitleById = useMemo(
     () =>
@@ -398,7 +398,10 @@ export function GroupOverview({
   const peers = useMemo(() => actors.filter((a) => a !== foreman), [actors, foreman]);
   const pageCount = Math.max(1, Math.ceil(peers.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const visiblePeers = peers.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+  const visiblePeers = useMemo(
+    () => peers.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
+    [peers, safePage],
+  );
 
   const mailInfoByActorId = useMemo(() => buildRuntimeDockMailInfo(events), [events]);
 
@@ -451,7 +454,11 @@ export function GroupOverview({
     };
   }, [groupId]);
 
-  const inboundByActor = useMemo(() => lastInboundByActor(events, actors, 2), [events, actors]);
+  const youLabel = t("chat:workView.overviewFromYou");
+  const { inbound: inboundByActor, edges } = useMemo(
+    () => scanChatEvents(events, actors, actorTitleById, youLabel, 2),
+    [events, actors, actorTitleById, youLabel],
+  );
 
   const [ttyByActorId, setTtyByActorId] = useState<Map<string, string[]>>(new Map());
   useEffect(() => {
@@ -484,12 +491,6 @@ export function GroupOverview({
     };
   }, [mode, groupId, foreman, visiblePeers]);
 
-  const youLabel = t("chat:workView.overviewFromYou");
-  const edges = useMemo(
-    () => buildDirectEdges(events, actors, actorTitleById, youLabel),
-    [events, actors, actorTitleById, youLabel],
-  );
-
   /* visible cell assignment: foreman at 4, peers through GRID_SLOTS */
   const cellActor = useMemo(() => {
     const map = new Map<number, Actor>();
@@ -507,7 +508,7 @@ export function GroupOverview({
       const sr = stage.getBoundingClientRect();
       setCellRects(
         cellRefs.current.map((el) => {
-          if (!el) return null as unknown as CellRect;
+          if (!el) return null;
           const r = el.getBoundingClientRect();
           return {
             l: r.left - sr.left,
@@ -536,33 +537,63 @@ export function GroupOverview({
         const toActor = actors.find((a) => String(a.id) === edge.toId);
         const fromCell = edge.fromId === "user" ? 4 : fromActor ? cellOf.get(fromActor) : undefined;
         const toCell = toActor ? cellOf.get(toActor) : undefined;
-        if (fromCell === undefined || toCell === undefined) return null;
+        /* same-cell edges (e.g. user -> foreman card) draw no pipe:
+           the card's own excerpt already shows that message */
+        if (fromCell === undefined || toCell === undefined || fromCell === toCell) return null;
         const s = cellRects[fromCell];
         const d = cellRects[toCell];
         if (!s || !d) return null;
-        const sameRow = Math.abs(s.cy - d.cy) < 40;
-        const sameCol = Math.abs(s.cx - d.cx) < 40;
+        const fromRow = Math.floor(fromCell / 3);
+        const toRow = Math.floor(toCell / 3);
+        const fromCol = fromCell % 3;
+        const toCol = toCell % 3;
+        const sameRow = fromRow === toRow;
+        const sameCol = fromCol === toCol;
         let path: string;
         let lx: number;
         let ly: number;
-        if (sameRow) {
-          const ltr = d.cx > s.cx;
+        if (sameRow && Math.abs(fromCol - toCol) === 1) {
+          /* adjacent cells in a row: straight line through the gutter */
+          const ltr = toCol > fromCol;
           const sx = ltr ? s.r : s.l;
           const ex = ltr ? d.l : d.r;
           const y = (s.cy + d.cy) / 2;
           path = `M ${sx} ${y} H ${ex}`;
           lx = (sx + ex) / 2;
           ly = y;
-        } else if (sameCol) {
-          const up = d.cy < s.cy;
+        } else if (sameCol && Math.abs(fromRow - toRow) === 1) {
+          const up = toRow < fromRow;
           const sy = up ? s.t : s.b;
           const ey = up ? d.b : d.t;
           const x = (s.cx + d.cx) / 2;
           path = `M ${x} ${sy} V ${ey}`;
           lx = x;
           ly = (sy + ey) / 2;
+        } else if (sameRow) {
+          /* same row, skipping a cell: detour via the horizontal gutter
+             below the row (above for the bottom row) so pipes never
+             cross cards */
+          const detourDown = fromRow < 2;
+          const below = cellRects[fromRow * 3 + fromCol + (detourDown ? 3 : -3)];
+          const gy = below ? (detourDown ? (s.b + below.t) / 2 : (s.t + below.b) / 2) : s.cy;
+          const sy = detourDown ? s.b : s.t;
+          const ey = detourDown ? d.b : d.t;
+          path = `M ${s.cx} ${sy} V ${gy} H ${d.cx} V ${ey}`;
+          lx = (s.cx + d.cx) / 2;
+          ly = gy;
+        } else if (sameCol) {
+          /* same column, skipping a cell: detour via the vertical gutter
+             to the right (left for the rightmost column) */
+          const detourRight = fromCol < 2;
+          const beside = cellRects[fromCol + (detourRight ? 1 : -1)];
+          const gx = beside ? (detourRight ? (s.r + beside.l) / 2 : (s.l + beside.r) / 2) : s.cx;
+          const sx = detourRight ? s.r : s.l;
+          const ex = detourRight ? d.r : d.l;
+          path = `M ${sx} ${s.cy} H ${gx} V ${d.cy} H ${ex}`;
+          lx = gx;
+          ly = (s.cy + d.cy) / 2;
         } else {
-          const ltr = d.cx > s.cx;
+          const ltr = toCol > fromCol;
           const sx = ltr ? s.r : s.l;
           const ex = ltr ? d.l : d.r;
           const mx = (sx + ex) / 2;
@@ -611,8 +642,12 @@ export function GroupOverview({
         }
       }
       if (!text) continue;
-      const x = (cellRects[r * 3 + c].r + cellRects[r * 3 + c + 1].l) / 2;
-      const y = (cellRects[r * 3 + c].b + cellRects[(r + 1) * 3 + c].t) / 2;
+      const aboveLeft = cellRects[r * 3 + c];
+      const aboveRight = cellRects[r * 3 + c + 1];
+      const belowLeft = cellRects[(r + 1) * 3 + c];
+      if (!aboveLeft || !aboveRight || !belowLeft) continue;
+      const x = (aboveLeft.r + aboveRight.l) / 2;
+      const y = (aboveLeft.b + belowLeft.t) / 2;
       out.push({ x, y, text });
     }
     return out;
@@ -736,7 +771,7 @@ export function GroupOverview({
               <div
                 key={`label-${edge.fromId}-${edge.toId}`}
                 className="pointer-events-none absolute max-w-[170px] -translate-x-1/2 -translate-y-1/2 truncate rounded-md border border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-1.5 py-0.5 text-[9px] text-[var(--color-text-tertiary)]"
-                style={{ left: lx, top: ly } as CSSProperties}
+                style={{ left: lx, top: ly }}
                 title={edge.label}
               >
                 {edge.label}
@@ -746,7 +781,7 @@ export function GroupOverview({
               <div
                 key={i}
                 className="pointer-events-none absolute max-w-[180px] -translate-x-1/2 -translate-y-1/2 text-center text-[9.5px] italic leading-[1.35] text-[var(--color-text-tertiary)]"
-                style={{ left: corner.x, top: corner.y } as CSSProperties}
+                style={{ left: corner.x, top: corner.y }}
               >
                 {corner.text}
               </div>
