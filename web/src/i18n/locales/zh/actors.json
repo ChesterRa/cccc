@@ -3,6 +3,7 @@
   "loadingAgent": "加载智能体中…",
   "foreman": "领班",
   "running": "运行中",
+  "idle": "空闲",
   "working": "工作中",
   "waiting": "等待中",
   "stuck": "卡住了",

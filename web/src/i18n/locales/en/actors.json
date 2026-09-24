@@ -3,6 +3,7 @@
   "loadingAgent": "Loading agent…",
   "foreman": "foreman",
   "running": "Running",
+  "idle": "Idle",
   "working": "Working",
   "waiting": "Waiting",
   "stuck": "Stuck",
