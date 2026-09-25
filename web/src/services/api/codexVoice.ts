@@ -1,4 +1,4 @@
-import { apiJson, withAuthToken } from "./base";
+import { apiJson, apiUrl, withAuthToken } from "./base";
 
 export type VoiceNotificationScope = "off" | "to_user" | "all_chat";
 export type VoicePreferences = {
@@ -152,7 +152,7 @@ export function getCodexVoiceWebSocketUrl(generation: string): string {
 
 export function getCodexVoiceTerminalWebSocketUrl(generation: string, query: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const base = `${protocol}//${window.location.host}/api/v1/codex_voice/analysts/${encodeURIComponent(generation)}/terminal`;
+  const base = apiUrl(`${protocol}//${window.location.host}/api/v1/codex_voice/analysts/${encodeURIComponent(generation)}/terminal`);
   return `${base}${query ? `?${query}` : ""}`;
 }
 
