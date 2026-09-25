@@ -99,8 +99,7 @@ pub(super) fn running_payload(
     if !running {
         return None;
     }
-    let mut payload =
-        super::working_state::runtime_actor_fields(home, actor, &group.group_id, true);
+    let mut payload = super::working_state::runtime_actor_fields(home, actor, group, true);
     payload.insert("id".into(), json!(actor.id));
     payload.insert("running".into(), Value::Bool(true));
     Some(payload)

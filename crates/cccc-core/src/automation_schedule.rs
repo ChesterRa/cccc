@@ -239,13 +239,13 @@ mod tests {
         json!({"kind":"cron","cron":expression})
             .as_object()
             .cloned()
-            .unwrap()
+            .unwrap_or_default()
     }
 
     #[test]
     fn cron_day_of_week_uses_posix_numbering() {
         // 2026-09-25 is a Friday; POSIX: 0 and 7 are Sunday, 1 Monday, 2 Tuesday.
-        let now = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).earliest().unwrap_or_default();
         for (expression, weekday) in [
             ("0 0 * * 0", Weekday::Sun),
             ("0 0 * * 7", Weekday::Sun),
@@ -268,9 +268,9 @@ mod tests {
 
     #[test]
     fn cron_day_of_week_weekday_range_fires_next_weekday() {
-        let now = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).unwrap(); // Friday noon
+        let now = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).earliest().expect("valid timestamp"); // Friday noon
         let trigger = cron_trigger("0 9 * * mon-fri");
-        let next = next_fire_at(Some(&trigger), None, now).unwrap();
+        let next = next_fire_at(Some(&trigger), None, now).expect("mon-fri must produce a next fire");
         assert_eq!(next.weekday(), Weekday::Mon);
     }
 

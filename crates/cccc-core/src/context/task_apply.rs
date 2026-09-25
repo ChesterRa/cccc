@@ -76,6 +76,10 @@ pub(super) fn update(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resul
         "task_type",
         "notes",
         "checklist",
+        "window_minutes",
+        "deadline",
+        "until",
+        "waiting_until",
     ];
     for key in allowed {
         if let Some(value) = op.get(key) {
