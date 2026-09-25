@@ -11,6 +11,42 @@ pub(crate) struct AuthorizedChat {
     pub chat_id: String,
     pub thread_id: String,
     pub verbose: bool,
+    /// Per-subscriber relay policy: which outbound events reach this chat.
+    /// `to_user_only` < `mentions` < `all`.
+    pub relay: RelayMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RelayMode {
+    /// Only messages explicitly addressed to the user (`to` contains
+    /// user/@user/@all). The quietest subscription.
+    ToUserOnly,
+    /// User-addressed and broadcast (missing `to`) traffic — the default,
+    /// matching the historical non-verbose behavior.
+    #[default]
+    Mentions,
+    /// Every outbound event, including agent-to-agent traffic — equivalent
+    /// to the legacy `verbose: true` flag.
+    All,
+}
+
+impl RelayMode {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "all" => Some(Self::All),
+            "mentions" => Some(Self::Mentions),
+            "to_user_only" | "user_only" | "to-user-only" => Some(Self::ToUserOnly),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::ToUserOnly => "to_user_only",
+            Self::Mentions => "mentions",
+            Self::All => "all",
+        }
+    }
 }
 
 impl AuthorizedChat {
@@ -68,20 +104,28 @@ pub(super) fn authorized_chats_from_store(
     collect_active_chats(value.get("authorized"), platform, &mut authorized);
     let mut subscribers = HashMap::new();
     collect_active_chats(value.get("subscribers"), platform, &mut subscribers);
-    subscribers.retain(|key, verbose| {
-        let Some(authorized_verbose) = authorized.get(key) else {
+    subscribers.retain(|key, entry| {
+        let Some(authorized_entry) = authorized.get(key) else {
             return false;
         };
-        *verbose |= *authorized_verbose;
+        // The subscriber's own settings win; the authorized entry fills gaps.
+        entry.verbose |= authorized_entry.verbose;
+        entry.relay = entry.relay.or(authorized_entry.relay);
         true
     });
     into_authorized_chats(subscribers)
 }
 
+#[derive(Clone, Copy, Default)]
+struct ChatEntry {
+    verbose: bool,
+    relay: Option<RelayMode>,
+}
+
 fn collect_active_chats(
     value: Option<&Value>,
     platform: &str,
-    chats: &mut HashMap<(String, String), bool>,
+    chats: &mut HashMap<(String, String), ChatEntry>,
 ) {
     let items: Vec<&Value> = match value {
         Some(Value::Array(items)) => items.iter().collect(),
@@ -102,13 +146,20 @@ fn collect_active_chats(
             .filter(|chat_id| !chat_id.is_empty())
         {
             let verbose = item["verbose"].as_bool().unwrap_or(false);
+            let relay = item
+                .get("relay")
+                .and_then(Value::as_str)
+                .and_then(RelayMode::parse);
             chats
                 .entry((
                     chat_id.to_owned(),
                     normalized_thread_id(item.get("thread_id")),
                 ))
-                .and_modify(|current| *current |= verbose)
-                .or_insert(verbose);
+                .and_modify(|current| {
+                    current.verbose |= verbose;
+                    current.relay = current.relay.or(relay);
+                })
+                .or_insert(ChatEntry { verbose, relay });
         }
     }
 }
@@ -120,13 +171,22 @@ fn platform_matches(item: &Value, platform: &str) -> bool {
         .is_none_or(|value| value.is_empty() || value.eq_ignore_ascii_case(platform))
 }
 
-fn into_authorized_chats(chats: HashMap<(String, String), bool>) -> Vec<AuthorizedChat> {
+fn into_authorized_chats(chats: HashMap<(String, String), ChatEntry>) -> Vec<AuthorizedChat> {
     chats
         .into_iter()
-        .map(|((chat_id, thread_id), verbose)| AuthorizedChat {
-            chat_id,
-            thread_id,
-            verbose,
+        .map(|((chat_id, thread_id), entry)| {
+            // An explicit `relay` wins; the legacy `verbose` flag maps to `all`.
+            let relay = entry.relay.unwrap_or(if entry.verbose {
+                RelayMode::All
+            } else {
+                RelayMode::Mentions
+            });
+            AuthorizedChat {
+                chat_id,
+                thread_id,
+                verbose: entry.verbose,
+                relay,
+            }
         })
         .collect()
 }
@@ -369,7 +429,48 @@ mod tests {
                 chat_id: "telegram-chat".into(),
                 thread_id: String::new(),
                 verbose: true,
+                relay: RelayMode::All,
             }]
+        );
+    }
+
+    #[test]
+    fn relay_mode_is_collected_and_the_subscriber_setting_wins() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("IM", "").expect("group");
+        cccc_core::im_state::update(&store, &group.group_id, |state| {
+            *state = json!({
+                "authorized":[
+                    {"chat_id":"sub-wins","platform":"telegram","relay":"all"},
+                    {"chat_id":"falls-back","platform":"telegram","relay":"to_user_only"},
+                    {"chat_id":"unparseable","platform":"telegram","relay":"bogus","verbose":true}
+                ],
+                "subscribers":[
+                    {"chat_id":"sub-wins","platform":"telegram","subscribed":true,"relay":"to_user_only"},
+                    {"chat_id":"falls-back","platform":"telegram","subscribed":true},
+                    {"chat_id":"unparseable","platform":"telegram","subscribed":true,"verbose":true}
+                ]
+            });
+            Ok(())
+        })
+        .expect("state");
+
+        let mut targets = authorized_chats_from_store(&store, &group.group_id, "telegram");
+        targets.sort_by(|left, right| left.chat_id.cmp(&right.chat_id));
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| (target.chat_id.as_str(), target.relay))
+                .collect::<Vec<_>>(),
+            // The subscriber's `relay` wins over the authorized entry's;
+            // absent values fall back to authorized, then to verbose→all.
+            vec![
+                ("falls-back", RelayMode::ToUserOnly),
+                ("sub-wins", RelayMode::ToUserOnly),
+                ("unparseable", RelayMode::All),
+            ]
         );
     }
 

@@ -2236,6 +2236,7 @@ mod tests {
                 String::new()
             },
             verbose: false,
+            relay: crate::im_runtime::RelayMode::Mentions,
         }
     }
 
@@ -2715,6 +2716,7 @@ mod tests {
                     chat_id: channel,
                     thread_id: root.clone(),
                     verbose: false,
+                    relay: crate::im_runtime::RelayMode::Mentions,
                 },
                 &event,
             )
@@ -3880,11 +3882,13 @@ mod tests {
                 chat_id: channel.clone(),
                 thread_id: String::new(),
                 verbose: false,
+                relay: crate::im_runtime::RelayMode::Mentions,
             },
             AuthorizedChat {
                 chat_id: channel.clone(),
                 thread_id: root.clone(),
                 verbose: false,
+                relay: crate::im_runtime::RelayMode::Mentions,
             },
         ];
         let sender = MattermostOutbound::new(home, &group, api.clone(), &Map::new());

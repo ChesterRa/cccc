@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use teloxide::payloads::{SendDocumentSetters, SendMessageSetters, SendPhotoSetters};
 use teloxide::prelude::*;
-use teloxide::types::{InputFile, MessageId, ThreadId};
+use teloxide::types::{InputFile, MessageId, ReplyParameters, ThreadId};
 
 const MAX_MESSAGE_CHARS: usize = 4_096;
 const STREAM_THROTTLE: Duration = Duration::from_millis(300);
@@ -64,10 +64,22 @@ impl TelegramOutbound {
                 .lock()
                 .expect("Telegram completed stream registry poisoned")
                 .remove(&(stream_id, target.key()));
+        // `reply_to` carries a source event id; resolve it to the Telegram
+        // message id so the reply threads onto the original inbound message.
+        // Unresolvable targets fall back to a plain send and are logged.
+        let reply_to = if streamed {
+            None
+        } else {
+            self.resolve_reply_target(target, event)
+        };
         let mut first_error = None;
         if !streamed {
-            for chunk in split_message(&body, MAX_MESSAGE_CHARS, None) {
-                if let Err(error) = self.send_text(target, &chunk).await {
+            for (index, chunk) in split_message(&body, MAX_MESSAGE_CHARS, None)
+                .into_iter()
+                .enumerate()
+            {
+                let reply = (index == 0).then_some(reply_to).flatten();
+                if let Err(error) = self.send_text(target, &chunk, reply).await {
                     first_error.get_or_insert(error);
                 }
             }
@@ -118,7 +130,7 @@ impl TelegramOutbound {
             .unwrap_or_else(|| "…".into());
         let key = (stream_id, target.key());
         if op == "start" {
-            let message = self.send_text(target, &preview).await?;
+            let message = self.send_text(target, &preview, None).await?;
             let mut streams = self
                 .streams
                 .lock()
@@ -173,14 +185,63 @@ impl TelegramOutbound {
         Ok(())
     }
 
-    async fn send_text(&self, target: &AuthorizedChat, text: &str) -> Result<Message, String> {
+    async fn send_text(
+        &self,
+        target: &AuthorizedChat,
+        text: &str,
+        reply_to: Option<MessageId>,
+    ) -> Result<Message, String> {
         let chat_id = parse_chat_id(target)?;
-        let request = self.bot.send_message(chat_id, text);
+        let mut request = self.bot.send_message(chat_id, text);
+        if let Some(message_id) = reply_to {
+            request = request.reply_parameters(
+                // `allow_sending_without_reply` keeps a deleted source message
+                // from failing the whole send.
+                ReplyParameters::new(message_id).allow_sending_without_reply(),
+            );
+        }
         match parse_thread_id(target)? {
             Some(thread_id) => request.message_thread_id(thread_id).await,
             None => request.await,
         }
         .map_err(|error| error.to_string())
+    }
+
+    /// Maps `data.reply_to` (a CCCC event id) to the Telegram `MessageId` of the
+    /// inbound message that produced it. Inbound events stamp
+    /// `source_message_id` as `{chat_id}:{message_id}`; a reply only threads
+    /// when the source was posted into this same chat.
+    fn resolve_reply_target(&self, target: &AuthorizedChat, event: &Event) -> Option<MessageId> {
+        let reply_to = event.data.get("reply_to")?.as_str()?.trim();
+        if reply_to.is_empty() {
+            return None;
+        }
+        let resolved = (|| {
+            let store = cccc_core::GroupStore::new(self.home.clone()).ok()?;
+            let path = store.ledger_path(&self.group_id).ok()?;
+            let source = cccc_core::ledger::find_event(&path, reply_to)
+                .ok()
+                .flatten()?;
+            let source_id = source.data.get("source_message_id")?.as_str()?.trim();
+            let (chat_id, message_id) = source_id.split_once(':')?;
+            if chat_id != target.chat_id {
+                return None;
+            }
+            message_id.trim().parse::<i32>().ok().map(MessageId)
+        })();
+        if resolved.is_none() {
+            // The source event is missing, carries no Telegram id, or belongs
+            // to another chat: send as a plain message and leave a log line.
+            super::bridge_log_line(
+                &self.home,
+                &self.group_id,
+                "telegram",
+                "WARN",
+                "reply target unresolved; sent as plain message",
+                serde_json::Map::from_iter([("reply_to".into(), Value::from(reply_to))]),
+            );
+        }
+        resolved
     }
 
     async fn send_attachment(
@@ -305,12 +366,18 @@ mod tests {
         send_message: AtomicUsize,
         edit_message: AtomicUsize,
         unexpected: AtomicUsize,
+        send_bodies: Mutex<Vec<Value>>,
     }
 
-    async fn telegram_api(State(calls): State<Arc<TelegramApiCalls>>, uri: Uri) -> Json<Value> {
+    async fn telegram_api(
+        State(calls): State<Arc<TelegramApiCalls>>,
+        uri: Uri,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
         let path = uri.path().trim_end_matches('/').to_ascii_lowercase();
         if path.ends_with("/sendmessage") {
             calls.send_message.fetch_add(1, Ordering::Relaxed);
+            calls.send_bodies.lock().expect("bodies").push(body);
         } else if path.ends_with("/editmessagetext") {
             calls.edit_message.fetch_add(1, Ordering::Relaxed);
             return Json(
@@ -372,6 +439,7 @@ mod tests {
             chat_id: "42".into(),
             thread_id: String::new(),
             verbose: false,
+            relay: crate::im_runtime::RelayMode::Mentions,
         };
         let event = |kind: &str, op: Option<&str>| {
             let mut event = Event::new(kind, "group");
@@ -404,6 +472,84 @@ mod tests {
         assert_eq!(calls.send_message.load(Ordering::Relaxed), 1);
         assert_eq!(calls.edit_message.load(Ordering::Relaxed), 0);
         assert_eq!(calls.unexpected.load(Ordering::Relaxed), 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn reply_target_threads_onto_the_inbound_message() {
+        let calls = Arc::new(TelegramApiCalls::default());
+        let app = Router::new()
+            .fallback(telegram_api)
+            .with_state(Arc::clone(&calls));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("server");
+        });
+        let bot = Bot::new("token").set_api_url(
+            reqwest::Url::parse(&format!("http://{address}")).expect("Telegram test API URL"),
+        );
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+        let group = store.create("telegram", "").expect("group");
+        // Inbound source event stamped with its Telegram id: chat 42, message 777.
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let mut source = Event::new("chat.message", &group.group_id);
+        source.by = "user".into();
+        source.data = json!({"source_message_id":"42:777","text":"hello"})
+            .as_object()
+            .cloned()
+            .expect("source data");
+        cccc_core::ledger::append(&path, &source).expect("append");
+        let outbound = TelegramOutbound::new(home, &group.group_id, bot);
+        let target = AuthorizedChat {
+            chat_id: "42".into(),
+            thread_id: String::new(),
+            verbose: false,
+            relay: crate::im_runtime::RelayMode::Mentions,
+        };
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "foreman".into();
+        event.data = json!({"text":"reply text","reply_to":source.id,"to":["user"]})
+            .as_object()
+            .cloned()
+            .expect("event data");
+
+        outbound
+            .send_target(&target, &event)
+            .await
+            .expect("reply send");
+
+        {
+            let bodies = calls.send_bodies.lock().expect("bodies");
+            assert_eq!(bodies.len(), 1);
+            assert_eq!(bodies[0]["reply_parameters"]["message_id"], json!(777));
+        }
+
+        // A reply_to that does not resolve (different chat) falls back to a plain send.
+        let mut other_chat = Event::new("chat.message", &group.group_id);
+        other_chat.by = "user".into();
+        other_chat.data = json!({"source_message_id":"999:555","text":"elsewhere"})
+            .as_object()
+            .cloned()
+            .expect("data");
+        cccc_core::ledger::append(&path, &other_chat).expect("append");
+        let mut fallback = Event::new("chat.message", &group.group_id);
+        fallback.by = "foreman".into();
+        fallback.data = json!({"text":"plain","reply_to":other_chat.id,"to":["user"]})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        outbound
+            .send_target(&target, &fallback)
+            .await
+            .expect("fallback send");
+        let bodies = calls.send_bodies.lock().expect("bodies");
+        assert_eq!(bodies.len(), 2);
+        assert!(bodies[1].get("reply_parameters").is_none());
         server.abort();
     }
 }

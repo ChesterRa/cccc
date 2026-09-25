@@ -371,6 +371,20 @@ fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResul
     forwarded
         .args
         .insert("reply_to".into(), Value::String(reply_to));
+    // A reply is new outbound traffic: drop the inbound echo markers a caller
+    // may have forwarded from the source event so the result still relays to
+    // IM subscribers (`transport="im"` and friends suppress outbound delivery).
+    for key in [
+        "transport",
+        "im_platform",
+        "im_chat_id",
+        "im_thread_id",
+        "source_platform",
+        "source_user_id",
+        "source_message_id",
+    ] {
+        forwarded.args.remove(key);
+    }
     super::message_metadata::add_reply_snapshot(&target, &mut forwarded.args);
     if recipient_tokens(&forwarded.args).is_empty() {
         forwarded.args.insert(
@@ -475,6 +489,20 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     forwarded
         .args
         .insert("reply_to".into(), Value::String(reply_to));
+    // A reply is new outbound traffic: drop the inbound echo markers a caller
+    // may have forwarded from the source event so the result still relays to
+    // IM subscribers (`transport="im"` and friends suppress outbound delivery).
+    for key in [
+        "transport",
+        "im_platform",
+        "im_chat_id",
+        "im_thread_id",
+        "source_platform",
+        "source_user_id",
+        "source_message_id",
+    ] {
+        forwarded.args.remove(key);
+    }
     super::message_metadata::add_reply_snapshot(&target, &mut forwarded.args);
     if recipient_tokens(&forwarded.args).is_empty() {
         forwarded.args.insert(
