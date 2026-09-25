@@ -154,8 +154,8 @@ async fn closed_actor_windows_retire_with_their_generation() {
     store.save(&group).expect("save");
     let manager = BrowserSurfaces::default();
     let key = format!("web-model::{}::a", group.group_id);
-    for cleanup in ["generation", "actor", "prefix", "group"] {
-        let generation = group.actors[0].generation.clone();
+    for cleanup in ["generation", "provider", "actor", "prefix", "group"] {
+        let generation = crate::browser_surface::actor_identity(&group.actors[0]);
         manager
             .open_with(OpenRequest {
                 key: &key,
@@ -167,7 +167,7 @@ async fn closed_actor_windows_retire_with_their_generation() {
                 reuse_existing: true,
                 mode: BrowserMode::Headless,
                 shared_browser: true,
-                actor_generation: Some(&generation),
+                actor_identity: Some(&generation),
             })
             .await
             .expect("open actor");
@@ -206,6 +206,14 @@ async fn closed_actor_windows_retire_with_their_generation() {
                     .close_missing_actors(&store)
                     .await
                     .expect("retire old generation");
+            }
+            "provider" => {
+                group.actors[0].runtime = cccc_contracts::ActorRuntime::GrokWebModel;
+                store.save(&group).expect("switch provider");
+                manager
+                    .close_missing_actors(&store)
+                    .await
+                    .expect("retire old provider");
             }
             "actor" => {
                 let mut removed = group.clone();
@@ -278,7 +286,7 @@ async fn legacy_actor_pairing_does_not_replace_or_reap_its_window() {
                 &profile,
                 &url,
                 (800, 600),
-                &cccc_core::actors::generation_identity(actor),
+                &crate::browser_surface::actor_identity(actor),
             )
             .await
             .expect("open Actor window");
@@ -315,7 +323,7 @@ async fn legacy_actor_pairing_does_not_replace_or_reap_its_window() {
             &profile,
             &url,
             (800, 600),
-            &cccc_core::actors::generation_identity(&loaded.actors[0]),
+            &crate::browser_surface::actor_identity(&loaded.actors[0]),
         )
         .await
         .expect("open viewer");

@@ -16,7 +16,7 @@ vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k }
 vi.mock("../../../services/api", () => ({
   fetchWebModelConnectors: () => mocks.connectors(),
   sharedWebModelBrowser: (...args: unknown[]) => mocks.browser(...args),
-  createWebModelConnector: () => mocks.create(),
+  createWebModelConnector: (...args: unknown[]) => mocks.create(...args),
   revokeWebModelConnector: (...args: unknown[]) => mocks.revoke(...args),
   sharedWebModelBrowserWebSocketUrl: () => "ws://fixture/shared",
 }));
@@ -63,11 +63,11 @@ describe("shared Web Model login and connector", () => {
   });
   const button = (name: string) =>
     Array.from(host.querySelectorAll("button")).find(
-      (b) => b.textContent === `webModelShared.${name}`,
+      (b) => !b.closest("[hidden]") && b.textContent === `webModelShared.${name}`,
     )!;
   it("can set up shared login without any Actor and does not start a browser on mount", async () => {
     await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
-    expect(mocks.browser).toHaveBeenCalledExactlyOnceWith();
+    expect(mocks.browser).toHaveBeenCalledExactlyOnceWith("status", false, "chatgpt_web");
     expect(mocks.create).not.toHaveBeenCalled();
     expect(host.querySelector("[data-testid=viewer]")).toBeNull();
     mocks.browser.mockResolvedValue({
@@ -75,7 +75,7 @@ describe("shared Web Model login and connector", () => {
       result: { browser_session: { active: true, verification_required: true } },
     });
     await act(async () => button("open").click());
-    expect(mocks.browser).toHaveBeenLastCalledWith("open", false);
+    expect(mocks.browser).toHaveBeenLastCalledWith("open", false, "chatgpt_web");
     expect(host.textContent).toContain("webModelShared.verification");
     expect(host.querySelector("[data-testid=viewer]")).not.toBeNull();
     await act(async () => button("open").click());
@@ -86,7 +86,7 @@ describe("shared Web Model login and connector", () => {
     await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
     const viewer = host.querySelector("[data-testid=viewer]");
     await act(async () => button("check").click());
-    expect(mocks.browser).toHaveBeenLastCalledWith("status", true);
+    expect(mocks.browser).toHaveBeenLastCalledWith("status", true, "chatgpt_web");
     expect(host.querySelector("[data-testid=viewer]")).toBe(viewer);
     expect(mocks.panel.mock.calls.every(([props]) => props.refreshNonce === 0)).toBe(true);
   });
@@ -201,5 +201,23 @@ describe("shared Web Model login and connector", () => {
     });
     expect(mocks.create).toHaveBeenCalledOnce();
     await act(async () => write.resolve(created));
+  });
+  it("scopes provider actions and keeps one-time URLs when switching providers", async () => {
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    await act(async () => button("create").click());
+    expect(mocks.create).toHaveBeenLastCalledWith("chatgpt_web");
+    mocks.connectors.mockResolvedValue({ ok: true, result: { connectors: [existing] } });
+    const select = (name: string) =>
+      Array.from(host.querySelectorAll("button")).find((b) => b.textContent === name)!;
+    await act(async () => select("Grok Bot").click());
+    expect(mocks.browser).toHaveBeenLastCalledWith("status", false, "grok_web");
+    expect(button("copy")).toBeUndefined();
+    expect(button("create").disabled).toBe(false);
+    await act(async () => button("create").click());
+    expect(mocks.create).toHaveBeenLastCalledWith("grok_web");
+    await act(async () => select("ChatGPT").click());
+    expect(button("copy")).toBeDefined();
+    await act(async () => button("copy").click());
+    expect(mocks.copy).toHaveBeenLastCalledWith("https://fixture.test/token/test-only");
   });
 });

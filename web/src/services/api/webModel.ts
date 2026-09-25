@@ -216,10 +216,12 @@ export async function fetchWebModelConnectors() {
   );
 }
 
-export async function createWebModelConnector() {
+export type WebModelProvider = "chatgpt_web" | "grok_web";
+
+export async function createWebModelConnector(provider: WebModelProvider = "chatgpt_web") {
   return apiJson<WebModelConnectorCreateResult>("/api/v1/web-model/connectors", {
     method: "POST",
-    body: "{}",
+    body: JSON.stringify({ provider }),
   });
 }
 
@@ -238,8 +240,12 @@ export async function changeWebModelPairing(
 export async function sharedWebModelBrowser(
   action: "status" | "open" | "close" = "status",
   inspect = false,
+  provider: WebModelProvider = "chatgpt_web",
 ): Promise<ApiResponse<WebModelBrowserSurfaceResult>> {
-  const path = action === "status" ? `?inspect=${inspect}` : `/${action}`;
+  const path =
+    action === "status"
+      ? `?inspect=${inspect}&provider=${provider}`
+      : `/${action}?provider=${provider}`;
   const response = await apiJson<WebModelBrowserSurfaceResult>(
     `/api/v1/web-model/shared-browser${path}`,
     action === "status" ? undefined : { method: "POST", body: "{}" },
@@ -254,8 +260,9 @@ export async function sharedWebModelBrowser(
   };
 }
 
-export function sharedWebModelBrowserWebSocketUrl() {
+export function sharedWebModelBrowserWebSocketUrl(provider: WebModelProvider = "chatgpt_web") {
   const url = new URL(withAuthToken("/api/v1/web-model/shared-browser/ws"), window.location.href);
+  url.searchParams.set("provider", provider);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
 }
@@ -527,4 +534,11 @@ export function getWebModelBrowserSurfaceWebSocketUrl(groupId: string, actorId: 
   return withAuthToken(
     `${protocol}//${window.location.host}/api/v1/web-model/browser-session/ws?${params.toString()}`,
   );
+}
+
+export async function bindGrokBot(groupId: string, actorId: string, url: string) {
+  return apiJson<WebModelBrowserSurfaceResult>("/api/v1/web-model/browser-session/grok-bind", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId, actor_id: actorId, url }),
+  });
 }

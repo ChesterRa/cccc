@@ -3,16 +3,22 @@ use std::cell::Cell;
 
 #[test]
 fn launch_is_retried_only_after_claude_configuration_changes() {
+    let temp = tempfile::tempdir().expect("trust records");
+    let records = vec![temp.path().join(".claude.json")];
     // Polls: unchanged, changed (still refused), unchanged, changed (launches).
     let changes = [false, true, false, true];
     let poll = Cell::new(0);
     let launches = Cell::new(0);
     wait_for_trust(
         Duration::ZERO,
-        || true,
+        &records,
+        signature(&records),
         || {
             poll.set(poll.get() + 1);
-            changes[poll.get() - 1]
+            if changes[poll.get() - 1] {
+                std::fs::write(&records[0], "x".repeat(poll.get())).expect("configuration change");
+            }
+            true
         },
         || {
             launches.set(launches.get() + 1);
@@ -24,16 +30,49 @@ fn launch_is_retried_only_after_claude_configuration_changes() {
 }
 
 #[test]
+fn approval_before_the_watcher_starts_still_triggers_a_launch() {
+    let temp = tempfile::tempdir().expect("trust records");
+    let records = vec![temp.path().join(".claude.json")];
+    // Snapshot precedes the interactive prompt; approval happens before monitoring.
+    let before_prompt = signature(&records);
+    std::fs::write(
+        &records[0],
+        r#"{"projects":{"/w":{"hasTrustDialogAccepted":true}}}"#,
+    )
+    .expect("approve while watcher has not started");
+    let polls = Cell::new(0);
+    let launched = Cell::new(false);
+    wait_for_trust(
+        Duration::ZERO,
+        &records,
+        before_prompt,
+        || {
+            polls.set(polls.get() + 1);
+            polls.get() == 1
+        },
+        || {
+            launched.set(true);
+            true
+        },
+    );
+    assert!(
+        launched.get(),
+        "approval must not wait for another configuration write"
+    );
+}
+
+#[test]
 fn a_closed_prompt_ends_the_wait_without_launching() {
     let polls = Cell::new(0);
     let launched = Cell::new(false);
     wait_for_trust(
         Duration::ZERO,
+        &[],
+        Vec::new(),
         || {
             polls.set(polls.get() + 1);
             polls.get() < 3
         },
-        || false,
         || {
             launched.set(true);
             true

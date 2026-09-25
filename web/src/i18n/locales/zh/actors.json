@@ -149,7 +149,6 @@
   "resetGroupOldDeleteFailed": "已创建干净的新工作组，但旧工作组未能自动删除。",
   "saveAndRestartConfirm": "保存更改并重启 \"{{label}}\"？这将中断正在进行的工作。",
   "saveSecretsAndRestartConfirm": "保存更改、应用密钥并重启 \"{{label}}\"？这将中断正在进行的工作。",
-  "nothingToSave": "没有可保存的更改。",
   "savedRestartRequired": "已保存。请重启 \"{{label}}\" 以应用运行时/配置/密钥变更。",
   "createdButFailedAttach": "已创建工作组但关联失败：{{message}}",
   "destGroupDifferent": "目标工作组必须与源工作组不同。",
@@ -286,5 +285,7 @@
   "terminalReadOnlyNotice": "此终端当前只读，接管后可以输入。",
   "webModelActorBoundConnectorTitle": "ChatGPT Web Model",
   "webModelActorBoundConnectorHint": "全局 Web Model 设置管理共享登录和一个连接器。保存后正常启动此 Actor，CCCC 会先自动连接对话，再投递任务。",
-  "webModelProfileHint": "复用运行类型和默认能力。ChatGPT 登录、对话和配对关系单独设置。"
+  "webModelProfileHint": "Web 模型配置共享运行时与能力设置，每个 Actor 独立配置自己的对话。",
+  "saveAndApply": "保存并应用",
+  "applyWebModelTargetConfirm": "要为“{{label}}”应用新对话吗？CCCC 将只停止此 Actor，保存设置，待新连接保存成功后再启动。应用失败时会保持停止，并保留这里的草稿。"
 }

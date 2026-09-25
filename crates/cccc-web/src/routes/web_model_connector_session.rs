@@ -23,6 +23,26 @@ pub(super) fn extend_catalog(response: &mut Value) {
     }
 }
 
+pub(super) fn extend_grok_catalog(response: &mut Value) {
+    if let Some(tools) = response["result"]["tools"].as_array_mut() {
+        for tool in tools.iter_mut() {
+            tool["inputSchema"]["properties"]["actor_token"] = json!({"type":"string","minLength":43,"maxLength":43,
+                "description":"CCCC Actor credential supplied in this Bot's current task message. Send it only to this CCCC connector; it selects the configured Group and Actor. Do not include it in replies, files or commands."});
+            if !tool["inputSchema"]["required"].is_array() {
+                tool["inputSchema"]["required"] = json!([]);
+            }
+            tool["inputSchema"]["required"]
+                .as_array_mut()
+                .expect("array")
+                .push(json!("actor_token"));
+        }
+        tools.push(json!({"name":"cccc_connector_status",
+            "description":"Check the Grok connector. With the Actor credential from the current CCCC task, also check that Actor's connection. No changes, file access or task execution.",
+            "inputSchema":{"type":"object","properties":{"actor_token":{"type":"string","minLength":43,"maxLength":43}},"additionalProperties":false},
+            "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}));
+    }
+}
+
 pub(super) fn result(request: &Value, payload: Value, error: bool) -> Value {
     json!({"jsonrpc":"2.0","id":request.get("id").cloned().unwrap_or(Value::Null),"result":{"content":[{"type":"text","text":payload.to_string()}],"structuredContent":payload,"isError":error}})
 }
@@ -34,6 +54,36 @@ pub(super) async fn handle(state: &AppState, connector: &Value, request: &Value)
     let name = request["params"]["name"].as_str()?;
     if !matches!(name, "cccc_connector_status" | "cccc_pair") {
         return None;
+    }
+    if connector["provider"] == "grok_web" {
+        if name != "cccc_connector_status" {
+            return None;
+        }
+        let args = &request["params"]["arguments"];
+        if !args.is_null()
+            && !args
+                .as_object()
+                .is_some_and(|a| a.keys().all(|k| k == "actor_token"))
+        {
+            return Some(result(request, json!({"error":"invalid_arguments"}), true));
+        }
+        if args.get("actor_token").is_none() {
+            return Some(result(
+                request,
+                json!({"connected":true,"routing_mode":"credential","state":"actor_token_required"}),
+                false,
+            ));
+        }
+        return Some(
+            match super::web_model_connector_store::resolve(state, connector, request) {
+                Ok(b) => result(
+                    request,
+                    json!({"connected":true,"routing_mode":"credential","state":"ready","group_id":b["group_id"],"actor_id":b["actor_id"]}),
+                    false,
+                ),
+                Err(e) => result(request, json!({"error":e.to_string()}), true),
+            },
+        );
     }
     let arguments = request["params"]
         .get("arguments")

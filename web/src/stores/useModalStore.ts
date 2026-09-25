@@ -50,12 +50,21 @@ interface ModalState {
   presentationAttention: PresentationAttentionState;
   editingActor: Actor | null;
   editingActorSection: "chatgpt" | null;
-  settingsTarget: { scope?: "group" | "global"; tab?: string; nonce: number } | null;
+  settingsTarget: {
+    scope?: "group" | "global";
+    tab?: string;
+    webModelProvider?: "chatgpt_web" | "grok_web";
+    nonce: number;
+  } | null;
 
   // Actions
   openModal: (name: keyof ModalState["modals"]) => void;
   closeModal: (name: keyof ModalState["modals"]) => void;
-  openSettingsTarget: (target: { scope?: "group" | "global"; tab?: string }) => void;
+  openSettingsTarget: (target: {
+    scope?: "group" | "global";
+    tab?: string;
+    webModelProvider?: "chatgpt_web" | "grok_web";
+  }) => void;
   clearSettingsTarget: () => void;
   setRecipientsModal: (eventId: string | null) => void;
   setRelayModal: (eventId: string | null, groupId?: string, event?: LedgerEvent | null) => void;
@@ -111,6 +120,7 @@ export const useModalStore = create<ModalState>((set) => ({
         scope:
           target.scope === "global" ? "global" : target.scope === "group" ? "group" : undefined,
         tab: typeof target.tab === "string" ? target.tab : undefined,
+        webModelProvider: target.webModelProvider,
         nonce: Date.now(),
       },
     })),

@@ -15,6 +15,73 @@ struct Fixture {
     connector: Value,
     secret: String,
 }
+
+#[tokio::test]
+async fn unconfigured_grok_actor_open_requires_url_without_launching_a_browser() {
+    let f = Fixture::new();
+    let groups = GroupStore::new(f.home.clone()).expect("groups");
+    groups
+        .mutate(&f.group, |g| {
+            g.actors[0].runtime = ActorRuntime::GrokWebModel;
+            Ok(())
+        })
+        .expect("change runtime");
+    let app = cccc_web::app(f.home.clone());
+    let peer = axum::extract::ConnectInfo(
+        "127.0.0.1:12345"
+            .parse::<std::net::SocketAddr>()
+            .expect("loopback"),
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/web-model/browser-session/open")
+                .extension(peer)
+                .header(header::HOST, "localhost")
+                .header(header::ORIGIN, "http://localhost")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"group_id":f.group,"actor_id":"alpha"}).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("open response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes(),
+    )
+    .expect("json");
+    assert_eq!(body["error"]["code"], "grok_bot_url_required");
+    let response = app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/web-model/browser-session?group_id={}&actor_id=alpha",
+                f.group
+            ))
+            .extension(peer)
+            .header(header::HOST, "localhost")
+            .body(Body::empty())
+            .expect("status request"),
+        )
+        .await
+        .expect("status response");
+    let body: Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes(),
+    )
+    .expect("json");
+    assert_eq!(body["result"]["browser_surface"]["active"], false);
+}
 impl Fixture {
     fn new() -> Self {
         let temp = tempfile::tempdir().expect("valid test fixture");
@@ -602,50 +669,217 @@ async fn pairing_tool_receipt_requires_host_metadata_and_grants_no_business_tool
     );
 }
 
+async fn close_shared_browser(home: &HomeLayout, provider: &str) -> StatusCode {
+    cccc_web::app(home.clone())
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/web-model/shared-browser/close?provider={provider}"
+            ))
+            .extension(axum::extract::ConnectInfo(
+                "127.0.0.1:12345"
+                    .parse::<std::net::SocketAddr>()
+                    .expect("loopback"),
+            ))
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, "http://localhost")
+            .body(Body::empty())
+            .expect("request"),
+        )
+        .await
+        .expect("response")
+        .status()
+}
+
+fn add_legacy_actor(groups: &GroupStore, group: &str) -> (std::path::PathBuf, Vec<u8>) {
+    let path = groups
+        .group_dir(group)
+        .expect("group directory")
+        .join("group.yaml");
+    let mut value: Value = cccc_core::fs::read_yaml(&path).expect("group YAML");
+    let mut actor = serde_json::to_value(Actor::new("legacy")).expect("actor");
+    actor["runtime"] = json!("gemini");
+    actor["enabled"] = json!(false);
+    value["actors"].as_array_mut().expect("actors").push(actor);
+    cccc_core::fs::write_yaml(&path, &value).expect("legacy group YAML");
+    let bytes = std::fs::read(&path).expect("legacy bytes");
+    assert!(
+        groups.load(group).is_err(),
+        "fixture must reproduce the unsupported runtime"
+    );
+    (path, bytes)
+}
+
 #[tokio::test]
-async fn shared_browser_close_blocks_paired_enabled_actors_only() {
-    let f = Fixture::new();
-    async fn close(f: &Fixture) -> StatusCode {
-        cccc_web::app(f.home.clone())
-            .oneshot(
-                Request::post("/api/v1/web-model/shared-browser/close")
-                    .extension(axum::extract::ConnectInfo(
-                        "127.0.0.1:12345"
-                            .parse::<std::net::SocketAddr>()
-                            .expect("loopback"),
-                    ))
-                    .header(header::HOST, "localhost")
-                    .header(header::ORIGIN, "http://localhost")
-                    .body(Body::empty())
-                    .expect("request"),
+async fn closing_login_does_not_depend_on_actor_lifecycle_or_group_parsing() {
+    for provider in ["chatgpt_web", "grok_web"] {
+        let f = Fixture::new();
+        let groups = GroupStore::new(f.home.clone()).expect("groups");
+        if provider == "grok_web" {
+            let group = groups
+                .mutate(&f.group, |g| {
+                    g.actors[0].runtime = ActorRuntime::GrokWebModel;
+                    Ok(g.clone())
+                })
+                .expect("Grok Actor");
+            let connector =
+                store::configure_provider(&f.home, provider).expect("connector")["connector"]
+                    .clone();
+            let actor = &group.actors[0];
+            store::bind_grok(
+                &f.home,
+                connector["connector_id"].as_str().expect("id"),
+                &f.group,
+                &actor.id,
+                &cccc_core::actors::generation_identity(actor),
+                "https://grok.com/bot/00000000-0000-4000-8000-000000000001",
             )
-            .await
-            .expect("response")
-            .status()
+            .expect("binding");
+        } else {
+            f.bind("alpha", "chat-a");
+        }
+        assert_eq!(
+            close_shared_browser(&f.home, provider).await,
+            StatusCode::OK,
+            "closing login must not require stopping enabled, bound Actors"
+        );
+        let (path, before) = add_legacy_actor(&groups, &f.group);
+        assert_eq!(
+            close_shared_browser(&f.home, provider).await,
+            StatusCode::OK,
+            "closing a window must not depend on parsing Actor configuration"
+        );
+        assert_eq!(std::fs::read(path).expect("unchanged group"), before);
     }
-    assert_eq!(
-        close(&f).await,
-        StatusCode::OK,
-        "unpaired enabled Actors do not own the shared browser"
+}
+
+#[tokio::test]
+async fn grok_token_routes_real_tools_and_nested_management_without_identity_metadata() {
+    let mut f = Fixture::new();
+    let groups = GroupStore::new(f.home.clone()).expect("valid test fixture");
+    let group = groups
+        .mutate(&f.group, |g| {
+            for a in &mut g.actors {
+                a.runtime = ActorRuntime::GrokWebModel;
+            }
+            Ok(g.clone())
+        })
+        .expect("valid test fixture");
+    let configured = store::configure_provider(&f.home, "grok_web").expect("valid test fixture");
+    f.connector = configured["connector"].clone();
+    f.secret = configured["secret"]
+        .as_str()
+        .expect("valid test fixture")
+        .into();
+    let mut tokens = Vec::new();
+    for (i, a) in group.actors.iter().enumerate() {
+        let url = format!("https://grok.com/bot/00000000-0000-4000-8000-{:012}", i + 1);
+        let b = store::bind_grok(
+            &f.home,
+            f.connector["connector_id"]
+                .as_str()
+                .expect("valid test fixture"),
+            &f.group,
+            &a.id,
+            &cccc_core::actors::generation_identity(a),
+            &url,
+        )
+        .expect("valid test fixture");
+        tokens.push(store::grok_token(&f.connector, &b).expect("valid test fixture"));
+    }
+    let _daemon = start_daemon(&f.home).await;
+    let catalog = f
+        .request(
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+            Some(&f.secret),
+            true,
+        )
+        .await
+        .1;
+    let tools = catalog["result"]["tools"]
+        .as_array()
+        .expect("valid test fixture");
+    assert!(!tools.iter().any(|t| t["name"] == "cccc_pair"));
+    assert!(
+        tools
+            .iter()
+            .filter(|t| t["name"] != "cccc_connector_status")
+            .all(|t| t["inputSchema"]["required"]
+                .as_array()
+                .expect("valid test fixture")
+                .contains(&json!("actor_token")))
     );
-    f.bind("alpha", "chat-a");
+    for (i, id) in ["alpha", "beta", "alpha"].iter().enumerate() {
+        let token = &tokens[i % 2];
+        let status = f
+            .call(
+                "cccc_connector_status",
+                json!({"actor_token":token}),
+                json!({}),
+            )
+            .await;
+        assert_eq!(
+            status["result"]["structuredContent"]["actor_id"], *id,
+            "{status}"
+        );
+        assert!(!status.to_string().contains(token));
+    }
+    for args in [
+        json!({}),
+        json!({"actor_token":"wrong"}),
+        json!({"actor_token":tokens[0],"group_id":"wrong"}),
+    ] {
+        let result = f.call("cccc_file", args, json!({})).await;
+        assert_eq!(result["result"]["isError"], true, "{result}");
+    }
+    let read = f
+        .call(
+            "cccc_file",
+            json!({"actor_token":tokens[0],"rel_path":"sample.txt","actor_id":"beta"}),
+            json!({}),
+        )
+        .await;
     assert_eq!(
-        close(&f).await,
-        StatusCode::BAD_REQUEST,
-        "a paired enabled Actor must be stopped first"
+        read["result"]["structuredContent"]["content"], "local fixture content",
+        "{read}"
     );
-    let store = GroupStore::new(f.home.clone()).expect("groups");
-    let mut group = store.load(&f.group).expect("group");
-    group
-        .actors
-        .iter_mut()
-        .find(|a| a.id == "alpha")
-        .expect("actor")
-        .enabled = false;
-    store.save(&group).expect("save");
+    let nested = f.call("cccc_code_exec",json!({"actor_token":tokens[0],"source":"const r=await tools.cccc_file({rel_path:'sample.txt'});text(r);","yield_time_ms":10000}),json!({})).await;
     assert_eq!(
-        close(&f).await,
-        StatusCode::OK,
-        "an unrelated unpaired Actor must not block close"
+        nested["result"]["structuredContent"]["status"], "completed",
+        "{nested}"
     );
+    assert!(!nested.to_string().contains(&tokens[0]));
+    let stopped = f.call("cccc_code_exec",json!({"actor_token":tokens[0],"source":"text(await tools.cccc_capability_use({tool_name:'cccc_actor',tool_arguments:{action:'stop',actor_id:'beta'}}));","yield_time_ms":10000}),json!({})).await;
+    assert_eq!(
+        stopped["result"]["structuredContent"]["status"], "completed",
+        "{stopped}"
+    );
+    let doc = groups.load(&f.group).expect("valid test fixture");
+    assert!(
+        doc.actors
+            .iter()
+            .find(|a| a.id == "alpha")
+            .expect("valid test fixture")
+            .enabled
+    );
+    assert!(
+        !doc.actors
+            .iter()
+            .find(|a| a.id == "beta")
+            .expect("valid test fixture")
+            .enabled,
+        "{stopped}"
+    );
+    let denied = f
+        .call(
+            "cccc_connector_status",
+            json!({"actor_token":tokens[1]}),
+            json!({}),
+        )
+        .await;
+    assert_eq!(denied["result"]["isError"], true);
+    let ledger = std::fs::read_to_string(groups.ledger_path(&f.group).expect("valid test fixture"))
+        .expect("valid test fixture");
+    for token in tokens {
+        assert!(!ledger.contains(&token));
+    }
 }

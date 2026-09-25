@@ -203,6 +203,7 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
         t("copyGroups.workspaceExcluded"),
         t("copyGroups.secretsExcluded"),
         previewData.requires_reconnect?.chatgpt_web_model ? t("copyGroups.reconnectChatGPT") : "",
+        previewData.requires_reconnect?.grok_web_model ? t("copyGroups.reconnectGrok") : "",
         previewData.requires_reconnect?.notebooklm_group_space
           ? t("copyGroups.reconnectNotebookLM")
           : "",

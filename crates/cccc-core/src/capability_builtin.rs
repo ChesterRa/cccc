@@ -82,9 +82,7 @@ pub fn actor_base_tool_names(
     } else {
         CORE_TOOL_NAMES
     };
-    let extra = if !secretary
-        && actor.is_some_and(|a| a.runtime == cccc_contracts::ActorRuntime::WebModel)
-    {
+    let extra = if !secretary && actor.is_some_and(|a| a.runtime.is_web_model()) {
         WEB_MODEL_EXTRA_TOOL_NAMES
     } else {
         &[]

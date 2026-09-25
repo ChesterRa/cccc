@@ -592,11 +592,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .map_err(OpError::io)?;
     }
     if matches!(state, GroupState::Paused | GroupState::Stopped) {
-        if group
-            .actors
-            .iter()
-            .any(|a| a.runtime == cccc_contracts::ActorRuntime::WebModel)
-        {
+        if group.actors.iter().any(|a| a.runtime.is_web_model()) {
             cccc_core::web_model_connectors::interrupt_automatic_pairings(
                 home,
                 &group.group_id,
@@ -637,11 +633,7 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
     let runtimes = if value {
         actor_runtime::start_group(home, &group)?
     } else {
-        if group
-            .actors
-            .iter()
-            .any(|a| a.runtime == cccc_contracts::ActorRuntime::WebModel)
-        {
+        if group.actors.iter().any(|a| a.runtime.is_web_model()) {
             cccc_core::web_model_connectors::interrupt_automatic_pairings(
                 home,
                 &group.group_id,

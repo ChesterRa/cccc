@@ -75,6 +75,7 @@ pub struct Preview {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct RequiresReconnect {
     pub chatgpt_web_model: bool,
+    pub grok_web_model: bool,
     pub notebooklm_group_space: bool,
 }
 
@@ -398,6 +399,7 @@ fn preview_package(
         actor_count: actors.len(),
         requires_reconnect: RequiresReconnect {
             chatgpt_web_model: actors.iter().any(|actor| actor.runtime == "web_model"),
+            grok_web_model: actors.iter().any(|actor| actor.runtime == "grok_web_model"),
             notebooklm_group_space: serde_json::to_string(group)
                 .unwrap_or_default()
                 .to_ascii_lowercase()
@@ -506,6 +508,7 @@ fn excluded(relative: &str, _is_dir: bool) -> bool {
         "runners",
         "runtime_sessions",
         "web_model",
+        "grok_web_model",
     ];
     let name = parts.last().copied().unwrap_or_default();
     parts.iter().any(|part| sensitive.contains(part))
@@ -536,6 +539,7 @@ fn excluded(relative: &str, _is_dir: bool) -> bool {
         || lower == "state/unread_index.json"
         || lower == "state/assistants.json"
         || lower == "state/env_private.json"
+        || lower == "state/im_weixin_context_tokens.json"
 }
 
 fn scrub_group(group: &mut GroupDoc) {
@@ -728,6 +732,64 @@ fn slug(value: &str) -> String {
 mod tests {
     use super::*;
     use std::fs::File;
+
+    #[test]
+    fn weixin_reply_credentials_never_cross_group_copy_boundary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("copy", "").expect("group");
+        let state = store.state_dir(&group.group_id).expect("state");
+        fs::create_dir_all(&state).expect("state directory");
+        let credentials = b"{\"fixture-user\":\"synthetic-reply-credential\"}";
+        let relative = "state/im_weixin_context_tokens.json";
+        fs::write(state.join("im_weixin_context_tokens.json"), credentials).expect("credentials");
+        fs::write(state.join("notes.txt"), "ordinary content").expect("content");
+        let (bytes, manifest, _) = export(&store, &group.group_id).expect("export");
+        assert!(!manifest.contains_secrets);
+        let mut package = read_package(&bytes).expect("package");
+        assert!(
+            !package.files.contains_key(relative),
+            "export must exclude reply credentials"
+        );
+        assert!(package.files.contains_key("state/notes.txt"));
+
+        // Older exporters may have packaged credentials despite the manifest.
+        // Import must apply its own exclusion after validating the archive digest.
+        package.files.insert(relative.into(), credentials.to_vec());
+        package.manifest.content_digest = content_digest(&package.files);
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default();
+        writer
+            .start_file("manifest.json", options)
+            .expect("manifest entry");
+        writer
+            .write_all(&serde_json::to_vec(&package.manifest).expect("manifest"))
+            .expect("write manifest");
+        for (path, data) in package.files {
+            writer
+                .start_file(format!("group/{path}"), options)
+                .expect("entry");
+            writer.write_all(&data).expect("write entry");
+        }
+        let bytes = writer.finish().expect("archive").into_inner();
+        let imported = import(&store, &bytes, "", "").expect("import");
+        let directory = store
+            .group_dir(&imported.group_id)
+            .expect("imported directory");
+        assert!(
+            !directory.join(relative).exists(),
+            "import must discard reply credentials"
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("state/notes.txt")).expect("content"),
+            "ordinary content"
+        );
+        assert_eq!(
+            fs::read(state.join("im_weixin_context_tokens.json")).expect("source credentials"),
+            credentials
+        );
+    }
 
     #[test]
     fn export_collection_rejects_oversized_files_before_reading_them() {

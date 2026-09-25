@@ -131,6 +131,7 @@ export function SettingsModal({
   const [focusReachOnOpen, setFocusReachOnOpen] = useState(false);
   const [canAccessGlobalSettings, setCanAccessGlobalSettings] = useState<boolean | null>(null);
   const [webAccessSession, setWebAccessSession] = useState<WebAccessSession | null>(null);
+  const [webModelProvider, setWebModelProvider] = useState<api.WebModelProvider>("chatgpt_web");
   const settingsTarget = useModalStore((state) => state.settingsTarget);
   const clearSettingsTarget = useModalStore((state) => state.clearSettingsTarget);
 
@@ -1514,6 +1515,7 @@ export function SettingsModal({
       setFocusReachOnOpen(false);
       if (nextTab) setGroupTab(nextTab as GroupTabId);
     }
+    if (settingsTarget.webModelProvider) setWebModelProvider(settingsTarget.webModelProvider);
     clearSettingsTarget();
   }, [clearSettingsTarget, isOpen, settingsTarget]);
 
@@ -1877,6 +1879,8 @@ export function SettingsModal({
 
                 {activeTab === "webModels" && (
                   <WebModelConnectorsTab
+                    provider={webModelProvider}
+                    onProviderChange={setWebModelProvider}
                     isDark={isDark}
                     isActive={scope === "global" && activeTab === "webModels"}
                     currentGroupId={groupId}

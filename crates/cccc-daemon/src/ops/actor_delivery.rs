@@ -334,7 +334,7 @@ fn dispatch_to_inner(
             online += 1;
         }
         let transport = delivery_transport(home, group, actor);
-        if preclaimed && actor.runtime == ActorRuntime::WebModel {
+        if preclaimed && actor.runtime.is_web_model() {
             // Structured Web Model consumers take the durable claim through
             // runtime_wait_next_turn. Do not enqueue the actor on the PTY lane.
             queued += 1;
@@ -444,7 +444,7 @@ pub(super) fn delivery_transport(
 ) -> &'static str {
     if actor.runtime == ActorRuntime::Deepseek {
         "deepseek"
-    } else if actor.runtime == ActorRuntime::WebModel {
+    } else if actor.runtime.is_web_model() {
         web_model_delivery_transport(home, group, actor)
     } else if crate::ops::local_headless::uses_managed_session(actor) {
         "managed_session"
@@ -475,6 +475,9 @@ fn web_model_delivery_transport(
             })
             .unwrap_or_default()
     };
+    if actor.runtime == ActorRuntime::GrokWebModel {
+        return "web_model_browser";
+    }
     let mode = setting(&["CCCC_WEB_MODEL_DELIVERY_MODE", "CCCC_WEB_MODEL_DELIVERY"]);
     if matches!(
         mode.as_str(),
@@ -493,7 +496,9 @@ fn web_model_delivery_transport(
         provider = cccc_core::web_model_connectors::load(home)
             .unwrap_or_default()
             .into_iter()
-            .find(|connector| connector["revoked"] != true)
+            .find(|connector| {
+                connector["revoked"] != true && connector["provider"] == "chatgpt_web"
+            })
             .and_then(|connector| connector["provider"].as_str().map(str::to_owned))
             .map(|value| value.trim().to_ascii_lowercase())
             .unwrap_or_default();

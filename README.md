@@ -296,6 +296,8 @@ CCCC delivers Group messages into paired ChatGPT conversations. Multiple Web Mod
 
 Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy). CCCC defaults to stable text-only delivery and also offers an experimental **GPT Pro** mode that attaches a tiny blank PNG when delivering each batch. This compatibility workaround does not switch ChatGPT models or guarantee connector availability, and may stop working when ChatGPT changes. Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
 
+**Grok Bot Web Model** (`grok_web_model`) uses the same CCCC workspace tools and delivery queue, with a shared Grok login, one MCP connector, and a dedicated Bot URL per Actor. Save the Bot URL and start the Actor; CCCC supplies its routing credential with each task, without a separate pairing message. See [Grok Bot setup and current validation boundaries](https://chesterra.github.io/cccc/guide/grok-web-model-runtime).
+
 ## CCCC Connect: across instances and teams
 
 Choose the connection scope that fits your work:

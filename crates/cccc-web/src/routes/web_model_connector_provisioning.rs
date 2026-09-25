@@ -18,11 +18,17 @@ pub(super) async fn list(State(state): State<AppState>) -> ApiResult {
     })))
 }
 
-pub(super) async fn create(State(state): State<AppState>, Json(_body): Json<Value>) -> ApiResult {
+pub(super) async fn create(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
+    let provider = match body.get("provider") {
+        None => "chatgpt_web",
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| ApiError::bad("provider must be a string"))?,
+    };
     let result = super::web_model_delivery_completion::call(
         &state,
         "web_model_connector_configure",
-        json!({"by":"user"})
+        json!({"by":"user","provider":provider})
             .as_object()
             .expect("literal JSON object")
             .clone(),
@@ -55,7 +61,7 @@ fn connector_base_url(state: &AppState) -> Result<String, ApiError> {
 
 fn public(item: &Value, base_url: &str) -> Value {
     let id = item["connector_id"].as_str().unwrap_or_default();
-    let mut result = json!({"connector_id":id,"kind":"web_model_connector","routing_mode":"session","provider":"chatgpt_web",
+    let mut result = json!({"connector_id":id,"kind":"web_model_connector","routing_mode":item["routing_mode"],"provider":item["provider"],
         "connector_url":format!("{base_url}/mcp/web-model/{id}"),"secret_available":false,
         "bound_actor_count":item["bindings"].as_object().map_or(0, |b| b.len())});
     for field in [

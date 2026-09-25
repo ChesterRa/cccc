@@ -1,5 +1,7 @@
 # ChatGPT Web Model Runtime
 
+For the separate Grok Bot runtime, see [Grok Bot Web Model](/guide/grok-web-model-runtime). Its Actor routing uses per-call credentials rather than ChatGPT conversation pairing.
+
 The `web_model` runtime lets a ChatGPT web chat participate in a CCCC group through browser delivery plus a remote MCP connector. In ChatGPT sessions that expose the CCCC MCP connector, **GPT-5.x** can act as a first-class local development actor: it can receive routed CCCC messages, call CCCC MCP tools, edit the active workspace, run scoped commands, inspect git output, and report back through the same coordination layer as Codex or Claude Code. When the selected GPT-5.x chat exposes the CCCC MCP connector, ChatGPT web capacity can become additional local-development agent capacity and reduce pressure on native Codex usage for work that fits the ChatGPT Web path.
 
 MCP availability is determined by the selected ChatGPT model and account, not by CCCC. Use a ChatGPT session that can actually see the CCCC connector for local development. CCCC also offers an experimental **GPT Pro** delivery mode for accounts where attaching an image makes the connector available to a GPT Pro chat. This is an observed ChatGPT behavior rather than a supported model-selection API, so it can stop working when ChatGPT changes. CCCC never switches the ChatGPT model for you.
@@ -35,7 +37,11 @@ Mental model: the ChatGPT Web Model actor is a normal CCCC agent whose model sur
 
 Connector model: one authenticated CCCC connector serves multiple verified ChatGPT conversations. All Actors share one dedicated browser profile and login; each owns a persistent separate window and Page target. No active-tab scheduler chooses the delivery recipient. Rotating the global credential invalidates the old URL while preserving pairings. Revoking and recreating the connector requires new pairings.
 
-In global Web Model settings, **Open shared browser** reveals the login window and restores the ChatGPT entry page if that window is blank. It preserves an ongoing sign-in flow. **Check login** only inspects readiness; it does not reload the page. Closing the shared browser requires stopping its enabled, paired Actors first. Old unpaired Actors do not block setup or closing, and closing preserves the browser profile and saved login.
+In global Web Model settings, **Open login window** reveals the login window and restores the ChatGPT entry page if that window is blank. It preserves an ongoing sign-in flow. **Check login** only inspects readiness; it does not reload the page. **Close login window** closes only that window; Actor windows, queued work and the saved login remain intact. It does not require stopping Actors. Signing out of ChatGPT still affects all Actor windows sharing the login.
+
+Actor windows become viewable as soon as navigation starts, including while the website is loading or awaiting verification. Delivery checks the target, composer and draft state separately before claiming work; opening a window does not mean the website is ready to receive a task.
+
+The login window opens without waiting for the site's document to finish loading, so slow pages, network errors and verification remain visible and the window stays closable. Browser availability is separate from login and delivery readiness; automatic Actor delivery still checks the page before submitting.
 
 MCP tool model: ChatGPT registers a remote MCP schema up front, so the ChatGPT Web Model connector advertises a fixed built-in schema instead of extending that schema with newly discovered capability tools. Explicitly disabling CCCC code mode removes its two code-mode tools; daemon restart timing does not collapse the remaining Web Model schema to the smaller ordinary-actor fallback. Calls are still authorized with the connector-bound actor identity. A Web Model actor cannot bypass that surface by naming an unadvertised tool directly. A group foreman can reach an enabled built-in capability-pack tool through `cccc_capability_use`; a peer cannot use that route to acquire foreman management authority.
 
@@ -48,13 +54,15 @@ message. The runtime panel's **ChatGPT conversation** button opens this section
 of the Actor settings directly. **Refresh ChatGPT page** reloads that page; it does
 not restart the shared browser.
 
-To change the working conversation, select **Change working conversation** and
-stop only that Actor. Preview a new chat or an existing URL, enable the CCCC
+To change the working conversation, select **Change working conversation**. You
+can edit the URL while the Actor runs. Previewing or connecting asks to pause only
+this Actor, so no separate Stop action is required. Preview a new chat or an
+existing URL, enable the CCCC
 connector in that chat, then select **Use this conversation**. CCCC sends the setup
 message and verifies the reply automatically. Previewing alone does not switch the
 binding. Failed or cancelled verification preserves the previous binding and
-pending work. After successful replacement, start the Actor normally when ready;
-the change does not start it for you. These operations are independent of the
+pending work. After successful replacement, **Start Actor** is available in the
+same section; verification does not start it for you. These operations are independent of the
 Actor editor's Save button. Disconnecting is a separate maintenance action and is
 not required to replace a conversation.
 
@@ -121,7 +129,7 @@ Protect public Web access with an Admin Access Token in the same panel. The MCP 
 
 ### 2. Sign in once and create the shared connector
 
-Open `Settings > Global > ChatGPT Web Model`, open the shared browser and sign in. All Actor windows use this dedicated profile. Login from your everyday browser is separate; CCCC does not copy cookies. Signing out here signs out all ChatGPT Actors.
+Open `Settings > Global > ChatGPT Web Model`, open the login window and sign in. All Actor windows use this dedicated profile. Login from your everyday browser is separate; CCCC does not copy cookies. Signing out here signs out all ChatGPT Actors.
 
 Create the shared connector and copy its private URL. The secret is shown only after creation or rotation. If the URL is local-only or not HTTPS, configure Web Access before continuing. Add only this one connector in ChatGPT.
 
@@ -149,11 +157,11 @@ Connection attempts last at most ten minutes. You may close settings while waiti
 
 For a new chat, connection also waits for ChatGPT to assign its permanent conversation address. Its temporary address during the first response is part of normal startup, not a request to select or pair the conversation manually.
 
-To replace an established conversation, stop that Actor, open the intended conversation and use **Reconnect current conversation**. An existing binding remains until the replacement is verified or explicitly unpaired. This deliberate replacement is separate from automatic first connection. An unpaired Actor's explicitly chosen URL is retained as a startup destination, never as tool authority.
+To replace an established conversation, choose **Change working conversation**, preview the intended conversation (confirm the pause if running), then use **Use this conversation**. An existing binding remains until the replacement is verified or explicitly unpaired. This deliberate replacement is separate from automatic first connection. An unpaired Actor's explicitly chosen URL is retained as a startup destination, never as tool authority.
 
 Actor presets, notes, roles and capabilities remain applicable. Launch commands and private launch environment inputs are hidden for Web Model Actors and Profiles. Existing private environment values are retained, and hidden environment drafts are not applied when saving Web Model settings. Runtime Profiles reuse runtime type and default capabilities, not browser login, conversation or pairing.
 
-Opening a URL does not silently change an existing pairing. An unrelated composer draft is never overwritten. One host session or one conversation URL cannot be assigned to two Actors. Closing an Actor window leaves the shared browser and other windows intact; reopen it explicitly to resume the surface. Stop all Web Model Actors before closing the shared browser globally.
+Opening a URL does not silently change an existing pairing. An unrelated composer draft is never overwritten. One host session or one conversation URL cannot be assigned to two Actors. Closing an Actor window leaves the shared browser and other windows intact; reopen it explicitly to resume the surface. Closing the global login window also leaves Actor windows and their login intact.
 
 ### Upgrading from Actor-specific connectors
 

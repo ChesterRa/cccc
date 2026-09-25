@@ -172,7 +172,7 @@ fn authorize_tool(
             .actors
             .iter()
             .find(|actor| actor.id == actor_id)
-            .is_some_and(|actor| actor.runtime == cccc_contracts::ActorRuntime::WebModel)
+            .is_some_and(|actor| actor.runtime.is_web_model())
     {
         let role = cccc_core::actors::effective_role(group, actor_id)
             .unwrap_or(cccc_contracts::ActorRole::Peer);

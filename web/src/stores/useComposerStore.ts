@@ -35,6 +35,10 @@ export {
 
 const initialMessageMode = loadComposerMessageModePreference();
 
+function isLocalDestination(state: { activeGroupId: string; destGroupId: string }): boolean {
+  return !state.destGroupId || state.destGroupId === state.activeGroupId;
+}
+
 interface GroupDraft {
   composerGroupMentionTokens?: ComposerGroupMentionToken[];
   composerAgentMentionTokens?: ComposerAgentMentionToken[];
@@ -150,7 +154,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
   setToText: (text) =>
     set((state) => {
       const nextText = String(text || "");
-      if (state.replyTarget || !state.activeGroupId) {
+      if (state.replyTarget || !state.activeGroupId || !isLocalDestination(state)) {
         return { toText: nextText };
       }
       return {
@@ -162,7 +166,10 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     set((state) => {
       const activeGroupId = String(state.activeGroupId || "").trim();
       const normalToTextByGroup =
-        activeGroupId && !state.replyTarget
+        activeGroupId &&
+        !state.replyTarget &&
+        isLocalDestination(state) &&
+        state.normalToTextByGroup[activeGroupId] === undefined
           ? { ...state.normalToTextByGroup, [activeGroupId]: state.toText }
           : state.normalToTextByGroup;
       return { toText: String(text || ""), normalToTextByGroup };
@@ -177,6 +184,8 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       return {
         replyTarget: null,
         toText: normalToText ?? "",
+        // Reply destinations are temporary, including cross-group replies.
+        ...(state.replyTarget ? { destGroupId: activeGroupId } : {}),
         messageMode: state.preferredMessageMode,
       };
     }),
@@ -211,23 +220,42 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     saveComposerMessageModePreference(normalized);
     set({ preferredMessageMode: normalized, messageMode: normalized });
   },
-  setDestGroupId: (groupId) => set({ destGroupId: String(groupId || "").trim() }),
+  setDestGroupId: (groupId) =>
+    set((state) => {
+      const destGroupId = String(groupId || "").trim() || state.activeGroupId;
+      if (destGroupId === (state.destGroupId || state.activeGroupId)) return { destGroupId };
+      return {
+        destGroupId,
+        // Actor IDs are scoped to a Group. A temporary remote selection must
+        // neither inherit nor replace this Group's normal recipients.
+        ...(!state.replyTarget
+          ? {
+              toText:
+                destGroupId === state.activeGroupId
+                  ? (state.normalToTextByGroup[state.activeGroupId] ?? "")
+                  : "",
+            }
+          : {}),
+      };
+    }),
 
   clearComposer: () =>
     set((state) => {
       const activeGroupId = String(state.activeGroupId || "").trim();
+      const normalToText =
+        state.normalToTextByGroup[activeGroupId] ??
+        (state.replyTarget || !isLocalDestination(state) ? "" : state.toText);
       return {
         composerGroupMentionTokens: [],
         composerAgentMentionTokens: [],
         composerText: "",
         composerFiles: [],
-        toText: "",
+        toText: normalToText,
         replyTarget: null,
         quotedPresentationRef: null,
         quotedVoiceDocumentRef: null,
         messageMode: state.preferredMessageMode,
         destGroupId: activeGroupId,
-        normalToTextByGroup: {},
       };
     }),
 
@@ -255,7 +283,10 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
           composerAgentMentionTokens: state.composerAgentMentionTokens,
           composerText: state.composerText,
           composerFiles: state.composerFiles,
-          toText: state.replyTarget ? state.toText : "",
+          toText:
+            state.replyTarget || isLocalDestination(state)
+              ? state.toText
+              : (state.normalToTextByGroup[normalizedFromGroupId] ?? ""),
           replyTarget: state.replyTarget,
           quotedPresentationRef: state.quotedPresentationRef,
           quotedVoiceDocumentRef: state.quotedVoiceDocumentRef,
@@ -270,7 +301,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     const draft = normalizedToGroupId ? newDrafts[normalizedToGroupId] : null;
     const normalizedDestGroupId = normalizedToGroupId;
 
-    const nextToText = draft?.replyTarget ? draft.toText : "";
+    const nextToText = draft?.toText ?? state.normalToTextByGroup[normalizedToGroupId] ?? "";
     const nextMessageMode = draft?.replyTarget
       ? normalizeReplyMessageMode(draft.messageMode)
       : draft?.messageMode || state.preferredMessageMode;
@@ -278,7 +309,6 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     set({
       activeGroupId: normalizedDestGroupId,
       drafts: newDrafts,
-      normalToTextByGroup: {},
       composerGroupMentionTokens: draft?.composerGroupMentionTokens || [],
       composerAgentMentionTokens: draft?.composerAgentMentionTokens || [],
       composerText: draft?.composerText || "",

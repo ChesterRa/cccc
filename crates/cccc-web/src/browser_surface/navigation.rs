@@ -17,11 +17,7 @@ struct DocumentState {
     previous_document: bool,
 }
 
-pub(super) async fn goto_dom_content_loaded(page: &Page, url: &str) -> Result<()> {
-    let mut events = page
-        .event_listener::<EventDomContentEventFired>()
-        .await
-        .context("listen for DOMContentLoaded")?;
+pub(super) async fn start_navigation(page: &Page, url: &str) -> Result<()> {
     let encoded_url = serde_json::to_string(url)?;
     let encoded_marker = serde_json::to_string(PREVIOUS_DOCUMENT_MARKER)?;
     page.evaluate(format!(
@@ -29,6 +25,15 @@ pub(super) async fn goto_dom_content_loaded(page: &Page, url: &str) -> Result<()
     ))
     .await
     .context("start browser navigation")?;
+    Ok(())
+}
+
+pub(super) async fn goto_dom_content_loaded(page: &Page, url: &str) -> Result<()> {
+    let mut events = page
+        .event_listener::<EventDomContentEventFired>()
+        .await
+        .context("listen for DOMContentLoaded")?;
+    start_navigation(page, url).await?;
     tokio::time::timeout(NAVIGATION_TIMEOUT, async {
         loop {
             events

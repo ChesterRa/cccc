@@ -669,9 +669,12 @@ headings use smaller phone sizes, and document content scrolls within the availa
 space. Wider layouts use
 the existing workspace arrangement.
 
-Recipient chips are one-shot: a successful send clears the selection, and switching Groups does not
-restore a previous manual recipient. Unsent message text and attachments still remain as per-Group
-drafts.
+Recipient selections are remembered separately for each Group while the Web page remains open.
+Sending a normal message keeps the selection; switching Groups restores that Group's selection
+and unsent draft. Use Clear recipients to return to the Group's default routing.
+Reply recipients are temporary: canceling or sending a reply restores the normal selection.
+A temporary cross-group destination does not replace the local Group's remembered recipients;
+after sending, routing returns to the local Group. Reloading the page clears this in-memory state.
 
 Broadcasts (`@all` and `@peers`, including the Group's default broadcast target) leave
 disabled Actors stopped and deliver to enabled recipients. To wake a disabled Actor,

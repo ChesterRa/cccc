@@ -192,7 +192,10 @@ describe("useGroupStore selection and archive persistence", () => {
     expect(composerState.activeGroupId).toBe("g-b");
     expect(composerState.destGroupId).toBe("g-b");
     expect(composerState.toText).toBe("");
-    expect(composerState.drafts["g-a"]).toMatchObject({ composerText: "draft for a", toText: "" });
+    expect(composerState.drafts["g-a"]).toMatchObject({
+      composerText: "draft for a",
+      toText: "@all",
+    });
   });
 
   it("refreshGroups prefers the persisted selection when current state is empty", async () => {

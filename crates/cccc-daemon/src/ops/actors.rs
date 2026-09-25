@@ -338,6 +338,25 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             effect = ActorUpdateEffect::Started;
         }
     }
+    let retired_routes =
+        if original_actor.runtime.web_model_provider() != actor.runtime.web_model_provider() {
+            match web_model_connectors::retire_actor(home, &group_id, &actor_id) {
+                Ok(routes) => routes,
+                Err(error) => {
+                    return Err(rollback_actor_update(
+                        home,
+                        &group,
+                        &original_actor,
+                        original_secrets.as_ref(),
+                        Some(&updated_group),
+                        effect,
+                        OpError::io(error),
+                    ));
+                }
+            }
+        } else {
+            Vec::new()
+        };
     let event = match append_event(
         home,
         &group_id,
@@ -346,7 +365,12 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         json!({"actor_id": actor_id, "patch": patch}),
     ) {
         Ok(event) => event,
-        Err(error) => {
+        Err(mut error) => {
+            if let Err(restore_error) = web_model_connectors::restore(home, &retired_routes) {
+                error
+                    .message
+                    .push_str(&format!("; route rollback failed: {restore_error}"));
+            }
             return Err(rollback_actor_update(
                 home,
                 &group,

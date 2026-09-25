@@ -32,7 +32,7 @@ pub fn apply(
         .ok_or_else(|| OpError::new("not_found", format!("actor not found: {actor_id}")))?;
     // Configuration may already name a different backend. Lifecycle ownership
     // comes from the registries, not from the next launch configuration.
-    if stored_actor.runtime == ActorRuntime::WebModel
+    if stored_actor.runtime.is_web_model()
         && matches!(kind, "actor.stop" | "actor.restart" | "actor.new_session")
     {
         cccc_core::web_model_connectors::interrupt_automatic_pairings(
@@ -171,7 +171,7 @@ pub fn status(group_id: &str, actor_id: &str) -> Option<SessionStatus> {
 #[must_use]
 pub fn is_structured(actor: &Actor) -> bool {
     !super::local_headless::uses_managed_session(actor)
-        && (actor.runner == RunnerKind::Headless || actor.runtime == ActorRuntime::WebModel)
+        && (actor.runner == RunnerKind::Headless || actor.runtime.is_web_model())
 }
 
 pub fn start_group(home: &HomeLayout, group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {

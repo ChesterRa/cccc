@@ -57,9 +57,23 @@ async fn change(State(state): State<AppState>, Json(body): Json<Value>) -> ApiRe
     if !matches!(action.as_str(), "connect" | "cancel" | "remove") {
         return Err(ApiError::bad("invalid pairing action"));
     }
+    let group_doc = cccc_core::GroupStore::new(state.home.clone())
+        .and_then(|s| s.load(&group))
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let provider = group_doc
+        .actors
+        .iter()
+        .find(|a| a.id == actor)
+        .and_then(|a| a.runtime.web_model_provider())
+        .ok_or_else(|| ApiError::bad("Web Model Actor not found"))?;
+    if provider != "chatgpt_web" && action != "remove" {
+        return Err(ApiError::bad(
+            "Grok Bot connections use the saved Bot URL, not pairing",
+        ));
+    }
     let connector = store::load(&state)?
         .into_iter()
-        .find(|c| c["revoked"] != true)
+        .find(|c| c["revoked"] != true && c["provider"] == provider)
         .ok_or_else(|| ApiError::bad("Configure the shared ChatGPT connector first"))?;
     let mut args = json!({"by":"user","group_id":group,"actor_id":actor,"connector_id":connector["connector_id"]})
         .as_object().expect("literal JSON object").clone();
@@ -100,7 +114,7 @@ async fn start_connection(
     let control = super::web_model_delivery::control_guard(group, actor)?;
     let connector = store::load(state)?
         .into_iter()
-        .find(|c| c["revoked"] != true)
+        .find(|c| c["revoked"] != true && c["provider"] == "chatgpt_web")
         .ok_or_else(|| ApiError::bad("Configure the shared ChatGPT connector first"))?;
     let doc = cccc_core::GroupStore::new(state.home.clone())
         .and_then(|s| s.load(group))

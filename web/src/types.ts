@@ -1530,10 +1530,15 @@ export const SUPPORTED_RUNTIMES = [
   "kimi",
   "opencode",
   "web_model",
+  "grok_web_model",
   "custom",
 ] as const;
 
 export type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
+
+export function isWebModelRuntime(runtime: string | undefined): boolean {
+  return runtime === "web_model" || runtime === "grok_web_model";
+}
 
 export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   amp: { label: "Amp", desc: "" },
@@ -1565,6 +1570,10 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   web_model: {
     label: "ChatGPT Web Model",
     desc: "ChatGPT browser delivery + remote MCP connector",
+  },
+  grok_web_model: {
+    label: "Grok Bot Web Model",
+    desc: "Grok Bot browser delivery + remote MCP connector",
   },
   custom: { label: "Custom", desc: "Manual MCP installation needed" },
 };
@@ -1748,6 +1757,16 @@ export const RUNTIME_COLORS: Record<
     dotLight: "bg-stone-600",
   },
   web_model: {
+    bg: "bg-indigo-900/30",
+    text: "text-indigo-300",
+    border: "border-indigo-600/50",
+    dot: "bg-indigo-400",
+    bgLight: "bg-indigo-50",
+    textLight: "text-indigo-700",
+    borderLight: "border-indigo-300",
+    dotLight: "bg-indigo-500",
+  },
+  grok_web_model: {
     bg: "bg-indigo-900/30",
     text: "text-indigo-300",
     border: "border-indigo-600/50",

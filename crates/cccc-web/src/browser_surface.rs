@@ -23,7 +23,9 @@ use anyhow::{Context, Result, bail};
 use cccc_contracts::utc_now;
 use chromiumoxide::Page;
 use chromiumoxide::browser::Browser;
-use chromiumoxide::cdp::browser_protocol::target::{CreateTargetParams, GetTargetsParams};
+use chromiumoxide::cdp::browser_protocol::target::{
+    CloseTargetParams, CreateTargetParams, GetTargetsParams,
+};
 use futures_util::future::join_all;
 use navigation::goto_dom_content_loaded;
 use owner::BrowserOwner;
@@ -42,6 +44,16 @@ const BROWSER_EXIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 
 pub(crate) fn system_browser_path() -> Option<PathBuf> {
     system_browser::find_system_browser().map(|(path, _)| path)
+}
+
+// Browser ownership includes the provider: changing runtime must retire the old
+// window and its manual-close marker without changing the Actor's task identity.
+pub(crate) fn actor_identity(actor: &cccc_contracts::Actor) -> String {
+    format!(
+        "{}:{}",
+        actor.runtime.web_model_provider().unwrap_or(""),
+        cccc_core::actors::generation_identity(actor)
+    )
 }
 
 #[derive(Default)]
@@ -89,7 +101,7 @@ struct OpenRequest<'a> {
     reuse_existing: bool,
     mode: BrowserMode,
     shared_browser: bool,
-    actor_generation: Option<&'a str>,
+    actor_identity: Option<&'a str>,
 }
 
 pub(super) fn validate_browser_surface_url(value: &str) -> Result<()> {
@@ -128,7 +140,7 @@ impl BrowserSurfaces {
                 (
                     key.clone(),
                     Some(s.page.target_id().clone()),
-                    s.metadata["actor_generation"].as_str().map(str::to_owned),
+                    s.metadata["actor_identity"].as_str().map(str::to_owned),
                 )
             })
             .collect::<Vec<_>>();
@@ -153,8 +165,7 @@ impl BrowserSurfaces {
                     g.actors.iter().any(|a| {
                         a.id == actor_id
                             && generation.as_ref().is_none_or(|old| {
-                                a.runtime == cccc_contracts::ActorRuntime::WebModel
-                                    && cccc_core::actors::generation_identity(a) == *old
+                                a.runtime.is_web_model() && actor_identity(a) == *old
                             })
                     })
                 });
@@ -215,7 +226,7 @@ impl BrowserSurfaces {
             reuse_existing: false,
             mode: BrowserMode::Headless,
             shared_browser: false,
-            actor_generation: None,
+            actor_identity: None,
         })
         .await
     }
@@ -239,7 +250,7 @@ impl BrowserSurfaces {
             reuse_existing: true,
             mode: BrowserMode::Headless,
             shared_browser: false,
-            actor_generation: None,
+            actor_identity: None,
         })
         .await
     }
@@ -262,7 +273,7 @@ impl BrowserSurfaces {
             reuse_existing: true,
             mode: BrowserMode::System { background: false },
             shared_browser: true,
-            actor_generation: None,
+            actor_identity: None,
         })
         .await?;
         // Explicitly opening login should reveal its window, while Actor
@@ -277,12 +288,12 @@ impl BrowserSurfaces {
             .get(key)
             .map(|s| s.page.clone())
             .context("shared login window is not active")?;
-        if is_internal_page(&page.url().await?.unwrap_or_default()) {
-            goto_dom_content_loaded(&page, url).await?;
-        }
         page.bring_to_front()
             .await
             .context("show shared login window")?;
+        if is_internal_page(&page.url().await?.unwrap_or_default()) {
+            navigation::start_navigation(&page, url).await?;
+        }
         let current_url = page.url().await?.unwrap_or_else(|| url.to_owned());
         let mut sessions = self.sessions.lock().await;
         let session = sessions
@@ -311,7 +322,7 @@ impl BrowserSurfaces {
             reuse_existing: true,
             mode: BrowserMode::System { background: false },
             shared_browser: true,
-            actor_generation: Some(generation),
+            actor_identity: Some(generation),
         })
         .await
     }
@@ -336,7 +347,7 @@ impl BrowserSurfaces {
             reuse_existing: false,
             mode: BrowserMode::Headless,
             shared_browser: false,
-            actor_generation: None,
+            actor_identity: None,
         })
         .await
     }
@@ -360,7 +371,7 @@ impl BrowserSurfaces {
             reuse_existing: false,
             mode: BrowserMode::System { background: true },
             shared_browser: false,
-            actor_generation: None,
+            actor_identity: None,
         })
         .await
     }
@@ -376,7 +387,7 @@ impl BrowserSurfaces {
             reuse_existing,
             mode,
             shared_browser,
-            actor_generation,
+            actor_identity,
         } = request;
         validate_browser_surface_url(url)?;
         if self.shutting_down.load(Ordering::Acquire) {
@@ -401,7 +412,7 @@ impl BrowserSurfaces {
                 reuse_existing,
                 mode,
                 shared_browser,
-                actor_generation,
+                actor_identity,
             })
             .await;
         // Process/profile registration is serialized; a slow page navigation
@@ -414,12 +425,19 @@ impl BrowserSurfaces {
                 return Err(error);
             }
         };
-        if let Some(page) = page {
+        // Shared windows must be viewable and closable while the site loads.
+        // Login starts navigation in its caller; Actor delivery checks composer
+        // and target readiness separately before claiming or sending work.
+        if let Some(page) = page.filter(|_| !shared_browser || actor_identity.is_some()) {
             let opened = async {
-                goto_dom_content_loaded(&page, url)
-                    .await
-                    .context("open browser page")?;
-                if !shared_browser {
+                if shared_browser {
+                    navigation::start_navigation(&page, url)
+                        .await
+                        .context("open browser page")?;
+                } else {
+                    goto_dom_content_loaded(&page, url)
+                        .await
+                        .context("open browser page")?;
                     let owner = self
                         .sessions
                         .lock()
@@ -455,7 +473,7 @@ impl BrowserSurfaces {
             reuse_existing,
             mode,
             shared_browser,
-            actor_generation,
+            actor_identity,
         } = request;
         if self.shutting_down.load(Ordering::Acquire) {
             bail!("browser surfaces are shutting down");
@@ -470,7 +488,7 @@ impl BrowserSurfaces {
             if let Some((owner, state, target_id)) = existing {
                 let owner = owner.read().await;
                 if !owner.handler.is_finished()
-                    && actor_generation.is_none_or(|g| state["metadata"]["actor_generation"] == g)
+                    && actor_identity.is_none_or(|g| state["metadata"]["actor_identity"] == g)
                 {
                     let targets = owner
                         .browser
@@ -534,7 +552,7 @@ impl BrowserSurfaces {
                 let params = CreateTargetParams::builder()
                     .url("about:blank")
                     .new_window(true)
-                    .background(actor_generation.is_some())
+                    .background(actor_identity.is_some())
                     .build()
                     .map_err(anyhow::Error::msg)?;
                 let page = owner
@@ -547,20 +565,28 @@ impl BrowserSurfaces {
                 if new_owner {
                     close_internal_pages(&owner.browser, &page).await?;
                 }
-                Ok(page)
+                let viewport = match frame::viewport_size(&page).await {
+                    Ok(viewport) => viewport,
+                    Err(error) => {
+                        let _ = page.close().await;
+                        return Err(error);
+                    }
+                };
+                Ok((page, viewport))
             } else {
-                match reusable_page(&owner.browser).await? {
+                let page = match reusable_page(&owner.browser).await? {
                     Some(page) => Ok(page),
                     None => owner
                         .browser
                         .new_page("about:blank")
                         .await
                         .context("create browser page"),
-                }
+                }?;
+                Ok((page, (width, height)))
             }
         }
         .await;
-        let page = match initialized {
+        let (page, (width, height)) = match initialized {
             Ok(page) => page,
             Err(error) => {
                 if !shared_browser {
@@ -575,15 +601,15 @@ impl BrowserSurfaces {
         if shared_browser {
             metadata["shared_browser"] = json!(true);
         }
-        if let Some(generation) = actor_generation {
-            metadata["actor_generation"] = json!(generation);
+        if let Some(generation) = actor_identity {
+            metadata["actor_identity"] = json!(generation);
         }
         let session = Session {
             owner: Arc::clone(&owner),
             page: page.clone(),
             is_system_browser: resource.system_browser.is_some(),
             shared_browser,
-            viewer: if actor_generation.is_some() {
+            viewer: if actor_identity.is_some() {
                 json!({"kind":"screencast","vnc":{"available":false,"error":"actor_page_only"}})
             } else {
                 resource.viewer.clone()
@@ -615,7 +641,7 @@ impl BrowserSurfaces {
                 Arc::clone(&s.owner),
                 s.page.target_id().clone(),
                 s.recover_closed_page,
-                s.metadata["actor_generation"].as_str().map(str::to_owned),
+                s.metadata["actor_identity"].as_str().map(str::to_owned),
             )
         });
         let Some((owner, target_id, recover_closed_page, generation)) = snapshot else {
@@ -780,18 +806,6 @@ impl BrowserSurfaces {
         Ok(was_closed || retired_marker)
     }
 
-    pub async fn close_profile(&self, profile: &Path) -> Result<usize> {
-        let profile = profile
-            .canonicalize()
-            .unwrap_or_else(|_| profile.to_owned());
-        let operation = self.profile_operations.lock().await.get(&profile).cloned();
-        let Some(operation) = operation else {
-            return Ok(0);
-        };
-        let _guard = operation.lock().await;
-        self.close_owner_locked(&profile).await
-    }
-
     pub async fn shutdown_all(&self) -> Result<usize> {
         self.shutting_down.store(true, Ordering::Release);
         let mut profiles = self
@@ -870,13 +884,25 @@ impl BrowserSurfaces {
                 .context("browser profile registration missing")?;
             self.close_owner_locked(&profile).await?;
         } else {
-            if let Err(error) = page.clone().close().await {
-                page_recovery::confirm_candidate_gone(
-                    &owner.read().await.browser,
-                    &page,
-                    error.into(),
-                )
-                .await?;
+            // Close the owned target through the browser: Page.close can reject
+            // a still-existing window while its renderer changes during navigation.
+            let owner = owner.read().await;
+            if let Err(error) = owner
+                .browser
+                .execute(CloseTargetParams::new(page.target_id().clone()))
+                .await
+            {
+                // A user may already have closed this target. Completion is
+                // established by its absence in a live browser, not error text.
+                let targets = owner.browser.execute(GetTargetsParams::default()).await?;
+                if targets
+                    .result
+                    .target_infos
+                    .iter()
+                    .any(|target| &target.target_id == page.target_id())
+                {
+                    return Err(error.into());
+                }
             }
             self.sessions.lock().await.remove(key);
         }

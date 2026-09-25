@@ -1,3 +1,4 @@
+import { isWebModelRuntime } from "../types";
 import { useTerminalTitlePaging } from "./agentTerminal/useTerminalTitlePaging";
 import {
   useCallback,
@@ -159,10 +160,7 @@ export function AgentTab({
   });
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
-  const isWebModel =
-    String(actor.runtime || "")
-      .trim()
-      .toLowerCase() === "web_model";
+  const isWebModel = isWebModelRuntime(actor.runtime);
   const canStartNewSession = actorSupportsNewSession(actor.runtime);
   const hasRuntimeResumeFailure = actorHasRuntimeResumeFailure(actor);
   const runtimeResumeError = String(actor.runtime_session_last_resume_error || "").trim();

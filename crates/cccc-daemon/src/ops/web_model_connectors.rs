@@ -2,7 +2,7 @@
 //! global write permit serializes these changes with Actor lifecycle changes.
 use super::operation::{Operation, Policy::GlobalWrite};
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
-use cccc_contracts::{ActorRuntime, DaemonRequest, GroupState, RunnerKind};
+use cccc_contracts::{DaemonRequest, GroupState, RunnerKind};
 use cccc_core::{GroupStore, HomeLayout, integration_state, web_model_connectors as store};
 use serde_json::json;
 
@@ -17,6 +17,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
             | "web_model_pairing_cancel"
             | "web_model_pairing_fail"
             | "web_model_binding_remove"
+            | "web_model_grok_bind"
     )
     .then(|| Operation::new(GlobalWrite, execute))
 }
@@ -31,7 +32,13 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         ));
     }
     if request.op == "web_model_connector_configure" {
-        return object(store::configure(home).map_err(OpError::io)?);
+        let provider = match request.args.get("provider") {
+            None => "chatgpt_web",
+            Some(value) => value
+                .as_str()
+                .ok_or_else(|| OpError::new("invalid_argument", "provider must be a string"))?,
+        };
+        return object(store::configure_provider(home, provider).map_err(OpError::io)?);
     }
     let id = required_arg(request, "connector_id")?;
     if request.op == "web_model_connector_revoke" {
@@ -56,10 +63,29 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .iter()
         .find(|a| a.id == actor_id)
         .ok_or_else(|| OpError::new("actor_not_found", "Actor not found"))?;
-    if actor.runtime != ActorRuntime::WebModel || actor.runner != RunnerKind::Headless {
+    if !actor.runtime.is_web_model() || actor.runner != RunnerKind::Headless {
         return Err(OpError::new(
             "invalid_actor_runtime",
             "Pairing requires a Web Model Actor",
+        ));
+    }
+    let connector = store::load(home)
+        .map_err(OpError::io)?
+        .into_iter()
+        .find(|c| c["connector_id"] == id && c["revoked"] != true)
+        .ok_or_else(|| {
+            OpError::new(
+                "connector_unavailable",
+                "Configure the shared connector first",
+            )
+        })?;
+    if actor.runtime.web_model_provider() != connector["provider"].as_str()
+        || (request.op.starts_with("web_model_pairing_") && connector["provider"] != "chatgpt_web")
+        || (request.op == "web_model_grok_bind" && connector["provider"] != "grok_web")
+    {
+        return Err(OpError::new(
+            "invalid_actor_runtime",
+            "Connector provider does not match this Actor",
         ));
     }
     if request.op == "web_model_pairing_cancel" {
@@ -85,16 +111,6 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .map_err(OpError::io)?;
         return object(json!({"state":"failed","error_code":reason}));
     }
-    let connector = store::load(home)
-        .map_err(OpError::io)?
-        .into_iter()
-        .find(|c| c["connector_id"] == id && c["revoked"] != true)
-        .ok_or_else(|| {
-            OpError::new(
-                "connector_unavailable",
-                "Configure the shared connector first",
-            )
-        })?;
     let automatic = if request.op == "web_model_pairing_confirm" {
         store::pairing_for_actor(&connector, &group_id, &actor_id)
             .is_some_and(|p| p["automatic"] == true)
@@ -153,18 +169,26 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 | "completion_conflict"
                 | "legacy_submission_unverified"
         );
+    let normalize_url = |u: &str| {
+        if connector["provider"] == "grok_web" {
+            store::grok_bot_url(u)
+        } else {
+            store::conversation_url(u)
+        }
+    };
     let old_url = targets[&actor_id]["url"]
         .as_str()
-        .and_then(|u| store::conversation_url(u).ok());
+        .and_then(|u| normalize_url(u).ok());
     let same_url = string_arg(request, "url")
-        .and_then(|u| store::conversation_url(&u).ok())
+        .and_then(|u| normalize_url(&u).ok())
         .is_some_and(|u| Some(u) == old_url);
     // Re-pairing the SAME saved conversation restores access without deleting
     // unresolved evidence. A different conversation still requires resolution.
     if unresolved
         && (automatic
             || !(request.op == "web_model_pairing_begin" && old_url.is_some()
-                || request.op == "web_model_pairing_confirm" && same_url))
+                || request.op == "web_model_pairing_confirm" && same_url
+                || request.op == "web_model_grok_bind" && same_url))
     {
         return Err(OpError::new(
             "delivery_unresolved",
@@ -177,6 +201,12 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let generation = cccc_core::actors::generation_identity(actor);
     match request.op.as_str() {
+        "web_model_grok_bind" => {
+            let url = required_arg(request, "url")?;
+            let binding = store::bind_grok(home, &id, &group_id, &actor_id, &generation, &url)
+                .map_err(OpError::io)?;
+            object(json!({"state":"bound","url":binding["url"],"revision":binding["revision"]}))
+        }
         "web_model_pairing_begin" => object(
             store::begin_pairing(home, &id, &group_id, &actor_id, &generation, automatic)
                 .map_err(OpError::io)?,

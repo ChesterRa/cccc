@@ -4,6 +4,22 @@ export type TargetDraftMode = "existing" | "new";
 
 export type TargetDraft = { mode: TargetDraftMode; url: string };
 
+export function isGrokBotUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "grok.com" &&
+      !url.port &&
+      !url.username &&
+      !url.password &&
+      /^\/bot\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function isChatGptConversationUrl(url?: string): boolean {
   const raw = String(url || "").trim();
   if (!raw) return false;

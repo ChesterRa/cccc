@@ -24,6 +24,7 @@ Use this section based on what you are trying to do next.
 - [CCCC Connect](/guide/connect) for same-account instance aggregation and collaboration
 - [Capability Allowlist Baseline](/guide/capability-allowlist) for MCP/skill curation levels
 - [Contributor Quality Gates](/guide/quality-gates) for local checks, CI boundaries, and native release verification
+- [Grok Bot Web Model](/guide/grok-web-model-runtime) for Grok Bot setup
 - [ChatGPT Web Model Runtime](/guide/web-model-runtime) for MCP-capable ChatGPT GPT-5.x setup
 - [IM Bridge](/guide/im-bridge/) for mobile/remote operations
 

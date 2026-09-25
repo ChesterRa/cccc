@@ -685,6 +685,27 @@ async fn stop_process_child(child: &mut tokio::process::Child) {
     if child.try_wait().ok().flatten().is_some() {
         return;
     }
+    // x11vnc removes its SysV shared-memory segments in its signal handler.
+    // SIGKILL skips that cleanup and can exhaust the host's segment limit after
+    // repeated browser restarts. This is our unreaped child, so its PID is owned.
+    if let Some(pid) = child.id() {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            tokio::process::Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .status(),
+        )
+        .await;
+        if matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await,
+            Ok(Ok(_))
+        ) {
+            return;
+        }
+    }
     let _ = child.start_kill();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await;
 }
@@ -805,9 +826,17 @@ mod tests {
                 .await
                 .is_ok()
         );
-
+        let pid = vnc.pid().to_string();
         vnc.stop().await;
         display.stop().await;
+        let segments = std::fs::read_to_string("/proc/sysvipc/shm").expect("SysV memory table");
+        assert!(
+            segments
+                .lines()
+                .skip(1)
+                .all(|line| line.split_whitespace().nth(4) != Some(pid.as_str())),
+            "stopping VNC must release its shared-memory segments"
+        );
     }
 
     #[cfg(target_os = "linux")]

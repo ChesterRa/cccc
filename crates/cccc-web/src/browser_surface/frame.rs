@@ -28,17 +28,18 @@ impl BrowserSurfaces {
             .cloned()
             .context("browser surface is not active")?;
         let original_target = session.page.target_id().clone();
-        let (bytes, viewport) = match capture_frame(&session.page).await {
+        let cached_viewport = (session.width, session.height);
+        let (bytes, viewport) = match capture_frame(&session.page, cached_viewport).await {
             Ok(frame) => frame,
             Err(error) if session.recover_closed_page && is_page_gone(&error) => {
                 tracing::warn!(%error, "browser tab closed; recreating projected surface page");
                 recover_page(&mut session).await?;
-                capture_frame(&session.page).await?
+                capture_frame(&session.page, cached_viewport).await?
             }
             Err(error) => return Err(error),
         };
-        session.width = viewport.width;
-        session.height = viewport.height;
+        session.width = viewport.0;
+        session.height = viewport.1;
         session.seq += 1;
         session.updated_at = utc_now();
         session.url = session
@@ -73,13 +74,25 @@ impl BrowserSurfaces {
     }
 }
 
-async fn capture_frame(page: &Page) -> Result<(Vec<u8>, ViewportSize)> {
+pub(super) async fn viewport_size(page: &Page) -> Result<(u32, u32)> {
     let viewport = page
         .evaluate("({ width: window.innerWidth, height: window.innerHeight })")
         .await
         .context("read projected browser viewport")?
         .into_value::<ViewportSize>()
         .context("decode projected browser viewport")?;
+    Ok((viewport.width, viewport.height))
+}
+
+async fn capture_frame(page: &Page, cached_viewport: (u32, u32)) -> Result<(Vec<u8>, (u32, u32))> {
+    // Before the first response commits, Chromium can defer Runtime.evaluate
+    // while screenshot capture remains available. Use the viewport measured
+    // before navigation instead of making the loading view wait for JavaScript.
+    let viewport = if matches!(page.url().await?.as_deref(), None | Some("about:blank")) {
+        cached_viewport
+    } else {
+        viewport_size(page).await?
+    };
     let bytes = page
         .screenshot(
             ScreenshotParams::builder()

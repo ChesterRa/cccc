@@ -374,6 +374,7 @@ Recommended options:
 | hermes | `hermes` | Hermes Agent |
 | kimi | `kimi` | Kimi Code |
 | opencode | `opencode` | OpenCode |
+| grok_web_model | Grok Bot conversation | Shared Grok login and connector, per-Actor Bot URL and per-call routing credential; no pairing handshake |
 | web_model | ChatGPT Web conversation | ChatGPT Web conversation with CCCC MCP access; optional experimental GPT Pro delivery attaches a tiny blank PNG but does not select the model or guarantee connector availability |
 | custom | Any command | Any command |
 
@@ -400,7 +401,7 @@ cccc setup --runtime antigravity  # Prompt-assisted setup inside Antigravity
 cccc setup --runtime custom
 ```
 
-`web_model` does not use `cccc setup`; create the single `ChatGPT Web Model` actor from the CCCC Web group, then use Web Settings to sign in to ChatGPT, copy its remote MCP URL, and bind one specific ChatGPT conversation.
+`web_model` does not use `cccc setup`; create a `ChatGPT Web Model` Actor from the CCCC Web group, then use Web Settings to sign in to ChatGPT, copy its remote MCP URL, and bind one specific ChatGPT conversation for that Actor. For Grok, select `Grok Bot Web Model`, configure the shared Grok connector and save each Actor’s Bot URL; see [Grok Bot setup](/guide/grok-web-model-runtime).
 
 ### Runtime Detection
 

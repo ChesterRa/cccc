@@ -28,7 +28,6 @@ type FailedSendComposerRestoreActions = Pick<
   ReturnType<typeof useComposerStore.getState>,
   | "setComposerText"
   | "setComposerFiles"
-  | "setToText"
   | "setReplyTarget"
   | "setQuotedPresentationRef"
   | "setQuotedVoiceDocumentRef"
@@ -59,7 +58,9 @@ export function restoreFailedSendComposerState(
     restoreActions.setQuotedPresentationRef(snapshot.quotedPresentationRef);
     restoreActions.setQuotedVoiceDocumentRef(snapshot.quotedVoiceDocumentRef);
     restoreActions.setMessageMode(snapshot.messageMode);
-    restoreActions.setToText(snapshot.toText);
+    // Restore the failed message's exact recipients without overwriting a
+    // normal selection the user may have changed while its request was pending.
+    useComposerStore.setState({ toText: snapshot.toText });
     return;
   }
 

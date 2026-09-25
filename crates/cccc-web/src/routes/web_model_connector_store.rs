@@ -1,4 +1,4 @@
-use cccc_contracts::{ActorRuntime, RunnerKind};
+use cccc_contracts::RunnerKind;
 use cccc_core::{GroupStore, web_model_connectors};
 use serde_json::Value;
 use std::io;
@@ -42,7 +42,11 @@ pub(super) fn for_actor(state: &AppState, group_id: &str, actor_id: &str) -> Opt
         .load(group_id)
         .ok()?;
     let actor = group.actors.iter().find(|actor| actor.id == actor_id)?;
-    let connector = load(state).ok()?.into_iter().next()?;
+    let provider = actor.runtime.web_model_provider()?;
+    let connector = load(state)
+        .ok()?
+        .into_iter()
+        .find(|c| c["provider"] == provider)?;
     let mut binding = web_model_connectors::binding_for_actor(
         &connector,
         group_id,
@@ -59,14 +63,22 @@ pub(super) fn resolve(
     connector: &Value,
     request: &Value,
 ) -> Result<Value, ApiError> {
-    let session = web_model_connectors::session_key(connector, &request["params"]["_meta"])
-        .map_err(io_error)?;
-    let mut binding =
+    let mut binding = if connector["provider"] == "grok_web" {
+        let token = request["params"]["arguments"]["actor_token"]
+            .as_str()
+            .unwrap_or_default();
+        web_model_connectors::binding_for_token(connector, token).ok_or_else(|| {
+            ApiError::forbidden("actor_token_invalid: use the Actor credential from this Bot's current CCCC task message")
+        })?
+    } else {
+        let session = web_model_connectors::session_key(connector, &request["params"]["_meta"])
+            .map_err(io_error)?;
         web_model_connectors::binding_for_session(connector, &session).ok_or_else(|| {
             ApiError::forbidden(
                 "conversation_not_paired: pair this conversation in the Actor settings",
             )
-        })?;
+        })?
+    };
     let group = GroupStore::new(state.home.clone())
         .map_err(io_error)?
         .load(binding["group_id"].as_str().unwrap_or_default())
@@ -76,7 +88,7 @@ pub(super) fn resolve(
         .iter()
         .find(|a| Some(a.id.as_str()) == binding["actor_id"].as_str())
         .ok_or_else(|| ApiError::forbidden("paired Actor is unavailable"))?;
-    if actor.runtime != ActorRuntime::WebModel
+    if actor.runtime.web_model_provider() != connector["provider"].as_str()
         || actor.runner != RunnerKind::Headless
         || !actor.enabled
         || binding["generation"] != cccc_core::actors::generation_identity(actor)

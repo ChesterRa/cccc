@@ -21,6 +21,7 @@ export const RUNTIME_LOGO_FILE_BY_RUNTIME: Partial<Record<RuntimeLogoRuntime, st
   kimi: "logos/kimi.png",
   opencode: "logos/opencode.svg",
   web_model: "logos/codex.png",
+  grok_web_model: "logos/grok.svg",
 };
 
 function normalizeRuntime(runtime: string | null | undefined): RuntimeLogoRuntime {

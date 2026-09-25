@@ -1,3 +1,4 @@
+import { isWebModelRuntime } from "../../types";
 import { AlertTriangle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { RUNTIME_INFO, type ActorProfile } from "../../types";
@@ -98,7 +99,7 @@ export function RuntimeProfilePicker({
   const { t } = useTranslation("actors");
   const selected = profiles.find((profile) => actorProfileIdentityKey(profile) === value);
   const selectedCommand =
-    selected && selected.runtime !== "web_model" ? formatRuntimeCommand(selected.command) : "";
+    selected && !isWebModelRuntime(selected.runtime) ? formatRuntimeCommand(selected.command) : "";
   return (
     <div className="space-y-3">
       <div>
@@ -121,7 +122,7 @@ export function RuntimeProfilePicker({
           searchable
         />
         <OpenCodeManagedModelHint runtime={selected?.runtime} />
-        {selected?.runtime === "web_model" && (
+        {isWebModelRuntime(selected?.runtime) && (
           <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
             {t("webModelProfileHint")}
           </p>
@@ -206,9 +207,9 @@ export function RuntimeCommandControl({
   onUseDefaultCommandChange: (value: boolean) => void;
 }) {
   const { t } = useTranslation("actors");
-  const supportsDefaultCommand = runtime !== "custom" && runtime !== "web_model";
+  const supportsDefaultCommand = runtime !== "custom" && !isWebModelRuntime(runtime);
   const showCommandEditor = runtime === "custom" || !supportsDefaultCommand || !useDefaultCommand;
-  if (runtime === "web_model") return null;
+  if (isWebModelRuntime(runtime)) return null;
 
   return (
     <div className="space-y-3">

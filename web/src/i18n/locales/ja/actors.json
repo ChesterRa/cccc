@@ -149,7 +149,6 @@
   "resetGroupOldDeleteFailed": "クリーンな新規グループは作成されましたが、古いグループを自動削除できませんでした。",
   "saveAndRestartConfirm": "変更を保存して「{{label}}」を今すぐ再起動しますか？これにより、実行中の作業が中断されます。",
   "saveSecretsAndRestartConfirm": "変更を保存し、シークレットを適用して、「{{label}}」を今すぐ再起動しますか？これにより、実行中の作業が中断されます。",
-  "nothingToSave": "保存する変更がありません。",
   "savedRestartRequired": "保存しました。ランタイム/プロファイル/シークレットの変更を反映するには「{{label}}」を再起動してください。",
   "createdButFailedAttach": "グループを作成しましたが、接続できませんでした： {{message}}",
   "destGroupDifferent": "宛先グループは送信元グループとは異なる必要があります。",
@@ -286,5 +285,7 @@
   "terminalReadOnlyNotice": "この端末は読み取り専用です。入力するには操作権を取得してください。",
   "webModelActorBoundConnectorTitle": "ChatGPT Web Model",
   "webModelActorBoundConnectorHint": "共通 Web モデル設定で共有ログインとコネクターを管理します。この Actor を保存して通常どおり起動すると、会話に自動接続してからタスクを配信します。",
-  "webModelProfileHint": "ランタイムの種類と既定の機能を再利用します。ChatGPT のログイン、会話、接続関係は別途設定します。"
+  "webModelProfileHint": "Web モデルのプロファイルは実行環境と機能設定を共有します。各 Actor は自分の会話を個別に設定します。",
+  "saveAndApply": "保存して適用",
+  "applyWebModelTargetConfirm": "「{{label}}」に新しい会話を適用しますか？この Actor のみ停止して設定を保存し、新しい接続の保存に成功してから再起動します。失敗した場合は停止したまま、入力内容を保持します。"
 }

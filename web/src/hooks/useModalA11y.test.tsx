@@ -8,6 +8,7 @@ import { useModalA11y } from "./useModalA11y";
   true;
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
 
@@ -18,12 +19,18 @@ function Fixture() {
       <div hidden>
         <button>hidden first</button>
       </div>
+      <fieldset disabled>
+        <button>disabled first</button>
+      </fieldset>
       <button id="first">first</button>
       <details>
         <summary tabIndex={0}>advanced</summary>
         <button>closed detail</button>
       </details>
       <button id="last">last</button>
+      <fieldset disabled>
+        <button>disabled last</button>
+      </fieldset>
       <div inert>
         <button>inert last</button>
       </div>
@@ -42,6 +49,16 @@ function Fixture() {
 
 describe("modal keyboard focus", () => {
   it("starts and wraps on visible controls, skipping hidden panels, inert content and closed details", async () => {
+    // happy-dom does not yet implement fieldset-inherited :disabled. Model
+    // that browser CSS state here; the native browser acceptance also exercises it.
+    const matches = HTMLElement.prototype.matches;
+    vi.spyOn(HTMLElement.prototype, "matches").mockImplementation(function (
+      this: HTMLElement,
+      selector: string,
+    ) {
+      if (selector === ":disabled" && this.closest("fieldset[disabled]")) return true;
+      return matches.call(this, selector);
+    });
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       callback(0);
       return 1;

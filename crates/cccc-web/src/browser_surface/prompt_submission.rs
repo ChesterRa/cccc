@@ -114,7 +114,9 @@ impl BrowserSurfaces {
             .evaluate(format!("({INSPECT_SUBMISSION_SCRIPT})({payload})"))
             .await?
             .into_value::<SubmissionSnapshot>()?;
-        let same_target = if is_chatgpt_url(target_url) {
+        let same_target = if is_chatgpt_url(target_url)
+            || cccc_core::web_model_connectors::grok_bot_url(target_url).is_ok()
+        {
             conversation_target_matches(target_url, &observed.url)
         } else {
             target_url == observed.url
@@ -688,12 +690,18 @@ impl BrowserSurfaces {
     pub(crate) async fn prompt_readiness(&self, key: &str) -> Result<Value> {
         let page = self.page(key).await?;
         let url = page.url().await?.unwrap_or_default();
-        let candidate = page
-            .evaluate(format!("({SELECT_COMPOSER_SCRIPT})()"))
-            .await
-            .context("inspect visible browser composer")?
-            .into_value::<ComposerCandidate>()
-            .context("decode visible browser composer")?;
+        // A new window may still be waiting for response headers. It cannot
+        // contain a composer, and evaluating JS there can wait for navigation.
+        let loading = matches!(url.as_str(), "" | "about:blank");
+        let candidate = if loading {
+            ComposerCandidate::default()
+        } else {
+            page.evaluate(format!("({SELECT_COMPOSER_SCRIPT})()"))
+                .await
+                .context("inspect visible browser composer")?
+                .into_value::<ComposerCandidate>()
+                .context("decode visible browser composer")?
+        };
         let ready = !candidate.selector.is_empty();
         let snapshot = if ready {
             inspect_submission(&page, "", &[]).await?
@@ -703,14 +711,16 @@ impl BrowserSurfaces {
         let readiness = json!({
             "ready":ready,
             "composer_chars":snapshot.composer_chars,
-            "composer_has_attachments":composer_has_attachments(&page).await?,
+            "composer_has_attachments":!loading && composer_has_attachments(&page).await?,
             "running":snapshot.running,
-            "login_required":!ready,
+            "login_required":!ready && !loading,
             "verification_required":candidate.verification_required,
             "tab_url":url,
             "input_selector":candidate.descriptor,
             "checked_at":cccc_contracts::utc_now(),
-            "message":if candidate.verification_required {
+            "message":if loading {
+                "Browser page is loading. Delivery is waiting."
+            } else if candidate.verification_required {
                 "Complete the website's security verification in this browser. Delivery is waiting."
             } else if ready {
                 "Browser model composer is ready."
@@ -1150,6 +1160,10 @@ pub(crate) fn normalized_chatgpt_conversation_url(value: &str) -> Option<String>
 }
 
 pub(crate) fn conversation_target_matches(expected: &str, observed: &str) -> bool {
+    if let Ok(expected) = cccc_core::web_model_connectors::grok_bot_url(expected) {
+        return cccc_core::web_model_connectors::grok_bot_url(observed)
+            .is_ok_and(|observed| expected == observed);
+    }
     normalized_chatgpt_conversation_url(expected)
         .zip(normalized_chatgpt_conversation_url(observed))
         .is_some_and(|(expected, observed)| expected == observed)
@@ -1293,7 +1307,7 @@ const SELECT_COMPOSER_SCRIPT: &str = r#"() => {
     // conversation composer is a delivery target; generic inputs are not.
     const chatGptHost = /(^|\.)chatgpt\.com$/.test(location.hostname)
         || ['chat.openai.com', 'auth.openai.com'].includes(location.hostname);
-    const selectors = chatGptHost ? ['#prompt-textarea'] : [
+    const selectors = chatGptHost ? ['#prompt-textarea'] : location.hostname === 'grok.com' ? ['[data-testid="chat-input"] [role="textbox"][contenteditable="true"]'] : [
         '.ProseMirror', '#prompt-textarea', '[contenteditable="true"][data-virtualkeyboard="true"]',
         '[role="textbox"][contenteditable="true"]', 'textarea[data-id="prompt-textarea"]',
         'textarea[name="prompt-textarea"]', 'textarea[placeholder*="Send a message"]',
@@ -1357,14 +1371,15 @@ const SELECT_SEND_CONTROL_SCRIPT: &str = r#"() => {
             || /\bsend\b|\bsubmit\b|发送|送信/.test(text);
     };
     const allButtons = Array.from(document.querySelectorAll('button, [role="button"]')).filter(visible);
-    const running = allButtons.some(stop);
+    const working = document.querySelector('[data-testid="bot-working-slot"]');
+    const running = allButtons.some(stop) || !!working && Array.from(working.children).some(visible);
     let root = input?.closest('form')
         || input?.closest('[data-testid*="composer" i], [class*="composer" i]')
         || null;
     if (!root && input) {
         let parent = input.parentElement;
         for (let depth = 0; parent && depth < 6; depth += 1, parent = parent.parentElement) {
-            if (parent.querySelector('button, [role="button"]')) { root = parent; break; }
+            if (parent.querySelector(input.closest('[data-testid="chat-input"]') ? '[data-testid="chat-submit"]' : 'button, [role="button"]')) { root = parent; break; }
         }
     }
     const buttons = root ? Array.from(root.querySelectorAll('button, [role="button"]')).filter(visible) : [];
@@ -1470,7 +1485,7 @@ const INSPECT_SUBMISSION_SCRIPT: &str = r#"payload => {
     const composerTexts = composers.map(read).filter(Boolean);
     // Virtualized history can grow without a send, and assistants may quote a
     // pending batch. Only the exact receipt inside a user message proves it.
-    const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role="user"]'));
+    const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role="user"], [data-testid="bot-transcript-scroller"] [data-testid="user-message"][role="article"]'));
     const needles = Array.isArray(payload.needles) ? payload.needles.map(normalize).filter(Boolean) : [];
     const echoFound = messageNodes.some(node => {
         const text = read(node);
@@ -1488,7 +1503,8 @@ const INSPECT_SUBMISSION_SCRIPT: &str = r#"payload => {
     const label = node => [node.getAttribute('aria-label') || '', node.getAttribute('title') || '',
         node.getAttribute('data-testid') || '', node.id || '', node.innerText || node.textContent || '']
         .join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
-    const stopVisible = controls.some(node => /\bstop\b|停止|中止|cancel generation|interrupt/.test(label(node)));
+    const working = document.querySelector('[data-testid="bot-working-slot"]');
+    const stopVisible = !!working && Array.from(working.children).some(visible) || controls.some(node => /\bstop\b|停止|中止|cancel generation|interrupt/.test(label(node)));
     const safeSend = controls.filter(node => {
         const text = label(node);
         if (/\bstop\b|停止|中止|cancel|retry|signin|sign in|log in|login|voice|microphone|attach|upload/.test(text)) return false;
@@ -1500,7 +1516,7 @@ const INSPECT_SUBMISSION_SCRIPT: &str = r#"payload => {
         url: location.href || '', echo_found: echoFound, running: stopVisible, stop_visible: stopVisible,
         composer_exact: Boolean(markedText && markedText === expected),
         composer_contains_prompt: composerTexts.some(containsPrompt), composer_chars: markedText.length,
-        user_message_count: document.querySelectorAll('[data-message-author-role="user"]').length,
+        user_message_count: messageNodes.length,
         send_enabled_count: safeSend.filter(node => !node.disabled
             && String(node.getAttribute('aria-disabled') || '').toLowerCase() !== 'true').length
     };
@@ -1591,7 +1607,12 @@ pub(super) async fn composer_has_attachments(page: &Page) -> Result<bool> {
     page.evaluate(r#"() => {
             if ([...document.querySelectorAll('input[type=file]')].some(e => e.files?.length)) return true;
             const composer = document.querySelector('#prompt-textarea, [data-cccc-web-model-composer]');
-            const root = composer?.closest('form, [data-testid*="composer" i], [class*="composer" i]');
+            let root = composer?.closest('form, [data-testid*="composer" i], [class*="composer" i]');
+            if (!root && composer?.closest('[data-testid="chat-input"]')) {
+                for (let parent = composer.parentElement, depth = 0; parent && depth < 6; parent = parent.parentElement, depth++) {
+                    if (parent.querySelector('[data-testid="chat-submit"]')) { root = parent; break; }
+                }
+            }
             return !!root && [...root.querySelectorAll('[data-testid*="file-preview" i], [data-testid="attachment" i], [data-testid*="attachment-preview" i], [data-testid*="upload-preview" i], [class*="file-preview" i], [class*="attachment-preview" i], [class*="upload-preview" i], img[src^="blob:"]')]
                 .some(e => e.getClientRects().length > 0);
         }"#).await?.into_value::<bool>().map_err(Into::into)
@@ -2122,3 +2143,7 @@ mod readiness_tests {
         server.abort();
     }
 }
+
+#[cfg(test)]
+#[path = "grok_tests.rs"]
+mod grok_tests;

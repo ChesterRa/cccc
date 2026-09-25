@@ -773,8 +773,7 @@ fn visible_tools(
     let actor = group
         .as_ref()
         .and_then(|group| group.actors.iter().find(|actor| actor.id == actor_id));
-    let web_model =
-        actor.map(|actor| actor.runtime) == Some(cccc_contracts::ActorRuntime::WebModel);
+    let web_model = actor.is_some_and(|actor| actor.runtime.is_web_model());
     let peer = group.as_ref().is_some_and(|group| {
         cccc_core::actors::effective_role(group, actor_id) == Some(cccc_contracts::ActorRole::Peer)
     });

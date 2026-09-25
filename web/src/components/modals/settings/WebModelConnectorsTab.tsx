@@ -14,14 +14,71 @@ import {
 } from "./types";
 
 interface Props {
+  provider?: api.WebModelProvider;
+  onProviderChange?: (provider: api.WebModelProvider) => void;
   isDark: boolean;
   isActive?: boolean;
   currentGroupId?: string;
   onOpenWebAccess?: () => void;
 }
-export default function WebModelConnectorsTab({ isDark, isActive = true, onOpenWebAccess }: Props) {
+export default function WebModelConnectorsTab(props: Props) {
+  const [localProvider, setLocalProvider] = useState<api.WebModelProvider>("chatgpt_web");
+  const provider = props.provider ?? localProvider;
+  const setProvider = props.onProviderChange ?? setLocalProvider;
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2" role="group" aria-label="Web Model">
+        {(["chatgpt_web", "grok_web"] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={provider === value}
+            className={provider === value ? primaryButtonClass() : secondaryButtonClass()}
+            onClick={() => setProvider(value)}
+          >
+            {value === "chatgpt_web" ? "ChatGPT" : "Grok Bot"}
+          </button>
+        ))}
+      </div>
+      {(["chatgpt_web", "grok_web"] as const).map((value) => (
+        <div key={value} hidden={provider !== value}>
+          <ProviderSettings
+            {...props}
+            provider={value}
+            isActive={props.isActive !== false && provider === value}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+function ProviderSettings({
+  isDark,
+  isActive = true,
+  onOpenWebAccess,
+  provider,
+}: Props & { provider: api.WebModelProvider }) {
   const { t } = useTranslation("settings");
-  const label = (key: string) => t(`webModelShared.${key}`);
+  const label = (key: string) =>
+    t(
+      provider === "grok_web" &&
+        [
+          "title",
+          "description",
+          "login",
+          "loginHint",
+          "connectorHint",
+          "actorHint",
+          "rotateHint",
+          "revokeHint",
+          "upgrade",
+          "publicUrl",
+          "copyOnce",
+          "notSeen",
+        ].includes(key)
+        ? `grokShared.${key}`
+        : `webModelShared.${key}`,
+    );
   const [connector, setConnector] = useState<api.WebModelConnector | null>(null);
   const [browser, setBrowser] = useState<api.WebModelBrowserSession>({});
   const [needsSetup, setNeedsSetup] = useState(false);
@@ -40,17 +97,23 @@ export default function WebModelConnectorsTab({ isDark, isActive = true, onOpenW
     setLoadState("loading");
     setError("");
     setConfirm(null);
-    void Promise.all([api.fetchWebModelConnectors(), api.sharedWebModelBrowser()])
+    void Promise.all([
+      api.fetchWebModelConnectors(),
+      api.sharedWebModelBrowser("status", false, provider),
+    ])
       .then(([c, b]) => {
         if (cancelled) return;
         if (c.ok) {
           setConnector((previous) => {
-            const next = c.result.connectors.find((c) => !c.revoked) || null;
+            const next =
+              c.result.connectors.find(
+                (c) => !c.revoked && (c.provider || "chatgpt_web") === provider,
+              ) || null;
             return next && previous?.connector_id === next.connector_id
               ? { ...next, connector_url_path_token: previous?.connector_url_path_token }
               : next;
           });
-          setNeedsSetup(Boolean(c.result.requires_reconfiguration));
+          setNeedsSetup(provider === "chatgpt_web" && Boolean(c.result.requires_reconfiguration));
           setLoadState("ready");
         } else {
           setLoadState("error");
@@ -67,8 +130,11 @@ export default function WebModelConnectorsTab({ isDark, isActive = true, onOpenW
     return () => {
       cancelled = true;
     };
-  }, [isActive, loadNonce]);
-  const loadBrowser = useCallback(() => api.sharedWebModelBrowser(), []);
+  }, [isActive, loadNonce, provider]);
+  const loadBrowser = useCallback(
+    () => api.sharedWebModelBrowser("status", false, provider),
+    [provider],
+  );
   const actionsDisabled = busy || !isActive || loadState !== "ready";
   async function action(kind: "configure" | "revoke" | "open" | "check" | "close") {
     if (actionPending.current || actionsDisabled) return;
@@ -78,7 +144,7 @@ export default function WebModelConnectorsTab({ isDark, isActive = true, onOpenW
     setCopied(false);
     try {
       if (kind === "configure") {
-        const r = await api.createWebModelConnector();
+        const r = await api.createWebModelConnector(provider);
         if (!r.ok) throw new Error(r.error.message);
         setConnector(r.result.connector);
         setNeedsSetup(false);
@@ -92,6 +158,7 @@ export default function WebModelConnectorsTab({ isDark, isActive = true, onOpenW
         const r = await api.sharedWebModelBrowser(
           kind === "check" ? "status" : (kind as "open" | "close"),
           kind === "check",
+          provider,
         );
         if (!r.ok) throw new Error(r.error.message);
         setBrowser(r.result.browser_session);
@@ -191,10 +258,10 @@ export default function WebModelConnectorsTab({ isDark, isActive = true, onOpenW
                 refreshNonce={0}
                 viewportClassName="h-[min(70dvh,720px)] min-h-[320px] w-full"
                 reuseActiveSession
-                sessionIdentity="web-model-login"
+                sessionIdentity={`web-model-login:${provider}`}
                 defaultViewerMode="browser"
                 loadSession={loadBrowser}
-                webSocketUrl={api.sharedWebModelBrowserWebSocketUrl()}
+                webSocketUrl={api.sharedWebModelBrowserWebSocketUrl(provider)}
               />
             </div>
           )}

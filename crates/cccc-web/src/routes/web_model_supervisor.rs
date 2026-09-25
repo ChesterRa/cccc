@@ -138,12 +138,16 @@ fn running_browser_actors(
 }
 
 fn group_actor_ready_to_start(state: &AppState, group: &GroupDoc, actor: &Actor) -> bool {
-    if actor.runtime != ActorRuntime::WebModel
+    if !actor.runtime.is_web_model()
         || actor.runner != RunnerKind::Headless
         || !actor.enabled
         || !group_state_allows_delivery(group.running, group.state)
     {
         return false;
+    }
+    if actor.runtime == ActorRuntime::GrokWebModel {
+        return super::web_model_connector_store::for_actor(state, &group.group_id, &actor.id)
+            .is_some();
     }
     let provider = actor_setting(
         actor,
@@ -152,7 +156,11 @@ fn group_actor_ready_to_start(state: &AppState, group: &GroupDoc, actor: &Actor)
     let provider = if provider.is_empty() {
         super::web_model_connector_store::load(state)
             .ok()
-            .and_then(|items| items.into_iter().find(|c| c["revoked"] != true))
+            .and_then(|items| {
+                items
+                    .into_iter()
+                    .find(|c| c["revoked"] != true && c["provider"] == "chatgpt_web")
+            })
             .and_then(|connector| connector["provider"].as_str().map(normalize))
             .unwrap_or_default()
     } else {

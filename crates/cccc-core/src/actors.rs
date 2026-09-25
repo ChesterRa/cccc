@@ -96,9 +96,7 @@ pub fn add(group: &mut GroupDoc, mut actor: Actor) -> io::Result<Actor> {
             actor.id
         )));
     }
-    if actor.internal_kind.is_some()
-        && serde_json::to_value(actor.runtime).ok() == Some(Value::String("web_model".into()))
-    {
+    if actor.internal_kind.is_some() && actor.runtime.is_web_model() {
         return Err(io::Error::other(
             "internal actors cannot use web_model runtime",
         ));

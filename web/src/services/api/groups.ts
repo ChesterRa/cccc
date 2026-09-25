@@ -1453,7 +1453,11 @@ export type GroupCopyPreview = {
   workspace_root_exists?: boolean;
   group_id_conflict?: boolean;
   target_default_scope_conflict?: boolean;
-  requires_reconnect?: { chatgpt_web_model?: boolean; notebooklm_group_space?: boolean };
+  requires_reconnect?: {
+    chatgpt_web_model?: boolean;
+    grok_web_model?: boolean;
+    notebooklm_group_space?: boolean;
+  };
   workspace_included?: boolean;
   contains_secrets?: boolean;
   runtime_reset?: {

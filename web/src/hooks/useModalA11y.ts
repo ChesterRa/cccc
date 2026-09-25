@@ -6,7 +6,11 @@ const FOCUSABLE_SELECTOR =
 
 function focusableElements(modal: HTMLElement): HTMLElement[] {
   return Array.from(modal.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((element) => {
-    if (element.tabIndex < 0 || element.closest('[hidden], [inert], [aria-hidden="true"]'))
+    if (
+      element.matches(":disabled") ||
+      element.tabIndex < 0 ||
+      element.closest('[hidden], [inert], [aria-hidden="true"]')
+    )
       return false;
     for (let node: HTMLElement | null = element; node; node = node.parentElement) {
       const style = getComputedStyle(node);

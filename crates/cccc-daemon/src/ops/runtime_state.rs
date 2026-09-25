@@ -2,7 +2,7 @@ use super::operation::{
     Operation,
     Policy::{Read, Write},
 };
-use cccc_contracts::{ActorRuntime, DaemonRequest, Event, RunnerKind, utc_now};
+use cccc_contracts::{DaemonRequest, Event, RunnerKind, utc_now};
 use cccc_core::integration_state;
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
 use serde_json::{Value, json};
@@ -33,6 +33,13 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
 }
 
 fn delivery_preference(group: &GroupDoc, actor_id: &str) -> Value {
+    if group
+        .actors
+        .iter()
+        .any(|a| a.id == actor_id && a.runtime == cccc_contracts::ActorRuntime::GrokWebModel)
+    {
+        return json!({"mode":"standard"});
+    }
     let stored = group
         .extra
         .get(DELIVERY_PREFERENCES_KEY)
@@ -54,7 +61,7 @@ fn require_web_model_actor<'a>(
     actor_id: &str,
 ) -> Result<&'a cccc_contracts::Actor, OpError> {
     let actor = actor(group, actor_id)?;
-    if actor.runtime != ActorRuntime::WebModel {
+    if !actor.runtime.is_web_model() {
         return Err(OpError::new(
             "invalid_actor_runtime",
             "web-model delivery operations require runtime=web_model",
@@ -90,6 +97,14 @@ fn delivery_preferences_update(home: &HomeLayout, request: &DaemonRequest) -> Op
             "mode must be standard or image_compat",
         ));
     }
+    if mode == "image_compat"
+        && actor(&group, &actor_id)?.runtime != cccc_contracts::ActorRuntime::WebModel
+    {
+        return Err(OpError::new(
+            "invalid_web_model_delivery_mode",
+            "Image compatibility is only available for ChatGPT",
+        ));
+    }
     let preference = json!({"mode":mode,"updated_at":utc_now(),"updated_by":by});
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     integration_state::group_update(&store, &group.group_id, DELIVERY_PREFERENCES_KEY, |value| {
@@ -119,7 +134,7 @@ fn headless_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .unwrap_or_else(|| default_state(&group, &actor_id));
         return object(json!({"state":state}));
     }
-    if actor.runner != RunnerKind::Headless && actor.runtime != ActorRuntime::WebModel {
+    if actor.runner != RunnerKind::Headless && !actor.runtime.is_web_model() {
         return Err(OpError::new(
             "invalid_actor_runner",
             "headless operations require runner=headless or runtime=web_model",
@@ -141,7 +156,7 @@ fn headless_set_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "local managed-runtime headless status is owned by the daemon supervisor",
         ));
     }
-    if actor.runner != RunnerKind::Headless && actor.runtime != ActorRuntime::WebModel {
+    if actor.runner != RunnerKind::Headless && !actor.runtime.is_web_model() {
         return Err(OpError::new(
             "invalid_actor_runner",
             "headless operations require runner=headless or runtime=web_model",

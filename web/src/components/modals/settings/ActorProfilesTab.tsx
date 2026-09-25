@@ -1,3 +1,4 @@
+import { isWebModelRuntime } from "../../../types";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ActorProfile, ActorProfileUsage, RUNTIME_INFO, SUPPORTED_RUNTIMES } from "../../../types";
@@ -61,6 +62,7 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   kimi: "kimi --yolo",
   opencode: "opencode --auto",
   web_model: "",
+  grok_web_model: "",
   custom: "",
 };
 
@@ -269,7 +271,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             </div>
           </div>
 
-          {editor.runtime !== "web_model" && (
+          {!isWebModelRuntime(editor.runtime) && (
             <>
               <div>
                 <label className={labelClass()}>{t("actorProfiles.commandOverrideOptional")}</label>
@@ -391,7 +393,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             </div>
           </div>
 
-          {editor.runtime !== "web_model" && (
+          {!isWebModelRuntime(editor.runtime) && (
             <div className={settingsWorkspaceSectionClass}>
               <div className="text-sm font-semibold text-[var(--color-text-primary)]">
                 {t("actorProfiles.env")}
@@ -734,13 +736,15 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
     setEditorBusy(true);
     setEditorErr("");
     try {
-      const setParsed = parsePrivateEnvSetText(editor.runtime === "web_model" ? "" : secretSetText);
+      const setParsed = parsePrivateEnvSetText(
+        isWebModelRuntime(editor.runtime) ? "" : secretSetText,
+      );
       if (!setParsed.ok) {
         setEditorErr(setParsed.error);
         return;
       }
       const unsetParsed = parsePrivateEnvUnsetText(
-        editor.runtime === "web_model" ? "" : secretUnsetText,
+        isWebModelRuntime(editor.runtime) ? "" : secretUnsetText,
       );
       if (!unsetParsed.ok) {
         setEditorErr(unsetParsed.error);
@@ -754,7 +758,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         owner_id: ownerId,
         runtime: editor.runtime,
         command:
-          editor.runtime === "web_model" ||
+          isWebModelRuntime(editor.runtime) ||
           (editorSupportsDefaultCommand && editor.useDefaultCommand)
             ? ""
             : editor.command.trim(),
@@ -767,7 +771,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         },
       };
       if (
-        editor.runtime !== "web_model" &&
+        !isWebModelRuntime(editor.runtime) &&
         editorSupportsDefaultCommand &&
         !editor.useDefaultCommand &&
         !String(payload.command || "").trim()
@@ -782,10 +786,11 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         setEditorErr(t("actorProfiles.customRuntimeCommandRequired"));
         return;
       }
-      const copyFromProfileId =
-        editor.runtime === "web_model" ? "" : duplicateSourceProfileId.trim();
+      const copyFromProfileId = isWebModelRuntime(editor.runtime)
+        ? ""
+        : duplicateSourceProfileId.trim();
       const hasSecretOps =
-        editor.runtime !== "web_model" &&
+        !isWebModelRuntime(editor.runtime) &&
         (secretClear ||
           Object.keys(setParsed.setVars).length > 0 ||
           unsetParsed.unsetKeys.length > 0);

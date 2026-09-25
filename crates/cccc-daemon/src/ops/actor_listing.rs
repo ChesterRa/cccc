@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, ActorRuntime, DaemonRequest};
+use cccc_contracts::{Actor, DaemonRequest};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, actors, inbox, ledger};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -58,7 +58,7 @@ pub(super) fn list(
                     &group.group_id,
                     status.running,
                 ));
-                if actor.runtime == ActorRuntime::WebModel {
+                if actor.runtime.is_web_model() {
                     object.extend(web_model_queue_fields(home, group, &actor)?);
                 }
                 if include_unread {

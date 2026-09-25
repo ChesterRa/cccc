@@ -26,6 +26,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Kimi Code | `kimi` | Native TUI | Auto through Kimi Code's MCP config |
 | OpenCode | `opencode` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
 | ChatGPT Web Model | `web_model` | Bound ChatGPT Web conversation | Browser delivery + remote MCP connector |
+| Grok Bot Web Model | `grok_web_model` | Dedicated Grok Bot URL | Browser delivery + credential-routed remote MCP connector |
 
 `custom` is also supported as a manual fallback for any command-line agent that can be launched by CCCC.
 
@@ -404,6 +405,10 @@ Antigravity uses the ordinary process lifecycle: `actor_new_session` replaces
 the process and the next CCCC task receives a fresh bootstrap. CCCC does not
 claim automatic provider-session resume for this runtime; explicit native
 conversation arguments remain the user's responsibility.
+
+## Grok Bot Web Model
+
+`grok_web_model` uses one shared Grok login and connector, with a separate Bot URL per Actor. Save the URL while the Actor is stopped, then start it. No separate handshake is needed; each MCP call uses a CCCC-issued Actor credential supplied with its task. See [Grok Bot Web Model](/guide/grok-web-model-runtime) for setup, authority boundaries and validation status.
 
 ## ChatGPT Web Model
 

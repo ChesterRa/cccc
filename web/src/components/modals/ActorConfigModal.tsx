@@ -1,4 +1,7 @@
+import { GrokActorSetup } from "../webModel/GrokActorSetup";
+import { isWebModelRuntime } from "../../types";
 import {
+  type Actor,
   ActorProfile,
   RuntimeInfo,
   SupportedRuntime,
@@ -12,6 +15,7 @@ import * as api from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
 import { actorProfileIdentityKey } from "../../utils/actorProfiles";
+import { formatRuntimeCommand } from "./runtimeProfileControlsModel";
 import { CapabilityPicker } from "../CapabilityPicker";
 import { RolePresetPicker } from "../RolePresetPicker";
 import { ActorAvatarField } from "../ActorAvatarField";
@@ -37,6 +41,7 @@ import {
 } from "./actorSecretManagerModel";
 import { WebModelActorSetup } from "../webModel/WebModelActorSetup";
 import { useModalStore } from "../../stores";
+import { isGrokBotUrl } from "../../utils/webModelTargetDraft";
 import { ModalFrame } from "./ModalFrame";
 
 // Centered with equal breathing room above and below: the frame already pads
@@ -55,6 +60,7 @@ export interface EditActorSavePayload {
   capabilityAutoload: string[];
   profileId?: string;
   convertToCustom?: boolean;
+  grokBotUrl?: string;
 }
 
 export interface SaveActorProfileResult {
@@ -62,8 +68,6 @@ export interface SaveActorProfileResult {
   profileName?: string;
   useNow?: boolean;
 }
-
-export const NO_CHANGES_SENTINEL = "CCCC_NO_CHANGES";
 
 interface ActorConfigBaseProps {
   isOpen: boolean;
@@ -89,6 +93,8 @@ export interface EditActorConfigProps extends ActorConfigBaseProps {
   hasCustomAvatar?: boolean;
   isRunning: boolean;
   savedRuntime: string;
+  savedActor?: Actor;
+  savedActorNotes?: string;
   runtime: SupportedRuntime;
   onChangeRuntime: (runtime: SupportedRuntime) => void;
   command: string;
@@ -298,14 +304,14 @@ function CreateActorConfigModal({
   const previewRuntime = useProfile ? selectedProfileRuntime || null : runtime;
   const previewTitle = String(actorId || "").trim() || suggestedActorId;
   const showRuntimeSetup = !useProfile && runtime === "custom";
-  const webModelSetupIsActorBound = !useProfile && runtime === "web_model";
+  const webModelSetupIsActorBound = !useProfile && isWebModelRuntime(runtime);
   const secretsPlaceholder = (SECRETS_PLACEHOLDER[runtime] ?? DEFAULT_SECRETS_PLACEHOLDER).set;
   const sectionCardClass = "min-w-0 rounded-2xl p-4 sm:p-5 glass-panel";
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
   const sectionHintClass = "mt-1 text-xs text-[var(--color-text-muted)]";
   const createAdvancedTabIds: AdvancedTabId[] = [
     ...(showRuntimeSetup ? ["connection" as const] : []),
-    ...(!useProfile && runtime !== "web_model" ? ["environment" as const] : []),
+    ...(!useProfile && !isWebModelRuntime(runtime) ? ["environment" as const] : []),
     ...(previewRuntime ? ["capabilities" as const] : []),
     ...(!useProfile ? ["profile" as const] : []),
   ];
@@ -599,15 +605,19 @@ function CreateActorConfigModal({
                     {webModelSetupIsActorBound ? (
                       <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
                         <div className="font-medium">
-                          {t("webModelActorBoundConnectorTitle", {
-                            defaultValue: "ChatGPT Web Model",
-                          })}
+                          {runtime === "grok_web_model"
+                            ? "Grok Bot Web Model"
+                            : t("webModelActorBoundConnectorTitle", {
+                                defaultValue: "ChatGPT Web Model",
+                              })}
                         </div>
                         <div className="mt-1">
-                          {t("webModelActorBoundConnectorHint", {
-                            defaultValue:
-                              "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
-                          })}
+                          {runtime === "grok_web_model"
+                            ? t("settings:grokActor.hint")
+                            : t("webModelActorBoundConnectorHint", {
+                                defaultValue:
+                                  "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
+                              })}
                         </div>
                       </div>
                     ) : null}
@@ -651,7 +661,7 @@ function CreateActorConfigModal({
                         },
                       ]
                     : []),
-                  ...(!useProfile && runtime !== "web_model"
+                  ...(!useProfile && !isWebModelRuntime(runtime)
                     ? [
                         {
                           id: "environment",
@@ -707,7 +717,7 @@ function CreateActorConfigModal({
                           label: t("profileToolsSection"),
                           panel: (
                             <div className="flex flex-wrap gap-3">
-                              {runtime === "web_model" && (
+                              {isWebModelRuntime(runtime) && (
                                 <p className="w-full text-sm text-[var(--color-text-secondary)]">
                                   {t("webModelProfileHint")}
                                 </p>
@@ -757,6 +767,8 @@ function EditActorConfigModal({
   hasCustomAvatar = false,
   isRunning,
   savedRuntime,
+  savedActor,
+  savedActorNotes,
   runtimes,
   runtime,
   onChangeRuntime,
@@ -788,8 +800,8 @@ function EditActorConfigModal({
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const [sharedSettingsRequested, setSharedSettingsRequested] = useState(false);
   const suspended = sharedSettingsRequested && settingsOpen;
-  const focusConversation = initialSection === "chatgpt" && savedRuntime === "web_model";
-  const { modalRef } = useModalA11y(isOpen && !suspended, onCancel, {
+  const focusConversation = initialSection === "chatgpt" && isWebModelRuntime(savedRuntime);
+  const { modalRef } = useModalA11y(isOpen && !suspended, closeEdit, {
     initialFocusRef: focusConversation ? conversationRef : undefined,
   });
   useEffect(() => {
@@ -797,7 +809,11 @@ function EditActorConfigModal({
   }, [groupId, actorId, isOpen]);
   const openSharedSettings = () => {
     setSharedSettingsRequested(true);
-    openSettingsTarget({ scope: "global", tab: "webModels" });
+    openSettingsTarget({
+      scope: "global",
+      tab: "webModels",
+      webModelProvider: conversationRuntime === "grok_web_model" ? "grok_web" : "chatgpt_web",
+    });
   };
   const [secretKeys, setSecretKeys] = useState<string[]>([]);
   const [secretMasks, setSecretMasks] = useState<Record<string, string>>({});
@@ -809,6 +825,50 @@ function EditActorConfigModal({
   const [attachProfileId, setAttachProfileId] = useState("");
   const [editMode, setEditMode] = useState<ConfigMode>("custom");
   const [pendingConvertToCustom, setPendingConvertToCustom] = useState(false);
+  const [grokBotUrl, setGrokBotUrl] = useState<string | undefined>();
+  const [connectionBusy, setConnectionBusy] = useState(false);
+  const [connectionEnabled, setConnectionEnabled] = useState<boolean | undefined>();
+  const baseline = useRef({
+    identity: "",
+    title,
+    command,
+    actorNotes,
+    notesLoaded: false,
+    capabilityAutoloadText,
+  });
+  const identity = isOpen ? `${groupId}/${actorId}` : "";
+  if (baseline.current.identity !== identity) {
+    baseline.current = {
+      identity,
+      title,
+      command,
+      actorNotes,
+      notesLoaded: !actorNotesBusy,
+      capabilityAutoloadText,
+    };
+  }
+  if (actorNotesBusy) baseline.current.notesLoaded = false;
+  if (!baseline.current.notesLoaded && !actorNotesBusy) {
+    baseline.current.actorNotes = actorNotes;
+    baseline.current.notesLoaded = true;
+  }
+  // Successful steps may persist before a later binding/restart step fails.
+  // Refresh the comparison baseline without replacing the user's form draft.
+  if (savedActor) {
+    baseline.current.title = savedActor.title || "";
+    baseline.current.command = formatRuntimeCommand(savedActor.command);
+    baseline.current.capabilityAutoloadText = formatCapabilityIdInput(
+      savedActor.capability_autoload,
+    );
+  }
+  if (savedActorNotes !== undefined && !actorNotesBusy) {
+    baseline.current.actorNotes = savedActorNotes;
+  }
+  useEffect(() => {
+    setGrokBotUrl(undefined);
+    setConnectionBusy(false);
+    setConnectionEnabled(undefined);
+  }, [groupId, actorId, isOpen]);
   const [localNotice, setLocalNotice] = useState("");
   const [avatarBusy, setAvatarBusy] = useState<"" | "upload" | "clear">("");
   const [capabilitiesPrimed, setCapabilitiesPrimed] = useState(false);
@@ -832,16 +892,6 @@ function EditActorConfigModal({
 
   const linked = Boolean(String(linkedProfileId || "").trim());
   const effectiveLinked = linked && !pendingConvertToCustom;
-  const showRuntimeSetup = !effectiveLinked && editMode === "custom" && runtime === "custom";
-  const editAdvancedTabIds: AdvancedTabId[] = [
-    ...(showRuntimeSetup ? ["connection" as const] : []),
-    ...(editMode === "custom" && runtime !== "web_model" ? ["environment" as const] : []),
-    "capabilities",
-    ...(editMode === "custom" ? ["profile" as const] : []),
-  ];
-  const activeAdvancedTab = editAdvancedTabIds.includes(advancedTab)
-    ? advancedTab
-    : editAdvancedTabIds[0];
   const selectableActorProfiles = actorProfiles;
   const selectedProfile = useMemo(
     () =>
@@ -850,6 +900,47 @@ function EditActorConfigModal({
       ),
     [selectableActorProfiles, attachProfileId],
   );
+  const conversationRuntime =
+    editMode === "profile" ? selectedProfile?.runtime || runtime : runtime;
+  const stagingGrok =
+    conversationRuntime === "grok_web_model" && conversationRuntime !== savedRuntime;
+  const grokTargetChanged =
+    conversationRuntime === "grok_web_model" && (stagingGrok || grokBotUrl !== undefined);
+  const applyRunningTarget = grokTargetChanged && (connectionEnabled ?? isRunning);
+  const launchChanges = buildActorSecretSaveChanges(secretChanges);
+  const hasChanges =
+    title.trim() !== baseline.current.title.trim() ||
+    (baseline.current.notesLoaded && actorNotes.trim() !== baseline.current.actorNotes.trim()) ||
+    JSON.stringify(parseCapabilityIdInput(capabilityAutoloadText)) !==
+      JSON.stringify(parseCapabilityIdInput(baseline.current.capabilityAutoloadText)) ||
+    grokTargetChanged ||
+    pendingConvertToCustom ||
+    (editMode === "custom" &&
+      (linked ||
+        runtime !== savedRuntime ||
+        (!isWebModelRuntime(runtime) &&
+          (command.trim() !== baseline.current.command.trim() ||
+            launchChanges.clear ||
+            launchChanges.unsetKeys.length > 0 ||
+            Object.keys(launchChanges.setVars).length > 0)))) ||
+    (editMode === "profile" &&
+      (!linked ||
+        attachProfileId !==
+          actorProfileIdentityKey({
+            id: linkedProfileId || "",
+            scope: linkedProfileScope || "global",
+            owner_id: linkedProfileOwner || "",
+          })));
+  const showRuntimeSetup = !effectiveLinked && editMode === "custom" && runtime === "custom";
+  const editAdvancedTabIds: AdvancedTabId[] = [
+    ...(showRuntimeSetup ? ["connection" as const] : []),
+    ...(editMode === "custom" && !isWebModelRuntime(runtime) ? ["environment" as const] : []),
+    "capabilities",
+    ...(editMode === "custom" ? ["profile" as const] : []),
+  ];
+  const activeAdvancedTab = editAdvancedTabIds.includes(advancedTab)
+    ? advancedTab
+    : editAdvancedTabIds[0];
   const selectedProfileName = String(selectedProfile?.name || "").trim();
   useEffect(() => {
     modalStateRef.current = {
@@ -863,7 +954,7 @@ function EditActorConfigModal({
   }, [groupId, actorId, effectiveLinked, editMode, pendingConvertToCustom, linkedProfileId]);
 
   const refreshSecretKeys = async () => {
-    if (editMode !== "custom" || runtime === "web_model") {
+    if (editMode !== "custom" || isWebModelRuntime(runtime)) {
       setSecretsRefreshing(false);
       setSecretKeysLoadFailed(false);
       setSecretKeys([]);
@@ -1005,7 +1096,7 @@ function EditActorConfigModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    if (editMode === "profile" || runtime === "web_model") {
+    if (editMode === "profile" || isWebModelRuntime(runtime)) {
       secretFetchSeqRef.current += 1;
       setSecretsRefreshing(false);
       setSecretKeysLoadFailed(false);
@@ -1030,7 +1121,7 @@ function EditActorConfigModal({
   const requireCommand =
     !effectiveLinked &&
     editMode === "custom" &&
-    runtime !== "web_model" &&
+    !isWebModelRuntime(runtime) &&
     (runtime === "custom" || !available);
   const selectAdvancedTab = (id: string) => {
     const next = id as AdvancedTabId;
@@ -1052,7 +1143,7 @@ function EditActorConfigModal({
     try {
       const result = await onSaveAsProfile(
         buildActorSecretSaveChanges(
-          runtime === "web_model" ? emptyActorSecretChanges() : secretChanges,
+          isWebModelRuntime(runtime) ? emptyActorSecretChanges() : secretChanges,
         ),
       );
       const profileId = String(result?.profileId || "").trim();
@@ -1116,6 +1207,11 @@ function EditActorConfigModal({
     if (busy === "actor-update") return;
     const callback = restart ? onSaveAndRestart : onSave;
 
+    if (grokTargetChanged && !isGrokBotUrl(grokBotUrl || "")) {
+      setSecretsError(t("settings:grokActor.invalidUrl"));
+      return;
+    }
+
     if (editMode === "profile") {
       const profileId = String(attachProfileId || "").trim();
       if (!profileId) {
@@ -1133,16 +1229,11 @@ function EditActorConfigModal({
           clear: false,
           capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
           profileId,
+          ...(grokTargetChanged ? { grokBotUrl: grokBotUrl!.trim() } : {}),
         });
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "";
-        if (msg === NO_CHANGES_SENTINEL) {
-          setSecretsError("");
-          setLocalNotice(t("nothingToSave"));
-        } else {
-          setLocalNotice("");
-          setSecretsError(e instanceof Error ? e.message : t("saveFailed"));
-        }
+        setLocalNotice("");
+        setSecretsError(e instanceof Error ? e.message : t("saveFailed"));
         return;
       } finally {
         setSecretsBusy(false);
@@ -1157,7 +1248,7 @@ function EditActorConfigModal({
 
     setSecretsError("");
     const secretSaveChanges = buildActorSecretSaveChanges(
-      runtime === "web_model" ? emptyActorSecretChanges() : secretChanges,
+      isWebModelRuntime(runtime) ? emptyActorSecretChanges() : secretChanges,
     );
 
     setSecretsBusy(true);
@@ -1169,16 +1260,11 @@ function EditActorConfigModal({
         clear: secretSaveChanges.clear,
         capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
         convertToCustom: linked && pendingConvertToCustom,
+        ...(grokTargetChanged ? { grokBotUrl: grokBotUrl!.trim() } : {}),
       });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      if (msg === NO_CHANGES_SENTINEL) {
-        setSecretsError("");
-        setLocalNotice(t("nothingToSave"));
-      } else {
-        setLocalNotice("");
-        setSecretsError(e instanceof Error ? e.message : t("saveFailed"));
-      }
+      setLocalNotice("");
+      setSecretsError(e instanceof Error ? e.message : t("saveFailed"));
       return;
     } finally {
       setSecretsBusy(false);
@@ -1189,14 +1275,20 @@ function EditActorConfigModal({
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
   const sectionHintClass = "mt-1 text-xs text-[var(--color-text-muted)]";
   const saveDisabled =
+    connectionBusy ||
     busy === "actor-update" ||
     avatarBusy !== "" ||
     secretsBusy ||
     secretsRefreshing ||
     actorNotesBusy ||
+    (grokTargetChanged && !grokBotUrl?.trim()) ||
     (editMode === "custom" && effectiveLinked) ||
     (editMode === "custom" && requireCommand && !command.trim()) ||
     (editMode === "profile" && !String(attachProfileId || "").trim());
+  function closeEdit() {
+    if (busy === "actor-update" || secretsBusy || connectionBusy) return;
+    onCancel();
+  }
   const normalizedGroupRole = normalizeGroupRole(groupRole);
   const groupRoleLabel =
     normalizedGroupRole === "foreman"
@@ -1207,7 +1299,7 @@ function EditActorConfigModal({
     <ModalFrame
       isOpen={isOpen && !suspended}
       isDark={isDark}
-      onClose={onCancel}
+      onClose={closeEdit}
       titleId="edit-actor-title"
       title={
         <div>
@@ -1241,37 +1333,47 @@ function EditActorConfigModal({
           ) : null}
 
           <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+            {hasChanges && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full sm:w-auto transition-all ease-spring duration-300"
+                onClick={closeEdit}
+                disabled={busy === "actor-update" || secretsBusy || connectionBusy}
+              >
+                {t("common:cancel")}
+              </Button>
+            )}
+            {hasChanges && !applyRunningTarget && (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
+                onClick={() => void submit(true)}
+                disabled={saveDisabled}
+              >
+                {t("saveAndRestart")}
+              </Button>
+            )}
             <Button
               type="button"
-              variant="secondary"
-              className="w-full sm:w-auto transition-all ease-spring duration-300"
-              onClick={onCancel}
-            >
-              {t("common:cancel")}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
               className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
-              onClick={() => void submit(true)}
-              disabled={saveDisabled}
+              onClick={() => (hasChanges ? void submit(applyRunningTarget) : closeEdit())}
+              disabled={
+                hasChanges ? saveDisabled : busy === "actor-update" || secretsBusy || connectionBusy
+              }
             >
-              {t("saveAndRestart")}
-            </Button>
-            <Button
-              type="button"
-              className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
-              onClick={() => void submit(false)}
-              disabled={saveDisabled}
-            >
-              {t("common:save")}
+              {t(!hasChanges ? "common:done" : applyRunningTarget ? "saveAndApply" : "common:save")}
             </Button>
           </div>
         </>
       }
     >
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide bg-[var(--color-bg-primary)] p-4 sm:p-6">
-        <div className="mx-auto w-full max-w-6xl space-y-4">
+        <fieldset
+          disabled={secretsBusy || connectionBusy || busy === "actor-update"}
+          className="mx-auto w-full max-w-6xl min-w-0 space-y-4"
+        >
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.92fr)] xl:items-start">
             <Surface className={sectionCardClass}>
               <div className={sectionTitleClass}>{t("sectionBasics", "Basics")}</div>
@@ -1447,23 +1549,27 @@ function EditActorConfigModal({
                       <OpenCodeManagedModelHint runtime={runtime} />
                     </div>
 
-                    {runtime === "web_model" ? (
+                    {isWebModelRuntime(runtime) ? (
                       <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
                         <div className="font-medium">
-                          {t("webModelActorBoundConnectorTitle", {
-                            defaultValue: "ChatGPT Web Model",
-                          })}
+                          {runtime === "grok_web_model"
+                            ? "Grok Bot Web Model"
+                            : t("webModelActorBoundConnectorTitle", {
+                                defaultValue: "ChatGPT Web Model",
+                              })}
                         </div>
                         <div className="mt-1">
-                          {t("webModelActorBoundConnectorHint", {
-                            defaultValue:
-                              "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
-                          })}
+                          {runtime === "grok_web_model"
+                            ? t("settings:grokActor.hint")
+                            : t("webModelActorBoundConnectorHint", {
+                                defaultValue:
+                                  "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
+                              })}
                         </div>
                       </div>
                     ) : null}
 
-                    {runtime !== "web_model" && (
+                    {!isWebModelRuntime(runtime) && (
                       <div>
                         <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
                           {t("command")}
@@ -1491,25 +1597,73 @@ function EditActorConfigModal({
                     )}
                   </div>
                 )}
+                {stagingGrok && (
+                  <div className="space-y-2">
+                    <label className="block text-sm" htmlFor="edit-grok-bot-url">
+                      {t("settings:grokActor.url")}
+                    </label>
+                    <Input
+                      id="edit-grok-bot-url"
+                      type="url"
+                      required
+                      value={grokBotUrl ?? ""}
+                      onChange={(e) => setGrokBotUrl(e.target.value)}
+                      disabled={busy === "actor-update" || secretsBusy}
+                      placeholder="https://grok.com/bot/…"
+                      aria-describedby="edit-grok-bot-url-hint"
+                    />
+                    <p
+                      id="edit-grok-bot-url-hint"
+                      className="text-xs text-[var(--color-text-muted)]"
+                    >
+                      {t("settings:grokActor.runtimeSaveHint")}
+                    </p>
+                    <Button type="button" variant="outline" onClick={openSharedSettings}>
+                      {t("settings:grokActor.shared")}
+                    </Button>
+                  </div>
+                )}
               </div>
             </Surface>
           </div>
 
-          {runtime === "web_model" && savedRuntime === "web_model" && (
+          {isWebModelRuntime(conversationRuntime) && conversationRuntime === savedRuntime && (
             <div
               ref={conversationRef}
               tabIndex={-1}
               className="scroll-mt-4 outline-none"
-              aria-label={t("settings:webModelActor.title")}
+              aria-label={t(
+                conversationRuntime === "grok_web_model"
+                  ? "settings:grokActor.title"
+                  : "settings:webModelActor.title",
+              )}
             >
-              <WebModelActorSetup
-                key={`${groupId}/${actorId}`}
-                groupId={groupId}
-                actorId={actorId}
-                isDark={isDark}
-                isVisible={!suspended}
-                onOpenSharedSettings={openSharedSettings}
-              />
+              {conversationRuntime === "grok_web_model" ? (
+                <GrokActorSetup
+                  key={`${groupId}/${actorId}/grok`}
+                  groupId={groupId}
+                  actorId={actorId}
+                  isDark={isDark}
+                  isVisible={!suspended}
+                  onOpenSharedSettings={openSharedSettings}
+                  draftUrl={grokBotUrl}
+                  onDraftChange={setGrokBotUrl}
+                  onEnabledChange={setConnectionEnabled}
+                  onBusyChange={setConnectionBusy}
+                  saving={secretsBusy || busy === "actor-update"}
+                />
+              ) : (
+                <WebModelActorSetup
+                  key={`${groupId}/${actorId}`}
+                  groupId={groupId}
+                  actorId={actorId}
+                  isDark={isDark}
+                  isVisible={!suspended}
+                  onOpenSharedSettings={openSharedSettings}
+                  onBusyChange={setConnectionBusy}
+                  saving={secretsBusy || busy === "actor-update"}
+                />
+              )}
             </div>
           )}
 
@@ -1552,7 +1706,7 @@ function EditActorConfigModal({
                         },
                       ]
                     : []),
-                  ...(editMode === "custom" && runtime !== "web_model"
+                  ...(editMode === "custom" && !isWebModelRuntime(runtime)
                     ? [
                         {
                           id: "environment",
@@ -1596,7 +1750,7 @@ function EditActorConfigModal({
                           label: t("profileToolsSection", "Profile tools"),
                           panel: (
                             <div className="flex flex-wrap gap-3">
-                              {runtime === "web_model" && (
+                              {isWebModelRuntime(runtime) && (
                                 <p className="w-full text-sm text-[var(--color-text-secondary)]">
                                   {t("webModelProfileHint")}
                                 </p>
@@ -1620,7 +1774,7 @@ function EditActorConfigModal({
               />
             </div>
           </Surface>
-        </div>
+        </fieldset>
       </div>
     </ModalFrame>
   );

@@ -1,7 +1,6 @@
 mod buffering;
 
 use cccc_client::DaemonClient;
-use cccc_contracts::ActorRuntime;
 use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -233,7 +232,7 @@ fn resolve_owner(home: &HomeLayout, args: &Map<String, Value>) -> Result<Owner, 
         .iter()
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| format!("actor_not_found: actor not found: {actor_id}"))?;
-    if actor.runtime != ActorRuntime::WebModel {
+    if !actor.runtime.is_web_model() {
         return Err(
             "invalid_actor_runtime: local-power MCP tools are only available to web_model actors"
                 .into(),

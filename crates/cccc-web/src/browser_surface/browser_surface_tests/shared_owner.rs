@@ -15,6 +15,235 @@ async fn owned_page(manager: &BrowserSurfaces, key: &str) -> Page {
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
+async fn actor_window_remains_visible_and_closable_during_slow_navigation() {
+    require_chrome!();
+    if !std::path::Path::new("/usr/bin/Xvfb").is_file() {
+        return;
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listen");
+    let url = format!("http://{}", listener.local_addr().expect("address"));
+    let app = axum::Router::new()
+        .route(
+            "/",
+            axum::routing::get(|| async {
+                axum::response::Html(
+                    "<!doctype html><h1>Loading Bot</h1><script src='/slow.js'></script>",
+                )
+            }),
+        )
+        .route(
+            "/slow.js",
+            axum::routing::get(|| async { std::future::pending::<&'static str>().await }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let temp = tempfile::tempdir().expect("temp");
+    let manager = BrowserSurfaces::default();
+    for path in ["/", "/slow.js"] {
+        let opened = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            manager.ensure_open_shared_actor(
+                "actor",
+                &temp.path().join("profile"),
+                &format!("{url}{path}"),
+                (800, 600),
+                "gen",
+            ),
+        )
+        .await;
+        if opened.is_err() {
+            manager.shutdown_all().await.expect("cleanup");
+            server.abort();
+            panic!("Actor window availability must not wait for document loading: {path}");
+        }
+        assert_eq!(
+            opened.expect("prompt return").expect("open")["active"],
+            true
+        );
+        if path == "/" {
+            let page = owned_page(&manager, "actor").await;
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    if page.evaluate("Boolean(document.querySelector('h1')) && document.readyState === 'loading'")
+                        .await.ok().and_then(|r| r.into_value::<bool>().ok()) == Some(true)
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            }).await.expect("document begins rendering without DOMContentLoaded");
+        }
+        let readiness = manager.prompt_readiness("actor").await.expect("readiness");
+        assert_eq!(
+            readiness["ready"], false,
+            "opening is not delivery readiness"
+        );
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), manager.frame("actor"))
+            .await
+            .expect("frame without DOMContentLoaded")
+            .expect("frame");
+        assert!(frame["data_base64"].as_str().is_some());
+        tokio::time::timeout(std::time::Duration::from_secs(5), manager.close("actor"))
+            .await
+            .expect("close without DOMContentLoaded")
+            .expect("close");
+        assert_eq!(manager.info("actor").await["active"], false);
+    }
+    manager.shutdown_all().await.expect("cleanup");
+    server.abort();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn shared_login_window_is_available_before_document_readiness() {
+    require_chrome!();
+    if !std::path::Path::new("/usr/bin/Xvfb").is_file() {
+        return;
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let url = format!("http://{}", listener.local_addr().expect("address"));
+    let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = Arc::clone(&requests);
+    let app = axum::Router::new()
+        .route("/actor", axum::routing::get(|| async { axum::response::Html("<textarea></textarea>") }))
+        .route("/", axum::routing::get(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            async { axum::response::Html("<!doctype html><h1>Sign in</h1><textarea></textarea><script src='/slow.js'></script>") }
+        }))
+        .route("/slow.js", axum::routing::get(|| async {
+            std::future::pending::<&'static str>().await
+        }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let temp = tempfile::tempdir().expect("tempdir");
+    let profile = temp.path().join("profile");
+    let manager = BrowserSurfaces::default();
+    manager
+        .ensure_open_shared_actor(
+            "actor",
+            &profile,
+            &format!("{url}/actor"),
+            (800, 600),
+            "gen",
+        )
+        .await
+        .expect("warm browser with unrelated Actor");
+    let actor = owned_page(&manager, "actor").await;
+    wait_for_fixture_document(&actor).await;
+    actor
+        .evaluate("document.querySelector('textarea').value='Actor draft'")
+        .await
+        .expect("draft");
+    let opened = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        manager.ensure_open_shared_system("login", &profile, &url, 800, 600),
+    )
+    .await;
+    if opened.is_err() {
+        manager
+            .shutdown_all()
+            .await
+            .expect("cleanup failed regression");
+        server.abort();
+        panic!("login window must be available while its document is still loading");
+    }
+    assert_eq!(
+        opened.expect("prompt return").expect("open")["active"],
+        true
+    );
+    let login = owned_page(&manager, "login").await;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if login
+                .evaluate("Boolean(document.querySelector('h1'))")
+                .await
+                .ok()
+                .and_then(|r| r.into_value::<bool>().ok())
+                == Some(true)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("login document began rendering");
+    assert_eq!(
+        login
+            .evaluate("document.readyState")
+            .await
+            .expect("state")
+            .into_value::<String>()
+            .expect("string"),
+        "loading"
+    );
+    login
+        .evaluate("document.querySelector('textarea').value='Sign-in draft'")
+        .await
+        .expect("login draft");
+    assert!(
+        manager.frame("login").await.expect("visible frame")["data_base64"]
+            .as_str()
+            .is_some()
+    );
+    manager
+        .ensure_open_shared_system("login", &profile, &url, 800, 600)
+        .await
+        .expect("reveal existing loading window");
+    assert_eq!(
+        owned_page(&manager, "login").await.target_id(),
+        login.target_id()
+    );
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        1,
+        "showing login must not reload it"
+    );
+    assert_eq!(
+        login
+            .evaluate("document.querySelector('textarea').value")
+            .await
+            .expect("draft")
+            .into_value::<String>()
+            .expect("string"),
+        "Sign-in draft"
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), manager.close("login"))
+        .await
+        .expect("close must not wait for the site")
+        .expect("close");
+    assert_eq!(manager.info("login").await["active"], false);
+    // Even the first response's headers may stall. Keep a controllable window
+    // rather than requiring a committed document to expose the browser.
+    let opening = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        manager.ensure_open_shared_system("login", &profile, &format!("{url}/slow.js"), 800, 600),
+    )
+    .await
+    .expect("login open must not wait for response headers")
+    .expect("open without response headers");
+    assert_eq!(opening["active"], true);
+    tokio::time::timeout(std::time::Duration::from_secs(5), manager.close("login"))
+        .await
+        .expect("close without response headers")
+        .expect("close");
+    assert_eq!(
+        actor
+            .evaluate("document.querySelector('textarea').value")
+            .await
+            .expect("Actor draft")
+            .into_value::<String>()
+            .expect("string"),
+        "Actor draft"
+    );
+    manager.shutdown_all().await.expect("cleanup");
+    server.abort();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
 async fn shared_windows_submit_independent_batches_while_viewers_capture() {
     require_chrome!();
     if !std::path::Path::new("/usr/bin/Xvfb").is_file() {
@@ -30,6 +259,7 @@ async fn shared_windows_submit_independent_batches_while_viewers_capture() {
             .ensure_open_shared_actor(key, &profile, &url, (800, 600), key)
             .await
             .expect("window");
+        wait_for_fixture_document(&owned_page(&manager, key).await).await;
     }
     for (index, body) in ["long text ".repeat(100), "short text".into()]
         .iter()
@@ -115,7 +345,9 @@ async fn shared_windows_keep_login_and_close_only_their_own_surface() {
     );
     assert_eq!(manager.owners.lock().await.len(), 1);
     let a = owned_page(&manager, "web-model::g_a::a").await;
+    wait_for_fixture_document(&a).await;
     let b = owned_page(&manager, "web-model::g_b::b").await;
+    wait_for_fixture_document(&b).await;
     assert_ne!(a.target_id(), b.target_id());
     let owner = manager
         .sessions
@@ -215,7 +447,7 @@ async fn shared_windows_keep_login_and_close_only_their_own_surface() {
         a.target_id()
     );
     assert_eq!(
-        manager.info("web-model::g_a::a").await["metadata"]["actor_generation"],
+        manager.info("web-model::g_a::a").await["metadata"]["actor_identity"],
         "new-gen-a"
     );
     manager.close("web-model::g_a::a").await.expect("close A");
@@ -247,10 +479,11 @@ async fn shared_windows_keep_login_and_close_only_their_own_surface() {
         "another Web owner must not attach to the profile"
     );
     manager
-        .ensure_open_shared_system("web-model::g_a::a", &profile, &url, 800, 600)
+        .ensure_open_shared_actor("web-model::g_a::a", &profile, &url, (800, 600), "gen-a")
         .await
         .expect("reopen A");
     let reopened = owned_page(&manager, "web-model::g_a::a").await;
+    wait_for_fixture_document(&reopened).await;
     assert_ne!(a.target_id(), reopened.target_id());
     assert!(
         reopened
@@ -275,6 +508,7 @@ async fn shared_windows_keep_login_and_close_only_their_own_surface() {
         .ensure_open_shared_system("restart", &profile, &url, 800, 600)
         .await
         .expect("new owner after shutdown");
+    wait_for_fixture_document(&owned_page(&other, "restart").await).await;
     assert!(
         owned_page(&other, "restart")
             .await
@@ -301,12 +535,15 @@ async fn shared_page_commands_do_not_adopt_popups_or_block_other_surfaces() {
     let manager = Arc::new(BrowserSurfaces::default());
     for key in ["web-model::g_fixture::A", "web-model::g_fixture::B"] {
         manager
-            .ensure_open_shared_system(key, &profile, &url, 800, 600)
+            .ensure_open_shared_actor(key, &profile, &url, (800, 600), key)
             .await
             .expect("window");
+        wait_for_fixture_document(&owned_page(&manager, key).await).await;
     }
     let a = owned_page(&manager, "web-model::g_fixture::A").await;
+    wait_for_fixture_document(&a).await;
     let b = owned_page(&manager, "web-model::g_fixture::B").await;
+    wait_for_fixture_document(&b).await;
     manager
         .command(
             "web-model::g_fixture::A",
@@ -348,7 +585,13 @@ async fn shared_page_commands_do_not_adopt_popups_or_block_other_surfaces() {
         b.target_id()
     );
     manager
-        .ensure_open_shared_system("web-model::g_fixture::A", &profile, &url, 800, 600)
+        .ensure_open_shared_actor(
+            "web-model::g_fixture::A",
+            &profile,
+            &url,
+            (800, 600),
+            "web-model::g_fixture::A",
+        )
         .await
         .expect("restore A");
     // A navigation that never produces headers must not hold the surface registry.
@@ -366,7 +609,7 @@ async fn shared_page_commands_do_not_adopt_popups_or_block_other_surfaces() {
         let manager = Arc::clone(&manager);
         tokio::spawn(async move {
             manager
-                .ensure_open_shared_system("C", &profile, &stalled_url, 800, 600)
+                .ensure_open_shared_actor("C", &profile, &stalled_url, (800, 600), "C")
                 .await
         })
     };
@@ -376,7 +619,7 @@ async fn shared_page_commands_do_not_adopt_popups_or_block_other_surfaces() {
         .expect("signal");
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        manager.ensure_open_shared_system("D", &temp.path().join("profile"), &url, 800, 600),
+        manager.ensure_open_shared_actor("D", &temp.path().join("profile"), &url, (800, 600), "D"),
     )
     .await
     .expect("D registration must not wait for C navigation")
@@ -389,8 +632,11 @@ async fn shared_page_commands_do_not_adopt_popups_or_block_other_surfaces() {
     .expect("B should not wait for A")
     .expect("B frame");
     assert!(frame["data_base64"].as_str().is_some());
-    pending.abort();
-    let _ = pending.await;
+    tokio::time::timeout(std::time::Duration::from_secs(5), pending)
+        .await
+        .expect("C window must not wait for response headers")
+        .expect("open task")
+        .expect("C open");
     stalled.abort();
     manager
         .shutdown_all()
@@ -415,6 +661,7 @@ async fn shared_login_open_recovers_blank_without_replacing_actor_pages() {
         .await
         .expect("login");
     let login = owned_page(&manager, "login").await;
+    wait_for_fixture_document(&login).await;
     manager
         .ensure_open_shared_actor(
             "actor",
@@ -426,6 +673,7 @@ async fn shared_login_open_recovers_blank_without_replacing_actor_pages() {
         .await
         .expect("actor");
     let actor = owned_page(&manager, "actor").await;
+    wait_for_fixture_document(&actor).await;
     actor
         .evaluate("document.querySelector('textarea').value='keep my draft'")
         .await
@@ -446,6 +694,7 @@ async fn shared_login_open_recovers_blank_without_replacing_actor_pages() {
         .ensure_open_shared_system("login", &profile, &url, 1000, 700)
         .await
         .expect("reopen login");
+    wait_for_fixture_document(&login).await;
     let result = login
         .evaluate("location.href")
         .await

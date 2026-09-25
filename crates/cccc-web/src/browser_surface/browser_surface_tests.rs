@@ -11,6 +11,24 @@ macro_rules! require_chrome {
     };
 }
 
+async fn wait_for_fixture_document(page: &Page) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if page
+                .evaluate("location.protocol === 'http:' && ['interactive', 'complete'].includes(document.readyState)")
+                .await
+                .ok()
+                .and_then(|r| r.into_value::<bool>().ok()) == Some(true)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("fixture document ready");
+}
+
 #[test]
 fn extracts_google_account_route_from_completion_url() {
     assert_eq!(
@@ -120,6 +138,7 @@ async fn interactive_system_browser_keeps_native_mode_and_reuses_its_session() {
         .expect("session")
         .page
         .clone();
+    wait_for_fixture_document(&page).await;
     let automated: bool = page
         .evaluate("navigator.webdriver")
         .await

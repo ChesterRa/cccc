@@ -38,6 +38,9 @@ pub(super) fn prompt(
         super::super::actor_runtime::terminal_history::config(home, &group.group_id, &actor.id)
             .map_err(|error| unavailable(&error))?;
     let recovery = Recovery::register(key.clone()).map_err(|error| unavailable(&error))?;
+    // Capture before the prompt can record approval, even if the watcher starts late.
+    let records = trust_records(&actor.env);
+    let seen = signature(&records);
     let terminal = cccc_runtime::start_with_history(
         cccc_runtime::LaunchSpec {
             group_id: group.group_id.clone(),
@@ -62,7 +65,8 @@ pub(super) fn prompt(
         key,
         cwd,
         pid: terminal.pid,
-        records: trust_records(&actor.env),
+        records,
+        seen,
         recovery,
     };
     if let Err(error) = std::thread::Builder::new()
@@ -83,19 +87,17 @@ struct Watch {
     cwd: PathBuf,
     pid: Option<u32>,
     records: Vec<PathBuf>,
+    seen: Vec<Option<(SystemTime, u64)>>,
     recovery: Recovery,
 }
 
 impl Watch {
     fn run(self) {
-        let mut seen = signature(&self.records);
         wait_for_trust(
             POLL,
+            &self.records,
+            self.seen.clone(),
             || self.prompt_open(),
-            || {
-                let current = signature(&self.records);
-                std::mem::replace(&mut seen, current.clone()) != current
-            },
             || self.launch(),
         );
     }
@@ -141,8 +143,9 @@ impl Watch {
 /// the prompt closes.
 fn wait_for_trust(
     poll: Duration,
+    records: &[PathBuf],
+    mut seen: Vec<Option<(SystemTime, u64)>>,
     prompt_open: impl Fn() -> bool,
-    mut configuration_changed: impl FnMut() -> bool,
     mut launch: impl FnMut() -> bool,
 ) {
     loop {
@@ -150,7 +153,8 @@ fn wait_for_trust(
         if !prompt_open() {
             return;
         }
-        if configuration_changed() && launch() {
+        let current = signature(records);
+        if std::mem::replace(&mut seen, current.clone()) != current && launch() {
             return;
         }
     }

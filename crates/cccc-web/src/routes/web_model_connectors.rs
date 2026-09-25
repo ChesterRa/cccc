@@ -114,7 +114,7 @@ async fn mcp_with_path_token(
 async fn run_connector_mcp(
     state: &AppState,
     connector: &Value,
-    request: Value,
+    mut request: Value,
 ) -> Result<Response, ApiError> {
     let method = request
         .get("method")
@@ -146,6 +146,12 @@ async fn run_connector_mcp(
     } else if method == "tools/call" {
         match store::resolve(state, connector, &request) {
             Ok(binding) => {
+                if connector["provider"] == "grok_web" {
+                    request["params"]["arguments"]
+                        .as_object_mut()
+                        .expect("validated credential arguments")
+                        .remove("actor_token");
+                }
                 let response =
                     cccc_mcp::handle_request_for_binding(&state.home, &request, &binding).await;
                 bound_route = Some(binding);
@@ -164,7 +170,11 @@ async fn run_connector_mcp(
         cccc_mcp::handle_request_for_actor(&state.home, &request, "", "").await
     };
     if method == "tools/list" {
-        session::extend_catalog(&mut response);
+        if connector["provider"] == "grok_web" {
+            session::extend_grok_catalog(&mut response);
+        } else {
+            session::extend_catalog(&mut response);
+        }
     }
     let call_status = if response.get("error").is_some()
         || response["result"]["isError"].as_bool().unwrap_or(false)

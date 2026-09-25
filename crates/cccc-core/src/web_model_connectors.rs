@@ -1,4 +1,4 @@
-//! One authenticated Web Model entrance, with explicitly paired conversation routes.
+//! Provider-scoped Web Model entrances with explicit Actor routes.
 //! Old Actor-bound credentials are deliberately not promoted to instance authority.
 use std::io;
 use std::path::PathBuf;
@@ -9,7 +9,10 @@ use uuid::Uuid;
 
 use crate::{HomeLayout, fs};
 
-const VERSION: u64 = 2;
+const VERSION: u64 = 3;
+
+mod grok;
+pub use grok::{bind_grok, binding_for_token, grok_bot_url, grok_token};
 const PAIRING_TTL_MS: i64 = 10 * 60 * 1000;
 
 fn store_path(home: &HomeLayout) -> PathBuf {
@@ -34,13 +37,21 @@ fn now_ms() -> i64 {
 fn read(home: &HomeLayout) -> io::Result<Value> {
     let path = store_path(home);
     if !path.exists() {
-        return Ok(json!({"version":VERSION,"connector":null}));
+        return Ok(json!({"version":VERSION,"connectors":{}}));
     }
     let raw = fs::read_yaml::<Value>(&path)?;
     match raw["version"].as_u64() {
-        Some(VERSION) => Ok(raw),
+        Some(VERSION) if raw["connectors"].is_object() => Ok(raw),
+        Some(2) => {
+            let mut connectors = json!({});
+            if raw["connector"].is_object() {
+                connectors["chatgpt_web"] = raw["connector"].clone();
+            }
+            Ok(json!({"version":VERSION,"connectors":connectors,
+                "requires_reconfiguration":raw["requires_reconfiguration"] == true}))
+        }
         None | Some(1) => {
-            Ok(json!({"version":VERSION,"connector":null,"requires_reconfiguration":true}))
+            Ok(json!({"version":VERSION,"connectors":{},"requires_reconfiguration":true}))
         }
         _ => Err(error("unsupported web-model connector store version")),
     }
@@ -58,11 +69,11 @@ fn update<T>(home: &HomeLayout, change: impl FnOnce(&mut Value) -> io::Result<T>
 pub fn load(home: &HomeLayout) -> io::Result<Vec<Value>> {
     fs::with_exclusive_lock(&lock_path(home), || {
         let root = read(home)?;
-        Ok(root
-            .get("connector")
-            .filter(|v| v.is_object())
+        Ok(root["connectors"]
+            .as_object()
+            .expect("validated store")
+            .values()
             .cloned()
-            .into_iter()
             .collect())
     })
 }
@@ -70,16 +81,18 @@ pub fn load(home: &HomeLayout) -> io::Result<Vec<Value>> {
 pub fn requires_reconfiguration(home: &HomeLayout) -> io::Result<bool> {
     let root = read(home)?;
     Ok(root["requires_reconfiguration"] == true
-        || (root["connector"].is_null()
+        || (root["connectors"]["chatgpt_web"].is_null()
             && crate::settings::load(home)?
                 .extra
                 .contains_key("web_model_connectors")))
 }
 
 fn current<'a>(root: &'a mut Value, id: &str) -> io::Result<&'a mut Value> {
-    let connector = root
-        .get_mut("connector")
-        .filter(|c| c.is_object() && c["connector_id"] == id && c["revoked"] != true)
+    let connector = root["connectors"]
+        .as_object_mut()
+        .expect("validated store")
+        .values_mut()
+        .find(|c| c["connector_id"] == id && c["revoked"] != true)
         .ok_or_else(|| error("connector_unavailable"))?;
     Ok(connector)
 }
@@ -87,13 +100,20 @@ fn current<'a>(root: &'a mut Value, id: &str) -> io::Result<&'a mut Value> {
 /// Configure or rotate the current entrance. Return the new credential once;
 /// its hash is the only credential representation persisted in the store.
 pub fn configure(home: &HomeLayout) -> io::Result<Value> {
+    configure_provider(home, "chatgpt_web")
+}
+
+pub fn configure_provider(home: &HomeLayout, provider: &str) -> io::Result<Value> {
+    if !matches!(provider, "chatgpt_web" | "grok_web") {
+        return Err(error("invalid_web_model_provider"));
+    }
     update(home, |root| {
-        let old = &root["connector"];
+        let old = &root["connectors"][provider];
         let now = cccc_contracts::utc_now();
         let mut connector = if old.is_object() && old["revoked"] != true {
             old.clone()
         } else {
-            json!({"connector_id":format!("wmc_{}",Uuid::new_v4().simple()),"kind":"web_model_connector","routing_mode":"session","provider":"chatgpt_web","routing_salt":Uuid::new_v4().to_string(),"created_at":now,"bindings":{},"pairings":{}})
+            json!({"connector_id":format!("wmc_{}",Uuid::new_v4().simple()),"kind":"web_model_connector","routing_mode":if provider == "grok_web" {"credential"} else {"session"},"provider":provider,"routing_salt":Uuid::new_v4().to_string(),"created_at":now,"bindings":{},"pairings":{}})
         };
         let secret = format!(
             "wmcs_{}{}",
@@ -105,19 +125,34 @@ pub fn configure(home: &HomeLayout) -> io::Result<Value> {
             json!(format!("{}…{}", &secret[..6], &secret[secret.len() - 4..]));
         connector["updated_at"] = json!(now);
         connector["revoked"] = json!(false);
-        *root = json!({"version":VERSION,"connector":connector});
-        Ok(json!({"connector":root["connector"],"secret":secret}))
+        if provider == "grok_web" && !connector["routing_key"].is_string() {
+            connector["routing_key"] = json!(format!(
+                "{}{}",
+                Uuid::new_v4().simple(),
+                Uuid::new_v4().simple()
+            ));
+        }
+        root["connectors"][provider] = connector.clone();
+        if provider == "chatgpt_web" {
+            root["requires_reconfiguration"] = json!(false);
+        }
+        Ok(json!({"connector":connector,"secret":secret}))
     })
 }
 
 pub fn revoke(home: &HomeLayout, id: &str) -> io::Result<bool> {
     update(home, |root| {
-        if root["connector"]["connector_id"] != id {
+        let Some(connector) = root["connectors"]
+            .as_object_mut()
+            .expect("validated store")
+            .values_mut()
+            .find(|c| c["connector_id"] == id)
+        else {
             return Ok(false);
-        }
-        root["connector"]["revoked"] = json!(true);
-        root["connector"]["updated_at"] = json!(cccc_contracts::utc_now());
-        root["connector"]["pairings"] = json!({});
+        };
+        connector["revoked"] = json!(true);
+        connector["updated_at"] = json!(cccc_contracts::utc_now());
+        connector["pairings"] = json!({});
         Ok(true)
     })
 }
@@ -129,6 +164,7 @@ pub fn secret_matches(item: &Value, supplied: &str) -> bool {
 /// Credential-scoped correlation, not authentication. Never use model arguments
 /// or HTTP transport session IDs as a substitute for per-call host metadata.
 pub fn session_key(connector: &Value, metadata: &Value) -> io::Result<String> {
+    require_chatgpt(connector)?;
     let metadata = metadata
         .as_object()
         .ok_or_else(|| error("session_missing"))?;
@@ -200,7 +236,7 @@ pub fn validate_binding(home: &HomeLayout, expected: &Value) -> io::Result<()> {
     if generation.is_empty()
         || crate::actors::generation_identity(actor) != generation
         || !actor.enabled
-        || actor.runtime != cccc_contracts::ActorRuntime::WebModel
+        || actor.runtime.web_model_provider() != connector["provider"].as_str()
         || actor.runner != cccc_contracts::RunnerKind::Headless
     {
         return Err(error("paired_actor_unavailable"));
@@ -226,6 +262,7 @@ pub fn begin_pairing(
     }
     update(home, |root| {
         let c = current(root, id)?;
+        require_chatgpt(c)?;
         let code = format!(
             "wm_pair_{}{}",
             Uuid::new_v4().simple(),
@@ -249,6 +286,7 @@ pub fn accept_pairing(home: &HomeLayout, id: &str, code: &str, session: &str) ->
     }
     update(home, |root| {
         let c = current(root, id)?;
+        require_chatgpt(c)?;
         let digest = hash(code);
         let pair = c["pairings"]
             .as_object_mut()
@@ -299,7 +337,7 @@ pub fn interrupt_automatic_pairings(
     fs::with_exclusive_lock(&lock_path(home), || {
         let mut root = read(home)?;
         let mut changed = false;
-        if let Some(pairs) = root["connector"]["pairings"].as_object_mut() {
+        if let Some(pairs) = root["connectors"]["chatgpt_web"]["pairings"].as_object_mut() {
             for pair in pairs.values_mut().filter(|p| {
                 p["group_id"] == group
                     && actor.is_none_or(|a| p["actor_id"] == a)
@@ -390,6 +428,7 @@ pub fn confirm_pairing(
     let url = conversation_url(url)?;
     update(home, |root| {
         let c = current(root, id)?;
+        require_chatgpt(c)?;
         let key = route_key(group, actor);
         let pair = pairing_for_actor(c, group, actor).ok_or_else(|| error("pairing_expired"))?;
         if pair["expires_at_ms"].as_i64().is_none_or(|t| t <= now_ms()) {
@@ -463,26 +502,30 @@ pub fn conversation_url(value: &str) -> io::Result<String> {
 
 fn retire(home: &HomeLayout, group: &str, actor: Option<&str>) -> io::Result<Vec<Value>> {
     update(home, |root| {
-        let c = &mut root["connector"];
-        if !c.is_object() {
-            return Ok(Vec::new());
-        }
         let mut retired = Vec::new();
-        for collection in ["bindings", "pairings"] {
-            let keys = c[collection]
-                .as_object()
-                .into_iter()
-                .flat_map(|m| m.iter())
-                .filter(|(_, b)| b["group_id"] == group && actor.is_none_or(|a| b["actor_id"] == a))
-                .map(|(key, _)| key.clone())
-                .collect::<Vec<_>>();
-            for key in keys {
-                let value = c[collection]
-                    .as_object_mut()
-                    .expect("map")
-                    .remove(&key)
-                    .expect("entry");
-                retired.push(json!({"kind":"web_model_route_snapshot","connector_id":c["connector_id"],"collection":collection,"key":key,"value":value}));
+        for c in root["connectors"]
+            .as_object_mut()
+            .expect("validated store")
+            .values_mut()
+        {
+            for collection in ["bindings", "pairings"] {
+                let keys = c[collection]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|m| m.iter())
+                    .filter(|(_, b)| {
+                        b["group_id"] == group && actor.is_none_or(|a| b["actor_id"] == a)
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect::<Vec<_>>();
+                for key in keys {
+                    let value = c[collection]
+                        .as_object_mut()
+                        .expect("map")
+                        .remove(&key)
+                        .expect("entry");
+                    retired.push(json!({"kind":"web_model_route_snapshot","connector_id":c["connector_id"],"collection":collection,"key":key,"value":value}));
+                }
             }
         }
         Ok(retired)
@@ -500,8 +543,8 @@ pub fn restore(home: &HomeLayout, entries: &[Value]) -> io::Result<()> {
         return Ok(());
     }
     update(home, |root| {
-        let c = &mut root["connector"];
         for entry in entries {
+            let c = current(root, entry["connector_id"].as_str().unwrap_or_default())?;
             if entry["kind"] != "web_model_route_snapshot"
                 || entry["connector_id"] != c["connector_id"]
                 || c["revoked"] == true
@@ -532,12 +575,24 @@ pub fn update_connector(
     change: impl FnOnce(&mut Value),
 ) -> io::Result<bool> {
     update(home, |root| {
-        if root["connector"]["connector_id"] != id {
+        let Some(c) = root["connectors"]
+            .as_object_mut()
+            .expect("validated store")
+            .values_mut()
+            .find(|c| c["connector_id"] == id)
+        else {
             return Ok(false);
-        }
-        change(&mut root["connector"]);
+        };
+        change(c);
         Ok(true)
     })
+}
+
+fn require_chatgpt(connector: &Value) -> io::Result<()> {
+    if connector["provider"] != "chatgpt_web" {
+        return Err(error("invalid_web_model_provider"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

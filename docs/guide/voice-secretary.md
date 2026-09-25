@@ -96,13 +96,13 @@ switching groups. Stale or failed refresh responses cannot clear these guards.
 
 Folders are single-level, group-wide persistent organization, stored in the voice
 document index. The sidebar shows them as a tree: click a folder to expand its
-documents in place, and unfiled documents are listed below the folders. Create a
+documents in place. By default, unfiled documents follow the folders. Create a
 folder from the header's folder button. Drag a document onto a folder to file it,
 or onto the unfiled area to take it out; the Move to folder menu action does the
 same without dragging. Drag a folder anywhere among the folders and unfiled
-documents; the mixed order is saved, and new folders and documents appear at the
-top. On
-touch screens, long-press a row to start dragging. New documents are created at
+documents; the mixed order is saved. Items absent from that saved order appear
+before ordered items, with folders first and then unfiled documents. On touch
+screens, long-press a row to start dragging. New documents are created at
 the root. Removing a folder moves its documents to the root without deleting
 them. Folder assignment survives editing, archiving and restoring; it does not
 change Markdown paths or quoted references.

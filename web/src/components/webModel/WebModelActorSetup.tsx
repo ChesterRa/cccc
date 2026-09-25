@@ -12,18 +12,23 @@ export function WebModelActorSetup({
   isDark,
   isVisible = true,
   onOpenSharedSettings,
+  onBusyChange,
+  saving = false,
 }: {
   groupId: string;
   actorId: string;
   isDark: boolean;
   isVisible?: boolean;
   onOpenSharedSettings?: () => void;
+  onBusyChange?: (busy: boolean) => void;
+  saving?: boolean;
 }) {
   const { t } = useTranslation("settings");
   const label = (key: string) => t(`webModelActor.${key}`);
   const [result, setResult] = useState<api.WebModelBrowserSurfaceResult | null>(null);
   const [url, setUrl] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [acting, setBusy] = useState(false);
+  const busy = acting || saving;
   const [error, setError] = useState("");
   const [nonce, setNonce] = useState(0);
   const [viewing, setViewing] = useState(false);
@@ -88,18 +93,26 @@ export function WebModelActorSetup({
     }
   }, [attemptId, pairing?.pairing_id, state]);
   async function action(
-    kind: "stop" | "open" | "navigate" | "new" | "connect" | "cancel" | "remove" | "resume",
+    kind: "start" | "open" | "navigate" | "new" | "connect" | "cancel" | "remove" | "resume",
     value?: string,
   ) {
-    if (busy) return;
+    if (busy || !result) return;
+    const needsPause = enabled && ["navigate", "new", "connect", "remove"].includes(kind);
+    if (needsPause && kind !== "remove" && !window.confirm(label("pauseChangeConfirm"))) return;
     const identity = selection.current;
     mutation.current += 1;
     setBusy(true);
+    onBusyChange?.(true);
     setError("");
     try {
+      if (needsPause) {
+        const stopped = await api.stopActor(groupId, actorId);
+        if (!stopped.ok) throw new Error(stopped.error.message);
+        if (selection.current !== identity) return;
+      }
       const r =
-        kind === "stop"
-          ? await api.stopActor(groupId, actorId)
+        kind === "start"
+          ? await api.startActor(groupId, actorId)
           : kind === "open"
             ? await api.openWebModelBrowserSurfaceSession({ groupId, actorId })
             : kind === "navigate" || kind === "new"
@@ -135,6 +148,7 @@ export function WebModelActorSetup({
       if (selection.current === identity) {
         mutation.current += 1;
         setBusy(false);
+        onBusyChange?.(false);
       }
     }
   }
@@ -179,7 +193,7 @@ export function WebModelActorSetup({
         <button
           type="button"
           className={secondaryButtonClass()}
-          disabled={busy || connecting}
+          disabled={busy || connecting || !result}
           onClick={() => {
             if (viewing) setViewing(false);
             else if (result?.browser_session.active) setViewing(true);
@@ -207,54 +221,37 @@ export function WebModelActorSetup({
           <p className="text-sm text-[var(--color-text-secondary)]">
             {label(bound ? "changeHint" : restoring ? "restoreHint" : "pairHint")}
           </p>
-          {enabled && !connecting && (bound || failed || restoring) && (
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm mr-auto">{label("stopHint")}</p>
+          <button
+            type="button"
+            className={secondaryButtonClass()}
+            disabled={busy || connecting || !result}
+            onClick={() => void action("new")}
+          >
+            {label("new")}
+          </button>
+          <div>
+            <label htmlFor={`web-model-url-${actorId}`} className="block text-sm mb-2">
+              {label("url")}
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <input
+                id={`web-model-url-${actorId}`}
+                className={`${inputClass(isDark)} min-w-0 flex-1`}
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://chatgpt.com/c/…"
+                disabled={busy || connecting || !result}
+              />
               <button
                 type="button"
                 className={secondaryButtonClass()}
-                disabled={busy}
-                onClick={() => void action("stop")}
+                disabled={busy || connecting || !result || !url.trim()}
+                onClick={() => void action("navigate")}
               >
-                {label("stop")}
+                {label("openUrl")}
               </button>
             </div>
-          )}
-          {!enabled && (
-            <>
-              <button
-                type="button"
-                className={secondaryButtonClass()}
-                disabled={busy || connecting}
-                onClick={() => void action("new")}
-              >
-                {label("new")}
-              </button>
-              <div>
-                <label htmlFor={`web-model-url-${actorId}`} className="block text-sm mb-2">
-                  {label("url")}
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  <input
-                    id={`web-model-url-${actorId}`}
-                    className={`${inputClass(isDark)} min-w-0 flex-1`}
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    placeholder="https://chatgpt.com/c/…"
-                    disabled={busy || connecting}
-                  />
-                  <button
-                    type="button"
-                    className={secondaryButtonClass()}
-                    disabled={busy || connecting || !url.trim()}
-                    onClick={() => void action("navigate")}
-                  >
-                    {label("openUrl")}
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
+          </div>
         </div>
       )}
       {isVisible && showBrowser && result?.browser_session.active && (
@@ -271,7 +268,17 @@ export function WebModelActorSetup({
         />
       )}
       <div className="flex flex-wrap gap-2">
-        {!connecting && (((changing || restoring) && !enabled) || (failed && !bound)) && (
+        {state === "bound" && !enabled && !changing && (
+          <button
+            type="button"
+            className={primaryButtonClass()}
+            disabled={busy}
+            onClick={() => void action("start")}
+          >
+            {label("start")}
+          </button>
+        )}
+        {!connecting && (changing || restoring || (failed && !bound)) && (
           <button
             type="button"
             className={primaryButtonClass()}
@@ -306,13 +313,13 @@ export function WebModelActorSetup({
           </button>
         )}
       </div>
-      {changing && !enabled && !connecting && (
+      {changing && !connecting && (
         <details className="text-sm">
           <summary className="cursor-pointer text-[var(--color-text-secondary)]">
             {label("maintenance")}
           </summary>
           <div className="mt-3 space-y-2">
-            <p>{label("removeHint")}</p>
+            <p>{label(enabled ? "pauseRemoveConfirm" : "removeHint")}</p>
             <button
               type="button"
               className={secondaryButtonClass()}
