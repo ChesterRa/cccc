@@ -2287,3 +2287,65 @@ while True:
         std::panic::resume_unwind(error);
     }
 }
+
+#[test]
+fn reply_strips_forwarded_inbound_markers_so_the_event_relays_to_im() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"reply-marker-scrub","by":"user"}),
+    );
+    let gid = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":gid,"actor_id":"peer1","runtime":"custom","submit":"newline",
+            "command":["sh","-c","sleep 30"],"by":"user"
+        }),
+    );
+    // An inbound IM message carries transport/source markers in its data.
+    let source = call(
+        &home,
+        "send",
+        json!({
+            "group_id":gid,"by":"user","to":["peer1"],"text":"inbound",
+            "message_mode":"send",
+            "transport":"im","im_platform":"telegram","im_chat_id":"42",
+            "im_thread_id":"","source_platform":"telegram",
+            "source_user_id":"u1","source_message_id":"42:9"
+        }),
+    );
+    let source_id = source.result["event"]["id"].clone();
+
+    // Helpers that forward the source event's data into the reply args must
+    // not poison the outbound event: it is new traffic, not an IM echo.
+    let reply = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":gid,"by":"peer1","reply_to":source_id,"text":"back",
+            "transport":"im","im_platform":"telegram","im_chat_id":"42",
+            "source_platform":"telegram","source_user_id":"u1",
+            "source_message_id":"42:9"
+        }),
+    );
+    let data = &reply.result["event"]["data"];
+    for key in [
+        "transport",
+        "im_platform",
+        "im_chat_id",
+        "im_thread_id",
+        "source_platform",
+        "source_user_id",
+        "source_message_id",
+    ] {
+        assert!(data.get(key).is_none(), "key {key} must be scrubbed");
+    }
+    assert_eq!(data["reply_to"], source_id);
+}
