@@ -120,6 +120,18 @@ fn cached_catalog(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             })
             .unwrap_or_default();
         let external = external_groups(home, &source_group, links.ok().flatten().as_ref())?;
+        // Local groups never need a Connect entry: `--dst-group` alone routes
+        // them through the daemon's local cross-group relay.
+        let local_groups = GroupStore::new(home.clone())
+            .and_then(|store| store.list())
+            .map(|groups| {
+                groups
+                    .into_iter()
+                    .filter(|group| group.group_id != source_group)
+                    .map(|group| json!({"group_id":group.group_id,"title":group.title,"transport":"local"}))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let status = if directory.is_some() || !external.is_empty() {
             "ready"
         } else if snapshot.is_some() || account_error.is_some() {
@@ -128,7 +140,7 @@ fn cached_catalog(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "not_linked"
         };
         return object(
-            json!({"self_instance_id":own,"instances":instances,"external_groups":external,"status":status,"account_error":account_error,"checked_at":snapshot.as_ref().map(|s|&s.checked_at),"expires_at":directory.map(|d|&d.expires_at)}),
+            json!({"self_instance_id":own,"instances":instances,"external_groups":external,"local_groups":local_groups,"local_hint":"local groups accept --dst-group alone; no Connect entry required","status":status,"account_error":account_error,"checked_at":snapshot.as_ref().map(|s|&s.checked_at),"expires_at":directory.map(|d|&d.expires_at)}),
         );
     };
     let target = request.args.get("target_group_id").and_then(Value::as_str);

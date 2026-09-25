@@ -31,7 +31,12 @@ pub async fn send(client: &DaemonClient, home: &HomeLayout, args: SendArgs) -> R
     if let Some(insight) = args.insight {
         request["insight"] = json!(insight);
     }
-    let remote = match (args.dst_instance_id, args.dst_group_id) {
+    enum Route {
+        Local,
+        CrossGroup,
+        Remote,
+    }
+    let route = match (args.dst_instance_id, args.dst_group_id) {
         (Some(instance), Some(target)) => {
             anyhow::ensure!(
                 !instance.trim().is_empty() && !target.trim().is_empty(),
@@ -42,28 +47,30 @@ pub async fn send(client: &DaemonClient, home: &HomeLayout, args: SendArgs) -> R
             if args.recipients.is_empty() {
                 request["to"] = json!(["@foreman"]);
             }
-            true
+            Route::Remote
         }
-        (None, None) => false,
-        _ => anyhow::bail!("--dst-instance and --dst-group must be supplied together"),
+        (None, Some(target)) => {
+            anyhow::ensure!(
+                !target.trim().is_empty() && target.trim() != group_id,
+                "local destination Group ID must be nonempty and differ from the source Group"
+            );
+            request["dst_group_id"] = json!(target.trim());
+            Route::CrossGroup
+        }
+        (None, None) => Route::Local,
+        (Some(_), None) => anyhow::bail!("--dst-instance requires --dst-group"),
     };
     if let Some(key) = args.idempotency_key {
         request["client_id"] = json!(key);
-    } else if remote {
+    } else if matches!(route, Route::Remote) {
         request["client_id"] = json!(uuid::Uuid::new_v4().to_string());
     }
-    print(
-        call(
-            client,
-            if remote {
-                "connect_send"
-            } else {
-                "message_send"
-            },
-            request,
-        )
-        .await?,
-    )
+    let op = match route {
+        Route::Local => "message_send",
+        Route::CrossGroup => "send_cross_group",
+        Route::Remote => "connect_send",
+    };
+    print(call(client, op, request).await?)
 }
 
 pub async fn connect(client: &DaemonClient, home: &HomeLayout, args: ConnectArgs) -> Result<()> {

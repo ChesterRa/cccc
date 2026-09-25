@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 import { readFrameProof } from "../features/connect/protocol";
+import { apiUrl } from "../services/api/base";
 import { useUIStore } from "../stores/useUIStore";
 
 // A navigation download leaves the embedded cookie partition. Fetching the
@@ -31,7 +32,7 @@ export function AuthenticatedDownloadLink({
         onClick?.(event);
         if (event.defaultPrevented || !href || !readFrameProof(window.location)) return;
         const url = new URL(href, window.location.href);
-        if (url.origin !== window.location.origin || !url.pathname.startsWith("/api/v1/groups/"))
+        if (url.origin !== window.location.origin || !url.pathname.startsWith(apiUrl("/api/v1/groups/")))
           return;
         event.preventDefault();
         if (request.current) return;

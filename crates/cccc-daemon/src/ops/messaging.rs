@@ -510,7 +510,83 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             json!(default_reply_recipients(&group, &by, &target)),
         );
     }
+    // A reply aimed at a `src_group::actor` token (the default recipients of a
+    // locally relayed cross-group message) routes back through
+    // send_cross_group instead of failing recipient resolution.
+    let routed = routed_reply_recipients(&forwarded.args);
+    if !routed.is_empty() {
+        if routed.len() != recipient_tokens(&forwarded.args).len() {
+            return Err(OpError::new(
+                "invalid_recipient",
+                "replies cannot mix local and cross-group recipients",
+            ));
+        }
+        return reply_cross_group(home, &forwarded, &group, &target, &routed);
+    }
     send(home, &forwarded, "chat.message")
+}
+
+fn routed_reply_recipients(args: &Map<String, Value>) -> Vec<(String, String)> {
+    recipient_tokens(args)
+        .iter()
+        .filter_map(|token| {
+            token
+                .split_once("::")
+                .map(|(group, actor)| (group.to_owned(), actor.to_owned()))
+        })
+        .filter(|(group, actor)| !group.is_empty() && !actor.is_empty())
+        .collect()
+}
+
+fn reply_cross_group(
+    home: &HomeLayout,
+    forwarded: &DaemonRequest,
+    group: &GroupDoc,
+    target: &Event,
+    routed: &[(String, String)],
+) -> OpResult {
+    let mut destinations = routed
+        .iter()
+        .map(|(group_id, _)| group_id.clone())
+        .collect::<Vec<_>>();
+    destinations.sort();
+    destinations.dedup();
+    if destinations.len() != 1 {
+        return Err(OpError::new(
+            "invalid_recipient",
+            "cross-group replies target one origin group",
+        ));
+    }
+    let recipients = routed
+        .iter()
+        .map(|(_, actor)| actor.clone())
+        .collect::<Vec<_>>();
+    let mut request = forwarded.clone();
+    request.args = forwarded
+        .args
+        .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "to" | "reply_to"))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    request
+        .args
+        .insert("group_id".into(), json!(group.group_id));
+    request
+        .args
+        .insert("dst_group_id".into(), json!(destinations[0]));
+    request.args.insert("to".into(), json!(recipients));
+    if let Some(source_event_id) = target
+        .data
+        .get("src_event_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        // The far-side copy threads under the origin group's source event.
+        request
+            .args
+            .insert("reply_to".into(), json!(source_event_id));
+    }
+    send_cross_group(home, &request)
 }
 
 fn reject_retired_reply(home: &HomeLayout, target: &Event) -> Result<(), OpError> {
