@@ -133,6 +133,7 @@ export class EventStreamTransport {
         this.schedule();
       }, source.retryDelay),
     );
+    source.emit("retry", { delay_ms: source.retryDelay });
     source.retryDelay = Math.min(source.retryDelay * 2, 30000);
   }
   private fail(socket: WebSocket) {
@@ -148,10 +149,14 @@ export class EventStreamTransport {
       source.emit("error");
     }
     if (!this.sources.size || this.retry) return;
+    const delay = this.delay;
     this.retry = setTimeout(() => {
       this.retry = null;
       this.sync();
-    }, this.delay);
+    }, delay);
+    for (const source of this.sources.values()) {
+      if (this.sources.get(source.channel) === source) source.emit("retry", { delay_ms: delay });
+    }
     this.delay = Math.min(this.delay * 2, 30000);
   }
 }

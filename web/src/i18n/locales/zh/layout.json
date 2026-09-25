@@ -249,5 +249,7 @@
     "failed": "无法更新 {{group}}，请检查连接后重试。",
     "noActors": "添加 Agent 后即可启动此 Group。"
   },
-  "connectionInterruptedHint": "页面连接已中断，正在自动重连；当前显示的信息可能尚未更新。"
+  "connectionInterruptedHint": "页面连接已中断，正在自动重连；当前显示的信息可能尚未更新。",
+  "connectionUnreachable": "连接不可达",
+  "retryingIn": "{{seconds}} 秒后重试"
 }
