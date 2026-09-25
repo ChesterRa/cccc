@@ -6,6 +6,7 @@ import { GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import { ClipboardIcon, EditIcon, SearchIcon, MoreIcon, MenuIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
+import { useSseErrorDetailText } from "../../hooks/useSseErrorDetailText";
 import { groupRunMenuActions } from "./groupRunMenuActions";
 import { useGroupMenu } from "./useGroupMenu";
 import type { GroupControl } from "../../utils/groupControls";
@@ -87,10 +88,11 @@ export function AppHeader({
         ),
       })
     : "";
+  const sseErrorDetail = useSseErrorDetailText();
   const statusControlLabel =
     sseStatus === "connected"
       ? runLabel
-      : `${runLabel} · ${t(sseStatus === "connecting" ? "reconnecting" : "disconnected")}. ${t("connectionInterruptedHint")}`;
+      : `${runLabel} · ${t(sseStatus === "connecting" ? "reconnecting" : "disconnected")}${sseErrorDetail ? ` · ${sseErrorDetail}` : ""}. ${t("connectionInterruptedHint")}`;
   const runMenu = useGroupMenu(
     runLabel,
     selectedStatus && onControlGroup && !webReadOnly

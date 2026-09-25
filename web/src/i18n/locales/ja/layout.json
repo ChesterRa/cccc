@@ -249,5 +249,7 @@
     "failed": "{{group}} を更新できませんでした。接続を確認して再試行してください。",
     "noActors": "Agent を追加すると、このグループを起動できます。"
   },
-  "connectionInterruptedHint": "ページの接続が切れました。自動的に再接続します。表示情報は最新でない可能性があります。"
+  "connectionInterruptedHint": "ページの接続が切れました。自動的に再接続します。表示情報は最新でない可能性があります。",
+  "connectionUnreachable": "接続不可",
+  "retryingIn": "{{seconds}}秒後に再試行"
 }
