@@ -9,6 +9,14 @@ use crate::fs::{read_yaml, with_exclusive_lock, write_yaml, write_yaml_committed
 use crate::home::HomeLayout;
 use crate::registry::{GroupMeta, Registry};
 
+fn yaml_mtime(path: &std::path::Path) -> io::Result<Option<std::time::SystemTime>> {
+    match fs::metadata(path) {
+        Ok(meta) => meta.modified().map(Some),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 pub const AUTOMATION_TIMING_KEYS: &[&str] = &[
     "actor_idle_timeout_seconds",
     "keepalive_delay_seconds",
@@ -187,7 +195,8 @@ impl GroupStore {
         topic: Option<&str>,
     ) -> io::Result<GroupDoc> {
         let group = with_exclusive_lock(&self.group_lock_path(group_id)?, || {
-            let mut group = self.load(group_id)?;
+            let path = self.group_yaml_path(group_id)?;
+            let (mut group, baseline) = self.load_stamped(group_id, &path)?;
             if let Some(value) = title {
                 group.title = normalized_title(value);
             }
@@ -195,7 +204,7 @@ impl GroupStore {
                 group.topic = value.trim().to_owned();
             }
             group.updated_at = utc_now();
-            self.save_unlocked(&group)?;
+            self.save_if_untouched(&group, &path, baseline)?;
             Ok(group)
         })?;
         Registry::mutate(&self.home, |registry| {
@@ -223,9 +232,10 @@ impl GroupStore {
         change: impl FnOnce(&mut GroupDoc) -> io::Result<T>,
     ) -> io::Result<T> {
         with_exclusive_lock(&self.group_lock_path(group_id)?, || {
-            let mut group = self.load(group_id)?;
+            let path = self.group_yaml_path(group_id)?;
+            let (mut group, baseline) = self.load_stamped(group_id, &path)?;
             let result = change(&mut group)?;
-            self.save_unlocked(&group)?;
+            self.save_if_untouched(&group, &path, baseline)?;
             Ok(result)
         })
     }
@@ -237,10 +247,11 @@ impl GroupStore {
         side_effect: impl FnOnce(&T) -> io::Result<()>,
     ) -> io::Result<T> {
         with_exclusive_lock(&self.group_lock_path(group_id)?, || {
-            let before = self.load(group_id)?;
+            let path = self.group_yaml_path(group_id)?;
+            let (before, baseline) = self.load_stamped(group_id, &path)?;
             let mut group = before.clone();
             let result = change(&mut group)?;
-            let written = self.save_unlocked_doc(&group)?;
+            let written = self.save_if_untouched(&group, &path, baseline)?;
             if let Err(error) = side_effect(&result) {
                 return match self.load(group_id) {
                     Ok(current) if current == written => match self.restore_unlocked(&before) {
@@ -259,6 +270,41 @@ impl GroupStore {
             }
             Ok(result)
         })
+    }
+
+    fn group_yaml_path(&self, group_id: &str) -> io::Result<std::path::PathBuf> {
+        Ok(self.group_dir(group_id)?.join("group.yaml"))
+    }
+
+    /// Load the document and remember the file's mtime at read time, so a
+    /// later write can detect that the file was edited externally in between.
+    fn load_stamped(
+        &self,
+        group_id: &str,
+        path: &std::path::Path,
+    ) -> io::Result<(GroupDoc, Option<std::time::SystemTime>)> {
+        let group = self.load(group_id)?;
+        let baseline = yaml_mtime(path)?;
+        Ok((group, baseline))
+    }
+
+    /// Save only when group.yaml still has the mtime captured at load time.
+    /// An external edit lands between load and write inside the lock; refusing
+    /// to overwrite it is how hand edits stop being silently clobbered.
+    fn save_if_untouched(
+        &self,
+        group: &GroupDoc,
+        path: &std::path::Path,
+        baseline: Option<std::time::SystemTime>,
+    ) -> io::Result<GroupDoc> {
+        if yaml_mtime(path)? != baseline {
+            return Err(io::Error::other(format!(
+                "group.yaml for {} changed on disk since it was read; refusing to overwrite \
+                 an external edit (run `cccc group reload {}` to re-read the file)",
+                group.group_id, group.group_id
+            )));
+        }
+        self.save_unlocked_doc(group)
     }
 
     pub fn state_dir(&self, group_id: &str) -> io::Result<std::path::PathBuf> {

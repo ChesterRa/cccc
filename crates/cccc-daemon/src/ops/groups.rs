@@ -23,6 +23,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "group_create" => Operation::new(GlobalWrite, create),
         "group_list" | "groups" => Operation::new(Read, |home, _request| list(home)),
         "group_show" => Operation::new(Read, show),
+        "group_reload" => Operation::new(Read, reload),
         "group_preamble_get" => Operation::new(Read, preamble_get),
         "group_preamble_set" => Operation::new(Write, preamble_set),
         "group_preamble_reset" => Operation::new(Write, preamble_reset),
@@ -136,6 +137,12 @@ fn list(home: &HomeLayout) -> OpResult {
 
 fn show(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"group": group_runtime::group(load(home, request)?)}))
+}
+
+fn reload(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group = load(home, request)?;
+    tracing::info!(group_id = %group.group_id, "group.yaml reloaded from disk");
+    object(json!({"group": group_runtime::group(group), "reloaded": true}))
 }
 
 fn preamble_get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
