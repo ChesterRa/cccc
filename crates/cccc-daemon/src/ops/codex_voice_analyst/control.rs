@@ -122,6 +122,52 @@ impl AnalystSession {
         self.protocol.kill_request().await
     }
 
+    /// Release the session after its observer side ended. Agent View workers
+    /// are supervisor-owned jobs, not children of this client: observer
+    /// teardown must not `claude stop` them, and a live job is re-adopted by
+    /// the next launch through `find_live_job`. Child-owned providers keep
+    /// their normal close.
+    pub(crate) async fn release_provider_for_observer_exit(
+        &self,
+        expected_generation: &str,
+    ) -> io::Result<()> {
+        self.require_generation(expected_generation)?;
+        match &self.protocol {
+            ManagedProtocol::Claude(_) => {}
+            ManagedProtocol::Codex(protocol) => {
+                protocol.close().await;
+            }
+            ManagedProtocol::Acp(protocol) => {
+                protocol.close().await;
+            }
+        }
+        self.cleanup_owned_resources()
+    }
+
+    /// Confirmed provider stop for a session released after observer
+    /// teardown — its client channel is gone, so the close handshake cannot
+    /// run. Provider protocols without a supervisor-owned job are already
+    /// torn down by release.
+    pub(crate) async fn stop_after_release(&self) -> io::Result<()> {
+        match &self.protocol {
+            ManagedProtocol::Claude(protocol) => protocol.stop_confirmed().await,
+            ManagedProtocol::Codex(_) | ManagedProtocol::Acp(_) => Ok(()),
+        }
+    }
+
+    /// True only when the provider job is positively confirmed absent from
+    /// its supervisor. An unreachable supervisor is not evidence of absence.
+    pub(crate) async fn managed_provider_absent(&self) -> bool {
+        match &self.protocol {
+            ManagedProtocol::Claude(protocol) => protocol.job_absent().await,
+            ManagedProtocol::Codex(_) | ManagedProtocol::Acp(_) => false,
+        }
+    }
+
+    pub(crate) fn runtime(&self) -> ActorRuntime {
+        self.runtime
+    }
+
     pub(crate) async fn stop(&self, expected_generation: &str) -> io::Result<()> {
         self.require_generation(expected_generation)?;
         lifecycle_timing::run("runtime.protocol_close", self.protocol.close()).await?;

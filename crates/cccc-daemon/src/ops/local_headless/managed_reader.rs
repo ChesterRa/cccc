@@ -61,12 +61,27 @@ pub(super) fn spawn(
 }
 
 fn stop_after_provider_exit(session: &Session) {
-    record_provider_exit_if_first(
-        session.stop_after_process_exit(),
-        &session.home,
-        &session.group_id,
-        &session.actor_id,
-    );
+    // Whether the provider job is positively confirmed gone decides what the
+    // recorded binding means: a confirmed exit invalidates resume eligibility,
+    // a live (re-adoptable) job keeps it.
+    let provider_absent = managed_runtime().block_on(session.managed.managed_provider_absent());
+    let first = session.stop_after_process_exit();
+    if first
+        && provider_absent
+        && let Err(error) = super::super::runtime_session::invalidate_claude_managed_session(
+            &session.home,
+            &session.group_id,
+            &session.actor_id,
+            session.managed.runtime(),
+        )
+    {
+        tracing::warn!(
+            %error,
+            group_id = %session.group_id,
+            actor_id = %session.actor_id,
+            "failed to invalidate managed-session resume binding after provider exit"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -96,6 +111,7 @@ pub(crate) async fn verify_claude_reader_release(
         actor_id: "claude-reader".into(),
         managed: Arc::clone(&managed),
         has_terminal: AtomicBool::new(false),
+        viewer: Mutex::new(None),
         status: Mutex::new(super::HeadlessStatus {
             status: "idle".into(),
             task_id: None,
@@ -103,6 +119,7 @@ pub(crate) async fn verify_claude_reader_release(
             pid: None,
         }),
         stopped: AtomicBool::new(false),
+        released: AtomicBool::new(false),
         stop_lock: Mutex::new(()),
         startup_prompt: Mutex::new(None),
         active_turn: Mutex::new(None),
@@ -123,30 +140,22 @@ pub(crate) async fn verify_claude_reader_release(
         })
         .await
         .expect("transcript observer exits");
-        // The fake provider job is still alive. A rejected control request
-        // must not retire it locally or prevent a later successful stop.
+        // The fake provider job is still alive. Observer teardown must
+        // release the session without ever consulting the control socket —
+        // even a rejected control request cannot prevent the release.
         reject_control.store(true, Ordering::Release);
         let prematurely_stopped = tokio::task::spawn_blocking({
             let session = Arc::clone(&session);
             move || session.stop_after_process_exit()
         })
         .await
-        .expect("failed stop task");
+        .expect("failed release task");
         reject_control.store(false, Ordering::Release);
-        assert!(!prematurely_stopped);
-        assert!(!session.stopped.load(Ordering::Acquire));
-        assert_eq!(session.status.lock().expect("state").status, "error");
+        assert!(prematurely_stopped);
+        assert!(session.stopped.load(Ordering::Acquire));
+        assert_eq!(session.status.lock().expect("state").status, "stopped");
     }
     spawn(Arc::clone(&session), receiver).expect("spawn managed reader");
-    if corrupt_transcript.is_some() {
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !session.stopped.load(Ordering::Acquire) {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("observer failure must actually stop the job");
-    }
     let stopped = tokio::task::spawn_blocking({
         let session = Arc::clone(&session);
         move || session.stop()
@@ -155,6 +164,12 @@ pub(crate) async fn verify_claude_reader_release(
     .expect("stop task")
     .expect("stop session");
     assert_eq!(stopped, corrupt_transcript.is_none());
+    // An explicit stop still confirms the provider kill — release semantics
+    // only apply to observer teardown.
+    assert!(
+        !managed.process_running() || corrupt_transcript.is_some(),
+        "explicit session stop must confirm the provider exit"
+    );
     assert!(session.stopped.load(Ordering::Acquire));
     drop(session);
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -181,6 +196,7 @@ pub(crate) async fn verify_claude_reader_release(
     }
 }
 
+#[cfg(test)]
 fn record_provider_exit_if_first(
     first_stop: bool,
     home: &cccc_core::HomeLayout,

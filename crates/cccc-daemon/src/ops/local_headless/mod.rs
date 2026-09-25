@@ -28,7 +28,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, OnceLock};
 
 pub use supervisor::{
-    kill_all_requests, running, start, status, stop, stop_all, stop_group, submit_batch, supports,
+    detach_after_viewer_exit, kill_all_requests, running, start, status, stop, stop_all,
+    stop_group, submit_batch, supports,
 };
 
 pub(super) fn uses_managed_session(actor: &cccc_contracts::Actor) -> bool {
@@ -52,14 +53,27 @@ struct ActiveTurn {
     turn_id: String,
 }
 
+/// Everything needed to re-open the viewer attachment (`claude attach` or
+/// the remote TUI) after a detached attach exit.
+#[derive(Debug, Clone)]
+struct ViewerLaunch {
+    command: Vec<String>,
+    env: std::collections::BTreeMap<String, String>,
+    cwd: std::path::PathBuf,
+}
+
 struct Session {
     home: HomeLayout,
     group_id: String,
     actor_id: String,
     managed: std::sync::Arc<super::codex_voice_analyst::AnalystSession>,
     has_terminal: AtomicBool,
+    viewer: Mutex<Option<ViewerLaunch>>,
     status: Mutex<HeadlessStatus>,
     stopped: AtomicBool,
+    /// Set when the session was released after observer teardown — the
+    /// provider job was left running rather than confirmed stopped.
+    released: AtomicBool,
     stop_lock: Mutex<()>,
     startup_prompt: Mutex<Option<String>>,
     active_turn: Mutex<Option<ActiveTurn>>,
