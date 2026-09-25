@@ -145,7 +145,10 @@ fn validate_trigger(value: &mut Value) -> Result<String, OpError> {
         }
         "cron" => {
             reject_unknown(trigger, &["kind", "cron", "timezone"], "cron trigger")?;
-            required_text(trigger, "cron")?;
+            let expression = required_text(trigger, "cron")?;
+            if let Some(error) = cccc_core::automation::cron_expression_error(expression) {
+                return Err(invalid(format!("invalid cron expression: {error}")));
+            }
             match trigger.get("timezone") {
                 Some(value) if value.as_str().is_none() => {
                     return Err(invalid("cron timezone must be a string"));
