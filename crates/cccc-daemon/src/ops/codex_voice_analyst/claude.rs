@@ -2091,8 +2091,24 @@ mod tests {
         let worker_version = versions.1;
         let server = tokio::spawn(async move {
             let mut stopped = false;
+            // After a kill the real supervisor keeps answering `list` with an
+            // empty job set — and it must: the session's liveness poll and
+            // `kill_and_confirm` share this socket, so exiting on the first
+            // post-kill `list` can strand whichever caller did not win the
+            // race against a dead socket until STOP_TIMEOUT. Serve stragglers
+            // for a bounded window, then exit so teardown can await this task.
+            let mut post_kill_deadline = None;
             loop {
-                let (stream, _) = listener.accept().await.expect("accept");
+                let accepted = match post_kill_deadline {
+                    Some(deadline) => {
+                        match tokio::time::timeout_at(deadline, listener.accept()).await {
+                            Ok(accepted) => accepted.expect("accept"),
+                            Err(_) => break,
+                        }
+                    }
+                    None => listener.accept().await.expect("accept"),
+                };
+                let (stream, _) = accepted;
                 let mut stream = BufReader::new(stream);
                 let mut line = String::new();
                 stream.read_line(&mut line).await.expect("request");
@@ -2186,6 +2202,9 @@ mod tests {
                     }
                     "kill" => {
                         stopped = true;
+                        post_kill_deadline = Some(
+                            tokio::time::Instant::now() + Duration::from_millis(1500),
+                        );
                         json!({"ok":true,"op":"kill"})
                     }
                     other => panic!("unexpected control operation: {other}"),
@@ -2196,9 +2215,6 @@ mod tests {
                     .await
                     .expect("response");
                 stream.flush().await.expect("response flush");
-                if stopped && operation == "list" {
-                    break;
-                }
             }
         });
 
@@ -2314,7 +2330,7 @@ mod tests {
             assert_eq!(ended.message["params"]["expected"], !fail_transcript);
             None
         };
-        tokio::time::timeout(Duration::from_secs(2), server)
+        tokio::time::timeout(Duration::from_secs(5), server)
             .await
             .expect("server timeout")
             .expect("server");
