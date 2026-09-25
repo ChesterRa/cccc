@@ -105,6 +105,14 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: GroupArgs) -> R
             )
             .await?
         }
+        GroupAction::Reload { group_id, by } => {
+            call(
+                client,
+                "group_reload",
+                json!({"group_id":group(home,group_id)?,"by":by}),
+            )
+            .await?
+        }
     };
     print(response)
 }
