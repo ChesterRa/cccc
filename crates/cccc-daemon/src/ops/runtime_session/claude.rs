@@ -53,6 +53,37 @@ pub fn prepare_managed(
     Ok(Some(session_id))
 }
 
+/// Mark a managed-session binding as captured from a provider that is
+/// confirmed gone, so `prepare_managed` never resumes a killed spawn into
+/// another launch. Called only when the supervisor positively reports the
+/// job absent — an unreachable supervisor must not invalidate the binding.
+pub fn invalidate_managed(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+) -> std::io::Result<()> {
+    let Ok(mut document) = super::read(home, group_id, actor_id) else {
+        return Ok(());
+    };
+    if super::string(&document, "kind") != "runtime_session"
+        || super::string(&document, "transport") != MANAGED_TRANSPORT
+        || super::string(&document, "runtime") != "claude"
+    {
+        return Ok(());
+    }
+    let failure_count = document
+        .get("failure_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        + 1;
+    let now = utc_now();
+    document.insert("status".into(), json!("exited"));
+    document.insert("resume_eligible".into(), json!(false));
+    document.insert("failure_count".into(), json!(failure_count));
+    document.insert("updated_at".into(), json!(now));
+    super::write(home, group_id, actor_id, &document)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn record_managed(
     home: &HomeLayout,
