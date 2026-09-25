@@ -61,15 +61,15 @@ CCCC はコマンド一つで導入でき、データベースやメッセージ
 | **ロールベース協調** | Foreman + Peer ロールモデル、権限境界と宛先ルーティング（`@all`、`@peers`、`@foreman`） |
 | **ローカルファーストなランタイム状態** | ランタイムデータはリポジトリではなく `CCCC_HOME` に保持しつつ、Web Access と IM ブリッジで遠隔運用も可能 |
 
-## 0.4.40 の主な変更
+## 0.4.41 の主な変更
 
-- **三つの接続方法**：同一アカウントのインスタンス、会員間の指定 Group、アカウント不要の Direct Group 接続。入力欄の `#Group` 参照は Agent に正確な宛先を伝えます。
-- **Files と Git**：コードや文書の閲覧、下書き・競合保護付きのデスクトップ編集、作業ツリーとステージ済み変更の確認。
-- **安定した閲覧と移動**：コンパクトな Presentation、定期確認で点滅しない PDF、ページや Group の切り替えで保持されるターミナル、見やすいダークテーマと設定画面。
-- **Mattermost のネイティブ対応**：専用 Bot によるメッセージ、ファイル、スレッド、逐次返信。
-- **Runtime と設定の信頼性**：Profile 変換と秘密情報の保存再試行、Grok のネイティブ MCP 検証、ChatGPT の対話的ログイン、Voice の障害診断を改善。
+- **複数の ChatGPT Actor**：専用ブラウザーのログインと一つのコネクターを共有し、各 Actor は独立したウィンドウと検証済みの会話を保持します。
+- **Grok Bot Web Model**：既存の Bot URL を Actor に接続。Grok のログインを共有し、Actor ごとの認証情報で MCP 呼び出しを振り分けます。ペアリング用メッセージは不要です。
+- **ブラウザー配信と設定を改善**：下書きの保護、手動送信したメッセージの確認、読み込み中のウィンドウへのアクセスに対応。Grok URL は Actor 設定と一緒に保存でき、Profile 連携時も利用できます。
+- **音声文書ライブラリー**：永続フォルダー、ドラッグによる並べ替え、名前変更、アーカイブのプレビューと復元、分かりやすいライブ文字起こしとエラー表示。
+- **日常操作の信頼性**：Group ごとの宛先保持、MCP での画像/PDF/PPTX のネイティブ受け渡し、ローカルツールの期限と編集処理、Runtime 起動、Weixin 返信用認証情報の保護を改善。
 
-旧手動 Group Bridge は廃止され、既存の権限は自動変換されません。過去のメッセージは引き続き閲覧できます。更新時の動作と全変更は [0.4.40 リリースノート](docs/release/v0.4.40_release_notes.md)を参照してください。
+従来の Actor 専用 ChatGPT コネクターは共有コネクターに置き換え、各会話を再接続してください。履歴は保持されます。更新手順と検証範囲は [0.4.41 英語リリースノート](docs/release/v0.4.41_release_notes.md)をご覧ください。
 
 ## クイックスタート
 
@@ -243,7 +243,7 @@ graph TB
 
 ## サポートランタイム
 
-CCCC は 18 種の組み込み Runtime 連携と、その他の CLI エージェント向けの `custom` に対応します。同じ Group の Actor が異なる Runtime を使えます。操作方法と設定要件は Runtime ごとに異なります：
+CCCC は 19 種の組み込み Runtime 連携と、その他の CLI エージェント向けの `custom` に対応します。同じ Group の Actor が異なる Runtime を使えます。操作方法と設定要件は Runtime ごとに異なります：
 
 | ランタイム | 連携方式 | 入口 / サーフェス |
 |-----------|----------|-------------------|
@@ -258,6 +258,7 @@ CCCC は 18 種の組み込み Runtime 連携と、その他の CLI エージェ
 | Kilo Code CLI | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `kilo` |
 | Antigravity CLI | MCP 自動設定 | `agy` |
 | ChatGPT Web | Remote MCP + ブラウザ配信 | `chatgpt.com` の会話 |
+| Grok Bot Web Model | Remote MCP + ブラウザ配信、Actor ごとの認証情報でルーティング | 必須の `grok.com/bot/<UUID>` URL |
 | Grok Build | 管理 ACP セッション + 純正 TUI、自動 MCP 設定 | `grok` |
 | Hermes Agent | MCP 自動設定 | `hermes` |
 | Droid | MCP 自動設定 | `droid` |
@@ -281,7 +282,7 @@ cccc doctor                       # 環境とランタイムの可用性を検�
 
 Antigravity の設定時には、自動配信された端末入力を評価アンケートが消費しないよう、ユーザー設定でアンケートを無効にします。他の設定は保持されます。同じユーザーが単独で起動する AGY にも適用されます。
 
-Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Claude Code、Codex CLI、Grok Build、OpenCode、Kilo は、同じ provider session で純正の書き込み可能なターミナルと構造化プロトコルを併用します。メッセージはそのターミナルへ渡され、steer と queue は受信 Runtime が判断します。DeepSeek Harness は純正ターミナルなしの ACP、ChatGPT Web はブラウザ配信と Remote MCP を使用します。
+Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Claude Code、Codex CLI、Grok Build、OpenCode、Kilo は、同じ provider session で純正の書き込み可能なターミナルと構造化プロトコルを併用します。メッセージはそのターミナルへ渡され、steer と queue は受信 Runtime が判断します。DeepSeek Harness は純正ターミナルなしの ACP、ChatGPT Web と Grok Bot Web Model はブラウザ配信と Remote MCP を使用します。
 
 各サポート Runtime の setup コマンド、操作方式、トラブルシュートは [サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) を参照してください。
 
@@ -290,6 +291,10 @@ Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Clau
 CCCC は Group メッセージをペアリング済みの ChatGPT 会話へ届けます。複数の Web Model Actor が専用ブラウザのログインと一つの認証付き Remote MCP connector を共有し、各 Actor は独立した常設ウィンドウと確認済みの会話を持ちます。メッセージの受信・返信、リポジトリの閲覧・編集、scope 内の shell/git 実行ができます。共有ログインと connector は全体設定、各会話は Actor 設定で管理します。通常の Actor 起動時に会話を自動確認してから待機中のタスクを配信するため、事前のペアリング操作は不要です。
 
 セットアップには MCP connector 用の public HTTPS URL（Cloudflare Tunnel、ngrok、Tailscale Funnel、またはリバースプロキシ）が必要です。CCCC は安定したテキストのみの配信を既定とし、実験的な **GPT Pro** モードも提供します。このモードは、画像添付によって第三者 MCP が利用可能になる一部アカウント向けに、ごく小さな空白 PNG を各配信へ添付します。CCCC はモデルを切り替えず、ChatGPT の変更後もこの互換手段が動作し続けることを保証しません。詳細な設定とトラブルシュート: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime)。
+
+### Grok Bot Web Model
+
+**Grok Bot Web Model**（`grok_web_model`）は、同じ CCCC ワークスペースツールと配信キューを利用します。Grok Actor はログインと一つの MCP コネクターを共有し、それぞれ独立した Bot URL とウィンドウを持ちます。既存の `https://grok.com/bot/<UUID>` URL が必須で、CCCC は Bot を自動作成しません。全体の Web Model 設定で共有ログインとコネクターを設定し、Actor 設定で Bot URL を保存して起動します。CCCC が各タスクに Actor のルーティング用認証情報を付けるため、別途ペアリングメッセージを送る必要はありません。Grok Build CLI（`grok`）とは別のランタイムです。設定手順と現在の検証範囲は [Grok Bot ガイド](https://chesterra.github.io/cccc/guide/grok-web-model-runtime)を参照してください。
 
 ## CCCC Connect：インスタンスとチームをつなぐ
 

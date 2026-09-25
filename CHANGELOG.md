@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.41] — Unreleased
+
 ### Added
 
 - Claude Actors can present Claude's interactive workspace-trust prompt and retry managed startup after approval, including Windows homes resolved through `USERPROFILE`.
@@ -20,7 +22,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Local file reads deliver original PNG, JPEG and WebP bytes as native MCP images, including through code mode, with a 20 MiB image/result budget. Text previews honor their byte budget. The bridge performs no local media conversion; image understanding depends on the selected client/model.
 
 ### Fixed
+
 - Group copies exclude persisted Weixin reply credentials on both export and import.
+- Settings tabs load on demand and preserve drafts. Hidden Connect and Voice notification views pause display reads; browsing IM settings does not start Weixin, and a successful QR login is retained when bridge startup needs a retry.
 - Linked Grok Profiles retain per-Actor Bot URL editing. Saving a changed URL aligns the existing idle Bot window, and partial save failures keep the editor's saved baseline current so users can retry or restore their previous configuration.
 - **Composer recipients stay selected across messages and are remembered per Group.** Reply and temporary cross-group targets no longer replace the normal selection, and delayed send completion cannot change a newly selected Group or erase a newer draft.
 - Web Model settings allow local edits while Actors run. Grok Bot URLs save together with Actor settings; applying to a running Actor confirms a stop/save/restart, while failures retain the draft. A clean editor shows **Done**. ChatGPT conversation actions handle the pause in place and show **Start Actor** after successful verification.
@@ -61,6 +65,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Local command tool descriptions make direct execution explicit. `cccc_shell` honors workspace-relative `cwd`, child `env`, output limits and the documented default timeout; session commands share the same directory and environment handling.
 
 ### Changed
+
 - Direct-connection setup uses one Back action, a clearer address editor, and a compact invitation-sharing card.
 - Retire the checked-in browser fixture/Playwright harness and its CI/nightly jobs. Frontend unit/component checks, native Rust checks, and manual real-browser acceptance remain available.
 - Voice Secretary uses an audio-reactive workspace outline without re-rendering the composer on every audio frame. Desktop live transcription stays in the activity feed; narrow layouts show it inside the transcript workspace.
@@ -74,7 +79,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Web conversations, filters and the composer use the available workspace width. Long messages leave an opposite-side gutter that adapts to the message area, making sent and received messages easier to distinguish without fixed bubble-width caps. Short messages retain their natural sizing, and reading position is preserved when the message area resizes.
 - Voice diagnostics distinguish Realtime request/TLS failures and managed Codex WebSocket protocol failures, including an abrupt close without a closing handshake. Reports retain bounded categories and OS error codes without private error text; retry and session-lifecycle behavior is unchanged.
 
-## [0.4.40] — Unreleased
+## [0.4.40]
 
 ### Added
 - **Native Mattermost IM connector.** Connect a Group through a dedicated Bot using REST and WebSocket, with channel/thread authorization, attachments, streaming replies, and processing reactions. Configure it in the Group's IM Bridge settings; no public callback or extra service is required.
@@ -1134,5 +1139,3 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ### Notes
 - Release candidate baseline before the rc19/rc20 quality-convergence cycle.
 - Established append-only ledger, N-actor model, MCP tool surface, Web UI console, and IM bridge architecture.
-
-- ChatGPT Web Model Actors now connect their conversations automatically on normal startup, verify identity before delivering queued tasks, and retain explicit retry for failed or cancelled setup. Existing bindings survive restarts; replacing a conversation still requires stopping that Actor.

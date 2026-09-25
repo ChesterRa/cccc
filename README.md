@@ -62,15 +62,15 @@ CCCC installs with one command and needs no separately operated database, messag
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
 
-## 0.4.40 Highlights
+## 0.4.41 Highlights
 
-- **Three ways to connect:** same-account instances, selected Groups across members, and Direct Group connections without an account. Composer `#Group` references preserve the exact destination for Agents.
-- **Files and Git in the workbench:** browse code and documents, edit text on desktop with draft/conflict protection, and inspect working-tree and staged changes.
-- **Steadier reading and navigation:** compact Presentation slots, stable PDF previews, retained terminals across paging and Group switches, and clearer dark-mode surfaces and settings.
-- **Native Mattermost support:** messages, files, threads and progressive replies through a dedicated Bot.
-- **Runtime and configuration reliability:** Profile conversion and secret-save retries, Grok native MCP validation, interactive ChatGPT sign-in, and more useful Voice failure diagnostics.
+- **Multiple ChatGPT Actors:** one dedicated login and one shared connector, with a separate persistent window and verified conversation for each Actor.
+- **Grok Bot Web Model:** connect an existing Bot URL to an Actor, share Grok login, and route MCP calls with per-Actor credentials without a pairing message.
+- **Safer browser delivery and simpler settings:** protect drafts, recover manually sent messages, keep slow-loading windows accessible, and save Grok URLs with Actor settings, including linked Profiles.
+- **Voice document library:** persistent folders, drag-and-drop ordering, renaming, archive previews and restoration, plus clearer live transcription and failure feedback.
+- **Everyday reliability:** retained per-Group recipients, native MCP image/PDF/PPTX handoff, corrected local-tool deadlines and editing, managed startup fixes, and protected Weixin reply credentials.
 
-The old manual Group Bridge is retired; its grants are not converted automatically. Historical messages remain readable. See the [0.4.40 release notes](docs/release/v0.4.40_release_notes.md) for upgrade behavior and the full changes.
+Existing Actor-specific ChatGPT connectors need to be replaced with the shared connector and conversations reconnected; history is preserved. See the [0.4.41 release notes](docs/release/v0.4.41_release_notes.md) for upgrade steps and validation limits.
 
 ## Quick Start
 
@@ -248,7 +248,7 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC supports 18 built-in runtime integrations, plus `custom` for other command-line agents. Each actor in a Group can use a different runtime. Integration surfaces and setup requirements vary:
+CCCC supports 19 built-in runtime integrations, plus `custom` for other command-line agents. Each actor in a Group can use a different runtime. Integration surfaces and setup requirements vary:
 
 | Runtime | Integration | Entrypoint / Surface |
 |---------|-------------|----------------------|
@@ -263,6 +263,7 @@ CCCC supports 18 built-in runtime integrations, plus `custom` for other command-
 | Kilo Code CLI | Managed ACP session + native TUI; per-session MCP | `kilo` |
 | Antigravity CLI | Auto MCP setup | `agy` |
 | ChatGPT Web | Remote MCP + Browser Delivery | `chatgpt.com` conversation |
+| Grok Bot Web Model | Remote MCP + Browser Delivery; per-Actor routing credential | Required `grok.com/bot/<UUID>` URL |
 | Grok Build | Managed ACP session + native TUI; automatic native MCP setup | `grok` |
 | Hermes Agent | Auto MCP setup | `hermes` |
 | Droid | Auto MCP setup | `droid` |
@@ -286,7 +287,7 @@ cccc doctor                       # verify environment and runtime availability
 
 Antigravity setup also disables native feedback surveys in its user settings, because the rating prompt can consume automated terminal input. Other preferences are preserved; this also applies to standalone AGY sessions under the same user.
 
-Choose a Runtime; CCCC derives its interaction surface automatically. Claude Code, Codex CLI, Grok Build, OpenCode and Kilo pair a native writable terminal with a structured background protocol on the same provider session. Messages enter that terminal, leaving queue-versus-steer behavior to the receiving Runtime. DeepSeek Harness uses structured ACP without a native terminal; ChatGPT Web uses browser delivery and remote MCP.
+Choose a Runtime; CCCC derives its interaction surface automatically. Claude Code, Codex CLI, Grok Build, OpenCode and Kilo pair a native writable terminal with a structured background protocol on the same provider session. Messages enter that terminal, leaving queue-versus-steer behavior to the receiving Runtime. DeepSeek Harness uses structured ACP without a native terminal; ChatGPT Web and Grok Bot Web Model use browser delivery and remote MCP.
 
 For setup commands, interaction details, and troubleshooting for every supported Runtime, see the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes).
 
@@ -296,7 +297,9 @@ CCCC delivers Group messages into paired ChatGPT conversations. Multiple Web Mod
 
 Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy). CCCC defaults to stable text-only delivery and also offers an experimental **GPT Pro** mode that attaches a tiny blank PNG when delivering each batch. This compatibility workaround does not switch ChatGPT models or guarantee connector availability, and may stop working when ChatGPT changes. Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
 
-**Grok Bot Web Model** (`grok_web_model`) uses the same CCCC workspace tools and delivery queue, with a shared Grok login, one MCP connector, and a dedicated Bot URL per Actor. Save the Bot URL and start the Actor; CCCC supplies its routing credential with each task, without a separate pairing message. See [Grok Bot setup and current validation boundaries](https://chesterra.github.io/cccc/guide/grok-web-model-runtime).
+### Grok Bot Web Model
+
+**Grok Bot Web Model** (`grok_web_model`) uses the same CCCC workspace tools and delivery queue, with a shared Grok login, one MCP connector, and a dedicated Bot URL per Actor. An existing `https://grok.com/bot/<UUID>` URL is required; CCCC does not create Bots. Configure shared login and the connector in global Web Model settings, then save the Bot URL in Actor settings and start the Actor. CCCC supplies its routing credential with each task, without a separate pairing message. This browser runtime is separate from the Grok Build CLI (`grok`). See [Grok Bot setup and current validation boundaries](https://chesterra.github.io/cccc/guide/grok-web-model-runtime).
 
 ## CCCC Connect: across instances and teams
 

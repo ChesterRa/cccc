@@ -61,15 +61,15 @@ CCCC 只需一条安装命令，无需单独运维数据库、消息队列或 Do
 | **角色化协调** | Foreman + Peer 角色模型，权限边界清晰，收件人路由精确（`@all`、`@peers`、`@foreman`） |
 | **本地优先的运行时状态** | 运行时数据保存在 `CCCC_HOME` 而不是代码仓库里，同时仍可通过 Web Access 与 IM 做远程运维 |
 
-## 0.4.40 要点
+## 0.4.41 要点
 
-- **三种连接方式**：同账户实例、跨会员的指定 Group，以及免账号的 Direct Group 连接。输入框的 `#Group` 引用为 Agent 保留准确的目标身份。
-- **Files 与 Git 工作区工具**：浏览代码和文档，桌面文本编辑支持草稿保护与冲突检测，并可查看工作区及暂存区变更。
-- **更稳定的阅读和导航**：紧凑的 Presentation 槽位、不再随轮询闪烁的 PDF、翻页和切组时保留的终端，以及更清晰的深色界面和设置。
-- **原生 Mattermost 接入**：通过专用 Bot 支持消息、文件、话题串和渐进式回复。
-- **运行时与配置可靠性**：完善 Profile 转换和私密配置保存重试、Grok 原生 MCP 校验、ChatGPT 交互式登录和 Voice 故障诊断。
+- **多个 ChatGPT Actor**：共享一次专用浏览器登录和一个连接器，每个 Actor 保持独立窗口及已验证的会话。
+- **Grok Bot Web Model**：将已有 Bot URL 连接到 Actor，共享 Grok 登录，并通过各 Actor 的凭据路由 MCP 调用，无需配对消息。
+- **更稳妥的浏览器投递和更简单的设置**：保护草稿、识别手动发送的消息、保持慢加载窗口可访问；Grok URL 与 Actor 设置一起保存，也支持关联 Profile。
+- **语音文档库**：持久化文件夹、拖拽排序、重命名、归档预览与恢复，以及更清晰的实时转写和错误反馈。
+- **日常可靠性**：按 Group 保留收件人、原生 MCP 图片/PDF/PPTX 传递、修正本地工具超时与编辑行为、改善运行时启动，并保护微信回复凭据。
 
-旧手工 Group Bridge 已退役，原有授权不会自动转换；历史消息仍可阅读。升级行为与完整变更见 [0.4.40 发布说明](docs/release/v0.4.40_release_notes.md)。
+旧的 Actor 专属 ChatGPT 连接器需要更换为共享连接器并重新连接会话，历史记录保留。升级步骤与验证边界见 [0.4.41 英文发布说明](docs/release/v0.4.41_release_notes.md)。
 
 ## 快速上手
 
@@ -240,7 +240,7 @@ graph TB
 
 ## 支持的运行时
 
-CCCC 内置 18 种运行时接入，另支持通过 `custom` 启动其它命令行智能体。同一 Group 的 Actor 可使用不同运行时，其交互方式与配置要求也有所区别：
+CCCC 内置 19 种运行时接入，另支持通过 `custom` 启动其它命令行智能体。同一 Group 的 Actor 可使用不同运行时，其交互方式与配置要求也有所区别：
 
 | 运行时 | 接入方式 | 入口 |
 |---------|----------|-------------|
@@ -255,6 +255,7 @@ CCCC 内置 18 种运行时接入，另支持通过 `custom` 启动其它命令�
 | Kilo Code CLI | 托管 ACP 会话 + 原生 TUI；按会话注入 MCP | `kilo` |
 | Antigravity CLI | 自动 MCP 配置 | `agy` |
 | ChatGPT Web | 远程 MCP + 浏览器投递 | `chatgpt.com` 对话 |
+| Grok Bot Web Model | 远程 MCP + 浏览器投递；按 Actor 凭据路由 | 必填 `grok.com/bot/<UUID>` URL |
 | Grok Build | 托管 ACP 会话 + 原生 TUI；自动配置原生 MCP | `grok` |
 | Hermes Agent | 自动 MCP 配置 | `hermes` |
 | Droid | 自动 MCP 配置 | `droid` |
@@ -278,7 +279,7 @@ cccc doctor                       # 检查环境和运行时可用性
 
 Antigravity 配置还会在其用户设置中关闭原生评分问卷，避免问卷消耗自动投递的终端输入。其它偏好保持不变；同一用户独立运行的 AGY 也会关闭问卷。
 
-用户只需选择 Runtime，CCCC 会自动确定交互方式。Claude Code、Codex CLI、Grok Build、OpenCode 和 Kilo 在同一个 provider session 上配对原生可写终端与后台结构化协议。消息进入原生终端后，由接收 Runtime 决定是 steer 还是 queue。DeepSeek Harness 使用结构化 ACP，不提供原生终端；ChatGPT Web 使用浏览器投递和远程 MCP。
+用户只需选择 Runtime，CCCC 会自动确定交互方式。Claude Code、Codex CLI、Grok Build、OpenCode 和 Kilo 在同一个 provider session 上配对原生可写终端与后台结构化协议。消息进入原生终端后，由接收 Runtime 决定是 steer 还是 queue。DeepSeek Harness 使用结构化 ACP，不提供原生终端；ChatGPT Web 和 Grok Bot Web Model 使用浏览器投递和远程 MCP。
 
 每个支持 Runtime 的 setup 命令、交互说明和排障方式，见[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)。
 
@@ -287,6 +288,10 @@ Antigravity 配置还会在其用户设置中关闭原生评分问卷，避免�
 CCCC 通过浏览器投递把 Group 消息送入配对的 ChatGPT 对话。多个 Web Model Actor 共用一次专用浏览器登录和一个带认证的远程 MCP 连接器，各自拥有持续打开的独立窗口和明确确认的对话配对，可接收消息、回复、查看或编辑仓库文件，以及运行受 scope 限制的 shell/git 命令。全局设置管理共享登录和连接器，Actor 设置管理各自的对话。正常启动 Actor 后会先自动核验对话，再投递排队中的任务，无需提前点击配对。
 
 配置需要通过公网 HTTPS URL 暴露 MCP connector（Cloudflare Tunnel、ngrok、Tailscale Funnel 或反向代理）。CCCC 默认使用稳定的纯文本投递，也提供实验性的 **GPT Pro** 模式：每次投递会附带一张极小的空白 PNG，以兼容部分账户中由此开放第三方 MCP 的 ChatGPT 行为。CCCC 不会替你切换模型，也不保证该兼容方式在 ChatGPT 改版后继续有效。完整配置与排障见 [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime)。
+
+### Grok Bot Web Model
+
+**Grok Bot Web Model**（`grok_web_model`）使用同一套 CCCC 工作区工具和投递队列。Grok Actor 共享登录和一个 MCP 连接器，各自使用独立的 Bot URL 与窗口。必须提供已有的 `https://grok.com/bot/<UUID>` URL，CCCC 不会自动创建 Bot。在全局 Web Model 设置中配置共享登录和连接器，再到 Actor 设置中保存 Bot URL 并启动。CCCC 会随每条任务提供该 Actor 的路由凭据，无需额外发送配对消息。这与 Grok Build CLI（`grok`）是两种不同的运行时。完整配置与当前验证范围见 [Grok Bot 使用指南](https://chesterra.github.io/cccc/guide/grok-web-model-runtime)。
 
 ## CCCC Connect：跨实例与团队协作
 
