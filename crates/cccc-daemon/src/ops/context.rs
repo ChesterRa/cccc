@@ -67,7 +67,7 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             &by,
             bool_arg(request, "dry_run", false),
             |document, operation| {
-                authorize(role, document, operation, &by).map_err(|error| {
+                authorize(role, document, operation, &by, &group).map_err(|error| {
                     denied = Some(error);
                     std::io::Error::other("context authorization rejected")
                 })
@@ -132,6 +132,7 @@ fn authorize(
     document: &ContextDoc,
     operation: &Map<String, Value>,
     by: &str,
+    group: &GroupDoc,
 ) -> Result<(), OpError> {
     let Some(role) = role else {
         return Ok(());
@@ -161,6 +162,7 @@ fn authorize(
                 .get("assignee")
                 .and_then(Value::as_str)
                 .is_some_and(|assignee| !assignee.trim().is_empty() && assignee != by)
+                && !actors::find(group, by).is_some_and(|actor| actor.can_create_tasks)
             {
                 return Err(OpError::new(
                     "permission_denied",
@@ -186,7 +188,9 @@ fn authorize(
             };
             let owns_task = ["assignee", "handoff_to"]
                 .iter()
-                .any(|field| task.get(*field).and_then(Value::as_str) == Some(by));
+                .any(|field| task.get(*field).and_then(Value::as_str) == Some(by))
+                || (actors::find(group, by).is_some_and(|actor| actor.can_create_tasks)
+                    && task.get("created_by").and_then(Value::as_str) == Some(by));
             if !owns_task {
                 return Err(OpError::new(
                     "permission_denied",
@@ -198,6 +202,7 @@ fn authorize(
                     .get("assignee")
                     .and_then(Value::as_str)
                     .is_some_and(|assignee| !assignee.trim().is_empty() && assignee != by)
+                && !actors::find(group, by).is_some_and(|actor| actor.can_create_tasks)
             {
                 return Err(OpError::new(
                     "permission_denied",

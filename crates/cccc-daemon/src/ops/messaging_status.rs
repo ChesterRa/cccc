@@ -7,7 +7,14 @@ use crate::dispatch::{OpError, OpResult, object, required_arg, store};
 
 const MAX_STATUS_EVENT_IDS: usize = 1000;
 
-type DeliveryStatuses = HashMap<String, HashMap<String, String>>;
+#[derive(Default)]
+struct DeliveryFact {
+    state: String,
+    queued_at: Option<String>,
+    delivered_at: Option<String>,
+}
+
+type DeliveryStatuses = HashMap<String, HashMap<String, DeliveryFact>>;
 type ReplyPositions = HashMap<String, HashMap<String, usize>>;
 type CancellationPositions = HashMap<String, usize>;
 
@@ -184,8 +191,14 @@ impl StatusSnapshot<'_> {
                         "cancelled": reply_requested && cancelled,
                         "delivery_state":delivery
                             .and_then(|states| states.get(&actor_id))
-                            .map(String::as_str)
+                            .map(|fact| fact.state.as_str())
                             .unwrap_or(""),
+                        "queued_at":delivery
+                            .and_then(|states| states.get(&actor_id))
+                            .and_then(|fact| fact.queued_at.clone()),
+                        "delivered_at":delivery
+                            .and_then(|states| states.get(&actor_id))
+                            .and_then(|fact| fact.delivered_at.clone()),
                     }),
                 )
             })
@@ -242,7 +255,7 @@ impl StatusSnapshot<'_> {
 fn collect_message_outcomes(
     events: &[Event],
 ) -> (DeliveryStatuses, ReplyPositions, CancellationPositions) {
-    let mut deliveries = HashMap::<String, HashMap<String, String>>::new();
+    let mut deliveries = HashMap::<String, HashMap<String, DeliveryFact>>::new();
     let mut replies = HashMap::<String, HashMap<String, usize>>::new();
     let mut cancellations = HashMap::<String, usize>::new();
     for (position, event) in events.iter().enumerate() {
@@ -292,10 +305,18 @@ fn collect_message_outcomes(
             event.data.get("actor_id").and_then(Value::as_str),
             event.data.get("state").and_then(Value::as_str),
         ) {
-            deliveries
+            let fact = deliveries
                 .entry(source_event_id.to_owned())
                 .or_default()
-                .insert(actor_id.to_owned(), state.to_owned());
+                .entry(actor_id.to_owned())
+                .or_default();
+            fact.state = state.to_owned();
+            if state == "claimed" && fact.queued_at.is_none() {
+                fact.queued_at = Some(event.ts.clone());
+            }
+            if state == "accepted" {
+                fact.delivered_at = Some(event.ts.clone());
+            }
         }
     }
     (deliveries, replies, cancellations)
@@ -357,7 +378,7 @@ mod tests {
             .expect("data");
 
         let (statuses, _, _) = collect_message_outcomes(&[claimed, accepted]);
-        assert_eq!(statuses["event-1"]["peer1"], "accepted");
+        assert_eq!(statuses["event-1"]["peer1"].state, "accepted");
     }
 
     #[test]
