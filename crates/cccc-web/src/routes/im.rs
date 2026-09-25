@@ -573,6 +573,10 @@ fn status_payload(group_id: &str, value: &Value) -> Value {
         "running":value["running"].as_bool().unwrap_or(false),
         "adapter_available":value["adapter_available"].as_bool().unwrap_or(false),
         "last_error":value.get("last_error").cloned().unwrap_or(Value::Null),
+        "last_error_at":value.get("last_error_at").cloned().unwrap_or(Value::Null),
+        "last_poll_ok_at":value.get("last_poll_ok_at").cloned().unwrap_or(Value::Null),
+        "last_send_ok_at":value.get("last_send_ok_at").cloned().unwrap_or(Value::Null),
+        "queued_count":value.get("queued_count").cloned().unwrap_or(Value::Null),
         "pid":value.get("pid").cloned().unwrap_or(Value::Null),
         "subscribers":array_field(value,"subscribers").into_iter()
             .filter(|item|item["subscribed"].as_bool().unwrap_or(true)).count()

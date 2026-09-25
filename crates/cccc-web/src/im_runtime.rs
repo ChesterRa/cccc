@@ -769,6 +769,13 @@ where
                         event,
                     )
                     .await;
+                    // Queue-depth telemetry: a stalled send leaves this count
+                    // elevated instead of silently accumulating backlog.
+                    bridge_status_update(
+                        &home,
+                        &group_id,
+                        Map::from_iter([("queued_count".into(), json!(receiver.len()))]),
+                    );
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     let Some(mut replay_cursor) = delivery.cursor.clone() else {
@@ -858,8 +865,27 @@ async fn deliver_outbound<S, P, F, Fut>(
 fn delivery_targets(chats: Vec<AuthorizedChat>, event: &Event) -> Vec<AuthorizedChat> {
     chats
         .into_iter()
-        .filter(|chat| event_is_user_facing(event) || chat.verbose)
+        .filter(|chat| match chat.relay {
+            RelayMode::All => true,
+            RelayMode::Mentions => event_is_user_facing(event),
+            RelayMode::ToUserOnly => event_addresses_user(event),
+        })
         .collect()
+}
+
+/// Strictly addressed to the user: `to` contains user/@user/@all. Unlike
+/// `event_is_user_facing`, a message with no `to` does NOT qualify — it was
+/// addressed to nobody in particular.
+fn event_addresses_user(event: &Event) -> bool {
+    event
+        .data
+        .get("to")
+        .and_then(Value::as_array)
+        .is_some_and(|targets| {
+            targets
+                .iter()
+                .any(|target| matches!(target.as_str(), Some("user" | "@user" | "@all")))
+        })
 }
 
 pub(super) fn is_outbound(event: &Event) -> bool {
@@ -921,6 +947,47 @@ fn event_visible_to_im(event: &Event) -> bool {
         return false;
     }
     event_is_user_facing(event)
+}
+
+/// Writes liveness fields into the group's IM bridge status (`im_status`).
+/// Failures are swallowed: the bridge must never fail because its own
+/// telemetry cannot be persisted.
+pub(super) fn bridge_status_update(home: &HomeLayout, group_id: &str, fields: Map<String, Value>) {
+    let Ok(store) = GroupStore::new(home.clone()) else {
+        return;
+    };
+    let _ = cccc_core::im_state::update(&store, group_id, |state| {
+        if !state.is_object() {
+            *state = json!({});
+        }
+        let object = state.as_object_mut().expect("IM state initialized");
+        for (key, value) in fields {
+            object.insert(key, value);
+        }
+        object.insert("updated_at".into(), json!(cccc_contracts::utc_now()));
+        Ok(())
+    });
+}
+
+/// Appends one structured line to the group's `im_bridge.log`.
+pub(super) fn bridge_log_line(
+    home: &HomeLayout,
+    group_id: &str,
+    platform: &str,
+    level: &str,
+    message: &str,
+    fields: Map<String, Value>,
+) {
+    let mut line = Map::new();
+    line.insert("ts".into(), json!(cccc_contracts::utc_now()));
+    line.insert("level".into(), json!(level));
+    line.insert("platform".into(), json!(platform));
+    line.insert("group_id".into(), json!(group_id));
+    line.insert("message".into(), json!(message));
+    line.extend(fields);
+    if let Err(error) = bridge_log::append(home, group_id, &Value::Object(line).to_string()) {
+        tracing::warn!(%error, "failed to write the IM bridge log");
+    }
 }
 
 #[cfg(test)]
@@ -1323,11 +1390,13 @@ mod tests {
                     chat_id: "quiet".into(),
                     thread_id: String::new(),
                     verbose: false,
+                    relay: RelayMode::Mentions,
                 },
                 AuthorizedChat {
                     chat_id: "verbose".into(),
                     thread_id: String::new(),
                     verbose: true,
+                    relay: RelayMode::All,
                 },
             ]
         };
@@ -1356,6 +1425,95 @@ mod tests {
             .collect::<Vec<_>>();
         notification_targets.sort();
         assert_eq!(notification_targets, vec!["quiet", "verbose"]);
+    }
+
+    #[test]
+    fn bridge_telemetry_persists_status_fields_and_log_lines() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("telemetry", "").expect("group");
+
+        bridge_status_update(
+            &home,
+            &group.group_id,
+            Map::from_iter([
+                ("last_poll_ok_at".into(), json!("t1")),
+                ("queued_count".into(), json!(3)),
+            ]),
+        );
+        let state = cccc_core::im_state::load(&store, &group.group_id).expect("state");
+        assert_eq!(state["last_poll_ok_at"], json!("t1"));
+        assert_eq!(state["queued_count"], json!(3));
+        assert!(state["updated_at"].as_str().is_some_and(|v| !v.is_empty()));
+
+        bridge_log_line(
+            &home,
+            &group.group_id,
+            "telegram",
+            "WARN",
+            "outbound send failed",
+            Map::from_iter([("error".into(), json!("boom"))]),
+        );
+        let dir = store.state_dir(&group.group_id).expect("dir");
+        let log = std::fs::read_to_string(dir.join("im_bridge.log")).expect("log");
+        let line: Value = serde_json::from_str(log.trim()).expect("json line");
+        assert_eq!(line["message"], json!("outbound send failed"));
+        assert_eq!(line["error"], json!("boom"));
+        assert_eq!(line["platform"], json!("telegram"));
+        assert_eq!(line["level"], json!("WARN"));
+        assert_eq!(line["group_id"], json!(group.group_id));
+    }
+
+    #[test]
+    fn relay_modes_gate_delivery_per_subscriber() {
+        let targets = || {
+            vec![
+                AuthorizedChat {
+                    chat_id: "all".into(),
+                    thread_id: String::new(),
+                    verbose: false,
+                    relay: RelayMode::All,
+                },
+                AuthorizedChat {
+                    chat_id: "mentions".into(),
+                    thread_id: String::new(),
+                    verbose: false,
+                    relay: RelayMode::Mentions,
+                },
+                AuthorizedChat {
+                    chat_id: "only".into(),
+                    thread_id: String::new(),
+                    verbose: false,
+                    relay: RelayMode::ToUserOnly,
+                },
+            ]
+        };
+        let delivered = |event: &Event| {
+            let mut ids = delivery_targets(targets(), event)
+                .into_iter()
+                .map(|target| target.chat_id)
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        };
+        let mut event = Event::new("chat.message", "g_test");
+
+        // Agent-to-agent chatter: only the `all` subscriber sees it.
+        event.data.insert("to".into(), json!(["peer"]));
+        assert_eq!(delivered(&event), vec!["all"]);
+
+        // Broadcast (no explicit recipient): `to_user_only` still skips it.
+        event.data.remove("to");
+        assert_eq!(delivered(&event), vec!["all", "mentions"]);
+
+        // Explicitly addressed to the user: every mode relays it.
+        event.data.insert("to".into(), json!(["user"]));
+        assert_eq!(delivered(&event), vec!["all", "mentions", "only"]);
+        event.data.insert("to".into(), json!(["@all"]));
+        assert_eq!(delivered(&event), vec!["all", "mentions", "only"]);
+        event.data.insert("to".into(), json!(["@user"]));
+        assert_eq!(delivered(&event), vec!["all", "mentions", "only"]);
     }
 
     #[tokio::test]

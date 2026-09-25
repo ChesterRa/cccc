@@ -616,7 +616,10 @@ fn partial_automation_put_is_rejected_and_patch_rule_edits_one_rule() {
         json!({"group_id":group_id}),
     );
     assert_eq!(
-        after.result["ruleset"]["rules"].as_array().unwrap().len(),
+        after.result["ruleset"]["rules"]
+            .as_array()
+            .expect("rules")
+            .len(),
         2
     );
     assert_eq!(after.result["version"], 2);
@@ -640,7 +643,7 @@ fn partial_automation_put_is_rejected_and_patch_rule_edits_one_rule() {
     assert_eq!(
         replaced.result["ruleset"]["rules"]
             .as_array()
-            .unwrap()
+            .expect("rules")
             .len(),
         1
     );

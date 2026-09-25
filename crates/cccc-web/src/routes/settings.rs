@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn automation_update_forwards_replace_all_and_if_match() {
         let mut headers = HeaderMap::new();
-        headers.insert("if-match", "\"9\"".parse().unwrap());
+        headers.insert("if-match", "\"9\"".parse().expect("if-match header"));
         let args = automation_update_args(
             "g_demo".into(),
             &headers,

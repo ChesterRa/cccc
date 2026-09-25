@@ -1,3 +1,4 @@
+use super::RelayMode;
 use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Value, json};
 use std::io;
@@ -11,6 +12,7 @@ const RECOGNIZED_COMMANDS: &[&str] = &[
     "/pause",
     "/resume",
     "/verbose",
+    "/relay",
     "/status",
     "/help",
     "/send",
@@ -26,6 +28,7 @@ struct ChatAuthorization {
     authorized: bool,
     paused: bool,
     verbose: bool,
+    relay: Option<RelayMode>,
 }
 
 pub(super) async fn inbound_decision(
@@ -122,6 +125,20 @@ fn inbound_decision_blocking_for_thread(
             ),
             Err(()) => InboundDecision::Reply("Usage: /verbose [on|off]".into()),
         },
+        "/relay" => match relay_mode_value(text) {
+            Ok(mode) => update_authorized(
+                AuthorizedUpdate::Relay(mode),
+                match mode {
+                    RelayMode::All => "Relay mode: all.",
+                    RelayMode::Mentions => "Relay mode: mentions.",
+                    RelayMode::ToUserOnly => "Relay mode: to_user_only.",
+                },
+            ),
+            Err(()) => InboundDecision::Reply(
+                "Usage: /relay all|mentions|to_user_only\n`all` relays every group message, `mentions` relays messages addressed to you or broadcast, `to_user_only` relays only messages addressed to you."
+                    .into(),
+            ),
+        },
         "/status" => InboundDecision::Reply(status_text(home, group_id, authorization)),
         "/help" => InboundDecision::Reply(help_text(platform).into()),
         "/send" if !authorization.authorized => {
@@ -212,9 +229,17 @@ fn status_text(home: &HomeLayout, group_id: &str, authorization: ChatAuthorizati
             )
         },
     );
+    let relay = authorization.relay.unwrap_or(if authorization.verbose {
+        RelayMode::All
+    } else {
+        RelayMode::Mentions
+    });
     format!(
-        "{group_status}\nSubscription: authorized={}, paused={}, verbose={}.",
-        authorization.authorized, authorization.paused, authorization.verbose
+        "{group_status}\nSubscription: authorized={}, paused={}, verbose={}, relay={}.",
+        authorization.authorized,
+        authorization.paused,
+        authorization.verbose,
+        relay.name()
     )
 }
 
@@ -317,6 +342,11 @@ fn chat_authorization(
         verbose: subscriber
             .and_then(|item| item["verbose"].as_bool())
             .unwrap_or_else(|| authorized["verbose"].as_bool().unwrap_or(false)),
+        relay: subscriber
+            .and_then(|item| item.get("relay"))
+            .or_else(|| authorized.get("relay"))
+            .and_then(Value::as_str)
+            .and_then(RelayMode::parse),
     }
 }
 
@@ -343,6 +373,7 @@ enum AuthorizedUpdate {
     Remove,
     Paused(bool),
     Verbose(bool),
+    Relay(RelayMode),
 }
 
 fn persist_authorization_update(
@@ -424,6 +455,7 @@ fn apply_item_update(item: &mut Value, update: AuthorizedUpdate) -> bool {
     match update {
         AuthorizedUpdate::Paused(paused) => item["paused"] = json!(paused),
         AuthorizedUpdate::Verbose(verbose) => item["verbose"] = json!(verbose),
+        AuthorizedUpdate::Relay(mode) => item["relay"] = json!(mode.name()),
         AuthorizedUpdate::Remove => unreachable!(),
     }
     true
@@ -458,6 +490,13 @@ fn verbose_value(text: &str) -> Result<bool, ()> {
     }
 }
 
+fn relay_mode_value(text: &str) -> Result<RelayMode, ()> {
+    text.split_whitespace()
+        .nth(1)
+        .and_then(RelayMode::parse)
+        .ok_or(())
+}
+
 fn authorization_required(platform: &str) -> &'static str {
     if platform.eq_ignore_ascii_case("weixin") {
         "This Weixin account is not authorized. Scan and confirm the QR code in CCCC Settings; the scanning account is authorized automatically."
@@ -480,9 +519,9 @@ fn unauthorized_plain_text(home: &HomeLayout, group_id: &str, platform: &str) ->
 
 fn help_text(platform: &str) -> &'static str {
     if platform.eq_ignore_ascii_case("weixin") {
-        "Commands: /unsubscribe, /send <message>, /pause, /resume, /verbose [on|off], /status, /help"
+        "Commands: /unsubscribe, /send <message>, /pause, /resume, /verbose [on|off], /relay all|mentions|to_user_only, /status, /help"
     } else {
-        "Commands: /subscribe, /unsubscribe, /send <message>, /pause, /resume, /verbose [on|off], /status, /help"
+        "Commands: /subscribe, /unsubscribe, /send <message>, /pause, /resume, /verbose [on|off], /relay all|mentions|to_user_only, /status, /help"
     }
 }
 
