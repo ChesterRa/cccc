@@ -124,6 +124,26 @@ pub(super) fn apply(group: &GroupDoc, request: &DaemonRequest) -> Result<Outcome
                 );
                 applied.push(json!({"type":kind,"rule_id":id,"enabled":existing["enabled"]}));
             }
+            "patch_rule" => {
+                let id = required_text(action, "rule_id")?;
+                let existing = rules.get(id).ok_or_else(|| {
+                    OpError::new(
+                        "group_automation_manage_failed",
+                        format!("rule not found: {id}"),
+                    )
+                })?;
+                authorize_existing(existing, &by, peer)?;
+                let fields = action
+                    .get("fields")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| OpError::new("invalid_request", "patch_rule requires fields"))?;
+                let mut merged = existing.as_object().cloned().unwrap_or_default();
+                merge_patch(&mut merged, fields);
+                merged.insert("id".into(), Value::String(id.to_owned()));
+                validate_rule(&mut merged, &by, peer, Some(existing))?;
+                rules.insert(id.to_owned(), Value::Object(merged));
+                applied.push(json!({"type":kind,"rule_id":id,"fields":fields.len()}));
+            }
             "delete_rule" => {
                 let id = required_text(action, "rule_id")?;
                 let existing = rules.get(id).ok_or_else(|| {
@@ -198,4 +218,24 @@ pub(super) fn apply(group: &GroupDoc, request: &DaemonRequest) -> Result<Outcome
         applied_actions: applied,
         changed,
     })
+}
+
+/// JSON merge patch (RFC 7396): object members merge recursively, `null`
+/// deletes the key, every other value replaces.
+fn merge_patch(target: &mut Map<String, Value>, patch: &Map<String, Value>) {
+    for (key, value) in patch {
+        if value.is_null() {
+            target.remove(key);
+            continue;
+        }
+        match (
+            target.get_mut(key).and_then(Value::as_object_mut),
+            value.as_object(),
+        ) {
+            (Some(existing), Some(patch)) => merge_patch(existing, patch),
+            _ => {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    }
 }

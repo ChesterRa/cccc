@@ -496,6 +496,9 @@ export async function updateAutomation(
     rules: ruleset.rules,
     snippets: ruleset.snippets,
     by: "user",
+    // The editor always PUTs the complete desired ruleset — declaring the
+    // full-replace intent keeps partial-PUT guard from rejecting it.
+    replace_all: true,
   };
   if (typeof expectedVersion === "number" && Number.isFinite(expectedVersion)) {
     body.expected_version = Math.trunc(expectedVersion);
