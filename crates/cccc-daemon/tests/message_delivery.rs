@@ -2349,3 +2349,146 @@ fn reply_strips_forwarded_inbound_markers_so_the_event_relays_to_im() {
     }
     assert_eq!(data["reply_to"], source_id);
 }
+
+#[test]
+fn peer_task_grants_scope_task_create_and_tracked_send() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"task-grants","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["worker", "overseer", "plain"] {
+        call(
+            &home,
+            "actor_add",
+            json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+        );
+    }
+    call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,"actor_id":"overseer","by":"user",
+            "patch":{"can_create_tasks":true,"can_tracked_send":true}
+        }),
+    );
+
+    // A granted peer may create a task assigned to another actor.
+    call(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,"by":"overseer",
+            "ops":[{"op":"task.create","title":"Dispatch","assignee":"worker"}]
+        }),
+    );
+    let task_id = {
+        let context = call(
+            &home,
+            "context_get",
+            json!({"group_id":group_id,"by":"user"}),
+        );
+        context.result["coordination"]["tasks"]
+            .as_array()
+            .expect("tasks")
+            .iter()
+            .find(|task| task["title"] == "Dispatch")
+            .and_then(|task| task["id"].as_str())
+            .expect("created task id")
+            .to_owned()
+    };
+
+    // ...and may manage tasks it created (but not tasks created by others).
+    call(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,"by":"overseer",
+            "ops":[{"op":"task.update","task_id":task_id,"notes":"seen"}]
+        }),
+    );
+    call(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,"by":"user",
+            "ops":[{"op":"task.create","title":"Other","assignee":"worker"}]
+        }),
+    );
+    let foreign_id = {
+        let context = call(
+            &home,
+            "context_get",
+            json!({"group_id":group_id,"by":"user"}),
+        );
+        context.result["coordination"]["tasks"]
+            .as_array()
+            .expect("tasks")
+            .iter()
+            .find(|task| task["title"] == "Other")
+            .and_then(|task| task["id"].as_str())
+            .expect("foreign task id")
+            .to_owned()
+    };
+    let hijack = call_raw(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,"by":"overseer",
+            "ops":[{"op":"task.update","task_id":foreign_id,"notes":"mine now"}]
+        }),
+    );
+    assert_eq!(
+        hijack.error.as_ref().map(|error| error.code.as_str()),
+        Some("permission_denied")
+    );
+
+    // A granted peer may issue tracked dispatches to other actors.
+    let tracked = call(
+        &home,
+        "tracked_send",
+        json!({
+            "group_id":group_id,"by":"overseer","to":["worker"],
+            "title":"Card","text":"Run the card"
+        }),
+    );
+    assert_eq!(tracked.result["task_created"], true);
+    assert_eq!(tracked.result["message_sent"], true);
+
+    // An ungranted peer is still refused at both gates.
+    let create_denied = call_raw(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,"by":"plain",
+            "ops":[{"op":"task.create","title":"Nope","assignee":"worker"}]
+        }),
+    );
+    assert_eq!(
+        create_denied
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("permission_denied")
+    );
+    let tracked_denied = call_raw(
+        &home,
+        "tracked_send",
+        json!({
+            "group_id":group_id,"by":"plain","to":["worker"],
+            "title":"Nope","text":"still refused"
+        }),
+    );
+    assert_eq!(
+        tracked_denied
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("context_sync_error")
+    );
+}
