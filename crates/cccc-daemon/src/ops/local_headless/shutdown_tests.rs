@@ -128,6 +128,8 @@ async fn shutdown_requests_all_jobs_and_confirms_stops_concurrently() {
                     },
                 )),
                 has_terminal: AtomicBool::new(false),
+                viewer: Mutex::new(None),
+                released: AtomicBool::new(false),
                 status: Mutex::new(HeadlessStatus {
                     status: "idle".into(),
                     task_id: None,
