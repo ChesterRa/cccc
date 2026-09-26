@@ -644,14 +644,22 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 }
             }
             let mut delivered = false;
+            let mut terminal_reason = None;
             for attempt in 0..3 {
-                if actor_delivery_worker::process_batch(
+                match actor_delivery_worker::process_batch(
                     &batch,
                     &mut preamble_session,
                     &thread_cancelled,
                 ) {
-                    delivered = true;
-                    break;
+                    actor_delivery_worker::BatchOutcome::Delivered => {
+                        delivered = true;
+                        break;
+                    }
+                    actor_delivery_worker::BatchOutcome::Terminal(reason) => {
+                        terminal_reason = Some(reason);
+                        break;
+                    }
+                    actor_delivery_worker::BatchOutcome::Retry => {}
                 }
                 if thread_cancelled.load(Ordering::Acquire) {
                     break;
@@ -663,7 +671,9 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                     break;
                 }
             }
-            if !delivered {
+            if let Some(reason) = terminal_reason {
+                fail_jobs(&batch, &reason);
+            } else if !delivered {
                 deferred = batch;
                 deferred_failures = deferred_failures.saturating_add(1);
             } else {

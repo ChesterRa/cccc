@@ -14,27 +14,48 @@ const ANTIGRAVITY_STARTUP_SETTLE: Duration = Duration::from_millis(1_500);
 #[path = "actor_delivery_startup_tests.rs"]
 mod startup_tests;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchOutcome {
+    Delivered,
+    Retry,
+    /// The job can never succeed in the current configuration (e.g. the group
+    /// has no attached scope); the delivery must be settled Failed instead of
+    /// retried.
+    Terminal(String),
+}
+
+/// Scope-resolution errors match `actor_new_session`: without an attached scope
+/// no runtime can ever start, so the delivery must fail fast rather than loop
+/// claimed/stalled.
+fn terminal_reason(error: &crate::dispatch::OpError) -> Option<String> {
+    matches!(
+        error.code.as_str(),
+        "missing_project_root" | "scope_not_attached" | "invalid_project_root"
+    )
+    .then(|| error.message.clone())
+}
+
 pub fn process_batch(
     jobs: &[DeliveryJob],
     preamble_session: &mut String,
     cancelled: &AtomicBool,
-) -> bool {
+) -> BatchOutcome {
     let Some(job) = jobs.first() else {
-        return false;
+        return BatchOutcome::Retry;
     };
     if cancelled.load(Ordering::Acquire) {
-        return false;
+        return BatchOutcome::Retry;
     }
     let Ok(current_group) =
         GroupStore::new(job.home.clone()).and_then(|store| store.load(&job.group.group_id))
     else {
-        return false;
+        return BatchOutcome::Retry;
     };
     if matches!(
         current_group.state,
         GroupState::Paused | GroupState::Stopped
     ) {
-        return false;
+        return BatchOutcome::Retry;
     }
     let Some(current_actor) = current_group
         .actors
@@ -42,10 +63,10 @@ pub fn process_batch(
         .find(|actor| actor.id == job.actor.id)
         .cloned()
     else {
-        return false;
+        return BatchOutcome::Retry;
     };
     if !current_actor.enabled {
-        return false;
+        return BatchOutcome::Retry;
     }
     if current_actor.runtime == ActorRuntime::Deepseek {
         return process_deepseek_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
@@ -53,15 +74,17 @@ pub fn process_batch(
     if crate::ops::local_headless::supports(&current_actor) {
         return process_managed_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
     }
-    let Some(status) = ensure_running(&job.home, &current_group, &current_actor) else {
-        return false;
+    let status = match ensure_running(&job.home, &current_group, &current_actor) {
+        Ok(Some(status)) => status,
+        Ok(None) => return BatchOutcome::Retry,
+        Err(reason) => return BatchOutcome::Terminal(reason),
     };
     let first_delivery = *preamble_session != status.started_at;
     if first_delivery {
         if current_actor.runtime != ActorRuntime::Custom
             && !wait_for_input_mode(&current_group.group_id, &current_actor.id, cancelled)
         {
-            return false;
+            return BatchOutcome::Retry;
         }
         // agy can enable paste mode before its conversation input is mounted.
         // The ordinary submit delay comes AFTER writing and cannot protect the
@@ -70,7 +93,7 @@ pub fn process_batch(
         if current_actor.runtime == ActorRuntime::Antigravity
             && !interruptible_sleep(ANTIGRAVITY_STARTUP_SETTLE, cancelled)
         {
-            return false;
+            return BatchOutcome::Retry;
         }
         // Custom terminal programs retain their line-oriented preamble contract.
         // Native agents receive their startup context and task in one submission.
@@ -81,11 +104,11 @@ pub fn process_batch(
                 &super::actor_delivery_preamble::render(&job.home, &current_group, &current_actor),
                 cancelled,
             ) {
-                return false;
+                return BatchOutcome::Retry;
             }
             preamble_session.clone_from(&status.started_at);
             if !interruptible_sleep(PREAMBLE_DELAY, cancelled) {
-                return false;
+                return BatchOutcome::Retry;
             }
         }
     }
@@ -97,7 +120,7 @@ pub fn process_batch(
         &current_actor.id,
         &events,
     ) else {
-        return false;
+        return BatchOutcome::Retry;
     };
     if first_delivery && current_actor.runtime != ActorRuntime::Custom {
         payload = format!(
@@ -113,9 +136,9 @@ pub fn process_batch(
     if submit_text(&current_group.group_id, &current_actor, &payload, cancelled) {
         preamble_session.clone_from(&status.started_at);
         finish_jobs(jobs);
-        return true;
+        return BatchOutcome::Delivered;
     }
-    false
+    BatchOutcome::Retry
 }
 
 fn process_deepseek_batch(
@@ -124,25 +147,31 @@ fn process_deepseek_batch(
     group: &cccc_core::GroupDoc,
     actor: &Actor,
     cancelled: &AtomicBool,
-) -> bool {
+) -> BatchOutcome {
     if !crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) {
         if crate::ops::deepseek_runtime::manual_restart_required(home, group, actor) {
-            return false;
+            return BatchOutcome::Retry;
         }
         match actor_runtime::apply(home, group, &actor.id, "actor.start") {
             Ok(_) if crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) => {}
-            Ok(_) | Err(_) => return false,
+            Ok(_) => return BatchOutcome::Retry,
+            Err(error) => {
+                return match terminal_reason(&error) {
+                    Some(reason) => BatchOutcome::Terminal(reason),
+                    None => BatchOutcome::Retry,
+                };
+            }
         }
     }
     for job in jobs {
         if cancelled.load(Ordering::Acquire)
             || !crate::ops::deepseek_runtime::deliver(home, group, actor, &job.event, cancelled)
         {
-            return false;
+            return BatchOutcome::Retry;
         }
         complete_job(job);
     }
-    true
+    BatchOutcome::Delivered
 }
 
 fn process_managed_batch(
@@ -151,28 +180,31 @@ fn process_managed_batch(
     group: &cccc_core::GroupDoc,
     actor: &Actor,
     cancelled: &AtomicBool,
-) -> bool {
+) -> BatchOutcome {
     if !crate::ops::local_headless::running(&group.group_id, &actor.id) {
         match actor_runtime::apply(home, group, &actor.id, "actor.start") {
             Ok(None) if crate::ops::local_headless::running(&group.group_id, &actor.id) => {}
-            Ok(_) => return false,
+            Ok(_) => return BatchOutcome::Retry,
             Err(error) => {
+                if let Some(reason) = terminal_reason(&error) {
+                    return BatchOutcome::Terminal(reason);
+                }
                 tracing::warn!(
                     group_id = %group.group_id,
                     actor_id = %actor.id,
                     message = %error.message,
                     "failed to auto-wake managed actor for message delivery"
                 );
-                return false;
+                return BatchOutcome::Retry;
             }
         }
     }
     let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
     if crate::ops::local_headless::submit_batch(home, group, actor, &events, cancelled) {
         finish_jobs(jobs);
-        return true;
+        return BatchOutcome::Delivered;
     }
-    false
+    BatchOutcome::Retry
 }
 
 fn finish_jobs(jobs: &[DeliveryJob]) {
@@ -185,20 +217,22 @@ fn ensure_running(
     home: &cccc_core::HomeLayout,
     group: &cccc_core::GroupDoc,
     actor: &Actor,
-) -> Option<cccc_runtime::SessionStatus> {
+) -> Result<Option<cccc_runtime::SessionStatus>, String> {
     if let Ok(status) = cccc_runtime::status(&group.group_id, &actor.id)
         && status.running
     {
-        return Some(status);
+        return Ok(Some(status));
     }
     let status = match actor_runtime::apply(home, group, &actor.id, "actor.start") {
         Ok(Some(status)) if status.running => status,
-        Ok(_) => return None,
+        Ok(_) => return Ok(None),
         Err(error) => {
             if let Ok(status) = cccc_runtime::status(&group.group_id, &actor.id)
                 && status.running
             {
                 status
+            } else if let Some(reason) = terminal_reason(&error) {
+                return Err(reason);
             } else {
                 tracing::warn!(
                     group_id = %group.group_id,
@@ -206,11 +240,11 @@ fn ensure_running(
                     message = %error.message,
                     "failed to auto-wake actor for message delivery"
                 );
-                return None;
+                return Ok(None);
             }
         }
     };
-    Some(status)
+    Ok(Some(status))
 }
 
 fn submit_text(group_id: &str, actor: &Actor, text: &str, cancelled: &AtomicBool) -> bool {
@@ -307,13 +341,47 @@ mod tests {
             event,
         };
 
-        assert!(!process_batch(
-            &[job],
-            &mut String::new(),
-            &AtomicBool::new(false),
-        ));
+        assert_eq!(
+            process_batch(&[job], &mut String::new(), &AtomicBool::new(false),),
+            BatchOutcome::Retry
+        );
         let saved = store.load(&group.group_id).expect("reload group");
         assert!(!saved.actors[0].enabled);
         assert!(cccc_runtime::status(&group.group_id, &actor.id).is_err());
+    }
+
+    #[test]
+    fn scopeless_group_delivery_is_terminal_not_deferred() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        // No active scope and no actor default_scope_key: runtime can never
+        // start, matching actor_new_session's missing_project_root.
+        let mut group = store.create("scopeless delivery", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = serde_json::json!({"to":["peer1"],"text":"work"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        let job = DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor,
+            event,
+        };
+
+        match process_batch(&[job], &mut String::new(), &AtomicBool::new(false)) {
+            BatchOutcome::Terminal(reason) => {
+                assert!(
+                    reason.contains("project root") || reason.contains("scope"),
+                    "terminal reason should name the missing scope: {reason}"
+                );
+            }
+            other => panic!("expected Terminal, got {other:?}"),
+        }
     }
 }
