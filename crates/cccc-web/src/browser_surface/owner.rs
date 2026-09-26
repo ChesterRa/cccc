@@ -58,9 +58,7 @@ impl BrowserOwner {
                 // chromiumoxide's auto-detection does not probe every
                 // conventional binary name (`google-chrome`), so reuse the
                 // crate's own candidate list before falling back to it.
-                if let Some((executable, _)) =
-                    super::system_browser::find_system_browser()
-                {
+                if let Some((executable, _)) = super::system_browser::find_system_browser() {
                     config = config.chrome_executable(executable);
                 }
                 if !proxy_args.is_empty() {
