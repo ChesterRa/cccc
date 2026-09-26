@@ -1,8 +1,10 @@
-import { memo, useMemo, type CSSProperties } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+import { Mail } from "lucide-react";
 
 import { ActorAvatar } from "../../components/ActorAvatar";
 import { PlusIcon } from "../../components/Icons";
+import { selectChatBucketState, useGroupStore } from "../../stores";
 import { useActorDisplayState } from "../../hooks/useActorDisplayState";
 import { ShineBorder } from "@/registry/magicui/shine-border";
 import type { Actor, HeadlessStreamEvent } from "../../types";
@@ -10,8 +12,11 @@ import { classNames } from "../../utils/classNames";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { RuntimeDockTicker } from "./RuntimeDockTicker";
 import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
+import { fetchLedgerTailAll } from "../../services/api/messaging";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
+import { buildActorStoppedSinceMap, buildRuntimeDockMailInfo } from "./runtimeDockMail";
+import { formatElapsedCompact } from "../../utils/time";
 
 type RuntimeRingPresentation = {
   ringClassName: string;
@@ -21,8 +26,60 @@ type RuntimeRingPresentation = {
 };
 
 const RUNTIME_RING_GEOMETRY_CLASS = "absolute -inset-[0.5px] rounded-full";
-const RUNTIME_RING_STROKE_PX = 4;
+const RUNTIME_RING_STROKE_PX = 7;
 const RUNTIME_STATIC_RING_STROKE_CLASS = "border-[4px]";
+const RUNTIME_ELAPSED_CAP_MS = 60 * 60 * 1000;
+const RUNTIME_ELAPSED_TICK_MS = 10_000;
+const RUNTIME_ARC_STROKE_PX = 1.8;
+
+const EMPTY_STOPPED_MAP: Map<string, number | null> = new Map();
+
+const RUNTIME_ARC_COLORS: Record<"active" | "attention" | "idle", string> = {
+  active: "rgba(167, 139, 250, 0.95)",
+  attention: "rgba(251, 113, 133, 0.9)",
+  idle: "rgba(52, 211, 153, 0.85)",
+};
+
+function useElapsedNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), RUNTIME_ELAPSED_TICK_MS);
+    return () => window.clearInterval(id);
+  }, [active]);
+  return now;
+}
+
+function useStateSinceMs(
+  isRunning: boolean,
+  workingState: string,
+  backendSinceIso: string | null | undefined,
+  stoppedSinceLedgerMs: number,
+): { ms: number; stopped: boolean } | null {
+  const stateKey = isRunning ? String(workingState || "running") : "stopped";
+  const prevKeyRef = useRef<string | null>(null);
+  const baselineRef = useRef<{ key: string; at: number } | null>(null);
+  const flipRef = useRef<{ key: string; at: number } | null>(null);
+  if (prevKeyRef.current === null) {
+    baselineRef.current = { key: stateKey, at: Date.now() };
+  } else if (prevKeyRef.current !== stateKey) {
+    const at = Date.now();
+    baselineRef.current = { key: stateKey, at };
+    flipRef.current = { key: stateKey, at };
+  }
+  prevKeyRef.current = stateKey;
+
+  if (stateKey === "stopped") {
+    const flipMs = flipRef.current?.key === "stopped" ? flipRef.current.at : 0;
+    const ms = Math.max(stoppedSinceLedgerMs > 0 ? stoppedSinceLedgerMs : 0, flipMs);
+    return ms > 0 ? { ms, stopped: true } : null;
+  }
+  const backendSinceMs = Date.parse(String(backendSinceIso || ""));
+  const baseline = baselineRef.current?.at ?? Date.now();
+  const ms = Number.isFinite(backendSinceMs) ? Math.min(backendSinceMs, baseline) : baseline;
+  return { ms, stopped: false };
+}
 
 function buildFlowRingStyle(args: {
   tone: "active" | "attention";
@@ -69,6 +126,41 @@ function buildFlowRingStyle(args: {
     ["--runtime-flow-c" as keyof CSSProperties]: palette.streamC,
   };
 }
+
+const RuntimeElapsedArc = memo(function RuntimeElapsedArc(args: {
+  fraction: number;
+  tone: "active" | "attention" | "idle";
+  isSmallScreen: boolean;
+}) {
+  const radius =
+    args.tone === "idle" ? (args.isSmallScreen ? 20.5 : 23.5) : args.isSmallScreen ? 25 : 28;
+  const size = Math.ceil(2 * (radius + 3));
+  const circumference = 2 * Math.PI * radius;
+  const fraction = Math.min(1, Math.max(0, args.fraction));
+  const color = RUNTIME_ARC_COLORS[args.tone];
+  return (
+    <svg
+      className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      aria-hidden="true"
+    >
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke={color}
+        strokeWidth={RUNTIME_ARC_STROKE_PX}
+        strokeLinecap="round"
+        strokeDasharray={`${fraction * circumference} ${circumference}`}
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+      {fraction >= 1 ? <circle cx={size / 2} cy={size / 2 - radius} r={2.1} fill={color} /> : null}
+    </svg>
+  );
+});
 
 const RuntimeFlowRing = memo(function RuntimeFlowRing(args: {
   tone: RuntimeRingTone;
@@ -194,6 +286,9 @@ function RuntimeDockActorButtonView({
   isSmallScreen,
   isInspectorOpen,
   actorStatusProvisional,
+  mailCount,
+  mailOldestTsMs,
+  stoppedSinceMs,
   onOpenInspector,
 }: {
   groupId: string;
@@ -202,6 +297,9 @@ function RuntimeDockActorButtonView({
   isSmallScreen: boolean;
   isInspectorOpen: boolean;
   actorStatusProvisional: boolean;
+  mailCount: number;
+  mailOldestTsMs: number;
+  stoppedSinceMs: number;
   onOpenInspector: (actorId: string) => void;
 }) {
   const { t } = useTranslation(["chat", "actors"]);
@@ -223,9 +321,36 @@ function RuntimeDockActorButtonView({
           defaultValue: `${queuedCount} queued for next turn`,
         })
       : "";
-  const ringFrameClassName = isSmallScreen
-    ? "pointer-events-none absolute left-1/2 top-1/2 h-[35px] w-[35px] -translate-x-1/2 -translate-y-1/2"
-    : "pointer-events-none absolute left-1/2 top-1/2 h-[39px] w-[39px] -translate-x-1/2 -translate-y-1/2";
+  const busyRing = ringTone === "active" || ringTone === "attention";
+  const ringFrameSize = isSmallScreen ? (busyRing ? 44 : 35) : busyRing ? 50 : 41;
+  const stateSince = useStateSinceMs(
+    isRunning,
+    workingState,
+    item.actor.effective_working_updated_at,
+    stoppedSinceMs,
+  );
+  const now = useElapsedNow(stateSince !== null || mailCount > 0);
+  const elapsedMs = stateSince === null ? 0 : Math.max(0, now - stateSince.ms);
+  const elapsedLabel = formatElapsedCompact(elapsedMs);
+  const elapsedTone = busyRing ? ringTone : "idle";
+  const elapsedPillClass = busyRing
+    ? "border-black/10 bg-white/95 text-black"
+    : "border-white/10 bg-slate-500/75 text-white";
+  const mailOldestLabel =
+    mailOldestTsMs > 0 ? `${Math.floor(Math.max(0, now - mailOldestTsMs) / 60000)}m` : "";
+  const mailLabel =
+    mailCount > 0
+      ? mailOldestLabel
+        ? t("chat:runtimeDockUnreadMail", {
+            count: mailCount,
+            age: mailOldestLabel,
+            defaultValue: `${mailCount} unread mail, oldest ${mailOldestLabel}`,
+          })
+        : t("chat:runtimeDockUnreadMailNoAge", {
+            count: mailCount,
+            defaultValue: `${mailCount} unread mail`,
+          })
+      : "";
 
   const handleOpenInspector = () => {
     onOpenInspector(item.actorId);
@@ -274,13 +399,39 @@ function RuntimeDockActorButtonView({
         }
         aria-describedby={`runtime-dock-status-${item.actorId}`}
       >
-        <span className={ringFrameClassName}>
+        <span
+          className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-[width,height] duration-200"
+          style={{ width: ringFrameSize, height: ringFrameSize }}
+        >
           <span
             className={classNames("pointer-events-none", ringPresentation.ringClassName)}
             style={ringPresentation.ringStyle}
           />
           <RuntimeFlowRing tone={ringTone} isDark={isDark} />
         </span>
+        {stateSince !== null ? (
+          <>
+            {!stateSince.stopped ? (
+              <RuntimeElapsedArc
+                fraction={elapsedMs / RUNTIME_ELAPSED_CAP_MS}
+                tone={elapsedTone}
+                isSmallScreen={isSmallScreen}
+              />
+            ) : null}
+            <span
+              aria-hidden="true"
+              className={classNames(
+                "pointer-events-none absolute left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border font-semibold leading-none shadow-sm",
+                isSmallScreen
+                  ? "bottom-[-4px] px-[6px] py-[3px] text-[10px]"
+                  : "bottom-[-5px] px-[7px] py-[3px] text-[11px]",
+                elapsedPillClass,
+              )}
+            >
+              {elapsedLabel}
+            </span>
+          </>
+        ) : null}
 
         <ActorAvatar
           avatarUrl={item.actor.avatar_url || undefined}
@@ -309,10 +460,31 @@ function RuntimeDockActorButtonView({
             {queuedCount > 99 ? "99+" : queuedCount}
           </span>
         ) : null}
+        {mailCount > 0 ? (
+          <span
+            className={classNames(
+              "pointer-events-none absolute -left-1.5 -top-1 z-20 flex h-[17px] items-center gap-[3px] whitespace-nowrap rounded-full border px-[5px] font-semibold leading-none shadow-[0_8px_18px_-10px_rgba(15,23,42,0.7)]",
+              isSmallScreen ? "text-[9px]" : "text-[10px]",
+              isDark
+                ? "border-amber-300/40 bg-amber-400/25 text-amber-100"
+                : "border-amber-400/60 bg-amber-200/95 text-amber-900",
+            )}
+            aria-hidden="true"
+            title={mailLabel}
+          >
+            {mailCount > 99 ? "99+" : mailCount}
+            <Mail
+              className={isSmallScreen ? "h-[9px] w-[9px]" : "h-[10px] w-[10px]"}
+              strokeWidth={2.4}
+            />
+            {mailOldestLabel}
+          </span>
+        ) : null}
       </button>
       <span id={`runtime-dock-status-${item.actorId}`} className="sr-only">
         {item.actorLabel} · {item.runtime} · {statusLabel}
         {queuedLabel ? ` · ${queuedLabel}` : ""}
+        {mailLabel ? ` · ${mailLabel}` : ""}
       </span>
     </div>
   );
@@ -329,6 +501,9 @@ const RuntimeDockActorButton = memo(
     previous.item.runtime === next.item.runtime &&
     previous.item.runner === next.item.runner &&
     previous.item.webModelQueuedCount === next.item.webModelQueuedCount &&
+    previous.mailCount === next.mailCount &&
+    previous.mailOldestTsMs === next.mailOldestTsMs &&
+    previous.stoppedSinceMs === next.stoppedSinceMs &&
     previous.isDark === next.isDark &&
     previous.isSmallScreen === next.isSmallScreen &&
     previous.isInspectorOpen === next.isInspectorOpen &&
@@ -369,6 +544,33 @@ export function RuntimeDock({
     () => buildRuntimeDockItems({ actors: runtimeActors, liveWorkCards }),
     [runtimeActors, liveWorkCards],
   );
+  const ledgerEvents = useGroupStore((state) => selectChatBucketState(state, groupId).events);
+  const mailInfoByActorId = useMemo(() => buildRuntimeDockMailInfo(ledgerEvents), [ledgerEvents]);
+  const [historyStopped, setHistoryStopped] =
+    useState<Map<string, number | null>>(EMPTY_STOPPED_MAP);
+  useEffect(() => {
+    let cancelled = false;
+    setHistoryStopped(EMPTY_STOPPED_MAP);
+    void fetchLedgerTailAll(groupId)
+      .then((resp) => {
+        if (cancelled || !resp.ok) return;
+        setHistoryStopped(buildActorStoppedSinceMap(resp.result?.events || []));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [groupId]);
+  const stoppedSinceByActorId = useMemo(() => {
+    const live = buildActorStoppedSinceMap(ledgerEvents);
+    const merged = new Map<string, number>();
+    const ids = new Set([...live.keys(), ...historyStopped.keys()]);
+    for (const id of ids) {
+      const outcome = live.has(id) ? live.get(id) : historyStopped.get(id);
+      if (typeof outcome === "number" && outcome > 0) merged.set(id, outcome);
+    }
+    return merged;
+  }, [ledgerEvents, historyStopped]);
   const tickerEntries = useMemo(
     () => buildRuntimeDockTickerEntries(items, runtimeEvents),
     [items, runtimeEvents],
@@ -396,25 +598,29 @@ export function RuntimeDock({
             className={classNames(
               "flex items-end opacity-[0.72] transition-opacity delay-[3000ms] duration-200 ease-out group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0",
               isSmallScreen
-                ? "max-w-[calc(100vw-2.5rem)] gap-2 overflow-x-auto pb-1 scrollbar-hide"
-                : "gap-2.5",
+                ? "max-w-[calc(100vw-2.5rem)] gap-2 overflow-x-auto pb-3 scrollbar-hide"
+                : "gap-2",
             )}
           >
-            <div
-              className={classNames("relative flex items-end", isSmallScreen ? "gap-2" : "gap-2.5")}
-            >
-              {items.map((item) => (
-                <RuntimeDockActorButton
-                  key={item.actorId}
-                  groupId={groupId}
-                  item={item}
-                  isDark={isDark}
-                  isSmallScreen={isSmallScreen}
-                  isInspectorOpen={activeRuntimeActorId === item.actorId}
-                  actorStatusProvisional={actorStatusProvisional}
-                  onOpenInspector={onOpenRuntimeActor}
-                />
-              ))}
+            <div className="relative flex items-end gap-2">
+              {items.map((item) => {
+                const mailInfo = mailInfoByActorId.get(item.actorId);
+                return (
+                  <RuntimeDockActorButton
+                    key={item.actorId}
+                    groupId={groupId}
+                    item={item}
+                    isDark={isDark}
+                    isSmallScreen={isSmallScreen}
+                    isInspectorOpen={activeRuntimeActorId === item.actorId}
+                    actorStatusProvisional={actorStatusProvisional}
+                    mailCount={mailInfo?.count ?? 0}
+                    mailOldestTsMs={mailInfo?.oldestTsMs ?? 0}
+                    stoppedSinceMs={stoppedSinceByActorId.get(item.actorId) ?? 0}
+                    onOpenInspector={onOpenRuntimeActor}
+                  />
+                );
+              })}
             </div>
 
             {!readOnly && onAddAgent ? (
