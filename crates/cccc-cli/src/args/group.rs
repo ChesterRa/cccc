@@ -74,4 +74,11 @@ pub enum GroupAction {
         #[arg(long, default_value = "user")]
         by: String,
     },
+    /// Re-read group.yaml from disk; verifies the file parses after a hand edit.
+    Reload {
+        #[arg(long = "group")]
+        group_id: Option<String>,
+        #[arg(long, default_value = "user")]
+        by: String,
+    },
 }

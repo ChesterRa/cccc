@@ -44,6 +44,25 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             format!("automation version changed: expected {expected:?}, current {current}"),
         ));
     }
+    let replace_all = request
+        .args
+        .get("replace_all")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !replace_all {
+        let dropped = dropped_ruleset_members(&group, &rules, &snippets);
+        if !dropped.is_empty() {
+            return Err(OpError::new(
+                "partial_update_conflict",
+                format!(
+                    "PUT would drop {}; pass \"replace_all\": true for a full ruleset replace, \
+                     or change a single rule via PATCH /automation/rules/<id> \
+                     (group_automation_manage patch_rule)",
+                    dropped.join(" and ")
+                ),
+            ));
+        }
+    }
     let updated = mutate_automation(home, &group.group_id, |doc| {
         doc.automation.insert("rules".into(), Value::Array(rules));
         let mut custom = snippets;
@@ -61,8 +80,60 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     })?;
     let event = append_event(home, &group.group_id, request, "group.automation_update")?;
     let mut result = payload(home, &updated, &caller(request))?;
+    result["previous_version"] = json!(current);
     result["event"] = json!(event);
     object(result)
+}
+
+/// Members of the stored ruleset that a submitted PUT would silently delete.
+/// Compared against what actually lives in group.yaml — built-in defaults
+/// (the synthetic standup rule/snippet that GET synthesizes when absent)
+/// re-materialize on the next read and are not data loss.
+fn dropped_ruleset_members(
+    group: &GroupDoc,
+    rules: &[Value],
+    snippets: &Map<String, Value>,
+) -> Vec<String> {
+    let submitted_rule_ids = rules
+        .iter()
+        .filter_map(|rule| rule.get("id").and_then(Value::as_str))
+        .collect::<std::collections::BTreeSet<_>>();
+    let missing_rules = automation_rules(group)
+        .iter()
+        .filter_map(|rule| rule.get("id").and_then(Value::as_str))
+        .map(str::to_owned)
+        .filter(|id| !submitted_rule_ids.contains(id.as_str()))
+        .collect::<Vec<_>>();
+    let submitted_snippet_keys = snippets
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut stored_snippet_keys = group
+        .automation
+        .get("snippets")
+        .and_then(Value::as_object)
+        .map(|items| items.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    stored_snippet_keys.extend(
+        group
+            .automation
+            .get("snippet_overrides")
+            .and_then(Value::as_object)
+            .map(|items| items.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default(),
+    );
+    let missing_snippets = stored_snippet_keys
+        .into_iter()
+        .filter(|key| !submitted_snippet_keys.contains(key))
+        .collect::<Vec<_>>();
+    let mut dropped = Vec::new();
+    if !missing_rules.is_empty() {
+        dropped.push(format!("rules {missing_rules:?}"));
+    }
+    if !missing_snippets.is_empty() {
+        dropped.push(format!("snippets {missing_snippets:?}"));
+    }
+    dropped
 }
 
 fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

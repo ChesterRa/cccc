@@ -563,6 +563,122 @@ fn automation_writes_reject_malformed_cross_engine_state() {
     );
 }
 
+#[test]
+fn partial_automation_put_is_rejected_and_patch_rule_edits_one_rule() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let created = ok(&home, "group_create", json!({"title":"partial put"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+
+    let seeded = ok(
+        &home,
+        "group_automation_update",
+        json!({
+            "group_id":group_id,
+            "expected_version":1,
+            "ruleset":{
+                "rules":[
+                    {"id":"r1","trigger":{"kind":"interval","every_seconds":60},
+                        "action":{"kind":"notify","message":"m1"}},
+                    {"id":"r2","trigger":{"kind":"interval","every_seconds":120},
+                        "action":{"kind":"notify","message":"m2"}}
+                ],
+                "snippets":{"s1":"snippet one"}
+            }
+        }),
+    );
+    assert_eq!(seeded.result["version"], 2);
+
+    // A PUT that would silently delete r2 and s1 is refused unless the caller
+    // declares the full-replace intent.
+    let partial = raw(
+        &home,
+        "group_automation_update",
+        json!({
+            "group_id":group_id,
+            "expected_version":2,
+            "ruleset":{"rules":[
+                {"id":"r1","trigger":{"kind":"interval","every_seconds":60},
+                    "action":{"kind":"notify","message":"m1"}}
+            ],"snippets":{}}
+        }),
+    );
+    assert!(!partial.ok);
+    let error = partial.error.expect("partial error");
+    assert_eq!(error.code, "partial_update_conflict");
+    assert!(error.message.contains("r2"));
+    assert!(error.message.contains("s1"));
+    let after = ok(
+        &home,
+        "group_automation_state",
+        json!({"group_id":group_id}),
+    );
+    assert_eq!(
+        after.result["ruleset"]["rules"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(after.result["version"], 2);
+
+    // The declared full replace goes through and reports the version delta.
+    let replaced = ok(
+        &home,
+        "group_automation_update",
+        json!({
+            "group_id":group_id,
+            "expected_version":2,
+            "replace_all":true,
+            "ruleset":{"rules":[
+                {"id":"r1","trigger":{"kind":"interval","every_seconds":60},
+                    "action":{"kind":"notify","message":"m1"}}
+            ],"snippets":{}}
+        }),
+    );
+    assert_eq!(replaced.result["previous_version"], 2);
+    assert_eq!(replaced.result["version"], 3);
+    assert_eq!(
+        replaced.result["ruleset"]["rules"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // patch_rule merge-edits one rule: every_seconds changes, kind survives,
+    // and the id cannot be rewritten.
+    let patched = ok(
+        &home,
+        "group_automation_manage",
+        json!({
+            "group_id":group_id,
+            "by":"user",
+            "actions":[{"type":"patch_rule","rule_id":"r1","fields":{
+                "enabled":false,
+                "id":"rewrite-attempt",
+                "trigger":{"every_seconds":300}
+            }}]
+        }),
+    );
+    let rule = &patched.result["ruleset"]["rules"][0];
+    assert_eq!(rule["id"], "r1");
+    assert_eq!(rule["enabled"], false);
+    assert_eq!(rule["trigger"]["kind"], "interval");
+    assert_eq!(rule["trigger"]["every_seconds"], 300);
+    assert_eq!(rule["action"]["message"], "m1");
+
+    let missing = raw(
+        &home,
+        "group_automation_manage",
+        json!({
+            "group_id":group_id,
+            "by":"user",
+            "actions":[{"type":"patch_rule","rule_id":"ghost","fields":{"enabled":false}}]
+        }),
+    );
+    assert!(!missing.ok);
+}
+
 fn ok(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     let response = raw(home, op, args);
     assert!(response.ok, "{op} failed: {:?}", response.error);

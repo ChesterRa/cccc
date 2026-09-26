@@ -1,5 +1,6 @@
 use axum::extract::{Path, State};
-use axum::routing::{get, post};
+use axum::http::HeaderMap;
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde_json::{Value, json};
 
@@ -15,6 +16,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/v1/groups/{group_id}/automation",
             get(automation_get).put(automation_update),
+        )
+        .route(
+            "/api/v1/groups/{group_id}/automation/rules/{rule_id}",
+            patch(automation_rule_patch),
         )
         .route(
             "/api/v1/groups/{group_id}/automation/manage",
@@ -136,18 +141,20 @@ async fn automation_get(State(state): State<AppState>, Path(group_id): Path<Stri
 async fn automation_update(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> ApiResult {
     call(
         &state,
         "group_automation_update",
-        automation_update_args(group_id, body)?,
+        automation_update_args(group_id, &headers, body)?,
     )
     .await
 }
 
 fn automation_update_args(
     group_id: String,
+    headers: &HeaderMap,
     body: Value,
 ) -> Result<serde_json::Map<String, Value>, crate::api::ApiError> {
     let mut body = body_object(body)?;
@@ -162,12 +169,55 @@ fn automation_update_args(
         "ruleset":{"rules":rules,"snippets":snippets},
         "by":by
     }));
-    if let Some(expected_version) = body.remove("expected_version")
-        && !expected_version.is_null()
+    if let Some(expected_version) = body
+        .remove("expected_version")
+        .filter(|value| !value.is_null())
+        .or_else(|| if_match_version(headers).map(Value::from))
     {
         args.insert("expected_version".into(), expected_version);
     }
+    if let Some(replace_all) = body.remove("replace_all")
+        && !replace_all.is_null()
+    {
+        args.insert("replace_all".into(), replace_all);
+    }
     Ok(args)
+}
+
+/// `If-Match: "7"` / `If-Match: 7` carries the ruleset version for optimistic
+/// concurrency on the automation write endpoints.
+fn if_match_version(headers: &HeaderMap) -> Option<u64> {
+    let raw = headers.get("if-match")?.to_str().ok()?.trim();
+    let token = raw
+        .strip_prefix("W/")
+        .unwrap_or(raw)
+        .trim_matches('"')
+        .trim();
+    token.parse::<u64>().ok()
+}
+
+async fn automation_rule_patch(
+    State(state): State<AppState>,
+    Path((group_id, rule_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let mut body = body_object(body)?;
+    let expected_version = body
+        .remove("expected_version")
+        .filter(|value| !value.is_null())
+        .or_else(|| if_match_version(&headers).map(Value::from));
+    body.remove("by");
+    let fields = body.remove("fields").unwrap_or(Value::Object(body));
+    let mut args = object(json!({
+        "group_id":group_id,
+        "by":"user",
+        "actions":[{"type":"patch_rule","rule_id":rule_id,"fields":fields}],
+    }));
+    if let Some(expected_version) = expected_version {
+        args.insert("expected_version".into(), expected_version);
+    }
+    call(&state, "group_automation_manage", args).await
 }
 async fn automation_manage(
     State(state): State<AppState>,
@@ -221,6 +271,7 @@ mod tests {
     fn automation_update_wraps_the_native_web_payload_in_the_daemon_contract() {
         let args = automation_update_args(
             "g_demo".into(),
+            &HeaderMap::new(),
             json!({
                 "rules":[{"id":"standup"}],
                 "snippets":{"standup":"check in"},
@@ -236,5 +287,20 @@ mod tests {
         assert_eq!(args["expected_version"], json!(7));
         assert_eq!(args["by"], json!("user"));
         assert!(args.get("patch").is_none());
+    }
+
+    #[test]
+    fn automation_update_forwards_replace_all_and_if_match() {
+        let mut headers = HeaderMap::new();
+        headers.insert("if-match", "\"9\"".parse().unwrap());
+        let args = automation_update_args(
+            "g_demo".into(),
+            &headers,
+            json!({"rules":[],"snippets":{},"replace_all":true}),
+        )
+        .expect("automation args");
+
+        assert_eq!(args["expected_version"], json!(9));
+        assert_eq!(args["replace_all"], json!(true));
     }
 }

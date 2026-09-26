@@ -10,6 +10,7 @@ pub fn group(value: &str) -> Option<&'static str> {
         "start" => "group_start",
         "stop" => "group_stop",
         "set_state" => "group_set_state",
+        "reload" => "group_reload",
         "use" => "group_use",
         "attach" => "attach",
         "detach_scope" => "group_detach_scope",
