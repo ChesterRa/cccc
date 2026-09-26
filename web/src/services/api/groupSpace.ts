@@ -409,6 +409,8 @@ export function getGroupSpaceProviderAuthBrowserWebSocketUrl(
   provider: string = "notebooklm",
 ): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const base = apiUrl(`${protocol}//${window.location.host}/api/v1/space/providers/${encodeURIComponent(provider)}/auth/browser_surface/ws`);
+  const base = apiUrl(
+    `${protocol}//${window.location.host}/api/v1/space/providers/${encodeURIComponent(provider)}/auth/browser_surface/ws`,
+  );
   return withAuthToken(base);
 }

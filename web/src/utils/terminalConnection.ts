@@ -35,7 +35,9 @@ export function buildTerminalWebSocketUrl(args: {
   rows?: number;
 }): string {
   const protocol = args.protocol === "https:" ? "wss:" : "ws:";
-  const url = apiUrl(`${protocol}//${args.host}/api/v1/groups/${encodeURIComponent(args.groupId)}/actors/${encodeURIComponent(args.actorId)}/term`);
+  const url = apiUrl(
+    `${protocol}//${args.host}/api/v1/groups/${encodeURIComponent(args.groupId)}/actors/${encodeURIComponent(args.actorId)}/term`,
+  );
   const params = new URLSearchParams();
   params.set("mode", args.mode === "viewer" ? "viewer" : "control");
   if (args.takeover) params.set("takeover", "true");

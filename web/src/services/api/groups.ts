@@ -1432,7 +1432,9 @@ export async function closePresentationBrowserSurfaceSession(
 
 export function getPresentationBrowserSurfaceWebSocketUrl(groupId: string, slotId: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const base = apiUrl(`${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/ws?slot=${encodeURIComponent(slotId)}`);
+  const base = apiUrl(
+    `${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/ws?slot=${encodeURIComponent(slotId)}`,
+  );
   return withAuthToken(base);
 }
 

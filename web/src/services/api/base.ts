@@ -170,10 +170,7 @@ export function apiUrl(path: string): string {
   if (!prefix) return path;
   // Covers "/api/..." plus absolute "scheme://host/api/..." URLs built by
   // the websocket/SSE helpers.
-  return path.replace(
-    /^((?:[a-z][a-z\d+.-]*:)?(?:\/\/[^/]+)?)\/api(\/|$)/,
-    `$1${prefix}$2`,
-  );
+  return path.replace(/^((?:[a-z][a-z\d+.-]*:)?(?:\/\/[^/]+)?)\/api(\/|$)/, `$1${prefix}$2`);
 }
 
 export function withAuthToken(url: string): string {

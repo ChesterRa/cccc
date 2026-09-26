@@ -3282,7 +3282,9 @@ export function VoiceSecretaryComposerControl({
         lease_id: voiceRecordingLeaseIdRef.current,
       });
       const wsUrl = withAuthToken(
-        apiUrl(`${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/transcriptions/ws?${wsParams.toString()}`),
+        apiUrl(
+          `${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/transcriptions/ws?${wsParams.toString()}`,
+        ),
       );
       const ws = new WebSocket(wsUrl);
       mediaStreamRef.current = stream;

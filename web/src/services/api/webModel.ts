@@ -532,7 +532,9 @@ export function getWebModelBrowserSurfaceWebSocketUrl(groupId: string, actorId: 
     actor_id: String(actorId || "").trim(),
   });
   return withAuthToken(
-    apiUrl(`${protocol}//${window.location.host}/api/v1/web-model/browser-session/ws?${params.toString()}`),
+    apiUrl(
+      `${protocol}//${window.location.host}/api/v1/web-model/browser-session/ws?${params.toString()}`,
+    ),
   );
 }
 

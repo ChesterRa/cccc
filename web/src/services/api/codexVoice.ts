@@ -152,7 +152,9 @@ export function getCodexVoiceWebSocketUrl(generation: string): string {
 
 export function getCodexVoiceTerminalWebSocketUrl(generation: string, query: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const base = apiUrl(`${protocol}//${window.location.host}/api/v1/codex_voice/analysts/${encodeURIComponent(generation)}/terminal`);
+  const base = apiUrl(
+    `${protocol}//${window.location.host}/api/v1/codex_voice/analysts/${encodeURIComponent(generation)}/terminal`,
+  );
   return `${base}${query ? `?${query}` : ""}`;
 }
 
