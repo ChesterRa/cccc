@@ -69,6 +69,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
   const incrementChatUnread = useUIStore((s) => s.incrementChatUnread);
   const setSSEStatus = useUIStore((s) => s.setSSEStatus);
+  const setSSEError = useUIStore((s) => s.setSSEError);
   const markPresentationSlotAttention = useModalStore((s) => s.markPresentationSlotAttention);
   const clearPresentationSlotAttention = useModalStore((s) => s.clearPresentationSlotAttention);
 
@@ -868,6 +869,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (!shouldStartGroupStreams(document.hidden)) {
       needsVisibilityCatchupRef.current = true;
       setSSEStatus("disconnected");
+      setSSEError(null);
       return;
     }
 
@@ -882,6 +884,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     es.onopen = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       setSSEStatus("connected");
+      setSSEError(null);
       hasConnectedOnceRef.current = true;
       needsVisibilityCatchupRef.current = false;
       // Group scope changes may have happened before this subscription opened.
@@ -900,9 +903,53 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     es.onerror = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       setSSEStatus("disconnected");
+      void probeStreamFailure(groupId);
       // Keep this logical subscription alive: the shared transport reconnects
       // with its delivered cursor so Rust can replay the missed ledger events.
     };
+
+    async function probeStreamFailure(gid: string) {
+      let kind: "http" | "network" = "network";
+      let status: number | null = null;
+      try {
+        const resp = await fetch(
+          api.withAuthToken(`/api/v1/groups/${encodeURIComponent(gid)}/ledger/stream`),
+          { method: "HEAD", cache: "no-store", credentials: "same-origin" },
+        );
+        kind = "http";
+        status = resp.status;
+      } catch {
+        /* network unreachable — daemon down or link dead */
+      }
+      if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
+      const prev = useUIStore.getState().sseError;
+      setSSEError({
+        endpoint: "ledger stream",
+        kind,
+        status,
+        nextRetryAt: prev?.nextRetryAt ?? null,
+      });
+    }
+
+    es.addEventListener("retry", (e) => {
+      if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
+      const msg = e as MessageEvent;
+      try {
+        const data = JSON.parse(String(msg.data || "{}"));
+        const delayMs = Number(data.delay_ms);
+        if (Number.isFinite(delayMs) && delayMs > 0) {
+          const prev = useUIStore.getState().sseError;
+          setSSEError({
+            endpoint: prev?.endpoint ?? "ledger stream",
+            kind: prev?.kind ?? "network",
+            status: prev?.status ?? null,
+            nextRetryAt: Date.now() + delayMs,
+          });
+        }
+      } catch {
+        /* ignore parse errors */
+      }
+    });
 
     es.addEventListener("ledger", (e) => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
@@ -983,6 +1030,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (options?.resetConnected !== false) {
       hasConnectedOnceRef.current = false;
       needsVisibilityCatchupRef.current = false;
+      setSSEError(null);
     } else {
       needsVisibilityCatchupRef.current = true;
     }

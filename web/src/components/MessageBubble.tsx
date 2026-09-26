@@ -14,7 +14,7 @@ import {
   TaskMessageRef,
   VoiceDocumentMessageRef,
 } from "../types";
-import { formatFullTime, formatMessageTimestamp } from "../utils/time";
+import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getReplyEventId } from "../utils/chatReply";
 import { projectCrossGroupRecipients, projectMessageMode } from "../utils/crossGroupRecipients";
@@ -540,7 +540,7 @@ export const MessageBubble = memo(
         voiceDocumentRefs,
       ],
     );
-    const messageTimestamp = formatMessageTimestamp(ev.ts);
+    const messageTimestamp = formatTime(ev.ts);
     const fullMessageTimestamp = formatFullTime(ev.ts);
 
     // Use event's group_id for blob URLs (attachments are stored in the event's original group)

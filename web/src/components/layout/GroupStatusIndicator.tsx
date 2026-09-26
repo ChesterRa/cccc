@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 
+import { useSseErrorDetailText } from "../../hooks/useSseErrorDetailText";
 import type { GroupStatus, GroupStatusKey } from "../../utils/groupStatus";
 import { GROUP_STATUS_DOT_BASE_CLASS } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
@@ -27,8 +28,9 @@ export function GroupStatusIndicator({
   const { t } = useTranslation("layout");
   const label = t(statusLabelKey[status.key]);
   const interrupted = connectionStatus && connectionStatus !== "connected";
+  const errorDetail = useSseErrorDetailText();
   const description = interrupted
-    ? `${label} · ${t(connectionStatus === "connecting" ? "reconnecting" : "disconnected")}. ${t("connectionInterruptedHint")}`
+    ? `${label} · ${t(connectionStatus === "connecting" ? "reconnecting" : "disconnected")}${errorDetail ? ` · ${errorDetail}` : ""}. ${t("connectionInterruptedHint")}`
     : label;
   const dotClass = interrupted
     ? connectionStatus === "connecting"
