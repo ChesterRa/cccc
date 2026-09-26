@@ -25,40 +25,6 @@ export function formatTime(isoStr: string | undefined): string {
   }
 }
 
-function pad2(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
-function isSameLocalDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
-function formatLocalMonthDayTime(date: Date): string {
-  return `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-}
-
-export function formatMessageTimestamp(isoStr: string | undefined): string {
-  if (!isoStr) return "—";
-  try {
-    const date = new Date(isoStr);
-    if (isNaN(date.getTime())) return isoStr;
-    const now = new Date();
-    if (isSameLocalDay(date, now)) {
-      return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-    }
-    if (date.getFullYear() === now.getFullYear()) {
-      return formatLocalMonthDayTime(date);
-    }
-    return `${date.getFullYear()}-${formatLocalMonthDayTime(date)}`;
-  } catch {
-    return isoStr;
-  }
-}
-
 export function formatFullTime(isoStr: string | undefined): string {
   if (!isoStr) return "";
   try {
