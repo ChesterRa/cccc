@@ -58,7 +58,6 @@
   "liveWorkHint": "运行时的结构化过程输出会显示在这里，正式回复通过 message 工具发送。",
   "runtimeDockOpenLiveWork": "打开 {{name}} 的实时工作",
   "runtimeDockOpenTerminal": "打开 {{name}} 的终端",
-  "runtimeDockUnreadMail": "{{count}} 封未读邮件，最早 {{age}}",
   "runtimeDockUnreadMailNoAge": "{{count}} 封未读邮件",
   "runtimeInspectorTitle": "运行时检查器",
   "runtimeInspectorClose": "关闭运行时检查器",

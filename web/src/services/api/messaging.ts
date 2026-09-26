@@ -25,14 +25,6 @@ export async function fetchLedgerTail(groupId: string, lines = 120, init?: Ledge
   );
 }
 
-export async function fetchLedgerTailAll(groupId: string, lines = 200) {
-  const params = new URLSearchParams({ kind: "all", limit: String(lines) });
-  return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/tail?${params.toString()}`,
-    { cache: "no-store" },
-  );
-}
-
 export async function fetchLedgerBoundary(groupId: string) {
   const params = new URLSearchParams({ kind: "all", limit: "1" });
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(

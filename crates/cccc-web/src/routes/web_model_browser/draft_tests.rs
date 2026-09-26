@@ -164,6 +164,17 @@ async fn preview_and_saved_alignment_preserve_attachment_only_drafts() {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn grok_binding_aligns_existing_page_without_viewer_and_preserves_drafts() {
+    check_grok_binding_page(false).await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn grok_binding_replaces_chatgpt_surface_before_navigation() {
+    check_grok_binding_page(true).await;
+}
+
+#[cfg(target_os = "linux")]
+async fn check_grok_binding_page(switch_provider: bool) {
     use cccc_core::web_model_connectors as bindings;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     if crate::system_browser_path().is_none() || !Path::new("/usr/bin/Xvfb").is_file() {
@@ -220,7 +231,7 @@ async fn grok_binding_aligns_existing_page_without_viewer_and_preserves_drafts()
             stream.get_mut().write_all(&bytes).await.expect("response");
         }
     });
-    let (_, _, _, state) = crate::app_with_shutdown(
+    let (_, _, _, mut state) = crate::app_with_shutdown(
         home.clone(),
         tokio::sync::broadcast::channel(1).0,
         crate::WebMode::Normal,
@@ -231,6 +242,11 @@ async fn grok_binding_aligns_existing_page_without_viewer_and_preserves_drafts()
         },
         "binding-fixture".into(),
     );
+    // This fixture deliberately retains an old provider page. Drive reaping
+    // explicitly below, so the app's periodic reaper cannot remove it during
+    // setup before the binding route is exercised.
+    state.browser_surfaces =
+        std::sync::Arc::new(crate::browser_surface::BrowserSurfaces::default());
     let key = key(gid, "grok");
     let page_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -246,9 +262,55 @@ async fn grok_binding_aligns_existing_page_without_viewer_and_preserves_drafts()
         )
         .await
     });
+    let grok_profile = super::super::web_model_shared_browser::profile(&state, "grok_web");
+    // Keep this isolated Grok owner available and intercept new targets before
+    // navigation. No authenticated session or external provider is contacted.
     state
         .browser_surfaces
-        .open(&key, &temp.path().join("profile"), &local_url, 800, 600)
+        .ensure_open_shared_system(
+            "web-model-login:grok_web",
+            &grok_profile,
+            &local_url,
+            800,
+            600,
+        )
+        .await
+        .expect("Grok login fixture");
+    let grok_requests = if switch_provider {
+        Some(
+            intercept_fixture_profile(
+                state
+                    .browser_surfaces
+                    .info("web-model-login:grok_web")
+                    .await["metadata"]["cdp_port"]
+                    .as_u64()
+                    .expect("fixture port"),
+            )
+            .await,
+        )
+    } else {
+        None
+    };
+    let mut surface_actor = group.actors[0].clone();
+    if switch_provider {
+        surface_actor.runtime = ActorRuntime::WebModel;
+    }
+    let surface_profile = super::super::web_model_shared_browser::profile(
+        &state,
+        surface_actor
+            .runtime
+            .web_model_provider()
+            .expect("provider"),
+    );
+    state
+        .browser_surfaces
+        .ensure_open_shared_actor(
+            &key,
+            &surface_profile,
+            &local_url,
+            (800, 600),
+            &crate::browser_surface::actor_identity(&surface_actor),
+        )
         .await
         .expect("open");
     let page = state
@@ -272,19 +334,31 @@ async fn grok_binding_aligns_existing_page_without_viewer_and_preserves_drafts()
         while let Some(e) = events.next().await {
             let mut response = FulfillRequestParams::new(e.request_id.clone(), 200);
             response.body = Some(base64::engine::general_purpose::STANDARD.encode(
-                r#"<!doctype html><main><div data-testid="bot-working-slot"></div><div data-testid="chat-input"><div contenteditable="true" role="textbox" class="ProseMirror" style="width:400px;height:100px"></div></div><input type="file"><button data-testid="chat-submit" aria-label="Submit">Submit</button></main>"#
+                r#"<!doctype html><main><div data-testid="bot-working-slot"></div><div data-testid="chat-input"><div contenteditable="true" role="textbox" id="prompt-textarea" class="ProseMirror" style="width:400px;height:100px"></div></div><input type="file"><button data-testid="chat-submit" aria-label="Submit">Submit</button></main>"#
             ).into());
             if responder.execute(response).await.is_err() {
                 break;
             }
         }
     });
-    page.goto(a).await.expect("Bot A fixture");
+    let initial_url = if switch_provider {
+        "https://chatgpt.com/c/fixture"
+    } else {
+        a
+    };
+    page.goto(initial_url).await.expect("initial page fixture");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let ready = page.evaluate(format!("location.href === '{initial_url}' && document.readyState === 'complete' && !!document.querySelector('#prompt-textarea')")).await;
+            if ready.is_ok_and(|value| value.into_value::<bool>().unwrap_or(false)) { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }).await.expect("fixture composer ready");
     let body = json!({"group_id":gid,"actor_id":"grok","url":b});
     for draft in [
         "const d = new DataTransfer(); d.items.add(new File(['draft'], 'unsent.txt')); document.querySelector('input').files = d.files;",
         "document.querySelector('input').value='';document.querySelector('[contenteditable]').textContent='unsent';",
-        "document.querySelector('[contenteditable]').textContent='';document.querySelector('[data-testid=bot-working-slot]').innerHTML='<div style=\"width:100px;height:30px\">Working</div>';",
+        "document.querySelector('[contenteditable]').textContent='';document.querySelector('[data-testid=bot-working-slot]').innerHTML='<button data-testid=\"stop-button\" aria-label=\"Stop\" style=\"width:100px;height:30px\">Working</button>';",
     ] {
         page.evaluate(format!("() => {{ {draft} }}"))
             .await
@@ -294,7 +368,7 @@ async fn grok_binding_aligns_existing_page_without_viewer_and_preserves_drafts()
                 .await
                 .is_err()
         );
-        assert_eq!(page.url().await.expect("url").as_deref(), Some(a));
+        assert_eq!(page.url().await.expect("url").as_deref(), Some(initial_url));
         assert_eq!(
             super::super::web_model_connector_store::for_actor(&state, gid, "grok")
                 .expect("binding")["url"],
@@ -305,18 +379,153 @@ async fn grok_binding_aligns_existing_page_without_viewer_and_preserves_drafts()
         .await
         .expect("idle");
     let result = bind_grok(State(state.clone()), Json(body.clone())).await;
-    let url_after_save = page.url().await.expect("url");
+    let saved_surface = state.browser_surfaces.info(&key).await;
+    let saved_page = state
+        .browser_surfaces
+        .sessions
+        .lock()
+        .await
+        .get(&key)
+        .map(|session| session.page.clone());
+    let url_after_save = if let Some(saved_page) = saved_page {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let url = saved_page.url().await.expect("saved URL");
+                if url.as_deref() == Some(b) {
+                    break url;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+    } else {
+        Ok(None)
+    };
+    let reaped = state
+        .browser_surfaces
+        .close_missing_actors(&groups)
+        .await
+        .expect("reap");
     let binding_after_save =
         super::super::web_model_connector_store::for_actor(&state, gid, "grok").expect("binding");
-    state.browser_surfaces.close(&key).await.expect("cleanup");
+    state
+        .browser_surfaces
+        .shutdown_all()
+        .await
+        .expect("cleanup");
+    if let Some(task) = grok_requests {
+        task.abort();
+    }
     intercept.abort();
     daemon.abort();
     page_server.abort();
     assert!(result.is_ok(), "save failed: {result:?}");
     assert_eq!(binding_after_save["url"], b);
     assert_eq!(
-        url_after_save.as_deref(),
+        saved_surface["metadata"]["actor_identity"],
+        crate::browser_surface::actor_identity(&group.actors[0])
+    );
+    assert_eq!(
+        saved_surface["metadata"]["profile_dir"],
+        grok_profile.to_string_lossy().as_ref()
+    );
+    assert_eq!(reaped, 0, "saved window must belong to the current Actor");
+    assert_eq!(
+        url_after_save.expect("saved page navigation").as_deref(),
         Some(b),
         "save must align the page without opening the viewer"
     );
+}
+
+#[cfg(target_os = "linux")]
+async fn intercept_fixture_profile(port: u64) -> tokio::task::JoinHandle<()> {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+    let version = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("client")
+        .get(format!("http://127.0.0.1:{port}/json/version"))
+        .send()
+        .await
+        .expect("fixture CDP")
+        .json::<Value>()
+        .await
+        .expect("CDP metadata");
+    let endpoint = version["webSocketDebuggerUrl"]
+        .as_str()
+        .expect("fixture endpoint");
+    let (mut socket, _) = tokio_tungstenite::connect_async(endpoint)
+        .await
+        .expect("fixture connection");
+    socket
+        .send(Message::Text(
+            json!({"id":1,"method":"Target.setAutoAttach","params":{
+                "autoAttach":true,"waitForDebuggerOnStart":true,"flatten":true
+            }})
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("intercept new pages");
+    let (ready, waiting) = tokio::sync::oneshot::channel();
+    let handle = tokio::spawn(async move {
+        let mut ready = Some(ready);
+        let mut id = 1;
+        while let Some(Ok(message)) = socket.next().await {
+            let Ok(message) = message.to_text() else {
+                continue;
+            };
+            let Ok(event) = serde_json::from_str::<Value>(message) else {
+                continue;
+            };
+            if event["id"] == 1 {
+                assert!(
+                    event.get("error").is_none(),
+                    "fixture interception rejected"
+                );
+                let _ = ready.take().expect("one reply").send(());
+            }
+            let commands = match event["method"].as_str() {
+                Some("Target.attachedToTarget") => vec![
+                    (
+                        event["params"]["sessionId"].clone(),
+                        "Fetch.enable",
+                        json!({}),
+                    ),
+                    (
+                        event["params"]["sessionId"].clone(),
+                        "Runtime.runIfWaitingForDebugger",
+                        json!({}),
+                    ),
+                ],
+                Some("Fetch.requestPaused") => vec![(
+                    event["sessionId"].clone(),
+                    "Fetch.fulfillRequest",
+                    json!({
+                        "requestId":event["params"]["requestId"], "responseCode":200,
+                        "body":base64::engine::general_purpose::STANDARD.encode("<!doctype html><p>isolated Grok fixture</p>"),
+                        "responseHeaders":[{"name":"Content-Type","value":"text/html"}]
+                    }),
+                )],
+                _ => vec![],
+            };
+            for (session, method, params) in commands {
+                id += 1;
+                if socket
+                    .send(Message::Text(
+                        json!({"id":id,"sessionId":session,"method":method,"params":params})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+    });
+    waiting.await.expect("interception ready");
+    handle
 }

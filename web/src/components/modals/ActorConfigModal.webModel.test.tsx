@@ -9,6 +9,7 @@ vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => k
 vi.mock("../../services/api", () => ({
   fetchWebModelBrowserSurfaceSession: (...a: unknown[]) => mocks.status(...a),
   fetchActorPrivateEnvKeys: (...a: unknown[]) => mocks.env(...a),
+  fetchActorProfilePrivateEnvKeys: (...a: unknown[]) => mocks.env(...a),
 }));
 vi.mock("../CapabilityPicker", () => ({ CapabilityPicker: () => <div>capability-picker</div> }));
 vi.mock("../RolePresetPicker", () => ({ RolePresetPicker: () => <div>actor-preset</div> }));
@@ -103,6 +104,50 @@ describe("Web Model effective Actor configuration", () => {
   });
   const button = (label: string) =>
     [...host.querySelectorAll("button")].find((b) => b.textContent === label)!;
+  it("retains secret drafts when unlinking succeeds but private-env saving fails", async () => {
+    const p = props();
+    p.linkedProfileId = "fixture-profile";
+    await act(async () => root.render(<ActorConfigModal {...p} />));
+    await act(async () => button("customAgent").click());
+    await act(async () => button("convertToCustom").click());
+    await act(async () => button("stage-env-draft").click());
+    p.onSave = vi.fn().mockImplementationOnce(async () => {
+      p.linkedProfileId = undefined;
+      root.render(<ActorConfigModal {...p} />);
+      throw new Error("fixture private-env write failed");
+    });
+    await act(async () => root.render(<ActorConfigModal {...p} />));
+    await act(async () => button("common:save").click());
+    expect(host.textContent).toContain("fixture private-env write failed");
+    expect(button("common:save")).toBeDefined();
+    await act(async () => button("common:save").click());
+    expect(p.onSave).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        convertToCustom: false,
+        setVars: { FIXTURE_KEY: "synthetic" },
+        unsetKeys: ["OLD_FIXTURE"],
+      }),
+    );
+    await act(async () => root.render(<ActorConfigModal {...p} actorId="beta" />));
+    expect(button("common:done")).toBeDefined();
+  });
+  it("clears committed secrets even if a later save step fails", async () => {
+    const p = props();
+    await act(async () => root.render(<ActorConfigModal {...p} />));
+    await act(async () => button("stage-env-draft").click());
+    p.actorNotes = "An unsaved note";
+    p.onSave = vi.fn().mockImplementationOnce(async (payload) => {
+      payload.onSecretsSaved(["FIXTURE_KEY"]);
+      throw new Error("fixture notes write failed");
+    });
+    await act(async () => root.render(<ActorConfigModal {...p} />));
+    await act(async () => button("common:save").click());
+    expect(host.textContent).toContain("fixture notes write failed");
+    await act(async () => button("common:save").click());
+    expect(p.onSave).toHaveBeenLastCalledWith(
+      expect.objectContaining({ setVars: {}, unsetKeys: [], clear: false }),
+    );
+  });
   it("hides launch fields without fetching secrets while preserving valid controls and saving", async () => {
     const p = props();
     p.runtime = "web_model";

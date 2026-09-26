@@ -119,6 +119,14 @@ runtime activity display, and stopped Actors are explicitly identified. Hidden G
 not clear the message unread count or count as viewed for Voice suppression. Following a message
 source link returns to Messages and locates the original event.
 
+The Runtime Dock uses a thin violet-to-rose trailing arc for working Actors, rotating gently
+once every 3.6 seconds. Idle Actors have a quieter green ring, stopped Actors gray, and states
+needing attention rose. All rings keep the same size; reduced-motion preferences leave the working arc static. Hover or focus an Actor
+for its name and use the button's description for status details. No duration or progress is
+inferred from status timestamps. The upper-right envelope badge shows unread Mail from the
+daemon, including messages outside the loaded chat history. Browser delivery queues have a
+separate badge at the lower right; both badges appear only when their count is nonzero.
+
 The Runtime Dock's progress bubbles show the latest short live update for each Actor, with up to
 two Actors visible at once. Updates from the same Actor replace the previous excerpt. Open the
 Actor to inspect the complete output. Restoring a Group or reconnecting its activity stream

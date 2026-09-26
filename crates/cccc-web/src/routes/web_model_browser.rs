@@ -186,8 +186,22 @@ async fn close(State(state): State<AppState>, Json(body): Json<Value>) -> ApiRes
 async fn bind_grok(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     let actor_id = required(&body, "actor_id")?;
-    validate_actor(&state, &group_id, &actor_id)?;
     let _control = super::web_model_delivery::control_guard(&group_id, &actor_id)?;
+    let group = GroupStore::new(state.home.clone())
+        .map_err(io_error)?
+        .load(&group_id)
+        .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))?;
+    let actor = group
+        .actors
+        .iter()
+        .find(|a| a.id == actor_id)
+        .ok_or_else(|| ApiError::not_found(format!("actor not found: {actor_id}")))?;
+    if actor.runtime.web_model_provider() != Some("grok_web") {
+        return Err(ApiError::bad(
+            "Actor must use the Grok Bot Web Model runtime",
+        ));
+    }
+    let identity = crate::browser_surface::actor_identity(actor);
     require_stopped(&state, &group_id, &actor_id)?;
     let url =
         cccc_core::web_model_connectors::grok_bot_url(body["url"].as_str().unwrap_or_default())
@@ -210,6 +224,25 @@ async fn bind_grok(State(state): State<AppState>, Json(body): Json<Value>) -> Ap
         // aligning that Page, rather than waiting for someone to open its viewer.
         // Recheck after IPC so a draft typed during persistence is preserved.
         require_idle_grok_page(&state, &surface_key).await?;
+        let surface = state.browser_surfaces.info(&surface_key).await;
+        if surface["metadata"]["actor_identity"] != identity {
+            // Stop/update retain the old Page. A provider or generation change
+            // must retire it, never navigate Grok inside another login profile.
+            state
+                .browser_surfaces
+                .close(&surface_key)
+                .await
+                .map_err(|e| ApiError::bad(format!("{e:#}")))?;
+            ensure_open_for_actor(
+                &state,
+                &group_id,
+                &actor_id,
+                dimension(&surface, "width", 1366, 640, 2560),
+                dimension(&surface, "height", 900, 480, 1600),
+            )
+            .await?;
+            return payload(&state, &group_id, &actor_id, false).await;
+        }
         let observed = state
             .browser_surfaces
             .navigate_to_url(&surface_key, &url)

@@ -25,14 +25,6 @@ export function formatTime(isoStr: string | undefined): string {
   }
 }
 
-export function formatElapsedCompact(ms: number): string {
-  const totalMin = Math.max(0, Math.floor(ms / 60000));
-  if (totalMin < 60) return `${totalMin}m`;
-  const totalHr = Math.floor(totalMin / 60);
-  const remMin = totalMin % 60;
-  return remMin ? `${totalHr}h${remMin}m` : `${totalHr}h`;
-}
-
 function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }

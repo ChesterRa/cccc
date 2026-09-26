@@ -61,6 +61,8 @@ export interface EditActorSavePayload {
   profileId?: string;
   convertToCustom?: boolean;
   grokBotUrl?: string;
+  // A later notes/binding/restart failure must not replay committed secret edits.
+  onSecretsSaved?: (keys: string[]) => void;
 }
 
 export interface SaveActorProfileResult {
@@ -874,6 +876,7 @@ function EditActorConfigModal({
   const [capabilitiesPrimed, setCapabilitiesPrimed] = useState(false);
   const [advancedTab, setAdvancedTab] = useState<AdvancedTabId>("environment");
   const secretFetchSeqRef = useRef(0);
+  const initializedDraftIdentityRef = useRef("");
   const modalStateRef = useRef<{
     groupId: string;
     actorId: string;
@@ -1071,9 +1074,18 @@ function EditActorConfigModal({
   };
 
   useEffect(() => {
-    if (!isOpen) return;
-    secretFetchSeqRef.current += 1;
+    if (!isOpen) {
+      initializedDraftIdentityRef.current = "";
+      return;
+    }
     const hasLinked = Boolean(String(linkedProfileId || "").trim());
+    if (initializedDraftIdentityRef.current === identity) {
+      // A partial save updates the persisted Profile link, not the edit session.
+      if (!hasLinked) setPendingConvertToCustom(false);
+      return;
+    }
+    initializedDraftIdentityRef.current = identity;
+    secretFetchSeqRef.current += 1;
     setEditMode(hasLinked ? "profile" : "custom");
     setPendingConvertToCustom(false);
     setAttachProfileId(
@@ -1092,7 +1104,7 @@ function EditActorConfigModal({
     setSecretMasks({});
     setSecretChanges(emptyActorSecretChanges());
     setSecretKeys([]);
-  }, [groupId, actorId, isOpen, linkedProfileId, linkedProfileOwner, linkedProfileScope]);
+  }, [identity, isOpen, linkedProfileId, linkedProfileOwner, linkedProfileScope]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1260,6 +1272,15 @@ function EditActorConfigModal({
         clear: secretSaveChanges.clear,
         capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
         convertToCustom: linked && pendingConvertToCustom,
+        onSecretsSaved: (keys) => {
+          if (initializedDraftIdentityRef.current !== identity) return;
+          secretFetchSeqRef.current += 1;
+          setSecretChanges(emptyActorSecretChanges());
+          setSecretKeys(keys);
+          setSecretMasks({});
+          setSecretKeysLoadFailed(false);
+          setSecretsRefreshing(false);
+        },
         ...(grokTargetChanged ? { grokBotUrl: grokBotUrl!.trim() } : {}),
       });
     } catch (e) {

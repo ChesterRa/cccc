@@ -1072,6 +1072,7 @@ export function AppModals({
         if (!envResp.ok) {
           throw new Error(`${envResp.error.code}: ${envResp.error.message}`);
         }
+        payload.onSecretsSaved?.(envResp.result.keys);
       }
 
       if (actorNotesChanged) {
