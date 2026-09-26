@@ -23,9 +23,7 @@ export function useSseErrorDetailText(): string {
     sseError.status ? ` HTTP ${sseError.status}` : ` ${t("connectionUnreachable")}`
   }`;
   const countdown = sseError.nextRetryAt
-    ? t("retryingIn", {
-        seconds: Math.max(0, Math.ceil((sseError.nextRetryAt - now) / 1000)),
-      })
+    ? t("retryingIn", { seconds: Math.max(0, Math.ceil((sseError.nextRetryAt - now) / 1000)) })
     : "";
   return [reason, countdown].filter(Boolean).join(" · ");
 }
