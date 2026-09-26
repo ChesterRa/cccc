@@ -254,21 +254,36 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
             .and_then(serde_json::Value::as_str)
             == Some("mail")
     {
-        return mail_report();
+        let wake_targets: Vec<_> = group
+            .actors
+            .iter()
+            .filter(|actor| {
+                actor.wake_on_mail
+                    && delivery_supported(actor)
+                    && event_targets_actor(group, event, &actor.id)
+            })
+            .cloned()
+            .collect();
+        return if wake_targets.is_empty() {
+            mail_report()
+        } else {
+            dispatch_to(home, group, event, &wake_targets, false)
+        };
     }
 
     let targets: Vec<_> = group
         .actors
         .iter()
-        .filter(|actor| {
-            (!crate::ops::actor_runtime::is_structured(actor)
-                || crate::ops::local_headless::supports(actor)
-                || actor.runtime == ActorRuntime::Deepseek)
-                && event_targets_actor(group, event, &actor.id)
-        })
+        .filter(|actor| delivery_supported(actor) && event_targets_actor(group, event, &actor.id))
         .cloned()
         .collect();
     dispatch_to(home, group, event, &targets, false)
+}
+
+fn delivery_supported(actor: &Actor) -> bool {
+    !crate::ops::actor_runtime::is_structured(actor)
+        || crate::ops::local_headless::supports(actor)
+        || actor.runtime == ActorRuntime::Deepseek
 }
 
 fn event_targets_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
@@ -629,14 +644,22 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 }
             }
             let mut delivered = false;
+            let mut terminal_reason = None;
             for attempt in 0..3 {
-                if actor_delivery_worker::process_batch(
+                match actor_delivery_worker::process_batch(
                     &batch,
                     &mut preamble_session,
                     &thread_cancelled,
                 ) {
-                    delivered = true;
-                    break;
+                    actor_delivery_worker::BatchOutcome::Delivered => {
+                        delivered = true;
+                        break;
+                    }
+                    actor_delivery_worker::BatchOutcome::Terminal(reason) => {
+                        terminal_reason = Some(reason);
+                        break;
+                    }
+                    actor_delivery_worker::BatchOutcome::Retry => {}
                 }
                 if thread_cancelled.load(Ordering::Acquire) {
                     break;
@@ -648,7 +671,9 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                     break;
                 }
             }
-            if !delivered {
+            if let Some(reason) = terminal_reason {
+                fail_jobs(&batch, &reason);
+            } else if !delivered {
                 deferred = batch;
                 deferred_failures = deferred_failures.saturating_add(1);
             } else {
@@ -736,6 +761,45 @@ mod tests {
                 .expect("in flight")
                 .iter()
                 .any(|item| item.0 == group.group_id)
+        );
+    }
+
+    #[test]
+    fn wake_on_mail_delivers_only_to_opted_in_actors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("wake mail", "").expect("group");
+        let mut woken = Actor::new("peer1");
+        woken.wake_on_mail = true;
+        let idle = Actor::new("peer2");
+        group.actors.extend([woken, idle]);
+        store.save(&group).expect("save actors");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"to":["peer1","peer2"],"text":"wake up","message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+
+        let report = dispatch(&home, &group, &event);
+        assert_eq!(report.targeted, 1);
+        assert_eq!(report.queued, 1);
+
+        let events =
+            ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger")).expect("events");
+        let deliveries: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "runtime.delivery")
+            .collect();
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(
+            deliveries[0].data.get("actor_id").and_then(|v| v.as_str()),
+            Some("peer1")
+        );
+        assert_eq!(
+            deliveries[0].data.get("state").and_then(|v| v.as_str()),
+            Some("claimed")
         );
     }
 

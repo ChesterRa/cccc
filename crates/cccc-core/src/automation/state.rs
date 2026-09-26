@@ -13,6 +13,8 @@ pub(super) struct RuntimeState {
     pub last_rule: BTreeMap<String, i64>,
     #[serde(default)]
     pub last_nudge: BTreeMap<String, i64>,
+    #[serde(default)]
+    pub stalled_tasks: BTreeMap<String, i64>,
 }
 
 pub(super) fn load(store: &GroupStore, group_id: &str) -> io::Result<RuntimeState> {
@@ -24,6 +26,17 @@ pub(super) fn load(store: &GroupStore, group_id: &str) -> io::Result<RuntimeStat
     let canonical_exists = canonical.exists();
     if canonical_exists {
         let doc: Value = read_json(&canonical)?;
+        if let Some(tasks) = doc.get("tasks").and_then(Value::as_object) {
+            for (task_id, entry) in tasks {
+                if let Some(timestamp) = entry
+                    .get("stalled_since")
+                    .and_then(Value::as_str)
+                    .and_then(parse_timestamp)
+                {
+                    state.stalled_tasks.insert(task_id.clone(), timestamp);
+                }
+            }
+        }
         if let Some(rules) = doc.get("rules").and_then(Value::as_object) {
             for (rule_id, entry) in rules {
                 if let Some(timestamp) = entry
@@ -72,6 +85,13 @@ pub(super) fn load(store: &GroupStore, group_id: &str) -> io::Result<RuntimeStat
                 .and_modify(|current| *current = (*current).max(value))
                 .or_insert(value);
         }
+        for (key, value) in legacy.stalled_tasks {
+            state
+                .stalled_tasks
+                .entry(key)
+                .and_modify(|current| *current = (*current).max(value))
+                .or_insert(value);
+        }
         save(store, group_id, &state)?;
     } else if legacy_pending {
         std::fs::write(
@@ -98,6 +118,12 @@ pub(super) fn save(store: &GroupStore, group_id: &str, state: &RuntimeState) -> 
         let entry = object(rules.entry(rule_id.clone()).or_insert_with(|| json!({})));
         entry.insert("last_fired_at".into(), json!(format_timestamp(*timestamp)));
     }
+    let tasks = object(root.entry("tasks").or_insert_with(|| json!({})));
+    for (task_id, timestamp) in &state.stalled_tasks {
+        let entry = object(tasks.entry(task_id.clone()).or_insert_with(|| json!({})));
+        entry.insert("stalled_since".into(), json!(format_timestamp(*timestamp)));
+    }
+    tasks.retain(|task_id, _| state.stalled_tasks.contains_key(task_id));
     let actors = object(root.entry("actors").or_insert_with(|| json!({})));
     for (key, timestamp) in &state.last_nudge {
         let Some((actor_id, event_id)) = key.split_once(':') else {
