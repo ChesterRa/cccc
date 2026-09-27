@@ -262,7 +262,7 @@ mod tests {
         json!({"kind":"cron","cron":expression})
             .as_object()
             .cloned()
-            .unwrap()
+            .expect("cron trigger is a JSON object")
     }
 
     #[test]
@@ -293,7 +293,7 @@ mod tests {
     fn cron_day_of_week_weekday_range_fires_next_weekday() {
         let now = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).unwrap(); // Friday noon
         let trigger = cron_trigger("0 9 * * mon-fri");
-        let next = next_fire_at(Some(&trigger), None, now).unwrap();
+        let next = next_fire_at(Some(&trigger), None, now).expect("mon-fri has a next fire");
         assert_eq!(next.weekday(), Weekday::Mon);
     }
 
