@@ -454,11 +454,40 @@ fn update_items(
 fn apply_item_update(item: &mut Value, update: AuthorizedUpdate) -> bool {
     match update {
         AuthorizedUpdate::Paused(paused) => item["paused"] = json!(paused),
-        AuthorizedUpdate::Verbose(verbose) => item["verbose"] = json!(verbose),
-        AuthorizedUpdate::Relay(mode) => item["relay"] = json!(mode.name()),
+        // The relay mode is the single source of truth for what reaches a
+        // chat; `/verbose` is kept as shorthand for it, and the legacy
+        // `verbose` flag always mirrors the mode, so the two commands can
+        // never disagree.
+        AuthorizedUpdate::Verbose(true) => set_relay(item, RelayMode::All),
+        AuthorizedUpdate::Verbose(false) => {
+            // Turning verbose off only steps down from `all`; a quieter
+            // mode the user chose (`to_user_only`) is left as it is.
+            let current = item
+                .get("relay")
+                .and_then(Value::as_str)
+                .and_then(RelayMode::parse);
+            let verbose = item.get("verbose").and_then(Value::as_bool) == Some(true);
+            let effective = current.unwrap_or(if verbose {
+                RelayMode::All
+            } else {
+                RelayMode::Mentions
+            });
+            let next = if effective == RelayMode::All {
+                RelayMode::Mentions
+            } else {
+                effective
+            };
+            set_relay(item, next);
+        }
+        AuthorizedUpdate::Relay(mode) => set_relay(item, mode),
         AuthorizedUpdate::Remove => unreachable!(),
     }
     true
+}
+
+fn set_relay(item: &mut Value, mode: RelayMode) {
+    item["relay"] = json!(mode.name());
+    item["verbose"] = json!(mode == RelayMode::All);
 }
 
 fn command_name(text: &str) -> String {
@@ -918,5 +947,63 @@ mod tests {
         assert!(body.contains("removed"));
         let state = cccc_core::im_state::load(&store, &group_id).expect("state");
         assert!(state["authorized"].as_array().expect("array").is_empty());
+    }
+
+    fn relay_state(store: &GroupStore, group_id: &str) -> (Value, Value) {
+        let state = cccc_core::im_state::load(store, group_id).expect("state");
+        let item = &state["authorized"][0];
+        (item["relay"].clone(), item["verbose"].clone())
+    }
+
+    fn command(home: &HomeLayout, group_id: &str, text: &str) -> String {
+        reply(inbound_decision_blocking(
+            home, group_id, "telegram", "chat-1", text,
+        ))
+    }
+
+    #[test]
+    fn verbose_off_after_relay_all_stops_all_message_forwarding() {
+        let (_temp, home, store, group_id) = setup();
+        authorize(&store, &group_id, false, false);
+        command(&home, &group_id, "/relay all");
+        assert_eq!(relay_state(&store, &group_id), (json!("all"), json!(true)));
+        command(&home, &group_id, "/verbose off");
+        assert_eq!(
+            relay_state(&store, &group_id),
+            (json!("mentions"), json!(false)),
+            "/verbose off must turn all-message forwarding off"
+        );
+    }
+
+    #[test]
+    fn verbose_and_relay_stay_consistent_in_both_directions() {
+        let (_temp, home, store, group_id) = setup();
+        authorize(&store, &group_id, false, false);
+        command(&home, &group_id, "/verbose on");
+        assert_eq!(relay_state(&store, &group_id), (json!("all"), json!(true)));
+        command(&home, &group_id, "/relay mentions");
+        assert_eq!(
+            relay_state(&store, &group_id),
+            (json!("mentions"), json!(false))
+        );
+        // A quieter mode the user chose survives /verbose off.
+        command(&home, &group_id, "/relay to_user_only");
+        command(&home, &group_id, "/verbose off");
+        assert_eq!(
+            relay_state(&store, &group_id),
+            (json!("to_user_only"), json!(false))
+        );
+    }
+
+    #[test]
+    fn verbose_off_on_a_legacy_verbose_subscription_steps_down_to_mentions() {
+        let (_temp, home, store, group_id) = setup();
+        // Persisted before relay modes existed: verbose only, no relay key.
+        authorize(&store, &group_id, false, true);
+        command(&home, &group_id, "/verbose off");
+        assert_eq!(
+            relay_state(&store, &group_id),
+            (json!("mentions"), json!(false))
+        );
     }
 }
