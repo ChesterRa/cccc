@@ -16,27 +16,8 @@ impl Session {
                     .is_ok_and(|status| status.running))
     }
 
-    /// An explicit stop still owns the confirmed kill — even after observer
-    /// teardown released the session (its client channel is gone, so the
-    /// direct `claude stop` request applies instead of the close handshake).
     pub(super) fn stop(&self) -> io::Result<bool> {
-        self.stop_locked_inner(true)
-    }
-
-    /// Replacing a session during respawn must never reap a released
-    /// provider: a live job is the re-adopt target of the next launch.
-    pub(super) fn stop_for_replacement(&self) -> io::Result<bool> {
-        self.stop_locked_inner(false)
-    }
-
-    fn stop_locked_inner(&self, kill_released: bool) -> io::Result<bool> {
         let _guard = self.stop_lock.lock().map_err(|_| super::poisoned())?;
-        if self.released.swap(false, Ordering::AcqRel) {
-            if kill_released {
-                block_on_managed(self.managed.stop_after_release())?;
-            }
-            return Ok(false);
-        }
         if self.stopped.load(Ordering::Acquire) {
             return Ok(false);
         }
@@ -55,32 +36,32 @@ impl Session {
         Ok(true)
     }
 
-    pub(super) fn stop_after_process_exit(&self) -> bool {
-        // A dead observer is not proof that the provider job stopped — and a
-        // supervisor-owned job (Claude Agent View) must not be reaped on
-        // observer teardown. Release owned resources without requesting a
-        // provider stop; a live job is re-adopted by the next launch.
-        match self.release_after_observer_exit() {
-            Ok(first) => {
-                if first {
-                    record_provider_exit(&self.home, &self.group_id, &self.actor_id);
-                }
-                first
-            }
+    pub(super) fn stop_after_process_exit(&self, provider_absent: bool) -> bool {
+        // A dead observer is not proof that the provider job stopped: a job
+        // that may still be working is stopped through the same confirmed
+        // path as actor_stop, retaining ownership on error. Only a job its
+        // supervisor positively reports gone has nothing left to stop.
+        let result = if provider_absent {
+            self.release_after_provider_exit()
+        } else {
+            self.stop()
+        };
+        match result {
+            Ok(first) => first,
             Err(error) => {
                 self.set_status("error", None);
                 tracing::error!(
                     %error,
                     group_id = %self.group_id,
                     actor_id = %self.actor_id,
-                    "failed to release disconnected managed Actor; stop remains retryable"
+                    "failed to stop disconnected managed Actor; stop remains retryable"
                 );
                 false
             }
         }
     }
 
-    fn release_after_observer_exit(&self) -> io::Result<bool> {
+    fn release_after_provider_exit(&self) -> io::Result<bool> {
         let _guard = self.stop_lock.lock().map_err(|_| super::poisoned())?;
         if self.stopped.load(Ordering::Acquire) {
             return Ok(false);
@@ -98,7 +79,6 @@ impl Session {
                 Err(error) => return Err(io::Error::other(error)),
             }
         }
-        self.released.store(true, Ordering::Release);
         self.stopped.store(true, Ordering::Release);
         self.set_status("stopped", None);
         output::emit(self, "headless.session.stopped", serde_json::Map::new());
@@ -184,18 +164,5 @@ impl Session {
 
     pub(super) fn respond_error(&self, id: Value, error: Value) -> io::Result<()> {
         managed_runtime().block_on(self.managed.respond_error(id, error))
-    }
-}
-
-fn record_provider_exit(home: &cccc_core::HomeLayout, group_id: &str, actor_id: &str) {
-    if let Err(error) =
-        super::super::actor_runtime::record_process_exit(home, group_id, actor_id, None)
-    {
-        tracing::warn!(
-            ?error,
-            group_id,
-            actor_id,
-            "failed to record managed Actor provider exit"
-        );
     }
 }

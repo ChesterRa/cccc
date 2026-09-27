@@ -71,9 +71,6 @@ struct Session {
     viewer: Mutex<Option<ViewerLaunch>>,
     status: Mutex<HeadlessStatus>,
     stopped: AtomicBool,
-    /// Set when the session was released after observer teardown — the
-    /// provider job was left running rather than confirmed stopped.
-    released: AtomicBool,
     stop_lock: Mutex<()>,
     startup_prompt: Mutex<Option<String>>,
     active_turn: Mutex<Option<ActiveTurn>>,

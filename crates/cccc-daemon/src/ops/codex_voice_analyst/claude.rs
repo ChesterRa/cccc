@@ -908,13 +908,6 @@ impl ClaudeClient {
         control::kill(&self.endpoint, &self.short).await
     }
 
-    /// The confirmed kill used by `close`, usable without the client command
-    /// channel. Released sessions (observer already ended) take this path for
-    /// an explicit stop.
-    pub(super) async fn stop_confirmed(&self) -> io::Result<()> {
-        kill_and_confirm(&self.endpoint, &self.short).await
-    }
-
     /// True only when Agent View positively reports the provider job as
     /// absent. An unreachable supervisor is not evidence of absence.
     pub(super) async fn job_absent(&self) -> bool {
@@ -2202,9 +2195,8 @@ mod tests {
                     }
                     "kill" => {
                         stopped = true;
-                        post_kill_deadline = Some(
-                            tokio::time::Instant::now() + Duration::from_millis(1500),
-                        );
+                        post_kill_deadline =
+                            Some(tokio::time::Instant::now() + Duration::from_millis(1500));
                         json!({"ok":true,"op":"kill"})
                     }
                     other => panic!("unexpected control operation: {other}"),

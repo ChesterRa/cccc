@@ -163,6 +163,63 @@ mod tests {
     use cccc_core::GroupStore;
 
     #[test]
+    fn a_binding_from_a_provider_confirmed_gone_is_never_resumed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let group = GroupStore::new(home.clone())
+            .expect("store")
+            .create("Claude exit", "")
+            .expect("group");
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir(&workspace).expect("workspace");
+        let command = vec!["claude".into()];
+        let environment = BTreeMap::new();
+        let prepare = || {
+            prepare_managed(
+                &home,
+                &group.group_id,
+                "claude-1",
+                &workspace,
+                &command,
+                &environment,
+            )
+            .expect("prepare Claude resume")
+        };
+        let exited = "52b41c61-e23c-4b7c-8b60-809c347451b5";
+        record_managed(
+            &home,
+            &group.group_id,
+            "claude-1",
+            &workspace,
+            &command,
+            &environment,
+            exited,
+            false,
+        )
+        .expect("record Claude session");
+        assert_eq!(prepare().as_deref(), Some(exited));
+
+        invalidate_managed(&home, &group.group_id, "claude-1").expect("invalidate");
+        assert_eq!(prepare(), None, "a dead session must not be resumed");
+
+        // The next successful launch records a fresh, resumable binding.
+        let fresh = "0f8e1b1e-2c7a-4d7e-9a53-3b1f0b9c2d44";
+        record_managed(
+            &home,
+            &group.group_id,
+            "claude-1",
+            &workspace,
+            &command,
+            &environment,
+            fresh,
+            false,
+        )
+        .expect("record fresh session");
+        assert_eq!(prepare().as_deref(), Some(fresh));
+    }
+
+    #[test]
     fn managed_receipt_rejects_legacy_and_identity_changes() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

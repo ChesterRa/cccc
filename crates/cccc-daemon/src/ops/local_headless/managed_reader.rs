@@ -61,11 +61,11 @@ pub(super) fn spawn(
 }
 
 fn stop_after_provider_exit(session: &Session) {
-    // Whether the provider job is positively confirmed gone decides what the
-    // recorded binding means: a confirmed exit invalidates resume eligibility,
-    // a live (re-adoptable) job keeps it.
+    // Only a job its supervisor positively reports gone skips the confirmed
+    // stop, and only its binding stops being resumable.
     let provider_absent = managed_runtime().block_on(session.managed.managed_provider_absent());
-    let first = session.stop_after_process_exit();
+    let first = session.stop_after_process_exit(provider_absent);
+    record_provider_exit_if_first(first, &session.home, &session.group_id, &session.actor_id);
     if first
         && provider_absent
         && let Err(error) = super::super::runtime_session::invalidate_claude_managed_session(
@@ -119,7 +119,6 @@ pub(crate) async fn verify_claude_reader_release(
             pid: None,
         }),
         stopped: AtomicBool::new(false),
-        released: AtomicBool::new(false),
         stop_lock: Mutex::new(()),
         startup_prompt: Mutex::new(None),
         active_turn: Mutex::new(None),
@@ -140,22 +139,30 @@ pub(crate) async fn verify_claude_reader_release(
         })
         .await
         .expect("transcript observer exits");
-        // The fake provider job is still alive. Observer teardown must
-        // release the session without ever consulting the control socket —
-        // even a rejected control request cannot prevent the release.
+        // The fake provider job is still alive. A supervisor that cannot be
+        // asked is not proof of absence: a rejected control request must not
+        // retire the job locally or prevent a later successful stop.
         reject_control.store(true, Ordering::Release);
-        let prematurely_stopped = tokio::task::spawn_blocking({
+        tokio::task::spawn_blocking({
             let session = Arc::clone(&session);
-            move || session.stop_after_process_exit()
+            move || stop_after_provider_exit(&session)
         })
         .await
-        .expect("failed release task");
+        .expect("failed stop task");
         reject_control.store(false, Ordering::Release);
-        assert!(prematurely_stopped);
-        assert!(session.stopped.load(Ordering::Acquire));
-        assert_eq!(session.status.lock().expect("state").status, "stopped");
+        assert!(!session.stopped.load(Ordering::Acquire));
+        assert_eq!(session.status.lock().expect("state").status, "error");
     }
     spawn(Arc::clone(&session), receiver).expect("spawn managed reader");
+    if corrupt_transcript.is_some() {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !session.stopped.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("observer failure must actually stop the job");
+    }
     let stopped = tokio::task::spawn_blocking({
         let session = Arc::clone(&session);
         move || session.stop()
@@ -164,12 +171,6 @@ pub(crate) async fn verify_claude_reader_release(
     .expect("stop task")
     .expect("stop session");
     assert_eq!(stopped, corrupt_transcript.is_none());
-    // An explicit stop still confirms the provider kill — release semantics
-    // only apply to observer teardown.
-    assert!(
-        !managed.process_running() || corrupt_transcript.is_some(),
-        "explicit session stop must confirm the provider exit"
-    );
     assert!(session.stopped.load(Ordering::Acquire));
     drop(session);
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -196,7 +197,6 @@ pub(crate) async fn verify_claude_reader_release(
     }
 }
 
-#[cfg(test)]
 fn record_provider_exit_if_first(
     first_stop: bool,
     home: &cccc_core::HomeLayout,

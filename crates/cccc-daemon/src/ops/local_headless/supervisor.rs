@@ -10,8 +10,14 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use tracing::Instrument;
 
 #[cfg(all(test, unix))]
+#[path = "control_fixture.rs"]
+mod control_fixture;
+#[cfg(all(test, unix))]
 #[path = "shutdown_tests.rs"]
 mod shutdown_tests;
+#[cfg(all(test, unix))]
+#[path = "viewer_detach_tests.rs"]
+mod viewer_detach_tests;
 
 pub(super) type Key = (String, String);
 
@@ -143,7 +149,6 @@ pub(super) fn attach_managed(
             pid: app.process_id(),
         }),
         stopped: AtomicBool::new(false),
-        released: AtomicBool::new(false),
         stop_lock: Mutex::new(()),
         startup_prompt: Mutex::new(Some(prompt)),
         active_turn: Mutex::new(None),
@@ -217,7 +222,7 @@ fn start_session(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Resu
     if lookup(&key).is_some_and(|item| item.running()) {
         return Ok(());
     }
-    stop_locked(&key, false)?;
+    stop_locked(&key)?;
 
     start_managed_agent(home, group, actor, key)
 }
@@ -226,7 +231,7 @@ pub fn stop(group_id: &str, actor_id: &str) -> io::Result<()> {
     let key = (group_id.to_owned(), actor_id.to_owned());
     super::workspace_trust_recovery::cancel(&key)?;
     let _start = StartGuard::acquire(&key)?;
-    stop_locked(&key, true)
+    stop_locked(&key)
 }
 
 /// A managed Actor's runtime session is only its viewer attachment (for
@@ -248,17 +253,13 @@ pub fn detach_after_viewer_exit(group_id: &str, actor_id: &str) -> io::Result<bo
     Ok(true)
 }
 
-fn stop_locked(key: &Key, kill_released: bool) -> io::Result<()> {
+fn stop_locked(key: &Key) -> io::Result<()> {
     // A prompt may have been registered while stop was waiting for its start.
     super::workspace_trust_recovery::cancel(key)?;
     let Some(item) = lookup(key) else {
         return Ok(());
     };
-    if kill_released {
-        item.stop()?;
-    } else {
-        item.stop_for_replacement()?;
-    }
+    item.stop()?;
     let mut items = sessions().write().map_err(|_| poisoned())?;
     if items
         .get(key)
