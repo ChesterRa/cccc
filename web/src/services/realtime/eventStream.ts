@@ -67,4 +67,14 @@ export function openEventStream(path: string): EventStreamSource {
   return source;
 }
 
+/** Current state of the shared realtime socket, for connection diagnostics. */
+export function eventStreamStatus(): {
+  url: string;
+  readyState: number;
+  channels: Channel[];
+} | null {
+  if (!transport) return null;
+  return { ...transport.status, channels: transport.channels };
+}
+
 if (import.meta.hot) import.meta.hot.dispose(() => transport?.dispose());

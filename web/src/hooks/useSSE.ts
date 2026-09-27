@@ -1,4 +1,8 @@
-import { openEventStream, type EventStreamSource } from "../services/realtime/eventStream";
+import {
+  openEventStream,
+  eventStreamStatus,
+  type EventStreamSource,
+} from "../services/realtime/eventStream";
 // Ledger and headless subscriptions on the shared realtime connection.
 import { useEffect, useRef } from "react";
 import { useGroupStore, useUIStore, useModalStore } from "../stores";
@@ -69,6 +73,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
   const incrementChatUnread = useUIStore((s) => s.incrementChatUnread);
   const setSSEStatus = useUIStore((s) => s.setSSEStatus);
+  const setSSEError = useUIStore((s) => s.setSSEError);
   const markPresentationSlotAttention = useModalStore((s) => s.markPresentationSlotAttention);
   const clearPresentationSlotAttention = useModalStore((s) => s.clearPresentationSlotAttention);
 
@@ -868,6 +873,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (!shouldStartGroupStreams(document.hidden)) {
       needsVisibilityCatchupRef.current = true;
       setSSEStatus("disconnected");
+      setSSEError(null);
       return;
     }
 
@@ -882,6 +888,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     es.onopen = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       setSSEStatus("connected");
+      setSSEError(null);
       hasConnectedOnceRef.current = true;
       needsVisibilityCatchupRef.current = false;
       // Group scope changes may have happened before this subscription opened.
@@ -900,9 +907,42 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     es.onerror = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       setSSEStatus("disconnected");
+      describeTransportFailure();
       // Keep this logical subscription alive: the shared transport reconnects
       // with its delivered cursor so Rust can replay the missed ledger events.
     };
+
+    /**
+     * Reports the transport that is actually in use. Every logical
+     * subscription (global, ledger, headless) rides a single WebSocket to
+     * /api/v1/events/ws, with no HTTP SSE fallback, so name the shared socket
+     * and the channels it carries rather than probing one channel's URL.
+     */
+    function describeTransportFailure(): void {
+      if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
+      const channels = eventStreamStatus()?.channels ?? [];
+      setSSEError({
+        endpoint: channels.length ? `realtime socket (${channels.join(", ")})` : "realtime socket",
+        nextRetryAt: useUIStore.getState().sseError?.nextRetryAt ?? null,
+      });
+    }
+
+    es.addEventListener("retry", (e) => {
+      if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
+      const msg = e as MessageEvent;
+      try {
+        const data = JSON.parse(String(msg.data || "{}"));
+        const delayMs = Number(data.delay_ms);
+        if (Number.isFinite(delayMs) && delayMs > 0) {
+          setSSEError({
+            endpoint: useUIStore.getState().sseError?.endpoint ?? "realtime socket",
+            nextRetryAt: Date.now() + delayMs,
+          });
+        }
+      } catch {
+        /* ignore parse errors */
+      }
+    });
 
     es.addEventListener("ledger", (e) => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
@@ -983,6 +1023,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (options?.resetConnected !== false) {
       hasConnectedOnceRef.current = false;
       needsVisibilityCatchupRef.current = false;
+      setSSEError(null);
     } else {
       needsVisibilityCatchupRef.current = true;
     }

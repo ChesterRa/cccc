@@ -39,6 +39,19 @@ export class EventStreamTransport {
     for (const source of this.sources.values()) source.readyState = 2;
     this.sources.clear();
   }
+  /**
+   * Live state of the shared socket, for connection diagnostics. The UI has to
+   * report the transport that is actually in use: every logical subscription
+   * rides one WebSocket to /api/v1/events/ws, so an HTTP probe of an
+   * individual channel URL describes a request the client never makes.
+   */
+  get status(): { url: string; readyState: number } {
+    return { url: this.url, readyState: this.socket?.readyState ?? WebSocket.CLOSED };
+  }
+  /** Channels currently multiplexed over the socket. */
+  get channels(): Channel[] {
+    return [...this.sources.keys()];
+  }
   private schedule() {
     if (this.scheduled) return;
     this.scheduled = true;
@@ -133,6 +146,7 @@ export class EventStreamTransport {
         this.schedule();
       }, source.retryDelay),
     );
+    source.emit("retry", { delay_ms: source.retryDelay });
     source.retryDelay = Math.min(source.retryDelay * 2, 30000);
   }
   private fail(socket: WebSocket) {
@@ -148,10 +162,12 @@ export class EventStreamTransport {
       source.emit("error");
     }
     if (!this.sources.size || this.retry) return;
+    const delay = this.delay;
     this.retry = setTimeout(() => {
       this.retry = null;
       this.sync();
-    }, this.delay);
+    }, delay);
+    for (const source of this.sources.values()) source.emit("retry", { delay_ms: delay });
     this.delay = Math.min(this.delay * 2, 30000);
   }
 }
