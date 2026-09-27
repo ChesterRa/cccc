@@ -6,18 +6,16 @@ import { ActorAvatar } from "../../components/ActorAvatar";
 import { useActorDisplayState } from "../../hooks/useActorDisplayState";
 import { fetchContext } from "../../services/api/context";
 import { fetchTerminalTail } from "../../services/api/diagnostics";
-import { fetchLedgerTailAll } from "../../services/api/messaging";
 import { selectChatBucketState, useGroupStore } from "../../stores";
 import type { Actor, AgentState, ChatMessageData, LedgerEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { getRecipientActorIdsForEvent, isChatMessageEvent } from "../../utils/ledgerEventHandlers";
-import { formatElapsedCompact } from "../../utils/time";
 import {
   buildActorStoppedSinceMap,
-  buildRuntimeDockMailInfo,
-  type RuntimeDockMailInfo,
-} from "./runtimeDockMail";
-import { useElapsedNow, useStateSinceMs } from "./runtimeDockElapsed";
+  formatElapsedCompact,
+  useElapsedNow,
+  useStateSinceMs,
+} from "./runtimeDockElapsed";
 
 type Props = {
   groupId: string;
@@ -112,7 +110,7 @@ const ActorOverviewCard = memo(function ActorOverviewCard({
   mode,
   actorStatusProvisional,
   stoppedSinceMs,
-  mail,
+  mailCount,
   agentState,
   msgExcerpt,
   ttyLines,
@@ -126,7 +124,7 @@ const ActorOverviewCard = memo(function ActorOverviewCard({
   mode: ExcerptMode;
   stoppedSinceMs: number;
   actorStatusProvisional?: boolean;
-  mail: RuntimeDockMailInfo | undefined;
+  mailCount: number;
   agentState: AgentState | undefined;
   msgExcerpt: LedgerEvent[];
   ttyLines: string[] | undefined;
@@ -147,7 +145,6 @@ const ActorOverviewCard = memo(function ActorOverviewCard({
     actor.effective_working_updated_at,
     stoppedSinceMs,
   );
-  const mailCount = mail?.count ?? 0;
   const now = useElapsedNow(true);
   const toneClasses = TONE[tone];
   const actorTitle = String(actor.title || actor.id || "").trim() || String(actor.id || "");
@@ -158,10 +155,6 @@ const ActorOverviewCard = memo(function ActorOverviewCard({
       ? t("chat:workView.overviewDown")
       : t(`actors:${toneClasses.labelKey}`, { defaultValue: tone });
   const pillText = elapsedLabel ? `${statusLabel} · ${elapsedLabel}` : statusLabel;
-  const mailOldestLabel =
-    mailCount > 0 && mail?.oldestTsMs
-      ? `${Math.floor(Math.max(0, now - mail.oldestTsMs) / 60000)}m`
-      : "";
   const taskId = String(agentState?.hot?.active_task_id || "").trim();
   const blockers = Array.isArray(agentState?.hot?.blockers) ? agentState.hot.blockers.length : 0;
   const focus = String(agentState?.hot?.focus || "").trim();
@@ -218,11 +211,10 @@ const ActorOverviewCard = memo(function ActorOverviewCard({
           {mailCount > 0 ? (
             <span
               className="inline-flex items-center gap-1 rounded-md bg-amber-400/90 px-1.5 py-0.5 text-[10px] font-bold text-amber-950"
-              title={t("chat:runtimeDockUnreadMail", { count: mailCount, age: mailOldestLabel })}
+              title={t("chat:runtimeDockUnreadMailNoAge", { count: mailCount })}
             >
               {mailCount}
               <Mail className="h-2.5 w-2.5" strokeWidth={3} aria-hidden="true" />
-              {mailOldestLabel}
             </span>
           ) : null}
           <span
@@ -403,33 +395,15 @@ export function GroupOverview({
     [peers, safePage],
   );
 
-  const mailInfoByActorId = useMemo(() => buildRuntimeDockMailInfo(events), [events]);
+  const mailCountByActorId = useMemo(
+    () =>
+      new Map(
+        actors.map((a) => [String(a.id || ""), Math.max(0, Number(a.unread_count || 0))]),
+      ),
+    [actors],
+  );
 
-  const liveStopped = useMemo(() => buildActorStoppedSinceMap(events), [events]);
-  const [historyStopped, setHistoryStopped] = useState<Map<string, number | null> | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    fetchLedgerTailAll(groupId, 200)
-      .then((resp) => {
-        if (cancelled || !resp?.ok || !resp.result) return;
-        const tailEvents = Array.isArray((resp.result as { events?: unknown }).events)
-          ? ((resp.result as { events: LedgerEvent[] }).events as LedgerEvent[])
-          : [];
-        if (!cancelled) setHistoryStopped(buildActorStoppedSinceMap(tailEvents));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [groupId]);
-  const stoppedSinceByActorId = useMemo(() => {
-    const merged = new Map<string, number | null>();
-    if (historyStopped) {
-      for (const [id, v] of historyStopped) merged.set(id, v);
-    }
-    for (const [id, v] of liveStopped) merged.set(id, v);
-    return merged;
-  }, [historyStopped, liveStopped]);
+  const stoppedSinceByActorId = useMemo(() => buildActorStoppedSinceMap(events), [events]);
 
   const [agentStates, setAgentStates] = useState<Map<string, AgentState>>(new Map());
   useEffect(() => {
@@ -624,7 +598,7 @@ export function GroupOverview({
       for (const a of adjacent) {
         const st = agentStates.get(String(a.id));
         const blk = Array.isArray(st?.hot?.blockers) ? st.hot.blockers.length : 0;
-        const mail = mailInfoByActorId.get(String(a.id))?.count ?? 0;
+        const mail = mailCountByActorId.get(String(a.id)) ?? 0;
         const title = String(a.title || a.id || "");
         if (blk > 0) {
           text = `${title} · ⚠${blk}${mail > 0 ? ` + ${mail}✉` : ""}`;
@@ -651,7 +625,7 @@ export function GroupOverview({
       out.push({ x, y, text });
     }
     return out;
-  }, [cellRects, cellActor, agentStates, mailInfoByActorId, t]);
+  }, [cellRects, cellActor, agentStates, mailCountByActorId, t]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-group-overview>
@@ -740,7 +714,7 @@ export function GroupOverview({
                         mode={mode}
                         actorStatusProvisional={actorStatusProvisional}
                         stoppedSinceMs={stoppedSinceByActorId.get(String(actor.id)) ?? 0}
-                        mail={mailInfoByActorId.get(String(actor.id))}
+                        mailCount={mailCountByActorId.get(String(actor.id)) ?? 0}
                         agentState={agentStates.get(String(actor.id))}
                         msgExcerpt={inboundByActor.get(String(actor.id)) || []}
                         ttyLines={ttyByActorId.get(String(actor.id))}
