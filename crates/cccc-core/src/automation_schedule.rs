@@ -153,6 +153,43 @@ fn dow_name(index: usize) -> &'static str {
     DOW_NAMES[index % 7]
 }
 
+/// A day-of-week value as written: a weekday name maps to 0-6 and a number
+/// stays 0-7, so a range can still tell 0 (Sunday, start of week) from 7
+/// (Sunday, end of week) before both fold to the same index.
+fn dow_raw(value: &str) -> Option<usize> {
+    let lower = value.to_ascii_lowercase();
+    if let Some(index) = DOW_NAMES.iter().position(|name| *name == lower) {
+        return Some(index);
+    }
+    lower.parse::<usize>().ok().filter(|day| *day <= 7)
+}
+
+/// The days a range covers, in order, without repeats. `0-7` and `1-7` cover
+/// the whole week and `7-7` is Sunday alone; a start after the end wraps
+/// through Sunday (`5-1` is Friday to Monday). 7 as a start means Sunday.
+fn dow_range(start: &str, end: &str) -> Option<Vec<usize>> {
+    let (a, b) = (dow_raw(start)?, dow_raw(end)?);
+    if a == b {
+        return Some(vec![a % 7]);
+    }
+    let a = if a == 7 { 0 } else { a };
+    let days: Vec<usize> = if a <= b {
+        (a..=b).map(|day| day % 7).collect()
+    } else {
+        (a..=6).chain(0..=b).collect()
+    };
+    let mut seen = [false; 7];
+    Some(
+        days.into_iter()
+            .filter(|day| !std::mem::replace(&mut seen[*day], true))
+            .collect(),
+    )
+}
+
+fn dow_list(days: impl IntoIterator<Item = usize>) -> String {
+    days.into_iter().map(dow_name).collect::<Vec<_>>().join(",")
+}
+
 fn posix_dow_atom(atom: &str) -> String {
     let (base, step) = match atom.split_once('/') {
         Some((base, step)) => (base, Some(step)),
@@ -162,23 +199,14 @@ fn posix_dow_atom(atom: &str) -> String {
         return expand_dow_step(base, step);
     }
     match base.split_once('-') {
-        Some((start, end)) => {
-            let (a, b) = (dow_index(start), dow_index(end));
-            match (a, b) {
-                (Some(a), Some(b)) if a == b => dow_name(a).to_owned(),
-                (Some(a), Some(b)) if a < b => format!("{}-{}", dow_name(a), dow_name(b)),
-                (Some(a), Some(b)) => (a..=6)
-                    .chain(0..=b)
-                    .map(dow_name)
-                    .collect::<Vec<_>>()
-                    .join(","),
-                (a, b) => format!(
-                    "{}-{}",
-                    a.map(dow_name).unwrap_or(start),
-                    b.map(dow_name).unwrap_or(end)
-                ),
-            }
-        }
+        Some((start, end)) => match dow_range(start, end) {
+            Some(days) => dow_list(days),
+            None => format!(
+                "{}-{}",
+                dow_index(start).map(dow_name).unwrap_or(start),
+                dow_index(end).map(dow_name).unwrap_or(end)
+            ),
+        },
         None => match dow_index(base) {
             Some(day) if base.parse::<usize>().is_ok() => dow_name(day).to_owned(),
             _ => base.to_owned(),
@@ -194,10 +222,9 @@ fn expand_dow_step(base: &str, step: &str) -> String {
         return format!("{base}/{step}");
     }
     let values: Vec<usize> = match base.split_once('-') {
-        Some((start, end)) => match (dow_index(start), dow_index(end)) {
-            (Some(a), Some(b)) if a <= b => (a..=b).step_by(step).collect(),
-            (Some(a), Some(b)) => (a..=6).chain(0..=b).step_by(step).collect(),
-            _ => return format!("{base}/{step}"),
+        Some((start, end)) => match dow_range(start, end) {
+            Some(days) => days.into_iter().step_by(step).collect(),
+            None => return format!("{base}/{step}"),
         },
         None if base == "*" || base == "?" => (0..=6).step_by(step).collect(),
         None => match dow_index(base) {
@@ -208,11 +235,7 @@ fn expand_dow_step(base: &str, step: &str) -> String {
     if values.is_empty() {
         return format!("{base}/{step}");
     }
-    values
-        .into_iter()
-        .map(dow_name)
-        .collect::<Vec<_>>()
-        .join(",")
+    dow_list(values)
 }
 
 #[cfg(test)]
@@ -272,6 +295,37 @@ mod tests {
         let trigger = cron_trigger("0 9 * * mon-fri");
         let next = next_fire_at(Some(&trigger), None, now).unwrap();
         assert_eq!(next.weekday(), Weekday::Mon);
+    }
+
+    /// The weekdays an expression fires on, sampled over two weeks.
+    fn fire_weekdays(expression: &str) -> Vec<Weekday> {
+        let start = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).unwrap();
+        let schedule = parse_cron_schedule(expression)
+            .unwrap_or_else(|error| panic!("{expression} should parse: {error}"));
+        let mut days: Vec<Weekday> = schedule
+            .after(&start)
+            .take(14)
+            .map(|time| time.weekday())
+            .collect();
+        days.sort_by_key(|day| day.num_days_from_sunday());
+        days.dedup();
+        days
+    }
+
+    #[test]
+    fn cron_day_of_week_ranges_that_span_both_sundays() {
+        use Weekday::{Fri, Mon, Sat, Sun, Thu, Tue, Wed};
+        let week = vec![Sun, Mon, Tue, Wed, Thu, Fri, Sat];
+        // 0 and 7 are both Sunday, so 0-7 is the whole week, not Sunday only.
+        assert_eq!(fire_weekdays("0 9 * * 0-7"), week);
+        assert_eq!(fire_weekdays("0 9 * * 1-7"), week);
+        assert_eq!(fire_weekdays("0 9 * * 7-7"), vec![Sun]);
+        assert_eq!(fire_weekdays("0 9 * * 5-7"), vec![Sun, Fri, Sat]);
+        assert_eq!(fire_weekdays("0 9 * * 1-5"), vec![Mon, Tue, Wed, Thu, Fri]);
+        // Steps over the same range must not collapse either.
+        assert_eq!(fire_weekdays("0 9 * * 0-7/2"), vec![Sun, Tue, Thu, Sat]);
+        assert_eq!(fire_weekdays("0 9 * * 1-7/2"), vec![Sun, Mon, Wed, Fri]);
+        assert_eq!(fire_weekdays("0 9 * * */2"), vec![Sun, Tue, Thu, Sat]);
     }
 
     #[test]
