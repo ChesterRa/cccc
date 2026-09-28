@@ -93,6 +93,8 @@ pub(super) async fn fake_app_server() -> (
                         assert_eq!(request["params"]["approvalPolicy"], "never");
                         assert_eq!(request["params"]["sandbox"], "danger-full-access");
                         assert!(request["params"].get("historyMode").is_none());
+                        // Only the thread id is used; full history can exceed the frame limit.
+                        assert_eq!(request["params"]["excludeTurns"], true);
                         assert_eq!(
                             request["params"]["developerInstructions"],
                             json!(launch::ANALYST_INSTRUCTIONS)
