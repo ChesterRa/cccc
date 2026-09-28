@@ -53,6 +53,37 @@ pub fn prepare_managed(
     Ok(Some(session_id))
 }
 
+/// Mark a managed-session binding as captured from a provider that is
+/// confirmed gone, so `prepare_managed` never resumes a killed spawn into
+/// another launch. Called only when the supervisor positively reports the
+/// job absent — an unreachable supervisor must not invalidate the binding.
+pub fn invalidate_managed(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+) -> std::io::Result<()> {
+    let Ok(mut document) = super::read(home, group_id, actor_id) else {
+        return Ok(());
+    };
+    if super::string(&document, "kind") != "runtime_session"
+        || super::string(&document, "transport") != MANAGED_TRANSPORT
+        || super::string(&document, "runtime") != "claude"
+    {
+        return Ok(());
+    }
+    let failure_count = document
+        .get("failure_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        + 1;
+    let now = utc_now();
+    document.insert("status".into(), json!("exited"));
+    document.insert("resume_eligible".into(), json!(false));
+    document.insert("failure_count".into(), json!(failure_count));
+    document.insert("updated_at".into(), json!(now));
+    super::write(home, group_id, actor_id, &document)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn record_managed(
     home: &HomeLayout,
@@ -130,6 +161,63 @@ fn identity_fingerprint(
 mod tests {
     use super::*;
     use cccc_core::GroupStore;
+
+    #[test]
+    fn a_binding_from_a_provider_confirmed_gone_is_never_resumed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let group = GroupStore::new(home.clone())
+            .expect("store")
+            .create("Claude exit", "")
+            .expect("group");
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir(&workspace).expect("workspace");
+        let command = vec!["claude".into()];
+        let environment = BTreeMap::new();
+        let prepare = || {
+            prepare_managed(
+                &home,
+                &group.group_id,
+                "claude-1",
+                &workspace,
+                &command,
+                &environment,
+            )
+            .expect("prepare Claude resume")
+        };
+        let exited = "52b41c61-e23c-4b7c-8b60-809c347451b5";
+        record_managed(
+            &home,
+            &group.group_id,
+            "claude-1",
+            &workspace,
+            &command,
+            &environment,
+            exited,
+            false,
+        )
+        .expect("record Claude session");
+        assert_eq!(prepare().as_deref(), Some(exited));
+
+        invalidate_managed(&home, &group.group_id, "claude-1").expect("invalidate");
+        assert_eq!(prepare(), None, "a dead session must not be resumed");
+
+        // The next successful launch records a fresh, resumable binding.
+        let fresh = "0f8e1b1e-2c7a-4d7e-9a53-3b1f0b9c2d44";
+        record_managed(
+            &home,
+            &group.group_id,
+            "claude-1",
+            &workspace,
+            &command,
+            &environment,
+            fresh,
+            false,
+        )
+        .expect("record fresh session");
+        assert_eq!(prepare().as_deref(), Some(fresh));
+    }
 
     #[test]
     fn managed_receipt_rejects_legacy_and_identity_changes() {

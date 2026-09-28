@@ -61,12 +61,27 @@ pub(super) fn spawn(
 }
 
 fn stop_after_provider_exit(session: &Session) {
-    record_provider_exit_if_first(
-        session.stop_after_process_exit(),
-        &session.home,
-        &session.group_id,
-        &session.actor_id,
-    );
+    // Only a job its supervisor positively reports gone skips the confirmed
+    // stop, and only its binding stops being resumable.
+    let provider_absent = managed_runtime().block_on(session.managed.managed_provider_absent());
+    let first = session.stop_after_process_exit(provider_absent);
+    record_provider_exit_if_first(first, &session.home, &session.group_id, &session.actor_id);
+    if first
+        && provider_absent
+        && let Err(error) = super::super::runtime_session::invalidate_claude_managed_session(
+            &session.home,
+            &session.group_id,
+            &session.actor_id,
+            session.managed.runtime(),
+        )
+    {
+        tracing::warn!(
+            %error,
+            group_id = %session.group_id,
+            actor_id = %session.actor_id,
+            "failed to invalidate managed-session resume binding after provider exit"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -96,6 +111,7 @@ pub(crate) async fn verify_claude_reader_release(
         actor_id: "claude-reader".into(),
         managed: Arc::clone(&managed),
         has_terminal: AtomicBool::new(false),
+        viewer: Mutex::new(None),
         status: Mutex::new(super::HeadlessStatus {
             status: "idle".into(),
             task_id: None,
@@ -123,17 +139,17 @@ pub(crate) async fn verify_claude_reader_release(
         })
         .await
         .expect("transcript observer exits");
-        // The fake provider job is still alive. A rejected control request
-        // must not retire it locally or prevent a later successful stop.
+        // The fake provider job is still alive. A supervisor that cannot be
+        // asked is not proof of absence: a rejected control request must not
+        // retire the job locally or prevent a later successful stop.
         reject_control.store(true, Ordering::Release);
-        let prematurely_stopped = tokio::task::spawn_blocking({
+        tokio::task::spawn_blocking({
             let session = Arc::clone(&session);
-            move || session.stop_after_process_exit()
+            move || stop_after_provider_exit(&session)
         })
         .await
         .expect("failed stop task");
         reject_control.store(false, Ordering::Release);
-        assert!(!prematurely_stopped);
         assert!(!session.stopped.load(Ordering::Acquire));
         assert_eq!(session.status.lock().expect("state").status, "error");
     }

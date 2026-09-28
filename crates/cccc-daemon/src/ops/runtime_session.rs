@@ -13,6 +13,21 @@ pub use claude::{
     prepare_managed as prepare_claude_managed_session,
     record_managed as record_claude_managed_session,
 };
+
+/// Invalidate a claude managed-session binding whose provider job is
+/// confirmed gone. Other runtimes keep their resume bindings on observer
+/// teardown — only a confirmed supervisor absence reaches here.
+pub fn invalidate_claude_managed_session(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    runtime: cccc_contracts::ActorRuntime,
+) -> std::io::Result<()> {
+    if runtime != cccc_contracts::ActorRuntime::Claude {
+        return Ok(());
+    }
+    claude::invalidate_managed(home, group_id, actor_id)
+}
 pub use grok::{
     prepare_managed as prepare_grok_managed_session, record_managed as record_grok_managed_session,
 };

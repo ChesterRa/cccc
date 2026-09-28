@@ -122,6 +122,38 @@ impl AnalystSession {
         self.protocol.kill_request().await
     }
 
+    /// Release the session after its supervisor confirmed the provider job
+    /// gone: there is nothing left to `claude stop`, only owned resources.
+    pub(crate) async fn release_provider_for_observer_exit(
+        &self,
+        expected_generation: &str,
+    ) -> io::Result<()> {
+        self.require_generation(expected_generation)?;
+        match &self.protocol {
+            ManagedProtocol::Claude(_) => {}
+            ManagedProtocol::Codex(protocol) => {
+                protocol.close().await;
+            }
+            ManagedProtocol::Acp(protocol) => {
+                protocol.close().await;
+            }
+        }
+        self.cleanup_owned_resources()
+    }
+
+    /// True only when the provider job is positively confirmed absent from
+    /// its supervisor. An unreachable supervisor is not evidence of absence.
+    pub(crate) async fn managed_provider_absent(&self) -> bool {
+        match &self.protocol {
+            ManagedProtocol::Claude(protocol) => protocol.job_absent().await,
+            ManagedProtocol::Codex(_) | ManagedProtocol::Acp(_) => false,
+        }
+    }
+
+    pub(crate) fn runtime(&self) -> ActorRuntime {
+        self.runtime
+    }
+
     pub(crate) async fn stop(&self, expected_generation: &str) -> io::Result<()> {
         self.require_generation(expected_generation)?;
         lifecycle_timing::run("runtime.protocol_close", self.protocol.close()).await?;

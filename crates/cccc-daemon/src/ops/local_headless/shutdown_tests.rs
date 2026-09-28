@@ -1,8 +1,6 @@
 use super::*;
 use crate::ops::codex_voice_analyst::AnalystSession;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -27,24 +25,7 @@ async fn shutdown_requests_all_jobs_and_confirms_stops_concurrently() {
     }
     let temp = tempfile::tempdir().expect("fixture home");
     let config = temp.path().canonicalize().expect("config");
-    let digest = format!("{:x}", Sha256::digest(config.to_string_lossy().as_bytes()));
-    let directory = std::path::PathBuf::from("/tmp")
-        .join(format!(
-            "cc-daemon-{}",
-            std::fs::metadata(&config).expect("metadata").uid()
-        ))
-        .join(&digest[..8]);
-    std::fs::create_dir_all(&directory).expect("control directory");
-    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
-        .expect("permissions");
-    struct Directory(std::path::PathBuf);
-    impl Drop for Directory {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-    let _directory = Directory(directory.clone());
-    let listener = tokio::net::UnixListener::bind(directory.join("control.sock")).expect("socket");
+    let (listener, _directory) = super::control_fixture::bind(&config);
     let mode = Arc::new(AtomicUsize::new(0));
     let requests = Arc::new(Mutex::new(Vec::<String>::new()));
     let stopped = Arc::new(Mutex::new(HashSet::<String>::new()));
@@ -128,6 +109,7 @@ async fn shutdown_requests_all_jobs_and_confirms_stops_concurrently() {
                     },
                 )),
                 has_terminal: AtomicBool::new(false),
+                viewer: Mutex::new(None),
                 status: Mutex::new(HeadlessStatus {
                     status: "idle".into(),
                     task_id: None,

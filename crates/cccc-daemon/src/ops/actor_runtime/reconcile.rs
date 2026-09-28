@@ -45,9 +45,17 @@ fn reconcile_one(store: &GroupStore, status: SessionStatus) -> Result<(), OpErro
     else {
         return Ok(());
     };
-    if super::super::local_headless::supports(actor) {
-        super::super::local_headless::stop(&status.group_id, &status.actor_id)
-            .map_err(OpError::io)?;
+    if super::super::local_headless::supports(actor)
+        && super::super::local_headless::detach_after_viewer_exit(
+            &status.group_id,
+            &status.actor_id,
+        )
+        .map_err(OpError::io)?
+    {
+        // A managed-session Actor's runtime session is its viewer attachment
+        // (`claude attach <job>`), not the provider job — a reaped attach must
+        // only drop the terminal, never stop the worker or report its exit.
+        return Ok(());
     }
     // Preserve desired lifecycle after a provider exit. A later user-directed
     // message follows the same wake path whether the process exited or was stopped.

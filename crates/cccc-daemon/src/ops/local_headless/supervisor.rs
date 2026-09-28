@@ -10,8 +10,14 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use tracing::Instrument;
 
 #[cfg(all(test, unix))]
+#[path = "control_fixture.rs"]
+mod control_fixture;
+#[cfg(all(test, unix))]
 #[path = "shutdown_tests.rs"]
 mod shutdown_tests;
+#[cfg(all(test, unix))]
+#[path = "viewer_detach_tests.rs"]
+mod viewer_detach_tests;
 
 pub(super) type Key = (String, String);
 
@@ -131,6 +137,11 @@ pub(super) fn attach_managed(
         actor_id: actor.id.clone(),
         managed: Arc::clone(&app),
         has_terminal: AtomicBool::new(false),
+        viewer: Mutex::new(Some(super::ViewerLaunch {
+            command: app.actor_tui_command(),
+            env: app.tui_environment(),
+            cwd: cwd.clone(),
+        })),
         status: Mutex::new(HeadlessStatus {
             status: "idle".into(),
             task_id: None,
@@ -221,6 +232,25 @@ pub fn stop(group_id: &str, actor_id: &str) -> io::Result<()> {
     super::workspace_trust_recovery::cancel(&key)?;
     let _start = StartGuard::acquire(&key)?;
     stop_locked(&key)
+}
+
+/// A managed Actor's runtime session is only its viewer attachment (for
+/// Agent View, `claude attach <job>`), never the provider job itself. A
+/// reaped viewer exit must not reap the provider; detach the terminal and
+/// let the session keep running. The provider's own exit still arrives
+/// through the managed-session reader. Returns `false` when the actor has no
+/// tracked managed session — the exit then follows the normal record path.
+pub fn detach_after_viewer_exit(group_id: &str, actor_id: &str) -> io::Result<bool> {
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    let _start = StartGuard::acquire(&key)?;
+    let Some(item) = lookup(&key) else {
+        return Ok(false);
+    };
+    if !item.stopped.load(std::sync::atomic::Ordering::Acquire) {
+        item.detach_viewer();
+        super::output::emit(&item, "headless.session.viewer_detached", Map::new());
+    }
+    Ok(true)
 }
 
 fn stop_locked(key: &Key) -> io::Result<()> {
@@ -370,6 +400,17 @@ pub fn submit_batch(
     ) else {
         return false;
     };
+    if !item.has_terminal()
+        && let Err(error) = item.reattach_viewer()
+    {
+        tracing::warn!(
+            %error,
+            group_id = %group.group_id,
+            actor_id = %actor.id,
+            "failed to re-attach managed Actor viewer for delivery"
+        );
+        return false;
+    }
     if item.has_terminal() {
         return submit_with_startup_prompt(&item.startup_prompt, &delivery, |prepared| {
             super::super::actor_delivery::submit_terminal_text(
