@@ -32,7 +32,7 @@ export interface ChatScrollSnapshot {
   updatedAt: number;
 }
 
-export type GroupWorkView = "messages" | "terminals";
+export type GroupWorkView = "messages" | "terminals" | "overview";
 /** Which full-screen surface a phone shows for the selected group. */
 export type MobileSurface = "messages" | "presentation" | "files";
 const MOBILE_SURFACES: MobileSurface[] = ["messages", "presentation", "files"];
@@ -195,7 +195,7 @@ export function groupMessagesVisible(
   return (
     state.activeTab === "chat" &&
     state.workspaceFileViewerGroupId !== groupId &&
-    session.workView !== "terminals" &&
+    session.workView === "messages" &&
     (!state.isSmallScreen || session.mobileSurface === "messages")
   );
 }
@@ -220,7 +220,10 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
     };
     next[gid] = {
       ...DEFAULT_CHAT_SESSION,
-      workView: session.workView === "terminals" ? "terminals" : "messages",
+      workView:
+        session.workView === "terminals" || session.workView === "overview"
+          ? session.workView
+          : "messages",
       terminalPage: sanitizeTerminalPage(session.terminalPage),
       chatFilter:
         session.chatFilter === "user" ||

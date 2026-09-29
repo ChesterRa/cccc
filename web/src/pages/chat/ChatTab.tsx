@@ -765,6 +765,7 @@ export function ChatTab({
                   workControlsHost={workControlsHost}
                   sidePanelControlsHost={sidePanelControlsHost}
                   isSmallScreen={isSmallScreen}
+                  actorStatusProvisional={selectedGroupActorStatusProvisional}
                   sidePanelControls={
                     !selectedGroupId ? undefined : !isSmallScreen ? (
                       <>
