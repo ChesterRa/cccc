@@ -249,5 +249,9 @@
     "failed": "Could not update {{group}}. Check the connection and try again.",
     "noActors": "Add an Agent to start this Group."
   },
-  "connectionInterruptedHint": "The page connection was interrupted. Reconnection is automatic; displayed information may be outdated."
+  "connectionInterruptedHint": "The page connection was interrupted. Reconnection is automatic; displayed information may be outdated.",
+  "realtimeSocketUnreachable": "realtime connection unreachable",
+  "realtimeSubscriptionClosed": "subscription closed by the server",
+  "retryingIn": "retrying in {{seconds}}s",
+  "retryingNow": "retrying now"
 }

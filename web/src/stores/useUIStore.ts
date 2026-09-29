@@ -93,6 +93,7 @@ interface UIState {
   webReadOnly: boolean;
   workspaceFileViewerGroupId: string;
   sseStatus: "connected" | "connecting" | "disconnected";
+  sseError: SSEErrorDetail | null;
 
   // Actions
   setActiveTab: (tab: string) => void;
@@ -125,6 +126,14 @@ interface UIState {
   setWorkspaceFileViewerGroupId: (groupId: string) => void;
   setWebReadOnly: (v: boolean) => void;
   setSSEStatus: (v: "connected" | "connecting" | "disconnected") => void;
+  setSSEError: (v: SSEErrorDetail | null) => void;
+}
+
+export interface SSEErrorDetail {
+  /** The shared socket dropped, or the server closed one subscription on it. */
+  cause: "socket" | "channel";
+  /** When the transport will next retry (epoch ms). */
+  nextRetryAt: number;
 }
 
 let errorTimeoutId: number | null = null;
@@ -319,6 +328,7 @@ export const useUIStore = create<UIState>((set) => ({
   webReadOnly: false,
   workspaceFileViewerGroupId: "",
   sseStatus: "disconnected" as const,
+  sseError: null as SSEErrorDetail | null,
 
   // Actions
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -482,4 +492,5 @@ export const useUIStore = create<UIState>((set) => ({
   setWorkspaceFileViewerGroupId: (groupId) => set({ workspaceFileViewerGroupId: groupId }),
   setWebReadOnly: (v) => set({ webReadOnly: v }),
   setSSEStatus: (v) => set({ sseStatus: v }),
+  setSSEError: (v) => set({ sseError: v }),
 }));
