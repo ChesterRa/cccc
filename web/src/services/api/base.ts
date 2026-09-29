@@ -156,8 +156,25 @@ function getAuthHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// The daemon may serve the API under a non-/api prefix (injected as
+// window.__CCCC_API_PREFIX by index.html) so proxies that reserve /api/
+// (e.g. tailscaled serve) can still host the app.
+declare global {
+  interface Window {
+    __CCCC_API_PREFIX?: string;
+  }
+}
+
+export function apiUrl(path: string): string {
+  const prefix = window.__CCCC_API_PREFIX;
+  if (!prefix) return path;
+  // Covers "/api/..." plus absolute "scheme://host/api/..." URLs built by
+  // the websocket/SSE helpers.
+  return path.replace(/^((?:[a-z][a-z\d+.-]*:)?(?:\/\/[^/]+)?)\/api(\/|$)/, `$1${prefix}$2`);
+}
+
 export function withAuthToken(url: string): string {
-  return frameResourceUrl(url);
+  return frameResourceUrl(apiUrl(url));
 }
 
 export function refreshAuthTokenInUrl(url: string): string {
@@ -766,7 +783,7 @@ export function normalizePresentationBrowserSurfaceState(
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   let resp: Response;
   try {
-    resp = await fetch(path, {
+    resp = await fetch(apiUrl(path), {
       ...init,
       headers: {
         "content-type": "application/json",
@@ -826,7 +843,7 @@ export async function apiForm<T>(
 ): Promise<ApiResponse<T>> {
   let resp: Response;
   try {
-    resp = await fetch(path, {
+    resp = await fetch(apiUrl(path), {
       ...(init || {}),
       method: init?.method || "POST",
       body: form,

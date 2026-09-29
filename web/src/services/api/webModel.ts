@@ -1,6 +1,6 @@
 import type { PresentationBrowserSurfaceState } from "../../types";
 import type { ApiResponse } from "./base";
-import { apiJson, normalizePresentationBrowserSurfaceState, withAuthToken } from "./base";
+import { apiJson, apiUrl, normalizePresentationBrowserSurfaceState, withAuthToken } from "./base";
 
 export type WebModelConnector = {
   connector_id: string;
@@ -532,7 +532,9 @@ export function getWebModelBrowserSurfaceWebSocketUrl(groupId: string, actorId: 
     actor_id: String(actorId || "").trim(),
   });
   return withAuthToken(
-    `${protocol}//${window.location.host}/api/v1/web-model/browser-session/ws?${params.toString()}`,
+    apiUrl(
+      `${protocol}//${window.location.host}/api/v1/web-model/browser-session/ws?${params.toString()}`,
+    ),
   );
 }
 

@@ -117,7 +117,6 @@ fn incomplete_remote_cli_arguments_fail_before_ipc() {
     let home = HomeLayout::from_path(temp.path()).expect("home");
     for args in [
         vec!["send", "hello", "--dst-instance", "i_remote"],
-        vec!["send", "hello", "--dst-group", "g_remote"],
         vec![
             "send",
             "hello",
@@ -134,4 +133,12 @@ fn incomplete_remote_cli_arguments_fail_before_ipc() {
         assert!(!output.status.success(), "must reject {args:?}");
         assert!(!String::from_utf8_lossy(&output.stderr).contains("daemon unavailable"));
     }
+    // --dst-group alone is a complete local cross-group send: it passes
+    // argument validation and fails later at the (absent) daemon.
+    let output = command(&home)
+        .args(["send", "hello", "--dst-group", "g_remote"])
+        .output()
+        .expect("CLI");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("daemon unavailable"));
 }

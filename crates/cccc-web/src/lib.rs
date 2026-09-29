@@ -21,6 +21,7 @@ mod web_runtime_state;
 
 use anyhow::Result;
 use axum::Router;
+use axum::ServiceExt as _;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
@@ -33,6 +34,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
+use tower::Layer;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -247,6 +249,55 @@ fn router_for_state(state: AppState) -> Router {
     app.with_state(state)
 }
 
+/// When `CCCC_API_PREFIX` is set (e.g. `/cccc`), the full API also answers
+/// under `{prefix}`: `{prefix}/v1/...` is rewritten to `/api/v1/...` before
+/// routing. This bypasses reverse proxies — notably `tailscaled serve` — that
+/// reserve `/api/` for their own control plane. The canonical `/api/` routes
+/// keep working unchanged.
+async fn api_prefix_rewrite(mut request: Request<Body>, next: axum::middleware::Next) -> Response {
+    let Some(prefix) = api_prefix() else {
+        return next.run(request).await;
+    };
+    let path = request.uri().path();
+    if let Some(suffix) = path.strip_prefix(prefix)
+        && (suffix.is_empty() || suffix.starts_with('/'))
+    {
+        let mut parts = request.uri().clone().into_parts();
+        let query = parts
+            .path_and_query
+            .as_ref()
+            .and_then(|pq| pq.query())
+            .map(|q| format!("?{q}"))
+            .unwrap_or_default();
+        if let Ok(pq) = format!("/api{suffix}{query}").parse() {
+            parts.path_and_query = Some(pq);
+            if let Ok(uri) = Uri::from_parts(parts) {
+                *request.uri_mut() = uri;
+            }
+        }
+    }
+    next.run(request).await
+}
+
+fn api_prefix() -> Option<&'static str> {
+    static PREFIX: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PREFIX
+        .get_or_init(|| {
+            std::env::var("CCCC_API_PREFIX")
+                .ok()
+                .map(|value| {
+                    let value = value.trim().trim_end_matches('/');
+                    if value.starts_with('/') {
+                        value.to_owned()
+                    } else {
+                        format!("/{value}")
+                    }
+                })
+                .filter(|value| !value.is_empty() && value != "/" && !value.starts_with("/api"))
+        })
+        .as_deref()
+}
+
 fn spawn_codex_voice_shutdown(
     sessions: Arc<codex_voice::CodexVoiceSessions>,
     mut shutdown: broadcast::Receiver<()>,
@@ -354,6 +405,25 @@ async fn static_asset(method: axum::http::Method, uri: Uri) -> Response {
         return StatusCode::NOT_FOUND.into_response();
     };
     let mime = mime_guess::from_path(served_path).first_or_octet_stream();
+    // The UI resolves its API base from window.__CCCC_API_PREFIX so a proxy
+    // that owns /api/ (tailscaled serve) can still host the app.
+    let body = if served_path == "index.html"
+        && let Some(prefix) = api_prefix()
+    {
+        let html = String::from_utf8_lossy(&asset.data);
+        let injection = format!(
+            "<script>window.__CCCC_API_PREFIX={};</script></head>",
+            serde_json::to_string(prefix).unwrap_or_else(|_| "\"\"".into())
+        );
+        let html = if html.contains("</head>") {
+            html.replacen("</head>", &injection, 1)
+        } else {
+            html.replacen("<html>", &format!("<html>{injection}"), 1)
+        };
+        Body::from(html)
+    } else {
+        Body::from(asset.data.into_owned())
+    };
     (
         [
             (header::CONTENT_TYPE, mime.as_ref()),
@@ -366,7 +436,7 @@ async fn static_asset(method: axum::http::Method, uri: Uri) -> Response {
                 },
             ),
         ],
-        Body::from(asset.data.into_owned()),
+        body,
     )
         .into_response()
 }
@@ -487,7 +557,9 @@ where
     let server = async move {
         axum::serve(
             listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
+            axum::middleware::from_fn(api_prefix_rewrite)
+                .layer(app)
+                .into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(async move {
             tokio::select! {

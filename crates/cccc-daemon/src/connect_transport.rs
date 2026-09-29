@@ -151,7 +151,33 @@ async fn read_json<T: DeserializeOwned>(
     maximum: usize,
 ) -> Result<T, String> {
     if !response.status().is_success() {
-        return Err(format!("peer HTTP status {}", response.status()));
+        let status = response.status();
+        let server = response
+            .headers()
+            .get(reqwest::header::SERVER)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let mut head = Vec::new();
+        while head.len() < 4096 {
+            let Ok(Some(chunk)) = response.chunk().await else {
+                break;
+            };
+            head.extend_from_slice(&chunk);
+        }
+        // tailscaled serve reserves /api/ on its own listener: a 404 answered
+        // by tailscaled itself means the route hit the proxy, not the daemon.
+        let body = String::from_utf8_lossy(&head).to_ascii_lowercase();
+        if status == reqwest::StatusCode::NOT_FOUND
+            && (server.contains("tailscale") || body.contains("tailscaled"))
+        {
+            return Err(
+                "peer route was answered by tailscaled, which reserves /api/: \
+                 serve the peer under CCCC_API_PREFIX=<path> and update its remote origin"
+                    .into(),
+            );
+        }
+        return Err(format!("peer HTTP status {status}"));
     }
     let mut raw = Vec::new();
     while let Some(chunk) = response

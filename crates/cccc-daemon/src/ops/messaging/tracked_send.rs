@@ -314,6 +314,8 @@ fn authorize_task_create(
         || actors::effective_role(group, by) == Some(ActorRole::Foreman)
         || assignee.is_empty()
         || assignee == by
+        || actors::find(group, by)
+            .is_some_and(|actor| actor.can_tracked_send || actor.can_create_tasks)
     {
         return Ok(());
     }

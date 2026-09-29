@@ -112,7 +112,10 @@ while True:
                 event,
             };
             assert!(
-                process_batch(std::slice::from_ref(&job), &mut preamble, &cancelled),
+                matches!(
+                    process_batch(std::slice::from_ref(&job), &mut preamble, &cancelled),
+                    super::BatchOutcome::Delivered
+                ),
                 "first task must be delivered without a Web attachment or confirmation"
             );
             let mut second = job;
@@ -121,7 +124,10 @@ while True:
                 .event
                 .data
                 .insert("text".into(), "SECOND_TASK".into());
-            assert!(process_batch(&[second], &mut preamble, &cancelled));
+            assert!(matches!(
+                process_batch(&[second], &mut preamble, &cancelled),
+                super::BatchOutcome::Delivered
+            ));
             wait_for(|| {
                 std::fs::read_to_string(temp.path().join("received"))
                     .is_ok_and(|text| text.lines().count() >= 2)

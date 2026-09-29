@@ -18,10 +18,10 @@ pub struct SendArgs {
         requires = "dst_group_id",
         conflicts_with = "path"
     )]
-    /// Exact remote instance ID from `cccc connect`; always pair with --dst-group.
+    /// Exact remote instance ID from `cccc connect`; pair with --dst-group for a remote Group.
     pub dst_instance_id: Option<String>,
-    #[arg(long = "dst-group", requires = "dst_instance_id")]
-    /// Remote Group ID, qualified by --dst-instance.
+    #[arg(long = "dst-group", conflicts_with = "path")]
+    /// Destination Group ID: a local Group when --dst-instance is omitted.
     pub dst_group_id: Option<String>,
     #[arg(long)]
     /// Visible perspective accompanying this message.

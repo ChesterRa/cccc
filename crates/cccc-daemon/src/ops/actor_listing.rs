@@ -55,7 +55,7 @@ pub(super) fn list(
                 object.extend(super::working_state::runtime_actor_fields(
                     home,
                     &actor,
-                    &group.group_id,
+                    group,
                     status.running,
                 ));
                 if actor.runtime.is_web_model() {

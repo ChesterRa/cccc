@@ -7,6 +7,7 @@ use std::io;
 use crate::actors;
 use crate::automation_render::notify_events;
 use crate::automation_schedule::is_due;
+use crate::context::{ContextDoc, ContextStore};
 use crate::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
 
 mod state;
@@ -168,6 +169,9 @@ fn tick_group_inner(
     let mut state = state::load(&store, group_id)?;
     let previous = state.clone();
     tick_rules(&store, &group, &mut state, &mut result)?;
+    if matches!(group.state, GroupState::Active | GroupState::Idle) {
+        tick_tasks(home, &store, &group, &mut state, &mut result)?;
+    }
     if include_unread && matches!(group.state, GroupState::Active | GroupState::Idle) {
         tick_unread(home, &store, &group, delivery_actor_ids, &mut result)?;
     }
@@ -204,6 +208,9 @@ fn tick_rules(
             .and_then(|trigger| trigger.get("kind"))
             .and_then(Value::as_str)
             .unwrap_or("interval");
+        if trigger_kind == "task_stalled" {
+            continue;
+        }
         if trigger_kind == "interval" && last_fired.is_none() {
             state.last_rule.insert(id.into(), now.timestamp());
             continue;
@@ -301,6 +308,178 @@ fn scheduled_at(
         _ => None,
     };
     timestamp.map_or_else(String::new, |value| value.to_rfc3339())
+}
+
+/// Scan ACTIVE tasks carrying `window_minutes`: a task stalls when no
+/// progress signal (task update, or an agent-state heartbeat while reporting
+/// the task as its `hot.active_task_id`) lands inside the window. A
+/// `waiting_on` value other than `none` plus a future `until`/`waiting_until`
+/// suppresses the scan. Each newly stalled task emits one `task.stalled`
+/// ledger event and fires `task_stalled` automation rules once; progress past
+/// the marker clears it so the task can stall again.
+fn tick_tasks(
+    home: &HomeLayout,
+    store: &GroupStore,
+    group: &GroupDoc,
+    state: &mut RuntimeState,
+    result: &mut TickResult,
+) -> io::Result<()> {
+    let Ok(contexts) = ContextStore::new(home.clone()) else {
+        return Ok(());
+    };
+    let Ok(context) = contexts.load(&group.group_id) else {
+        return Ok(());
+    };
+    let now = Utc::now().timestamp();
+    let stalled_rules: Vec<&Map<String, Value>> = group
+        .automation
+        .get("rules")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .filter(|rule| {
+            rule.get("enabled").and_then(Value::as_bool) != Some(false)
+                && rule
+                    .get("trigger")
+                    .and_then(|trigger| trigger.get("kind"))
+                    .and_then(Value::as_str)
+                    == Some("task_stalled")
+                && rule
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.trim().is_empty())
+        })
+        .collect();
+    let ledger_path = store.ledger_path(&group.group_id)?;
+    for task in &context.tasks {
+        let Some(task_id) = task
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .filter(|id| !id.is_empty())
+        else {
+            continue;
+        };
+        let marker = state.stalled_tasks.get(&task_id).copied();
+        let window_minutes = task.get("window_minutes").and_then(Value::as_f64);
+        let active = task.get("status").and_then(Value::as_str) == Some("active");
+        if !active || window_minutes.is_none() {
+            if marker.is_some() {
+                state.stalled_tasks.remove(&task_id);
+            }
+            continue;
+        }
+        let window_seconds = (window_minutes.unwrap_or_default() * 60.0) as i64;
+        if window_seconds <= 0 {
+            continue;
+        }
+        let waiting = task
+            .get("waiting_on")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value != "none");
+        let until = task
+            .get("until")
+            .or_else(|| task.get("waiting_until"))
+            .and_then(Value::as_str)
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.timestamp());
+        if waiting && until.is_some_and(|until| until > now) {
+            if marker.is_some() {
+                state.stalled_tasks.remove(&task_id);
+            }
+            continue;
+        }
+        let Some(last_progress) = task_last_progress_at(task, &context) else {
+            continue;
+        };
+        if last_progress + window_seconds <= now {
+            if marker.is_some_and(|marker| marker >= last_progress) {
+                continue;
+            }
+            state.stalled_tasks.insert(task_id.clone(), now);
+            let mut event = Event::new("task.stalled", &group.group_id);
+            event.by = "system".into();
+            event.data = json!({
+                "task_id": task_id,
+                "title": task.get("title").cloned().unwrap_or(Value::Null),
+                "assignee": task.get("assignee").cloned().unwrap_or(Value::Null),
+                "window_minutes": task.get("window_minutes").cloned().unwrap_or(Value::Null),
+                "last_progress_at": format_timestamp(last_progress),
+                "stalled_at": format_timestamp(now),
+            })
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+            ledger::append(&ledger_path, &event)?;
+            let stalled_at = format_timestamp(now);
+            for rule in &stalled_rules {
+                let rule_id = rule.get("id").and_then(Value::as_str).unwrap_or("");
+                let action = rule.get("action").and_then(Value::as_object);
+                for mut notify in notify_events(group, rule_id, rule, action, &stalled_at) {
+                    notify
+                        .data
+                        .insert("kind".into(), Value::String("task_stalled".into()));
+                    if let Some(context) = notify
+                        .data
+                        .get_mut("context")
+                        .and_then(Value::as_object_mut)
+                    {
+                        context.insert(
+                            "task".into(),
+                            json!({
+                                "id": task_id,
+                                "title": task.get("title").cloned().unwrap_or(Value::Null),
+                                "assignee": task.get("assignee").cloned().unwrap_or(Value::Null),
+                                "last_progress_at": format_timestamp(last_progress),
+                            }),
+                        );
+                    }
+                    ledger::append(&ledger_path, &notify)?;
+                    result.notifications.push(notify);
+                }
+            }
+        } else if marker.is_some() {
+            state.stalled_tasks.remove(&task_id);
+        }
+    }
+    Ok(())
+}
+
+/// Last progress timestamp for a task: the latest of its own `updated_at` /
+/// `created_at` and any actor's agent-state heartbeat taken while that actor
+/// reports the task as `hot.active_task_id`.
+pub fn task_last_progress_at(task: &Map<String, Value>, context: &ContextDoc) -> Option<i64> {
+    let task_id = task.get("id").and_then(Value::as_str).unwrap_or("");
+    let mut progress = ["updated_at", "created_at"]
+        .iter()
+        .filter_map(|key| task.get(*key).and_then(Value::as_str))
+        .filter_map(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.timestamp())
+        .max()?;
+    for agent_state in context.agent_states.values() {
+        let on_task = agent_state
+            .get("hot")
+            .and_then(|hot| hot.get("active_task_id"))
+            .and_then(Value::as_str)
+            == Some(task_id);
+        if on_task {
+            if let Some(stamp) = agent_state
+                .get("updated_at")
+                .and_then(Value::as_str)
+                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            {
+                progress = progress.max(stamp.timestamp());
+            }
+        }
+    }
+    Some(progress)
+}
+
+fn format_timestamp(value: i64) -> String {
+    DateTime::from_timestamp(value, 0)
+        .map(|value| value.to_rfc3339())
+        .unwrap_or_default()
 }
 
 fn tick_unread(
@@ -700,5 +879,81 @@ mod tests {
             assert!(result.notifications.is_empty());
             assert!(!crate::ledger_index::is_cached(&path), "{mode}");
         }
+    }
+
+    #[test]
+    fn active_task_past_window_emits_task_stalled_once() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("stall scan", "").expect("group");
+        group.state = GroupState::Active;
+        let mut foreman = cccc_contracts::Actor::new("foreman");
+        foreman.role = Some(cccc_contracts::ActorRole::Foreman);
+        group.actors = vec![foreman];
+        group.automation = json!({"rules":[{
+            "id":"stall-alarm","enabled":true,
+            "trigger":{"kind":"task_stalled"},
+            "action":{"kind":"notify","message":"task stalled","title":"Stalled"},
+            "to":["@foreman"]
+        }]})
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+        store.save(&group).expect("save");
+        let contexts = crate::context::ContextStore::new(home.clone()).expect("contexts");
+        contexts
+            .sync(
+                &group.group_id,
+                &[
+                    json!({"op":"task.create","title":"stale task","status":"active",
+                        "assignee":"peer1","window_minutes":0.02})
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+                    json!({"op":"task.create","title":"waiting task","status":"active",
+                        "assignee":"peer1","window_minutes":0.02,"waiting_on":"user",
+                        "until":"2999-01-01T00:00:00Z"})
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+                ],
+                None,
+                "user",
+                false,
+            )
+            .expect("create tasks");
+        std::thread::sleep(std::time::Duration::from_millis(1400));
+
+        tick_group(&home, &group.group_id, false).expect("first tick");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        let stalled: Vec<String> = ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .iter()
+            .filter(|event| event.kind == "task.stalled")
+            .filter_map(|event| {
+                event
+                    .data
+                    .get("task_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect();
+        assert_eq!(stalled.len(), 1, "only the unblocked task stalls");
+        tick_group(&home, &group.group_id, false).expect("second tick");
+        let stalled_again = ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .iter()
+            .filter(|event| event.kind == "task.stalled")
+            .count();
+        assert_eq!(stalled_again, 1, "stall marker dedupes repeat ticks");
+
+        let notifies = ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .iter()
+            .filter(|event| event.kind == "system.notify")
+            .filter(|event| event.data.get("kind").and_then(Value::as_str) == Some("task_stalled"))
+            .count();
+        assert_eq!(notifies, 1, "task_stalled rule fired once");
     }
 }

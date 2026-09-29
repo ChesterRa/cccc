@@ -133,6 +133,17 @@ pub struct Actor {
     pub capability_autoload: Vec<String>,
     #[serde(default)]
     pub capability_hidden: Vec<String>,
+    /// Peer grant: create tasks assigned to any actor and manage tasks this
+    /// actor created (instead of only self-assigned or owned tasks).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_create_tasks: bool,
+    /// Peer grant: issue tracked_send dispatches addressed to other actors.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_tracked_send: bool,
+    /// Deliver mail-mode messages to the actor's runtime immediately instead
+    /// of waiting for the unread-mail notice window.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub wake_on_mail: bool,
     #[serde(default = "enabled")]
     pub enabled: bool,
     #[serde(default)]
@@ -177,6 +188,9 @@ impl Actor {
             submit: ActorSubmit::default(),
             capability_autoload: Vec::new(),
             capability_hidden: Vec::new(),
+            can_create_tasks: false,
+            can_tracked_send: false,
+            wake_on_mail: false,
             enabled: true,
             runner: RunnerKind::default(),
             runtime: ActorRuntime::default(),
@@ -200,6 +214,10 @@ impl Actor {
             self.command.clear();
         }
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 const fn version() -> u8 {
