@@ -5,6 +5,7 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 
 use crate::actors::{effective_role, find};
@@ -188,45 +189,45 @@ pub fn mail_pending_summary(
 ) -> io::Result<Option<Value>> {
     let store = GroupStore::new(home.clone())?;
     let state = load(home, &group.group_id)?;
-    ledger::inspect(&store.ledger_path(&group.group_id)?, |events, positions| {
-        let cursor_start = state
-            .cursors
-            .get(actor_id)
-            .and_then(|event_id| positions.get(event_id))
-            .map_or(0, |position| position + 1);
-        let generation_start = actor_generation_positions(events)
-            .get(actor_id)
-            .copied()
-            .unwrap_or(0);
-        let start = cursor_start.max(generation_start);
-
+    let cursor = state.cursors.get(actor_id).map(String::as_str);
+    let mut count = 0_usize;
+    let mut oldest_ts = None;
+    // Unread Mail starts after the later of the reader's cursor and the
+    // actor's latest generation. Walking newest-first stops at whichever comes
+    // first, so every MCP bridge answers this without indexing the ledger.
+    ledger::visit_newest_first(&store.ledger_path(&group.group_id)?, |event| {
+        if cursor == Some(event.id.as_str()) || actor_add_id(&event) == Some(actor_id) {
+            return ControlFlow::Break(());
+        }
         // Reply and manual-delivery facts suppress the one-shot active notice,
         // but they do not consume Mail. Natural hints must therefore mirror
         // the unread Inbox projection rather than the notice-eligible subset.
-        let pending = events[start..]
-            .iter()
-            .filter(|event| {
-                event.kind == "chat.message"
-                    && event.by != actor_id
-                    && event.data.get("message_mode").and_then(Value::as_str) == Some("mail")
-                    && is_for_actor(group, event, actor_id)
-            })
-            .collect::<Vec<_>>();
-        let oldest = pending.first()?;
-        let oldest_age_seconds = DateTime::parse_from_rfc3339(&oldest.ts)
-            .map(|created| {
-                Utc::now()
-                    .signed_duration_since(created.with_timezone(&Utc))
-                    .num_seconds()
-                    .max(0)
-            })
-            .unwrap_or(0);
-        Some(json!({
-            "count":pending.len(),
-            "oldest_age_seconds":oldest_age_seconds,
-            "action":"cccc_inbox_read()",
-        }))
-    })
+        if event.kind == "chat.message"
+            && event.by != actor_id
+            && event.data.get("message_mode").and_then(Value::as_str) == Some("mail")
+            && is_for_actor(group, &event, actor_id)
+        {
+            count += 1;
+            oldest_ts = Some(event.ts);
+        }
+        ControlFlow::Continue(())
+    })?;
+    let Some(oldest_ts) = oldest_ts else {
+        return Ok(None);
+    };
+    let oldest_age_seconds = DateTime::parse_from_rfc3339(&oldest_ts)
+        .map(|created| {
+            Utc::now()
+                .signed_duration_since(created.with_timezone(&Utc))
+                .num_seconds()
+                .max(0)
+        })
+        .unwrap_or(0);
+    Ok(Some(json!({
+        "count":count,
+        "oldest_age_seconds":oldest_age_seconds,
+        "action":"cccc_inbox_read()",
+    })))
 }
 
 pub fn cursor(home: &HomeLayout, group_id: &str, actor_id: &str) -> io::Result<Option<String>> {
@@ -317,22 +318,25 @@ pub fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
 pub fn actor_generation_positions(events: &[Event]) -> HashMap<String, usize> {
     let mut positions = HashMap::new();
     for (index, event) in events.iter().enumerate() {
-        if event.kind != "actor.add" {
-            continue;
-        }
-        let actor_id = event
-            .data
-            .get("actor")
-            .and_then(Value::as_object)
-            .and_then(|actor| actor.get("id"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim();
-        if !actor_id.is_empty() {
+        if let Some(actor_id) = actor_add_id(event) {
             positions.insert(actor_id.to_owned(), index);
         }
     }
     positions
+}
+
+fn actor_add_id(event: &Event) -> Option<&str> {
+    if event.kind != "actor.add" {
+        return None;
+    }
+    event
+        .data
+        .get("actor")
+        .and_then(Value::as_object)
+        .and_then(|actor| actor.get("id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|actor_id| !actor_id.is_empty())
 }
 
 pub fn actor_generation_contains(
@@ -412,15 +416,20 @@ fn load_pending(home: &HomeLayout, group_id: &str) -> io::Result<Option<PendingR
 
 fn pending_has_fact(home: &HomeLayout, group_id: &str, pending: &PendingRead) -> io::Result<bool> {
     let ledger_path = GroupStore::new(home.clone())?.ledger_path(group_id)?;
-    ledger::inspect(&ledger_path, |events, _| {
-        events.iter().rev().any(|event| {
-            event.kind == "mail.read"
-                && event.data.get("actor_id").and_then(Value::as_str)
-                    == Some(pending.actor_id.as_str())
-                && event.data.get("event_id").and_then(Value::as_str)
-                    == Some(pending.target.event_id.as_str())
-        })
-    })
+    let mut found = false;
+    ledger::visit_newest_first(&ledger_path, |event| {
+        found = event.kind == "mail.read"
+            && event.data.get("actor_id").and_then(Value::as_str)
+                == Some(pending.actor_id.as_str())
+            && event.data.get("event_id").and_then(Value::as_str)
+                == Some(pending.target.event_id.as_str());
+        if found {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })?;
+    Ok(found)
 }
 
 fn cursor_covers(
@@ -436,12 +445,21 @@ fn cursor_covers(
         return Ok(false);
     }
     let ledger_path = GroupStore::new(home.clone())?.ledger_path(group_id)?;
-    ledger::inspect(&ledger_path, |_, positions| {
-        positions
-            .get(current_event_id)
-            .zip(positions.get(target_event_id))
-            .is_some_and(|(current, target)| current >= target)
-    })
+    // Newest-first, the current cursor covers the target only when it is seen
+    // before the target is reached.
+    let mut seen_current = false;
+    let mut covers = false;
+    ledger::visit_newest_first(&ledger_path, |event| {
+        if event.id == current_event_id {
+            seen_current = true;
+        }
+        if event.id == target_event_id {
+            covers = seen_current;
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    })?;
+    Ok(covers)
 }
 
 fn stored_cursor_record(
@@ -738,6 +756,160 @@ mod tests {
         })
         .expect("read ledger");
         assert_eq!(read_count, 1);
+    }
+
+    #[test]
+    fn pending_summary_does_not_retain_ledger_index() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("pending summary memory", "").expect("group");
+        group.actors.push(Actor::new("peer1"));
+        store.save(&group).expect("save group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+        let mut mail = Event::new("chat.message", &group.group_id);
+        mail.by = "user".into();
+        mail.data = json!({"text":"later","to":["peer1"],"message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("mail data");
+        ledger::append(&ledger_path, &mail).expect("append mail");
+        crate::ledger_index::invalidate_path(&ledger_path);
+
+        let pending = mail_pending_summary(&home, &group, "peer1")
+            .expect("pending summary")
+            .expect("one unread Mail");
+
+        assert_eq!(pending["count"], 1);
+        // MCP bridges answer this hint once per session; building the shared
+        // index would keep a multiple of the whole ledger resident afterwards.
+        assert!(!crate::ledger_index::is_cached(&ledger_path));
+    }
+
+    #[test]
+    fn pending_summary_resolves_lingering_read_marker_without_retaining_ledger_index() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("pending marker memory", "").expect("group");
+        group.actors.push(Actor::new("peer1"));
+        store.save(&group).expect("save group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+        let append = |kind: &str, by: &str, data: Value| {
+            let mut event = Event::new(kind, &group.group_id);
+            event.by = by.into();
+            event.data = data.as_object().cloned().expect("event data");
+            ledger::append(&ledger_path, &event).expect("append");
+            event
+        };
+        let mails = ["one", "two", "three"].map(|text| {
+            append(
+                "chat.message",
+                "user",
+                json!({"text":text,"to":["peer1"],"message_mode":"mail"}),
+            )
+        });
+        consume_unread(&home, &group, "peer1", "peer1", 2).expect("consume two");
+        // A crash after the ledger fact but before the cursor save leaves the
+        // marker behind; every reader resolves it on load.
+        let linger = |target: &Event| {
+            let pending = PendingRead {
+                schema: PENDING_READ_SCHEMA,
+                group_id: group.group_id.clone(),
+                actor_id: "peer1".into(),
+                expected: PendingCursor::default(),
+                target: PendingCursor {
+                    event_id: target.id.clone(),
+                    ts: target.ts.clone(),
+                    updated_at: target.ts.clone(),
+                },
+            };
+            write_json(
+                &pending_path(&home, &group.group_id).expect("pending path"),
+                &pending,
+            )
+            .expect("pending marker");
+        };
+        let read_fact = |target: &Event| {
+            append(
+                "mail.read",
+                "peer1",
+                json!({"actor_id":"peer1","event_id":target.id}),
+            );
+        };
+        let summary = || {
+            crate::ledger_index::invalidate_path(&ledger_path);
+            let pending = mail_pending_summary(&home, &group, "peer1").expect("pending summary");
+            assert!(!crate::ledger_index::is_cached(&ledger_path));
+            pending.map(|pending| pending["count"].clone())
+        };
+
+        // A marker behind the stored cursor must not rewind it.
+        linger(&mails[0]);
+        read_fact(&mails[0]);
+        assert_eq!(summary(), Some(json!(1)));
+
+        // A marker without its committed fact is ignored.
+        linger(&mails[2]);
+        assert_eq!(summary(), Some(json!(1)));
+
+        // A committed marker ahead of the stored cursor advances it.
+        read_fact(&mails[2]);
+        assert_eq!(summary(), None);
+    }
+
+    #[test]
+    fn pending_summary_counts_from_later_of_cursor_and_generation_across_segments() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("pending summary bounds", "").expect("group");
+        group.actors.push(Actor::new("peer1"));
+        store.save(&group).expect("save group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+        let append = |kind: &str, data: Value, ts: Option<&str>| {
+            let mut event = Event::new(kind, &group.group_id);
+            event.by = "user".into();
+            if let Some(ts) = ts {
+                event.ts = ts.into();
+            }
+            event.data = data.as_object().cloned().expect("event data");
+            ledger::append(&ledger_path, &event).expect("append");
+            event
+        };
+        let mail = |text: &str| json!({"text":text,"to":["peer1"],"message_mode":"mail"});
+        let generation = || json!({"actor":{"id":"peer1"}});
+        let summary = || mail_pending_summary(&home, &group, "peer1").expect("pending summary");
+
+        append("chat.message", mail("previous generation"), None);
+        append("actor.add", generation(), None);
+        append("chat.message", mail("first"), Some("2020-01-01T00:00:00Z"));
+        crate::ledger_archive::compact(&home, &group.group_id, "test").expect("compact");
+        append("chat.message", mail("second"), None);
+        append(
+            "chat.message",
+            json!({"text":"not mail","to":["peer1"],"message_mode":"send"}),
+            None,
+        );
+
+        // Generation boundary without a cursor, spanning a rotated segment:
+        // the oldest pending item is the one before the rotation.
+        let pending = summary().expect("two unread Mail");
+        assert_eq!(pending["count"], 2);
+        assert!(pending["oldest_age_seconds"].as_i64().expect("age") > 86_400 * 365);
+
+        // Cursor after the generation boundary wins.
+        let consumed = consume_unread(&home, &group, "peer1", "peer1", 1).expect("consume");
+        assert_eq!(consumed.messages.len(), 1);
+        let pending = summary().expect("one unread Mail");
+        assert_eq!(pending["count"], 1);
+        assert!(pending["oldest_age_seconds"].as_i64().expect("age") < 3_600);
+
+        // A later generation boundary wins over an older cursor.
+        append("actor.add", generation(), None);
+        assert!(summary().is_none());
+        append("chat.message", mail("third"), None);
+        assert_eq!(summary().expect("new generation Mail")["count"], 1);
     }
 
     #[test]

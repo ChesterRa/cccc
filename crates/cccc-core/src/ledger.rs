@@ -5,8 +5,12 @@ use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+mod reverse;
+pub use reverse::visit_newest_first;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceRevision {
@@ -594,52 +598,19 @@ fn read_source_reverse(
         return read_gzip_tail(path, limit, kind, group_id, stop_at);
     }
 
-    const CHUNK_SIZE: u64 = 64 * 1024;
-    let mut file = File::open(path)?;
-    FileExt::lock_shared(&file)?;
-    let result: io::Result<Vec<Event>> = (|| {
-        let mut position = file.metadata()?.len();
-        let mut pending = Vec::new();
-        let mut events = Vec::with_capacity(limit.min(1024));
-        let reached_cursor = |events: &[Event]| {
-            stop_at.is_some_and(|id| events.last().is_some_and(|event| event.id == id))
-        };
-
-        while position > 0 && events.len() < limit && !reached_cursor(&events) {
-            let start = position.saturating_sub(CHUNK_SIZE);
-            let chunk_len = usize::try_from(position - start).map_err(io::Error::other)?;
-            let mut buffer = vec![0; chunk_len];
-            file.seek(io::SeekFrom::Start(start))?;
-            file.read_exact(&mut buffer)?;
-            buffer.extend_from_slice(&pending);
-
-            let mut line_end = buffer.len();
-            while line_end > 0 && events.len() < limit && !reached_cursor(&events) {
-                let Some(newline) = buffer[..line_end].iter().rposition(|byte| *byte == b'\n')
-                else {
-                    break;
-                };
-                push_reverse_event(
-                    &buffer[newline + 1..line_end],
-                    path,
-                    kind,
-                    group_id,
-                    &mut events,
-                );
-                line_end = newline;
-            }
-            pending = buffer[..line_end].to_vec();
-            position = start;
+    let mut events = Vec::with_capacity(limit.min(1024));
+    let _ = reverse::visit_source_newest_first(path, group_id, &mut |event| {
+        if !event_matches_kind(&event, kind) {
+            return ControlFlow::Continue(());
         }
-
-        if position == 0 && events.len() < limit && !reached_cursor(&events) {
-            push_reverse_event(&pending, path, kind, group_id, &mut events);
+        let reached_cursor = stop_at == Some(event.id.as_str());
+        events.push(event);
+        if reached_cursor || events.len() >= limit {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
         }
-        Ok(events)
-    })();
-    let unlock_result = FileExt::unlock(&file);
-    let events = result?;
-    unlock_result?;
+    })?;
     Ok(events)
 }
 
@@ -683,24 +654,6 @@ fn read_gzip_tail(
         return read_gzip_tail(path, limit, kind, group_id, None);
     }
     Ok(retained.into_iter().rev().collect())
-}
-
-fn push_reverse_event(
-    line: &[u8],
-    source: &Path,
-    kind: Option<&str>,
-    group_id: &str,
-    events: &mut Vec<Event>,
-) {
-    let line = trim_ascii(line);
-    if line.is_empty() {
-        return;
-    }
-    if let Some(event) = decode_event_line(line, source, 0, group_id)
-        && event_matches_kind(&event, kind)
-    {
-        events.push(event);
-    }
 }
 
 fn trim_ascii(mut value: &[u8]) -> &[u8] {
