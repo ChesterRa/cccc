@@ -36,7 +36,7 @@ export function DirectConnectionRow({
   return (
     <li className="space-y-2 rounded-lg border border-[var(--glass-border-subtle)] p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-48">
           <p className="break-words font-medium">
             {relation.remote
               ? `${relation.local.title} ↔ ${relation.remote.name} · ${relation.remote.title}`

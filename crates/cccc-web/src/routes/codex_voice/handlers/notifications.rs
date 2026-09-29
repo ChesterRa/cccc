@@ -53,8 +53,13 @@ pub(crate) async fn prepare_output(
 ) -> ApiResult {
     require_interactive_web(&state)?;
     let call = state.codex_voice.current().await.call;
-    if !call.is_some_and(|call| call.generation == generation && call.connected) {
-        return Err(ApiError::bad("Voice call is no longer connected"));
+    let call = call
+        .filter(|call| call.generation == generation && call.connected)
+        .ok_or_else(|| ApiError::bad("Voice call is no longer connected"))?;
+    if call.mode == cccc_contracts::codex_voice::VoiceCallMode::Persona {
+        return Err(ApiError::bad(
+            "Persona calls do not receive Voice notifications",
+        ));
     }
     let id = body["result_id"]
         .as_str()

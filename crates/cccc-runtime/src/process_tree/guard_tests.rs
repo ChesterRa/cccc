@@ -5,11 +5,223 @@ use std::process::Child;
 
 const T: u64 = 1_000_000;
 
-fn entry(spawned_at: u64, alive_until: u64) -> LedgerEntry {
+#[test]
+fn legacy_cleanup_records_survive_restart_format_change() {
+    const MODE: &str = "CCCC_GUARD_LEGACY_RESTART_TEST";
+    if std::env::var_os(MODE).is_none() {
+        let output = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "process_tree::guard::tests::legacy_cleanup_records_survive_restart_format_change",
+                "--nocapture",
+            ])
+            .env(MODE, "1")
+            .output()
+            .expect("isolated restart");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let temp = tempfile::tempdir().expect("temp");
+    let ledger = temp.path().join("owned.json");
+    let mut leader = orphan_leader();
+    let pgid = leader.id() as i32;
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec(&serde_json::json!([{
+            "pgid": pgid,
+            "spawned_at": now(),
+            "alive_until": now() + 20
+        }]))
+        .expect("old record"),
+    )
+    .expect("persist old record");
+    enable(&ledger).expect("restart with old ledger");
+    let stopped = leader.try_wait().expect("poll old leader").is_some();
+    if !stopped {
+        leader.kill().expect("fixture cleanup");
+    }
+    leader.wait().expect("reap fixture");
+    assert!(stopped, "old-format owned process was forgotten at startup");
+}
+
+#[test]
+fn post_term_uncertain_survivors_keep_their_cleanup_record() {
+    let spawned_at = now();
+    let mut leader = Command::new("sh")
+        .args([
+            "-c",
+            "sh -c 'trap \"\" TERM; echo $$; exec sleep 60' & wait",
+        ])
+        .process_group(0)
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("leader with TERM-resistant descendant");
+    let pgid = leader.id() as i32;
+    let mut line = String::new();
+    BufReader::new(leader.stdout.take().expect("stdout"))
+        .read_line(&mut line)
+        .expect("descendant has installed its signal handler");
+    let member: i32 = line.trim().parse().expect("descendant pid");
+    let recorded = LedgerEntry {
+        pgid,
+        spawned_at,
+        observed_at: spawned_at,
+    };
+    // Reap the leader as soon as TERM ends it, before the escalation snapshot.
+    let reaper = std::thread::spawn(move || leader.wait().expect("reap leader"));
+    let retained = reconcile(&[recorded]);
+    let survived = running(member);
+    signal(pgid, Some(nix::sys::signal::Signal::SIGKILL));
+    reaper.join().expect("reaper");
+    assert!(
+        survived,
+        "a recently born leaderless group is not proven at escalation"
+    );
+    assert_eq!(retained, [recorded], "unresolved cleanup record was lost");
+}
+
+#[test]
+fn ledger_migration_removes_only_the_original_future_allowance() {
+    let temp = tempfile::tempdir().expect("temp");
+    let ledger = temp.path().join("owned.json");
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec(&serde_json::json!([
+            {"pgid": 500, "spawned_at": T, "observed_at": T + 600},
+            {"pgid": 500, "spawned_at": T, "alive_until": T + 620},
+            {"pgid": 501, "spawned_at": 0, "alive_until": 10}
+        ]))
+        .expect("mixed ledger"),
+    )
+    .expect("persist fixture");
+    let entries = read_ledger(&ledger).expect("current and previous formats");
+    assert_eq!(entries[0], entry(T, T + 600));
+    assert_eq!(entries[1], entries[0]);
+    assert_eq!(entries[2].observed_at, 0);
+    assert_eq!(
+        classify(&entries[1], &[row(502, T + 610)]),
+        Verdict::Retain,
+        "the old future allowance is not proof of ownership"
+    );
+    let encoded = serde_json::to_value(&entries).expect("current representation");
+    assert!(encoded[1].get("alive_until").is_none());
+    assert_eq!(encoded[1]["observed_at"], T + 600);
+}
+
+#[test]
+fn unreadable_cleanup_records_block_replacement() {
+    let temp = tempfile::tempdir().expect("temp");
+    let ledger = temp.path().join("owned.json");
+    let watch_list = temp.path().join("owned.previous.watchdog");
+    let original = br#"[{"pgid":500,"spawned_at":1000,"unknown_observation":2000}]"#;
+    std::fs::write(&ledger, original).expect("unknown ledger format");
+    std::fs::write(&watch_list, "1000 500\n").expect("previous watchdog");
+    assert_eq!(
+        read_ledger(&ledger)
+            .expect_err("required observation")
+            .kind(),
+        io::ErrorKind::InvalidData
+    );
+    assert_eq!(
+        enable(&ledger)
+            .expect_err("must not replace unreadable state")
+            .kind(),
+        io::ErrorKind::InvalidData
+    );
+    assert_eq!(
+        std::fs::read(&ledger).expect("old ledger retained"),
+        original
+    );
+    assert_eq!(
+        std::fs::read_to_string(&watch_list).expect("old watchdog retained"),
+        "1000 500\n"
+    );
+    assert!(
+        read_ledger(&temp.path().join("missing.json"))
+            .expect("first startup has no ledger")
+            .is_empty()
+    );
+}
+
+#[test]
+fn externally_reaped_child_is_removed_from_guard_records() {
+    const MODE: &str = "CCCC_TEST_GUARD_EXTERNAL_REAP";
+    if std::env::var_os(MODE).is_none() {
+        let output = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "process_tree::guard::tests::externally_reaped_child_is_removed_from_guard_records",
+                "--nocapture",
+            ])
+            .env(MODE, "1")
+            .output()
+            .expect("isolated helper");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let temp = tempfile::tempdir().expect("temporary ledger");
+    let ledger = temp.path().join("owned.json");
+    crate::protect_owned_process_groups(&ledger).expect("protect helper");
+    let (mut child, owner) =
+        crate::OwnedProcessTree::spawn(Command::new("sh").args(["-c", "exit 0"]))
+            .expect("fixture child");
+    child.wait().expect("external reap");
+    let error = owner
+        .try_wait(|| child.try_wait())
+        .expect_err("ownership lost");
+    assert_eq!(error.raw_os_error(), Some(nix::libc::ECHILD));
+    let entries = read_ledger(&ledger).expect("read owned ledger");
+    let listed = guard().as_ref().expect("guard").groups.len();
+    publish(&[]).expect("clear fixture records before assertions");
+    assert!(
+        entries.is_empty(),
+        "externally reaped identity remains in durable ledger"
+    );
+    assert_eq!(
+        listed, 0,
+        "externally reaped identity remains in watch list"
+    );
+}
+
+#[test]
+fn a_fresh_watch_list_does_not_authorize_a_recycled_group() {
+    let temp = tempfile::tempdir().expect("temporary watch list");
+    let mut unrelated = orphan_leader();
+    let list = temp.path().join("groups.watchdog");
+    write_watch_list(
+        &list,
+        &[OwnedGroup {
+            pgid: unrelated.id() as i32,
+            spawned_at: now() - 3_600,
+        }],
+    )
+    .expect("fresh list containing an obsolete identity");
+    run_watchdog(&list);
+    let survived = unrelated.try_wait().expect("poll fixture").is_none();
+    if survived {
+        unrelated.kill().expect("fixture cleanup");
+    }
+    unrelated.wait().expect("reap fixture");
+    assert!(
+        survived,
+        "watchdog signalled a process with another birth time"
+    );
+}
+
+fn entry(spawned_at: u64, observed_at: u64) -> LedgerEntry {
     LedgerEntry {
         pgid: 500,
         spawned_at,
-        alive_until,
+        observed_at,
     }
 }
 
@@ -40,20 +252,22 @@ fn a_live_leader_is_the_recorded_group_only_with_its_spawn_time() {
 }
 
 #[test]
-fn members_of_a_reaped_leader_are_ours_if_they_started_before_the_owner_can_have_died() {
-    // The owner refreshed at T + 580, so it died no later than T + 600.
+fn leaderless_members_must_predate_the_last_confirmed_ownership() {
+    // The owner last confirmed its group at T + 600. Future refreshes are unknown.
     let recorded = entry(T, T + 600);
     assert_eq!(
         classify(&recorded, &[row(501, T + 10), row(502, T + 900)]),
         Verdict::Terminate
     );
-    // Started between heartbeats, after the last refresh but before any death.
+    // A member known to predate the last observation can prove the group.
     assert_eq!(
         classify(&recorded, &[row(503, T + 595)]),
         Verdict::Terminate
     );
-    // Every survivor started after the owner's latest death: possibly a later
-    // group that reused the PID. Keep the record rather than drop or signal it.
+    // Even the next second could belong to a reused group after owner exit.
+    assert_eq!(classify(&recorded, &[row(502, T + 601)]), Verdict::Retain);
+    // Timestamp rounding at the observation boundary is not proof either.
+    assert_eq!(classify(&recorded, &[row(502, T + 599)]), Verdict::Retain);
     assert_eq!(classify(&recorded, &[row(502, T + 900)]), Verdict::Retain);
 }
 
@@ -84,7 +298,7 @@ fn a_recorded_leader_left_behind_is_terminated() {
     let retained = reconcile(&[LedgerEntry {
         pgid,
         spawned_at: now(),
-        alive_until: now(),
+        observed_at: now(),
     }]);
     assert!(retained.is_empty());
     leader.wait().expect("reap terminated leader");
@@ -97,7 +311,7 @@ fn a_recycled_pid_with_another_start_time_is_never_signalled() {
     let retained = reconcile(&[LedgerEntry {
         pgid,
         spawned_at: now() - 3_600,
-        alive_until: now() - 3_000,
+        observed_at: now() - 3_000,
     }]);
     assert!(retained.is_empty());
     assert!(
@@ -123,13 +337,16 @@ fn survivors_of_a_reaped_leader_are_terminated() {
         .read_line(&mut line)
         .expect("member pid");
     let member: i32 = line.trim().parse().expect("numeric member pid");
+    // Retain the exited leader until the observation is unambiguously later
+    // than the member's birth under whole-second ps timestamps.
+    std::thread::sleep(Duration::from_secs(TIME_TOLERANCE_SECS + 1));
     // The leader exits and is reaped; only its member keeps the group alive.
     leader.wait().expect("reap leader");
 
     let retained = reconcile(&[LedgerEntry {
         pgid,
         spawned_at,
-        alive_until: now(),
+        observed_at: now(),
     }]);
 
     assert!(retained.is_empty());

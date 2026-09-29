@@ -18,7 +18,8 @@ pub(crate) async fn handle<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut attachment = match prepare(&home, &request) {
+    let mut attachment = match tokio::task::spawn_blocking(move || prepare(&home, &request)).await?
+    {
         Ok(attachment) => attachment,
         Err(response) => {
             write_response(stream.get_mut(), &response).await?;
@@ -76,6 +77,10 @@ fn prepare(
     } else {
         TerminalAttachMode::Control
     };
+    if mode == TerminalAttachMode::Control {
+        crate::ops::local_headless::ensure_viewer(&group_id, &actor_id)
+            .map_err(|error| DaemonResponse::failure("runtime_error", error.to_string()))?;
+    }
     let takeover = mode == TerminalAttachMode::Control
         && request
             .args

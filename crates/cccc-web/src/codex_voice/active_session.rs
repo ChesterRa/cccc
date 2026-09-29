@@ -23,14 +23,18 @@ impl ActiveSession {
         &self.call
     }
 
-    pub(crate) fn analyst(&self) -> &Arc<AnalystRuntime> {
-        &self.analyst
+    pub(crate) fn analyst(&self) -> Option<&Arc<AnalystRuntime>> {
+        self.analyst.as_ref()
     }
 
     pub(crate) fn info(&self) -> SessionInfo {
         SessionInfo {
             generation: self.call.generation().to_owned(),
-            analyst_generation: self.analyst.analyst.generation().to_owned(),
+            analyst_generation: self
+                .analyst
+                .as_ref()
+                .map(|analyst| analyst.analyst.generation().to_owned()),
+            mode: self.call.mode(),
             voice: self.voice.clone(),
             connected: self.connection_state.load(Ordering::Acquire) == CONNECTION_ATTACHED,
         }

@@ -76,14 +76,15 @@ pub(super) async fn serve(
     let info = session.info();
     let generation = info.generation.clone();
     let call = Arc::clone(session.call());
-    let mut lifecycle_events = call.analyst().subscribe_lifecycle();
+    let analyst = call.analyst();
+    let mut lifecycle_events = analyst.map(|analyst| analyst.subscribe_lifecycle());
     let mut shutdown = state.shutdown.subscribe();
     // Analyst admission can outlast the recording TTL, so renewal must not share its event loop.
     let mut lease_heartbeat = RecordingLeaseHeartbeat::start(Arc::clone(&call), generation.clone());
     let mut socket_heartbeat = tokio::time::interval(RECORDING_LEASE_HEARTBEAT_INTERVAL);
-    let mut notification_output = tokio::time::interval(Duration::from_millis(500));
+    let mut control_tick = tokio::time::interval(Duration::from_millis(500));
     let mut notification_status = session.notification_status();
-    notification_output.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    control_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut output_failed = false;
     socket_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     if !send_json(
@@ -94,7 +95,7 @@ pub(super) async fn serve(
     {
         log_disconnect(
             &generation,
-            call.analyst().generation(),
+            info.analyst_generation.as_deref(),
             "ready_write_failed",
             started,
             None,
@@ -107,7 +108,7 @@ pub(super) async fn serve(
         if !send_provider_command(&mut socket, command).await {
             log_disconnect(
                 &generation,
-                call.analyst().generation(),
+                info.analyst_generation.as_deref(),
                 "greeting_write_failed",
                 started,
                 None,
@@ -132,8 +133,9 @@ pub(super) async fn serve(
                 let paused = *notification_status.borrow_and_update();
                 if !send_json(&mut socket, json!({"type":"notification_status", "paused":paused})).await { break; }
             }
-            _ = notification_output.tick() => {
+            _ = control_tick.tick() => {
                 if !principal.current_admin(&state.home).unwrap_or(false) { end_reason = "authorization_lost"; break; }
+                if analyst.is_none() { continue; }
                 match send_notification_results(&mut socket, &state.home, &generation).await {
                     Ok(()) => output_failed = false,
                     Err(error) if !output_failed => {
@@ -184,7 +186,7 @@ pub(super) async fn serve(
                     }
                 };
                 match value["type"].as_str().unwrap_or_default() {
-                    "notification_output_submitted" => {
+                    "notification_output_submitted" if analyst.is_some() => {
                         if let Some(id) = value["result_id"].as_str().filter(|id| id.len() <= 256)
                             && let Err(error) = cccc_core::voice_notifications::output_submitted(&state.home, id, &generation)
                         {
@@ -193,7 +195,7 @@ pub(super) async fn serve(
                             tracing::info!(%generation, result_id = id, "Voice notification submitted to provider");
                         }
                     }
-                    "notification_output_not_submitted" => {
+                    "notification_output_not_submitted" if analyst.is_some() => {
                         if let Ok(ids) = serde_json::from_value::<Vec<String>>(value["result_ids"].clone())
                             && let Err(error) = cccc_core::voice_notifications::output_not_submitted(&state.home, &ids, &generation)
                         {
@@ -219,7 +221,13 @@ pub(super) async fn serve(
                             "Codex Voice provider delivery receipt"
                         );
                     }
+                    "notification_output_submitted" | "notification_output_not_submitted" => {},
                     "provider_event" => {
+                        if analyst.is_none() {
+                            // No payload parsing, logging or execution in a persona call.
+                            tracing::debug!(%generation, "Ignored provider event in persona call");
+                            continue;
+                        }
                         let provider_event = &value["event"];
                         let provider = match parse_provider_delegation(provider_event) {
                             Ok(provider) => provider,
@@ -232,7 +240,7 @@ pub(super) async fn serve(
                         if provider.is_none() { continue; }
                         match call.route_provider_event(&generation, provider_event).await {
                             Ok(Some(VoiceDelegationAdmission::NativeInput { delegation_id, text })) => {
-                                let delivery = session.analyst().submit_native_voice_input(&text).await;
+                                let delivery = session.analyst().expect("assistant call").submit_native_voice_input(&text).await;
                                 if !matches!(delivery, Ok(true)) {
                                     let rolled_back = call
                                         .reject_native_delegation(&generation, &delegation_id)
@@ -280,6 +288,7 @@ pub(super) async fn serve(
                             }
                         }
                     }
+                    "cancel_current" | "cancel" if analyst.is_none() => {},
                     "cancel_current" | "cancel" => match call.cancel_current(&generation).await {
                         Ok(true) => {
                             if !send_json(&mut socket, json!({"type":"analyst_cancelling"})).await { break; }
@@ -301,7 +310,12 @@ pub(super) async fn serve(
                     }
                 }
             }
-            lifecycle = lifecycle_events.recv() => match lifecycle {
+            lifecycle = async {
+                match lifecycle_events.as_mut() {
+                    Some(events) => events.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => match lifecycle {
                 Ok(AnalystLifecycleEvent::Started { receipt, origin }) => {
                     if origin.speakable() {
                         call.follow_analyst_turn(&receipt).await;
@@ -338,7 +352,7 @@ pub(super) async fn serve(
                         let text = if status == "completed" { result.clone() } else {
                             format!("The Analyst did not complete this update ({status}). Check the source messages; do not report the work as completed.")
                         };
-                        if let Err(error) = cccc_core::voice_notifications::processed(&state.home, &delegation_ids, call.analyst().generation(), &turn_id, &text) {
+                        if let Err(error) = cccc_core::voice_notifications::processed(&state.home, &delegation_ids, analyst.expect("assistant lifecycle").generation(), &turn_id, &text) {
                             tracing::warn!(%error, "failed to persist source-bearing Voice result");
                             let _ = send_error(&mut socket, "actor_result_return_failed", "The message result could not be retained. Check its source messages.").await;
                         }
@@ -415,7 +429,7 @@ pub(super) async fn serve(
     }
     log_disconnect(
         &generation,
-        call.analyst().generation(),
+        info.analyst_generation.as_deref(),
         end_reason,
         started,
         close_code,
@@ -426,7 +440,7 @@ pub(super) async fn serve(
 
 fn log_disconnect(
     generation: &str,
-    analyst_generation: &str,
+    analyst_generation: Option<&str>,
     code: &'static str,
     started: Instant,
     close_code: Option<u16>,

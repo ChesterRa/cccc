@@ -11,6 +11,9 @@ impl ActiveSession {
         events: LedgerEventHub,
         principal: crate::auth::Principal,
     ) {
+        if self.analyst.is_none() {
+            return;
+        }
         let weak = Arc::downgrade(self);
         let mut ledger = events.subscribe_global();
         tokio::spawn(async move {
@@ -46,6 +49,9 @@ impl ActiveSession {
         home: &HomeLayout,
         principal: &crate::auth::Principal,
     ) -> Result<()> {
+        let Some(analyst) = self.analyst.as_ref() else {
+            return Ok(());
+        };
         if !principal.current_admin(home)? {
             return Ok(());
         }
@@ -57,14 +63,13 @@ impl ActiveSession {
             if item.handoff.is_some() {
                 continue;
             }
-            let generation = self.analyst.analyst.generation();
+            let generation = analyst.analyst.generation();
             let Some(event) = store::reserve(home, &item.source, generation)? else {
                 continue;
             };
             let prompt = store::notification_prompt(home, &event, self.verbosity)?;
             let id = item.source.correlation_id();
-            let admission = self
-                .analyst
+            let admission = analyst
                 .analyst
                 .begin_actor_result(&id, &prompt, false)
                 .await
@@ -74,13 +79,10 @@ impl ActiveSession {
                     delegation_id,
                     text,
                 } => {
-                    let delivered = self.analyst.submit_native_voice_input(&text).await;
+                    let delivered = analyst.submit_native_voice_input(&text).await;
                     if !matches!(delivered, Ok(true)) {
-                        let rolled_back = self
-                            .analyst
-                            .analyst
-                            .reject_native_input(&delegation_id)
-                            .await?;
+                        let rolled_back =
+                            analyst.analyst.reject_native_input(&delegation_id).await?;
                         if rolled_back {
                             anyhow::bail!(
                                 "native Runtime did not accept the Voice notification input"

@@ -96,8 +96,60 @@ fn visit_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn reverse_visit_preserves_order_across_large_lines_gzip_and_partial_tail() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let segments = temp.path().join("state/ledger/segments");
+        std::fs::create_dir_all(&segments).expect("segments");
+        let archived = Event::new("actor.add", "g_test");
+        let plain = segments.join("0001.jsonl");
+        let encoded = format!("{}\n", serde_json::to_string(&archived).expect("event"));
+        std::fs::write(&plain, &encoded).expect("plain segment");
+        let mut gzip = flate2::write::GzEncoder::new(
+            File::create(plain.with_extension("jsonl.gz")).expect("gzip segment"),
+            flate2::Compression::default(),
+        );
+        gzip.write_all(encoded.as_bytes()).expect("write gzip");
+        gzip.finish().expect("finish gzip");
+        let mut large = Event::new("chat.message", "g_test");
+        large
+            .data
+            .insert("text".into(), serde_json::json!("中文🙂".repeat(20_000)));
+        let newest = Event::new("chat.message", "g_test");
+        std::fs::write(
+            &path,
+            format!(
+                "{}\ninvalid\n{}",
+                serde_json::to_string(&large).expect("large event"),
+                serde_json::to_string(&newest).expect("newest event")
+            ),
+        )
+        .expect("active ledger without trailing newline");
+        let mut visited = Vec::new();
+        visit_newest_first(&path, |event| {
+            visited.push(event.id);
+            ControlFlow::Continue(())
+        })
+        .expect("reverse visit");
+        assert_eq!(visited, [newest.id.clone(), large.id.clone(), archived.id]);
+        let mut prefix = Vec::new();
+        visit_newest_first(&path, |event| {
+            let stop = event.id == large.id;
+            prefix.push(event.id);
+            if stop {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .expect("bounded reverse visit");
+        assert_eq!(prefix, [newest.id, large.id]);
+    }
 
     #[test]
     fn visit_waits_for_rotation_writer() {

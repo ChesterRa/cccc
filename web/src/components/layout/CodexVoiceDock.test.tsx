@@ -32,6 +32,7 @@ function controller(
     readiness: {
       analyst_runtime: "codex",
       analyst_runtime_available: true,
+      supported_modes: ["assistant", "persona"],
       realtime_credentials_available: true,
     },
     updatePreferences: vi.fn(),

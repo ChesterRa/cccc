@@ -8,10 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Added
 
+- Embedded Codex Voice supports per-call `application_context.mode: "persona"` for host-defined roleplay, without a Voice Analyst, local delegation execution or Actor notifications. Assistant mode remains the default; call responses expose the mode and readiness advertises supported modes. Experimental quicksilver delegation suppression and opening behavior require real-provider acceptance.
+
 - Runtime Dock uses fixed-size, thin activity rings and shows authoritative unread Mail counts, independent of loaded chat history. Nonzero unread and browser-queue badges remain separate, without persistent time labels. Thanks to [@chriscoveries](https://github.com/chriscoveries) for [#116](https://github.com/ChesterRa/cccc/pull/116).
 
 ### Fixed
 
+- Pending Mail counts no longer build and retain a full ledger index in each MCP process. Cursor and Actor-generation boundaries remain unchanged, including rotated and compressed history.
+- On Unix, daemon crashes now trigger cleanup of its owned process groups, with restart reconciliation if the watchdog also exits. Cleanup checks recorded process identities, removes externally reaped children from its lists, and leaves unverified groups untouched. Restart recovery also preserves old-format ownership records and unfinished termination attempts; unreadable cleanup state is reported before any replacement.
+- Group connection rows use clearer status labels and keep approval guidance visible; narrow layouts place actions below long Group names.
+- Embedded Codex Voice accepts host instructions up to 24 KiB of UTF-8 text in both assistant and persona modes, up from 8 KiB. Oversized instructions are rejected without truncation; this local byte limit does not guarantee acceptance under the provider's token limits.
+- Managed Codex Actors and Voice Analyst resume the same conversation without transferring its full history to CCCC, preventing oversized history responses from disconnecting long-running sessions. Saved conversation history is retained.
+- Managed Actor terminal exits no longer stop a healthy provider. Starting the Actor, opening a writable terminal or delivering a message reconnects the native TUI to the same session; passive views remain read-only. Claude provider exits preserve durable conversation recovery, and failed provider stops remain retryable. Thanks to [@chriscoveries](https://github.com/chriscoveries) for [#119](https://github.com/ChesterRa/cccc/pull/119).
 - Switching an Actor from ChatGPT to Grok now replaces its old window through the Grok login profile when saving the Bot URL, while preserving draft and active-response checks.
 - Converting a linked Actor Profile to custom configuration preserves pending secret edits if saving fails. Successfully saved secrets are cleared from the draft independently of later save steps.
 

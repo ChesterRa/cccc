@@ -28,7 +28,7 @@ async fn call_generation_coalesces_delegations_and_projects_progress_once() {
     let call = CodexVoiceCall {
         application_context: None,
         generation: "call-a".into(),
-        analyst: Arc::new(CodexVoiceAnalyst::from_session(analyst)),
+        analyst: Some(Arc::new(CodexVoiceAnalyst::from_session(analyst))),
         lease,
         state: tokio::sync::Mutex::new(CallState::default()),
     };
@@ -36,7 +36,10 @@ async fn call_generation_coalesces_delegations_and_projects_progress_once() {
     assert_eq!(call.analyst_thread_id(), "thread-controller");
     assert_eq!(call.analyst_tui_command()[2], endpoint);
     call.heartbeat("call-a").expect("heartbeat");
-    let mut lifecycle_events = call.analyst.subscribe_lifecycle();
+    let mut lifecycle_events = call
+        .analyst()
+        .expect("assistant fixture")
+        .subscribe_lifecycle();
     let event = json!({
         "type":"delegation.created",
         "item":{
@@ -304,6 +307,10 @@ async fn call_generation_coalesces_delegations_and_projects_progress_once() {
         voice_recording_lease::current(&home).expect("recording lease state"),
         json!({})
     );
-    call.analyst.shutdown().await.expect("stop Analyst");
+    call.analyst()
+        .expect("assistant fixture")
+        .shutdown()
+        .await
+        .expect("stop Analyst");
     server.await.expect("fake Analyst server");
 }

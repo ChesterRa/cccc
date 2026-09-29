@@ -6,7 +6,7 @@
 //! - A watchdog shell in its own process group keeps the read end of a pipe that
 //!   carries no data. The kernel closes the owner's write end when the owner dies
 //!   for any reason, so the watchdog reads EOF, then terminates the groups in the
-//!   owner's latest watch list on disk if that list is fresh enough to trust.
+//!   owner's latest watch list on disk after checking freshness and process identity.
 //! - A durable ledger of the same set. The next owner start terminates groups the
 //!   watchdog could not, such as after the watchdog itself was killed.
 
@@ -24,13 +24,40 @@ pub(super) struct OwnedGroup {
     pub(super) spawned_at: u64,
 }
 
-/// An owned group, and the latest time its owner can have died holding it: a live
-/// owner rewrites the entry at least every `HEARTBEAT`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// An owned group and the last time its owner actually confirmed holding it.
+/// Never extend that observation into a future heartbeat interval: a replacement
+/// group might already exist during that interval after an abrupt exit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub(super) struct LedgerEntry {
     pub(super) pgid: i32,
     pub(super) spawned_at: u64,
-    pub(super) alive_until: u64,
+    pub(super) observed_at: u64,
+}
+
+impl<'de> Deserialize<'de> for LedgerEntry {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct StoredEntry {
+            pgid: i32,
+            spawned_at: u64,
+            observed_at: Option<u64>,
+            alive_until: Option<u64>,
+        }
+        let stored = StoredEntry::deserialize(deserializer)?;
+        let observed_at = stored
+            .observed_at
+            .or_else(|| {
+                // The original on-disk format added exactly 20 seconds to its
+                // observation. Remove that allowance; never grant it authority.
+                stored.alive_until.map(|until| until.saturating_sub(20))
+            })
+            .ok_or_else(|| serde::de::Error::custom("missing process ownership observation"))?;
+        Ok(Self {
+            pgid: stored.pgid,
+            spawned_at: stored.spawned_at,
+            observed_at,
+        })
+    }
 }
 
 /// One process in a `ps` snapshot.
@@ -54,7 +81,7 @@ pub(super) enum Verdict {
 /// `ps` reports elapsed time in whole seconds, and spawning takes a moment.
 const TIME_TOLERANCE_SECS: u64 = 3;
 const TERMINATE_GRACE: Duration = Duration::from_secs(2);
-/// A live owner refreshes its entries this often, bounding when it can have died.
+/// A live owner refreshes its last confirmed ownership observation this often.
 const HEARTBEAT: Duration = Duration::from_secs(10);
 
 /// A live owner rewrites its watch list at least every `HEARTBEAT`. An older list
@@ -62,16 +89,44 @@ const HEARTBEAT: Duration = Duration::from_secs(10);
 /// been reused; the next owner's verified reconciliation handles it instead.
 const WATCH_LIST_MAX_AGE: Duration = Duration::from_secs(3 * HEARTBEAT.as_secs());
 
-/// Wait for the owner's death, then terminate the groups in its fresh watch list
-/// (`$1`, holding `written_at pgid...`) after a grace period.
+/// Wait for the owner's death, then check the identities in its fresh watch list
+/// (`$1`, holding `written_at pgid:spawned_at...`) before each termination signal.
+/// Keep the ps identity predicate aligned with `classify` below.
 const WATCHDOG: &str = r#"trap '' INT HUP
 cat >/dev/null
 read -r written groups < "$1" || exit 0
 [ -n "$groups" ] || exit 0
-[ $(( $(date +%s) - written )) -le "$2" ] || exit 0
-for group in $groups; do kill -s TERM -- "-$group" 2>/dev/null; done
+tolerance=$3
+age=$(( $(date +%s) - written ))
+[ "$age" -ge 0 ] && [ "$age" -le "$2" ] || exit 0
+owned_groups() {
+  ps -A -o pid=,pgid=,etime= | awk -v groups="$groups" -v observed="$written" -v now="$(date +%s)" -v tolerance="$tolerance" '
+    BEGIN {
+      count = split(groups, records, " ")
+      for (i = 1; i <= count; i++) {
+        if (split(records[i], pair, ":") == 2 && pair[1] ~ /^[0-9]+$/ && pair[1] > 1 && pair[2] ~ /^[0-9]+$/)
+          born[pair[1]] = pair[2]
+      }
+    }
+    NF == 3 && $1 ~ /^[0-9]+$/ && $2 in born && $3 ~ /^[0-9:-]+$/ {
+      days = 0; clock = $3
+      if (split(clock, day, "-") == 2) { days = day[1]; clock = day[2] }
+      count = split(clock, parts, ":"); elapsed = 0
+      for (i = 1; i <= count; i++) elapsed = elapsed * 60 + parts[i]
+      started = now - days * 86400 - elapsed
+      if ($1 == $2) {
+        leader[$2] = 1
+        delta = started - born[$2]
+        matching[$2] = delta >= -tolerance && delta <= tolerance
+      }
+      if (started >= born[$2] - tolerance && started <= observed - tolerance) member[$2] = 1
+    }
+    END { for (group in born) if (leader[group] ? matching[group] : member[group]) print group }
+  '
+}
+for group in $(owned_groups); do kill -s TERM -- "-$group" 2>/dev/null; done
 sleep 2
-for group in $groups; do kill -s KILL -- "-$group" 2>/dev/null; done
+for group in $(owned_groups); do kill -s KILL -- "-$group" 2>/dev/null; done
 exit 0
 "#;
 
@@ -111,7 +166,7 @@ pub(super) fn enable(ledger: &Path) -> io::Result<bool> {
     if let Some(directory) = ledger.parent() {
         std::fs::create_dir_all(directory)?;
     }
-    let retained = reconcile(&read_ledger(ledger));
+    let retained = reconcile(&read_ledger(ledger)?);
     let watch_list = instance_watch_list(ledger);
     write_watch_list(&watch_list, &[])?;
     // Reconciliation above already handled every earlier instance's groups. Their
@@ -158,7 +213,7 @@ pub(super) fn publish(groups: &[OwnedGroup]) -> io::Result<()> {
     persist(guard)
 }
 
-/// Keep `alive_until` ahead of now for groups that outlive their last publication.
+/// Refresh the last confirmed observation for groups that remain owned.
 fn heartbeat() {
     loop {
         std::thread::sleep(HEARTBEAT);
@@ -171,20 +226,19 @@ fn heartbeat() {
 }
 
 fn persist(guard: &Guard) -> io::Result<()> {
-    // One missed refresh of slack for scheduling delays.
-    let alive_until = now() + 2 * HEARTBEAT.as_secs();
+    let observed_at = now();
     let entries = guard
         .groups
         .iter()
         .map(|group| LedgerEntry {
             pgid: group.pgid,
             spawned_at: group.spawned_at,
-            alive_until,
+            observed_at,
         })
         .chain(guard.retained.iter().copied())
         .collect::<Vec<_>>();
     // Retained groups are unproven, so only the owned set reaches the watchdog.
-    write_watch_list(&guard.watch_list, &guard.groups)?;
+    write_watch_list_at(&guard.watch_list, &guard.groups, observed_at)?;
     write_atomically(&guard.ledger, &serde_json::to_vec(&entries)?)
 }
 
@@ -226,10 +280,14 @@ fn remove_other_watch_lists(ledger: &Path, keep: &Path) {
 }
 
 fn write_watch_list(path: &Path, groups: &[OwnedGroup]) -> io::Result<()> {
-    let mut line = now().to_string();
+    write_watch_list_at(path, groups, now())
+}
+
+fn write_watch_list_at(path: &Path, groups: &[OwnedGroup], observed_at: u64) -> io::Result<()> {
+    let mut line = observed_at.to_string();
     for group in groups {
         line.push(' ');
-        line.push_str(&group.pgid.to_string());
+        line.push_str(&format!("{}:{}", group.pgid, group.spawned_at));
     }
     line.push('\n');
     write_atomically(path, line.as_bytes())
@@ -247,7 +305,8 @@ fn watchdog_command(watch_list: &Path) -> Command {
     command
         .args(["-c", WATCHDOG, "cccc-watchdog"])
         .arg(watch_list)
-        .arg(WATCH_LIST_MAX_AGE.as_secs().to_string());
+        .arg(WATCH_LIST_MAX_AGE.as_secs().to_string())
+        .arg(TIME_TOLERANCE_SECS.to_string());
     command
 }
 
@@ -267,12 +326,15 @@ fn spawn_watchdog(watch_list: &Path) -> io::Result<ChildStdin> {
         .ok_or_else(|| io::Error::other("watchdog has no stdin"))
 }
 
-fn read_ledger(ledger: &Path) -> Vec<LedgerEntry> {
-    // A missing or unreadable ledger names nothing that can be safely signalled.
-    std::fs::read(ledger)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+fn read_ledger(ledger: &Path) -> io::Result<Vec<LedgerEntry>> {
+    match std::fs::read(ledger) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        // An unreadable required ledger is not an empty owned set. Stop before
+        // replacing either it or the previous owner's watchdog lists.
+        Err(error) => Err(error),
+    }
 }
 
 /// Terminate every entry proven to be the recorded group; return those to retain.
@@ -288,19 +350,19 @@ pub(super) fn reconcile(entries: &[LedgerEntry]) -> Vec<LedgerEntry> {
     let mut retained = Vec::new();
     for entry in entries {
         match classify(entry, &rows) {
-            Verdict::Terminate => terminate.push(entry.pgid),
+            Verdict::Terminate => terminate.push(*entry),
             Verdict::Retain => retained.push(*entry),
             Verdict::Forget => {}
         }
     }
-    terminate_groups(&terminate);
+    retained.extend(terminate_groups(&terminate));
     retained
 }
 
 /// No PID is reused while a process group with that ID exists. So a live leader
-/// with another start time means the recorded group ended, and a member that
-/// started before its owner can have died can only belong to it. Survivors that
-/// all started later cannot be told from a group that reused the PID afterwards.
+/// with another start time means the recorded group ended. Without a leader, a
+/// member must predate the last confirmed observation, including ps rounding
+/// uncertainty; a member born afterwards cannot prove the group's identity.
 pub(super) fn classify(entry: &LedgerEntry, rows: &[ProcessRow]) -> Verdict {
     let members = rows
         .iter()
@@ -317,7 +379,7 @@ pub(super) fn classify(entry: &LedgerEntry, rows: &[ProcessRow]) -> Verdict {
         };
     }
     let owned_window = entry.spawned_at.saturating_sub(TIME_TOLERANCE_SECS)
-        ..=entry.alive_until.saturating_add(TIME_TOLERANCE_SECS);
+        ..=entry.observed_at.saturating_sub(TIME_TOLERANCE_SECS);
     if members
         .iter()
         .any(|row| owned_window.contains(&row.started_at))
@@ -354,17 +416,33 @@ fn process_rows() -> Option<Vec<ProcessRow>> {
     )
 }
 
-fn terminate_groups(groups: &[i32]) {
-    for pgid in groups {
-        signal(*pgid, Some(nix::sys::signal::Signal::SIGTERM));
+fn terminate_groups(groups: &[LedgerEntry]) -> Vec<LedgerEntry> {
+    if groups.is_empty() {
+        return Vec::new();
+    }
+    for entry in groups {
+        signal(entry.pgid, Some(nix::sys::signal::Signal::SIGTERM));
     }
     let deadline = Instant::now() + TERMINATE_GRACE;
-    while groups.iter().any(|pgid| alive(*pgid)) && Instant::now() < deadline {
+    while groups.iter().any(|entry| alive(entry.pgid)) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
-    for pgid in groups.iter().copied().filter(|pgid| alive(*pgid)) {
-        signal(pgid, Some(nix::sys::signal::Signal::SIGKILL));
-    }
+    // TERM may end the original group during the grace period. Do not send
+    // KILL to a different group that subsequently acquired its numeric ID.
+    let Some(rows) = process_rows() else {
+        return groups.to_vec();
+    };
+    groups
+        .iter()
+        .filter(|entry| match classify(entry, &rows) {
+            Verdict::Forget => false,
+            Verdict::Retain => true,
+            // Failed escalation is still unfinished cleanup, even when the
+            // initial snapshot proved the group's identity.
+            Verdict::Terminate => !signal(entry.pgid, Some(nix::sys::signal::Signal::SIGKILL)),
+        })
+        .copied()
+        .collect()
 }
 
 /// `ps -o etime` is `[[dd-]hh:]mm:ss`.

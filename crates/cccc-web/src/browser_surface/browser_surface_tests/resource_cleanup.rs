@@ -171,15 +171,20 @@ async fn closed_actor_windows_retire_with_their_generation() {
             })
             .await
             .expect("open actor");
-        let page = manager
-            .sessions
-            .lock()
+        let (owner, target_id) = {
+            let sessions = manager.sessions.lock().await;
+            let session = sessions.get(&key).expect("actor session");
+            (session.owner.clone(), session.page.target_id().clone())
+        };
+        // Simulate a user closing the browser window during navigation. Page.close
+        // depends on an active renderer and can fail while that renderer changes.
+        owner
+            .read()
             .await
-            .get(&key)
-            .expect("actor session")
-            .page
-            .clone();
-        page.close().await.expect("user closes window");
+            .browser
+            .execute(CloseTargetParams::new(target_id))
+            .await
+            .expect("user closes window");
         // CDP acknowledges CloseTarget before the target necessarily disappears
         // from GetTargets. Wait for that lifecycle fact, not an arbitrary delay.
         tokio::time::timeout(std::time::Duration::from_secs(5), async {

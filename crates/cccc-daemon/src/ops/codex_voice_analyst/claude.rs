@@ -907,17 +907,6 @@ impl ClaudeClient {
     pub(super) async fn kill_request(&self) -> io::Result<()> {
         control::kill(&self.endpoint, &self.short).await
     }
-
-    /// True only when Agent View positively reports the provider job as
-    /// absent. An unreachable supervisor is not evidence of absence.
-    pub(super) async fn job_absent(&self) -> bool {
-        match control::list(&self.endpoint).await {
-            Ok(jobs) => !jobs
-                .iter()
-                .any(|job| job.get("short").and_then(Value::as_str) == Some(self.short.as_str())),
-            Err(_) => false,
-        }
-    }
 }
 
 impl Drop for ClaudeClient {
@@ -939,6 +928,7 @@ impl super::AnalystSession {
         config_dir: &Path,
         short: &str,
         cleanup_paths: Vec<PathBuf>,
+        observer_running: bool,
     ) -> Self {
         let (commands, receiver) = mpsc::channel(1);
         drop(receiver);
@@ -956,7 +946,7 @@ impl super::AnalystSession {
             protocol: super::ManagedProtocol::Claude(ClaudeClient {
                 commands,
                 events,
-                running: Arc::new(AtomicBool::new(false)),
+                running: Arc::new(AtomicBool::new(observer_running)),
                 task: Mutex::new(None),
                 endpoint: control::Endpoint::resolve(config_dir).expect("fixture endpoint"),
                 short: short.into(),

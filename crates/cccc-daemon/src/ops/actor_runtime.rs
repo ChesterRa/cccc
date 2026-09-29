@@ -51,6 +51,7 @@ pub fn apply(
     {
         // Saving config does not restart an existing session. Explicit restart
         // applies it; start remains idempotent across backend changes too.
+        super::local_headless::ensure_viewer(&group.group_id, actor_id).map_err(OpError::io)?;
         super::capabilities::apply_actor_startup_baseline(home, group, &actor);
         return Ok(
             if super::local_headless::running(&group.group_id, actor_id)

@@ -92,6 +92,7 @@ impl OwnedProcessTree {
                     // signal a potentially reused numeric process identity.
                     if error.raw_os_error() == Some(nix::libc::ECHILD) {
                         registry.resources.remove(&self.id);
+                        registry.publish();
                     }
                     return Err(error);
                 }

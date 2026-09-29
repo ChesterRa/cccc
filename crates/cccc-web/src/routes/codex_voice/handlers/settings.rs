@@ -44,6 +44,7 @@ pub(super) async fn codex_voice_readiness(home: &cccc_core::HomeLayout) -> Value
             Err(_) => false,
         };
     json!({
+        "supported_modes":["assistant", "persona"],
         "analyst_runtime":analyst_runtime,
         "analyst_runtime_available":analyst_runtime_available,
         "realtime_credentials_available":realtime_credentials_available,

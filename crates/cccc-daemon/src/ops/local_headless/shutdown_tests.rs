@@ -107,6 +107,7 @@ async fn shutdown_requests_all_jobs_and_confirms_stops_concurrently() {
                     } else {
                         Vec::new()
                     },
+                    false,
                 )),
                 has_terminal: AtomicBool::new(false),
                 viewer: Mutex::new(None),

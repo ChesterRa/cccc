@@ -16,7 +16,7 @@ export type CodexVoicePhase =
 export type CodexVoiceSessionCallbacks = {
   onPhase(phase: CodexVoicePhase): void;
   onCall(call: CodexVoiceCallInfo | null): void;
-  onAnalyst(analyst: CodexVoiceAnalystInfo): void;
+  onAnalyst(analyst: CodexVoiceAnalystInfo | null): void;
   onUserTranscript(text: string): void;
   onAssistantTranscript(text: string): void;
   onAnalystProgress(text: string): void;

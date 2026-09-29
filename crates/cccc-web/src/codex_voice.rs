@@ -19,6 +19,8 @@ mod analyst_settings;
 mod analyst_terminal;
 mod notifications;
 mod persistence;
+#[cfg(test)]
+mod persona_tests;
 mod sessions_lifecycle;
 mod sessions_start;
 #[cfg(all(test, unix))]
@@ -34,7 +36,8 @@ const CONNECTION_CLOSING: u8 = 2;
 #[derive(Debug, Clone)]
 pub(crate) struct SessionInfo {
     pub generation: String,
-    pub analyst_generation: String,
+    pub analyst_generation: Option<String>,
+    pub mode: cccc_contracts::codex_voice::VoiceCallMode,
     pub voice: String,
     pub connected: bool,
 }
@@ -85,7 +88,7 @@ pub(crate) struct ActiveSession {
     verbosity: cccc_contracts::voice_notifications::VoiceVerbosity,
     notification_paused: tokio::sync::watch::Sender<bool>,
     call: Arc<CodexVoiceCall>,
-    analyst: Arc<AnalystRuntime>,
+    analyst: Option<Arc<AnalystRuntime>>,
     client_session_id: String,
     offer_digest: [u8; 32],
     answer_sdp: String,

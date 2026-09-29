@@ -44,7 +44,9 @@ pub(super) async fn start(State(state): State<AppState>, Json(body): Json<Value>
         Option<cccc_contracts::codex_voice::VoiceApplicationContext>,
     >(body["application_context"].clone())
     .map_err(|_| {
-        ApiError::bad("application_context must contain a valid bounded id and instructions")
+        ApiError::bad(
+            "application_context must contain a valid id, mode and nonempty instructions up to 24576 UTF-8 bytes",
+        )
     })?;
     let started = std::time::Instant::now();
     let outcome = state
@@ -78,7 +80,7 @@ pub(super) async fn start(State(state): State<AppState>, Json(body): Json<Value>
             }
             Ok(success(json!({
                 "call":payload::info_value(info),
-                "analyst":payload::analyst_info_value(started.session.analyst().info()),
+                "analyst":started.session.analyst().map(|analyst| payload::analyst_info_value(analyst.info())),
                 "answer_sdp":started.answer_sdp,
                 "experimental":true,
             })))

@@ -32,7 +32,7 @@ async fn application_context_reaches_new_and_steered_delegations_without_replay(
     .await
     .expect("connect fixture Analyst");
     let analyst = Arc::new(CodexVoiceAnalyst::from_session(analyst));
-    let call = CodexVoiceCall::start(&home, Arc::clone(&analyst), Some(context))
+    let call = CodexVoiceCall::start(&home, Some(Arc::clone(&analyst)), Some(context))
         .await
         .expect("start embedded call");
     for id in ["first", "first", "second"] {
@@ -78,24 +78,48 @@ async fn stopping_audio_keeps_the_shared_analyst_available_for_the_next_call() {
     let first = CodexVoiceCall {
         application_context: None,
         generation: "call-r1".into(),
-        analyst: Arc::clone(&analyst),
+        analyst: Some(Arc::clone(&analyst)),
         lease: first_lease,
         state: tokio::sync::Mutex::new(CallState::default()),
     };
     assert_eq!(first.analyst_thread_id(), "thread-controller");
     first.stop("call-r1").await.expect("stop first audio call");
 
+    let context = cccc_contracts::codex_voice::VoiceApplicationContext::new_with_mode(
+        "training".into(),
+        "Act as a customer.".into(),
+        cccc_contracts::codex_voice::VoiceCallMode::Persona,
+    )
+    .expect("persona context");
+    assert!(CodexVoiceCall::start(&home, None, None).await.is_err());
+    assert!(
+        CodexVoiceCall::start(&home, Some(Arc::clone(&analyst)), Some(context.clone()))
+            .await
+            .is_err()
+    );
+    let persona = CodexVoiceCall::start(&home, None, Some(context))
+        .await
+        .expect("persona between assistant calls");
+    assert!(persona.analyst().is_none());
+    persona
+        .stop(persona.generation())
+        .await
+        .expect("stop persona");
+
     let second_lease = CallLease::acquire(&home, "g_voice", "Voice", "codex-voice:call-r2")
         .expect("second call lease");
     let second = CodexVoiceCall {
         application_context: None,
         generation: "call-r2".into(),
-        analyst: Arc::clone(&analyst),
+        analyst: Some(Arc::clone(&analyst)),
         lease: second_lease,
         state: tokio::sync::Mutex::new(CallState::default()),
     };
     assert_eq!(second.analyst_thread_id(), "thread-controller");
-    assert_eq!(second.analyst.generation(), "analyst-shared");
+    assert_eq!(
+        second.analyst().expect("assistant fixture").generation(),
+        "analyst-shared"
+    );
     second
         .stop("call-r2")
         .await
@@ -129,7 +153,7 @@ async fn analyst_disconnect_is_generation_bound_and_call_drop_releases_the_lease
     let call = CodexVoiceCall {
         application_context: None,
         generation: "call-d".into(),
-        analyst: Arc::new(CodexVoiceAnalyst::from_session(analyst)),
+        analyst: Some(Arc::new(CodexVoiceAnalyst::from_session(analyst))),
         lease,
         state: tokio::sync::Mutex::new(CallState::default()),
     };

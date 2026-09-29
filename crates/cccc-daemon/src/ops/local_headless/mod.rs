@@ -28,8 +28,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, OnceLock};
 
 pub use supervisor::{
-    detach_after_viewer_exit, kill_all_requests, running, start, status, stop, stop_all,
-    stop_group, submit_batch, supports,
+    detach_after_viewer_exit, ensure_viewer, kill_all_requests, running, start, status, stop,
+    stop_all, stop_group, submit_batch, supports,
 };
 
 pub(super) fn uses_managed_session(actor: &cccc_contracts::Actor) -> bool {

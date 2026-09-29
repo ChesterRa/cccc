@@ -5,6 +5,7 @@ pub(super) fn info_value(info: SessionInfo) -> Value {
     json!({
         "generation":info.generation,
         "analyst_generation":info.analyst_generation,
+        "mode":info.mode,
         "voice":info.voice,
         "connected":info.connected,
     })

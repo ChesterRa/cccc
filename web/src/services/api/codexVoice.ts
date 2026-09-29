@@ -41,9 +41,13 @@ export const markVoiceMessagesViewed = (messages: VoiceMessageRef[]) =>
     body: JSON.stringify({ messages }),
   });
 
+export type VoiceCallMode = "assistant" | "persona";
+export type VoiceApplicationContext = { id: string; instructions: string; mode?: VoiceCallMode };
+
 export type CodexVoiceCallInfo = {
   generation: string;
-  analyst_generation: string;
+  analyst_generation: string | null;
+  mode: VoiceCallMode;
   voice: string;
   connected: boolean;
 };
@@ -65,6 +69,7 @@ export type CodexVoiceActiveResult = {
 };
 
 export type CodexVoiceReadiness = {
+  supported_modes: VoiceCallMode[];
   analyst_runtime: string;
   analyst_runtime_available: boolean;
   realtime_credentials_available: boolean;
@@ -72,7 +77,7 @@ export type CodexVoiceReadiness = {
 
 export type CodexVoiceStartResult = {
   call: CodexVoiceCallInfo;
-  analyst: CodexVoiceAnalystInfo;
+  analyst: CodexVoiceAnalystInfo | null;
   answer_sdp: string;
   experimental: boolean;
 };
@@ -98,6 +103,7 @@ export async function startCodexVoiceCall(args: {
   clientSessionId: string;
   offerSdp: string;
   voice: string;
+  applicationContext?: VoiceApplicationContext;
   signal?: AbortSignal;
 }) {
   return apiJson<CodexVoiceStartResult>("/api/v1/codex_voice/calls", {
@@ -107,6 +113,7 @@ export async function startCodexVoiceCall(args: {
       client_session_id: args.clientSessionId,
       offer_sdp: args.offerSdp,
       voice: args.voice,
+      ...(args.applicationContext ? { application_context: args.applicationContext } : {}),
     }),
   });
 }

@@ -2,7 +2,7 @@ use crate::ActorRuntime;
 use serde::{Deserialize, Deserializer, Serialize};
 
 mod application_context;
-pub use application_context::VoiceApplicationContext;
+pub use application_context::{VoiceApplicationContext, VoiceCallMode};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexVoiceSettings {

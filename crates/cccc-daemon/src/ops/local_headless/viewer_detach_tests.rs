@@ -27,7 +27,9 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
     let (listener, _directory) = super::control_fixture::bind(&config);
     // The provider job stays listed; record every control operation it receives.
     let operations = Arc::new(Mutex::new(Vec::<String>::new()));
+    let provider_alive = Arc::new(AtomicBool::new(true));
     let server = tokio::spawn({
+        let provider_alive = Arc::clone(&provider_alive);
         let operations = Arc::clone(&operations);
         async move {
             loop {
@@ -39,7 +41,9 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
                 let op = request["op"].as_str().expect("operation").to_owned();
                 operations.lock().expect("operations").push(op.clone());
                 let response = match op.as_str() {
-                    "list" => json!({"ok":true,"op":"list","jobs":[{"short":"abcdef01"}]}),
+                    "list" => {
+                        json!({"ok":true,"op":"list","jobs":if provider_alive.load(std::sync::atomic::Ordering::Acquire) { vec![json!({"short":"abcdef01"})] } else { vec![] }})
+                    }
                     other => json!({"ok":true,"op":other}),
                 };
                 stream
@@ -63,7 +67,11 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
         })
         .expect("actor");
     let viewer = super::super::ViewerLaunch {
-        command: vec!["sleep".into(), "30".into()],
+        command: vec![
+            "sh".into(),
+            "-c".into(),
+            "stty -echo; printf '\\033[?2004h'; exec cat".into(),
+        ],
         env: BTreeMap::from([("PATH".into(), std::env::var("PATH").unwrap_or_default())]),
         cwd: config.clone(),
     };
@@ -86,6 +94,7 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
             &config,
             "abcdef01",
             Vec::new(),
+            true,
         )),
         has_terminal: AtomicBool::new(true),
         viewer: Mutex::new(Some(viewer.clone())),
@@ -107,6 +116,26 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
 
     // The `claude attach` viewer exits and the runtime reaper reconciles it.
     let exited = cccc_runtime::stop(&group.group_id, "claude-1").expect("viewer exit");
+    assert!(
+        item.running(),
+        "live provider must remain running before viewer reconciliation"
+    );
+    // A lifecycle start before the reaper runs must reconnect the same provider.
+    let current_group = store.load(&group.group_id).expect("current group");
+    crate::ops::actor_runtime::apply(&home, &current_group, "claude-1", "actor.start")
+        .expect("start reconnects viewer");
+    crate::ops::actor_runtime::reconcile_exited(&home, vec![exited])
+        .expect("late exit must not detach the replacement");
+    assert!(item.has_terminal());
+    assert!(item.running());
+    let exited = cccc_runtime::stop(&group.group_id, "claude-1").expect("second viewer exit");
+    // Saved settings may already target a different backend; the live owner wins.
+    store
+        .mutate(&group.group_id, |document| {
+            document.actors[0].runtime = ActorRuntime::Custom;
+            Ok(())
+        })
+        .expect("change next-launch runtime");
     crate::ops::actor_runtime::reconcile_exited(&home, vec![exited]).expect("reconcile");
 
     assert!(
@@ -123,14 +152,136 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
         "a viewer exit is not a provider exit"
     );
 
-    // The next delivery re-opens the viewer on the same live job.
-    item.reattach_viewer().expect("reattach");
+    // A passive viewer must not launch work. A control attach can reconnect.
+    let passive = attach_request(&home, &group.group_id, "viewer").await;
+    assert!(!passive.ok);
+    assert!(!item.has_terminal());
+    let control = attach_request(&home, &group.group_id, "control").await;
+    assert!(control.ok, "{control:?}");
     assert!(item.has_terminal());
     assert!(
         cccc_runtime::status(&group.group_id, "claude-1")
             .expect("reattached viewer")
             .running
     );
-    cccc_runtime::stop(&group.group_id, "claude-1").expect("stop viewer");
+    assert!(operations.lock().expect("operations").is_empty());
+
+    // Delivery must also reopen an exited TUI before the reaper has seen it.
+    let exited = cccc_runtime::stop(&group.group_id, "claude-1").expect("exit before delivery");
+    let mut event = Event::new("chat.message", &group.group_id);
+    event.by = "user".into();
+    event.data = json!({"text":"ISOLATED_VIEWER_DELIVERY","to":["claude-1"]})
+        .as_object()
+        .expect("message")
+        .clone();
+    let delivered = tokio::task::spawn_blocking({
+        let home = home.clone();
+        let group = current_group.clone();
+        move || {
+            submit_batch(
+                &home,
+                &group,
+                &group.actors[0],
+                &[event],
+                &AtomicBool::new(false),
+            )
+        }
+    })
+    .await
+    .expect("delivery task");
+    assert!(
+        delivered,
+        "delivery reconnects the same provider's input channel"
+    );
+    crate::ops::actor_runtime::reconcile_exited(&home, vec![exited]).expect("late delivery reap");
+    assert!(item.has_terminal());
+    assert!(operations.lock().expect("operations").is_empty());
+
+    // Losing the provider process must preserve the durable conversation receipt.
+    let session_id = "52b41c61-e23c-4b7c-8b60-809c347451b5";
+    let command = vec!["claude".into()];
+    let environment = BTreeMap::new();
+    crate::ops::runtime_session::record_claude_managed_session(
+        &home,
+        &group.group_id,
+        "claude-1",
+        &config,
+        &command,
+        &environment,
+        session_id,
+        false,
+    )
+    .expect("record durable session");
+    provider_alive.store(false, std::sync::atomic::Ordering::Release);
+    tokio::task::spawn_blocking({
+        let item = Arc::clone(&item);
+        move || super::super::managed_reader::stop_after_provider_exit(&item)
+    })
+    .await
+    .expect("reconcile provider exit");
+    assert!(item.stopped.load(std::sync::atomic::Ordering::Acquire));
+    assert!(!item.running());
+    let resumed = crate::ops::runtime_session::prepare_claude_managed_session(
+        &home,
+        &group.group_id,
+        "claude-1",
+        &config,
+        &command,
+        &environment,
+    )
+    .expect("prepare durable resume");
+    assert_eq!(resumed.as_deref(), Some(session_id));
+    assert_eq!(operations.lock().expect("operations").as_slice(), ["list"]);
+    let events =
+        cccc_core::ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger path"))
+            .expect("ledger after provider exit");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "actor.stop")
+            .count(),
+        1
+    );
+    let closed = attach_request(&home, &group.group_id, "control").await;
+    assert!(
+        !closed.ok,
+        "control attach cannot restart a stopped provider"
+    );
     server.abort();
+}
+
+async fn attach_request(
+    home: &HomeLayout,
+    group_id: &str,
+    mode: &str,
+) -> cccc_contracts::DaemonResponse {
+    let (client, server) = tokio::io::duplex(64 * 1024);
+    let (_shutdown, receiver) = tokio::sync::watch::channel(false);
+    let request = cccc_contracts::DaemonRequest {
+        v: 1,
+        op: "term_attach".into(),
+        args: json!({"group_id":group_id,"actor_id":"claude-1","mode":mode})
+            .as_object()
+            .expect("args")
+            .clone(),
+    };
+    let server = tokio::spawn(crate::server_terminal_attach::handle(
+        BufReader::new(server),
+        home.clone(),
+        request,
+        receiver,
+    ));
+    let mut client = BufReader::new(client);
+    let mut line = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.read_line(&mut line),
+    )
+    .await
+    .expect("attach timeout")
+    .expect("response");
+    let response = serde_json::from_str(&line).expect("attachment response");
+    drop(client);
+    server.await.expect("server task").expect("server stream");
+    response
 }

@@ -405,14 +405,58 @@ in the neutral Voice directory.
 An embedding application can provide optional `application_context` in
 `POST /api/v1/codex_voice/calls`: `{ "id": "work:123", "instructions": "Reply in Japanese for the current work." }`.
 The ID is 1–128 ASCII letters, digits, `-`, `_`, `.`, or `:`; instructions are
-nonempty UTF-8 text up to 8192 bytes, without control characters except newline and tab.
-CCCC holds this context unchanged for that call, includes it in Realtime startup
-instructions and every Voice Analyst delegation, and uses a context-aware greeting.
+nonempty UTF-8 text up to 24 KiB (24,576 bytes), without control characters except newline and tab.
+The same byte limit applies to assistant and persona modes. CCCC rejects oversized text
+instead of truncating it. This is a local input size limit, not a provider token limit;
+token counts vary with the text and model, and provider limits still apply.
+CCCC holds this context unchanged for that call. In assistant mode, it includes the context
+in Realtime startup instructions and every Voice Analyst delegation, and uses a context-aware greeting.
 Replaying the same client session and SDP with different context returns busy rather
 than silently reusing the old call. Omitting the field preserves the global Voice behavior.
 Context is not authentication, a selected CCCC Group, a tool permission, or an isolated
 Analyst session. The host application remains responsible for authorization, business
 records and any session reset needed when changing subjects. Do not include credentials.
+
+For host-defined roleplay, set `application_context.mode` to `"persona"`:
+
+```json
+{
+  "client_session_id": "training-call-1",
+  "offer_sdp": "<WebRTC offer>",
+  "voice": "cove",
+  "application_context": {
+    "id": "training:customer",
+    "mode": "persona",
+    "instructions": "Act as a customer in a Japanese phone-training exercise. Wait for the trainee to speak first."
+  }
+}
+```
+
+The default mode is `"assistant"`; explicitly specifying it behaves like omitting it.
+In persona mode CCCC supplies only the host's instructions, without its assistant role,
+routing instructions or saved expression preferences. It does not resolve, launch, attach
+or reset a Voice Analyst. Incoming delegation events are ignored; Actor/Group notifications
+are neither consumed nor spoken. An existing Analyst and its pending notifications remain
+available for later assistant calls. Authorization checks, the single-call microphone lease,
+heartbeats and disconnect cleanup still apply. The host decides the opening behavior in
+its instructions; CCCC sends only a neutral call-start cue.
+
+Check `GET /api/v1/codex_voice/calls/active` first: `readiness.supported_modes` advertises
+`["assistant", "persona"]`. For persona, check `realtime_credentials_available`; do not
+require `analyst_runtime_available` or configure/reset an Analyst. Credential presence is
+not a guarantee of provider availability. Old servers reject the nested `mode` field;
+never retry a rejected persona request by silently dropping it. Start and active responses
+include `call.mode`; persona has `call.analyst_generation: null` and the start response has
+`analyst: null`. The active endpoint's top-level `analyst` still describes the independently
+managed global Analyst, if one exists. A different mode with the same client session ID
+returns busy, just like a changed context or SDP. Stop the old call before changing modes.
+
+**Experimental provider boundary:** persona startup omits the quicksilver `delegation`
+configuration and CCCC enforces no local delegation execution. Omission must not be treated
+as proof that the upstream model cannot emit delegation events. [Public GPT-Live documentation](https://developers.openai.com/api/docs/guides/live-delegation#configure-responses-delegation) describes
+`delegation: null` as client mode, not as a disabling setting; CCCC's experimental quicksilver
+v2 behavior and both opening directions require real-call acceptance before production use.
+The host instructions do not override the provider's own system rules.
 
 CCCC reads the existing Codex credential only in the native process that creates the provider call;
 the browser receives the WebRTC answer and bounded session events, not the credential. Use the
