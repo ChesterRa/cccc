@@ -200,7 +200,7 @@ export function DirectConnectionsPanel({
   const current = relations.filter((r) => !directRelationClosed(r));
   const history = relations.filter((r) => !current.includes(r));
   const rows = (items: typeof relations) => (
-    <ul className="divide-y divide-[var(--glass-border-subtle)]">
+    <ul className="space-y-2">
       {items.map((r) => (
         <DirectConnectionRow
           key={r.id}
@@ -215,7 +215,9 @@ export function DirectConnectionsPanel({
 
   return (
     <div ref={panel} className="space-y-4 text-sm">
-      {!task && <p className="text-[var(--color-text-secondary)]">{t("direct.description")}</p>}
+      {!task && current.length === 0 && (
+        <p className="text-[var(--color-text-secondary)]">{t("direct.description")}</p>
+      )}
       {(error || pollFailed) && (
         <p role="alert" className="break-words text-[var(--color-danger)]">
           {error || t("direct.statusUnavailable")}
@@ -335,7 +337,9 @@ export function DirectConnectionsPanel({
               {t("direct.useInvite")}
             </Button>
           </div>
-          <p className="text-xs text-[var(--color-text-secondary)]">{t("direct.chooseHint")}</p>
+          {current.length === 0 && (
+            <p className="text-xs text-[var(--color-text-secondary)]">{t("direct.chooseHint")}</p>
+          )}
         </div>
       )}
       {status?.listener && task !== "settings" && task !== "invite" && (

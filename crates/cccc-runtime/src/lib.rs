@@ -60,6 +60,8 @@ pub use manager::{
     submit_interruptible, submit_sequence_interruptible, wait_for_input_ready, write,
 };
 pub use output::HistoryPage;
+#[cfg(unix)]
+pub use process_tree::protect_owned_process_groups;
 pub use process_tree::{OwnedProcessTree, force_terminate_owned};
 pub use session::{LaunchSpec, SessionStatus};
 pub use terminal_attach::{TerminalAttachMode, TerminalAttachment, TerminalInput, TerminalOutput};

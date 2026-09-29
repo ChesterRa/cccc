@@ -102,7 +102,7 @@ it("creates an invitation for this Group only after verified listener status", a
   ).toEqual({ action: "invite", group_id: "group-a", expected_listener: value.listener });
   expect(host.querySelector<HTMLTextAreaElement>("textarea[readonly]")?.value).toBe(text);
 });
-it("requires explicit approval of the requesting pair and never presents pending as connected", async () => {
+it("approves the requesting pair in one click and never presents pending as connected", async () => {
   value.relations = [
     {
       id: "direct-id",
@@ -119,13 +119,45 @@ it("requires explicit approval of the requesting pair and never presents pending
   await render();
   expect(host.textContent).toContain("Office B · Build");
   expect(host.textContent).toContain("direct.states.needsApproval");
-  await act(async () => button("direct.approve").click());
-  expect(mocks.request.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  // The identity check reminder is visible before the decision, not behind a second step.
   expect(host.textContent).toContain("direct.approveHint");
-  await act(async () => button("direct.confirm").click());
-  expect(
-    JSON.parse(mocks.request.mock.calls.find(([, init]) => init?.method === "POST")![1].body),
-  ).toEqual({ action: "approve", group_id: "group-a", id: "direct-id" });
+  const posts = () => mocks.request.mock.calls.filter(([, init]) => init?.method === "POST");
+  // Declining stays a guarded, destructive action that needs its own confirmation.
+  await act(async () => button("direct.cancelInvite").click());
+  expect(posts()).toHaveLength(0);
+  expect(host.textContent).toContain("direct.cancelPairHint");
+  await act(async () => button("direct.cancel").click());
+  expect(posts()).toHaveLength(0);
+  await act(async () => button("direct.approve").click());
+  expect(button("direct.confirm")).toBeUndefined();
+  expect(posts().map(([, init]) => JSON.parse(init!.body))).toEqual([
+    { action: "approve", group_id: "group-a", id: "direct-id" },
+  ]);
+});
+it("shows the setup explanation only until a Group pair is connected", async () => {
+  await render();
+  expect(host.textContent).toContain("direct.description");
+  expect(host.textContent).toContain("direct.chooseHint");
+  value.relations = [
+    {
+      id: "direct-id",
+      local: { title: "A" },
+      remote: { name: "Office B", title: "Build", instance_id: "peer-b" },
+      state: "active",
+      initiated: true,
+      current: true,
+      expired: false,
+      online: true,
+      error: null,
+    },
+  ];
+  await render();
+  expect(host.textContent).toContain("direct.states.online");
+  expect(host.textContent).not.toContain("direct.description");
+  expect(host.textContent).not.toContain("direct.chooseHint");
+  // Starting another pairing stays available once the explanation is gone.
+  expect(button("direct.inviteGroup")).toBeDefined();
+  expect(button("direct.useInvite")).toBeDefined();
 });
 it("offers removal for expired invitations but cannot approve a replaced Group", async () => {
   value.relations = [

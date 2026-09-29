@@ -1,11 +1,12 @@
 use anyhow::Result;
+use cccc_core::HomeLayout;
 
 /// Put the daemon host in an operating-system-owned process container before
 /// any actor is restored or launched. On Windows, child processes inherit job
 /// membership at creation time, so closing the daemon's last job handle also
 /// terminates Codex and every MCP descendant after an abrupt host exit.
 #[cfg(windows)]
-pub fn protect_daemon_host() -> Result<()> {
+pub fn protect_daemon_host(_home: &HomeLayout) -> Result<()> {
     use std::sync::{Mutex, OnceLock};
     use win32job::{ExtendedLimitInfo, Job};
 
@@ -36,14 +37,26 @@ pub fn protect_daemon_host() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
-pub fn protect_daemon_host() -> Result<()> {
+/// Unix has no inheritable container. Owned process groups instead end with the
+/// daemon through a watchdog that outlives an abrupt exit, and the next daemon
+/// terminates any group that watchdog missed.
+#[cfg(unix)]
+pub fn protect_daemon_host(home: &HomeLayout) -> Result<()> {
+    cccc_runtime::protect_owned_process_groups(&home.daemon_dir().join(OWNED_GROUPS_LEDGER))?;
     Ok(())
 }
+
+#[cfg(unix)]
+const OWNED_GROUPS_LEDGER: &str = "owned-process-groups.json";
+
+#[cfg(all(test, unix))]
+#[path = "process_tree_unix_tests.rs"]
+mod unix_tests;
 
 #[cfg(all(test, windows))]
 mod tests {
     use super::protect_daemon_host;
+    use cccc_core::HomeLayout;
     use std::path::Path;
     use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
@@ -107,7 +120,8 @@ mod tests {
         if std::env::var(MODE).as_deref() != Ok("host") {
             return;
         }
-        protect_daemon_host().expect("protect daemon host");
+        protect_daemon_host(&HomeLayout::from_path(std::env::temp_dir()).expect("home"))
+            .expect("protect daemon host");
         let pid_path = required_path(PIDS);
         let mut child = spawn_helper("child_helper", "child", &pid_path);
         child.wait().expect("wait for child helper");

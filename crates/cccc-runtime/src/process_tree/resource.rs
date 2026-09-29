@@ -3,6 +3,8 @@ use std::io;
 pub(super) struct Resource {
     #[cfg(unix)]
     pid: rustix::process::Pid,
+    #[cfg(unix)]
+    spawned_at: u64,
     #[cfg(windows)]
     job: Option<win32job::Job>,
 }
@@ -44,7 +46,19 @@ impl Resource {
     fn unix(pid: u32) -> io::Result<Self> {
         let pid = rustix::process::Pid::from_raw(pid as i32)
             .ok_or_else(|| io::Error::other("invalid child PID"))?;
-        Ok(Self { pid })
+        Ok(Self {
+            pid,
+            spawned_at: super::guard::now(),
+        })
+    }
+
+    /// Every Unix resource leads its own process group.
+    #[cfg(unix)]
+    pub(super) fn owned_group(&self) -> super::guard::OwnedGroup {
+        super::guard::OwnedGroup {
+            pgid: self.pid.as_raw_pid(),
+            spawned_at: self.spawned_at,
+        }
     }
 
     #[cfg(windows)]

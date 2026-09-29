@@ -28,11 +28,10 @@ pub async fn run(home: HomeLayout) -> Result<()> {
 }
 
 async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> Result<()> {
-    crate::process_tree::protect_daemon_host().context("protect daemon process tree")?;
     home.initialize().context("initialize Rust home")?;
     let paths = DaemonPaths::new(home);
     std::fs::create_dir_all(&paths.daemon_dir)?;
-    let lock = acquire_daemon_lock(&paths.lock)?;
+    let lock = claim_home(&paths)?;
     if let Err(error) = cccc_core::group_bridge_retirement::retire(&paths.home) {
         tracing::warn!(%error, "manual Group Bridge state retained for retirement on next startup");
     }
@@ -208,6 +207,15 @@ async fn serve_platform_default(
     restore: RuntimeRestoreSpawner,
 ) -> Result<()> {
     serve_tcp(paths, shutdown_tx, shutdown_rx, dispatch_locks, restore).await
+}
+
+/// Take the home's exclusive daemon lock, then protect its process tree. Only the
+/// lock holder may terminate what a previous owner left behind: a rejected second
+/// start must never touch the running daemon's process groups.
+pub(crate) fn claim_home(paths: &DaemonPaths) -> Result<File> {
+    let lock = acquire_daemon_lock(&paths.lock)?;
+    crate::process_tree::protect_daemon_host(&paths.home).context("protect daemon process tree")?;
+    Ok(lock)
 }
 
 fn acquire_daemon_lock(path: &Path) -> Result<File> {

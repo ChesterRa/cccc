@@ -1,4 +1,6 @@
 //! Process resources reachable independently of session/protocol shutdown locks.
+#[cfg(unix)]
+mod guard;
 mod resource;
 mod spawn;
 use resource::Resource;
@@ -136,6 +138,7 @@ impl Registry {
     fn insert(&mut self, resource: Resource) -> OwnedProcessTree {
         self.next_id += 1;
         self.resources.insert(self.next_id, resource);
+        self.publish();
         OwnedProcessTree { id: self.next_id }
     }
 
@@ -143,9 +146,39 @@ impl Registry {
         if let Some(resource) = self.resources.get_mut(&id) {
             resource.terminate()?;
         }
-        self.resources.remove(&id);
+        if self.resources.remove(&id).is_some() {
+            self.publish();
+        }
         Ok(())
     }
+
+    /// Keep the abrupt-exit guard's view equal to the owned set. Its failure must
+    /// never fail the spawn or termination that changed the set.
+    fn publish(&self) {
+        #[cfg(unix)]
+        {
+            let groups = self
+                .resources
+                .values()
+                .map(Resource::owned_group)
+                .collect::<Vec<_>>();
+            if let Err(error) = guard::publish(&groups) {
+                eprintln!("could not record owned process groups: {error}");
+            }
+        }
+    }
+}
+
+/// Make this process's owned process groups end with it, including after SIGKILL
+/// or a crash, and terminate groups a previous owner using `ledger` left behind.
+/// Call before spawning anything that must not outlive this process.
+#[cfg(unix)]
+pub fn protect_owned_process_groups(ledger: &std::path::Path) -> io::Result<()> {
+    let registry = registry();
+    if guard::enable(ledger)? {
+        registry.publish();
+    }
+    Ok(())
 }
 
 /// Permanently close process admission and terminate this process's owned trees.
