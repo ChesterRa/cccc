@@ -95,6 +95,14 @@ pub fn next_rule_fire_at(
     crate::automation_schedule::next_fire_at(trigger, last, now)
 }
 
+/// Validate a cron trigger expression, returning the parse error text on failure.
+/// Day-of-week fields are interpreted with POSIX numbering (0 or 7 = Sunday).
+pub fn cron_expression_error(raw: &str) -> Option<String> {
+    crate::automation_schedule::parse_cron_schedule(raw)
+        .err()
+        .map(|error| error.to_string())
+}
+
 pub fn reset_rule_timers_on_resume(home: &HomeLayout, group_id: &str) -> io::Result<()> {
     let store = GroupStore::new(home.clone())?;
     let group = store.load(group_id)?;
