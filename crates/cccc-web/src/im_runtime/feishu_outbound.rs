@@ -636,11 +636,13 @@ mod tests {
                 chat_id: "chat-1".into(),
                 thread_id: String::new(),
                 verbose: false,
+                relay: crate::im_runtime::RelayMode::Mentions,
             },
             AuthorizedChat {
                 chat_id: "chat-2".into(),
                 thread_id: String::new(),
                 verbose: false,
+                relay: crate::im_runtime::RelayMode::Mentions,
             },
         ];
         let delivered = outbound.send_with(&sender, &targets, &event).await;
