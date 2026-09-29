@@ -250,6 +250,8 @@
     "noActors": "添加 Agent 后即可启动此 Group。"
   },
   "connectionInterruptedHint": "页面连接已中断，正在自动重连；当前显示的信息可能尚未更新。",
-  "connectionUnreachable": "连接不可达",
-  "retryingIn": "{{seconds}} 秒后重试"
+  "realtimeSocketUnreachable": "实时连接不可达",
+  "realtimeSubscriptionClosed": "订阅被服务端关闭",
+  "retryingIn": "{{seconds}} 秒后重试",
+  "retryingNow": "正在重试"
 }

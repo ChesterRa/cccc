@@ -250,6 +250,8 @@
     "noActors": "Add an Agent to start this Group."
   },
   "connectionInterruptedHint": "The page connection was interrupted. Reconnection is automatic; displayed information may be outdated.",
-  "connectionUnreachable": "unreachable",
-  "retryingIn": "retrying in {{seconds}}s"
+  "realtimeSocketUnreachable": "realtime connection unreachable",
+  "realtimeSubscriptionClosed": "subscription closed by the server",
+  "retryingIn": "retrying in {{seconds}}s",
+  "retryingNow": "retrying now"
 }

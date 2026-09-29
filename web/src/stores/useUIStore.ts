@@ -130,10 +130,10 @@ interface UIState {
 }
 
 export interface SSEErrorDetail {
-  /** The connection that failed, e.g. "realtime socket (global, ledger)". */
-  endpoint: string;
-  /** When the transport will next retry (epoch ms), if one is scheduled. */
-  nextRetryAt: number | null;
+  /** The shared socket dropped, or the server closed one subscription on it. */
+  cause: "socket" | "channel";
+  /** When the transport will next retry (epoch ms). */
+  nextRetryAt: number;
 }
 
 let errorTimeoutId: number | null = null;

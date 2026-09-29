@@ -4,22 +4,31 @@ export class EventStreamTransport {
   private sources = new Map<Channel, EventStreamSource>();
   private socket: WebSocket | null = null;
   private retry: ReturnType<typeof setTimeout> | null = null;
+  // Set from a socket failure until a new socket opens: covers both the
+  // backoff wait and the reconnect handshake.
+  private retryAt = 0;
   private delay = 1000;
   private scheduled = false;
-  private channelRetries = new Map<EventStreamSource, ReturnType<typeof setTimeout>>();
+  private channelRetries = new Map<
+    EventStreamSource,
+    { timer: ReturnType<typeof setTimeout>; at: number }
+  >();
   private watchdog: ReturnType<typeof setTimeout> | null = null;
   constructor(readonly url: string) {}
 
   add(source: EventStreamSource) {
     this.sources.get(source.channel)?.close();
     this.sources.set(source.channel, source);
+    // A subscription opened while the socket recovers (e.g. a group switch)
+    // must still learn about it; announce once the caller attached listeners.
+    if (this.retryAt) queueMicrotask(() => this.announceRetry(source));
     this.schedule();
   }
   remove(source: EventStreamSource) {
     if (this.sources.get(source.channel) !== source) return;
     this.sources.delete(source.channel);
     const retry = this.channelRetries.get(source);
-    if (retry) clearTimeout(retry);
+    if (retry) clearTimeout(retry.timer);
     this.channelRetries.delete(source);
     this.send({ type: "unsubscribe", channel: source.channel, id: source.id });
     // A group switch closes and replaces subscriptions in one task. Delay the
@@ -29,28 +38,16 @@ export class EventStreamTransport {
   dispose() {
     if (this.retry) clearTimeout(this.retry);
     this.retry = null;
+    this.retryAt = 0;
     if (this.watchdog) clearTimeout(this.watchdog);
     this.watchdog = null;
-    for (const timer of this.channelRetries.values()) clearTimeout(timer);
+    for (const retry of this.channelRetries.values()) clearTimeout(retry.timer);
     this.channelRetries.clear();
     const socket = this.socket;
     this.socket = null;
     socket?.close();
     for (const source of this.sources.values()) source.readyState = 2;
     this.sources.clear();
-  }
-  /**
-   * Live state of the shared socket, for connection diagnostics. The UI has to
-   * report the transport that is actually in use: every logical subscription
-   * rides one WebSocket to /api/v1/events/ws, so an HTTP probe of an
-   * individual channel URL describes a request the client never makes.
-   */
-  get status(): { url: string; readyState: number } {
-    return { url: this.url, readyState: this.socket?.readyState ?? WebSocket.CLOSED };
-  }
-  /** Channels currently multiplexed over the socket. */
-  get channels(): Channel[] {
-    return [...this.sources.keys()];
   }
   private schedule() {
     if (this.scheduled) return;
@@ -101,6 +98,9 @@ export class EventStreamTransport {
     socket.onopen = () => {
       if (this.socket !== socket) return;
       this.armWatchdog(socket);
+      this.retryAt = 0;
+      // Subscriptions still in their own backoff now wait only on that.
+      for (const source of this.channelRetries.keys()) this.announceRetry(source);
       this.sync();
     };
     socket.onmessage = (event) => {
@@ -139,14 +139,14 @@ export class EventStreamTransport {
     source.emit("error");
     if (this.sources.get(source.channel) !== source || this.channelRetries.has(source)) return;
     source.sent = false;
-    this.channelRetries.set(
-      source,
-      setTimeout(() => {
+    this.channelRetries.set(source, {
+      timer: setTimeout(() => {
         this.channelRetries.delete(source);
         this.schedule();
       }, source.retryDelay),
-    );
-    source.emit("retry", { delay_ms: source.retryDelay });
+      at: Date.now() + source.retryDelay,
+    });
+    this.announceRetry(source);
     source.retryDelay = Math.min(source.retryDelay * 2, 30000);
   }
   private fail(socket: WebSocket) {
@@ -162,12 +162,27 @@ export class EventStreamTransport {
       source.emit("error");
     }
     if (!this.sources.size || this.retry) return;
-    const delay = this.delay;
+    this.retryAt = Date.now() + this.delay;
     this.retry = setTimeout(() => {
       this.retry = null;
       this.sync();
-    }, delay);
-    for (const source of this.sources.values()) source.emit("retry", { delay_ms: delay });
+    }, this.delay);
+    for (const source of this.sources.values()) this.announceRetry(source);
     this.delay = Math.min(this.delay * 2, 30000);
+  }
+  /**
+   * Tells a subscription why it is down and when it can resubscribe. While
+   * the socket recovers that is the reason, and the subscription also waits
+   * out its own later backoff; afterwards only its own backoff remains.
+   */
+  private announceRetry(source: EventStreamSource) {
+    if (this.sources.get(source.channel) !== source) return;
+    const channelAt = this.channelRetries.get(source)?.at ?? 0;
+    const at = this.retryAt ? Math.max(this.retryAt, channelAt) : channelAt;
+    if (!at) return;
+    source.emit("retry", {
+      delay_ms: Math.max(0, at - Date.now()),
+      cause: this.retryAt ? "socket" : "channel",
+    });
   }
 }

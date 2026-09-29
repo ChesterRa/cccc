@@ -85,18 +85,13 @@ it("shows which call failed and the retry countdown when disconnected", async ()
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  useUIStore.setState({
-    sseError: { endpoint: "realtime socket (global, ledger)", nextRetryAt: Date.now() + 7000 },
-  });
+  useUIStore.setState({ sseError: { cause: "socket", nextRetryAt: Date.now() + 7000 } });
   await act(async () => root.render(<AppHeader {...props} sseStatus="disconnected" />));
   const badge = host.querySelector("[data-connection-state]")!;
   const label = badge.getAttribute("aria-label") || "";
-  expect(label).toContain("disconnected");
-  expect(label).toContain("realtime socket (global, ledger)");
-  expect(label).not.toContain("HTTP");
-  expect(label).toContain("retryingIn");
+  expect(label).toContain("disconnected · realtimeSocketUnreachable · retryingIn");
   // connected clears the detail text again
   useUIStore.setState({ sseError: null });
   await act(async () => root.render(<AppHeader {...props} sseStatus="connected" />));
-  expect(badge.getAttribute("aria-label")).not.toContain("realtime socket");
+  expect(badge.getAttribute("aria-label")).not.toContain("realtimeSocketUnreachable");
 });

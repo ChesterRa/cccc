@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { useSseErrorDetailText } from "./useSseErrorDetailText";
+import { readRetryDetail, useSseErrorDetailText } from "./useSseErrorDetailText";
 import { useUIStore } from "../stores/useUIStore";
 
 vi.mock("react-i18next", () => ({
@@ -37,115 +37,88 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+function retryIn(ms: number, cause: "socket" | "channel" = "socket") {
+  useUIStore.setState({ sseError: { cause, nextRetryAt: Date.now() + ms } });
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+});
+
 describe("retry countdown", () => {
   it("shows the true remainder on first render, without waiting a tick", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     // 6.4s left must display 7 on the FIRST render. A hook that seeds its
     // clock before the error arrives renders one second too high here.
-    useUIStore.setState({
-      sseError: { endpoint: "realtime socket", nextRetryAt: Date.now() + 6400 },
-    });
+    retryIn(6400);
     await act(async () => root.render(<Probe />));
     expect(detail()).toContain("retryingIn:7");
   });
 
-  it("rounds the remaining delay UP, so it never shows 6s for a 7s retry", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-    // 5.4s left must still display 6: floor() would under-report and flash 0
-    // a second early, telling the user the retry is imminent when it is not.
-    useUIStore.setState({
-      sseError: { endpoint: "realtime socket", nextRetryAt: Date.now() + 5400 },
-    });
+  it("rounds up and moves to the next second exactly when it changes", async () => {
+    retryIn(5400);
     await act(async () => root.render(<Probe />));
     expect(detail()).toContain("retryingIn:6");
-
-    await act(async () => {
-      vi.advanceTimersByTime(1400);
-    });
-    // 4.0s left -> 4. The interval fires every 250ms, so the newest sample is
-    // at +1250ms (rem 4150 -> ceil 5); advancing past the next tick at +1500ms
-    // is what moves the display to 4.
-    await act(async () => {
-      vi.advanceTimersByTime(200);
-    });
+    await act(async () => vi.advanceTimersByTime(399));
+    expect(detail()).toContain("retryingIn:6");
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(detail()).toContain("retryingIn:5");
+    await act(async () => vi.advanceTimersByTime(1000));
     expect(detail()).toContain("retryingIn:4");
   });
 
   it("ticks the countdown down without remounting the hook", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-    useUIStore.setState({
-      sseError: { endpoint: "realtime socket", nextRetryAt: Date.now() + 10000 },
-    });
+    retryIn(10000);
     await act(async () => root.render(<Probe />));
     expect(detail()).toContain("retryingIn:10");
-
-    for (const [advance, expected] of [
-      [3000, 7],
-      [3000, 4],
-      [3000, 1],
-    ] as const) {
-      await act(async () => {
-        vi.advanceTimersByTime(advance);
-      });
+    for (const expected of [7, 4, 1]) {
+      await act(async () => vi.advanceTimersByTime(3000));
       expect(detail()).toContain(`retryingIn:${expected}`);
     }
   });
 
-  it("never displays a negative count after the deadline passes", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-    useUIStore.setState({
-      sseError: { endpoint: "realtime socket", nextRetryAt: Date.now() + 1000 },
-    });
+  it("says it is retrying at the deadline and stops waking the component", async () => {
+    // The transport may sit in a new connection attempt for up to its 45s
+    // watchdog after the deadline; "retrying in 0s" would be stale for all of
+    // it, and a still-running timer would keep re-rendering the header.
+    retryIn(1000);
     await act(async () => root.render(<Probe />));
-    await act(async () => {
-      vi.advanceTimersByTime(5000);
-    });
-    expect(detail()).toContain("retryingIn:0");
-    expect(detail()).not.toContain("-");
+    await act(async () => vi.advanceTimersByTime(1000));
+    expect(detail()).toContain("retryingNow");
+    expect(detail()).not.toContain("retryingIn");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("resets the tick when a NEW retry deadline arrives", async () => {
-    // Regression: the interval effect keys on nextRetryAt, but the interval only
-    // calls setNow. If the deadline moves while the old timer is live the
-    // display must still be derived from the newest deadline.
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-    useUIStore.setState({
-      sseError: { endpoint: "realtime socket", nextRetryAt: Date.now() + 10000 },
-    });
+  it("follows a NEW retry deadline", async () => {
+    retryIn(10000);
     await act(async () => root.render(<Probe />));
     expect(detail()).toContain("retryingIn:10");
-
-    useUIStore.setState({
-      sseError: { endpoint: "realtime socket", nextRetryAt: Date.now() + 60000 },
-    });
-    await act(async () => {
-      vi.advanceTimersByTime(1000);
-    });
+    await act(async () => retryIn(60000));
+    await act(async () => vi.advanceTimersByTime(1000));
     expect(detail()).toContain("retryingIn:59");
   });
 });
 
 describe("diagnostics reflect the actual transport", () => {
-  it("names the transport and the channels riding it, not a single channel URL", async () => {
-    useUIStore.setState({
-      sseError: { endpoint: "realtime socket (global, ledger, headless)", nextRetryAt: null },
-    });
+  it("reports a dropped socket as an unreachable realtime connection", async () => {
+    retryIn(7000, "socket");
     await act(async () => root.render(<Probe />));
-    expect(detail()).toContain("realtime socket");
-    expect(detail()).toContain("ledger");
-    expect(detail()).not.toContain("HTTP");
+    expect(detail()).toBe("realtimeSocketUnreachable · retryingIn:7");
   });
 
-  it("reports an unreachable transport distinctly from an HTTP status", async () => {
-    useUIStore.setState({ sseError: { endpoint: "realtime socket", nextRetryAt: null } });
+  it("reports a server-closed subscription without calling the socket unreachable", async () => {
+    retryIn(7000, "channel");
     await act(async () => root.render(<Probe />));
-    expect(detail()).toContain("connectionUnreachable");
-    expect(detail()).not.toContain("HTTP");
+    expect(detail()).toBe("realtimeSubscriptionClosed · retryingIn:7");
+  });
+
+  it("shows a retry already under way (reconnect handshake) as retrying now", async () => {
+    const event = new MessageEvent("retry", {
+      data: JSON.stringify({ delay_ms: 0, cause: "socket" }),
+    });
+    useUIStore.setState({ sseError: readRetryDetail(event) });
+    await act(async () => root.render(<Probe />));
+    expect(detail()).toBe("realtimeSocketUnreachable · retryingNow");
   });
 
   it("emits no detail text when connected", async () => {
