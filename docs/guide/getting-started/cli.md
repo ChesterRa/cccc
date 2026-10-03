@@ -2,6 +2,8 @@
 
 Get started with CCCC using the command line.
 
+[日本語版はこちら](./cli-ja)
+
 Commands that accept `--group` resolve it in this order: the explicit option,
 the Actor's `CCCC_GROUP_ID` environment, then the active Group selected with
 `cccc use`. Messaging uses `--by`, then `CCCC_ACTOR_ID`, then `user`. An Actor
