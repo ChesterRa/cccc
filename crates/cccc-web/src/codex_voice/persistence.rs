@@ -32,6 +32,7 @@ pub(super) async fn launch_analyst(home: &HomeLayout) -> Result<AnalystRuntime> 
         .await
         {
             Ok(analyst) => return Ok(analyst),
+            Err(error) if runtime.runtime.is_headless_acp(runtime.runtime_mode) => return Err(error.context("resume attempted ACP Voice Analyst session; reset explicitly instead of replacing it")),
             Err(error) => {
                 tracing::warn!(%error, "Voice Analyst resume failed; starting fresh");
                 return launch_exact(
@@ -77,6 +78,7 @@ pub(super) async fn launch_exact(
 ) -> Result<AnalystRuntime> {
     let mut config = LaunchConfig::new(&workdir);
     config.runtime = runtime.runtime;
+    config.runtime_mode = runtime.runtime_mode;
     config.command = runtime.command.clone();
     config.environment = runtime.environment.clone();
     config.resume_thread_id = resume_thread_id;
@@ -176,7 +178,7 @@ pub(super) fn persist_analyst(
                 .launch_runtime()
                 .identity_fingerprint_at(&analyst.workdir)
                 .context("fingerprint Voice Analyst launch inputs")?,
-            materialized,
+            materialized: materialized && analyst.analyst.resumable(),
             updated_at: cccc_contracts::utc_now(),
         },
     )

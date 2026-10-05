@@ -82,6 +82,7 @@ function controller(): CodexVoiceSessionController {
       realtime_credentials_available: true,
     },
     updatePreferences: vi.fn(),
+    updateAnalystSnapshot: vi.fn(),
     refresh: vi.fn(async () => undefined),
     start: vi.fn(async () => undefined),
     disconnect: vi.fn(async () => undefined),

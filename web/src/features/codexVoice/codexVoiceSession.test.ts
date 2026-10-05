@@ -295,6 +295,49 @@ describe("Codex Voice realtime event model", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("makes queued ACP work cancellable without claiming a native terminal or starting voice output", () => {
+    const onAnalyst = vi.fn();
+    const onPhase = vi.fn();
+    const onProgress = vi.fn();
+    const session = new CodexVoiceBrowserSession({
+      audio: {} as HTMLAudioElement,
+      preferences: { voice: "cove", inputDeviceId: "", outputDeviceId: "" },
+      callbacks: {
+        onPhase,
+        onCall: vi.fn(),
+        onAnalyst,
+        onUserTranscript: vi.fn(),
+        onAssistantTranscript: vi.fn(),
+        onAnalystProgress: onProgress,
+        onAnalystResult: vi.fn(),
+        onPlaybackBlocked: vi.fn(),
+        onError: vi.fn(),
+      },
+    });
+    const transport = session as unknown as {
+      analyst: Record<string, unknown>;
+      handleServerMessage(value: Record<string, unknown>): void;
+    };
+    transport.analyst = {
+      generation: "fixture",
+      structured: true,
+      tui_ready: false,
+      phase: "ready",
+      last_result: "",
+      warning: "",
+    };
+    transport.handleServerMessage({ type: "analyst_queued", position: 1 });
+    expect(onAnalyst).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: "working", tui_ready: false }),
+    );
+    expect(onProgress).not.toHaveBeenCalled();
+    expect(onPhase).not.toHaveBeenCalled();
+    transport.handleServerMessage({ type: "analyst_working" });
+    expect(onAnalyst).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: "working", tui_ready: false }),
+    );
+  });
+
   it("starts a fresh buffer when provider roles switch even if a final event is delayed", () => {
     const transcripts = new RealtimeTranscriptAccumulator();
 

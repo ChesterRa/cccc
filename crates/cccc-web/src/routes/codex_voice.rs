@@ -53,6 +53,10 @@ pub fn routes() -> Router<AppState> {
             post(handlers::cancel_analyst),
         )
         .route(
+            "/api/v1/codex_voice/analysts/{generation}/control",
+            post(handlers::structured_control),
+        )
+        .route(
             "/api/v1/codex_voice/analyst-settings",
             get(handlers::analyst_settings).put(handlers::update_analyst_settings),
         )

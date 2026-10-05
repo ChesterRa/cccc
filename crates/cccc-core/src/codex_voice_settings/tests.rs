@@ -57,6 +57,7 @@ fn normalizes_the_shared_runtime_command() {
 fn runtime_identity_tracks_provider_storage_roots_and_runtime_but_not_model_credentials() {
     let baseline = ResolvedAgentRuntime {
         runtime: ActorRuntime::Codex,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: vec!["codex".into()],
         environment: BTreeMap::from([
             ("CODEX_HOME".into(), "/tmp/codex-a".into()),
@@ -90,6 +91,7 @@ fn runtime_identity_tracks_provider_storage_roots_and_runtime_but_not_model_cred
 
     let opencode_a = ResolvedAgentRuntime {
         runtime: ActorRuntime::Opencode,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: vec!["opencode".into()],
         environment: BTreeMap::from([("XDG_DATA_HOME".into(), "/tmp/opencode-a".into())]),
     };
@@ -128,6 +130,7 @@ fn runtime_identity_tracks_provider_storage_roots_and_runtime_but_not_model_cred
 fn kilo_identity_tracks_its_own_storage_not_transient_server_credentials() {
     let baseline = ResolvedAgentRuntime {
         runtime: ActorRuntime::Kilo,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: vec!["kilo".into()],
         environment: BTreeMap::from([("KILO_DB".into(), "/tmp/kilo-a.db".into())]),
     };
@@ -160,6 +163,7 @@ fn kilo_identity_tracks_its_own_storage_not_transient_server_credentials() {
 fn claude_identity_tracks_every_launch_setting_that_agent_view_persists() {
     let baseline = ResolvedAgentRuntime {
         runtime: ActorRuntime::Claude,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: vec!["claude".into(), "--model".into(), "sonnet".into()],
         environment: BTreeMap::from([
             ("CLAUDE_CONFIG_DIR".into(), "/tmp/claude-a".into()),
@@ -199,6 +203,7 @@ fn claude_path_aware_identity_tracks_all_local_launch_inputs() {
     }
     let runtime = ResolvedAgentRuntime {
         runtime: ActorRuntime::Claude,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: vec![
             "claude".into(),
             "--settings=settings.json".into(),
@@ -231,6 +236,7 @@ fn claude_path_aware_identity_tracks_all_local_launch_inputs() {
 fn codex_identity_keeps_the_legacy_receipt_format() {
     let runtime = ResolvedAgentRuntime {
         runtime: ActorRuntime::Codex,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: vec!["codex".into()],
         environment: BTreeMap::from([
             ("CODEX_HOME".into(), "/identity/codex".into()),
@@ -348,4 +354,87 @@ fn rejects_a_profile_until_its_runtime_has_a_voice_adapter() {
     )
     .expect_err("unsupported runtime");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+}
+
+#[test]
+fn antigravity_profiles_admit_only_acp_and_use_the_managed_provider_home() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let profiles = ProfileStore::new(home.clone()).expect("profiles");
+    let save = |mode: &str| {
+        profiles.upsert(
+            json!({"id":"agy","runtime":"antigravity","runtime_mode":mode,"command":["agy","--model=fixture"],"runner":"pty"})
+                .as_object().expect("profile").clone(),
+            None,
+        ).expect("save profile");
+    };
+    let settings = CodexVoiceAnalystSettings {
+        profile_id: "agy".into(),
+        ..Default::default()
+    };
+    save("default");
+    assert!(resolve(&home, &settings, &BTreeMap::new()).is_err());
+    save("acp");
+    let reopened = ProfileStore::new(home.clone()).expect("reopen saved profiles");
+    let persisted = reopened.get("agy").expect("read profile").expect("profile");
+    assert_eq!(persisted["runtime_mode"], "acp");
+    assert_eq!(persisted["runner"], "headless");
+    let profile = reopened
+        .runtime_ref("agy", "global", "")
+        .expect("resolve profile")
+        .expect("profile");
+    assert_eq!(profile.runner, cccc_contracts::RunnerKind::Headless);
+    let resolved = resolve(&home, &settings, &BTreeMap::new()).expect("ACP Analyst");
+    assert_eq!(resolved.runtime_mode, cccc_contracts::RuntimeMode::Acp);
+    assert_eq!(resolved.command, ["agy", "--model=fixture"]);
+    assert_eq!(
+        resolved.environment["GEMINI_HOME"],
+        home.root()
+            .join("state/antigravity-acp/home/.gemini")
+            .to_string_lossy()
+    );
+    assert!(
+        !home.root().join("state/antigravity-acp").exists(),
+        "settings reads never install or log in"
+    );
+}
+
+#[test]
+fn native_acp_voice_profiles_resolve_mode_and_preserve_private_configuration() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let profiles = ProfileStore::new(home.clone()).expect("profiles");
+    for runtime in [
+        ActorRuntime::Copilot,
+        ActorRuntime::Devin,
+        ActorRuntime::Cursor,
+    ] {
+        for mode in ["default", "acp"] {
+            profiles
+                .upsert(
+                    json!({"id":"native-acp","runtime":runtime,"runtime_mode":mode})
+                        .as_object()
+                        .expect("profile")
+                        .clone(),
+                    None,
+                )
+                .expect("save");
+            let settings = CodexVoiceAnalystSettings {
+                profile_id: "native-acp".into(),
+                ..Default::default()
+            };
+            let resolved = resolve(&home, &settings, &BTreeMap::new());
+            if mode == "default" {
+                assert!(resolved.is_err());
+            } else {
+                let resolved = resolved.expect("ACP profile");
+                assert_eq!(resolved.runtime, runtime);
+                assert_eq!(resolved.runtime_mode, cccc_contracts::RuntimeMode::Acp);
+                assert!(
+                    resolved.environment.is_empty(),
+                    "no synthetic provider home or shared config writes"
+                );
+            }
+        }
+    }
 }

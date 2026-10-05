@@ -36,8 +36,10 @@ export class CodexVoiceEventSocket {
           return;
         }
         if (message.type === "ready") {
+          if (ready || this.isStopping()) return;
           ready = true;
           window.clearTimeout(timeout);
+          this.onMessage(message);
           this.heartbeatTimer = window.setInterval(() => {
             this.send({ type: "heartbeat" });
           }, SERVER_HEARTBEAT_INTERVAL_MS);

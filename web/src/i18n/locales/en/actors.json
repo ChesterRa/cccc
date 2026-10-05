@@ -49,6 +49,18 @@
   "leaveEmptyToUse": "Leave empty to use:",
   "aiRuntime": "AI Runtime",
   "notInstalled": "(not installed)",
+  "runtimeDetection": {
+    "missingRuntime": "Not detected: {{runtime}}. Install it on the CCCC host, then check again.",
+    "detected": "Detected",
+    "missing": "Not detected",
+    "checking": "Checking…",
+    "failed": "Detection failed. Try again.",
+    "unknown": "Not checked",
+    "web": "No local CLI required",
+    "custom": "Configured manually",
+    "recheck": "Check again",
+    "scope": "Checks the machine running CCCC. Detection does not confirm login or task readiness."
+  },
   "manualMcpRequired": "Manual MCP install required",
   "customCommandHint": "Provide a command for your runtime in <1>Advanced options → Command Override</1>.",
   "configureMcpStdio": "Configure your runtime to add an MCP stdio server named",
@@ -263,6 +275,8 @@
   "headlessTraceLive": "Live",
   "headlessTraceStreaming": "streaming",
   "headlessTraceRecent": "Recent",
+  "headlessTurnFailed": "Model request failed",
+  "headlessTurnFailedFallback": "The model runtime reported an error.",
   "headlessControlQueued": "Control task queued",
   "headlessControlStarted": "Processing control task",
   "headlessControlRequeued": "Retrying control task",
@@ -287,5 +301,54 @@
   "webModelActorBoundConnectorHint": "Global Web Model settings manage shared login and one connector. Save this Actor and start it normally; its conversation connects automatically before task delivery.",
   "webModelProfileHint": "Web Model profiles reuse runtime and capability settings. Each Actor configures its own conversation.",
   "saveAndApply": "Save & apply",
-  "applyWebModelTargetConfirm": "Apply the new conversation for \"{{label}}\"? CCCC will stop only this Actor, save its settings, then restart it after the new connection is saved. If applying fails, it stays stopped and your draft remains here."
+  "applyWebModelTargetConfirm": "Apply the new conversation for \"{{label}}\"? CCCC will stop only this Actor, save its settings, then restart it after the new connection is saved. If applying fails, it stays stopped and your draft remains here.",
+  "antigravityMode": {
+    "label": "Antigravity mode",
+    "tui": "TUI · native terminal",
+    "acp": "ACP · structured workspace",
+    "hint": "Official ACP uses a separate CCCC login and has no terminal. The default command enables YOLO; custom commands without the permission override require approval here. Busy input is queued. Complete ACP login once in a terminal."
+  },
+  "acpControls": {
+    "turnFailed": "The Analyst task failed.",
+    "partialOutput": "The output below is incomplete.",
+    "allow": "Allow once",
+    "deny": "Deny",
+    "permission": "Permission required",
+    "send": "Send",
+    "cancel": "Cancel current and queued inputs",
+    "input": "Additional instruction",
+    "queued": "Queued inputs: {{count}}",
+    "hint": "ACP has no native terminal. Inputs wait for the current task to finish.",
+    "error": "The action failed. Your input has been kept.",
+    "stopped": "Start this Actor to use ACP controls.",
+    "cancelCurrent": "Cancel current task",
+    "question": "Answer required",
+    "plan": "Plan confirmation",
+    "answer": "Submit answers",
+    "skip": "Skip questions",
+    "acceptPlan": "Accept plan",
+    "rejectPlan": "Reject plan",
+    "investigations": "Manual investigations",
+    "investigationInput": "Enter an investigation task or follow-up",
+    "submitInvestigation": "Investigate",
+    "currentCallHint": "Send to the Analyst; results go to this call. Queued when busy. Ctrl / ⌘ + Enter to submit.",
+    "localHint": "Send to the Analyst; results stay here. Queued when busy. Ctrl / ⌘ + Enter to submit.",
+    "localResult": "Results stay in this panel.",
+    "callResult": "Results are for this call; this does not confirm spoken delivery.",
+    "endedCallResult": "The original call ended or is controlled elsewhere. Results remain here.",
+    "taskStatus": {
+      "queued": "Queued",
+      "working": "Investigating",
+      "completed": "Completed",
+      "failed": "Incomplete",
+      "cancelled": "Cancelled",
+      "unconfirmed": "Unconfirmed"
+    },
+    "retryScopeHint": "The call changed. Retrying keeps the original destination; edit the draft to submit a new task.",
+    "outcomeUnconfirmed": "The task outcome could not be confirmed."
+  },
+  "acpMode": {
+    "label": "{{runtime}} mode",
+    "hint": "ACP uses the native CLI login and its own managed session. There is no terminal; inputs queue until the current task finishes."
+  }
 }

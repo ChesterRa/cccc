@@ -68,6 +68,7 @@ export async function addActor(
   command: string,
   envPrivate?: Record<string, string>,
   options?: {
+    runtimeMode?: "default" | "acp";
     profileId?: string;
     profileScope?: ProfileScope;
     profileOwner?: string;
@@ -84,6 +85,7 @@ export async function addActor(
       actor_id: actorId,
       role,
       runtime,
+      ...(options?.runtimeMode ? { runtime_mode: options.runtimeMode } : {}),
       command,
       env: {},
       env_private: envPrivate && Object.keys(envPrivate).length ? envPrivate : undefined,
@@ -108,6 +110,7 @@ export async function updateActor(
   command?: string,
   title?: string,
   opts?: {
+    runtimeMode?: "default" | "acp";
     profileId?: string;
     profileScope?: ProfileScope;
     profileOwner?: string;
@@ -122,6 +125,7 @@ export async function updateActor(
   const body: Record<string, unknown> = { by: "user" };
   if (runtime !== undefined && runtime !== "") body.runtime = runtime;
   if (command !== undefined) body.command = command.trim();
+  if (opts?.runtimeMode) body.runtime_mode = opts.runtimeMode;
   if (title !== undefined) body.title = title.trim();
   if (opts?.profileId !== undefined) body.profile_id = String(opts.profileId || "");
   if (opts?.profileScope !== undefined) body.profile_scope = String(opts.profileScope || "");

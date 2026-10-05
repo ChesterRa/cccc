@@ -49,6 +49,18 @@
   "leaveEmptyToUse": "空欄の場合は次を使用：",
   "aiRuntime": "AI ランタイム",
   "notInstalled": "(インストールされていません)",
+  "runtimeDetection": {
+    "missingRuntime": "{{runtime}} が検出されませんでした。CCCC が動作するマシンにインストールしてから再確認してください。",
+    "detected": "検出済み",
+    "missing": "未検出",
+    "checking": "確認中…",
+    "failed": "確認に失敗しました。再試行してください。",
+    "unknown": "未確認",
+    "web": "ローカル CLI は不要",
+    "custom": "手動で設定",
+    "recheck": "再確認",
+    "scope": "CCCC が動作するマシンを確認します。検出済みでも、ログインやタスクの実行が保証されるわけではありません。"
+  },
   "manualMcpRequired": "手動 MCP インストールが必要です",
   "customCommandHint": "<1>詳細オプション → コマンドオーバーライド</1> でランタイムのコマンドを指定します。",
   "configureMcpStdio": "ランタイムに、次の名前の MCP stdio サーバーを設定します",
@@ -263,6 +275,8 @@
   "headlessTraceLive": "ライブ",
   "headlessTraceStreaming": "ストリーミング中",
   "headlessTraceRecent": "最近",
+  "headlessTurnFailed": "モデルへのリクエストに失敗しました",
+  "headlessTurnFailedFallback": "モデルのランタイムでエラーが発生しました。",
   "headlessControlQueued": "制御タスクをキューに追加しました",
   "headlessControlStarted": "制御タスクを処理中",
   "headlessControlRequeued": "制御タスクを再試行中",
@@ -287,5 +301,54 @@
   "webModelActorBoundConnectorHint": "共通 Web モデル設定で共有ログインとコネクターを管理します。この Actor を保存して通常どおり起動すると、会話に自動接続してからタスクを配信します。",
   "webModelProfileHint": "Web モデルのプロファイルは実行環境と機能設定を共有します。各 Actor は自分の会話を個別に設定します。",
   "saveAndApply": "保存して適用",
-  "applyWebModelTargetConfirm": "「{{label}}」に新しい会話を適用しますか？この Actor のみ停止して設定を保存し、新しい接続の保存に成功してから再起動します。失敗した場合は停止したまま、入力内容を保持します。"
+  "applyWebModelTargetConfirm": "「{{label}}」に新しい会話を適用しますか？この Actor のみ停止して設定を保存し、新しい接続の保存に成功してから再起動します。失敗した場合は停止したまま、入力内容を保持します。",
+  "antigravityMode": {
+    "label": "Antigravity モード",
+    "tui": "TUI · ネイティブ端末",
+    "acp": "ACP · 構造化ワークスペース",
+    "hint": "公式 ACP は CCCC 専用ログインを使い、端末はありません。既定のコマンドは YOLO を有効にします。権限確認を省略しないカスタムコマンドでは、ここで承認が必要です。実行中の入力は待機します。最初に端末で ACP にログインしてください。"
+  },
+  "acpControls": {
+    "turnFailed": "Analyst のタスクが失敗しました。",
+    "partialOutput": "以下は未完了の出力です。",
+    "allow": "今回のみ許可",
+    "deny": "拒否",
+    "permission": "権限の確認が必要です",
+    "send": "送信",
+    "cancel": "現在の処理と待機中の入力をキャンセル",
+    "input": "追加の指示",
+    "queued": "待機中の入力：{{count}}",
+    "hint": "ACP にネイティブ端末はありません。入力は現在の処理が終わった後に実行されます。",
+    "error": "操作に失敗しました。入力は保持されています。",
+    "stopped": "ACP 操作にはこの Actor を起動してください。",
+    "cancelCurrent": "現在の処理をキャンセル",
+    "question": "回答が必要",
+    "plan": "計画の確認",
+    "answer": "回答を送信",
+    "skip": "質問をスキップ",
+    "acceptPlan": "計画を承認",
+    "rejectPlan": "計画を拒否",
+    "investigations": "手動調査の記録",
+    "investigationInput": "調査タスクや追加の要件を入力",
+    "submitInvestigation": "調査を依頼",
+    "currentCallHint": "Analyst に送信し、結果を今回の通話に返します。処理中は順番待ち。Ctrl / ⌘ + Enter で送信。",
+    "localHint": "Analyst に送信し、結果はここに表示します。処理中は順番待ち。Ctrl / ⌘ + Enter で送信。",
+    "localResult": "結果はこのパネルにのみ表示します。",
+    "callResult": "結果は今回の通話用です。読み上げ完了を示すものではありません。",
+    "endedCallResult": "元の通話は終了したか、別の画面で操作されています。結果はここで確認できます。",
+    "taskStatus": {
+      "queued": "順番待ち",
+      "working": "調査中",
+      "completed": "完了",
+      "failed": "未完了",
+      "cancelled": "キャンセル済み",
+      "unconfirmed": "未確認"
+    },
+    "retryScopeHint": "通話の状態が変わりました。再試行は元の送信先を保持します。新しいタスクとして送るには内容を編集してください。",
+    "outcomeUnconfirmed": "このタスクの最終結果を確認できませんでした。"
+  },
+  "acpMode": {
+    "label": "{{runtime}} モード",
+    "hint": "ACP はローカル CLI のログインと独立した管理セッションを使います。ターミナルはなく、入力は現在のタスク終了後に実行されます。"
+  }
 }

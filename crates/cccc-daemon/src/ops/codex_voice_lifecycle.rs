@@ -5,6 +5,7 @@ use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use tokio::task::JoinHandle;
 
 mod events;
+mod queue;
 #[cfg(test)]
 mod tests;
 mod turn_wait;
@@ -59,6 +60,7 @@ pub enum AnalystLifecycleEvent {
         delegation_id: String,
         delegation_ids: Vec<String>,
         status: String,
+        error: String,
         result: String,
         speakable: bool,
     },
@@ -66,13 +68,24 @@ pub enum AnalystLifecycleEvent {
         code: &'static str,
     },
     Disconnected,
+    Queued {
+        delegation_id: String,
+        position: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VoiceDelegationAdmission {
     Turn(TurnReceipt),
-    NativeInput { delegation_id: String, text: String },
+    NativeInput {
+        delegation_id: String,
+        text: String,
+    },
     NativeInputPending,
+    Queued {
+        delegation_id: String,
+        position: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -91,6 +104,7 @@ struct ActiveTurn {
 struct PendingStart {
     delegation_id: String,
     origin: AnalystTurnOrigin,
+    cancelling: bool,
 }
 
 #[derive(Debug, Default)]
@@ -101,6 +115,9 @@ struct LifecycleState {
     native_pending: VecDeque<PendingStart>,
     delegations: HashMap<String, TurnReceipt>,
     invalidated: bool,
+    queue: VecDeque<queue::QueuedInput>,
+    host_context_sent: bool,
+    acp_inputs: HashMap<String, ([u8; 32], AnalystTurnOrigin)>,
 }
 
 pub(crate) struct AnalystLifecycle {
@@ -108,6 +125,9 @@ pub(crate) struct AnalystLifecycle {
     state: AsyncMutex<LifecycleState>,
     events: broadcast::Sender<AnalystLifecycleEvent>,
     monitor: Mutex<Option<JoinHandle<()>>>,
+    queue_task: Mutex<Option<JoinHandle<()>>>,
+    queue_notify: Arc<tokio::sync::Notify>,
+    queue_len: std::sync::atomic::AtomicUsize,
 }
 
 impl AnalystLifecycle {
@@ -118,6 +138,9 @@ impl AnalystLifecycle {
             state: AsyncMutex::new(LifecycleState::default()),
             events,
             monitor: Mutex::new(None),
+            queue_task: Mutex::new(None),
+            queue_notify: Arc::new(tokio::sync::Notify::new()),
+            queue_len: std::sync::atomic::AtomicUsize::new(0),
         });
         let weak = Arc::downgrade(&lifecycle);
         let mut source = lifecycle.session.subscribe();
@@ -134,6 +157,7 @@ impl AnalystLifecycle {
                             break;
                         };
                         lifecycle.handle(event).await;
+                        lifecycle.queue_notify.notify_one();
                         if disconnected {
                             break;
                         }
@@ -166,6 +190,9 @@ impl AnalystLifecycle {
             .monitor
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = Some(task);
+        if lifecycle.session.structured_only() {
+            queue::start(&lifecycle);
+        }
         lifecycle
     }
 
@@ -179,6 +206,9 @@ impl AnalystLifecycle {
         state.pending = None;
         state.settled_pending = None;
         state.native_pending.clear();
+        state.queue.clear();
+        self.queue_len
+            .store(0, std::sync::atomic::Ordering::Release);
         state.invalidated = true;
         let _ = self.events.send(AnalystLifecycleEvent::Disconnected);
     }
@@ -186,6 +216,11 @@ impl AnalystLifecycle {
 
 impl Drop for AnalystLifecycle {
     fn drop(&mut self) {
+        if let Ok(mut task) = self.queue_task.lock()
+            && let Some(task) = task.take()
+        {
+            task.abort();
+        }
         if let Ok(mut monitor) = self.monitor.lock()
             && let Some(task) = monitor.take()
         {

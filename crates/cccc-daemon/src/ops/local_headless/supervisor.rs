@@ -1,11 +1,14 @@
 use super::super::codex_voice_analyst::{AnalystSession, lifecycle_timing};
-use super::{HeadlessStatus, Session, managed_reader, poisoned, provider_cli, run_managed_launch};
+use super::{
+    BatchSubmission, HeadlessStatus, Session, managed_reader, poisoned, provider_cli,
+    run_managed_launch,
+};
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::Map;
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use tracing::Instrument;
 
@@ -70,7 +73,7 @@ pub(super) fn uses_managed_session(actor: &Actor) -> bool {
             | ActorRuntime::Grok
             | ActorRuntime::Opencode
             | ActorRuntime::Kilo
-    )
+    ) || actor.runtime.is_headless_acp(actor.runtime_mode)
 }
 
 fn start_managed_agent(
@@ -108,6 +111,7 @@ pub(super) fn launch_managed(
         group_id: group.group_id.clone(),
         actor_id: actor.id.clone(),
         runtime: actor.runtime,
+        runtime_mode: actor.runtime_mode,
         command: provider_cli::base_command(actor),
         environment: env,
     };
@@ -137,7 +141,7 @@ pub(super) fn attach_managed(
         actor_id: actor.id.clone(),
         managed: Arc::clone(&app),
         has_terminal: AtomicBool::new(false),
-        viewer: Mutex::new(Some(super::ViewerLaunch {
+        viewer: Mutex::new(app.tui_ready().then(|| super::ViewerLaunch {
             command: app.actor_tui_command(),
             env: app.tui_environment(),
             cwd: cwd.clone(),
@@ -156,38 +160,40 @@ pub(super) fn attach_managed(
     if let Err(error) = managed_reader::spawn(Arc::clone(&item), app.subscribe()) {
         return Err(cleanup_failed_start(&item, error));
     }
-    let history = match super::super::actor_runtime::terminal_history::config(
-        home,
-        &group.group_id,
-        &actor.id,
-    ) {
-        Ok(history) => history,
-        Err(error) => {
-            return Err(cleanup_failed_start(&item, error));
-        }
-    };
-    let terminal = match lifecycle_timing::run_sync("runtime.terminal_attach", || {
-        cccc_runtime::start_with_history(
-            cccc_runtime::LaunchSpec {
-                group_id: group.group_id.clone(),
-                actor_id: actor.id.clone(),
-                runner: RunnerKind::Pty,
-                command: app.actor_tui_command(),
-                cwd: cwd.clone(),
-                env: app.tui_environment(),
-                cols: 120,
-                rows: 40,
-            },
-            history,
-        )
-        .map_err(io::Error::other)
-    }) {
-        Ok(status) => status,
-        Err(error) => {
-            return Err(cleanup_failed_start(&item, error));
-        }
-    };
-    item.attach_terminal(terminal.pid);
+    if app.tui_ready() {
+        let history = match super::super::actor_runtime::terminal_history::config(
+            home,
+            &group.group_id,
+            &actor.id,
+        ) {
+            Ok(history) => history,
+            Err(error) => {
+                return Err(cleanup_failed_start(&item, error));
+            }
+        };
+        let terminal = match lifecycle_timing::run_sync("runtime.terminal_attach", || {
+            cccc_runtime::start_with_history(
+                cccc_runtime::LaunchSpec {
+                    group_id: group.group_id.clone(),
+                    actor_id: actor.id.clone(),
+                    runner: RunnerKind::Pty,
+                    command: app.actor_tui_command(),
+                    cwd: cwd.clone(),
+                    env: app.tui_environment(),
+                    cols: 120,
+                    rows: 40,
+                },
+                history,
+            )
+            .map_err(io::Error::other)
+        }) {
+            Ok(status) => status,
+            Err(error) => {
+                return Err(cleanup_failed_start(&item, error));
+            }
+        };
+        item.attach_terminal(terminal.pid);
+    }
     if let Err(error) = sessions()
         .write()
         .map_err(|_| poisoned())
@@ -397,12 +403,15 @@ pub fn submit_batch(
     actor: &Actor,
     source_events: &[Event],
     cancelled: &AtomicBool,
-) -> bool {
+) -> BatchSubmission {
     let Some(item) = lookup(&(group.group_id.clone(), actor.id.clone())) else {
-        return false;
+        return BatchSubmission::Deferred;
     };
     if !item.running() {
-        return false;
+        return BatchSubmission::Deferred;
+    }
+    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        return BatchSubmission::Deferred;
     }
     let Some(delivery) = super::super::actor_delivery_render::render_batch_with_mail_context(
         home,
@@ -410,8 +419,50 @@ pub fn submit_batch(
         &actor.id,
         source_events,
     ) else {
-        return false;
+        return BatchSubmission::Deferred;
     };
+    if item.managed.structured_only() {
+        let id = format!(
+            "actor-delivery:{}",
+            source_events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let mut outcome = BatchSubmission::Deferred;
+        submit_with_startup_prompt(&item.startup_prompt, &delivery, |prepared| {
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return false;
+            }
+            match super::block_on_managed(async {
+                tokio::select! {
+                    biased;
+                    result = item.managed.start_turn(item.managed.generation(), &id, prepared) => result,
+                    _ = async {
+                        while !cancelled.load(Ordering::Acquire) {
+                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        }
+                    } => Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "Actor stopped before ACP admission was confirmed",
+                    )),
+                }
+            }) {
+                Ok(_) => {
+                    outcome = BatchSubmission::Accepted;
+                    true
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => false,
+                Err(error) => {
+                    tracing::warn!(%error,group_id=%group.group_id,actor_id=%actor.id,"ACP delivery outcome is unconfirmed; quarantining the batch");
+                    outcome = BatchSubmission::Unconfirmed;
+                    false
+                }
+            }
+        });
+        return outcome;
+    }
     if let Err(error) = item.reattach_viewer() {
         tracing::warn!(
             %error,
@@ -419,10 +470,10 @@ pub fn submit_batch(
             actor_id = %actor.id,
             "failed to re-attach managed Actor viewer for delivery"
         );
-        return false;
+        return BatchSubmission::Deferred;
     }
     if item.has_terminal() {
-        return submit_with_startup_prompt(&item.startup_prompt, &delivery, |prepared| {
+        let accepted = submit_with_startup_prompt(&item.startup_prompt, &delivery, |prepared| {
             super::super::actor_delivery::submit_terminal_text(
                 &group.group_id,
                 actor,
@@ -430,8 +481,13 @@ pub fn submit_batch(
                 cancelled,
             )
         });
+        return if accepted {
+            BatchSubmission::Accepted
+        } else {
+            BatchSubmission::Deferred
+        };
     }
-    false
+    BatchSubmission::Deferred
 }
 
 fn submit_with_startup_prompt(
@@ -469,6 +525,52 @@ fn render_turn(event: &Event) -> Option<(String, String)> {
 
 fn lookup(key: &Key) -> Option<Arc<Session>> {
     sessions().read().ok()?.get(key).cloned()
+}
+
+pub(crate) fn structured_state(group: &str, actor: &str) -> Option<serde_json::Value> {
+    let item = lookup(&(group.to_owned(), actor.to_owned()))?;
+    Some(
+        serde_json::json!({"generation":item.managed.generation(),"runtime":item.managed.runtime(),"runtime_mode":item.managed.runtime_mode(),"runner":if item.managed.structured_only(){"headless"}else{"pty"},"permissions":item.managed.permissions(),"running":item.running(),"working":item.active_turn.lock().is_ok_and(|turn|turn.is_some())}),
+    )
+}
+
+pub(crate) fn respond_interaction(
+    group: &str,
+    actor: &str,
+    generation: &str,
+    request: &str,
+    reply: serde_json::Value,
+) -> io::Result<()> {
+    let item = lookup(&(group.to_owned(), actor.to_owned()))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Actor is not running"))?;
+    super::block_on_managed(item.managed.respond_interaction(generation, request, reply))
+}
+
+pub(crate) fn respond_permission(
+    group: &str,
+    actor: &str,
+    generation: &str,
+    request: &str,
+    allow: bool,
+) -> io::Result<()> {
+    let item = lookup(&(group.to_owned(), actor.to_owned()))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Actor is not running"))?;
+    super::block_on_managed(item.managed.respond_permission(generation, request, allow))
+}
+
+pub(crate) fn cancel_turn(group: &str, actor: &str, generation: &str) -> io::Result<bool> {
+    let item = lookup(&(group.to_owned(), actor.to_owned()))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Actor is not running"))?;
+    item.managed.require_generation(generation)?;
+    let turn = item
+        .active_turn
+        .lock()
+        .map_err(|_| poisoned())?
+        .as_ref()
+        .map(|turn| turn.turn_id.clone());
+    let Some(turn) = turn else { return Ok(false) };
+    super::block_on_managed(item.managed.interrupt(generation, &turn))?;
+    Ok(true)
 }
 
 fn working_directory(group: &GroupDoc, actor: &Actor) -> io::Result<std::path::PathBuf> {

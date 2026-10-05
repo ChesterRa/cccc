@@ -1,3 +1,18 @@
+import type { CodexVoiceReadiness } from "../../services/api";
+
+export function codexVoiceReadinessProblem(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  readiness: CodexVoiceReadiness | null,
+): string {
+  if (!readiness) return "";
+  if (!readiness.analyst_runtime_available) {
+    return readiness.analyst_runtime_setup_required
+      ? t("codexVoiceAntigravityAcpSetupRequired")
+      : t("codexVoiceAnalystRuntimeMissing", { runtime: readiness.analyst_runtime });
+  }
+  return readiness.realtime_credentials_available ? "" : t("codexVoiceCodexLoginRequired");
+}
+
 export function codexVoiceErrorText(
   t: (key: string, options?: Record<string, unknown>) => string,
   code: string,

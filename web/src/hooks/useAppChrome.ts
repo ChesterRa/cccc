@@ -96,18 +96,9 @@ export function useAppChrome({
   }, [setSmallScreen]);
 
   const ensureRuntimesLoaded = useCallback(async () => {
-    if (useGroupStore.getState().runtimes.length > 0) return;
-    try {
-      const resp = await api.fetchRuntimes();
-      if (resp.ok) {
-        useGroupStore.getState().setRuntimes(resp.result.runtimes || []);
-        return;
-      }
-      showError(resp.error?.message || "Failed to load runtimes");
-    } catch {
-      showError("Failed to load runtimes");
-    }
-  }, [showError]);
+    const state = useGroupStore.getState();
+    if (state.runtimeDetectionStatus === "idle") await state.refreshRuntimes();
+  }, []);
 
   const fetchDirSuggestions = useCallback(async () => {
     try {

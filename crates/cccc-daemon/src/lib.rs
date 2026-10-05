@@ -1,3 +1,4 @@
+pub mod antigravity_acp_setup;
 mod connect_transport;
 pub mod deepseek_setup;
 mod direct_channel;

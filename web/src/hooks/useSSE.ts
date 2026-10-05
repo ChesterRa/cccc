@@ -558,26 +558,40 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         });
         if (failed) {
           clearStreamingEventsForActor(actorId, groupId);
+          const activityTs = typeof ev.ts === "string" ? ev.ts : new Date().toISOString();
+          const activity: StreamingActivity = {
+            id: `error:${pendingEventId || turnId || actorId}`,
+            kind: "error",
+            status: "completed",
+            summary: translateActorLabel("headlessTurnFailed", "Model request failed"),
+            detail:
+              errorMessage ||
+              translateActorLabel(
+                "headlessTurnFailedFallback",
+                "The model runtime reported an error.",
+              ),
+            ts: activityTs,
+            raw_item_type: "turn_error",
+          };
           if (pendingEventId) {
             upsertStreamingActivity(
               actorId,
               { pendingEventId, streamId: streamId || turnId },
-              {
-                id: `error:${pendingEventId || turnId || actorId}`,
-                kind: "error",
-                status: "completed",
-                summary: translateActorLabel("headlessTurnFailed", "Model request failed"),
-                detail:
-                  errorMessage ||
-                  translateActorLabel(
-                    "headlessTurnFailedFallback",
-                    "The model runtime reported an error.",
-                  ),
-                ts: typeof ev.ts === "string" ? ev.ts : new Date().toISOString(),
-                raw_item_type: "turn_error",
-              },
+              activity,
               groupId,
             );
+          } else if (streamId || turnId) {
+            reconcileStreamingMessage({
+              actorId,
+              streamId: streamId || turnId,
+              ts: activityTs,
+              fullText: "",
+              eventText: "",
+              activities: [activity],
+              completed: true,
+              transientStream: false,
+              groupId,
+            });
           }
         } else {
           clearEmptyStreamingEventsForActor(actorId, groupId);

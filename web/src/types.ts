@@ -317,6 +317,8 @@ export type WebModelDeliveryStatusPayload = {
   detail?: string;
 };
 
+export type RuntimeMode = "default" | "acp";
+
 export type Actor = {
   id: string;
   generation?: string;
@@ -339,6 +341,9 @@ export type Actor = {
   runner?: string;
   runner_effective?: string;
   runtime?: string;
+  runtime_mode?: RuntimeMode;
+  effective_runtime_mode?: RuntimeMode;
+  effective_runtime?: string;
   runtime_state_source?: "terminal" | "managed_session" | string;
   runtime_session_status?: string | null;
   runtime_session_resume_eligible?: boolean | null;
@@ -362,6 +367,7 @@ export type ActorProfile = {
   scope?: "global" | "user";
   owner_id?: string;
   runtime: SupportedRuntime | string;
+  runtime_mode?: RuntimeMode;
   runner: "pty" | "headless";
   command: string[] | string;
   submit: "enter" | "newline" | "none";
@@ -602,6 +608,7 @@ export type RuntimeInfo = {
   display_name: string;
   recommended_command?: string;
   available: boolean;
+  mode_availability?: Partial<Record<RuntimeMode, boolean>>;
 };
 
 export type ReplyTarget = {
@@ -1880,4 +1887,8 @@ export function getActorAccentColor(actorId?: string, isDark: boolean = true) {
   const a = ACTOR_ACCENTS[idx] || ACTOR_ACCENTS[0];
   if (isDark) return { ring: a.ring, text: a.text };
   return { ring: a.ringLight, text: a.textLight };
+}
+
+export function supportsAcpMode(runtime?: string | null): boolean {
+  return ["antigravity", "copilot", "devin", "cursor"].includes(runtime || "");
 }

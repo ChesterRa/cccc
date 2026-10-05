@@ -16,6 +16,69 @@ pub(super) mod notifications;
 mod settings;
 pub(super) use settings::{analyst_settings, update_analyst_settings};
 
+pub(super) async fn structured_control(
+    State(state): State<AppState>,
+    Path(generation): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    require_interactive_web(&state)?;
+    let action = body["action"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad("action is required"))?;
+    let text = body["text"].as_str().unwrap_or_default();
+    let input_id = body["input_id"].as_str().unwrap_or_default();
+    let call_generation = match body.get("call_generation") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) if !value.is_empty() && value.len() <= 128 => {
+            Some(value.as_str())
+        }
+        _ => {
+            return Err(ApiError::bad(
+                "call_generation must be a nonempty string or null",
+            ));
+        }
+    };
+    let request_id = body["request_id"].as_str().unwrap_or_default();
+    if action == "input"
+        && (text.trim().is_empty()
+            || text.len() > 64 * 1024
+            || input_id.is_empty()
+            || input_id.len() > 128)
+    {
+        return Err(ApiError::bad(
+            "input_id and nonempty text up to 65536 bytes are required",
+        ));
+    }
+    if action == "permission" && (request_id.is_empty() || body["allow"].as_bool().is_none()) {
+        return Err(ApiError::bad("request_id and boolean allow are required"));
+    }
+    if action == "interaction" && (request_id.is_empty() || !body["response"].is_object()) {
+        return Err(ApiError::bad("request_id and response are required"));
+    }
+    state
+        .codex_voice
+        .structured_control(
+            &generation,
+            action,
+            input_id,
+            call_generation,
+            text,
+            request_id,
+            body["allow"].as_bool().unwrap_or(false),
+            body["response"].clone(),
+        )
+        .await
+        .map_err(|error| ApiError::unavailable("analyst_control_failed", error.to_string()))?;
+    let analyst = state
+        .codex_voice
+        .current()
+        .await
+        .analyst
+        .filter(|analyst| analyst.generation == generation)
+        .map(payload::analyst_info_value);
+    Ok(success(json!({"accepted":true, "analyst":analyst})))
+}
+
 pub(super) async fn active(State(state): State<AppState>) -> ApiResult {
     require_interactive_web(&state)?;
     let current = state.codex_voice.current().await;

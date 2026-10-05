@@ -92,6 +92,7 @@ impl ActiveSession {
                 }
                 VoiceDelegationAdmission::Turn(_)
                 | VoiceDelegationAdmission::NativeInputPending => {}
+                VoiceDelegationAdmission::Queued { .. } => {}
             }
             store::accepted(home, &item.source, generation)?;
         }

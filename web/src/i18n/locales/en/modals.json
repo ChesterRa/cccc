@@ -516,7 +516,7 @@
   "codexVoiceOutputSelectionUnavailable": "This browser uses the system speaker.",
   "codexVoiceAnalystRuntime": "Analyst runtime",
   "codexVoiceAnalystRuntimeHint": "Use a supported Runtime Profile or configure one directly. Analyst credentials are independent from the Realtime Voice login.",
-  "codexVoiceAnalystSupportedRuntimesHint": "Codex, Claude Code, Grok Build, OpenCode, and Kilo are supported Voice Analyst hosts.",
+  "codexVoiceAnalystSupportedRuntimesHint": "Choose from the runtimes above. Options marked ACP use the runtime's official ACP mode and have no native terminal.",
   "codexVoiceAnalystCommandHint": "Uses the same launch-command syntax as the matching Group Actor. CCCC owns the managed session, YOLO policy, MCP, workspace, and attach flags.",
   "codexVoiceAnalystCompatibleProfilesEmpty": "No compatible Runtime Profiles are available. Create one in Settings > Runtime Profiles or use Custom.",
   "codexVoiceAnalystProfileHostNote": "Uses this profile's runtime command and private environment. Runner and submit settings remain Actor-specific; CCCC hosts the Analyst through the runtime's managed session in YOLO mode.",
@@ -528,7 +528,7 @@
   "codexVoiceAnalystSettingsSave": "Save settings",
   "codexVoiceAnalystSettingsApplyRestart": "Save & restart",
   "codexVoiceAnalystSettingsSaving": "Saving…",
-  "codexVoiceAnalystSettingsApplyHint": "Saving restarts a warm Analyst in the same session. Later Profile edits apply on the next start.",
+  "codexVoiceAnalystSettingsApplyHint": "Saving restarts a running Analyst. A compatible, resumable session is kept; changing the runtime configuration may start a new session. Later Profile edits apply on the next start.",
   "codexVoiceAnalystSettingsCallActive": "Stop voice before applying Analyst runtime settings.",
   "codexVoiceAnalystSettingsWorkActive": "The Analyst still has active or queued work. Applying now will stop that work and discard its unfinished result.",
   "codexVoiceAnalystSettingsDiscardConfirm": "The Analyst still has active or queued work. Stop it and apply these settings? Its unfinished result will be discarded.",
@@ -540,6 +540,7 @@
   "codexVoiceAnalystSettingsNewSession": "Settings applied in a new Analyst session because the runtime identity changed.",
   "codexVoiceAnalystIdentityChangeConfirm": "Changing the runtime, CODEX_HOME, GROK_HOME, HOME, or USERPROFILE changes the Analyst identity and starts a new session. Apply this change?",
   "codexVoiceAnalystRuntimeMissing": "The configured Voice Analyst runtime ({{runtime}}) is unavailable. Check its Runtime Profile or restart CCCC from a shell that can run it.",
+  "codexVoiceAntigravityAcpSetupRequired": "The Antigravity ACP component is not installed. On the machine running CCCC, run cccc setup --runtime antigravity --runtime-mode acp --login to install it and complete its separate Google login, then try again. ACP uses a different login environment from native agy.",
   "codexVoiceCodexLoginRequired": "Realtime Voice has no ChatGPT login. Run codex login for the CCCC host, then refresh this page. Voice Analyst Profile credentials are separate.",
   "codexVoiceAnalystTerminalPending": "The Analyst terminal appears here when its managed session is ready.",
   "codexVoiceTerminalDisconnected": "Terminal disconnected",
@@ -612,6 +613,7 @@
     "provider_output_stalled": "The voice connection stopped accepting updates. Restart voice to continue. The Analyst session is retained."
   },
   "codexVoiceWarnings": {
+    "analyst_turn_failed": "The Analyst task failed. Check the details in the Analyst panel.",
     "unknown": "The Voice Analyst needs attention.",
     "analyst_resume_replaced": "The previous Analyst session could not be resumed, so CCCC started a new one.",
     "analyst_workspace_migrated": "CCCC moved Voice Analyst to its global neutral workspace. The previous repository-bound thread remains in Codex history.",

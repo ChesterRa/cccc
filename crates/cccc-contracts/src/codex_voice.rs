@@ -1,4 +1,4 @@
-use crate::ActorRuntime;
+use crate::{ActorRuntime, RuntimeMode};
 use serde::{Deserialize, Deserializer, Serialize};
 
 mod application_context;
@@ -26,6 +26,8 @@ impl CodexVoiceSettings {
 pub struct AgentRuntimeSettings {
     #[serde(default, skip_serializing_if = "is_default_runtime")]
     pub runtime: ActorRuntime,
+    #[serde(default, skip_serializing_if = "RuntimeMode::is_default")]
+    pub runtime_mode: RuntimeMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -40,6 +42,7 @@ impl Default for AgentRuntimeSettings {
     fn default() -> Self {
         Self {
             runtime: ActorRuntime::Codex,
+            runtime_mode: RuntimeMode::default(),
             command: Vec::new(),
             profile_id: String::new(),
             profile_scope: global_scope(),
@@ -65,6 +68,8 @@ pub type CodexVoiceAnalystSettings = AgentRuntimeSettings;
 struct AgentRuntimeSettingsWire {
     #[serde(default)]
     runtime: ActorRuntime,
+    #[serde(default)]
+    runtime_mode: RuntimeMode,
     #[serde(default)]
     command: Vec<String>,
     #[serde(default)]
@@ -124,6 +129,7 @@ impl<'de> Deserialize<'de> for AgentRuntimeSettings {
         };
         Ok(Self {
             runtime: wire.runtime,
+            runtime_mode: wire.runtime_mode,
             command,
             profile_id: wire.profile_id,
             profile_scope: wire.profile_scope,

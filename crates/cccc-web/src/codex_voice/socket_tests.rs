@@ -83,6 +83,7 @@ async fn voice_sockets_revoke_idle_terminals_and_report_notification_failure() {
     config.command = vec![program.to_string_lossy().into_owned()];
     let launch_runtime = ResolvedAgentRuntime {
         runtime: cccc_contracts::ActorRuntime::Codex,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: config.command.clone(),
         environment: BTreeMap::new(),
     };

@@ -6,6 +6,8 @@ pub(super) struct ParsedArguments {
     pub(super) agent_arguments: Vec<String>,
     pub(super) tui_arguments: Vec<String>,
     pub(super) rules: Vec<String>,
+    pub(super) model: Option<String>,
+    pub(super) reasoning_effort: Option<String>,
 }
 
 pub(super) fn parse_arguments(arguments: &[String]) -> io::Result<ParsedArguments> {
@@ -25,6 +27,11 @@ pub(super) fn parse_arguments(arguments: &[String]) -> io::Result<ParsedArgument
             }
             "--model" | "-m" | "--reasoning-effort" => {
                 let value = following(arguments, index, argument)?;
+                if argument == "--reasoning-effort" {
+                    parsed.reasoning_effort = Some(value.into());
+                } else {
+                    parsed.model = Some(value.into());
+                }
                 parsed
                     .agent_arguments
                     .extend([argument.into(), value.into()]);
@@ -50,6 +57,12 @@ pub(super) fn parse_arguments(arguments: &[String]) -> io::Result<ParsedArgument
                 index += 2;
             }
             _ if matches_prefixed_value(argument, &["--model=", "--reasoning-effort="]) => {
+                let (flag, value) = argument.split_once('=').expect("prefixed value");
+                if flag == "--reasoning-effort" {
+                    parsed.reasoning_effort = Some(value.into());
+                } else {
+                    parsed.model = Some(value.into());
+                }
                 parsed.agent_arguments.push(argument.into());
                 parsed.tui_arguments.push(argument.into());
                 index += 1;

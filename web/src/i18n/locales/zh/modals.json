@@ -516,7 +516,7 @@
   "codexVoiceOutputSelectionUnavailable": "当前浏览器使用系统默认扬声器。",
   "codexVoiceAnalystRuntime": "分析运行环境",
   "codexVoiceAnalystRuntimeHint": "使用受支持的 Runtime Profile，也可直接配置；Analyst 凭据与 Realtime Voice 登录彼此独立。",
-  "codexVoiceAnalystSupportedRuntimesHint": "Voice Analyst 支持 Codex、Claude Code、Grok Build、OpenCode 与 Kilo。",
+  "codexVoiceAnalystSupportedRuntimesHint": "可选 Runtime 以上方列表为准。标注 ACP 的选项使用该 Runtime 的官方 ACP 模式，没有原生终端。",
   "codexVoiceAnalystCommandHint": "启动命令语法与对应的 Group Actor 一致；managed session、YOLO、MCP、工作目录和 attach 参数由 CCCC 管理。",
   "codexVoiceAnalystCompatibleProfilesEmpty": "没有可用的兼容 Runtime Profile。请在“设置 > Runtime Profiles”中创建，或使用“自定义”。",
   "codexVoiceAnalystProfileHostNote": "使用该 Profile 的运行命令和私密环境变量。Runner 与提交方式仍属于 Actor 设置；CCCC 以 YOLO 模式通过该 Runtime 的 managed session 托管 Analyst。",
@@ -528,7 +528,7 @@
   "codexVoiceAnalystSettingsSave": "保存设置",
   "codexVoiceAnalystSettingsApplyRestart": "保存并重启",
   "codexVoiceAnalystSettingsSaving": "正在保存…",
-  "codexVoiceAnalystSettingsApplyHint": "保存后，已启动的 Analyst 会重启并恢复同一会话；Profile 的后续修改在下次启动时生效。",
+  "codexVoiceAnalystSettingsApplyHint": "保存会重启已启动的 Analyst；可恢复且兼容的会话会保留，更换运行环境可能新建会话。Profile 的后续修改在下次启动时生效。",
   "codexVoiceAnalystSettingsCallActive": "请先停止语音，再应用 Analyst Runtime 设置。",
   "codexVoiceAnalystSettingsWorkActive": "Analyst 仍有正在执行或排队的工作；现在应用会停止这些工作并丢弃未完成结果。",
   "codexVoiceAnalystSettingsDiscardConfirm": "Analyst 仍有正在执行或排队的工作。确定停止这些工作并应用新设置吗？未完成结果将被丢弃。",
@@ -540,6 +540,7 @@
   "codexVoiceAnalystSettingsNewSession": "Runtime 身份发生变化，设置已在新的 Analyst 会话中生效。",
   "codexVoiceAnalystIdentityChangeConfirm": "修改 Runtime、CODEX_HOME、GROK_HOME、HOME 或 USERPROFILE 会切换 Analyst 身份并新建会话。确定应用吗？",
   "codexVoiceAnalystRuntimeMissing": "找不到 Voice Analyst 所配置的 Runtime（{{runtime}}）。请检查 Runtime Profile，或从能够运行它的终端重启 CCCC。",
+  "codexVoiceAntigravityAcpSetupRequired": "Antigravity ACP 组件尚未安装。请在运行 CCCC 的机器上执行 cccc setup --runtime antigravity --runtime-mode acp --login，完成安装和独立 Google 登录，然后重试。ACP 与原生 agy 使用不同的登录环境。",
   "codexVoiceCodexLoginRequired": "Realtime Voice 尚无 ChatGPT 登录。请在 CCCC 宿主环境运行 codex login 后刷新页面；Voice Analyst Profile 的凭据与其相互独立。",
   "codexVoiceAnalystTerminalPending": "Analyst 的受管会话就绪后，终端会显示在这里。",
   "codexVoiceTerminalDisconnected": "终端已断开",
@@ -612,6 +613,7 @@
     "provider_output_stalled": "语音连接无法继续接收更新。请重新开始语音；Analyst 会话已保留。"
   },
   "codexVoiceWarnings": {
+    "analyst_turn_failed": "Analyst 任务失败，请查看 Analyst 面板中的详细原因。",
     "unknown": "Voice Analyst 需要处理。",
     "analyst_resume_replaced": "上一次 Analyst 会话无法恢复，CCCC 已启动一个新会话。",
     "analyst_workspace_migrated": "CCCC 已将 Voice Analyst 迁移到全局中性工作目录；原有仓库绑定线程仍保留在 Codex 历史中。",

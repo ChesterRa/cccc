@@ -282,6 +282,10 @@ cccc doctor                       # 環境とランタイムの可用性を検�
 
 Antigravity の設定時には、自動配信された端末入力を評価アンケートが消費しないよう、ユーザー設定でアンケートを無効にします。他の設定は保持されます。同じユーザーが単独で起動する AGY にも適用されます。
 
+GitHub Copilot、Devin CLI、Cursor も Actor と Voice Analyst 向けの任意の**公式 headless ACP**に対応し、純正 TUI が既定のままです。ローカル CLI のログインを使い、Actor ごとに独立した CCCC 識別情報を注入します。入力キュー、キャンセル、今回のみの権限確認を表示し、Cursor の質問と計画は YOLO でもユーザーの明示的な判断を必要とします。[ランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes#copilot-devin-and-cursor-tui-or-official-acp)をご覧ください。
+
+Antigravity は Actor と Voice Analyst 向けの任意の**公式 ACP モード**にも対応し、端末の代わりに構造化ワークスペースを使います。Actor／Profile 設定で ACP を選び、`cccc setup --runtime antigravity --runtime-mode acp --login` を一度実行して CCCC 専用ログインを完了してください。待機中の入力と今回のみの権限確認を画面で確認できます。[ランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp)をご覧ください。
+
 Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Claude Code、Codex CLI、Grok Build、OpenCode、Kilo は、同じ provider session で純正の書き込み可能なターミナルと構造化プロトコルを併用します。メッセージはそのターミナルへ渡され、steer と queue は受信 Runtime が判断します。DeepSeek Harness は純正ターミナルなしの ACP、ChatGPT Web と Grok Bot Web Model はブラウザ配信と Remote MCP を使用します。
 
 各サポート Runtime の setup コマンド、操作方式、トラブルシュートは [サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) を参照してください。

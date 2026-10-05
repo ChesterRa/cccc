@@ -18,5 +18,12 @@ pub(super) fn analyst_info_value(info: AnalystInfo) -> Value {
         "phase":info.phase,
         "last_result":info.last_result,
         "warning":info.warning,
+        "structured":info.structured,
+        "queued_inputs":info.queued_inputs,
+        "permissions":info.permissions,
+        "progress":info.progress,
+        "last_error":info.last_error,
+        "manual_tasks":info.manual_tasks,
+        "manual_task_id":info.manual_task_id,
     })
 }

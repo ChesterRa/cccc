@@ -8,7 +8,49 @@ pub(super) fn handle_message(session: &Session, message: Value) {
         }
         return;
     }
+    if session.managed.structured_only() {
+        project_structured_event(session, &message);
+    }
     handle_announced_message(session, message);
+}
+
+// Reuse the existing headless journal and frontend projection. Store only the
+// normalized, selected event fields, never opaque protocol/configuration frames.
+fn project_structured_event(session: &Session, message: &Value) {
+    let params = &message["params"];
+    let turn_id = params["turnId"]
+        .as_str()
+        .or_else(|| params.pointer("/turn/id").and_then(Value::as_str))
+        .unwrap_or_default();
+    let stream_id = format!("{}:{turn_id}", session.managed.generation());
+    let mut data = Map::from_iter([
+        ("turn_id".into(), json!(turn_id)),
+        ("stream_id".into(), json!(stream_id)),
+    ]);
+    let kind = match message["method"].as_str().unwrap_or_default() {
+        "turn/started" => "headless.turn.started",
+        "turn/completed" => {
+            emit(session, "headless.message.completed", data.clone());
+            data.insert("status".into(), params["turn"]["status"].clone());
+            if params["turn"]["status"] == "failed" {
+                data.insert("error".into(), params["turn"]["error"].clone());
+                "headless.turn.failed"
+            } else {
+                "headless.turn.completed"
+            }
+        }
+        "item/agentMessage/delta" => {
+            data.insert("delta".into(), params["delta"].clone());
+            "headless.message.delta"
+        }
+        "cccc/approvalRequired" => {
+            data.insert("summary".into(), json!("Permission confirmation required"));
+            data.insert("kind".into(), json!("approval"));
+            "headless.activity.updated"
+        }
+        _ => return,
+    };
+    emit(session, kind, data);
 }
 
 fn respond_unsupported_server_request(session: &Session, message: &Value) {

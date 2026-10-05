@@ -225,6 +225,12 @@ export function RuntimeCommandControl({
         </label>
       ) : null}
 
+      {supportsDefaultCommand && useDefaultCommand && defaultCommand.trim() ? (
+        <p className="break-all text-xs leading-5 text-[var(--color-text-muted)]">
+          {t("default")} <code>{defaultCommand}</code>
+        </p>
+      ) : null}
+
       {showCommandEditor ? (
         <div>
           <label className="mb-2 block text-xs font-medium text-[var(--color-text-muted)]">

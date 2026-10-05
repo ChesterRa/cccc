@@ -1590,6 +1590,14 @@
         },
         "profile_id": {
           "type": "string"
+        },
+        "runtime_mode": {
+          "type": "string",
+          "enum": [
+            "default",
+            "acp"
+          ],
+          "description": "Execution mode for Antigravity, Copilot, Devin and Cursor: default uses the native TUI; acp uses the official headless ACP adapter. Other runtimes accept only default."
         }
       },
       "required": []

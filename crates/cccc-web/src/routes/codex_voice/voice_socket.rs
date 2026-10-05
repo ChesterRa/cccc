@@ -135,7 +135,13 @@ pub(super) async fn serve(
             }
             _ = control_tick.tick() => {
                 if !principal.current_admin(&state.home).unwrap_or(false) { end_reason = "authorization_lost"; break; }
+                if !session.info().connected { end_reason = "call_stopped"; break; }
                 if analyst.is_none() { continue; }
+                let runtime = session.analyst().expect("assistant call");
+                for (id, command) in runtime.manual_results_for_call(&generation) {
+                    if !send_provider_command(&mut socket, command).await { break 'session; }
+                    runtime.manual_result_projected(&id);
+                }
                 match send_notification_results(&mut socket, &state.home, &generation).await {
                     Ok(()) => output_failed = false,
                     Err(error) if !output_failed => {
@@ -271,7 +277,7 @@ pub(super) async fn serve(
                                 }
                             }
                             Ok(Some(VoiceDelegationAdmission::Turn(_)
-                                | VoiceDelegationAdmission::NativeInputPending))
+                                | VoiceDelegationAdmission::NativeInputPending | VoiceDelegationAdmission::Queued{..}))
                             | Ok(None) => {}
                             Err(error) => {
                                 for command in realtime_notice_commands(
@@ -316,6 +322,9 @@ pub(super) async fn serve(
                     None => std::future::pending().await,
                 }
             } => match lifecycle {
+                Ok(AnalystLifecycleEvent::Queued{delegation_id,position})=>{
+                    if !send_json(&mut socket,json!({"type":"analyst_queued","delegation_id":delegation_id,"position":position})).await { break; }
+                }
                 Ok(AnalystLifecycleEvent::Started { receipt, origin }) => {
                     if origin.speakable() {
                         call.follow_analyst_turn(&receipt).await;
@@ -344,7 +353,7 @@ pub(super) async fn serve(
                         }
                     }
                 }
-                Ok(AnalystLifecycleEvent::Completed { turn_id, delegation_id, delegation_ids, status, result, speakable }) => {
+                Ok(AnalystLifecycleEvent::Completed { turn_id, delegation_id, delegation_ids, status, result, speakable, .. }) => {
                     // Source-bearing turns take one durable path, including mixed user answers.
                     // The warm monitor also records them after a call stops; insertion is idempotent.
                     let has_sources = delegation_ids.iter().any(|id| id.starts_with("voice-result:"));

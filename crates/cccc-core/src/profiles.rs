@@ -1,4 +1,4 @@
-use cccc_contracts::{ActorRuntime, ActorSubmit, RunnerKind, utc_now};
+use cccc_contracts::{ActorRuntime, ActorSubmit, RunnerKind, RuntimeMode, utc_now};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -51,6 +51,7 @@ struct SecretDoc {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeProfileConfig {
     pub runtime: ActorRuntime,
+    pub runtime_mode: RuntimeMode,
     pub runner: RunnerKind,
     pub command: Vec<String>,
     pub submit: ActorSubmit,
@@ -146,12 +147,15 @@ impl ProfileStore {
             return Ok(None);
         };
         let runtime = parse_profile_runtime(&profile)?;
-        let runner = runtime.runner();
+        let runtime_mode = parse_profile_field(&profile, "runtime_mode", RuntimeMode::default())?;
+        runtime_mode.validate(runtime).map_err(io::Error::other)?;
+        let runner = runtime.runner_for(runtime_mode);
         let submit = parse_profile_field(&profile, "submit", ActorSubmit::default())?;
         let command = parse_profile_command(&profile)?;
         let environment = self.secret_values_ref(profile_id, scope, owner_id)?;
         Ok(Some(RuntimeProfileConfig {
             runtime,
+            runtime_mode,
             runner,
             command,
             submit,
@@ -220,9 +224,19 @@ impl ProfileStore {
         profile.insert("owner_id".into(), json!(owner_id));
         profile.entry("runtime").or_insert_with(|| json!("codex"));
         let runtime = parse_profile_runtime(&Value::Object(profile.clone()))?;
+        let runtime_mode: RuntimeMode = parse_profile_field(
+            &Value::Object(profile.clone()),
+            "runtime_mode",
+            RuntimeMode::default(),
+        )?;
+        runtime_mode.validate(runtime).map_err(io::Error::other)?;
+        profile.insert(
+            "runtime_mode".into(),
+            serde_json::to_value(runtime_mode).map_err(io::Error::other)?,
+        );
         profile.insert(
             "runner".into(),
-            serde_json::to_value(runtime.runner()).map_err(io::Error::other)?,
+            serde_json::to_value(runtime.runner_for(runtime_mode)).map_err(io::Error::other)?,
         );
         let command = parse_profile_command_value(profile.get("command"))?;
         profile.insert(
@@ -247,6 +261,7 @@ impl ProfileStore {
                     | "scope"
                     | "owner_id"
                     | "runtime"
+                    | "runtime_mode"
                     | "runner"
                     | "command"
                     | "submit"
@@ -537,8 +552,11 @@ impl ProfileStore {
                 let mut extracted = Vec::new();
                 for profile in profiles.profiles.values_mut() {
                     if let Ok(runtime) = parse_profile_runtime(profile) {
-                        let runner =
-                            serde_json::to_value(runtime.runner()).map_err(io::Error::other)?;
+                        let runtime_mode =
+                            parse_profile_field(profile, "runtime_mode", RuntimeMode::default())?;
+                        runtime_mode.validate(runtime).map_err(io::Error::other)?;
+                        let runner = serde_json::to_value(runtime.runner_for(runtime_mode))
+                            .map_err(io::Error::other)?;
                         if profile.get("runner") != Some(&runner) {
                             profile["runner"] = runner;
                             changed = true;

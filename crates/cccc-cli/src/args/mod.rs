@@ -42,6 +42,11 @@ pub struct SetupArgs {
     pub runtime: Option<String>,
     #[arg(long, default_value = ".")]
     pub path: String,
+    #[arg(long,default_value="default",value_parser=["default","acp"])]
+    pub runtime_mode: String,
+    /// Complete the separate official Antigravity ACP login in this terminal.
+    #[arg(long)]
+    pub login: bool,
 }
 
 #[derive(Debug, Args)]

@@ -120,6 +120,7 @@ fn identity_fingerprint(
 ) -> std::io::Result<String> {
     cccc_core::codex_voice_settings::ResolvedAgentRuntime {
         runtime: cccc_contracts::ActorRuntime::Claude,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: command.to_vec(),
         environment: environment.clone(),
     }

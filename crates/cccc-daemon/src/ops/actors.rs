@@ -107,6 +107,22 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             OpError::io(error),
         ));
     }
+    if let Err(error) = runtime_session::antigravity::remove(home, &group_id, &added.id) {
+        return Err(super::actor_saga::rollback_added(
+            home,
+            &group_id,
+            &added.id,
+            OpError::io(error),
+        ));
+    }
+    if let Err(error) = runtime_session::native_acp::retire_all(home, &group_id, &added.id) {
+        return Err(super::actor_saga::rollback_added(
+            home,
+            &group_id,
+            &added.id,
+            OpError::io(error),
+        ));
+    }
     if let Err(error) = actor_secrets::remove(home, &group_id, &added.id) {
         return Err(super::actor_saga::rollback_added(
             home, &group_id, &added.id, error,
@@ -578,6 +594,12 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     if let Err(error) = runtime_session::remove(home, &group_id, &actor_id) {
         tracing::warn!(%error, %group_id, %actor_id, "post-commit runtime session cleanup failed");
+    }
+    if let Err(error) = runtime_session::antigravity::remove(home, &group_id, &actor_id) {
+        tracing::warn!(%error,%group_id,%actor_id,"post-commit ACP receipt cleanup failed");
+    }
+    if let Err(error) = runtime_session::native_acp::retire_all(home, &group_id, &actor_id) {
+        tracing::warn!(%error,%group_id,%actor_id,"post-commit native ACP receipt cleanup failed");
     }
     object(json!({"actor_id": actor_id, "event": event}))
 }

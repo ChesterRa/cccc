@@ -189,8 +189,9 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
     })
     .await
     .expect("delivery task");
-    assert!(
+    assert_eq!(
         delivered,
+        super::super::BatchSubmission::Accepted,
         "delivery reconnects the same provider's input channel"
     );
     crate::ops::actor_runtime::reconcile_exited(&home, vec![exited]).expect("late delivery reap");

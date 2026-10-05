@@ -20,6 +20,10 @@ impl CodexVoiceAnalyst {
         self.session.generation()
     }
 
+    pub fn resumable(&self) -> bool {
+        self.session.resumable()
+    }
+
     pub fn thread_id(&self) -> &str {
         self.session.thread_id()
     }
@@ -34,6 +38,46 @@ impl CodexVoiceAnalyst {
 
     pub fn tui_ready(&self) -> bool {
         self.session.tui_ready()
+    }
+
+    pub fn structured_only(&self) -> bool {
+        self.session.structured_only()
+    }
+    pub fn queued_inputs(&self) -> usize {
+        self.lifecycle.queued_inputs()
+    }
+    pub fn permissions(&self) -> Vec<serde_json::Value> {
+        self.session.permissions()
+    }
+    pub async fn respond_permission(
+        &self,
+        generation: &str,
+        request_id: &str,
+        allow: bool,
+    ) -> Result<()> {
+        self.session
+            .respond_permission(generation, request_id, allow)
+            .await
+            .map_err(Into::into)
+    }
+    pub async fn respond_interaction(
+        &self,
+        generation: &str,
+        request_id: &str,
+        reply: serde_json::Value,
+    ) -> Result<()> {
+        self.session
+            .respond_interaction(generation, request_id, reply)
+            .await
+            .map_err(Into::into)
+    }
+    pub async fn submit_input(&self, id: &str, text: &str) -> Result<VoiceDelegationAdmission> {
+        self.lifecycle.admit_terminal(id, text).await
+    }
+
+    /// A retired console row must not turn a previously accepted input into new work.
+    pub async fn input_was_admitted(&self, id: &str) -> bool {
+        self.lifecycle.input_was_admitted(id).await
     }
 
     #[cfg(test)]

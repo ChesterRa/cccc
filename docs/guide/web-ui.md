@@ -391,7 +391,7 @@ The two visible roles are one product flow:
 - **Voice Analyst** is the backing managed agent session. It handles file inspection, tools, current CCCC facts,
   and substantial analysis, then returns useful progress and the final result to the same spoken
   conversation. Under local user authority it can list all Groups and query an explicitly named Group.
-  Codex, Claude Code, Grok Build, OpenCode, and Kilo are the currently admitted Analyst runtimes.
+  Codex, Claude Code, Grok Build, OpenCode, Kilo and Antigravity (official ACP) are the currently admitted Analyst runtimes.
 
 CCCC starts the Analyst in one stable neutral directory at
 `CCCC_HOME/state/codex_voice/analyst-workdir/`. It is not a repository, Working Group, implicit MCP
@@ -464,17 +464,44 @@ console header to mute the microphone, resume browser-blocked playback, or stop 
 Analyst uses the same trusted-local YOLO boundary as the corresponding CCCC Actor runtime. Its
 authentication and model provider are independent from the Realtime login: the default launch
 inherits the normal Codex configuration, while Custom or Runtime Profile settings can select Codex,
-Claude Code, Grok, OpenCode, or Kilo and configure that runtime's provider home, model provider, or API key without
+Claude Code, Grok, OpenCode, Kilo, or official ACP for Antigravity, Copilot, Devin and Cursor,
+and configure that runtime's provider home, model provider, or API key without
 changing the Realtime credential path. The two sides exchange only
 delegations, progress, and results through the CCCC controller.
 
+For a pure ACP Analyst, the structured console offers **manual investigations** instead
+of a terminal. Submit a task or follow-up; busy work uses the visible FIFO and does not
+steer the current task immediately. Cancel stops the current investigation and queued
+inputs, and remains available while the next investigation awaits provider admission.
+During a call owned by this page, submission binds
+the task to that exact assistant call and its settled result returns to Realtime.
+Outside a call, results stay in the Analyst pane. Ending the original call never moves
+queued or late results into the next one. The pane pairs task text with queued, working,
+completed, failed or cancelled outcomes, retaining the eight most recent settled rows
+and any unsettled/awaiting-output work for the current Analyst generation. Enter adds
+a newline; Ctrl/Command+Enter submits. Failed submissions preserve the draft and original
+call scope; editing starts a new explicit submission. Realtime context delivery is not
+proof that the result was spoken. Independent native-TUI tasks are not automatically
+shared with Voice; existing voice-delegated tasks retain their current result routing.
 The Analyst **Runtime Setup** uses the same Custom / Runtime Profile model as Actor editing. Custom
-mode accepts a direct Codex, Claude Code, Grok, OpenCode, or Kilo command (including Kilo's official Windows npm entrypoint), supported provider/model options, and
+mode accepts a command for any supported runtime (including Kilo's official Windows npm entrypoint), supported provider/model options, and
 write-only private environment values, and it can save that complete configuration as a reusable
-Runtime Profile without revealing secrets to Web. Runtime Profile mode resolves a compatible Codex,
-Claude Code, Grok, OpenCode, or Kilo Profile's command and private environment from the shared profile store;
+Runtime Profile without revealing secrets to Web. Runtime Profile mode resolves a compatible
+Profile's command and private environment from the shared profile store;
 the Actor-only submit field does not alter the Voice host. Historical Profiles with a string command are accepted
 and normalized to the canonical argument array when next saved.
+
+Antigravity is supported only in official ACP mode and shares the Actor adapter and separate
+CCCC-managed Google login. It shows structured progress, results, queued input and one-time
+permission requests instead of a terminal. An existing Antigravity TUI Profile is not eligible.
+Run `cccc setup --runtime antigravity --runtime-mode acp --login` once before using it.
+The Voice console gives this command when the ACP component is not installed;
+native `agy` availability and its login do not satisfy this prerequisite. Reading status does not
+download the component or start authentication. An explicit
+`--model` is reapplied on resume; `--dangerously-skip-permissions` selects unrestricted operation,
+otherwise permissions require Allow once / Deny. ACP serializes additional inputs in a visible
+queue of up to 32; cancellation clears current and queued inputs. Other Runtime input behavior
+and Realtime credentials stay unchanged.
 
 For Codex, CCCC removes conflicting host flags and pins app-server,
 `shell_environment_policy.inherit=all`, `approval_policy=never`,
@@ -503,7 +530,7 @@ values in the job record or Web API. Claude wrappers, renamed binaries, prompt
 tails, print mode, remote-control mode, and user-owned background/session
 arguments fail explicitly; there is no Hook, PTY-paste, or `claude -p` fallback.
 
-Each runtime's controller and native TUI are separate processes but one configured Analyst. Codex's
+For runtimes with a native terminal, the controller and TUI are separate processes but one configured Analyst. Codex's
 app-server and remote TUI receive the same executable, model, Profile, supported `-c` overrides, YOLO
 policy, and private environment. Claude's Agent View controller, transcript follower, and native TUI
 share one background session and one effective launch identity. Grok's leader, ACP client, and TUI share one resolved provider
@@ -542,7 +569,7 @@ behavior to the receiving Runtime. Realtime Voice decides whether a spoken reque
 but it does not schedule the Analyst process. CCCC attempts each correlated delegation immediately:
 Codex can append an explicit in-flight correction through exact-turn steering, while the other
 admitted Runtimes receive the exact input through their verified native terminal and own whether it
-steers or queues. Busy state alone never drops or delays a delegation.
+steers or queues. Busy state alone never drops or delays a delegation for these runtimes. Antigravity ACP has no native busy-input surface, so its additional inputs instead enter the visible bounded queue described above.
 All admitted Runtime commands fail explicitly when they cannot join the managed
 session instead of falling back to a second execution path.
 
@@ -672,6 +699,13 @@ remain separate from **This instance** settings.
 
 Use the **+** in the Agent bar near the composer to add an Agent. Choose an
 installed Runtime, set its Actor ID and review the configuration before adding it.
+The Runtime selector reports detection on the machine running CCCC, rather than
+the browser device. Use **Check again** after installing a Runtime; a failed check
+is shown separately from a Runtime that was not detected. Detection does not
+confirm provider login or successful task execution. Antigravity reports its native
+TUI CLI and separately installed official ACP component independently. Web Models
+need no local CLI. Runtime Profiles can still be saved for a different host even
+when their Runtime is not detected on this one.
 Open an existing Agent to inspect its Runtime and use its available lifecycle
 actions. The Group status button controls the whole Group's enabled Agents and
 message delivery; pausing delivery does not stop work already in progress.

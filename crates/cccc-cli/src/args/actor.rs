@@ -18,6 +18,8 @@ pub enum ActorAction {
         title: String,
         #[arg(long, default_value = "codex")]
         runtime: String,
+        #[arg(long, default_value = "default", value_parser = ["default", "acp"])]
+        runtime_mode: String,
         #[arg(long, default_value = "")]
         command: String,
         #[arg(long = "env")]
@@ -43,6 +45,8 @@ pub enum ActorAction {
         title: Option<String>,
         #[arg(long)]
         runtime: Option<String>,
+        #[arg(long, value_parser = ["default", "acp"])]
+        runtime_mode: Option<String>,
         #[arg(long)]
         scope: Option<String>,
         #[arg(long)]

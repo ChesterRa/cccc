@@ -89,6 +89,46 @@ async function renderSettings(sessionController = controller()) {
 }
 
 describe("CodexVoiceAnalystSettings", () => {
+  it.each([{ command: [] }, { command: ["agy"] }])(
+    "shows the Antigravity YOLO default without rewriting the saved command %j",
+    async ({ command }) => {
+      const settings = { ...customSettings, runtime: "antigravity", runtime_mode: "acp", command };
+      api.fetchSettings.mockResolvedValue({ ok: true, result: { settings, environment_keys: [] } });
+      api.listProfiles.mockResolvedValue({ ok: true, result: { profiles: [] } });
+      api.updateSettings.mockResolvedValue({
+        ok: true,
+        result: { analyst: null, restarted: false, started_new_session: false },
+      });
+      const { host, root } = await renderSettings();
+      const toggle = host.querySelector('input[type="checkbox"]');
+      if (!(toggle instanceof HTMLInputElement)) throw new Error("default command toggle missing");
+      expect(toggle.checked).toBe(command.length === 0);
+      const input = host.querySelector('input[placeholder="agy --dangerously-skip-permissions"]');
+      if (command.length) {
+        expect(input).toBeInstanceOf(HTMLInputElement);
+        expect((input as HTMLInputElement).value).toBe("agy");
+      } else {
+        expect(host.textContent).toContain("agy --dangerously-skip-permissions");
+        expect(input).toBeNull();
+      }
+      expect(api.updateSettings).not.toHaveBeenCalled();
+
+      await act(async () => toggle.click());
+      await act(async () => buttonWithText(host, "codexVoiceAnalystSettingsSave").click());
+      expect(api.updateSettings).toHaveBeenCalledWith({
+        settings: {
+          ...settings,
+          command: command.length ? "" : "agy --dangerously-skip-permissions",
+        },
+        environmentSet: {},
+        environmentUnset: [],
+        environmentClear: false,
+        discardCurrentWork: false,
+      });
+      await act(async () => root.unmount());
+    },
+  );
+
   it("refreshes a clean form on return so another settings change does not stay hidden", async () => {
     api.fetchSettings
       .mockResolvedValueOnce({

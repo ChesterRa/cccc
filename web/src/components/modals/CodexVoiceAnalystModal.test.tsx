@@ -48,6 +48,7 @@ function controller(
       realtime_credentials_available: true,
     },
     updatePreferences: vi.fn(),
+    updateAnalystSnapshot: vi.fn(),
     refresh: vi.fn(async () => undefined),
     start: vi.fn(async () => undefined),
     disconnect: vi.fn(async () => undefined),
@@ -69,6 +70,52 @@ const readyAnalyst = {
 };
 
 describe("CodexVoiceAnalystModal", () => {
+  it("shows ACP setup guidance for first use instead of a missing native runtime", () => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceAnalystModal
+        isOpen
+        isDark={false}
+        isSmallScreen={false}
+        controller={controller({
+          readiness: {
+            supported_modes: ["assistant", "persona"],
+            analyst_runtime: "antigravity",
+            analyst_runtime_available: false,
+            analyst_runtime_setup_required: true,
+            realtime_credentials_available: true,
+          },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(html).toContain("codexVoiceAntigravityAcpSetupRequired");
+    expect(html).not.toContain("codexVoiceAnalystRuntimeMissing");
+  });
+
+  it("shows the setup instruction once after a blocked start", () => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceAnalystModal
+        isOpen
+        isDark={false}
+        isSmallScreen
+        controller={controller({
+          phase: "failed",
+          error: "codexVoiceAntigravityAcpSetupRequired",
+          readiness: {
+            supported_modes: ["assistant", "persona"],
+            analyst_runtime: "antigravity",
+            analyst_runtime_available: false,
+            analyst_runtime_setup_required: true,
+            realtime_credentials_available: true,
+          },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(html.match(/codexVoiceAntigravityAcpSetupRequired/g)).toHaveLength(1);
+    expect(html).toContain('role="alert"');
+  });
+
   it("does not connect the hidden terminal below the lg breakpoint", () => {
     vi.stubGlobal("window", {
       matchMedia: vi.fn(() => ({

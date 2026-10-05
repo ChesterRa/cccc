@@ -46,6 +46,20 @@ pub(super) fn list(
                     &actor.id,
                 ));
                 object.insert("running".into(), Value::Bool(status.running));
+                let actual = super::local_headless::structured_state(&group.group_id, &actor.id);
+                let retained_pty = cccc_runtime::status(&group.group_id, &actor.id)
+                    .is_ok_and(|status| status.running);
+                if let Some(actual) = actual {
+                    object.insert("runner_effective".into(), actual["runner"].clone());
+                    object.insert(
+                        "effective_runtime_mode".into(),
+                        actual["runtime_mode"].clone(),
+                    );
+                    object.insert("effective_runtime".into(), actual["runtime"].clone());
+                } else if retained_pty {
+                    object.insert("runner_effective".into(), json!("pty"));
+                    object.insert("effective_runtime_mode".into(), json!("default"));
+                }
                 object.insert(
                     "pid".into(),
                     status

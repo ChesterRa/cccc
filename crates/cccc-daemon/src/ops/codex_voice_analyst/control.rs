@@ -5,6 +5,67 @@ use std::time::Duration;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl AnalystSession {
+    pub(crate) async fn cancel_pending_input(
+        &self,
+        generation: &str,
+        delegation_id: &str,
+    ) -> io::Result<()> {
+        self.require_generation(generation)?;
+        let delegation_id = required_value(delegation_id, "delegation_id")?;
+        match &self.protocol {
+            ManagedProtocol::Acp(protocol) if self.structured_only() => protocol
+                .cancel_input(&self.thread_id, Some(delegation_id))
+                .await
+                .map(|_| ()),
+            _ => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Runtime does not support pending ACP cancellation",
+            )),
+        }
+    }
+
+    pub(crate) fn permissions(&self) -> Vec<Value> {
+        match &self.protocol {
+            ManagedProtocol::Acp(protocol) if self.structured_only() => protocol.permissions(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) async fn respond_permission(
+        &self,
+        generation: &str,
+        request_id: &str,
+        allow: bool,
+    ) -> io::Result<()> {
+        self.require_generation(generation)?;
+        match &self.protocol {
+            ManagedProtocol::Acp(protocol) if self.structured_only() => {
+                protocol.respond_permission(request_id, allow).await
+            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "This Runtime handles permissions in its native terminal",
+            )),
+        }
+    }
+    pub(crate) async fn respond_interaction(
+        &self,
+        generation: &str,
+        request_id: &str,
+        reply: Value,
+    ) -> io::Result<()> {
+        self.require_generation(generation)?;
+        match &self.protocol {
+            ManagedProtocol::Acp(protocol) if self.structured_only() => {
+                protocol.respond_interaction(request_id, reply).await
+            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Runtime does not expose ACP interactions",
+            )),
+        }
+    }
+
     pub(crate) async fn register_native_input(
         &self,
         expected_generation: &str,
@@ -145,7 +206,7 @@ impl AnalystSession {
         Ok(())
     }
 
-    pub(super) fn require_generation(&self, expected: &str) -> io::Result<()> {
+    pub(crate) fn require_generation(&self, expected: &str) -> io::Result<()> {
         if expected == self.generation {
             Ok(())
         } else {

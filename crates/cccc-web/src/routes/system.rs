@@ -4,7 +4,7 @@ use axum::{Json, Router};
 use serde_json::{Value, json};
 
 use crate::AppState;
-use crate::api::{ApiResult, call, object, success};
+use crate::api::{ApiError, ApiResult, call, object, success};
 use crate::auth::Principal;
 
 pub fn routes() -> Router<AppState> {
@@ -101,14 +101,46 @@ async fn ready(
         None => json!({"web":"ready"}),
     })
 }
-async fn runtimes() -> Json<Value> {
-    let runtimes = cccc_runtime::detect_runtimes();
+async fn runtimes(State(state): State<AppState>) -> ApiResult {
+    let result = tokio::task::spawn_blocking(move || {
+        runtime_catalog_value(
+            cccc_runtime::detect_runtimes()
+                .into_iter()
+                .map(|runtime| json!(runtime))
+                .collect(),
+            cccc_daemon::antigravity_acp_setup::installed(&state.home),
+        )
+    })
+    .await
+    .map_err(|_| {
+        ApiError::unavailable(
+            "runtime_detection_failed",
+            "Could not detect local Runtimes",
+        )
+    })?;
+    Ok(success(result))
+}
+
+fn runtime_catalog_value(runtimes: Vec<Value>, acp_installed: bool) -> Value {
     let available = runtimes
         .iter()
-        .filter(|runtime| runtime.available)
-        .map(|runtime| runtime.name.clone())
+        .filter(|runtime| runtime["available"] == true)
+        .map(|runtime| runtime["name"].clone())
         .collect::<Vec<_>>();
-    success(json!({"available":available,"runtimes":runtimes}))
+    let runtimes = runtimes
+        .into_iter()
+        .map(|mut value| {
+            if value["name"] == "antigravity" {
+                value["mode_availability"] =
+                    json!({"default":value["available"],"acp":acp_installed});
+            } else if matches!(value["name"].as_str(), Some("copilot" | "devin" | "cursor")) {
+                value["mode_availability"] =
+                    json!({"default":value["available"],"acp":value["available"]});
+            }
+            value
+        })
+        .collect::<Vec<_>>();
+    json!({"available":available,"runtimes":runtimes})
 }
 async fn observability_get(State(state): State<AppState>) -> ApiResult {
     call(&state, "observability_get", Default::default()).await
@@ -190,8 +222,89 @@ async fn reconcile_apply(State(state): State<AppState>, Json(body): Json<Value>)
 
 #[cfg(test)]
 mod tests {
-    use super::observability_patch;
+    use super::{observability_patch, runtime_catalog_value};
     use serde_json::json;
+
+    #[test]
+    fn antigravity_catalog_keeps_native_and_acp_detection_independent() {
+        for native in [false, true] {
+            for acp in [false, true] {
+                let result = runtime_catalog_value(
+                    vec![json!({"name":"antigravity","available":native})],
+                    acp,
+                );
+                assert_eq!(result["runtimes"][0]["available"], native);
+                assert_eq!(
+                    result["runtimes"][0]["mode_availability"],
+                    json!({"default":native,"acp":acp})
+                );
+                assert_eq!(
+                    result["available"],
+                    if native {
+                        json!(["antigravity"])
+                    } else {
+                        json!([])
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn catalog_preserves_other_runtime_records() {
+        let records = vec![
+            json!({"name":"codex","available":true,"recommended_command":"codex","path":"/fixture/codex"}),
+            json!({"name":"custom","available":true}),
+        ];
+        let result = runtime_catalog_value(records.clone(), true);
+        assert_eq!(result["runtimes"], json!(records));
+        assert_eq!(result["available"], json!(["codex", "custom"]));
+    }
+
+    #[tokio::test]
+    async fn catalog_recheck_does_not_install_or_create_provider_state() {
+        use axum::{
+            body::Body,
+            http::{Request, StatusCode, header},
+        };
+        use tower::ServiceExt;
+        let temp = tempfile::tempdir().expect("temp");
+        let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let token = cccc_core::access_tokens::AccessTokenStore::new(home.clone())
+            .expect("tokens")
+            .create("admin", vec![], true, None)
+            .expect("admin");
+        let router = crate::app(home.clone());
+        for _ in 0..2 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/runtimes")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body");
+            let value: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+            let info = value["result"]["runtimes"]
+                .as_array()
+                .expect("catalog")
+                .iter()
+                .find(|item| item["name"] == "antigravity")
+                .expect("Antigravity");
+            assert_eq!(info["mode_availability"]["acp"], false);
+            assert_eq!(info["mode_availability"]["default"], info["available"]);
+        }
+        assert!(!home.root().join("runtimes/antigravity-acp").exists());
+        assert!(!home.root().join("state/antigravity-acp").exists());
+    }
 
     #[test]
     fn observability_update_maps_flat_request_fields_to_persisted_sections() {

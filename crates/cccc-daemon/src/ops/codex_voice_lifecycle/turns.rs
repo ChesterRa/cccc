@@ -30,7 +30,7 @@ impl AnalystLifecycle {
         .await
     }
 
-    async fn admit_input(
+    pub(super) async fn admit_input(
         &self,
         delegation_id: &str,
         text: &str,
@@ -44,6 +44,11 @@ impl AnalystLifecycle {
         let mut state = self.state.lock().await;
         if state.invalidated {
             bail!("Voice Analyst lifecycle is no longer trustworthy");
+        }
+        if self.session.structured_only() {
+            // Pure ACP has no native busy-input surface. Every accepted input
+            // uses a visible FIFO, never an overlapping session/prompt request.
+            return self.enqueue(delegation_id, text, origin, state);
         }
         if let Some(receipt) = state.delegations.get(delegation_id) {
             return Ok(VoiceDelegationAdmission::Turn(receipt.clone()));
@@ -117,6 +122,7 @@ impl AnalystLifecycle {
         state.native_pending.push_back(PendingStart {
             delegation_id: delegation_id.to_owned(),
             origin,
+            cancelling: false,
         });
         drop(state);
         if let Err(error) = self
@@ -134,7 +140,7 @@ impl AnalystLifecycle {
         })
     }
 
-    async fn start_new(
+    pub(super) async fn start_new(
         &self,
         delegation_id: &str,
         text: &str,
@@ -144,18 +150,31 @@ impl AnalystLifecycle {
         state.pending = Some(PendingStart {
             delegation_id: delegation_id.to_owned(),
             origin,
+            cancelling: false,
         });
         state.settled_pending = None;
+        let text = if self.session.structured_only() && !state.host_context_sent {
+            format!(
+                "{}\n\n{text}",
+                super::super::codex_voice_analyst::ANALYST_INSTRUCTIONS
+            )
+        } else {
+            text.to_owned()
+        };
         drop(state);
 
         // A managed Runtime may publish `turn/started` before answering its start request; the
         // monitor must be able to record that authoritative event while the request is in flight.
         let result = self
             .session
-            .start_turn(self.session.generation(), delegation_id, text)
+            .start_turn(self.session.generation(), delegation_id, &text)
             .await
             .context("start Voice Analyst investigation");
         let mut state = self.state.lock().await;
+        let cancelling = state
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.delegation_id == delegation_id && pending.cancelling);
         if state.pending.as_ref().is_some_and(|pending| {
             pending.delegation_id == delegation_id && pending.origin == origin
         }) {
@@ -172,6 +191,7 @@ impl AnalystLifecycle {
         };
         match result {
             Ok(receipt) => {
+                state.host_context_sent = true;
                 if let Some(settled) = settled_pending {
                     if settled.turn_id != receipt.turn_id {
                         bail!(
@@ -194,6 +214,11 @@ impl AnalystLifecycle {
                     false
                 } else {
                     state.active = Some(active_from(&receipt, origin));
+                    state
+                        .active
+                        .as_mut()
+                        .expect("created active turn")
+                        .cancelling = cancelling;
                     true
                 };
                 state
@@ -255,25 +280,46 @@ impl AnalystLifecycle {
     pub(crate) async fn cancel_current(&self) -> Result<bool> {
         let wait_for_settlement = !self.session.supports_steer();
         let mut lifecycle_events = wait_for_settlement.then(|| self.subscribe());
-        let turn_id = {
+        let (turn_id, pending_id) = {
             let mut state = self.state.lock().await;
-            let Some(active) = state.active.as_mut() else {
-                return Ok(false);
-            };
-            if active.cancelling {
-                return Ok(true);
+            let queued = state.queue.drain(..).collect::<Vec<_>>();
+            self.queue_len
+                .store(0, std::sync::atomic::Ordering::Release);
+            let had_queued = !queued.is_empty();
+            for input in queued {
+                self.complete_unadmitted_input(&input.delegation_id, input.origin, "cancelled", "");
             }
-            // Fence new steering before the RPC, but do not hold the lifecycle lock while Codex
-            // answers. A terminal event may legitimately race the interrupt response and remains
-            // the authoritative settlement for the turn.
-            active.cancelling = true;
-            active.turn_id.clone()
+            if let Some(active) = state.active.as_mut() {
+                if active.cancelling {
+                    return Ok(true);
+                }
+                active.cancelling = true;
+                (active.turn_id.clone(), None)
+            } else if self.session.structured_only()
+                && state.settled_pending.is_none()
+                && let Some(pending) = state.pending.as_mut()
+            {
+                if pending.cancelling {
+                    return Ok(true);
+                }
+                pending.cancelling = true;
+                (String::new(), Some(pending.delegation_id.clone()))
+            } else {
+                return Ok(had_queued);
+            }
         };
-        let interrupted = self
-            .session
-            .interrupt(self.session.generation(), &turn_id)
-            .await
-            .context("interrupt Voice Analyst turn");
+        // Correlate cancellation before admission; the protocol serializes it
+        // with the exact prompt rather than holding a gate across its receipt.
+        let interrupted = if let Some(id) = &pending_id {
+            self.session
+                .cancel_pending_input(self.session.generation(), id)
+                .await
+        } else {
+            self.session
+                .interrupt(self.session.generation(), &turn_id)
+                .await
+        }
+        .context("interrupt Voice Analyst turn");
         if let Err(error) = interrupted {
             let mut state = self.state.lock().await;
             if let Some(active) = state.active.as_mut()
@@ -281,13 +327,21 @@ impl AnalystLifecycle {
             {
                 active.cancelling = false;
             }
+            if let Some(pending) = state.pending.as_mut()
+                && Some(&pending.delegation_id) == pending_id.as_ref()
+            {
+                pending.cancelling = false;
+            }
             return Err(error);
         }
         if let Some(events) = lifecycle_events.as_mut() {
-            let settled = match tokio::time::timeout(
-                MANAGED_CANCEL_SETTLE_TIMEOUT,
-                wait_for_turn_settlement(events, &turn_id),
-            )
+            let settled = match tokio::time::timeout(MANAGED_CANCEL_SETTLE_TIMEOUT, async {
+                if let Some(id) = &pending_id {
+                    super::turn_wait::for_input_settlement(events, id).await
+                } else {
+                    wait_for_turn_settlement(events, &turn_id).await
+                }
+            })
             .await
             {
                 Ok(result) => result,
@@ -348,7 +402,10 @@ impl AnalystLifecycle {
 
     pub(crate) async fn is_busy(&self) -> bool {
         let state = self.state.lock().await;
-        state.active.is_some() || state.pending.is_some() || !state.native_pending.is_empty()
+        state.active.is_some()
+            || state.pending.is_some()
+            || !state.native_pending.is_empty()
+            || !state.queue.is_empty()
     }
 
     pub(crate) async fn terminal_input_allowed(&self) -> bool {
@@ -393,7 +450,7 @@ fn steer_rejection_can_use_native_input(error: &std::io::Error) -> bool {
     )
 }
 
-fn is_would_block(error: &anyhow::Error) -> bool {
+pub(super) fn is_would_block(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         cause
             .downcast_ref::<std::io::Error>()

@@ -29,6 +29,7 @@ export interface GroupState {
   groupSettings: GroupSettings | null;
   groupPresentation: GroupPresentation | null;
   runtimes: RuntimeInfo[];
+  runtimeDetectionStatus: "idle" | "loading" | "ready" | "error";
   selectedGroupActorsHydrating: boolean;
   selectedGroupActorStatusProvisional: boolean;
   hasMoreHistory: boolean;
@@ -123,6 +124,7 @@ export interface GroupState {
   setGroupSettings: (settings: GroupSettings | null) => void;
   setGroupPresentation: (presentation: GroupPresentation | null) => void;
   setRuntimes: (runtimes: RuntimeInfo[]) => void;
+  refreshRuntimes: () => Promise<void>;
   updateReadStatus: (eventId: string, actorId: string, groupId?: string) => void;
   updateObligationStatus: (eventId: string, patch: ObligationStatusPatch, groupId?: string) => void;
   setHasMoreHistory: (v: boolean, groupId?: string) => void;

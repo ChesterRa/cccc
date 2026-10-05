@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 fn test_identity(codex_home: &str) -> String {
     cccc_core::codex_voice_settings::ResolvedAgentRuntime {
         runtime: ActorRuntime::Codex,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: vec!["codex".into()],
         environment: BTreeMap::from([("CODEX_HOME".into(), codex_home.into())]),
     }
@@ -30,6 +31,10 @@ fn client_session_ids_are_bounded_and_path_safe() {
 fn a_disconnected_analyst_is_replaced_before_the_next_call() {
     assert!(
         AnalystSnapshot {
+            progress: String::new(),
+            last_error: String::new(),
+            manual_task_id: None,
+            manual_tasks: vec![],
             phase: "ready".into(),
             last_result: String::new(),
             warning: String::new(),
@@ -38,6 +43,10 @@ fn a_disconnected_analyst_is_replaced_before_the_next_call() {
     );
     assert!(
         !AnalystSnapshot {
+            progress: String::new(),
+            last_error: String::new(),
+            manual_task_id: None,
+            manual_tasks: vec![],
             phase: "needs_attention".into(),
             last_result: String::new(),
             warning: "analyst_disconnected".into(),
@@ -46,6 +55,10 @@ fn a_disconnected_analyst_is_replaced_before_the_next_call() {
     );
     assert!(
         !AnalystSnapshot {
+            progress: String::new(),
+            last_error: String::new(),
+            manual_task_id: None,
+            manual_tasks: vec![],
             phase: "needs_attention".into(),
             last_result: String::new(),
             warning: "analyst_event_gap".into(),
@@ -214,4 +227,41 @@ fn a_current_receipt_from_another_codex_identity_starts_fresh() {
             .expect("identity replacement"),
         (None, "analyst_configuration_started_new_session".into())
     );
+}
+
+#[test]
+fn failed_voice_turns_preserve_diagnostics_and_partial_output_until_the_next_outcome() {
+    let mut snapshot = AnalystSnapshot::default();
+    snapshot.complete("failed", "partial answer", "Provider rejected the request");
+    assert_eq!(snapshot.phase, "needs_attention");
+    assert_eq!(snapshot.last_error, "Provider rejected the request");
+    assert_eq!(snapshot.last_result, "partial answer");
+    assert!(snapshot.reusable_for_call());
+    snapshot.complete("failed", "", "Admission could not be confirmed");
+    assert_eq!(snapshot.last_result, "");
+    assert_eq!(snapshot.last_error, "Admission could not be confirmed");
+    snapshot.complete("cancelled", "", "");
+    assert_eq!(snapshot.phase, "ready");
+    assert!(snapshot.last_error.is_empty());
+    snapshot.complete("completed", "fresh result", "");
+    assert_eq!(snapshot.last_result, "fresh result");
+    assert!(snapshot.warning.is_empty());
+}
+
+#[test]
+fn terminal_outcomes_do_not_revive_a_disconnected_or_invalidated_analyst() {
+    for warning in ["analyst_disconnected", "analyst_event_gap"] {
+        let mut snapshot = AnalystSnapshot {
+            phase: "needs_attention".into(),
+            warning: warning.into(),
+            ..Default::default()
+        };
+        snapshot.complete("failed", "", "Admission was lost");
+        assert!(!snapshot.reusable_for_call());
+        assert_eq!(snapshot.warning, warning);
+        assert_eq!(snapshot.last_error, "Admission was lost");
+        snapshot.complete("cancelled", "", "");
+        assert!(!snapshot.reusable_for_call());
+        assert_eq!(snapshot.warning, warning);
+    }
 }

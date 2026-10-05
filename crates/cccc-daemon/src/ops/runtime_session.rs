@@ -4,10 +4,12 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
+pub(crate) mod antigravity;
 mod claude;
 mod grok;
 #[cfg(test)]
 mod grok_tests;
+pub(crate) mod native_acp;
 mod opencode;
 pub use claude::{
     prepare_managed as prepare_claude_managed_session,
@@ -134,7 +136,7 @@ pub fn record_codex_app_thread(
 }
 
 pub fn remove(home: &HomeLayout, group_id: &str, actor_id: &str) -> std::io::Result<()> {
-    let path = path(home, group_id, actor_id)?;
+    let path = selected_path(home, group_id, actor_id)?;
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -147,11 +149,16 @@ pub fn snapshot(
     group_id: &str,
     actor_id: &str,
 ) -> std::io::Result<Option<Map<String, Value>>> {
-    let session_path = path(home, group_id, actor_id)?;
+    let session_path = selected_path(home, group_id, actor_id)?;
     if !session_path.exists() {
         return Ok(None);
     }
-    read(home, group_id, actor_id).map(Some)
+    let value: Value = cccc_core::fs::read_json(&session_path)?;
+    value
+        .as_object()
+        .cloned()
+        .map(Some)
+        .ok_or_else(|| std::io::Error::other("runtime session receipt is not an object"))
 }
 
 pub fn restore_snapshot(
@@ -161,13 +168,37 @@ pub fn restore_snapshot(
     snapshot: Option<&Map<String, Value>>,
 ) -> std::io::Result<()> {
     if let Some(document) = snapshot {
-        write(home, group_id, actor_id, document)
+        cccc_core::fs::write_json(&selected_path(home, group_id, actor_id)?, document)
     } else {
         remove(home, group_id, actor_id)
     }
 }
 
 pub fn actor_fields(home: &HomeLayout, group_id: &str, actor_id: &str) -> Map<String, Value> {
+    if selected_acp(home, group_id, actor_id)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        let usable = selected_path(home, group_id, actor_id).is_ok_and(|path| {
+            if selected_acp(home, group_id, actor_id).ok().flatten()
+                == Some(cccc_contracts::ActorRuntime::Antigravity)
+            {
+                path.is_file()
+            } else {
+                cccc_core::fs::read_json::<Value>(&path)
+                    .is_ok_and(|value| value["attempted"] == true)
+            }
+        });
+        return Map::from_iter([
+            (
+                "runtime_session_status".into(),
+                if usable { json!("usable") } else { Value::Null },
+            ),
+            ("runtime_session_resume_eligible".into(), json!(usable)),
+            ("runtime_session_last_resume_error".into(), Value::Null),
+        ]);
+    }
     let document = read(home, group_id, actor_id).unwrap_or_default();
     Map::from_iter([
         (
@@ -187,6 +218,33 @@ pub fn actor_fields(home: &HomeLayout, group_id: &str, actor_id: &str) -> Map<St
             nullable_string(&document, "last_resume_error"),
         ),
     ])
+}
+
+fn selected_acp(
+    home: &HomeLayout,
+    group: &str,
+    actor: &str,
+) -> std::io::Result<Option<cccc_contracts::ActorRuntime>> {
+    let group = GroupStore::new(home.clone())?.load(group)?;
+    let Some(actor) = group.actors.iter().find(|item| item.id == actor) else {
+        return Ok(None);
+    };
+    let effective = super::actor_profile_runtime::resolve(home, actor)
+        .map_err(|error| std::io::Error::other(error.message))?;
+    Ok(effective
+        .runtime
+        .is_headless_acp(effective.runtime_mode)
+        .then_some(effective.runtime))
+}
+
+fn selected_path(home: &HomeLayout, group: &str, actor: &str) -> std::io::Result<PathBuf> {
+    match selected_acp(home, group, actor)? {
+        Some(cccc_contracts::ActorRuntime::Antigravity) => {
+            antigravity::receipt_path(home, group, actor)
+        }
+        Some(runtime) => native_acp::receipt_path(home, group, actor, runtime),
+        None => path(home, group, actor),
+    }
 }
 
 fn read(home: &HomeLayout, group_id: &str, actor_id: &str) -> std::io::Result<Map<String, Value>> {
@@ -240,6 +298,7 @@ fn codex_identity_fingerprint(
 ) -> String {
     cccc_core::codex_voice_settings::ResolvedAgentRuntime {
         runtime: cccc_contracts::ActorRuntime::Codex,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: command.to_vec(),
         environment: environment.clone(),
     }
@@ -324,6 +383,72 @@ fn nullable_string(document: &Map<String, Value>, key: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receipt_selection_uses_current_linked_profile_and_preserves_other_surface() {
+        for runtime in [
+            cccc_contracts::ActorRuntime::Antigravity,
+            cccc_contracts::ActorRuntime::Copilot,
+            cccc_contracts::ActorRuntime::Devin,
+            cccc_contracts::ActorRuntime::Cursor,
+        ] {
+            let (_temp, home, group_id, _cwd) = fixture();
+            let store = GroupStore::new(home.clone()).expect("store");
+            let profiles = cccc_core::profiles::ProfileStore::new(home.clone()).expect("profiles");
+            profiles
+                .upsert(
+                    json!({"id":"linked","runtime":"codex"})
+                        .as_object()
+                        .expect("profile")
+                        .clone(),
+                    None,
+                )
+                .expect("profile");
+            let mut group = store.load(&group_id).expect("group");
+            let mut actor = cccc_contracts::Actor::new("linked-worker");
+            actor.profile_id = "linked".into();
+            cccc_core::actors::add(&mut group, actor).expect("actor");
+            store.save(&group).expect("save");
+            profiles
+                .upsert(
+                    json!({"id":"linked","runtime":runtime,"runtime_mode":"acp"})
+                        .as_object()
+                        .expect("profile")
+                        .clone(),
+                    None,
+                )
+                .expect("changed profile");
+            let generic = json!({"provider_session_id":"native-old"});
+            let acp = json!({"provider_session_id":"acp-old"});
+            cccc_core::fs::write_json(
+                &path(&home, &group_id, "linked-worker").expect("generic path"),
+                &generic,
+            )
+            .expect("generic receipt");
+            let acp_path = selected_path(&home, &group_id, "linked-worker").expect("ACP path");
+            cccc_core::fs::write_json(&acp_path, &acp).expect("ACP receipt");
+            assert_eq!(
+                snapshot(&home, &group_id, "linked-worker")
+                    .expect("snapshot")
+                    .expect("receipt")["provider_session_id"],
+                "acp-old"
+            );
+            remove(&home, &group_id, "linked-worker").expect("new session remove");
+            assert!(!acp_path.exists());
+            assert_eq!(
+                read(&home, &group_id, "linked-worker").expect("native receipt")["provider_session_id"],
+                "native-old"
+            );
+            restore_snapshot(&home, &group_id, "linked-worker", acp.as_object())
+                .expect("restore failed launch");
+            assert_eq!(
+                snapshot(&home, &group_id, "linked-worker")
+                    .expect("snapshot")
+                    .expect("receipt")["provider_session_id"],
+                "acp-old"
+            );
+        }
+    }
 
     fn fixture() -> (tempfile::TempDir, HomeLayout, String, PathBuf) {
         let temp = tempfile::tempdir().expect("tempdir");

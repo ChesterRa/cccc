@@ -104,6 +104,54 @@ describe("Web Model effective Actor configuration", () => {
   });
   const button = (label: string) =>
     [...host.querySelectorAll("button")].find((b) => b.textContent === label)!;
+  it("shows ACP settings on runtime selection and preserves the saved mode baseline", async () => {
+    const p = props();
+    p.runtime = "antigravity";
+    p.command = "agy";
+    p.savedRuntime = "antigravity";
+    p.savedActor = {
+      id: "alpha",
+      runtime: "antigravity",
+      runtime_mode: "acp",
+      command: ["agy"],
+      title: p.title,
+      capability_autoload: ["skill:fixture"],
+    };
+    await act(async () => root.render(<ActorConfigModal {...p} />));
+    expect(host.textContent).toContain("antigravityMode.hint");
+    expect(button("common:done")).toBeDefined();
+    await act(async () => button("stage-env-draft").click());
+    await act(async () => button("common:save").click());
+    expect(p.onSave).toHaveBeenCalledWith(expect.objectContaining({ runtimeMode: "acp" }));
+    // A partial-save snapshot must refresh the baseline without erasing the draft.
+    p.savedActor = { ...p.savedActor, runtime_mode: "default" };
+    await act(async () => root.render(<ActorConfigModal {...p} />));
+    expect(host.textContent).toContain("antigravityMode.hint");
+    expect(button("common:save")).toBeDefined();
+  });
+  it.each(["copilot", "devin", "cursor"] as const)(
+    "preserves %s ACP mode when saving an Actor",
+    async (runtime) => {
+      const p = props();
+      p.runtime = runtime;
+      p.savedRuntime = runtime;
+      p.command = runtime === "cursor" ? "cursor-agent" : runtime;
+      p.savedActor = {
+        id: "alpha",
+        runtime,
+        runtime_mode: "acp",
+        command: [p.command],
+        title: p.title,
+        capability_autoload: ["skill:fixture"],
+      };
+      await act(async () => root.render(<ActorConfigModal {...p} />));
+      expect(host.textContent).toContain("acpMode.hint");
+      expect(button("common:done")).toBeDefined();
+      await act(async () => button("stage-env-draft").click());
+      await act(async () => button("common:save").click());
+      expect(p.onSave).toHaveBeenCalledWith(expect.objectContaining({ runtimeMode: "acp" }));
+    },
+  );
   it("retains secret drafts when unlinking succeeds but private-env saving fails", async () => {
     const p = props();
     p.linkedProfileId = "fixture-profile";

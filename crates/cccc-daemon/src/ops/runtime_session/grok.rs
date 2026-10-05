@@ -116,6 +116,7 @@ pub fn record_managed(
 fn identity_fingerprint(command: &[String], environment: &BTreeMap<String, String>) -> String {
     cccc_core::codex_voice_settings::ResolvedAgentRuntime {
         runtime: cccc_contracts::ActorRuntime::Grok,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: command.to_vec(),
         environment: environment.clone(),
     }

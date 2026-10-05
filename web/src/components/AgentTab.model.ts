@@ -1,6 +1,11 @@
 import type { Actor } from "../types";
 
-export function actorSupportsNewSession(runtime: Actor["runtime"]): boolean {
+export function actorSupportsNewSession(
+  runtime: Actor["runtime"],
+  mode?: Actor["runtime_mode"],
+): boolean {
+  if (["antigravity", "copilot", "devin", "cursor"].includes(runtime || "") && mode === "acp")
+    return true;
   return ["claude", "codex", "grok"].includes(
     String(runtime || "")
       .trim()

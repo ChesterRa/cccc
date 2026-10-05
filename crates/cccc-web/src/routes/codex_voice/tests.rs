@@ -9,6 +9,76 @@ use cccc_core::access_tokens::AccessTokenStore;
 use serde_json::json;
 use tower::ServiceExt;
 
+#[tokio::test]
+async fn antigravity_voice_readiness_reports_setup_without_creating_runtime_state() {
+    for linked_profile in [false, true] {
+        let temp = tempfile::tempdir().expect("temp");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let settings = if linked_profile {
+            cccc_core::profiles::ProfileStore::new(home.clone())
+                .expect("profiles")
+                .upsert(
+                    json!({"id":"agy-acp","runtime":"antigravity","runtime_mode":"acp","command":["agy"]})
+                        .as_object().expect("profile").clone(),
+                    None,
+                )
+                .expect("save profile");
+            cccc_contracts::CodexVoiceAnalystSettings {
+                profile_id: "agy-acp".into(),
+                ..Default::default()
+            }
+        } else {
+            cccc_contracts::CodexVoiceAnalystSettings {
+                runtime: cccc_contracts::ActorRuntime::Antigravity,
+                runtime_mode: cccc_contracts::RuntimeMode::Acp,
+                command: vec!["agy".into()],
+                ..Default::default()
+            }
+        };
+        cccc_core::codex_voice_settings::save(&home, &settings).expect("settings");
+        let token = AccessTokenStore::new(home.clone())
+            .expect("tokens")
+            .create("admin", vec![], true, None)
+            .expect("admin");
+        let router = app_with_mode(home.clone(), WebMode::Normal);
+        for _ in 0..2 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/codex_voice/calls/active")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body");
+            let body: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+            assert_eq!(
+                body["result"]["readiness"]["analyst_runtime"],
+                "antigravity"
+            );
+            assert_eq!(
+                body["result"]["readiness"]["analyst_runtime_available"],
+                false
+            );
+            assert_eq!(
+                body["result"]["readiness"]["analyst_runtime_setup_required"],
+                true
+            );
+            assert!(body["result"]["analyst"].is_null());
+            assert!(body["result"]["call"].is_null());
+        }
+        assert!(!home.root().join("runtimes/antigravity-acp").exists());
+        assert!(!home.root().join("state/antigravity-acp").exists());
+    }
+}
+
 #[test]
 fn connected_voice_principal_loses_authority_when_its_token_is_revoked() {
     let temp = tempfile::tempdir().expect("temp");
@@ -123,6 +193,13 @@ fn public_voice_payloads_do_not_expose_local_paths_or_codex_commands() {
         connected: true,
     });
     let analyst = analyst_info_value(AnalystInfo {
+        structured: false,
+        queued_inputs: 0,
+        permissions: vec![],
+        progress: String::new(),
+        last_error: String::new(),
+        manual_task_id: None,
+        manual_tasks: vec![],
         generation: "analyst-1".into(),
         tui_ready: true,
         phase: "ready".into(),

@@ -8,11 +8,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Added
 
+- Add optional official Antigravity ACP for Actors and Voice Analyst: separate managed login, per-session MCP routing, validated resume, structured output, one-time approvals and visible serialized input. Native TUI remains the default.
+
+- Add optional official headless ACP for GitHub Copilot, Devin CLI and Cursor across Actors, Runtime Profiles and Voice Analyst, retaining native TUI defaults. Share the existing FIFO, cancellation and unconfirmed-delivery handling; isolate CCCC MCP identity without rewriting native login/configuration. Track first prompt attempts durably so empty sessions can restart while uncertain work cannot silently replay. Cursor questions and plans require explicit user responses even with YOLO.
+
+- Voice Analyst's structured ACP console pairs manual investigations with their status and results. Tasks submitted during an attached assistant call send completed results to that call's Realtime context; standalone tasks remain local, and earlier calls' results are not replayed into later calls. Context submission does not itself confirm spoken playback.
+
 - Embedded Codex Voice supports per-call `application_context.mode: "persona"` for host-defined roleplay, without a Voice Analyst, local delegation execution or Actor notifications. Assistant mode remains the default; call responses expose the mode and readiness advertises supported modes. Experimental quicksilver delegation suppression and opening behavior require real-provider acceptance.
 
 - Runtime Dock uses fixed-size, thin activity rings and shows authoritative unread Mail counts, independent of loaded chat history. Nonzero unread and browser-queue badges remain separate, without persistent time labels. Thanks to [@chriscoveries](https://github.com/chriscoveries) for [#116](https://github.com/ChesterRa/cccc/pull/116).
 
 ### Fixed
+
+- Antigravity ACP quarantines unconfirmed Actor deliveries instead of replaying them, permits cancellation before the first admission receipt, and preserves separate queued-result associations. Provider failures retain visible error details. Repeating the same Runtime preserves ACP mode, and New session follows the current linked Profile when selecting its receipt.
+
+- Antigravity Voice Analyst's default command now enables ACP YOLO mode like Actors, including after session resume. Remaining permission requests receive automatic one-time approval; explicit custom and Profile commands keep their configured policy.
+
+- Voice Analyst's ACP panel refreshes without requiring a native terminal, so pending tool permissions and progress remain visible during calls.
+
+- Official ACP Actor shutdown can interrupt a stalled admission wait while preserving unconfirmed delivery records. Analyst setting changes distinguish empty sessions from resumable ones, and native ACP startup resolves Windows CLI shims through the shared executable lookup.
+
+- ACP interaction replies use unique, turn-bound CCCC request tokens, preventing delayed answers or approvals from affecting replacement requests. Voice Analyst keeps cancellation available while investigations are queued or awaiting admission, even after the previous turn completes.
+
+- Codex Voice updates its connected-call state after startup, so subsequent manual investigations bind to the current call. Failed, cancelled or unconfirmed investigations retain their distinct outcomes and do not forward partial output as a completed answer.
+
+- Voice Analyst settings and investigation controls use clearer desktop and narrow layouts. Each task prompt appears once, with a one-line collapsed summary and complete text when expanded; failed submissions retain their drafts and original task identity for retry.
+
+- Embedded assistant calls follow the host's language, response length and source-label instructions without imposing global Voice expression preferences. Immediate provider acknowledgement remains enabled, while persona isolation and shared delegation/authority rules are preserved.
+
+- Runtime selectors show host detection states and offer an explicit recheck without refreshing the page. Antigravity distinguishes its native CLI from the official ACP component; failed detection is not reported as a missing installation.
 
 - Pending Mail counts no longer build and retain a full ledger index in each MCP process. Cursor and Actor-generation boundaries remain unchanged, including rotated and compressed history.
 - On Unix, daemon crashes now trigger cleanup of its owned process groups, with restart reconciliation if the watchdog also exits. Cleanup checks recorded process identities, removes externally reaped children from its lists, and leaves unverified groups untouched. Restart recovery also preserves old-format ownership records and unfinished termination attempts; unreadable cleanup state is reported before any replacement.

@@ -20,6 +20,9 @@ pub(crate) use events::{
     contains_dedupe as contains_event_dedupe,
 };
 pub(crate) use supervisor::registered_running;
+pub(crate) use supervisor::{
+    cancel_turn, respond_interaction, respond_permission, structured_state,
+};
 
 use cccc_core::HomeLayout;
 use serde::Serialize;
@@ -46,6 +49,13 @@ pub struct HeadlessStatus {
     pub task_id: Option<String>,
     pub updated_at: String,
     pub pid: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchSubmission {
+    Deferred,
+    Accepted,
+    Unconfirmed,
 }
 
 #[derive(Debug)]

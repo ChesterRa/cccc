@@ -4,12 +4,14 @@ import { codexVoiceErrorText } from "./codexVoiceControllerText";
 import en from "../../i18n/locales/en/modals.json";
 import zh from "../../i18n/locales/zh/modals.json";
 import ja from "../../i18n/locales/ja/modals.json";
+import type { CodexVoiceCallInfo } from "../../services/api";
 
 const mocks = vi.hoisted(() => ({ start: vi.fn(), stop: vi.fn(), ice: vi.fn() }));
 vi.mock("../../services/api", () => ({
   startCodexVoiceCall: mocks.start,
   stopCodexVoiceCall: mocks.stop,
   prepareCodexVoiceNotificationOutput: vi.fn(),
+  getCodexVoiceWebSocketUrl: () => "ws://fixture",
 }));
 vi.mock("./codexVoiceMedia", async (original) => ({
   ...(await original<typeof import("./codexVoiceMedia")>()),
@@ -29,12 +31,13 @@ function fixture(setSinkId = vi.fn(async () => {})) {
   const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
   const getUserMedia = vi.fn(async () => stream);
   vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
-  const wire = { close: vi.fn(), readyState: "connecting", bufferedAmount: 0 };
+  const wire = { close: vi.fn(), send: vi.fn(), readyState: "connecting", bufferedAmount: 0 };
   const peer = {
     addTrack: vi.fn(),
     createDataChannel: () => wire,
     createOffer: vi.fn(async () => ({ type: "offer", sdp: "fixture-sdp" })),
     setLocalDescription: vi.fn(async () => {}),
+    setRemoteDescription: vi.fn(async () => {}),
     localDescription: { sdp: "fixture-sdp" },
     close: vi.fn(),
     ontrack: null as null | ((event: RTCTrackEvent) => void),
@@ -64,7 +67,7 @@ function fixture(setSinkId = vi.fn(async () => {})) {
     preferences: { voice: "cove", inputDeviceId: "", outputDeviceId: "" },
     callbacks,
   });
-  return { session, audio, callbacks, track, peer, getUserMedia };
+  return { session, audio, callbacks, track, peer, wire, getUserMedia };
 }
 
 beforeEach(() => {
@@ -78,6 +81,68 @@ afterEach(() => {
 });
 
 describe("Voice startup cancellation", () => {
+  it.each(["assistant", "persona"] as const)(
+    "publishes the attached %s call from the real control socket before listening",
+    async (mode) => {
+      vi.stubGlobal("window", globalThis);
+      const socket = {
+        onmessage: null as ((event: { data: string }) => void) | null,
+        send: vi.fn(),
+        close: vi.fn(),
+        readyState: 1,
+      };
+      const opened = vi.fn();
+      vi.stubGlobal(
+        "WebSocket",
+        class {
+          static OPEN = 1;
+          constructor() {
+            opened();
+            return socket;
+          }
+        },
+      );
+      const call: CodexVoiceCallInfo = {
+        generation: "owned-call",
+        analyst_generation: mode === "assistant" ? "owned-analyst" : null,
+        connected: false,
+        mode,
+        voice: "cove",
+      };
+      mocks.start.mockResolvedValue({
+        ok: true,
+        result: { call, analyst: null, answer_sdp: "fixture-answer" },
+      });
+      const f = fixture();
+      const starting = f.session.start();
+      try {
+        await vi.waitFor(() => expect(opened).toHaveBeenCalledOnce());
+        expect(f.callbacks.onCall).toHaveBeenLastCalledWith(call);
+        f.wire.readyState = "open";
+        socket.onmessage?.({
+          data: JSON.stringify({ type: "ready", call: { ...call, connected: true } }),
+        });
+        await starting;
+        expect(f.callbacks.onPhase).toHaveBeenLastCalledWith("listening");
+        expect(f.callbacks.onCall.mock.calls).toEqual([[call], [{ ...call, connected: true }]]);
+
+        // Another generation cannot replace this browser's call identity.
+        socket.onmessage?.({
+          data: JSON.stringify({ type: "ready", call: { ...call, generation: "foreign-call" } }),
+        });
+        expect(f.callbacks.onCall).toHaveBeenCalledTimes(2);
+        await f.session.stop();
+        expect(mocks.stop).toHaveBeenCalledExactlyOnceWith(call.generation);
+        socket.onmessage?.({
+          data: JSON.stringify({ type: "ready", call: { ...call, connected: true } }),
+        });
+        expect(f.callbacks.onCall).toHaveBeenLastCalledWith(null);
+      } finally {
+        await f.session.stop();
+      }
+    },
+  );
+
   it.each([
     "codex_voice_setup_failed",
     "codex_voice_analyst_start_failed",

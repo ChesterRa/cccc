@@ -516,7 +516,7 @@
   "codexVoiceOutputSelectionUnavailable": "このブラウザーはシステムのスピーカーを使用します。",
   "codexVoiceAnalystRuntime": "Analyst ランタイム",
   "codexVoiceAnalystRuntimeHint": "対応する Runtime Profile を使うか、直接設定します。Analyst の認証情報は Realtime Voice のログインとは独立しています。",
-  "codexVoiceAnalystSupportedRuntimesHint": "Voice Analyst は Codex、Claude Code、Grok Build、OpenCode、Kilo に対応しています。",
+  "codexVoiceAnalystSupportedRuntimesHint": "利用できる Runtime は上の一覧をご確認ください。ACP 表記の選択肢は、その Runtime の公式 ACP モードを使い、ネイティブ端末はありません。",
   "codexVoiceAnalystCommandHint": "対応する Group Actor と同じ起動コマンド構文を使います。managed session、YOLO、MCP、ワークスペース、attach 引数は CCCC が管理します。",
   "codexVoiceAnalystCompatibleProfilesEmpty": "互換性のある Runtime Profile がありません。Settings > Runtime Profiles で作成するか、Custom を使ってください。",
   "codexVoiceAnalystProfileHostNote": "この Profile の起動コマンドと非公開環境変数を使います。Runner と送信方式は Actor 専用で、Analyst は CCCC がランタイムの managed session を YOLO モードでホストします。",
@@ -528,7 +528,7 @@
   "codexVoiceAnalystSettingsSave": "設定を保存",
   "codexVoiceAnalystSettingsApplyRestart": "保存して再起動",
   "codexVoiceAnalystSettingsSaving": "保存中…",
-  "codexVoiceAnalystSettingsApplyHint": "保存すると起動中の Analyst は同じセッションで再起動します。以後の Profile 編集は次回起動時に反映されます。",
+  "codexVoiceAnalystSettingsApplyHint": "保存すると起動中の Analyst が再起動します。再開可能で互換性のあるセッションは引き継がれますが、実行環境の変更時は新しいセッションになる場合があります。以後の Profile 編集は次回起動時に反映されます。",
   "codexVoiceAnalystSettingsCallActive": "Analyst のランタイム設定を適用する前に音声を停止してください。",
   "codexVoiceAnalystSettingsWorkActive": "Analyst には実行中または待機中の作業があります。今すぐ適用すると、その作業を停止して未完了の結果を破棄します。",
   "codexVoiceAnalystSettingsDiscardConfirm": "Analyst には実行中または待機中の作業があります。停止してこの設定を適用しますか？未完了の結果は破棄されます。",
@@ -540,6 +540,7 @@
   "codexVoiceAnalystSettingsNewSession": "Runtime の識別情報が変わったため、新しい Analyst セッションで設定を適用しました。",
   "codexVoiceAnalystIdentityChangeConfirm": "Runtime、CODEX_HOME、GROK_HOME、HOME、USERPROFILE を変更すると Analyst の識別情報が切り替わり、新しいセッションが開始されます。適用しますか？",
   "codexVoiceAnalystRuntimeMissing": "Voice Analyst に設定された Runtime（{{runtime}}）が利用できません。Runtime Profile を確認するか、その Runtime を実行できるシェルから CCCC を再起動してください。",
+  "codexVoiceAntigravityAcpSetupRequired": "Antigravity ACP がまだインストールされていません。CCCC が動作するマシンで cccc setup --runtime antigravity --runtime-mode acp --login を実行し、インストールと専用の Google ログインを完了してから再試行してください。ACP とネイティブ agy のログイン環境は異なります。",
   "codexVoiceCodexLoginRequired": "Realtime Voice 用の ChatGPT ログインがありません。CCCC ホストで codex login を実行してから更新してください。Voice Analyst Profile の認証情報とは独立しています。",
   "codexVoiceAnalystTerminalPending": "Analyst の管理セッションが準備できると、端末がここに表示されます。",
   "codexVoiceTerminalDisconnected": "端末が切断されました",
@@ -612,6 +613,7 @@
     "provider_output_stalled": "音声接続が更新を受信できなくなりました。音声を再開してください。Analyst セッションは保持されています。"
   },
   "codexVoiceWarnings": {
+    "analyst_turn_failed": "Analyst のタスクが失敗しました。Analyst パネルで詳細を確認してください。",
     "unknown": "Voice Analyst の確認が必要です。",
     "analyst_resume_replaced": "以前の Analyst セッションを再開できなかったため、CCCC が新しいセッションを開始しました。",
     "analyst_workspace_migrated": "CCCC は Voice Analyst をグローバルな中立ワークスペースへ移行しました。以前のリポジトリ紐付けスレッドは Codex 履歴に残ります。",

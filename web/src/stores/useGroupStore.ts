@@ -54,6 +54,9 @@ import {
 import { mergeOlderLedgerEvents } from "./groupHistoryMerge";
 import { computeGroupRuntimePatch } from "../utils/groupRuntimeProjection";
 import { projectCrossGroupReceipts } from "../utils/mergeLedgerEvents";
+import { fetchRuntimes } from "../services/api";
+
+let runtimeDetectionRequest: Promise<void> | null = null;
 
 function stableSerialize(value: unknown): string {
   if (value === null || value === undefined) return String(value);
@@ -101,6 +104,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   groupSettings: null,
   groupPresentation: null,
   runtimes: [],
+  runtimeDetectionStatus: "idle",
   selectedGroupActorsHydrating: false,
   selectedGroupActorStatusProvisional: false,
   hasMoreHistory: true,
@@ -698,7 +702,26 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       }
       return { groupPresentation: presentation };
     }),
-  setRuntimes: (runtimes) => set({ runtimes }),
+  setRuntimes: (runtimes) => set({ runtimes, runtimeDetectionStatus: "ready" }),
+  refreshRuntimes: () => {
+    if (runtimeDetectionRequest) return runtimeDetectionRequest;
+    set({ runtimeDetectionStatus: "loading" });
+    runtimeDetectionRequest = (async () => {
+      try {
+        const response = await fetchRuntimes();
+        if (response.ok) {
+          set({ runtimes: response.result.runtimes, runtimeDetectionStatus: "ready" });
+        } else {
+          set({ runtimeDetectionStatus: "error" });
+        }
+      } catch {
+        set({ runtimeDetectionStatus: "error" });
+      }
+    })().finally(() => {
+      runtimeDetectionRequest = null;
+    });
+    return runtimeDetectionRequest;
+  },
 
   updateReadStatus: (eventId, actorId, groupId) =>
     set((state) => {

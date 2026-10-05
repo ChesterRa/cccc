@@ -9,6 +9,7 @@ use tokio::task::JoinHandle;
 
 mod events;
 mod framing;
+mod interactions;
 mod pending;
 mod permissions;
 mod protocol_loop;
@@ -38,7 +39,8 @@ enum AcpCommand {
     Prompt(PromptRequest),
     Cancel {
         session_id: String,
-        response: oneshot::Sender<io::Result<()>>,
+        delegation_id: Option<String>,
+        response: oneshot::Sender<io::Result<Option<String>>>,
     },
     Respond {
         id: Value,
@@ -47,6 +49,11 @@ enum AcpCommand {
     RespondError {
         id: Value,
         error: Value,
+    },
+    Permission {
+        request_id: String,
+        reply: Value,
+        response: oneshot::Sender<io::Result<()>>,
     },
     ExternalStatus {
         session_id: String,
@@ -82,12 +89,15 @@ enum AcpCommand {
 pub(super) enum PermissionPolicy {
     Reject,
     AllowOnce,
+    Interactive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PromptCompletion {
-    #[cfg(test)]
     Response,
+    /// Official AGY does not echo user text. Its first live, same-session
+    /// activity is the receipt; all turn updates precede the prompt response.
+    ResponseWithActivityReceipt,
     /// OpenCode/Kilo use the ordered backend stream for output and completion.
     SessionEvents,
     BoundedPostResponseDrain,
@@ -186,6 +196,8 @@ pub(super) struct AcpClient {
     pub(super) events: broadcast::Sender<AnalystEvent>,
     task: Mutex<Option<JoinHandle<()>>>,
     auxiliary_tasks: Mutex<Vec<JoinHandle<()>>>,
+    permissions: std::sync::Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
+    prompt_receipt: Mutex<Option<super::super::runtime_session::native_acp::PromptReceipt>>,
 }
 
 impl AcpClient {
@@ -200,6 +212,7 @@ impl AcpClient {
         let (commands, receiver) = mpsc::channel(COMMAND_CAPACITY);
         let (frames, frame_receiver) = mpsc::channel(FRAME_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
+        let permissions = std::sync::Arc::new(Mutex::new(std::collections::BTreeMap::new()));
         framing::spawn_reader(stdout, frames)?;
         let task = tokio::spawn(protocol_loop::run(
             std::sync::Arc::new(Mutex::new(stdin)),
@@ -210,13 +223,29 @@ impl AcpClient {
             runtime,
             permission_policy,
             prompt_completion,
+            std::sync::Arc::clone(&permissions),
         ));
         Ok(Self {
             commands,
             events,
             task: Mutex::new(Some(task)),
             auxiliary_tasks: Mutex::new(Vec::new()),
+            prompt_receipt: Mutex::new(None),
+            permissions,
         })
+    }
+
+    pub(super) fn set_prompt_receipt(
+        &self,
+        receipt: super::super::runtime_session::native_acp::PromptReceipt,
+    ) {
+        *self.prompt_receipt.lock().expect("ACP prompt receipt lock") = Some(receipt);
+    }
+
+    pub(super) fn resumable(&self) -> bool {
+        self.prompt_receipt
+            .lock()
+            .is_ok_and(|receipt| receipt.as_ref().is_none_or(|receipt| receipt.resumable()))
     }
 
     pub(super) fn lifecycle_control(&self) -> AcpLifecycleControl {
@@ -237,6 +266,38 @@ impl AcpClient {
         self.events.subscribe()
     }
 
+    pub(super) fn permissions(&self) -> Vec<Value> {
+        self.permissions.lock().map(|items| items.iter().map(|(key, message)| {
+            match message["method"].as_str() {
+                Some("cursor/ask_question") => json!({"request_id":key,"kind":"question","title":message["params"]["title"],"questions":message["params"]["questions"]}),
+                Some("cursor/create_plan") => json!({"request_id":key,"kind":"plan","title":message["params"]["name"],"overview":message["params"]["overview"],"plan":message["params"]["plan"],"todos":message["params"]["todos"]}),
+                _ => json!({"request_id":key,"kind":"permission","title":message.pointer("/params/toolCall/title").and_then(Value::as_str).unwrap_or("Permission requested"),"details":message.pointer("/params/toolCall/rawInput")}),
+            }
+        }).collect()).unwrap_or_default()
+    }
+
+    pub(super) async fn respond_permission(&self, request_id: &str, allow: bool) -> io::Result<()> {
+        self.respond_interaction(request_id, json!({"allow":allow}))
+            .await
+    }
+
+    pub(super) async fn respond_interaction(
+        &self,
+        request_id: &str,
+        reply: Value,
+    ) -> io::Result<()> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(AcpCommand::Permission {
+                request_id: request_id.to_owned(),
+                reply,
+                response,
+            })
+            .await
+            .map_err(|_| closed_error())?;
+        receiver.await.map_err(|_| closed_error())?
+    }
+
     pub(super) async fn request(
         &self,
         method: &str,
@@ -252,6 +313,14 @@ impl AcpClient {
         delegation_id: &str,
         text: &str,
     ) -> io::Result<String> {
+        if let Some(receipt) = self
+            .prompt_receipt
+            .lock()
+            .map_err(|_| io::Error::other("ACP prompt receipt lock failed"))?
+            .as_ref()
+        {
+            receipt.mark_attempted()?;
+        }
         let (sender, receiver) = oneshot::channel();
         self.commands
             .send(AcpCommand::Prompt(PromptRequest {
@@ -295,10 +364,19 @@ impl AcpClient {
     }
 
     pub(super) async fn cancel(&self, session_id: &str) -> io::Result<()> {
+        self.cancel_input(session_id, None).await.map(|_| ())
+    }
+
+    pub(super) async fn cancel_input(
+        &self,
+        session_id: &str,
+        delegation_id: Option<&str>,
+    ) -> io::Result<Option<String>> {
         let (sender, receiver) = oneshot::channel();
         self.commands
             .send(AcpCommand::Cancel {
                 session_id: session_id.to_owned(),
+                delegation_id: delegation_id.map(str::to_owned),
                 response: sender,
             })
             .await

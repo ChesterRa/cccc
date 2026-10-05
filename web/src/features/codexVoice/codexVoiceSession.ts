@@ -189,6 +189,12 @@ export class CodexVoiceBrowserSession {
     }
   }
 
+  updateAnalystSnapshot(analyst: CodexVoiceAnalystInfo): void {
+    if (this.stopping || this.analyst?.generation !== analyst.generation) return;
+    this.analyst = analyst;
+    this.callbacks.onAnalyst(analyst);
+  }
+
   cancelInvestigation(): boolean {
     return this.sendServerMessage({ type: "cancel_current" });
   }
@@ -254,6 +260,20 @@ export class CodexVoiceBrowserSession {
   private handleServerMessage(message: CodexVoiceServerMessage): void {
     if (this.stopping) return;
     switch (message.type) {
+      case "ready": {
+        const attachedCall = message.call as CodexVoiceCallInfo | undefined;
+        if (
+          this.call &&
+          attachedCall?.generation === this.call.generation &&
+          typeof attachedCall.connected === "boolean"
+        ) {
+          // HTTP creates an unattached call; the control socket confirms its
+          // attachment. Publish it so manual inputs retain this call's scope.
+          this.call = { ...this.call, connected: attachedCall.connected };
+          this.callbacks.onCall(this.call);
+        }
+        break;
+      }
       case "notification_status":
         this.callbacks.onNotificationPaused?.(message.paused === true);
         break;
@@ -263,11 +283,23 @@ export class CodexVoiceBrowserSession {
           typeof message.result_id === "string" ? message.result_id : undefined,
         );
         break;
+      case "analyst_queued":
+        if (this.analyst?.structured) {
+          // Queued work is cancellable, but it has no provider-start receipt yet.
+          this.analyst = { ...this.analyst, phase: "working" };
+          this.callbacks.onAnalyst(this.analyst);
+        }
+        break;
       case "analyst_working":
         this.callbacks.onAnalystProgress("");
         this.callbacks.onAnalystResult("");
         if (this.analyst) {
-          this.analyst = { ...this.analyst, tui_ready: true, phase: "working", warning: "" };
+          this.analyst = {
+            ...this.analyst,
+            tui_ready: !this.analyst.structured,
+            phase: "working",
+            warning: "",
+          };
           this.callbacks.onAnalyst(this.analyst);
         }
         break;

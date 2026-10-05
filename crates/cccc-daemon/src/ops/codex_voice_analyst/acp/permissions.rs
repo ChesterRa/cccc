@@ -1,6 +1,15 @@
 use super::PermissionPolicy;
 use serde_json::{Value, json};
 
+pub(super) fn pending_request(message: &Value, turn_id: &str) -> (String, Value) {
+    let mut request = message.clone();
+    request["_cccc_turn_id"] = json!(turn_id);
+    // Provider RPC ids may repeat. The caller must identify this exact
+    // interaction, while the original id stays private for the wire response.
+    let token = format!("{turn_id}:{}", uuid::Uuid::new_v4().simple());
+    (token, request)
+}
+
 pub(super) fn permission_response(message: &Value, policy: PermissionPolicy) -> (Value, bool) {
     if policy == PermissionPolicy::AllowOnce
         && let Some(option_id) = permission_option(
@@ -39,6 +48,14 @@ fn permission_option(message: &Value, accepted: &[&str]) -> Option<String> {
         .and_then(|options| {
             options.iter().find_map(|option| {
                 let id = option.get("optionId").and_then(Value::as_str)?;
+                if let Some(kind) = option.get("kind").and_then(Value::as_str) {
+                    let expected = if accepted.contains(&"allow_once") {
+                        "allow_once"
+                    } else {
+                        "reject_once"
+                    };
+                    return (kind == expected).then(|| id.to_owned());
+                }
                 accepted
                     .contains(&id.to_ascii_lowercase().as_str())
                     .then(|| id.to_owned())

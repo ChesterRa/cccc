@@ -1,9 +1,11 @@
+import { supportsAcpMode } from "../../types";
 import { formatRuntimeCommand } from "../../components/modals/runtimeProfileControlsModel";
 import type { CodexVoiceAnalystSettings } from "../../services/api";
 import type { ActorProfile } from "../../types";
 
 export type VoiceAnalystDraftSettings = {
   runtime: string;
+  runtime_mode?: "default" | "acp";
   command: string;
   profile_id: string;
   profile_scope: "global" | "user";
@@ -18,11 +20,22 @@ export const emptyVoiceAnalystSettings: VoiceAnalystDraftSettings = {
   profile_owner: "",
 };
 
-export const managedAnalystRuntimes = new Set(["codex", "claude", "grok", "opencode", "kilo"]);
+export const managedAnalystRuntimes = new Set([
+  "codex",
+  "claude",
+  "grok",
+  "opencode",
+  "kilo",
+  "antigravity",
+  "copilot",
+  "devin",
+  "cursor",
+]);
 export const analystIdentityEnvironmentKeys = new Set([
   "CODEX_HOME",
   "CLAUDE_CONFIG_DIR",
   "GROK_HOME",
+  "GEMINI_HOME",
   "HOME",
   "USERPROFILE",
   "XDG_DATA_HOME",
@@ -36,6 +49,10 @@ export const analystIdentityEnvironmentKeys = new Set([
 ]);
 
 export function defaultAnalystRuntimeCommand(runtime: string): string {
+  if (runtime === "antigravity") return "agy --dangerously-skip-permissions";
+  if (runtime === "copilot") return "copilot --allow-all";
+  if (runtime === "devin") return "devin --permission-mode dangerous";
+  if (runtime === "cursor") return "cursor-agent --yolo --approve-mcps";
   if (runtime === "claude") return "claude";
   if (runtime === "grok") return "grok";
   if (runtime === "opencode") return "opencode";
@@ -48,6 +65,7 @@ export function normalizeVoiceAnalystSettings(
 ): VoiceAnalystDraftSettings {
   return {
     runtime: String(settings?.runtime || "codex"),
+    ...(supportsAcpMode(settings?.runtime) ? { runtime_mode: "acp" as const } : {}),
     command: formatRuntimeCommand(settings?.command),
     profile_id: String(settings?.profile_id || "").trim(),
     profile_scope: settings?.profile_scope === "user" ? "user" : "global",
@@ -79,6 +97,7 @@ export function voiceAnalystIdentityChanged(
 ): boolean {
   if (
     current.runtime !== loaded.runtime ||
+    current.runtime_mode !== loaded.runtime_mode ||
     current.profile_id !== loaded.profile_id ||
     current.profile_scope !== loaded.profile_scope ||
     current.profile_owner !== loaded.profile_owner
@@ -87,7 +106,7 @@ export function voiceAnalystIdentityChanged(
   }
   if (mode !== "custom") return false;
   if (
-    current.runtime === "claude" &&
+    (current.runtime === "claude" || supportsAcpMode(current.runtime)) &&
     (current.command.trim() !== loaded.command.trim() || hasEnvironmentChanges)
   ) {
     return true;

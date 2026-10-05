@@ -36,6 +36,29 @@ pub enum RuntimeStateSource {
     ManagedSession,
 }
 
+/// Provider-supported execution path. Default preserves each Runtime's
+/// existing surface; ACP is an explicit headless execution path.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMode {
+    #[default]
+    Default,
+    Acp,
+}
+
+impl RuntimeMode {
+    pub const fn is_default(&self) -> bool {
+        matches!(self, Self::Default)
+    }
+
+    pub fn validate(self, runtime: ActorRuntime) -> Result<(), &'static str> {
+        if self == Self::Acp && !runtime.supports_acp_mode() {
+            return Err("runtime_mode=acp requires Antigravity, Copilot, Devin or Cursor");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ActorRuntime {
@@ -63,6 +86,37 @@ pub enum ActorRuntime {
 }
 
 impl ActorRuntime {
+    #[must_use]
+    pub const fn supports_acp_mode(self) -> bool {
+        matches!(
+            self,
+            Self::Antigravity | Self::Copilot | Self::Devin | Self::Cursor
+        )
+    }
+
+    #[must_use]
+    pub const fn is_headless_acp(self, mode: RuntimeMode) -> bool {
+        self.supports_acp_mode() && matches!(mode, RuntimeMode::Acp)
+    }
+
+    #[must_use]
+    pub const fn runner_for(self, mode: RuntimeMode) -> RunnerKind {
+        if self.is_headless_acp(mode) {
+            RunnerKind::Headless
+        } else {
+            self.runner()
+        }
+    }
+
+    #[must_use]
+    pub const fn state_source_for(self, mode: RuntimeMode) -> RuntimeStateSource {
+        if self.is_headless_acp(mode) {
+            RuntimeStateSource::ManagedSession
+        } else {
+            self.state_source()
+        }
+    }
+
     #[must_use]
     pub const fn web_model_provider(self) -> Option<&'static str> {
         match self {
@@ -139,6 +193,8 @@ pub struct Actor {
     pub runner: RunnerKind,
     #[serde(default)]
     pub runtime: ActorRuntime,
+    #[serde(default, skip_serializing_if = "RuntimeMode::is_default")]
+    pub runtime_mode: RuntimeMode,
     #[serde(default)]
     pub runtime_state_source: RuntimeStateSource,
     #[serde(default)]
@@ -180,6 +236,7 @@ impl Actor {
             enabled: true,
             runner: RunnerKind::default(),
             runtime: ActorRuntime::default(),
+            runtime_mode: RuntimeMode::default(),
             runtime_state_source: RuntimeStateSource::default(),
             internal_kind: None,
             avatar_asset_path: String::new(),
@@ -194,8 +251,8 @@ impl Actor {
     }
 
     pub fn normalize_runtime_constraints(&mut self) {
-        self.runner = self.runtime.runner();
-        self.runtime_state_source = self.runtime.state_source();
+        self.runner = self.runtime.runner_for(self.runtime_mode);
+        self.runtime_state_source = self.runtime.state_source_for(self.runtime_mode);
         if self.runtime.is_web_model() {
             self.command.clear();
         }
@@ -214,7 +271,7 @@ fn global_scope() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Actor, ActorRuntime, RunnerKind, RuntimeStateSource};
+    use super::{Actor, ActorRuntime, RunnerKind, RuntimeMode, RuntimeStateSource};
 
     #[test]
     fn cline_runtime_round_trips_through_the_shared_contract() {
@@ -273,5 +330,59 @@ mod tests {
             serde_json::to_string(&state).expect("managed state"),
             r#""managed_session""#
         );
+    }
+
+    #[test]
+    fn antigravity_mode_is_explicit_and_derives_its_surface() {
+        let mut actor = Actor::new("agy");
+        actor.runtime = ActorRuntime::Antigravity;
+        actor.normalize_runtime_constraints();
+        assert_eq!(actor.runner, RunnerKind::Pty);
+        assert!(
+            serde_json::to_value(&actor)
+                .expect("serialize Actor")
+                .get("runtime_mode")
+                .is_none()
+        );
+        actor.runtime_mode = RuntimeMode::Acp;
+        actor.normalize_runtime_constraints();
+        assert_eq!(actor.runner, RunnerKind::Headless);
+        assert_eq!(
+            actor.runtime_state_source,
+            RuntimeStateSource::ManagedSession
+        );
+        assert!(actor.runtime_mode.validate(ActorRuntime::Codex).is_err());
+    }
+
+    #[test]
+    fn official_native_acp_is_optional_and_keeps_tui_as_default() {
+        for runtime in [
+            ActorRuntime::Copilot,
+            ActorRuntime::Devin,
+            ActorRuntime::Cursor,
+        ] {
+            assert_eq!(runtime.runner_for(RuntimeMode::Default), RunnerKind::Pty);
+            assert_eq!(
+                runtime.state_source_for(RuntimeMode::Default),
+                RuntimeStateSource::Terminal
+            );
+            assert!(RuntimeMode::Acp.validate(runtime).is_ok());
+            assert_eq!(runtime.runner_for(RuntimeMode::Acp), RunnerKind::Headless);
+            assert_eq!(
+                runtime.state_source_for(RuntimeMode::Acp),
+                RuntimeStateSource::ManagedSession
+            );
+        }
+        for runtime in [
+            ActorRuntime::Codex,
+            ActorRuntime::Claude,
+            ActorRuntime::Opencode,
+            ActorRuntime::Custom,
+        ] {
+            assert!(
+                RuntimeMode::Acp.validate(runtime).is_err(),
+                "existing native managed surfaces keep their own lifecycle"
+            );
+        }
     }
 }

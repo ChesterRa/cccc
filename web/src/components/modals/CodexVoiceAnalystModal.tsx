@@ -8,6 +8,7 @@ import { CodexVoiceSplitLayout } from "../../features/codexVoice/CodexVoiceSplit
 import { CodexVoiceSettingsPanel } from "../../features/codexVoice/CodexVoiceSettingsPanel";
 import { CodexVoiceMessageSources } from "../../features/codexVoice/CodexVoiceMessageSources";
 import { voicePhaseDotClass } from "../../features/codexVoice/codexVoicePhase";
+import { codexVoiceReadinessProblem } from "../../features/codexVoice/codexVoiceControllerText";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import {
@@ -70,16 +71,9 @@ export function CodexVoiceAnalystModal({
   const analystPhase = analyst ? t(`codexVoiceAnalystPhase.${analyst.phase}`) : "";
   const terminalVisible =
     isOpen &&
-    Boolean(analyst?.tui_ready) &&
+    Boolean(analyst?.structured || analyst?.tui_ready) &&
     (splitLayout ? analystExpanded : mobilePane === "analyst");
-  const readinessProblem = !controller.readiness
-    ? ""
-    : !controller.readiness.analyst_runtime_available
-      ? t("codexVoiceAnalystRuntimeMissing", { runtime: controller.readiness.analyst_runtime })
-      : !controller.readiness.realtime_credentials_available
-        ? t("codexVoiceCodexLoginRequired")
-        : "";
-  const startupProblem = readinessProblem;
+  const startupProblem = codexVoiceReadinessProblem(t, controller.readiness);
 
   useEffect(() => {
     if (!isOpen) {
@@ -235,7 +229,7 @@ export function CodexVoiceAnalystModal({
           </div>
         ) : null}
 
-        {!controller.isEngaged && startupProblem ? (
+        {!controller.isEngaged && startupProblem && startupProblem !== controller.error ? (
           <div className="flex-none border-b border-amber-400/25 bg-amber-400/8 px-5 py-2.5 text-sm text-amber-700 dark:text-amber-300 sm:px-6">
             {startupProblem}
           </div>

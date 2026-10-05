@@ -45,6 +45,9 @@ impl CodexVoiceSessions {
             .stop(generation)
             .await
             .context("stop Codex Voice audio call")?;
+        if let Some(analyst) = session.analyst.as_ref() {
+            analyst.retire_manual_call(generation);
+        }
         Ok(true)
     }
 
@@ -79,6 +82,9 @@ impl CodexVoiceSessions {
             .stop(generation)
             .await
             .context("stop unattached Codex Voice audio call")?;
+        if let Some(analyst) = session.analyst.as_ref() {
+            analyst.retire_manual_call(generation);
+        }
         Ok(true)
     }
 

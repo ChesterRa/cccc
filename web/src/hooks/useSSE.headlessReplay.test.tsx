@@ -393,3 +393,77 @@ it("reconciles scope changes with fresh Group documents and rejects late refresh
 vi.mock("../services/realtime/eventStream", () => ({
   openEventStream: (url: string) => new EventSource(url),
 }));
+
+it("shows an ACP provider failure without a pending chat event and deduplicates replay", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const original = useGroupStore.getState();
+  const sources = stubEventSources();
+  const actor: Actor = {
+    id: "acp",
+    runtime: "antigravity",
+    runtime_mode: "acp",
+    runner: "headless",
+    runtime_state_source: "managed_session",
+    running: true,
+  };
+  useGroupStore.setState({
+    selectedGroupId: "g",
+    actors: [actor],
+    chatByGroup: {},
+    refreshActors: vi.fn().mockResolvedValue(undefined),
+  });
+  let connection: ReturnType<typeof useSSE>;
+  function Probe() {
+    connection = useSSE({
+      activeTabRef: { current: "chat" },
+      chatAtBottomRef: { current: true },
+      actorsRef: { current: [actor] },
+    });
+    return null;
+  }
+  const host = document.createElement("div"),
+    root = createRoot(host);
+  const failure: HeadlessStreamEvent = {
+    id: "failure",
+    group_id: "g",
+    actor_id: "acp",
+    type: "headless.turn.failed",
+    ts: "2026-10-03T00:00:00Z",
+    data: {
+      turn_id: "acp-turn",
+      stream_id: "generation:acp-turn",
+      status: "failed",
+      error: "Synthetic provider failure",
+    },
+  };
+  try {
+    await act(async () => root.render(<Probe />));
+    await act(async () => connection!.connectStream("g"));
+    const stream = sources.find((source) => source.url.includes("/headless/stream"))!;
+    await act(async () => stream.emit("headless", failure));
+    const bucket = () => useGroupStore.getState().chatByGroup.g!;
+    expect(bucket().streamingActivitiesByStreamId["generation:acp-turn"]).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        detail: "Synthetic provider failure",
+        raw_item_type: "turn_error",
+      }),
+    ]);
+    expect(bucket().streamingEvents).toHaveLength(1);
+    expect(bucket().streamingEvents[0]!._streaming).toBe(false);
+    expect(useGroupStore.getState().actors[0]!.effective_working_reason).toBe(
+      "headless_turn_failed",
+    );
+    await act(async () => stream.emit("headless", failure));
+    expect(bucket().streamingEvents).toHaveLength(1);
+    expect(bucket().streamingActivitiesByStreamId["generation:acp-turn"]).toHaveLength(1);
+  } finally {
+    await act(async () => {
+      connection!.cleanup();
+      root.unmount();
+    });
+    vi.unstubAllGlobals();
+    useGroupStore.setState(original);
+    host.remove();
+  }
+});

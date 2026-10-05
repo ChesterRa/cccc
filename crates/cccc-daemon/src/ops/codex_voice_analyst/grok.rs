@@ -22,6 +22,8 @@ pub(super) struct PreparedGrok {
     pub(super) executable: String,
     tui_arguments: Vec<String>,
     rules: String,
+    model: Option<String>,
+    reasoning_effort: Option<String>,
     socket_path: PathBuf,
 }
 
@@ -101,6 +103,8 @@ pub(super) fn prepare(
         executable,
         tui_arguments: parsed.tui_arguments,
         rules: parsed.rules.join("\n\n"),
+        model: parsed.model,
+        reasoning_effort: parsed.reasoning_effort,
         socket_path,
     })
 }
@@ -128,14 +132,25 @@ pub(super) async fn launch(
                 return Err(error);
             }
         };
-    let result = session::initialize(
-        &protocol,
-        cwd,
-        purpose,
-        &prepared.rules,
-        resume_session_id,
-        purpose == SessionPurpose::Actor,
-    )
+    let result = async {
+        let (session_id, resumed) = session::initialize(
+            &protocol,
+            cwd,
+            purpose,
+            &prepared.rules,
+            resume_session_id,
+            purpose == SessionPurpose::Actor,
+        )
+        .await?;
+        session::apply_preferences(
+            &protocol,
+            &session_id,
+            prepared.model.as_deref(),
+            prepared.reasoning_effort.as_deref(),
+        )
+        .await?;
+        Ok::<_, io::Error>((session_id, resumed))
+    }
     .await;
     let (session_id, resumed) = match result {
         Ok(value) => value,

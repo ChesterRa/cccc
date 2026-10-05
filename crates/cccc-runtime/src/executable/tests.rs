@@ -156,3 +156,35 @@ fn windows_actor_environment_keys_are_case_insensitive() {
         ]
     );
 }
+
+#[test]
+fn windows_native_stdio_resolution_preserves_acp_arguments_and_prefers_pathext_shims() {
+    for runtime in ["copilot", "devin", "cursor-agent"] {
+        let temp = tempfile::tempdir().expect("shim directory");
+        fs::write(temp.path().join(runtime), "shell shim").expect("extensionless shim");
+        fs::write(temp.path().join(format!("{runtime}.cmd")), "@echo off").expect("npm shim");
+        let args = vec![
+            runtime.to_owned(),
+            "--acp".into(),
+            "--additional-mcp-config".into(),
+            r#"{"mcpServers":{"cccc":{"args":["two words","literal%value&data"]}}}"#.into(),
+        ];
+        let env = BTreeMap::from([
+            ("Path".into(), temp.path().display().to_string()),
+            ("pathext".into(), ".CMD;.EXE".into()),
+        ]);
+        let resolved = super::resolve_command_executable_for(&args, &env, true);
+        assert_eq!(
+            resolved[0],
+            temp.path()
+                .join(format!("{runtime}.cmd"))
+                .display()
+                .to_string()
+        );
+        assert_eq!(
+            &resolved[1..],
+            &args[1..],
+            "std::Command owns batch argument quoting"
+        );
+    }
+}

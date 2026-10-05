@@ -29,6 +29,7 @@ import {
   useTerminalSignalsStore,
   useUIStore,
 } from "../stores";
+import { ActorAcpControls } from "./headless/ActorAcpControls";
 import { HeadlessRuntimePanel } from "./headless/HeadlessRuntimePanel";
 import { WebModelRuntimePanel } from "./webModel/WebModelRuntimePanel";
 import {
@@ -161,7 +162,7 @@ export function AgentTab({
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
   const isWebModel = isWebModelRuntime(actor.runtime);
-  const canStartNewSession = actorSupportsNewSession(actor.runtime);
+  const canStartNewSession = actorSupportsNewSession(actor.runtime, actor.runtime_mode);
   const hasRuntimeResumeFailure = actorHasRuntimeResumeFailure(actor);
   const runtimeResumeError = String(actor.runtime_session_last_resume_error || "").trim();
   const canControl = !readOnly;
@@ -932,6 +933,14 @@ export function AgentTab({
                   readOnly={readOnly}
                 />
               ) : null}
+              {(actor.effective_runtime_mode || actor.runtime_mode) === "acp" && (
+                <ActorAcpControls
+                  groupId={groupId}
+                  actorId={actor.id}
+                  visible={isVisible}
+                  readOnly={readOnly}
+                />
+              )}
               {!isWebModel ? (
                 <div className="min-h-0 flex-1">
                   {resumeFailureNotice && !isRunning ? (

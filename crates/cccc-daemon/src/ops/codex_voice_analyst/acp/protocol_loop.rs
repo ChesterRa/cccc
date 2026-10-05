@@ -3,8 +3,9 @@ use super::events::{
     settle_turn, status_from_stop_reason,
 };
 use super::framing::{parse_frame, write_message};
+use super::interactions;
 use super::pending::PendingKind;
-use super::permissions::permission_response;
+use super::permissions::{pending_request, permission_response};
 use super::{
     AcpCommand, AnalystEvent, MANAGED_AGENT_DISCONNECTED_METHOD, PermissionPolicy, PromptCompletion,
 };
@@ -40,6 +41,7 @@ pub(super) async fn run(
     runtime: &'static str,
     permission_policy: PermissionPolicy,
     prompt_completion: PromptCompletion,
+    permissions: Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
 ) {
     let mut next_id = 1_u64;
     let mut pending: HashMap<u64, PendingKind> = HashMap::new();
@@ -47,12 +49,20 @@ pub(super) async fn run(
     let mut loading_request_id = None;
     let mut active: Option<ActiveTurn> = None;
     let mut cancelling_turn_id: Option<String> = None;
+    // Cancellation can reach this serial command loop just before its pending
+    // prompt. Retire exactly that input without sending it to the provider.
+    let mut cancelled_pending_input: Option<String> = None;
     let mut tool_calls = HashMap::<String, ToolCall>::new();
     let mut native_inputs = VecDeque::new();
     let settle_timer = tokio::time::sleep(Duration::from_secs(24 * 60 * 60));
     tokio::pin!(settle_timer);
     let mut deferred_settlement: Option<DeferredSettlement> = None;
     let terminal_error = loop {
+        if active.is_none()
+            && let Err(error) = expire_permissions(&stdin, &permissions, false).await
+        {
+            break error.to_string();
+        }
         tokio::select! {
             _ = &mut settle_timer, if deferred_settlement.is_some() => {
                 let settlement = deferred_settlement
@@ -109,6 +119,13 @@ pub(super) async fn run(
                         )));
                         continue;
                     }
+                    if cancelled_pending_input.as_deref() == Some(request.delegation_id.as_str()) {
+                        cancelled_pending_input = None;
+                        let _ = request.response.send(Err(io::Error::new(
+                            io::ErrorKind::Interrupted, "ACP pending input was cancelled",
+                        )));
+                        continue;
+                    }
                     if active.is_some() {
                         let _ = request.response.send(Err(io::Error::new(
                             io::ErrorKind::WouldBlock,
@@ -153,20 +170,33 @@ pub(super) async fn run(
                         }
                     }
                 }
-                Some(AcpCommand::Cancel { session_id: requested, response }) => {
+                Some(AcpCommand::Cancel { session_id: requested, delegation_id, response }) => {
                     let active_turn_id = active.as_ref().map(|turn| turn.turn_id.clone());
                     let result = if requested != session_id || session_id.is_empty() {
                         Err(io::Error::new(io::ErrorKind::InvalidInput, "ACP cancel targets a different session"))
+                    } else if active.is_none() && delegation_id.is_some() {
+                        cancelled_pending_input = delegation_id;
+                        Ok(None)
                     } else if active.is_none() {
                         Err(io::Error::new(io::ErrorKind::NotFound, "managed Agent has no active turn"))
+                    } else if delegation_id.as_ref().is_some_and(|expected| {
+                        !pending.values().any(|kind| matches!(kind,
+                            PendingKind::Prompt { turn_id, delegation_id, .. }
+                            if Some(turn_id) == active_turn_id.as_ref() && delegation_id == expected))
+                    }) {
+                        Err(io::Error::new(io::ErrorKind::InvalidInput, "ACP cancel targets a different pending input"))
                     } else {
+                        if let Err(error) = expire_permissions(&stdin,&permissions,true).await {
+                            let _ = response.send(Err(error));
+                            break "ACP pending approvals could not be cancelled".into();
+                        }
                         write_message(&stdin, json!({
                             "jsonrpc":"2.0", "method":"session/cancel",
                             "params":{"sessionId":session_id},
-                        })).await
+                        })).await.map(|()| active_turn_id.clone())
                     };
-                    if result.is_ok() {
-                        cancelling_turn_id = active_turn_id;
+                    if let Ok(Some(turn_id)) = &result {
+                        cancelling_turn_id = Some(turn_id.clone());
                     }
                     let failed = result.as_ref().err().map(ToString::to_string);
                     let _ = response.send(result);
@@ -183,6 +213,30 @@ pub(super) async fn run(
                     if let Err(error) = write_message(&stdin, json!({"jsonrpc":"2.0","id":id,"error":error})).await {
                         break error.to_string();
                     }
+                }
+                Some(AcpCommand::Permission { request_id, reply, response }) => {
+                    let request = permissions.lock().ok().and_then(|items|items.get(&request_id).cloned());
+                    let Some(request) = request else {
+                        let _ = response.send(Err(io::Error::new(io::ErrorKind::NotFound,"Permission request is no longer pending")));
+                        continue;
+                    };
+                    if request["_cccc_turn_id"].as_str() != active.as_ref().map(|turn| turn.turn_id.as_str()) || cancelling_turn_id.is_some() {
+                        let _ = response.send(Err(io::Error::new(io::ErrorKind::NotFound,"ACP interaction belongs to a retired turn")));
+                        continue;
+                    }
+                    let result = if request["method"] == "session/request_permission" {
+                        reply["allow"].as_bool().map(|allow| permission_response(&request, if allow { PermissionPolicy::AllowOnce } else { PermissionPolicy::Reject }).0).ok_or_else(||io::Error::new(io::ErrorKind::InvalidInput,"Tool permission requires boolean allow"))
+                    } else { interactions::response(&request,&reply) };
+                    let result = match result { Ok(result) => result, Err(error) => { let _ = response.send(Err(error)); continue; } };
+                    let result = write_message(&stdin, json!({"jsonrpc":"2.0","id":request["id"],"result":result})).await;
+                    let failed = result.is_err();
+                    if result.is_ok() {
+                        let still_waiting = if let Ok(mut items) = permissions.lock() { items.remove(&request_id); !items.is_empty() } else { false };
+                        let flags = if still_waiting { vec!["waitingOnApproval"] } else { vec![] };
+                        let _ = events.send(AnalystEvent {generation:generation.clone(),requested_delegation_id:None,message:json!({"method":"thread/status/changed","params":{"threadId":session_id,"status":{"type":"active","activeFlags":flags}}})});
+                    }
+                    let _ = response.send(result);
+                    if failed { break "ACP permission response could not be delivered".into(); }
                 }
                 Some(AcpCommand::ExternalStatus { session_id: observed, busy, error }) => {
                     if observed != session_id || session_id.is_empty() {
@@ -310,10 +364,55 @@ pub(super) async fn run(
                     Ok(message) => message,
                     Err(error) => break error.to_string(),
                 };
+                if prompt_completion == PromptCompletion::ResponseWithActivityReceipt
+                    && loading_request_id.is_none()
+                    && message.pointer("/params/_meta/isReplay").and_then(Value::as_bool) != Some(true)
+                    && ((message.pointer("/params/sessionId").and_then(Value::as_str) == Some(session_id.as_str())
+                        && (is_turn_activity(&message) || message["method"] == "session/request_permission"))
+                        || (interactions::is_cursor_interaction(&message,runtime) && active.is_some() && cancelling_turn_id.is_none()
+                            && message.pointer("/params/sessionId").and_then(Value::as_str).is_none_or(|id| id == session_id)))
+                {
+                    admit_activity_prompt(&mut pending,&mut active,&events,&generation,&session_id);
+                }
                 if let Some(method) = message.get("method").and_then(Value::as_str) {
                     if message.get("id").is_some() {
                         let id = message["id"].clone();
+                        if interactions::is_cursor_interaction(&message,runtime) {
+                            let live = active.is_some() && loading_request_id.is_none() && cancelling_turn_id.is_none()
+                                && message.pointer("/params/sessionId").and_then(Value::as_str).is_none_or(|id| id == session_id)
+                                && message.pointer("/params/_meta/isReplay").and_then(Value::as_bool) != Some(true);
+                            if !live {
+                                if let Err(error) = write_message(&stdin,json!({"jsonrpc":"2.0","id":id,"result":{"outcome":{"outcome":"cancelled"}}})).await { break error.to_string(); }
+                                continue;
+                            }
+                            if !interactions::valid_request(&message) {
+                                if let Err(error) = write_message(&stdin,json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Malformed Cursor user interaction"}})).await { break error.to_string(); }
+                                continue;
+                            }
+                            let (token, request) = pending_request(&message, &active.as_ref().expect("live Cursor interaction").turn_id);
+                            if let Ok(mut items) = permissions.lock() { items.insert(token,request); }
+                            let _ = events.send(AnalystEvent {generation:generation.clone(),requested_delegation_id:None,message:json!({"method":"thread/status/changed","params":{"threadId":session_id,"status":{"type":"active","activeFlags":["waitingOnApproval"]}}})});
+                            let _ = events.send(AnalystEvent {generation:generation.clone(),requested_delegation_id:None,message:json!({"method":"cccc/approvalRequired","params":{"threadId":session_id}})});
+                            continue;
+                        }
                         if method == "session/request_permission" {
+                            if active.is_none() || loading_request_id.is_some() || cancelling_turn_id.is_some()
+                                || message.pointer("/params/sessionId").and_then(Value::as_str) != Some(session_id.as_str())
+                                || message.pointer("/params/_meta/isReplay").and_then(Value::as_bool) == Some(true) {
+                                if let Err(error) = write_message(&stdin,json!({"jsonrpc":"2.0","id":id,"result":{"outcome":{"outcome":"cancelled"}}})).await { break error.to_string(); }
+                                continue;
+                            }
+                            if permission_policy == PermissionPolicy::Interactive {
+                                if active.is_none() || message.pointer("/params/sessionId").and_then(Value::as_str) != Some(session_id.as_str()) || message.pointer("/params/_meta/isReplay").and_then(Value::as_bool) == Some(true) {
+                                    if let Err(error) = write_message(&stdin,json!({"jsonrpc":"2.0","id":id,"result":{"outcome":{"outcome":"cancelled"}}})).await { break error.to_string(); }
+                                    continue;
+                                }
+                                let (token, permission) = pending_request(&message, &active.as_ref().expect("live ACP permission").turn_id);
+                                if let Ok(mut items) = permissions.lock() { items.insert(token, permission); }
+                                let _ = events.send(AnalystEvent {generation:generation.clone(),requested_delegation_id:None,message:json!({"method":"thread/status/changed","params":{"threadId":session_id,"status":{"type":"active","activeFlags":["waitingOnApproval"]}}})});
+                                let _ = events.send(AnalystEvent {generation:generation.clone(),requested_delegation_id:None,message:json!({"method":"cccc/approvalRequired","params":{"threadId":session_id}})});
+                                continue;
+                            }
                             let (result, allowed) =
                                 permission_response(&message, permission_policy);
                             if let Err(error) = write_message(&stdin, json!({"jsonrpc":"2.0","id":id,"result":result})).await {
@@ -414,7 +513,10 @@ pub(super) async fn run(
                     loading_request_id = None;
                 }
                 let result = if let Some(error) = message.get("error") {
-                    Err(io::Error::other(format!("ACP request failed: {error}")))
+                    Err(io::Error::other(format!(
+                        "ACP request failed: {}",
+                        error.get("message").and_then(Value::as_str).unwrap_or("Provider returned an error"),
+                    )))
                 } else {
                     Ok(message.get("result").cloned().unwrap_or(Value::Null))
                 };
@@ -463,9 +565,15 @@ pub(super) async fn run(
                         match result {
                             Err(error) if response.is_some() => {
                                 clear_unadmitted_turn(&mut active, &turn_id);
+                                let error = if cancelling_turn_id.as_deref() == Some(turn_id.as_str()) {
+                                    cancelling_turn_id = None;
+                                    io::Error::new(io::ErrorKind::Interrupted, "ACP pending input was cancelled")
+                                } else {
+                                    prompt_admission_error(error)
+                                };
                                 let _ = response
                                     .expect("guarded pending ACP response")
-                                    .send(Err(prompt_admission_error(error)));
+                                    .send(Err(error));
                                 continue;
                             }
                             outcome => {
@@ -535,6 +643,9 @@ pub(super) async fn run(
             }
         }
     };
+    if let Ok(mut items) = permissions.lock() {
+        items.clear();
+    }
     for (_, kind) in pending {
         match kind {
             PendingKind::Request { response, .. } => {
@@ -646,6 +757,67 @@ fn flush_notifications(
         handle_notification(
             method, &message, events, generation, session_id, active, tool_calls,
         );
+    }
+}
+
+async fn expire_permissions(
+    stdin: &Arc<Mutex<ChildStdin>>,
+    permissions: &Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
+    all: bool,
+) -> io::Result<()> {
+    let expired = {
+        let mut items = permissions
+            .lock()
+            .map_err(|_| io::Error::other("ACP permission state lock poisoned"))?;
+        let keys = items
+            .iter()
+            .filter(|(_, message)| all || message["_cccc_turn_id"].is_string())
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        keys.into_iter()
+            .filter_map(|key| items.remove(&key))
+            .collect::<Vec<_>>()
+    };
+    for message in expired {
+        write_message(stdin,json!({"jsonrpc":"2.0","id":message["id"],"result":{"outcome":{"outcome":"cancelled"}}})).await?;
+    }
+    Ok(())
+}
+
+fn admit_activity_prompt(
+    pending: &mut HashMap<u64, PendingKind>,
+    active: &mut Option<ActiveTurn>,
+    events: &broadcast::Sender<AnalystEvent>,
+    generation: &str,
+    session_id: &str,
+) {
+    let Some(turn) = active
+        .as_mut()
+        .filter(|turn| !turn.admitted && !turn.external)
+    else {
+        return;
+    };
+    let Some((response, delegation)) = pending.values_mut().find_map(|kind| match kind {
+        PendingKind::Prompt {
+            turn_id,
+            response,
+            delegation_id,
+            ..
+        } if turn_id == &turn.turn_id => Some((response, delegation_id.clone())),
+        _ => None,
+    }) else {
+        return;
+    };
+    turn.admitted = true;
+    publish_started(
+        events,
+        generation,
+        session_id,
+        &turn.turn_id,
+        Some(delegation),
+    );
+    if let Some(response) = response.take() {
+        let _ = response.send(Ok(turn.turn_id.clone()));
     }
 }
 

@@ -75,12 +75,25 @@ export function CodexVoiceAnalystSettings({
                       { value: "grok", label: RUNTIME_INFO.grok.label },
                       { value: "opencode", label: RUNTIME_INFO.opencode.label },
                       { value: "kilo", label: RUNTIME_INFO.kilo.label },
+                      { value: "antigravity", label: "Antigravity (ACP)" },
+                      { value: "copilot", label: "GitHub Copilot (ACP)" },
+                      { value: "devin", label: "Devin CLI (ACP)" },
+                      { value: "cursor", label: "Cursor (ACP)" },
                     ]}
                   />
                   <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
                     {t("codexVoiceAnalystSupportedRuntimesHint")}
                   </p>
                   <OpenCodeManagedModelHint runtime={form.settings.runtime} />
+                  {form.settings.runtime === "antigravity" && (
+                    <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                      {tActors("antigravityMode.hint")}
+                      <br />
+                      <code className="break-all">
+                        cccc setup --runtime antigravity --runtime-mode acp --login
+                      </code>
+                    </p>
+                  )}
                 </div>
 
                 <RuntimeCommandControl
@@ -125,8 +138,8 @@ export function CodexVoiceAnalystSettings({
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-3 border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between sm:px-6">
-        <div className="min-w-0 text-xs">
+      <div className="flex flex-col gap-3 border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] backdrop-blur-xl sm:px-6">
+        <div className="min-w-0 text-xs leading-5 break-words">
           {form.hasChanges ? (
             <p className="mb-1 font-medium text-[var(--color-text-primary)]">
               {t("codexVoiceUnsavedChanges")}
@@ -154,7 +167,7 @@ export function CodexVoiceAnalystSettings({
             </p>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           {form.hasChanges ? (
             <Button
               type="button"
@@ -177,7 +190,12 @@ export function CodexVoiceAnalystSettings({
                 : tActors("addToActorProfiles")}
             </Button>
           ) : null}
-          <Button type="button" onClick={() => void form.save()} disabled={form.saveDisabled}>
+          <Button
+            type="button"
+            className="w-full sm:w-auto"
+            onClick={() => void form.save()}
+            disabled={form.saveDisabled}
+          >
             {form.saving
               ? t("codexVoiceAnalystSettingsSaving")
               : controller.analyst

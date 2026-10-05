@@ -47,6 +47,8 @@ fn manual_runtime_has_explicit_batch_status() {
     let args = SetupArgs {
         runtime: None,
         path: ".".into(),
+        runtime_mode: "default".into(),
+        login: false,
     };
     let value = setup_one(
         &home,
@@ -83,6 +85,8 @@ fn assert_managed_setup(runtime: &str, actor_runtime: ActorRuntime) {
     let args = SetupArgs {
         runtime: Some(runtime.into()),
         path: ".".into(),
+        runtime_mode: "default".into(),
+        login: false,
     };
     let value = setup_one(
         &home,

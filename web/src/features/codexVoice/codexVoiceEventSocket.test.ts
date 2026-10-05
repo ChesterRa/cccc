@@ -31,9 +31,10 @@ it("preserves a server failure on close and records only safe close metadata", a
     },
   );
   const failed = vi.fn();
+  const onMessage = vi.fn();
   const client = new CodexVoiceEventSocket(
     { generation: "fixture-generation" } as CodexVoiceCallInfo,
-    vi.fn(),
+    onMessage,
     failed,
     () => false,
   );
@@ -41,6 +42,9 @@ it("preserves a server failure on close and records only safe close metadata", a
   const message = (value: unknown) => socket.onmessage?.({ data: JSON.stringify(value) });
   message({ type: "ready" });
   await ready;
+  expect(onMessage).toHaveBeenCalledExactlyOnceWith({ type: "ready" });
+  message({ type: "ready" });
+  expect(onMessage).toHaveBeenCalledTimes(1);
   message({ type: "error", code: "analyst_disconnected" });
   socket.onclose?.({ code: 1006, reason: "private close reason", wasClean: false });
   expect(failed).toHaveBeenCalledExactlyOnceWith("analyst_disconnected");

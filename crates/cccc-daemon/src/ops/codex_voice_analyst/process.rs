@@ -76,6 +76,34 @@ pub(super) fn spawn_piped(
     env: &BTreeMap<String, String>,
     label: &'static str,
 ) -> io::Result<(ChildOwner, ChildStdin, ChildStdout)> {
+    spawn_piped_with_logging(command, cwd, env, label, Some(true))
+}
+
+pub(super) fn spawn_piped_quiet(
+    command: &[String],
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+) -> io::Result<(ChildOwner, ChildStdin, ChildStdout)> {
+    // Authentication URLs and provider diagnostics can carry private data.
+    // Ordinary ACP launch must not write those lines to daemon logs.
+    spawn_piped_with_logging(command, cwd, env, "antigravity-acp", Some(false))
+}
+
+pub(super) fn spawn_piped_for_login(
+    command: &[String],
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+) -> io::Result<(ChildOwner, ChildStdin, ChildStdout)> {
+    spawn_piped_with_logging(command, cwd, env, "antigravity-acp", None)
+}
+
+fn spawn_piped_with_logging(
+    command: &[String],
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    label: &'static str,
+    log: Option<bool>,
+) -> io::Result<(ChildOwner, ChildStdin, ChildStdout)> {
     let (program, args) = command
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty managed command"))?;
@@ -86,7 +114,11 @@ pub(super) fn spawn_piped(
         .envs(env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(match log {
+            Some(true) => Stdio::piped(),
+            Some(false) => Stdio::null(),
+            None => Stdio::inherit(),
+        });
     let (mut child, process_tree) = OwnedProcessTree::spawn(&mut process)?;
     let stdin = child
         .stdin

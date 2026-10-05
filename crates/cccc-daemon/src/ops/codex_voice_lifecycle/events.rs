@@ -114,7 +114,10 @@ impl AnalystLifecycle {
             },
             latest_delegation_id: delegation_id,
             origin,
-            cancelling: false,
+            cancelling: state
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.cancelling),
             deltas: String::new(),
             completed_text: String::new(),
             result_overflowed: false,
@@ -237,6 +240,12 @@ impl AnalystLifecycle {
             turn_id: active.turn_id,
             delegation_id: active.latest_delegation_id,
             delegation_ids: active.delegation_ids,
+            error: bounded_error(
+                params["turn"]["error"]
+                    .as_str()
+                    .or_else(|| params["turn"]["error"]["message"].as_str())
+                    .unwrap_or_default(),
+            ),
             status,
             result,
             speakable: active.origin.speakable(),
@@ -302,4 +311,13 @@ pub(super) fn normalized_completion_status(
     } else {
         status.to_owned()
     }
+}
+
+// Retain only the provider's diagnostic message, never the raw RPC envelope.
+pub(super) fn bounded_error(message: &str) -> String {
+    let mut end = message.len().min(4096);
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    message[..end].to_owned()
 }

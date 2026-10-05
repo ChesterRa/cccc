@@ -1,7 +1,9 @@
+import { supportsAcpMode } from "../../../types";
+import { AcpRuntimeMode } from "../AcpRuntimeMode";
 import { isWebModelRuntime } from "../../../types";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ActorProfile, ActorProfileUsage, RUNTIME_INFO, SUPPORTED_RUNTIMES } from "../../../types";
+import { ActorProfile, ActorProfileUsage, RUNTIME_INFO } from "../../../types";
 import * as api from "../../../services/api";
 import { parsePrivateEnvSetText, parsePrivateEnvUnsetText } from "../../../utils/privateEnvInput";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../../utils/capabilityAutoload";
@@ -24,6 +26,7 @@ import { CapabilityPicker } from "../../CapabilityPicker";
 import { SelectCombobox } from "../../SelectCombobox";
 import { BodyPortal } from "../../ui/BodyPortal";
 import { formatRuntimeCommand } from "../runtimeProfileControlsModel";
+import { RuntimeSelector } from "../RuntimeSelector";
 
 interface ActorProfilesTabProps {
   isDark: boolean;
@@ -36,6 +39,7 @@ type EditorState = {
   revision: number;
   name: string;
   runtime: string;
+  runtimeMode: "default" | "acp";
   command: string;
   useDefaultCommand: boolean;
   submit: "enter" | "newline" | "none";
@@ -66,8 +70,6 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   custom: "",
 };
 
-const PROFILE_RUNTIME_OPTIONS = SUPPORTED_RUNTIMES;
-
 function defaultCommandForRuntime(runtime: string): string {
   const key = String(runtime || "").trim();
   return String(RUNTIME_DEFAULT_COMMANDS[key] || key || "").trim();
@@ -89,6 +91,7 @@ function buildEditor(profile?: ActorProfile | null): EditorState {
     revision: Number(profile?.revision || 0),
     name: String(profile?.name || ""),
     runtime,
+    runtimeMode: profile?.runtime_mode || "default",
     command,
     useDefaultCommand,
     submit: String(profile?.submit || "enter") as "enter" | "newline" | "none",
@@ -244,14 +247,11 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
           <div>
             <div>
               <label className={labelClass()}>{t("actorProfiles.runtime")}</label>
-              <SelectCombobox
-                items={[
-                  ...PROFILE_RUNTIME_OPTIONS.map((rt) => ({
-                    value: rt,
-                    label: RUNTIME_INFO[rt]?.label || rt,
-                  })),
-                ]}
+              <RuntimeSelector
                 value={editor.runtime}
+                runtimeMode={editor.runtimeMode}
+                allowUndetected
+                disabled={editorBusy}
                 onChange={(value) => {
                   const nextRuntime = String(value || "");
                   setEditor((prev) => {
@@ -259,6 +259,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                     return {
                       ...prev,
                       runtime: nextRuntime,
+                      runtimeMode: "default",
                       useDefaultCommand: supportsDefault ? prev.useDefaultCommand : false,
                       command: supportsDefault && prev.useDefaultCommand ? "" : prev.command,
                     };
@@ -266,11 +267,18 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                 }}
                 ariaLabel={t("actorProfiles.runtime")}
                 className={inputClass()}
-                searchable
               />
             </div>
           </div>
 
+          {supportsAcpMode(editor.runtime) && (
+            <AcpRuntimeMode
+              runtime={editor.runtime}
+              value={editor.runtimeMode}
+              onChange={(runtimeMode) => setEditor((prev) => ({ ...prev, runtimeMode }))}
+              disabled={editorBusy}
+            />
+          )}
           {!isWebModelRuntime(editor.runtime) && (
             <>
               <div>
@@ -757,6 +765,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         scope: profileScope,
         owner_id: ownerId,
         runtime: editor.runtime,
+        ...(supportsAcpMode(editor.runtime) ? { runtime_mode: editor.runtimeMode } : {}),
         command:
           isWebModelRuntime(editor.runtime) ||
           (editorSupportsDefaultCommand && editor.useDefaultCommand)

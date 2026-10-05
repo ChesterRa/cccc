@@ -4,6 +4,7 @@ import { StopIcon, TerminalIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import { RUNTIME_INFO } from "../../types";
 import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
+import { VoiceAcpConsole } from "./VoiceAcpConsole";
 import { VoiceAnalystTerminal } from "./VoiceAnalystTerminal";
 
 export function CodexVoiceConversationPane({
@@ -143,7 +144,9 @@ export function CodexVoiceAnalystPane({
               onClick={() => void controller.cancelInvestigation()}
             >
               <StopIcon size={14} />
-              {t("codexVoiceCancelInvestigation")}
+              {t(
+                analyst?.structured ? "actors:acpControls.cancel" : "codexVoiceCancelInvestigation",
+              )}
             </Button>
           ) : analyst ? (
             <Button
@@ -163,7 +166,8 @@ export function CodexVoiceAnalystPane({
         </div>
       </div>
 
-      {controller.analystWarning ? (
+      {controller.analystWarning &&
+      !(analyst?.structured && analyst.warning === "analyst_turn_failed" && analyst.last_error) ? (
         <div
           className="flex-none border-b border-amber-400/25 bg-amber-400/8 px-5 py-2.5 text-xs leading-5 text-amber-700 dark:text-amber-300"
           role="status"
@@ -173,7 +177,15 @@ export function CodexVoiceAnalystPane({
       ) : null}
 
       <div className="min-h-0 flex-1">
-        {analyst?.tui_ready ? (
+        {analyst?.structured ? (
+          <VoiceAcpConsole
+            key={analyst.generation}
+            analyst={analyst}
+            visible={terminalVisible}
+            call={controller.owned ? controller.call : null}
+            onAnalystSnapshot={controller.updateAnalystSnapshot}
+          />
+        ) : analyst?.tui_ready ? (
           <VoiceAnalystTerminal analyst={analyst} isVisible={terminalVisible} runtime={runtime} />
         ) : (
           <div className="flex h-full min-h-56 flex-col items-center justify-center px-8 text-center">

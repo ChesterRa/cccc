@@ -6,6 +6,7 @@ import {
   bindVoiceAnalystProfile,
   defaultAnalystRuntimeCommand,
   managedAnalystRuntimes,
+  normalizeVoiceAnalystSettings,
   voiceAnalystIdentityChanged,
 } from "./codexVoiceAnalystSettingsModel";
 
@@ -69,6 +70,41 @@ describe("Voice Analyst settings model", () => {
     expect(voiceAnalystIdentityChanged(loaded, loaded, "custom", [], false)).toBe(false);
   });
 
+  it("keeps Antigravity Voice on ACP and invalidates a changed model", () => {
+    expect(managedAnalystRuntimes.has("antigravity")).toBe(true);
+    expect(defaultAnalystRuntimeCommand("antigravity")).toBe("agy --dangerously-skip-permissions");
+    const loaded = normalizeVoiceAnalystSettings({ runtime: "antigravity", command: ["agy"] });
+    expect(loaded.runtime_mode).toBe("acp");
+    expect(loaded.command).toBe("agy");
+    expect(normalizeVoiceAnalystSettings({ runtime: "antigravity", command: [] }).command).toBe("");
+    expect(
+      voiceAnalystIdentityChanged(
+        { ...loaded, command: "agy --model=other" },
+        loaded,
+        "custom",
+        [],
+        false,
+      ),
+    ).toBe(true);
+    expect(voiceAnalystIdentityChanged(loaded, loaded, "custom", [], false)).toBe(false);
+  });
+
+  it.each(["copilot", "devin", "cursor"])(
+    "selects ACP and detects launch identity changes for %s Voice Analyst",
+    (runtime) => {
+      expect(managedAnalystRuntimes.has(runtime)).toBe(true);
+      const loaded = normalizeVoiceAnalystSettings({ runtime, command: [] });
+      expect(loaded.runtime_mode).toBe("acp");
+      expect(loaded.command).toBe("");
+      expect(defaultAnalystRuntimeCommand(runtime)).toContain(
+        runtime === "cursor" ? "cursor-agent" : runtime,
+      );
+      expect(
+        voiceAnalystIdentityChanged({ ...loaded, command: "changed" }, loaded, "custom", [], false),
+      ).toBe(true);
+      expect(voiceAnalystIdentityChanged(loaded, loaded, "custom", [], false)).toBe(false);
+    },
+  );
   it("keeps the narrower storage-identity boundary for non-Claude custom runtimes", () => {
     const loaded = {
       runtime: "opencode",

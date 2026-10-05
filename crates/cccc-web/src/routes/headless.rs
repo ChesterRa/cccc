@@ -1,4 +1,5 @@
 use super::realtime::event::{EventStream, StreamEvent};
+use axum::Json;
 use axum::Router;
 use axum::extract::{Extension, Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -46,6 +47,34 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/groups/{group_id}/codex/snapshot", get(snapshot))
         .route("/api/v1/groups/{group_id}/headless/stream", get(stream))
         .route("/api/v1/groups/{group_id}/codex/stream", get(stream))
+        .route(
+            "/api/v1/groups/{group_id}/actors/{actor_id}/headless/control",
+            get(control_state).post(control),
+        )
+}
+
+async fn control_state(
+    State(state): State<AppState>,
+    Path((group_id, actor_id)): Path<(String, String)>,
+) -> ApiResult {
+    call(
+        &state,
+        "headless_control_state",
+        object(json!({"group_id":group_id,"actor_id":actor_id,"by":"user"})),
+    )
+    .await
+}
+
+async fn control(
+    State(state): State<AppState>,
+    Path((group_id, actor_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> ApiResult {
+    let mut args = crate::api::body_object(body)?;
+    args.insert("group_id".into(), json!(group_id));
+    args.insert("actor_id".into(), json!(actor_id));
+    args.insert("by".into(), json!("user"));
+    call(&state, "headless_control", args).await
 }
 
 async fn snapshot(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {

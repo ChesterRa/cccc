@@ -183,6 +183,9 @@ impl CodexVoiceCall {
             VoiceDelegationAdmission::NativeInputPending => {
                 bail!("test caller cannot replay a pending native Runtime Voice input")
             }
+            VoiceDelegationAdmission::Queued { .. } => {
+                bail!("test caller must observe the queued ACP input through lifecycle events")
+            }
         };
         self.follow_analyst_turn(&turn).await;
         Ok(turn)

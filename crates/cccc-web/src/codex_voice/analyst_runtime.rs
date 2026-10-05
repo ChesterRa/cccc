@@ -10,6 +10,31 @@ impl AnalystSnapshot {
     }
 }
 
+impl AnalystSnapshot {
+    pub(super) fn complete(&mut self, status: &str, result: &str, error: &str) {
+        let invalidated = !self.reusable_for_call();
+        if !invalidated {
+            self.phase = "ready".into();
+            self.warning.clear();
+        }
+        self.last_result = result.trim().to_owned();
+        self.progress.clear();
+        self.last_error.clear();
+        if !matches!(status, "completed" | "cancelled") {
+            if !invalidated {
+                self.phase = "needs_attention".into();
+                self.warning = "analyst_turn_failed".into();
+            }
+            self.last_error = if error.trim().is_empty() {
+                status
+            } else {
+                error
+            }
+            .to_owned();
+        }
+    }
+}
+
 impl AnalystRuntime {
     pub(super) fn new(
         workdir: PathBuf,
@@ -27,6 +52,10 @@ impl AnalystRuntime {
                 phase: phase.to_owned(),
                 last_result: String::new(),
                 warning,
+                progress: String::new(),
+                last_error: String::new(),
+                manual_tasks: Vec::new(),
+                manual_task_id: None,
             }),
             monitor: StdMutex::new(None),
         }
@@ -62,6 +91,13 @@ impl AnalystRuntime {
             phase: snapshot.phase.clone(),
             last_result: snapshot.last_result.clone(),
             warning: snapshot.warning.clone(),
+            structured: self.analyst.structured_only(),
+            queued_inputs: self.analyst.queued_inputs(),
+            permissions: self.analyst.permissions(),
+            progress: snapshot.progress.clone(),
+            last_error: snapshot.last_error.clone(),
+            manual_tasks: snapshot.manual_tasks.clone(),
+            manual_task_id: snapshot.manual_task_id.clone(),
         }
     }
 
@@ -72,24 +108,16 @@ impl AnalystRuntime {
             .unwrap_or_else(|error| error.into_inner());
         snapshot.phase = "working".into();
         snapshot.warning.clear();
+        snapshot.progress.clear();
+        snapshot.last_error.clear();
+        snapshot.last_result.clear();
     }
 
-    pub(super) fn mark_ready(&self) {
-        let mut snapshot = self
-            .snapshot
+    pub(super) fn mark_completed(&self, status: &str, result: &str, error: &str) {
+        self.snapshot
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        snapshot.phase = "ready".into();
-    }
-
-    pub(super) fn mark_result(&self, result: &str) {
-        let mut snapshot = self
-            .snapshot
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        snapshot.phase = "ready".into();
-        snapshot.last_result = result.trim().to_owned();
-        snapshot.warning.clear();
+            .unwrap_or_else(|error| error.into_inner())
+            .complete(status, result, error);
     }
 
     pub(super) fn mark_failed(&self, warning: &str) {
@@ -99,6 +127,16 @@ impl AnalystRuntime {
             .unwrap_or_else(|error| error.into_inner());
         snapshot.phase = "needs_attention".into();
         snapshot.warning = warning.trim().to_owned();
+    }
+
+    pub(super) fn add_progress(&self, text: &str) {
+        let mut snapshot = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if snapshot.progress.len().saturating_add(text.len()) <= 32 * 1024 {
+            snapshot.progress.push_str(text);
+        }
     }
 }
 

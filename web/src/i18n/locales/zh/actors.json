@@ -49,6 +49,18 @@
   "leaveEmptyToUse": "留空则使用：",
   "aiRuntime": "AI 运行时",
   "notInstalled": "（未安装）",
+  "runtimeDetection": {
+    "missingRuntime": "未检测到 {{runtime}}。请在运行 CCCC 的机器上安装后重新检测。",
+    "detected": "已检测到",
+    "missing": "未检测到",
+    "checking": "检测中…",
+    "failed": "检测失败，请重试。",
+    "unknown": "尚未检测",
+    "web": "无需本机 CLI",
+    "custom": "自行配置",
+    "recheck": "重新检测",
+    "scope": "检测运行 CCCC 的机器。检测到组件不代表已登录或可以执行任务。"
+  },
   "manualMcpRequired": "需要手动安装 MCP",
   "customCommandHint": "请在 <1>高级选项 → 命令覆盖</1> 中提供运行时命令。",
   "configureMcpStdio": "配置运行时添加名为",
@@ -263,6 +275,8 @@
   "headlessTraceLive": "实时",
   "headlessTraceStreaming": "流式输出",
   "headlessTraceRecent": "最近",
+  "headlessTurnFailed": "模型请求失败",
+  "headlessTurnFailedFallback": "模型运行时报告了错误。",
   "headlessControlQueued": "控制任务已排队",
   "headlessControlStarted": "正在处理控制任务",
   "headlessControlRequeued": "控制任务正在重试",
@@ -287,5 +301,54 @@
   "webModelActorBoundConnectorHint": "全局 Web Model 设置管理共享登录和一个连接器。保存后正常启动此 Actor，CCCC 会先自动连接对话，再投递任务。",
   "webModelProfileHint": "Web 模型配置共享运行时与能力设置，每个 Actor 独立配置自己的对话。",
   "saveAndApply": "保存并应用",
-  "applyWebModelTargetConfirm": "要为“{{label}}”应用新对话吗？CCCC 将只停止此 Actor，保存设置，待新连接保存成功后再启动。应用失败时会保持停止，并保留这里的草稿。"
+  "applyWebModelTargetConfirm": "要为“{{label}}”应用新对话吗？CCCC 将只停止此 Actor，保存设置，待新连接保存成功后再启动。应用失败时会保持停止，并保留这里的草稿。",
+  "antigravityMode": {
+    "label": "Antigravity 模式",
+    "tui": "TUI · 原生终端",
+    "acp": "ACP · 结构化工作区",
+    "hint": "官方 ACP 使用独立的 CCCC 登录，没有终端。默认命令启用 YOLO；未开启权限跳过的自定义命令需要在此批准。忙时输入会排队。请先在终端完成一次 ACP 登录。"
+  },
+  "acpControls": {
+    "turnFailed": "Analyst 任务失败。",
+    "partialOutput": "以下是尚未完成的部分输出。",
+    "allow": "允许一次",
+    "deny": "拒绝",
+    "permission": "需要确认权限",
+    "send": "发送",
+    "cancel": "取消当前任务及排队输入",
+    "input": "追加指令",
+    "queued": "排队输入：{{count}}",
+    "hint": "ACP 没有原生终端。输入将在当前任务结束后执行。",
+    "error": "操作失败，已保留输入内容。",
+    "stopped": "启动此 Actor 后即可使用 ACP 控件。",
+    "cancelCurrent": "取消当前任务",
+    "question": "需要回答",
+    "plan": "确认计划",
+    "answer": "提交回答",
+    "skip": "跳过问题",
+    "acceptPlan": "接受计划",
+    "rejectPlan": "拒绝计划",
+    "investigations": "手动调查记录",
+    "investigationInput": "输入调查任务或后续要求",
+    "submitInvestigation": "提交调查",
+    "currentCallHint": "提交给 Analyst；结果用于当前通话。忙时排队，Ctrl / ⌘ + Enter 提交。",
+    "localHint": "提交给 Analyst；结果仅显示在此处。忙时排队，Ctrl / ⌘ + Enter 提交。",
+    "localResult": "结果仅显示在此处。",
+    "callResult": "结果用于本次通话；不代表已经播报。",
+    "endedCallResult": "原通话已结束或不在此页面控制，结果仍可在此查看。",
+    "taskStatus": {
+      "queued": "已排队",
+      "working": "调查中",
+      "completed": "已完成",
+      "failed": "未完成",
+      "cancelled": "已取消",
+      "unconfirmed": "未确认"
+    },
+    "retryScopeHint": "通话状态已变更。重试保留原提交对象；编辑内容后可作为新任务提交。",
+    "outcomeUnconfirmed": "无法确认这项任务的最终结果。"
+  },
+  "acpMode": {
+    "label": "{{runtime}} 模式",
+    "hint": "ACP 使用本机 CLI 登录和独立的受管会话。没有原生终端；输入在当前任务结束后执行。"
+  }
 }

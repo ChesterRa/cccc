@@ -10,7 +10,11 @@ import {
   type CodexVoiceReadiness,
 } from "../../services/api";
 import { CodexVoiceBrowserSession, type CodexVoicePhase } from "./codexVoiceSession";
-import { codexVoiceErrorText, codexVoiceWarningText } from "./codexVoiceControllerText";
+import {
+  codexVoiceErrorText,
+  codexVoiceReadinessProblem,
+  codexVoiceWarningText,
+} from "./codexVoiceControllerText";
 import { useCodexVoicePolling } from "./useCodexVoicePolling";
 import { useCodexVoicePreferencesState } from "./useCodexVoicePreferencesState";
 import { useCodexVoiceWindowLifecycle } from "./useCodexVoiceWindowLifecycle";
@@ -42,6 +46,20 @@ export function useCodexVoiceSessionController(enabled = true) {
   const { preferences, supportedVoices, updatePreferences, acceptSupportedVoices } =
     useCodexVoicePreferencesState();
   const [readiness, setReadiness] = useState<CodexVoiceReadiness | null>(null);
+  const analystWorking =
+    analyst?.phase === "working" ||
+    Boolean(
+      analyst?.structured &&
+      ((analyst.queued_inputs || 0) > 0 ||
+        analyst.manual_tasks?.some((task) => ["queued", "working"].includes(task.status))),
+    );
+
+  const updateAnalystSnapshot = useCallback((next: CodexVoiceAnalystInfo) => {
+    if (!mountedRef.current) return;
+    const session = sessionRef.current;
+    if (session) session.updateAnalystSnapshot(next);
+    else setAnalyst((current) => (current?.generation === next.generation ? next : current));
+  }, []);
 
   const refresh = useCallback(
     async (showChecking = true) => {
@@ -80,14 +98,10 @@ export function useCodexVoiceSessionController(enabled = true) {
       setError(t("codexVoiceExistingCallStartBlocked"));
       return;
     }
-    if (readiness && !readiness.analyst_runtime_available) {
+    const readinessProblem = codexVoiceReadinessProblem(t, readiness);
+    if (readinessProblem) {
       setPhase("failed");
-      setError(t("codexVoiceAnalystRuntimeMissing", { runtime: readiness.analyst_runtime }));
-      return;
-    }
-    if (readiness && !readiness.realtime_credentials_available) {
-      setPhase("failed");
-      setError(t("codexVoiceCodexLoginRequired"));
+      setError(readinessProblem);
       return;
     }
 
@@ -177,7 +191,7 @@ export function useCodexVoiceSessionController(enabled = true) {
   }, [call, t]);
 
   const cancelInvestigation = useCallback(async () => {
-    if (!analyst || analyst.phase !== "working") return false;
+    if (!analyst || !analystWorking) return false;
     setError("");
     if (sessionRef.current?.cancelInvestigation()) return true;
     const response = await cancelCodexVoiceAnalyst(analyst.generation);
@@ -191,7 +205,7 @@ export function useCodexVoiceSessionController(enabled = true) {
       return false;
     }
     return true;
-  }, [analyst, refresh, t]);
+  }, [analyst, analystWorking, refresh, t]);
 
   const toggleMicrophone = useCallback(() => {
     const next = !microphoneMuted;
@@ -204,7 +218,7 @@ export function useCodexVoiceSessionController(enabled = true) {
   }, []);
 
   const startNewAnalyst = useCallback(async () => {
-    if (!analyst || call || analyst.phase === "working") return false;
+    if (!analyst || call || analystWorking) return false;
     setError("");
     const response = await resetCodexVoiceAnalyst(analyst.generation);
     if (!mountedRef.current) return false;
@@ -214,7 +228,7 @@ export function useCodexVoiceSessionController(enabled = true) {
     }
     setAnalyst(response.result.analyst);
     return true;
-  }, [analyst, call, t]);
+  }, [analyst, analystWorking, call, t]);
 
   const clearError = useCallback(() => {
     setError("");
@@ -240,7 +254,7 @@ export function useCodexVoiceSessionController(enabled = true) {
       isStarting: phase === "preparing" || phase === "connecting",
       isEngaged: call !== null || owned || ENGAGED_PHASES.includes(phase),
       externalCall: call !== null && !owned,
-      analystWorking: analyst?.phase === "working",
+      analystWorking,
       analystWarning: analyst?.warning ? codexVoiceWarningText(t, analyst.warning) : "",
       refresh,
       readiness,
@@ -251,10 +265,12 @@ export function useCodexVoiceSessionController(enabled = true) {
       resumeAudio,
       startNewAnalyst,
       updatePreferences,
+      updateAnalystSnapshot,
       clearError,
     }),
     [
       analyst,
+      analystWorking,
       conversation,
       notificationPaused,
       call,
@@ -277,6 +293,7 @@ export function useCodexVoiceSessionController(enabled = true) {
       supportedVoices,
       toggleMicrophone,
       updatePreferences,
+      updateAnalystSnapshot,
       t,
     ],
   );

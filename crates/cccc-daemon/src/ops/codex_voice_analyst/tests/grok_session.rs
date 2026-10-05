@@ -22,6 +22,98 @@ mod socket_fixture;
 const FAKE_SESSION_ID: &str = "01a0623c-19b3-7ec3-b777-95e24279ec67";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grok_launch_applies_explicit_model_and_effort_after_new_and_resume() {
+    let temp = socket_fixture::tempdir();
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let executable = temp.path().join("grok");
+    std::fs::write(&executable, r#"#!/usr/bin/env python3
+import json, signal, sys
+from pathlib import Path
+if 'leader' in sys.argv:
+    while True: signal.pause()
+for line in sys.stdin:
+    r=json.loads(line); p=r.get('params', {}); method=r['method']
+    with open(Path.cwd()/'requests.jsonl','a') as f: f.write(json.dumps(r)+'\n')
+    if method == 'initialize': result={'protocolVersion':1,'agentCapabilities':{'loadSession':True}}
+    elif method in ['session/new','session/load']: result={'sessionId':'fixture-session'}
+    elif method == 'session/set_config_option' and p['value'] == 'unavailable':
+        print(json.dumps({'jsonrpc':'2.0','id':r['id'],'error':{'code':-32602,'message':'Unavailable model'}}),flush=True)
+        continue
+    else: result={}
+    print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}),flush=True)
+"#).expect("fixture");
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).expect("mode");
+    for resume in [None, Some("fixture-session")] {
+        let command = vec![
+            executable.to_string_lossy().into_owned(),
+            "--model=grok-4.7-build-fast".into(),
+            "--reasoning-effort".into(),
+            "medium".into(),
+        ];
+        let launched = launch(
+            &home,
+            temp.path(),
+            &command,
+            &BTreeMap::new(),
+            resume,
+            "profile",
+        )
+        .await
+        .expect("launch");
+        stop(launched).await;
+        let requests =
+            std::fs::read_to_string(temp.path().join("requests.jsonl")).expect("requests");
+        let changes: Vec<Value> = requests
+            .lines()
+            .map(|s| serde_json::from_str::<Value>(s).expect("json"))
+            .filter(|r| r["method"] == "session/set_config_option")
+            .collect();
+        assert_eq!(changes.len(), 2);
+        assert_eq!(
+            changes[0]["params"],
+            json!({"sessionId":"fixture-session","configId":"model","value":"grok-4.7-build-fast"})
+        );
+        assert_eq!(
+            changes[1]["params"],
+            json!({"sessionId":"fixture-session","configId":"reasoning_effort","value":"medium"})
+        );
+        std::fs::remove_file(temp.path().join("requests.jsonl")).expect("clear fixture requests");
+    }
+    let command = vec![executable.to_string_lossy().into_owned()];
+    let launched = launch(
+        &home,
+        temp.path(),
+        &command,
+        &BTreeMap::new(),
+        Some("fixture-session"),
+        "unchanged",
+    )
+    .await
+    .expect("unconfigured launch");
+    stop(launched).await;
+    let requests = std::fs::read_to_string(temp.path().join("requests.jsonl")).expect("requests");
+    assert!(!requests.contains("session/set_config_option"));
+    let command = vec![
+        executable.to_string_lossy().into_owned(),
+        "-m".into(),
+        "unavailable".into(),
+    ];
+    assert!(
+        launch(
+            &home,
+            temp.path(),
+            &command,
+            &BTreeMap::new(),
+            None,
+            "rejected"
+        )
+        .await
+        .is_err()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grok_live_echo_admits_long_turns_before_the_completion_rpc() {
     let temp = socket_fixture::tempdir();
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -773,6 +865,7 @@ case " $* " in
     ;;
 esac
 while IFS= read -r line; do
+  rpc_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
       printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentCapabilities":{{"loadSession":true}}}}}}'
@@ -785,11 +878,14 @@ while IFS= read -r line; do
       case "$line" in *'"mcpServers":[]'*) ;; *) exit 9 ;; esac
       printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"{FAKE_SESSION_ID}"}}}}'
       ;;
+    *'"method":"session/set_config_option"'*)
+      printf '%s\n' '{{"jsonrpc":"2.0","id":'"$rpc_id"',"result":{{}}}}'
+      ;;
     *'"method":"session/prompt"'*)
       printf '%s\n' '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"{FAKE_SESSION_ID}","update":{{"sessionUpdate":"user_message_chunk","content":{{"type":"text","text":"probe"}}}}}}}}'
       printf '%s\n' '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"{FAKE_SESSION_ID}","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"fake result"}}}}}}}}'
       printf '%s\n' '{{"jsonrpc":"2.0","method":"_x.ai/session_notification","params":{{"sessionId":"{FAKE_SESSION_ID}","update":{{"sessionUpdate":"turn_completed","stopReason":"end_turn"}}}}}}'
-      printf '%s\n' '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn"}}}}'
+      printf '%s\n' '{{"jsonrpc":"2.0","id":'"$rpc_id"',"result":{{"stopReason":"end_turn"}}}}'
       ;;
   esac
 done

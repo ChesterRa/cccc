@@ -1,4 +1,4 @@
-use cccc_contracts::ActorRuntime;
+use cccc_contracts::{ActorRuntime, RuntimeMode};
 use cccc_core::HomeLayout;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -8,15 +8,22 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 mod acp;
+mod antigravity;
 mod claude;
 mod control;
 mod grok;
 mod launch;
+pub(crate) use launch::ANALYST_INSTRUCTIONS;
+mod launch_antigravity;
+mod native_acp;
+pub(crate) use native_acp::{name as native_acp_name, valid_id as valid_native_acp_id};
 mod launch_claude;
 mod launch_codex;
 mod launch_command;
 mod launch_grok;
+mod launch_native_acp;
 mod launch_opencode;
+pub(crate) use launch_antigravity::login_antigravity;
 pub(crate) mod lifecycle_timing;
 mod native_input;
 mod opencode;
@@ -61,6 +68,7 @@ const CODEX_TURN_CORRELATION_KEY: &str = "cccc_turn_correlation_id";
 pub struct LaunchConfig {
     pub workdir: PathBuf,
     pub runtime: ActorRuntime,
+    pub runtime_mode: RuntimeMode,
     pub command: Vec<String>,
     pub environment: BTreeMap<String, String>,
     pub resume_thread_id: Option<String>,
@@ -72,6 +80,7 @@ pub(crate) struct ActorLaunchConfig {
     pub(crate) group_id: String,
     pub(crate) actor_id: String,
     pub(crate) runtime: ActorRuntime,
+    pub(crate) runtime_mode: RuntimeMode,
     pub(crate) command: Vec<String>,
     pub(crate) environment: BTreeMap<String, String>,
 }
@@ -81,6 +90,7 @@ impl LaunchConfig {
         Self {
             workdir: workdir.into(),
             runtime: ActorRuntime::Codex,
+            runtime_mode: RuntimeMode::Default,
             command: Vec::new(),
             environment: BTreeMap::new(),
             resume_thread_id: None,

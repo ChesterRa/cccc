@@ -94,6 +94,7 @@ async fn shared_actor_and_analyst(runtime: ActorRuntime, prefix: &str) {
                         AnalystSession::launch_actor(
                             &home,
                             ActorLaunchConfig {
+                                runtime_mode: cccc_contracts::RuntimeMode::Default,
                                 workdir: root.clone(),
                                 group_id: group.group_id.clone(),
                                 actor_id: "kilo-test".into(),
@@ -108,6 +109,7 @@ async fn shared_actor_and_analyst(runtime: ActorRuntime, prefix: &str) {
                         AnalystSession::launch(
                             &home,
                             LaunchConfig {
+                                runtime_mode: cccc_contracts::RuntimeMode::Default,
                                 workdir: root.clone(),
                                 runtime,
                                 command: command.clone(),

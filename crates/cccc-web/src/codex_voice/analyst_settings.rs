@@ -92,7 +92,8 @@ impl CodexVoiceSessions {
         let previous_runtime =
             resolved_previous_runtime.unwrap_or_else(|| previous.launch_runtime());
 
-        let materialized = previous.analyst.tui_ready();
+        let materialized = (previous.analyst.tui_ready() || previous.analyst.structured_only())
+            && previous.analyst.resumable();
         let identity_changed = cccc_core::codex_voice_settings::runtime_identity_changed(
             &previous_runtime,
             &candidate_runtime,

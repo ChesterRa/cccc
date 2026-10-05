@@ -30,6 +30,25 @@ const SUPPORTED: &[&str] = &[
 pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
     let executable = public_executable()?;
     let runtime = args.runtime.as_deref().map(str::trim).unwrap_or("");
+    if args.runtime_mode == "acp" || args.login {
+        if runtime != "antigravity" || args.runtime_mode != "acp" {
+            bail!(
+                "--runtime-mode acp and --login require --runtime antigravity --runtime-mode acp"
+            );
+        }
+        let install = cccc_daemon::antigravity_acp_setup::ensure(home)?;
+        if args.login {
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(cccc_daemon::antigravity_acp_setup::login(home))?;
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &json!({"runtime":"antigravity","runtime_mode":"acp","status":if args.login {"authenticated"} else {"installed"},"version":cccc_daemon::antigravity_acp_setup::VERSION,"provider_home":install.provider_home,"login_command":"cccc setup --runtime antigravity --runtime-mode acp --login"})
+            )?
+        );
+        return Ok(());
+    }
     let config = json!({
         "mcpServers":{"cccc":{"command":executable,"args":["mcp"],"env":{"CCCC_HOME":home.root()}}}
     });

@@ -8,7 +8,13 @@ pub fn runtime_actor_fields(
     group_id: &str,
     running: bool,
 ) -> Map<String, Value> {
-    let runner_effective = if super::actor_runtime::is_structured(actor) {
+    let actual = super::local_headless::structured_state(group_id, &actor.id);
+    let retained_pty = cccc_runtime::status(group_id, &actor.id).is_ok_and(|status| status.running);
+    let runner_effective = if let Some(actual) = actual.as_ref() {
+        actual["runner"].as_str().unwrap_or("pty")
+    } else if retained_pty {
+        "pty"
+    } else if super::actor_runtime::is_structured(actor) {
         "headless"
     } else {
         "pty"

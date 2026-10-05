@@ -89,6 +89,9 @@ impl Session {
     }
 
     pub(super) fn reattach_viewer(&self) -> io::Result<()> {
+        if self.managed.structured_only() {
+            return Ok(());
+        }
         let _guard = self.stop_lock.lock().map_err(|_| super::poisoned())?;
         if !self.running() {
             return Err(io::Error::new(

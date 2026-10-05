@@ -609,6 +609,7 @@ dependencies = [
  "url",
  "uuid",
  "win32job",
+ "zip",
 ]
 
 [[package]]

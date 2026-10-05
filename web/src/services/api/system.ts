@@ -28,7 +28,39 @@ export async function fetchPing(options?: { includeHome?: boolean }) {
 }
 
 export async function fetchRuntimes() {
-  return apiJson<{ runtimes: RuntimeInfo[]; available: string[] }>("/api/v1/runtimes");
+  const response = await apiJson<unknown>("/api/v1/runtimes");
+  if (!response.ok) return response;
+  const result = asRecord(response.result);
+  if (
+    !Array.isArray(result?.runtimes) ||
+    !result.runtimes.every(isRuntimeInfo) ||
+    !Array.isArray(result.available) ||
+    !result.available.every((name) => typeof name === "string")
+  ) {
+    return invalidResponse<{ runtimes: RuntimeInfo[]; available: string[] }>(
+      "Invalid Runtime detection response",
+    );
+  }
+  return { ok: true as const, result: { runtimes: result.runtimes, available: result.available } };
+}
+
+function isRuntimeInfo(value: unknown): value is RuntimeInfo {
+  const info = asRecord(value);
+  if (
+    !info ||
+    typeof info.name !== "string" ||
+    typeof info.display_name !== "string" ||
+    typeof info.available !== "boolean"
+  )
+    return false;
+  if (info.mode_availability === undefined) return true;
+  const modes = asRecord(info.mode_availability);
+  return (
+    !!modes &&
+    Object.entries(modes).every(
+      ([mode, available]) => ["default", "acp"].includes(mode) && typeof available === "boolean",
+    )
+  );
 }
 
 export async function fetchDirSuggestions() {

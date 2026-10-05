@@ -19,6 +19,8 @@ const MAX_TURN_EVENTS: usize = 20;
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
         "headless_status" => Operation::new(Read, headless_status),
+        "headless_control_state" => Operation::new(Read, control_state),
+        "headless_control" => Operation::new(Write, control),
         "headless_set_status" => Operation::new(Write, headless_set_status),
         "web_model_delivery_preferences_get" => Operation::new(Read, delivery_preferences_get),
         "web_model_delivery_preferences_update" => {
@@ -30,6 +32,67 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "runtime_complete_turn" => Operation::new(Write, complete_turn),
         _ => return None,
     })
+}
+
+fn control_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let (group, actor_id) = group_actor(home, request)?;
+    actor(&group, &actor_id)?;
+    object(json!({"state":super::local_headless::structured_state(&group.group_id,&actor_id)}))
+}
+
+fn control(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    if string_arg(request, "by").as_deref() != Some("user") {
+        return Err(OpError::new(
+            "permission_denied",
+            "Runtime permission and cancel controls require the user",
+        ));
+    }
+    let (group, actor_id) = group_actor(home, request)?;
+    actor(&group, &actor_id)?;
+    let generation = required_arg(request, "generation")?;
+    match required_arg(request, "action")?.as_str() {
+        "permission" => {
+            let request_id = required_arg(request, "request_id")?;
+            let allow = request
+                .args
+                .get("allow")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| OpError::new("invalid_args", "allow must be a boolean"))?;
+            super::local_headless::respond_permission(
+                &group.group_id,
+                &actor_id,
+                &generation,
+                &request_id,
+                allow,
+            )
+            .map_err(OpError::io)?;
+            object(json!({"responded":true}))
+        }
+        "interaction" => {
+            let request_id = required_arg(request, "request_id")?;
+            let reply = request
+                .args
+                .get("response")
+                .cloned()
+                .ok_or_else(|| OpError::new("invalid_args", "response is required"))?;
+            super::local_headless::respond_interaction(
+                &group.group_id,
+                &actor_id,
+                &generation,
+                &request_id,
+                reply,
+            )
+            .map_err(OpError::io)?;
+            object(json!({"responded":true}))
+        }
+        "cancel" => object(
+            json!({"cancelled":super::local_headless::cancel_turn(&group.group_id,&actor_id,&generation).map_err(OpError::io)?}),
+        ),
+        _ => Err(OpError::new(
+            "invalid_action",
+            "Expected permission, interaction or cancel",
+        )),
+    }
 }
 
 fn delivery_preference(group: &GroupDoc, actor_id: &str) -> Value {

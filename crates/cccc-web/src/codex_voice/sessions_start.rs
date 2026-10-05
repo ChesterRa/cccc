@@ -109,7 +109,7 @@ impl CodexVoiceSessions {
                     );
                     analyst.start_monitor(home.clone());
                     if let Err(error) =
-                        persistence::persist_analyst(home, &analyst, analyst.analyst.tui_ready())
+                        persistence::persist_analyst(home, &analyst, analyst.analyst.tui_ready() || analyst.analyst.structured_only())
                     {
                         analyst.stop_terminal();
                         return match analyst.analyst.shutdown().await {
@@ -218,6 +218,89 @@ impl CodexVoiceSessions {
             .cloned()
             .ok_or_else(|| anyhow!("Voice Analyst is no longer active"))
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn structured_control(
+        &self,
+        generation: &str,
+        action: &str,
+        input_id: &str,
+        call_generation: Option<&str>,
+        text: &str,
+        request_id: &str,
+        allow: bool,
+        response: serde_json::Value,
+    ) -> Result<()> {
+        let analyst = self.require_analyst(generation).await?;
+        if !analyst.analyst.structured_only() {
+            bail!("This Analyst uses its native terminal");
+        }
+        match action {
+            "input" => {
+                // Serialize binding and admission against call stop/replacement.
+                // Never infer a call from whichever microphone session happens
+                // to be active when a stale console request arrives.
+                let state = self.state.lock().await;
+                if state
+                    .analyst
+                    .as_ref()
+                    .is_none_or(|current| !Arc::ptr_eq(current, &analyst))
+                {
+                    bail!("Voice Analyst is no longer active");
+                }
+                let call = if let Some(generation) = call_generation {
+                    Some(
+                        state
+                            .active
+                            .as_ref()
+                            .filter(|session| {
+                                session.call.generation() == generation
+                                    && session.info().connected
+                                    && session
+                                        .analyst
+                                        .as_ref()
+                                        .is_some_and(|current| Arc::ptr_eq(current, &analyst))
+                            })
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "The original Voice call has ended or does not own this Analyst"
+                                )
+                            })?,
+                    )
+                } else {
+                    None
+                };
+                let id = format!("manual-input:{input_id}");
+                let text = text.trim();
+                let newly_registered = analyst
+                    .register_manual_task(&id, text, call_generation)
+                    .await?;
+                if newly_registered || !analyst.analyst.input_was_admitted(&id).await {
+                    let input = call
+                        .and_then(|session| session.call.application_context())
+                        .map_or_else(|| text.to_owned(), |context| context.analyst_input(text));
+                    if let Err(error) = analyst.analyst.submit_input(&id, &input).await {
+                        analyst.remove_unadmitted_manual_task(&id);
+                        return Err(error);
+                    }
+                }
+            }
+            "permission" => {
+                analyst
+                    .analyst
+                    .respond_permission(generation, request_id, allow)
+                    .await?
+            }
+            "interaction" => {
+                analyst
+                    .analyst
+                    .respond_interaction(generation, request_id, response)
+                    .await?
+            }
+            _ => bail!("Expected input, permission or interaction"),
+        }
+        Ok(())
+    }
 }
 
 fn with_authoritative_busy(mut info: AnalystInfo, busy: bool) -> AnalystInfo {
@@ -264,6 +347,13 @@ mod current_tests {
 
     fn info(phase: &str) -> AnalystInfo {
         AnalystInfo {
+            last_error: String::new(),
+            manual_task_id: None,
+            manual_tasks: vec![],
+            structured: false,
+            queued_inputs: 0,
+            permissions: vec![],
+            progress: String::new(),
             generation: "analyst-1".into(),
             tui_ready: true,
             phase: phase.into(),

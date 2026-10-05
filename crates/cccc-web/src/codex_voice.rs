@@ -12,10 +12,13 @@ use tokio::task::JoinHandle;
 
 use crate::ledger_event_hub::LedgerEventHub;
 
+#[cfg(all(test, unix))]
+mod acp_regression_tests;
 mod active_session;
 mod analyst_events;
 mod analyst_runtime;
 mod analyst_settings;
+mod analyst_tasks;
 mod analyst_terminal;
 mod notifications;
 mod persistence;
@@ -49,6 +52,27 @@ pub(crate) struct AnalystInfo {
     pub phase: String,
     pub last_result: String,
     pub warning: String,
+    pub structured: bool,
+    pub queued_inputs: usize,
+    pub permissions: Vec<serde_json::Value>,
+    pub progress: String,
+    pub last_error: String,
+    pub manual_tasks: Vec<ManualAnalystTask>,
+    pub manual_task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct ManualAnalystTask {
+    pub id: String,
+    pub text: String,
+    pub call_generation: Option<String>,
+    pub status: String,
+    pub result: String,
+    pub error: String,
+    #[serde(skip)]
+    turn_id: String,
+    #[serde(skip)]
+    projected: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +97,10 @@ struct AnalystSnapshot {
     phase: String,
     last_result: String,
     warning: String,
+    progress: String,
+    last_error: String,
+    manual_tasks: Vec<ManualAnalystTask>,
+    manual_task_id: Option<String>,
 }
 
 pub(crate) struct AnalystRuntime {

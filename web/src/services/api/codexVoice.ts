@@ -55,9 +55,25 @@ export type CodexVoiceCallInfo = {
 export type CodexVoiceAnalystInfo = {
   generation: string;
   tui_ready: boolean;
+  structured?: boolean;
+  queued_inputs?: number;
+  permissions?: AcpPermission[];
+  progress?: string;
+  last_error?: string;
+  manual_task_id?: string | null;
+  manual_tasks?: VoiceManualInvestigation[];
   phase: "waiting" | "ready" | "working" | "needs_attention";
   last_result: string;
   warning: string;
+};
+
+export type VoiceManualInvestigation = {
+  id: string;
+  text: string;
+  call_generation: string | null;
+  status: string;
+  result: string;
+  error: string;
 };
 
 export type CodexVoiceActiveResult = {
@@ -72,6 +88,7 @@ export type CodexVoiceReadiness = {
   supported_modes: VoiceCallMode[];
   analyst_runtime: string;
   analyst_runtime_available: boolean;
+  analyst_runtime_setup_required?: boolean;
   realtime_credentials_available: boolean;
 };
 
@@ -84,6 +101,7 @@ export type CodexVoiceStartResult = {
 
 export type CodexVoiceAnalystSettings = {
   runtime?: string;
+  runtime_mode?: "default" | "acp";
   command?: string[];
   profile_id?: string;
   profile_scope?: "global" | "user";
@@ -170,6 +188,7 @@ export async function fetchCodexVoiceAnalystSettings() {
 export async function updateCodexVoiceAnalystSettings(args: {
   settings: {
     runtime: string;
+    runtime_mode?: "default" | "acp";
     command: string;
     profile_id: string;
     profile_scope: "global" | "user";
@@ -195,4 +214,38 @@ export async function updateCodexVoiceAnalystSettings(args: {
       discard_current_work: args.discardCurrentWork,
     }),
   });
+}
+
+export type AcpQuestion = {
+  id: string;
+  prompt: string;
+  options: { id: string; label: string }[];
+  allowMultiple?: boolean;
+};
+export type AcpInteractionResponse = {
+  outcome:
+    | { outcome: "answered"; answers: { questionId: string; selectedOptionIds: string[] }[] }
+    | { outcome: "accepted" | "rejected" | "skipped" | "cancelled" };
+};
+export type AcpPermission = {
+  // Opaque token for this pending interaction; not the provider's RPC id.
+  request_id: string;
+  title: string;
+  kind: string;
+  details?: unknown;
+  questions?: AcpQuestion[];
+  plan?: string;
+  overview?: string;
+};
+export function controlCodexVoiceAnalyst(
+  generation: string,
+  command:
+    | { action: "input"; input_id: string; text: string; call_generation?: string | null }
+    | { action: "permission"; request_id: string; allow: boolean }
+    | { action: "interaction"; request_id: string; response: AcpInteractionResponse },
+) {
+  return apiJson<{ accepted?: boolean; analyst?: CodexVoiceAnalystInfo | null }>(
+    `/api/v1/codex_voice/analysts/${encodeURIComponent(generation)}/control`,
+    { method: "POST", body: JSON.stringify(command) },
+  );
 }

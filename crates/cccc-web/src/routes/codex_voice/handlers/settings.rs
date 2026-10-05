@@ -20,7 +20,14 @@ pub(super) async fn codex_voice_readiness(home: &cccc_core::HomeLayout) -> Value
         .as_ref()
         .map(|runtime| runtime_name(runtime.runtime))
         .unwrap_or_else(|| runtime_name(settings.runtime));
+    let analyst_runtime_setup_required = runtime.as_ref().is_some_and(|runtime| {
+        runtime.runtime == cccc_contracts::ActorRuntime::Antigravity
+            && !cccc_daemon::antigravity_acp_setup::installed(home)
+    });
     let analyst_runtime_available = runtime.as_ref().is_some_and(|runtime| {
+        if runtime.runtime == cccc_contracts::ActorRuntime::Antigravity {
+            return !analyst_runtime_setup_required;
+        }
         let executable = analyst_runtime_executable(runtime);
         let explicit = std::path::Path::new(executable).is_absolute()
             || executable == "~"
@@ -47,6 +54,7 @@ pub(super) async fn codex_voice_readiness(home: &cccc_core::HomeLayout) -> Value
         "supported_modes":["assistant", "persona"],
         "analyst_runtime":analyst_runtime,
         "analyst_runtime_available":analyst_runtime_available,
+        "analyst_runtime_setup_required":analyst_runtime_setup_required,
         "realtime_credentials_available":realtime_credentials_available,
     })
 }
@@ -63,6 +71,10 @@ fn analyst_runtime_executable(
             cccc_contracts::ActorRuntime::Grok => "grok",
             cccc_contracts::ActorRuntime::Opencode => "opencode",
             cccc_contracts::ActorRuntime::Kilo => "kilo",
+            cccc_contracts::ActorRuntime::Antigravity => "agy",
+            cccc_contracts::ActorRuntime::Copilot => "copilot",
+            cccc_contracts::ActorRuntime::Devin => "devin",
+            cccc_contracts::ActorRuntime::Cursor => "cursor-agent",
             _ => "codex",
         })
 }
@@ -229,6 +241,7 @@ mod tests {
         ] {
             let resolved = ResolvedAgentRuntime {
                 runtime,
+                runtime_mode: cccc_contracts::RuntimeMode::default(),
                 command: Vec::new(),
                 environment: BTreeMap::new(),
             };

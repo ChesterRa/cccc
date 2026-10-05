@@ -7,6 +7,29 @@ use std::time::Duration;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// Grok ACP does not apply CLI model defaults to every new session, and load
+/// restores the saved effort. Apply explicit launch choices before any prompt.
+/// Unspecified choices remain owned by the runtime/session.
+pub(super) async fn apply_preferences(
+    protocol: &AcpClient,
+    session_id: &str,
+    model: Option<&str>,
+    reasoning_effort: Option<&str>,
+) -> io::Result<()> {
+    for (config_id, value) in [("model", model), ("reasoning_effort", reasoning_effort)] {
+        if let Some(value) = value {
+            protocol
+                .request(
+                    "session/set_config_option",
+                    json!({"sessionId":session_id,"configId":config_id,"value":value}),
+                    HANDSHAKE_TIMEOUT,
+                )
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) async fn initialize(
     protocol: &AcpClient,
     cwd: &Path,

@@ -1,3 +1,4 @@
+import { supportsAcpMode } from "../../types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -119,8 +120,10 @@ export function useCodexVoiceAnalystSettings(
 
   const compatibleProfiles = useMemo(
     () =>
-      profiles.filter((profile) =>
-        managedAnalystRuntimes.has(String(profile.runtime).trim().toLowerCase()),
+      profiles.filter(
+        (profile) =>
+          managedAnalystRuntimes.has(String(profile.runtime).trim().toLowerCase()) &&
+          (!supportsAcpMode(profile.runtime) || profile.runtime_mode === "acp"),
       ),
     [profiles],
   );
@@ -266,7 +269,12 @@ export function useCodexVoiceAnalystSettings(
         !current.command.trim() || current.command.trim() === previousDefault
           ? ""
           : current.command;
-      return { ...current, runtime, command };
+      return {
+        ...current,
+        runtime,
+        command,
+        runtime_mode: supportsAcpMode(runtime) ? "acp" : undefined,
+      };
     });
     setSaved("");
     setError("");
@@ -295,6 +303,7 @@ export function useCodexVoiceAnalystSettings(
           id: profileSaveRef.current?.profile.id,
           name: name.trim(),
           runtime: settings.runtime,
+          ...(supportsAcpMode(settings.runtime) ? { runtime_mode: "acp" } : {}),
           command: settings.command.trim(),
           submit: "enter",
           env: {},

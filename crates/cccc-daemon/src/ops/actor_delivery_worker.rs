@@ -50,7 +50,11 @@ pub fn process_batch(
     if current_actor.runtime == ActorRuntime::Deepseek {
         return process_deepseek_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
     }
-    if crate::ops::local_headless::supports(&current_actor) {
+    if crate::ops::local_headless::running(&current_group.group_id, &current_actor.id)
+        || (crate::ops::local_headless::supports(&current_actor)
+            && !cccc_runtime::status(&current_group.group_id, &current_actor.id)
+                .is_ok_and(|status| status.running))
+    {
         return process_managed_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
     }
     let Some(status) = ensure_running(&job.home, &current_group, &current_actor) else {
@@ -168,11 +172,32 @@ fn process_managed_batch(
         }
     }
     let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
-    if crate::ops::local_headless::submit_batch(home, group, actor, &events, cancelled) {
-        finish_jobs(jobs);
-        return true;
+    match crate::ops::local_headless::submit_batch(home, group, actor, &events, cancelled) {
+        crate::ops::local_headless::BatchSubmission::Accepted => finish_jobs(jobs),
+        crate::ops::local_headless::BatchSubmission::Deferred => return false,
+        crate::ops::local_headless::BatchSubmission::Unconfirmed => {
+            for job in jobs {
+                if let Err(error) = crate::ops::runtime_delivery::append_state(
+                    home,
+                    &group.group_id,
+                    &actor.id,
+                    &actor.created_at,
+                    &job.event.id,
+                    super::actor_delivery::delivery_transport(home, group, actor),
+                    crate::ops::runtime_delivery::DeliveryOutcome::Ambiguous(
+                        "ACP prompt receipt was not confirmed; inspect the Actor before an explicit retry",
+                    ),
+                ) {
+                    // The original durable claim remains unretryable and is
+                    // reconciled as ambiguous on daemon restart.
+                    tracing::error!(message=%error.message, event_id=%job.event.id, "failed to persist unconfirmed ACP delivery");
+                }
+                super::actor_delivery::release_in_flight(job);
+            }
+        }
     }
-    false
+    // Terminal handling includes uncertainty; only Deferred enters automatic retry.
+    true
 }
 
 fn finish_jobs(jobs: &[DeliveryJob]) {

@@ -11,6 +11,9 @@ impl AnalystRuntime {
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                         tracing::warn!(skipped, "Voice Analyst runtime projection lost events");
                         if let Some(runtime) = weak.upgrade() {
+                            runtime.project_manual_event(&AnalystLifecycleEvent::NeedsAttention {
+                                code: "analyst_event_gap",
+                            });
                             runtime.mark_failed("analyst_event_gap");
                         }
                         break;
@@ -20,6 +23,7 @@ impl AnalystRuntime {
                 let Some(runtime) = weak.upgrade() else {
                     break;
                 };
+                runtime.project_manual_event(&event);
                 match event {
                     AnalystLifecycleEvent::Started { .. } => {
                         runtime.mark_working();
@@ -32,14 +36,11 @@ impl AnalystRuntime {
                         turn_id,
                         delegation_ids,
                         status,
+                        error,
                         result,
                         ..
                     } => {
-                        if status == "completed" && !result.trim().is_empty() {
-                            runtime.mark_result(&result);
-                        } else {
-                            runtime.mark_ready();
-                        }
+                        runtime.mark_completed(&status, &result, &error);
                         let result = if status == "completed" {
                             result
                         } else {
@@ -62,7 +63,8 @@ impl AnalystRuntime {
                     AnalystLifecycleEvent::Disconnected => {
                         runtime.mark_failed("analyst_disconnected")
                     }
-                    AnalystLifecycleEvent::Progress { .. } => {}
+                    AnalystLifecycleEvent::Progress { text, .. } => runtime.add_progress(&text),
+                    AnalystLifecycleEvent::Queued { .. } => {}
                 }
             }
         });

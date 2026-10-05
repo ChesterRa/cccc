@@ -287,6 +287,10 @@ cccc doctor                       # verify environment and runtime availability
 
 Antigravity setup also disables native feedback surveys in its user settings, because the rating prompt can consume automated terminal input. Other preferences are preserved; this also applies to standalone AGY sessions under the same user.
 
+GitHub Copilot, Devin CLI and Cursor also support optional **official headless ACP** for Actors and Voice Analyst, while native TUI remains their default. ACP reuses native CLI login, injects an independent CCCC identity per Actor, and exposes serialized input, cancellation and one-time approvals. Cursor questions and plans require explicit user decisions even with YOLO. See the [Runtime guide](https://chesterra.github.io/cccc/guide/runtimes#copilot-devin-and-cursor-tui-or-official-acp).
+
+Antigravity also supports an optional **official ACP mode** for Actors and Voice Analyst, with a structured workspace instead of a terminal. Select ACP in Actor/Profile settings and run `cccc setup --runtime antigravity --runtime-mode acp --login` once for its separate CCCC login. Busy inputs and one-time permission requests are visible in the workspace. See the [runtime guide](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp).
+
 Choose a Runtime; CCCC derives its interaction surface automatically. Claude Code, Codex CLI, Grok Build, OpenCode and Kilo pair a native writable terminal with a structured background protocol on the same provider session. Messages enter that terminal, leaving queue-versus-steer behavior to the receiving Runtime. DeepSeek Harness uses structured ACP without a native terminal; ChatGPT Web and Grok Bot Web Model use browser delivery and remote MCP.
 
 For setup commands, interaction details, and troubleshooting for every supported Runtime, see the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes).

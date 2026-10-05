@@ -126,7 +126,10 @@ async fn main() -> Result<()> {
         Some(CommandKind::Doctor(args)) => {
             commands::doctor::run(&home, PRODUCT_VERSION, args.all).await
         }
-        Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
+        Some(CommandKind::Setup(args)) => {
+            // Setup owns synchronous provider commands and the explicit ACP login runtime.
+            tokio::task::spawn_blocking(move || commands::setup::run(&home, args)).await?
+        }
         Some(CommandKind::Update(args)) => commands::update::run(args).await,
     }
 }
