@@ -61,15 +61,15 @@ CCCC 只需一条安装命令，无需单独运维数据库、消息队列或 Do
 | **角色化协调** | Foreman + Peer 角色模型，权限边界清晰，收件人路由精确（`@all`、`@peers`、`@foreman`） |
 | **本地优先的运行时状态** | 运行时数据保存在 `CCCC_HOME` 而不是代码仓库里，同时仍可通过 Web Access 与 IM 做远程运维 |
 
-## 0.4.41 要点
+## 0.4.42 要点
 
-- **多个 ChatGPT Actor**：共享一次专用浏览器登录和一个连接器，每个 Actor 保持独立窗口及已验证的会话。
-- **Grok Bot Web Model**：将已有 Bot URL 连接到 Actor，共享 Grok 登录，并通过各 Actor 的凭据路由 MCP 调用，无需配对消息。
-- **更稳妥的浏览器投递和更简单的设置**：保护草稿、识别手动发送的消息、保持慢加载窗口可访问；Grok URL 与 Actor 设置一起保存，也支持关联 Profile。
-- **语音文档库**：持久化文件夹、拖拽排序、重命名、归档预览与恢复，以及更清晰的实时转写和错误反馈。
-- **日常可靠性**：按 Group 保留收件人、原生 MCP 图片/PDF/PPTX 传递、修正本地工具超时与编辑行为、改善运行时启动，并保护微信回复凭据。
+- **可选官方 ACP**：Antigravity、GitHub Copilot、Devin CLI 和 Cursor 支持没有原生终端的结构化 Actor 与 Voice Analyst。默认仍是 TUI，保存的模式变更在重启或下次启动时生效。
+- **语音调查与宿主人设**：ACP 调查展示任务状态、人工决策和结果；绑定通话的已完成结果回传到该通话的 Realtime 上下文。宿主 API 可发起不使用 Analyst、也不插入 Actor 通知的 persona 通话。
+- **会话恢复**：Claude 对无法验证的恢复暂停自动启动，显示诊断并提供明确恢复操作；Codex 恢复长会话时不再向 CCCC 传输完整历史。关闭托管终端保留健康的供应商会话。
+- **更清晰的日常控制**：细活动环、准确的未读 Mail 角标、按 Group 保留收件人、安装检测，以及更可预测的 Actor/Profile 保存行为。
+- **Grok 与生命周期可靠性**：必填 Bot URL 支持关联 Profile，登录窗口可独立关闭，Unix 进程清理在崩溃后仍保留未解决的所有权记录。
 
-旧的 Actor 专属 ChatGPT 连接器需要更换为共享连接器并重新连接会话，历史记录保留。升级步骤与验证边界见 [0.4.41 英文发布说明](docs/release/v0.4.41_release_notes.md)。
+设置、升级步骤与验证边界见 [0.4.42 英文发布说明](docs/release/v0.4.42_release_notes.md)。从更早的 Actor 专属 ChatGPT 连接器升级时，请遵循 [0.4.41 说明](docs/release/v0.4.41_release_notes.md)中的共享连接器迁移步骤。
 
 ## 快速上手
 

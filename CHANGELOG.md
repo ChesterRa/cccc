@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.42]
+
 ### Added
 
 - Add optional official Antigravity ACP for Actors and Voice Analyst: separate managed login, per-session MCP routing, validated resume, structured output, one-time approvals and visible serialized input. Native TUI remains the default.
@@ -51,7 +53,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Switching an Actor from ChatGPT to Grok now replaces its old window through the Grok login profile when saving the Bot URL, while preserving draft and active-response checks.
 - Converting a linked Actor Profile to custom configuration preserves pending secret edits if saving fails. Successfully saved secrets are cleared from the draft independently of later save steps.
 
-## [0.4.41] — Unreleased
+## [0.4.41]
 
 ### Added
 

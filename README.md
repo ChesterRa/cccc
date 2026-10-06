@@ -62,15 +62,15 @@ CCCC installs with one command and needs no separately operated database, messag
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
 
-## 0.4.41 Highlights
+## 0.4.42 Highlights
 
-- **Multiple ChatGPT Actors:** one dedicated login and one shared connector, with a separate persistent window and verified conversation for each Actor.
-- **Grok Bot Web Model:** connect an existing Bot URL to an Actor, share Grok login, and route MCP calls with per-Actor credentials without a pairing message.
-- **Safer browser delivery and simpler settings:** protect drafts, recover manually sent messages, keep slow-loading windows accessible, and save Grok URLs with Actor settings, including linked Profiles.
-- **Voice document library:** persistent folders, drag-and-drop ordering, renaming, archive previews and restoration, plus clearer live transcription and failure feedback.
-- **Everyday reliability:** retained per-Group recipients, native MCP image/PDF/PPTX handoff, corrected local-tool deadlines and editing, managed startup fixes, and protected Weixin reply credentials.
+- **Optional official ACP:** Antigravity, GitHub Copilot, Devin CLI and Cursor support structured Actors and Voice Analyst without a native terminal. TUI remains the default; saved mode changes apply on restart or next start.
+- **Voice investigations and host personas:** ACP investigations show task status, decisions and results; completed call-bound work returns to that call's Realtime context. Host APIs can request persona calls without an Analyst or Actor notifications.
+- **Conversation recovery:** Claude pauses unverifiable resumes with visible diagnostics and explicit recovery; Codex resumes long conversations without transferring their full history to CCCC. Closing a managed terminal preserves its healthy provider session.
+- **Clearer daily controls:** thin activity rings, accurate unread Mail badges, retained per-Group recipients, installation detection and more predictable Actor/Profile saves.
+- **Grok and lifecycle reliability:** required Bot URLs work with linked Profiles, browser login windows close independently, and Unix process cleanup retains unresolved ownership records across crashes.
 
-Existing Actor-specific ChatGPT connectors need to be replaced with the shared connector and conversations reconnected; history is preserved. See the [0.4.41 release notes](docs/release/v0.4.41_release_notes.md) for upgrade steps and validation limits.
+See the [0.4.42 release notes](docs/release/v0.4.42_release_notes.md) for setup, upgrade steps and validation limits. When upgrading an older Actor-specific ChatGPT connector setup, follow the shared-connector migration in the [0.4.41 notes](docs/release/v0.4.41_release_notes.md).
 
 ## Quick Start
 
