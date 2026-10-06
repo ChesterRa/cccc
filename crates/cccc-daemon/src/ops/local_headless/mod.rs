@@ -1,3 +1,5 @@
+#[cfg(all(test, unix))]
+mod claude_resume_tests;
 mod events;
 mod events_migration;
 #[cfg(test)]
@@ -37,6 +39,16 @@ pub use supervisor::{
 
 pub(super) fn uses_managed_session(actor: &cccc_contracts::Actor) -> bool {
     supervisor::uses_managed_session(actor)
+}
+
+/// Delivery follows the current owner; saved settings apply on the next launch.
+/// A temporary Claude trust terminal belongs to recovery, not native task input.
+pub(super) fn uses_managed_delivery(group_id: &str, actor: &cccc_contracts::Actor) -> bool {
+    registered_running(group_id, &actor.id).is_some()
+        || workspace_trust_recovery::registered(&(group_id.to_owned(), actor.id.clone()))
+            .unwrap_or(true)
+        || (supports(actor)
+            && !cccc_runtime::status(group_id, &actor.id).is_ok_and(|status| status.running))
 }
 
 pub(super) fn uses_managed_provider_cli(actor: &cccc_contracts::Actor) -> bool {

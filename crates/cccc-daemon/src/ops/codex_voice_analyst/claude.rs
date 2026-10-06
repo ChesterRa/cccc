@@ -13,6 +13,7 @@ use tokio::task::JoinHandle;
 
 mod command;
 mod control;
+mod resume_failure;
 mod transcript;
 mod transcript_ack;
 mod transcript_buffer;
@@ -23,6 +24,7 @@ mod transcript_path;
 mod workspace_trust;
 
 pub(super) use command::prepare;
+pub(super) use resume_failure::diagnostic as resume_diagnostic;
 pub(super) use workspace_trust::untrusted_workspace;
 
 #[cfg(test)]
@@ -210,10 +212,7 @@ async fn launch_inner(
     if let Some(expected) = requested_session_id
         && job.session_id != expected
     {
-        let error = io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Claude Agent View copied a requested session instead of resuming it exactly",
-        );
+        let error = resume_failure::Rejection::CopiedSession.error();
         let rollback = kill_and_confirm(&endpoint, &job.short).await;
         return Err(with_optional_cleanup_error(error, rollback.err()));
     }
@@ -620,7 +619,7 @@ fn validate_worker_version(job: &Job) -> io::Result<()> {
 fn with_cleanup_error(primary: io::Error, cleanup: io::Error) -> io::Error {
     io::Error::new(
         primary.kind(),
-        format!("{primary}; cleanup also failed: {cleanup}"),
+        resume_failure::CleanupFailure { primary, cleanup },
     )
 }
 
@@ -1239,10 +1238,7 @@ impl TranscriptFollower {
                 return Ok(());
             }
             if tokio::time::Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "Claude Agent View did not expose its durable transcript",
-                ));
+                return Err(resume_failure::Rejection::MissingHistory.error());
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

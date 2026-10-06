@@ -67,7 +67,7 @@ impl AnalystSession {
             "env":mcp_environment,
         });
         let session_command = command.clone();
-        let resume_session_id = if let Some((group_id, actor_id)) = actor {
+        let resume_attempt = if let Some((group_id, actor_id)) = actor {
             super::super::runtime_session::prepare_claude_managed_session(
                 home,
                 group_id,
@@ -77,9 +77,13 @@ impl AnalystSession {
                 &environment,
             )?
         } else {
-            requested_session_id
+            None
         };
-        let prepared = claude::prepare(
+        let resume_session_id = resume_attempt
+            .as_ref()
+            .map(|attempt| attempt.session_id.as_str())
+            .or(requested_session_id.as_deref());
+        let result = match claude::prepare(
             home,
             &command,
             &environment,
@@ -87,15 +91,42 @@ impl AnalystSession {
             &settings_key,
             purpose,
             mcp_server,
-        )?;
-        let launched = claude::launch(
-            prepared,
-            &binding.root,
-            &generation,
-            purpose,
-            resume_session_id.as_deref(),
-        )
-        .await?;
+        ) {
+            Ok(prepared) => {
+                // Transcript validation holds a large future. Keep it off the
+                // managed worker's stack, including unoptimized native builds.
+                Box::pin(claude::launch(
+                    prepared,
+                    &binding.root,
+                    &generation,
+                    purpose,
+                    resume_session_id,
+                ))
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        let launched = match result {
+            Ok(launched) => launched,
+            Err(error) => {
+                if let Some((group_id, actor_id)) = actor
+                    && let Some(attempt) = resume_attempt.as_ref()
+                    && let Some((diagnostic, blocked)) = claude::resume_diagnostic(&error)
+                {
+                    super::super::runtime_session::record_claude_resume_failure(
+                        home, group_id, actor_id, attempt, diagnostic, blocked,
+                    )?;
+                    return Err(if blocked {
+                        io::Error::other(super::super::runtime_session::ClaudeResumeBlocked(
+                            diagnostic.into(),
+                        ))
+                    } else {
+                        io::Error::new(error.kind(), diagnostic)
+                    });
+                }
+                return Err(error);
+            }
+        };
         if let Some((group_id, actor_id)) = actor
             && let Err(error) = super::super::runtime_session::record_claude_managed_session(
                 home,

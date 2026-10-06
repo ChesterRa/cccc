@@ -1,18 +1,42 @@
 //! Offline PTY fixtures for ready input and the early paste-mode startup race.
 //! They do not establish provider receipt or completion of login/trust dialogs.
 use super::*;
-use cccc_contracts::{Event, RunnerKind};
+use cccc_contracts::{DaemonRequest, Event, RunnerKind};
 use cccc_core::{GroupStore, HomeLayout};
 use std::collections::BTreeMap;
 
 #[test]
 fn antigravity_delivers_automatically_without_terminal_labels_after_restart() {
-    exercise_startup("\x1b[2J\x1b[HAn entirely different UI\r\n>", false);
+    exercise_startup("\x1b[2J\x1b[HAn entirely different UI\r\n>", false, None);
 }
 
 #[test]
 fn antigravity_first_payload_survives_early_input_mode_during_initialization() {
-    exercise_startup("Initializing a native terminal", true);
+    exercise_startup("Initializing a native terminal", true, None);
+}
+
+#[test]
+fn antigravity_native_delivery_survives_saved_acp_mode() {
+    exercise_pending_acp_mode(ActorRuntime::Antigravity);
+}
+
+#[test]
+fn copilot_native_delivery_survives_saved_acp_mode() {
+    exercise_pending_acp_mode(ActorRuntime::Copilot);
+}
+
+#[test]
+fn devin_native_delivery_survives_saved_acp_mode() {
+    exercise_pending_acp_mode(ActorRuntime::Devin);
+}
+
+#[test]
+fn cursor_native_delivery_survives_saved_acp_mode() {
+    exercise_pending_acp_mode(ActorRuntime::Cursor);
+}
+
+fn exercise_pending_acp_mode(runtime: ActorRuntime) {
+    exercise_startup("Native fixture\r\n>", false, Some(runtime));
 }
 
 #[test]
@@ -31,16 +55,20 @@ fn exercise_captured_startup(layout: &str) {
     let frames: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/antigravity_ready_1_2_2.json"))
             .expect("captured frames");
-    exercise_startup(frames[layout].as_str().expect("captured layout"), false);
+    exercise_startup(
+        frames[layout].as_str().expect("captured layout"),
+        false,
+        None,
+    );
 }
 
-fn exercise_startup(prompt: &str, slow_start: bool) {
+fn exercise_startup(prompt: &str, slow_start: bool, pending_acp: Option<ActorRuntime>) {
     let temp = tempfile::tempdir().expect("fixture");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
     let mut group = store.create("startup", "").expect("group");
     let mut actor = Actor::new("agy");
-    actor.runtime = ActorRuntime::Antigravity;
+    actor.runtime = pending_acp.unwrap_or(ActorRuntime::Antigravity);
     group.actors.push(actor.clone());
     store.save(&group).expect("save");
     let script = temp.path().join("terminal.py");
@@ -65,6 +93,7 @@ while True:
  buf+=data
  while b'\r' in buf:
   text,buf=buf.split(b'\r',1)
+  if not text:continue
   with (root/'received').open('a') as f:f.write(json.dumps(text.decode())+'\n')
 "#,
     )
@@ -76,7 +105,7 @@ while True:
             std::fs::remove_file(temp.path().join("ready")).expect("clear fixture signal");
             std::fs::remove_file(temp.path().join("received")).expect("clear fixture input");
         }
-        cccc_runtime::start(cccc_runtime::LaunchSpec {
+        let terminal = cccc_runtime::start(cccc_runtime::LaunchSpec {
             group_id: group.group_id.clone(),
             actor_id: actor.id.clone(),
             runner: RunnerKind::Pty,
@@ -98,6 +127,39 @@ while True:
                 !temp.path().join("received").exists(),
                 "idle startup submits no prompt"
             );
+            if pending_acp.is_some() {
+                let response = crate::handle_request(
+                    &home,
+                    &DaemonRequest {
+                        v: 1,
+                        op: "actor_update".into(),
+                        args: serde_json::json!({
+                            "group_id":group.group_id,
+                            "actor_id":actor.id,
+                            "runtime_mode":"acp",
+                            "by":"user"
+                        })
+                        .as_object()
+                        .expect("update arguments")
+                        .clone(),
+                    },
+                );
+                assert!(response.ok, "{:?}", response.error);
+                group = store.load(&group.group_id).expect("saved ACP settings");
+                actor = group.actors[0].clone();
+                assert_eq!(actor.runtime_mode, cccc_contracts::RuntimeMode::Acp);
+                assert_eq!(
+                    cccc_runtime::status(&group.group_id, &actor.id)
+                        .expect("native status")
+                        .pid,
+                    terminal.pid,
+                    "saving mode must not replace the native terminal"
+                );
+                assert!(
+                    !crate::ops::local_headless::running(&group.group_id, &actor.id),
+                    "saving mode must not launch ACP"
+                );
+            }
             let mut event = Event::new("chat.message", &group.group_id);
             event.by = "user".into();
             event.data =
@@ -114,6 +176,18 @@ while True:
             assert!(
                 process_batch(std::slice::from_ref(&job), &mut preamble, &cancelled),
                 "first task must be delivered without a Web attachment or confirmation"
+            );
+            assert_eq!(
+                crate::ops::runtime_delivery::latest_state(
+                    &home,
+                    &group.group_id,
+                    &actor.id,
+                    &job.event.id
+                )
+                .expect("delivery state")
+                .expect("native receipt"),
+                ("accepted".into(), "pty".into()),
+                "delivery must describe the running native surface"
             );
             let mut second = job;
             second.event.id = uuid::Uuid::new_v4().simple().to_string();
@@ -136,14 +210,18 @@ while True:
                 2,
                 "one submission per task after start or restart"
             );
-            assert!(!messages[0].contains("MCP setup request"));
+            if actor.runtime == ActorRuntime::Antigravity {
+                assert!(!messages[0].contains("MCP setup request"));
+            }
             assert_eq!(messages[0].matches("[CCCC] You are agy").count(), 1);
             assert!(messages[0].contains("cccc_bootstrap"));
             assert!(messages[0].contains("FIRST_TASK"));
             assert!(messages[0].find("cccc_bootstrap") < messages[0].find("FIRST_TASK"));
             assert!(!messages[1].contains("MCP setup request"));
             assert!(!messages[1].contains("[CCCC] You are agy"));
-            assert!(messages[1].contains("Otherwise continue without repeating bootstrap"));
+            if actor.runtime == ActorRuntime::Antigravity {
+                assert!(messages[1].contains("Otherwise continue without repeating bootstrap"));
+            }
             assert!(messages[1].contains("SECOND_TASK"));
         }));
         cccc_runtime::stop(&group.group_id, &actor.id).expect("stop fixture");

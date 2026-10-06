@@ -12,8 +12,11 @@ mod grok_tests;
 pub(crate) mod native_acp;
 mod opencode;
 pub use claude::{
+    ResumeBlocked as ClaudeResumeBlocked, is_resume_blocked as is_claude_resume_blocked,
     prepare_managed as prepare_claude_managed_session,
     record_managed as record_claude_managed_session,
+    record_resume_failure as record_claude_resume_failure,
+    retry_failed_resume as retry_failed_claude_resume,
 };
 pub use grok::{
     prepare_managed as prepare_grok_managed_session, record_managed as record_grok_managed_session,

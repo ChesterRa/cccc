@@ -50,11 +50,7 @@ pub fn process_batch(
     if current_actor.runtime == ActorRuntime::Deepseek {
         return process_deepseek_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
     }
-    if crate::ops::local_headless::running(&current_group.group_id, &current_actor.id)
-        || (crate::ops::local_headless::supports(&current_actor)
-            && !cccc_runtime::status(&current_group.group_id, &current_actor.id)
-                .is_ok_and(|status| status.running))
-    {
+    if crate::ops::local_headless::uses_managed_delivery(&current_group.group_id, &current_actor) {
         return process_managed_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
     }
     let Some(status) = ensure_running(&job.home, &current_group, &current_actor) else {
@@ -161,6 +157,12 @@ fn process_managed_batch(
             Ok(None) if crate::ops::local_headless::running(&group.group_id, &actor.id) => {}
             Ok(_) => return false,
             Err(error) => {
+                if error.code == actor_runtime::CLAUDE_RESUME_FAILED {
+                    // Release this worker's claims but leave inbox/ledger messages pending.
+                    // Explicit recovery redispatches them; automatic startup must stop.
+                    super::actor_delivery::fail_jobs(jobs, &error.message);
+                    return true;
+                }
                 tracing::warn!(
                     group_id = %group.group_id,
                     actor_id = %actor.id,

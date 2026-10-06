@@ -149,3 +149,43 @@ fn retiring_an_old_prompt_does_not_unregister_its_replacement() {
         .expect("stop replacement");
     assert!(replacement.cancelled());
 }
+
+#[test]
+fn only_a_real_workspace_refusal_keeps_trust_recovery_waiting() {
+    let (_temp, home, recovery) = fixture();
+    let refusal = crate::ops::codex_voice_analyst::claude_workspace_refusal(
+        "Workspace not trusted",
+        std::path::Path::new("/fixture/workspace"),
+    )
+    .expect("typed trust refusal");
+    assert!(
+        !recover::<()>(
+            &home,
+            &recovery,
+            || true,
+            || Err(refusal),
+            |_| panic!("a refused launch must not attach"),
+            |_| panic!("no session was created"),
+        )
+        .expect("wait for operator approval")
+    );
+    for kind in [
+        std::io::ErrorKind::InvalidData,
+        std::io::ErrorKind::TimedOut,
+    ] {
+        let result = recover::<()>(
+            &home,
+            &recovery,
+            || true,
+            || Err(std::io::Error::new(kind, "unrelated launch failure")),
+            |_| panic!("a failed launch must not attach"),
+            |_| panic!("no session was created"),
+        );
+        assert_eq!(
+            result
+                .expect_err("configuration writes must not repeat this launch")
+                .kind(),
+            kind
+        );
+    }
+}

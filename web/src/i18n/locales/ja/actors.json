@@ -20,7 +20,7 @@
   "agentNotRunning": "エージェントは稼働していません",
   "agentStoppedDescription": "このエージェントは現在停止しています。",
   "runtimeResumeFailedTitle": "再開に失敗しました",
-  "runtimeResumeFailedDescription": "保存済みのランタイムセッションを再開できませんでした。New Session で新しく開始できます。",
+  "runtimeResumeFailedDescription": "自動再開を停止しています。保存済みの会話と未配信メッセージは保持されます。原因を修正して起動または再起動で再試行するか、新しいセッションを選んで開始してください。",
   "lastTerminalOutput": "最後のターミナル出力",
   "launchAgent": "エージェントを起動",
   "launching": "起動中…",

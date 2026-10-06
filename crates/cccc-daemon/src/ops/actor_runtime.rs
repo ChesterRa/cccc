@@ -18,6 +18,7 @@ pub use reconcile::{reap_exited, reconcile_exited};
 
 /// Claude Code refused the Actor's workspace; only the operator can accept its trust prompt.
 pub(crate) const CLAUDE_WORKSPACE_UNTRUSTED: &str = "claude_workspace_untrusted";
+pub(crate) const CLAUDE_RESUME_FAILED: &str = "claude_resume_failed";
 
 pub fn apply(
     home: &HomeLayout,
@@ -65,6 +66,12 @@ pub fn apply(
     }
     // Also retire a disconnected registration whose previous cleanup failed.
     stop_registered(group, actor_id)?;
+    if kind == "actor.new_session" {
+        // Pending trust recovery holds the start guard until its launch is
+        // attached or discarded. Retire its ownership before removing the
+        // receipt, so a late old launch cannot undo the explicit reset.
+        super::runtime_session::remove(home, &group.group_id, actor_id).map_err(OpError::io)?;
+    }
     super::capabilities::apply_actor_startup_baseline(home, group, &actor);
     if actor.runtime == ActorRuntime::Deepseek {
         super::deepseek_runtime::apply(home, group, &actor, "actor.start")?;
@@ -94,6 +101,9 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
 }
 
 fn launch_error(error: std::io::Error) -> OpError {
+    if super::runtime_session::is_claude_resume_blocked(&error) {
+        return OpError::new(CLAUDE_RESUME_FAILED, error.to_string());
+    }
     let Some(workspace) = super::codex_voice_analyst::untrusted_claude_workspace(&error) else {
         return OpError::io(error);
     };

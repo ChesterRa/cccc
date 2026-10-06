@@ -20,7 +20,7 @@
   "agentNotRunning": "Agent Not Running",
   "agentStoppedDescription": "This agent is currently stopped.",
   "runtimeResumeFailedTitle": "Resume failed",
-  "runtimeResumeFailedDescription": "The saved runtime session could not be resumed. Use New Session to start fresh.",
+  "runtimeResumeFailedDescription": "Automatic resume is paused. The saved conversation and pending messages are preserved. Fix the cause and use Launch or Relaunch to retry, or choose New Session to start fresh.",
   "lastTerminalOutput": "Last terminal output",
   "launchAgent": "Launch Agent",
   "launching": "Launching...",

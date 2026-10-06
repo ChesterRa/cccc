@@ -231,7 +231,10 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
         &environment,
     )
     .expect("prepare durable resume");
-    assert_eq!(resumed.as_deref(), Some(session_id));
+    assert_eq!(
+        resumed.as_ref().map(|attempt| attempt.session_id.as_str()),
+        Some(session_id)
+    );
     assert_eq!(operations.lock().expect("operations").as_slice(), ["list"]);
     let events =
         cccc_core::ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger path"))

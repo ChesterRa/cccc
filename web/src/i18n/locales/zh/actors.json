@@ -20,7 +20,7 @@
   "agentNotRunning": "智能体未运行",
   "agentStoppedDescription": "该智能体当前已停止。",
   "runtimeResumeFailedTitle": "恢复会话失败",
-  "runtimeResumeFailedDescription": "已保存的 runtime 会话无法恢复。可以使用“新会话”重新开始。",
+  "runtimeResumeFailedDescription": "自动恢复已暂停，原会话和待投递消息会保留。修正原因后可启动或重启以重试，也可选择“新会话”重新开始。",
   "lastTerminalOutput": "最近终端输出",
   "launchAgent": "启动智能体",
   "launching": "启动中…",

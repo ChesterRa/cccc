@@ -502,6 +502,10 @@ fn antigravity_supervisor_keeps_actual_acp_surface_after_a_pending_mode_edit() {
     let mut pending = actor.clone();
     pending.runtime_mode = RuntimeMode::Default;
     pending.normalize_runtime_constraints();
+    group.actors[0] = pending.clone();
+    store
+        .save(&group)
+        .expect("save next-launch native settings");
     let fields =
         crate::ops::working_state::runtime_actor_fields(&home, &pending, &group.group_id, true);
     assert_eq!(fields["runner_effective"], "headless");
@@ -513,16 +517,25 @@ fn antigravity_supervisor_keeps_actual_acp_surface_after_a_pending_mode_edit() {
         .as_object()
         .expect("message")
         .clone();
-    assert_eq!(
-        supervisor::submit_batch(
-            &home,
-            &group,
-            &pending,
-            &[event],
+    let job = crate::ops::actor_delivery::DeliveryJob {
+        home: home.clone(),
+        group: group.clone(),
+        actor: pending.clone(),
+        event,
+    };
+    assert!(
+        crate::ops::actor_delivery_worker::process_batch(
+            std::slice::from_ref(&job),
+            &mut String::new(),
             &std::sync::atomic::AtomicBool::new(false)
         ),
-        supervisor::BatchSubmission::Accepted,
         "delivery must continue through the actual ACP session"
+    );
+    assert_eq!(
+        crate::ops::runtime_delivery::latest_state(&home, &group.group_id, "alpha", &job.event.id)
+            .expect("delivery state")
+            .expect("managed receipt"),
+        ("accepted".into(), "managed_session".into())
     );
     assert!(supervisor::cancel_turn(&group.group_id, "alpha", "stale").is_err());
     let generation = state["generation"].as_str().expect("generation");

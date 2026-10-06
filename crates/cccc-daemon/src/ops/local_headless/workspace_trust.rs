@@ -115,7 +115,22 @@ impl Watch {
             &self.home,
             &self.recovery,
             || self.prompt_open(),
-            || launch_managed(&self.home, &self.group, &self.actor, &self.cwd),
+            || {
+                let result = launch_managed(&self.home, &self.group, &self.actor, &self.cwd);
+                if result
+                    .as_ref()
+                    .is_err_and(|error| !refused(&self.actor, error))
+                    && self.prompt_open()
+                {
+                    // The start guard still owns this exact prompt. Other launch
+                    // failures are not trust decisions; retire the temporary PTY
+                    // so status/UI expose the failed managed startup.
+                    cccc_runtime::stop(&self.key.0, &self.key.1).map_err(|_| {
+                        io::Error::other("Could not close the failed Claude trust prompt")
+                    })?;
+                }
+                result
+            },
             |app| {
                 let _ = cccc_runtime::stop(&self.key.0, &self.key.1);
                 attach_managed(

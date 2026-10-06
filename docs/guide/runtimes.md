@@ -402,6 +402,17 @@ closed instead of being guessed. `actor_new_session` clears the receipt, and
 `CCCC_RUNTIME_RESUME=0` disables reuse. A legacy Hook or print-mode receipt is
 never resumed.
 
+When Claude returns a different session ID or CCCC cannot verify the saved
+conversation's history or protocol, automatic recovery pauses instead of
+repeatedly launching jobs or silently starting a new conversation. The Actor
+shows **Resume failed** with a safe diagnostic; its original session ID, provider
+history and pending messages are preserved. Correct the provider configuration
+and use **Start** or **Restart** to retry that conversation. **New session** starts
+fresh without deleting provider history. Successful resume clears the failure
+state and delivers the pending messages. Known temporary control/startup errors
+remain retryable. The workspace-trust terminal only accepts the operator's trust
+decision; CCCC waits for the managed session before delivering tasks.
+
 `web_model` keeps the pull-consumer contract: an external executor calls
 `cccc_runtime_wait_next_turn` and `cccc_runtime_complete_turn`. It does not claim
 to have a local provider process or native terminal.
@@ -414,6 +425,8 @@ conversation arguments remain the user's responsibility.
 ## Copilot, Devin and Cursor: TUI or official ACP
 
 These three Runtimes keep their native **TUI** as the default. Choose **ACP** in Actor or Runtime Profile settings, or pass `--runtime-mode acp` to the Actor CLI, for a CCCC-managed structured workspace with no native terminal. This is distinct from the existing same-session terminal integration for Codex, Claude, OpenCode, Grok and Kilo. A changed mode/command applies on next start, or immediately with **Save and restart**.
+
+Saving without restarting keeps messages flowing through the current session: a native terminal remains native, and a running ACP session remains ACP. **Start** is idempotent while that session runs; use **Restart** to apply the saved mode.
 
 ```bash
 cccc actor add copilot-worker --runtime copilot --runtime-mode acp

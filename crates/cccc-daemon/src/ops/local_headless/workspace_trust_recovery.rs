@@ -65,6 +65,13 @@ pub(super) fn keys() -> io::Result<Vec<Key>> {
         .collect())
 }
 
+pub(super) fn registered(key: &Key) -> io::Result<bool> {
+    Ok(pending()
+        .lock()
+        .map_err(|_| super::poisoned())?
+        .contains_key(key))
+}
+
 /// External provider operations are callbacks; locking and cancellation always use the
 /// same production path. Stop cancels before waiting for StartGuard, then stops any
 /// session which committed before that cancellation.
@@ -87,6 +94,9 @@ pub(super) fn recover<T>(
     let app = match launch() {
         Ok(app) => app,
         Err(error) => {
+            if super::super::codex_voice_analyst::untrusted_claude_workspace(&error).is_none() {
+                return Err(error);
+            }
             tracing::debug!(%error, group_id = %recovery.key.0, actor_id = %recovery.key.1,
                 "Claude workspace is not ready for a managed session yet");
             return Ok(recovery.cancelled() || !prompt_open());

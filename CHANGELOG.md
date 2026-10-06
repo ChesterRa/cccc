@@ -20,6 +20,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- Saving ACP mode without restarting a native Actor preserves delivery through its current terminal until restart applies the new configuration. Delivery records and readiness follow the running session; Claude workspace-trust terminals remain isolated from task input.
+
+- Claude resume failures preserve the saved conversation and pending messages, record safe diagnostics, and pause automatic recovery when session identity or history cannot be verified. Explicit Start/Restart retries the same session; New session remains deliberate. Workspace-trust recovery no longer retries unrelated launch errors or accepts tasks through the temporary trust terminal.
+
 - Antigravity ACP quarantines unconfirmed Actor deliveries instead of replaying them, permits cancellation before the first admission receipt, and preserves separate queued-result associations. Provider failures retain visible error details. Repeating the same Runtime preserves ACP mode, and New session follows the current linked Profile when selecting its receipt.
 
 - Antigravity Voice Analyst's default command now enables ACP YOLO mode like Actors, including after session resume. Remaining permission requests receive automatic one-time approval; explicit custom and Profile commands keep their configured policy.

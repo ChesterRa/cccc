@@ -35,7 +35,7 @@ pub(super) fn submit_terminal_text(
     if raw.is_empty() {
         return false;
     }
-    if super::local_headless::supports(actor)
+    if super::local_headless::running(group_id, &actor.id)
         && !cccc_runtime::wait_for_input_ready(
             group_id,
             &actor.id,
@@ -234,7 +234,7 @@ fn fail_job(job: &DeliveryJob, reason: &str) {
     release_in_flight(job);
 }
 
-fn fail_jobs(jobs: &[DeliveryJob], reason: &str) {
+pub(super) fn fail_jobs(jobs: &[DeliveryJob], reason: &str) {
     for job in jobs {
         fail_job(job, reason);
     }
@@ -325,7 +325,7 @@ fn dispatch_to_inner(
         }
         let actor_online = if actor.runtime == ActorRuntime::Deepseek {
             crate::ops::deepseek_runtime::running(&group.group_id, &actor.id)
-        } else if crate::ops::local_headless::supports(actor) {
+        } else if crate::ops::local_headless::uses_managed_delivery(&group.group_id, actor) {
             crate::ops::local_headless::running(&group.group_id, &actor.id)
         } else {
             cccc_runtime::status(&group.group_id, &actor.id).is_ok_and(|status| status.running)
@@ -446,10 +446,8 @@ pub(super) fn delivery_transport(
         "deepseek"
     } else if actor.runtime.is_web_model() {
         web_model_delivery_transport(home, group, actor)
-    } else if crate::ops::local_headless::uses_managed_session(actor) {
+    } else if crate::ops::local_headless::uses_managed_delivery(&group.group_id, actor) {
         "managed_session"
-    } else if crate::ops::local_headless::supports(actor) {
-        "local_headless"
     } else {
         "pty"
     }
