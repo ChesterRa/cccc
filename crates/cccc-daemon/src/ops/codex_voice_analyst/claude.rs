@@ -16,6 +16,8 @@ mod control;
 mod resume_failure;
 mod transcript;
 mod transcript_ack;
+#[cfg(all(test, unix))]
+mod transcript_autonomous_client_tests;
 mod transcript_buffer;
 mod transcript_continuity;
 #[cfg(all(test, unix))]
@@ -2252,6 +2254,11 @@ mod tests {
         }
         assert_eq!(final_text.as_deref(), Some("managed answer"));
         if !fail_transcript {
+            transcript_autonomous_client_tests::verify_hidden_input_turn(
+                &launched.protocol,
+                &transcript_path,
+            )
+            .await;
             transcript_move_client_tests::verify_round_trip(
                 &launched.protocol,
                 &transcript_path,

@@ -250,3 +250,30 @@ fn hidden_input_from_another_session_is_not_remembered() {
             .is_err()
     );
 }
+
+/// Two hidden inputs can land before Claude answers (e.g. a held then denied delivery notice).
+/// Either one may own an interruption of the turn Claude starts for them.
+#[test]
+fn every_pending_hidden_input_belongs_to_the_turn_it_starts() {
+    let (mut state, mut events) = harness();
+    state
+        .ingest(&cross_session_message("first"), None)
+        .expect("first hidden input");
+    state
+        .ingest(&cross_session_message("second"), None)
+        .expect("second hidden input");
+    assert!(state.hidden_input_pending());
+    state
+        .ingest(
+            &assistant(json!([{"type":"text","text":"answering"}])),
+            None,
+        )
+        .expect("assistant");
+    assert!(!state.hidden_input_pending());
+    assert_eq!(state.active_turn_id(), Some("claude-first"));
+    state
+        .ingest(&user("first", INTERRUPTION_MARKER), None)
+        .expect("interruption carrying the earlier hidden prompt id");
+    let ended = drain(&mut events).pop().expect("completed turn");
+    assert_eq!(ended["params"]["turn"]["status"], "cancelled");
+}
