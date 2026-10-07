@@ -1,5 +1,8 @@
 {
   "voicePreferences": {
+    "responseSection": "応答スタイル",
+    "announceSection": "読み上げ設定",
+    "groupsSection": "Group 通知",
     "notifications": "メッセージ通知",
     "loading": "設定を読み込み中…",
     "saving": "保存中…",
@@ -489,6 +492,7 @@
   "codexVoiceAssistantSaid": "音声応答",
   "codexVoiceConversation": "会話",
   "codexVoiceConversationListening": "次の発話を待っています…",
+  "codexVoiceConversationEmptyTitle": "まだ音声会話はありません",
   "codexVoiceConversationReady": "準備ができたら音声を開始してください。",
   "codexVoiceAnalystTitle": "Voice Analyst",
   "codexVoiceAnalystPhase": {
@@ -502,7 +506,6 @@
   "codexVoiceCancelInvestigation": "調査をキャンセル",
   "codexVoiceAudioSettings": "音声設定",
   "codexVoiceSettings": "Codex Voice 設定",
-  "codexVoiceSettingsHint": "設定は自動保存されます。Analyst の下書きは保存または破棄するまで保持されます。",
   "codexVoiceSettingsVoiceAudio": "音声とデバイス",
   "codexVoiceVoiceLabel": "話し声",
   "codexVoiceRefreshDevices": "更新",
@@ -542,6 +545,7 @@
   "codexVoiceAnalystRuntimeMissing": "Voice Analyst に設定された Runtime（{{runtime}}）が利用できません。Runtime Profile を確認するか、その Runtime を実行できるシェルから CCCC を再起動してください。",
   "codexVoiceAntigravityAcpSetupRequired": "Antigravity ACP がまだインストールされていません。CCCC が動作するマシンで cccc setup --runtime antigravity --runtime-mode acp --login を実行し、インストールと専用の Google ログインを完了してから再試行してください。ACP とネイティブ agy のログイン環境は異なります。",
   "codexVoiceCodexLoginRequired": "Realtime Voice 用の ChatGPT ログインがありません。CCCC ホストで codex login を実行してから更新してください。Voice Analyst Profile の認証情報とは独立しています。",
+  "codexVoiceAnalystEmptyTitle": "Analyst はまだ準備できていません",
   "codexVoiceAnalystTerminalPending": "Analyst の管理セッションが準備できると、端末がここに表示されます。",
   "codexVoiceTerminalDisconnected": "端末が切断されました",
   "codexVoiceTerminalRejected": "実行中の Voice Analyst はこの端末接続を受け付けなくなりました。",
@@ -645,5 +649,6 @@
   "codexVoiceHideAnalyst": "Analyst を閉じる",
   "codexVoiceShowAnalyst": "Analyst を表示",
   "codexVoiceConversationHistoryHint": "この通話の最近の発言 · 最大 40 件",
+  "codexVoiceDevicesSection": "音声とデバイス",
   "codexVoiceAudioPreferencesHint": "このブラウザーに自動保存されます。声とデバイスの選択は次の通話から適用されます。"
 }

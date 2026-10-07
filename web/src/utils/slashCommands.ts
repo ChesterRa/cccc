@@ -190,11 +190,20 @@ export function buildSlashCommands(args: {
   return sortSlashCommands(commands);
 }
 
+// Chinese keyboards (e.g. iOS Pinyin) type a full-width slash; treat it as the
+// command prefix so the menu, parsing and dispatch all see the same "/".
+const FULL_WIDTH_SLASH = "\uFF0F";
+
+export function normalizeSlashCommandInput(text: string): string {
+  const raw = String(text || "");
+  return raw.startsWith(FULL_WIDTH_SLASH) ? `/${raw.slice(FULL_WIDTH_SLASH.length)}` : raw;
+}
+
 export function filterSlashCommands(
   commands: SlashCommandItem[],
   input: string,
 ): SlashCommandItem[] {
-  const text = String(input || "");
+  const text = normalizeSlashCommandInput(input);
   if (text !== text.trimStart()) return [];
   if (!text.startsWith("/")) return [];
   const firstToken = text.slice(1).split(/\s+/, 1)[0] || "";
@@ -233,7 +242,7 @@ export function parseSlashCommandInput(
   text: string,
   commands: SlashCommandItem[],
 ): ParsedSlashCommand | null {
-  const raw = String(text || "");
+  const raw = normalizeSlashCommandInput(text);
   if (raw !== raw.trimStart()) return null;
   const trimmed = raw.trim();
   if (!trimmed.startsWith("/")) return null;

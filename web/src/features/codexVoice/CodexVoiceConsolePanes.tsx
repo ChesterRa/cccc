@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { StopIcon, TerminalIcon } from "../../components/Icons";
+import { StopIcon, TerminalIcon, VoiceWaveformIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import { RUNTIME_INFO } from "../../types";
 import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
@@ -39,7 +39,7 @@ export function CodexVoiceConversationPane({
       id="codex-voice-conversation-pane"
       aria-labelledby="codex-voice-conversation-heading"
     >
-      <div className="hidden flex-none items-center justify-between border-b border-[var(--glass-border-subtle)] px-5 py-3 lg:flex">
+      <PaneHeader className="hidden lg:flex">
         <h3
           id="codex-voice-conversation-heading"
           className="text-sm font-semibold text-[var(--color-text-primary)]"
@@ -56,7 +56,7 @@ export function CodexVoiceConversationPane({
           <TerminalIcon size={15} />
           {t(analystExpanded ? "codexVoiceHideAnalyst" : "codexVoiceShowAnalyst")}
         </Button>
-      </div>
+      </PaneHeader>
       {children}
       <div
         ref={conversationRef}
@@ -77,11 +77,30 @@ export function CodexVoiceConversationPane({
           />
         ))}
         {!controller.conversation.length ? (
-          <div className="flex min-h-40 items-center justify-center text-center text-sm leading-6 text-[var(--color-text-muted)]">
-            {controller.isEngaged
-              ? t("codexVoiceConversationListening")
-              : t("codexVoiceConversationReady")}
-          </div>
+          controller.isEngaged ? (
+            <PaneEmptyState
+              icon={<VoiceWaveformIcon size={22} />}
+              title={t("codexVoiceConversationListening")}
+              live
+            />
+          ) : (
+            <PaneEmptyState
+              icon={<VoiceWaveformIcon size={22} />}
+              title={t("codexVoiceConversationEmptyTitle")}
+              hint={t("codexVoiceConversationReady")}
+              action={
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void controller.start()}
+                  disabled={controller.checking || controller.isStarting}
+                >
+                  <VoiceWaveformIcon size={15} />
+                  {controller.isStarting ? t("codexVoiceStarting") : t("codexVoiceStart")}
+                </Button>
+              }
+            />
+          )
         ) : null}
       </div>
       {controller.conversation.length ? (
@@ -115,7 +134,7 @@ export function CodexVoiceAnalystPane({
       id="codex-voice-analyst-pane"
       aria-labelledby="codex-voice-analyst-heading"
     >
-      <div className="flex flex-none items-center justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5">
+      <PaneHeader>
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <TerminalIcon size={16} className="flex-none text-[var(--color-accent-primary)]" />
@@ -164,7 +183,7 @@ export function CodexVoiceAnalystPane({
             </Button>
           ) : null}
         </div>
-      </div>
+      </PaneHeader>
 
       {controller.analystWarning &&
       !(analyst?.structured && analyst.warning === "analyst_turn_failed" && analyst.last_error) ? (
@@ -188,12 +207,11 @@ export function CodexVoiceAnalystPane({
         ) : analyst?.tui_ready ? (
           <VoiceAnalystTerminal analyst={analyst} isVisible={terminalVisible} runtime={runtime} />
         ) : (
-          <div className="flex h-full min-h-56 flex-col items-center justify-center px-8 text-center">
-            <TerminalIcon size={30} className="text-[var(--color-text-tertiary)]" />
-            <p className="mt-3 max-w-md text-sm leading-6 text-[var(--color-text-muted)]">
-              {t("codexVoiceAnalystTerminalPending")}
-            </p>
-          </div>
+          <PaneEmptyState
+            icon={<TerminalIcon size={22} />}
+            title={t("codexVoiceAnalystEmptyTitle")}
+            hint={t("codexVoiceAnalystTerminalPending")}
+          />
         )}
       </div>
     </section>
@@ -209,6 +227,47 @@ function TranscriptBlock({ label, text }: { label: string; text: string }) {
       <div className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-7 text-[var(--color-text-primary)]">
         {text}
       </div>
+    </div>
+  );
+}
+
+/** Both panes share one header height so their dividers line up. */
+function PaneHeader({ className = "flex", children }: { className?: string; children: ReactNode }) {
+  return (
+    <div
+      className={`${className} min-h-14 flex-none items-center justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-4 py-2 sm:px-5`}
+    >
+      {children}
+    </div>
+  );
+}
+
+function PaneEmptyState({
+  icon,
+  title,
+  hint,
+  action,
+  live = false,
+}: {
+  icon: ReactNode;
+  title: string;
+  hint?: string;
+  action?: ReactNode;
+  live?: boolean;
+}) {
+  return (
+    <div className="flex h-full min-h-56 flex-col items-center justify-center px-8 py-10 text-center">
+      <div
+        className={`flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] ${live ? "animate-pulse" : ""}`}
+        aria-hidden="true"
+      >
+        {icon}
+      </div>
+      <p className="mt-4 text-sm font-medium text-[var(--color-text-primary)]">{title}</p>
+      {hint ? (
+        <p className="mt-1.5 max-w-sm text-xs leading-5 text-[var(--color-text-muted)]">{hint}</p>
+      ) : null}
+      {action ? <div className="mt-5">{action}</div> : null}
     </div>
   );
 }

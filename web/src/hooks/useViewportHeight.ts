@@ -14,6 +14,17 @@ export interface VisualViewportLayout {
   offsetTop: string;
 }
 
+/**
+ * Box that follows the visible viewport published by `useViewportHeight`, so a
+ * full-screen surface stays above the mobile keyboard. Without the variables it
+ * falls back to the full dynamic viewport, matching `inset-0` on desktop.
+ */
+export const VISUAL_VIEWPORT_BOX = {
+  top: "var(--app-viewport-offset-top, 0px)",
+  height: "var(--app-viewport-height, 100dvh)",
+  maxHeight: "var(--app-viewport-height, 100dvh)",
+} as const;
+
 export function getVisualViewportLayout(
   height: number,
   offsetTop: number,

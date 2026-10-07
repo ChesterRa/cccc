@@ -1,6 +1,8 @@
 import { buttonVariants } from "../ui/button-variants";
 import { PanelRightClose } from "lucide-react";
+import { PresentationPreviewModeToggle } from "./PresentationPreviewModeToggle";
 import { PresentationSlotNavigation } from "./PresentationSlotNavigation";
+import { PresentationViewerTitle } from "./PresentationViewerTitle";
 import { GraphicViewer } from "../viewer/GraphicViewer";
 import { getPresentationReferenceHref } from "./presentationAssets";
 import { usePresentationAsset } from "./usePresentationAsset";
@@ -306,7 +308,7 @@ function PresentationViewer({
         : t("presentationOpenQuotedSnapshotAction", { defaultValue: "Open quoted snapshot" })
       : t("presentationHideSnapshotAction", { defaultValue: "Hide snapshot" });
   const iconButtonClassName = `${buttonVariants({ variant: "ghost", size: "iconRail" })} max-sm:h-11 max-sm:w-11`;
-  const destructiveIconButtonClassName = `${buttonVariants({ variant: "destructive", size: "iconRail" })} max-sm:h-11 max-sm:w-11`;
+  const destructiveIconButtonClassName = `${buttonVariants({ variant: "destructive", size: "iconRail" })} max-sm:h-11 max-sm:w-11 max-sm:!border-transparent max-sm:!bg-transparent max-sm:!shadow-none`;
   const copiedIconButtonClassName = `${iconButtonClassName} text-[var(--color-accent-success)]`;
   const refreshActionLabel = t("presentationRefreshAction", { defaultValue: "Refresh" });
   const copyActionLabel = copiedReference
@@ -327,6 +329,10 @@ function PresentationViewer({
     defaultValue:
       "Enhanced mode works better for local or private pages and tries to keep navigation inside CCCC.",
   });
+  const previewModeOptions = {
+    embedded: { label: embeddedModeLabel, help: embeddedModeHelp },
+    interactive: { label: interactiveModeLabel, help: interactiveModeHelp },
+  };
 
   const handleClearSlot = async () => {
     if (!slot || !onClearSlot || clearingSlotId) return;
@@ -833,7 +839,7 @@ function PresentationViewer({
             <>
               <span
                 className={classNames(
-                  "rounded-full px-2 py-1 font-medium",
+                  "rounded-full px-2 py-1 font-medium max-sm:hidden",
                   isDark
                     ? "bg-white/[0.08] text-white"
                     : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
@@ -853,7 +859,9 @@ function PresentationViewer({
                   {t("presentationWorkspaceLiveBadge", { defaultValue: "Live workspace link" })}
                 </span>
               ) : null}
-              {card.source_label ? <span>{card.source_label}</span> : null}
+              {card.source_label ? (
+                <span className="max-sm:hidden">{card.source_label}</span>
+              ) : null}
               {linkedAsset.stale ? (
                 <span
                   role="status"
@@ -863,94 +871,55 @@ function PresentationViewer({
                   {t("presentationRefreshFailed")}
                 </span>
               ) : publishedAt ? (
-                <span>{publishedAt}</span>
+                <span className="max-sm:hidden">{publishedAt}</span>
               ) : null}
-              <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 max-sm:ml-0 max-sm:w-full max-sm:justify-between">
                 {showWebPreviewModeToggle ? (
-                  <div
-                    className={classNames(
-                      "inline-flex items-center rounded-full border p-0.5",
-                      isDark
-                        ? "border-white/10 bg-white/[0.04]"
-                        : "border-black/10 bg-black/[0.03]",
-                    )}
-                    role="group"
-                    aria-label={previewModeLabel}
-                  >
+                  <PresentationPreviewModeToggle
+                    value={webPreviewMode}
+                    label={previewModeLabel}
+                    options={previewModeOptions}
+                    onChange={setWebPreviewMode}
+                  />
+                ) : null}
+                <div className="ml-auto flex items-center gap-1.5 max-sm:gap-1">
+                  {copyReferenceValue ? (
                     <button
                       type="button"
-                      onClick={() => setWebPreviewMode("embedded")}
-                      className={classNames(
-                        "rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors",
-                        webPreviewMode === "embedded"
-                          ? isDark
-                            ? "bg-slate-100 text-slate-950"
-                            : "bg-slate-900 text-white"
-                          : isDark
-                            ? "text-slate-300 hover:bg-white/8"
-                            : "text-gray-600 hover:bg-black/6",
-                      )}
-                      aria-pressed={webPreviewMode === "embedded"}
-                      title={embeddedModeHelp}
+                      onClick={() => {
+                        void handleCopyReference();
+                      }}
+                      className={copiedReference ? copiedIconButtonClassName : iconButtonClassName}
+                      aria-label={copyActionLabel}
+                      title={copyActionLabel}
                     >
-                      {embeddedModeLabel}
+                      <CopyIcon size={16} />
                     </button>
+                  ) : null}
+                  {!readOnly && onReplaceSlot ? (
                     <button
                       type="button"
-                      onClick={() => setWebPreviewMode("interactive")}
-                      className={classNames(
-                        "rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors",
-                        webPreviewMode === "interactive"
-                          ? isDark
-                            ? "bg-white/[0.08] text-white"
-                            : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"
-                          : isDark
-                            ? "text-slate-300 hover:bg-white/8"
-                            : "text-gray-600 hover:bg-black/6",
-                      )}
-                      aria-pressed={webPreviewMode === "interactive"}
-                      title={interactiveModeHelp}
+                      onClick={() => slot && onReplaceSlot(slot.slot_id)}
+                      className={iconButtonClassName}
+                      aria-label={editActionLabel}
+                      title={editActionLabel}
                     >
-                      {interactiveModeLabel}
+                      <EditIcon size={16} />
                     </button>
-                  </div>
-                ) : null}
-                {copyReferenceValue ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleCopyReference();
-                    }}
-                    className={copiedReference ? copiedIconButtonClassName : iconButtonClassName}
-                    aria-label={copyActionLabel}
-                    title={copyActionLabel}
-                  >
-                    <CopyIcon size={16} />
-                  </button>
-                ) : null}
-                {!readOnly && onReplaceSlot ? (
-                  <button
-                    type="button"
-                    onClick={() => slot && onReplaceSlot(slot.slot_id)}
-                    className={iconButtonClassName}
-                    aria-label={editActionLabel}
-                    title={editActionLabel}
-                  >
-                    <EditIcon size={16} />
-                  </button>
-                ) : null}
-                {!readOnly && onClearSlot ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleClearSlot()}
-                    disabled={!!clearingSlotId}
-                    className={destructiveIconButtonClassName}
-                    aria-label={clearActionLabel}
-                    title={clearActionLabel}
-                  >
-                    <TrashIcon size={16} />
-                  </button>
-                ) : null}
+                  ) : null}
+                  {!readOnly && onClearSlot ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleClearSlot()}
+                      disabled={!!clearingSlotId}
+                      className={destructiveIconButtonClassName}
+                      aria-label={clearActionLabel}
+                      title={clearActionLabel}
+                    >
+                      <TrashIcon size={16} />
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </>
           ) : (
@@ -964,7 +933,7 @@ function PresentationViewer({
       <div
         className={classNames(
           "relative min-h-0 flex-1 overflow-hidden",
-          variant === "split" ? "px-2 py-2" : "px-4 py-3",
+          variant === "split" ? "px-2 py-2" : "px-4 py-3 max-sm:px-3",
         )}
       >
         {showSnapshotCompare ? (
@@ -1226,51 +1195,13 @@ function PresentationViewer({
           (!readOnly && (onReplaceSlot || onClearSlot) && slot)) && (
           <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 py-1">
             {showWebPreviewModeToggle ? (
-              <div
-                className={classNames(
-                  "inline-flex items-center rounded-full border p-0.5",
-                  isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-black/[0.03]",
-                )}
-                role="group"
-                aria-label={previewModeLabel}
-              >
-                <button
-                  type="button"
-                  onClick={() => setWebPreviewMode("embedded")}
-                  className={classNames(
-                    "rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-colors",
-                    webPreviewMode === "embedded"
-                      ? isDark
-                        ? "bg-slate-100 text-slate-950"
-                        : "bg-slate-900 text-white"
-                      : isDark
-                        ? "text-slate-300 hover:bg-white/8"
-                        : "text-gray-600 hover:bg-black/6",
-                  )}
-                  aria-pressed={webPreviewMode === "embedded"}
-                  title={embeddedModeHelp}
-                >
-                  {embeddedModeLabel}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setWebPreviewMode("interactive")}
-                  className={classNames(
-                    "rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-colors",
-                    webPreviewMode === "interactive"
-                      ? isDark
-                        ? "bg-white/[0.08] text-white"
-                        : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"
-                      : isDark
-                        ? "text-slate-300 hover:bg-white/8"
-                        : "text-gray-600 hover:bg-black/6",
-                  )}
-                  aria-pressed={webPreviewMode === "interactive"}
-                  title={interactiveModeHelp}
-                >
-                  {interactiveModeLabel}
-                </button>
-              </div>
+              <PresentationPreviewModeToggle
+                value={webPreviewMode}
+                label={previewModeLabel}
+                options={previewModeOptions}
+                compact
+                onChange={setWebPreviewMode}
+              />
             ) : null}
             <div className="ml-auto flex shrink-0 items-center gap-1">
               {canRefresh && (
@@ -1320,8 +1251,16 @@ function PresentationViewer({
       isDark={isDark}
       onClose={onClose}
       titleId="presentation-viewer-title"
-      title={card?.title || t("presentationTitle", { defaultValue: "Presentation" })}
+      title={
+        <PresentationViewerTitle
+          title={card?.title || t("presentationTitle", { defaultValue: "Presentation" })}
+          typeLabel={card ? getCardTypeLabel(card.card_type, t) : ""}
+          publishedAt={publishedAt}
+        />
+      }
       closeAriaLabel={t("presentationCloseViewer", { defaultValue: "Close presentation viewer" })}
+      closeFirstOnMobile
+      headerClassName="max-sm:!gap-2 max-sm:!px-2 max-sm:!py-2"
       panelClassName={viewerPanelClassName}
       headerActions={modalHeaderActions}
       modalRef={modalRef}

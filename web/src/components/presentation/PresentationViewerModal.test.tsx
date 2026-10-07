@@ -137,6 +137,18 @@ describe("Presentation refresh", () => {
     },
   );
 
+  it("names the card type and publish time in the modal title for phone headers", async () => {
+    await render(false, "g", "slot-1", "2026-10-07T09:19:00Z");
+    const title = host.ownerDocument.getElementById("presentation-viewer-title")!;
+    const meta = title.querySelector("[data-presentation-title-meta]")!;
+    expect(title.textContent).toContain("Drawing");
+    expect(meta.textContent).toContain("presentationTypeImage");
+    expect(meta.textContent).toMatch(/2026/);
+    // Close stays a single control even though phones show it before the title.
+    const close = host.ownerDocument.querySelectorAll('[aria-label="presentationCloseViewer"]');
+    expect(close).toHaveLength(1);
+  });
+
   it("lets a slow refresh finish instead of restarting it on every polling tick", async () => {
     await render();
     let respond!: (response: Response) => void;

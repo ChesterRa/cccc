@@ -1,5 +1,8 @@
 {
   "voicePreferences": {
+    "responseSection": "回答方式",
+    "announceSection": "播报设置",
+    "groupsSection": "Group 通知",
     "notifications": "消息通知",
     "loading": "正在加载偏好…",
     "saving": "正在保存…",
@@ -489,6 +492,7 @@
   "codexVoiceAssistantSaid": "语音回复",
   "codexVoiceConversation": "实时对话",
   "codexVoiceConversationListening": "正在聆听你的下一句话…",
+  "codexVoiceConversationEmptyTitle": "还没有语音对话",
   "codexVoiceConversationReady": "准备好后即可开始语音对话。",
   "codexVoiceAnalystTitle": "Voice Analyst",
   "codexVoiceAnalystPhase": {
@@ -502,7 +506,6 @@
   "codexVoiceCancelInvestigation": "取消调查",
   "codexVoiceAudioSettings": "音频设置",
   "codexVoiceSettings": "Codex 语音设置",
-  "codexVoiceSettingsHint": "偏好自动保存；Analyst 草稿会保留，直到保存或撤销。",
   "codexVoiceSettingsVoiceAudio": "语音与设备",
   "codexVoiceVoiceLabel": "说话音色",
   "codexVoiceRefreshDevices": "刷新",
@@ -542,6 +545,7 @@
   "codexVoiceAnalystRuntimeMissing": "找不到 Voice Analyst 所配置的 Runtime（{{runtime}}）。请检查 Runtime Profile，或从能够运行它的终端重启 CCCC。",
   "codexVoiceAntigravityAcpSetupRequired": "Antigravity ACP 组件尚未安装。请在运行 CCCC 的机器上执行 cccc setup --runtime antigravity --runtime-mode acp --login，完成安装和独立 Google 登录，然后重试。ACP 与原生 agy 使用不同的登录环境。",
   "codexVoiceCodexLoginRequired": "Realtime Voice 尚无 ChatGPT 登录。请在 CCCC 宿主环境运行 codex login 后刷新页面；Voice Analyst Profile 的凭据与其相互独立。",
+  "codexVoiceAnalystEmptyTitle": "Analyst 尚未就绪",
   "codexVoiceAnalystTerminalPending": "Analyst 的受管会话就绪后，终端会显示在这里。",
   "codexVoiceTerminalDisconnected": "终端已断开",
   "codexVoiceTerminalRejected": "当前 Voice Analyst 已不再接受这条终端连接。",
@@ -645,5 +649,6 @@
   "codexVoiceHideAnalyst": "收起 Analyst",
   "codexVoiceShowAnalyst": "展开 Analyst",
   "codexVoiceConversationHistoryHint": "本次通话最近的文字 · 最多 40 条发言",
+  "codexVoiceDevicesSection": "音色与设备",
   "codexVoiceAudioPreferencesHint": "自动保存在此浏览器。音色和设备选择将在下次开始通话时生效。"
 }

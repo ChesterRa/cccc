@@ -1,4 +1,6 @@
 import { useTranslation } from "react-i18next";
+import { CodexVoiceSettingsHeading } from "./CodexVoiceSettingsSection";
+import { SETTINGS_CARD, SETTINGS_COLUMN } from "./codexVoiceSettingsLayout";
 import { ActorSecretManager } from "../../components/modals/ActorSecretManager";
 import {
   OpenCodeManagedModelHint,
@@ -15,9 +17,11 @@ import type { CodexVoiceSessionController } from "./useCodexVoiceSessionControll
 export function CodexVoiceAnalystSettings({
   active,
   controller,
+  heading,
 }: {
   active: boolean;
   controller: CodexVoiceSessionController;
+  heading: string;
 }) {
   const { t } = useTranslation("modals");
   const { t: tActors } = useTranslation("actors");
@@ -25,11 +29,14 @@ export function CodexVoiceAnalystSettings({
 
   return (
     <section
-      className="flex flex-col"
+      className="flex min-h-full flex-1 flex-col"
       aria-busy={form.loading || form.saving || form.profileSaving}
     >
-      <div className="space-y-5 px-5 py-5 sm:px-6 sm:py-6">
-        <div>
+      <div
+        className={`${SETTINGS_COLUMN} flex-1 space-y-4 py-4 @min-[900px]/voice-settings:space-y-5 @min-[900px]/voice-settings:py-10`}
+      >
+        <CodexVoiceSettingsHeading>{heading}</CodexVoiceSettingsHeading>
+        <div className={`${SETTINGS_CARD} p-4 @min-[900px]/voice-settings:p-6`}>
           <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
             {tActors("sectionRuntime")}
           </h3>
@@ -58,8 +65,8 @@ export function CodexVoiceAnalystSettings({
                 onChange={form.selectProfile}
               />
             ) : (
-              <div className="space-y-4">
-                <div>
+              <div className="grid gap-4 @min-[900px]/voice-settings:grid-cols-2 @min-[900px]/voice-settings:gap-6">
+                <div className="min-w-0">
                   <label className="mb-2 block text-xs font-medium text-[var(--color-text-muted)]">
                     {tActors("runtime")}
                   </label>
@@ -96,23 +103,25 @@ export function CodexVoiceAnalystSettings({
                   )}
                 </div>
 
-                <RuntimeCommandControl
-                  runtime={form.settings.runtime}
-                  command={form.settings.command}
-                  defaultCommand={form.defaultCommand}
-                  useDefaultCommand={form.useDefaultCommand}
-                  disabled={form.editingDisabled}
-                  description={t("codexVoiceAnalystCommandHint")}
-                  onCommandChange={form.setCommand}
-                  onUseDefaultCommandChange={form.setUseDefaultCommand}
-                />
+                <div className="min-w-0">
+                  <RuntimeCommandControl
+                    runtime={form.settings.runtime}
+                    command={form.settings.command}
+                    defaultCommand={form.defaultCommand}
+                    useDefaultCommand={form.useDefaultCommand}
+                    disabled={form.editingDisabled}
+                    description={t("codexVoiceAnalystCommandHint")}
+                    onCommandChange={form.setCommand}
+                    onUseDefaultCommandChange={form.setUseDefaultCommand}
+                  />
+                </div>
               </div>
             )}
           </div>
         </div>
 
         {form.mode === "custom" ? (
-          <details className="border-t border-[var(--glass-border-subtle)] pt-4">
+          <details className={`${SETTINGS_CARD} px-4 py-3`}>
             <summary className="cursor-pointer select-none text-sm font-semibold text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]/45">
               {tActors("sectionAdvanced")}
             </summary>
@@ -138,70 +147,74 @@ export function CodexVoiceAnalystSettings({
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-3 border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] backdrop-blur-xl sm:px-6">
-        <div className="min-w-0 text-xs leading-5 break-words">
-          {form.hasChanges ? (
-            <p className="mb-1 font-medium text-[var(--color-text-primary)]">
-              {t("codexVoiceUnsavedChanges")}
-            </p>
-          ) : null}
-          {form.error ? (
-            <p className="text-rose-500" role="alert">
-              {form.error}
-            </p>
-          ) : form.callActive ? (
-            <p className="text-amber-700 dark:text-amber-300">
-              {t("codexVoiceAnalystSettingsCallActive")}
-            </p>
-          ) : form.analystBusy ? (
-            <p className="text-amber-700 dark:text-amber-300">
-              {t("codexVoiceAnalystSettingsWorkActive")}
-            </p>
-          ) : form.saved ? (
-            <p className="text-emerald-600 dark:text-emerald-400" role="status">
-              {form.saved}
-            </p>
-          ) : (
-            <p className="text-[var(--color-text-muted)]">
-              {t("codexVoiceAnalystSettingsApplyHint")}
-            </p>
-          )}
-        </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          {form.hasChanges ? (
+      <div className="sticky bottom-0 z-10 border-t border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)]/90 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] backdrop-blur-xl">
+        <div
+          className={`${SETTINGS_COLUMN} flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between`}
+        >
+          <div className="min-w-0 flex-1 text-xs leading-5 break-words">
+            {form.hasChanges ? (
+              <p className="mb-1 font-medium text-[var(--color-text-primary)]">
+                {t("codexVoiceUnsavedChanges")}
+              </p>
+            ) : null}
+            {form.error ? (
+              <p className="text-rose-500" role="alert">
+                {form.error}
+              </p>
+            ) : form.callActive ? (
+              <p className="text-amber-700 dark:text-amber-300">
+                {t("codexVoiceAnalystSettingsCallActive")}
+              </p>
+            ) : form.analystBusy ? (
+              <p className="text-amber-700 dark:text-amber-300">
+                {t("codexVoiceAnalystSettingsWorkActive")}
+              </p>
+            ) : form.saved ? (
+              <p className="text-emerald-600 dark:text-emerald-400" role="status">
+                {form.saved}
+              </p>
+            ) : (
+              <p className="text-[var(--color-text-muted)]">
+                {t("codexVoiceAnalystSettingsApplyHint")}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-none flex-wrap justify-end gap-2">
+            {form.hasChanges ? (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={form.editingDisabled}
+                onClick={form.discard}
+              >
+                {t("codexVoiceDiscardChanges")}
+              </Button>
+            ) : null}
+            {form.mode === "custom" ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void form.saveAsProfile()}
+                disabled={form.editingDisabled || form.settingsLoadFailed}
+              >
+                {form.profileSaving
+                  ? t("codexVoiceAnalystProfileSaving")
+                  : tActors("addToActorProfiles")}
+              </Button>
+            ) : null}
             <Button
               type="button"
-              variant="ghost"
-              disabled={form.editingDisabled}
-              onClick={form.discard}
+              className="w-full sm:w-auto"
+              onClick={() => void form.save()}
+              disabled={form.saveDisabled}
             >
-              {t("codexVoiceDiscardChanges")}
+              {form.saving
+                ? t("codexVoiceAnalystSettingsSaving")
+                : controller.analyst
+                  ? t("codexVoiceAnalystSettingsApplyRestart")
+                  : t("codexVoiceAnalystSettingsSave")}
             </Button>
-          ) : null}
-          {form.mode === "custom" ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void form.saveAsProfile()}
-              disabled={form.editingDisabled || form.settingsLoadFailed}
-            >
-              {form.profileSaving
-                ? t("codexVoiceAnalystProfileSaving")
-                : tActors("addToActorProfiles")}
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            className="w-full sm:w-auto"
-            onClick={() => void form.save()}
-            disabled={form.saveDisabled}
-          >
-            {form.saving
-              ? t("codexVoiceAnalystSettingsSaving")
-              : controller.analyst
-                ? t("codexVoiceAnalystSettingsApplyRestart")
-                : t("codexVoiceAnalystSettingsSave")}
-          </Button>
+          </div>
         </div>
       </div>
     </section>

@@ -8,6 +8,7 @@ import {
 } from "./terminalOutputController";
 import { createTerminalOutputStreamWriter } from "./terminalOutputStreamWriter";
 import { createTerminalReplayWriteGuard } from "./terminalReplayWriteGuard";
+import { createTerminalResizeCoalescer } from "./terminalResizeCoalescer";
 import {
   buildTerminalWebSocketUrl,
   buildTerminalConnectionKey,
@@ -469,7 +470,8 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
             ws.send(encodeTerminalInputFrame(input));
           });
 
-          resizeDisposable = term.onResize(({ cols, rows }) => {
+          // Conditions are checked when the settled size is sent, not when it was queued.
+          const resizes = createTerminalResizeCoalescer((cols, rows) => {
             if (
               ws.readyState === WebSocket.OPEN &&
               visibleRef.current &&
@@ -480,6 +482,13 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
               ws.send(encodeTerminalResizeFrame(cols, rows));
             }
           });
+          const subscription = term.onResize(({ cols, rows }) => resizes.push(cols, rows));
+          resizeDisposable = {
+            dispose: () => {
+              subscription.dispose();
+              resizes.dispose();
+            },
+          };
         }
       };
 

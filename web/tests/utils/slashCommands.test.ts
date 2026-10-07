@@ -7,6 +7,7 @@ import {
   buildSlashCommands,
   filterSlashCommands,
   getVisibleSlashCommandPage,
+  normalizeSlashCommandInput,
   parseSlashCommandInput,
   resolveSlashCommandGuard,
   resolveCapsuleSkillSlashCommand,
@@ -437,5 +438,34 @@ describe("slashCommands", () => {
     expect(parseSlashCommandInput("please /writer", commands)).toBeNull();
     expect(parseSlashCommandInput(" /writer", commands)).toBeNull();
     expect(filterSlashCommands(commands, "http://example.test/path")).toEqual([]);
+  });
+  it("accepts the full-width slash typed by Chinese keyboards as the command prefix", () => {
+    const commands = buildSlashCommands({
+      state: {
+        group_id: "g1",
+        actor_id: "user",
+        enabled: [],
+        active_capsule_skills: [
+          { capability_id: "skill:agent_self_proposed:writer", name: "writer" },
+        ],
+        dynamic_tools: [],
+      },
+    });
+
+    // iOS Pinyin's symbol pane emits U+FF0F, not "/".
+    expect(filterSlashCommands(commands, "\uFF0F").map((item) => item.command)).toEqual(
+      filterSlashCommands(commands, "/").map((item) => item.command),
+    );
+    expect(filterSlashCommands(commands, "\uFF0Fwri").map((item) => item.command)).toEqual([
+      "/writer",
+    ]);
+    const parsed = parseSlashCommandInput("\uFF0Fwriter draft the release note", commands);
+    expect(parsed?.item.command).toBe("/writer");
+    expect(parsed?.argsText).toBe("draft the release note");
+
+    expect(normalizeSlashCommandInput("\uFF0Fwriter x")).toBe("/writer x");
+    // Only the leading prefix is a command marker; other full-width slashes are text.
+    expect(normalizeSlashCommandInput("a\uFF0Fb")).toBe("a\uFF0Fb");
+    expect(parseSlashCommandInput("please \uFF0Fwriter", commands)).toBeNull();
   });
 });

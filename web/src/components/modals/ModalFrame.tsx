@@ -1,4 +1,5 @@
 import type { ReactNode, Ref } from "react";
+import { getModalOverlayStyle } from "./modalOverlayStyle";
 
 interface ModalFrameProps {
   isOpen?: boolean;
@@ -12,6 +13,8 @@ interface ModalFrameProps {
   panelClassName: string;
   headerActions?: ReactNode;
   headerClassName?: string;
+  /** Phone layouts read close → title → actions, like a navigation bar. */
+  closeFirstOnMobile?: boolean;
   closeIcon?: ReactNode;
   footerActions?: ReactNode;
   floatingCloseClassName?: string;
@@ -32,6 +35,7 @@ export function ModalFrame({
   panelClassName,
   headerActions,
   headerClassName = "",
+  closeFirstOnMobile = false,
   closeIcon,
   footerActions,
   floatingCloseClassName = "",
@@ -74,11 +78,7 @@ export function ModalFrame({
                 : "pointer-events-none invisible opacity-0"
             }`
       }
-      style={
-        !inline && isOpen
-          ? { backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }
-          : undefined
-      }
+      style={getModalOverlayStyle({ inline, isOpen })}
       aria-hidden={isOpen ? undefined : true}
       inert={!isOpen ? true : undefined}
     >
@@ -114,8 +114,11 @@ export function ModalFrame({
             </div>
             <div className="flex flex-shrink-0 items-center gap-2">
               {headerActions}
-              {closeButtonElement}
+              {closeFirstOnMobile ? null : closeButtonElement}
             </div>
+            {closeFirstOnMobile ? (
+              <div className="flex-shrink-0 max-sm:-order-1 sm:-ml-2">{closeButtonElement}</div>
+            ) : null}
           </div>
         ) : !inline ? (
           <div

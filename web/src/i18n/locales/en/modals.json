@@ -1,5 +1,8 @@
 {
   "voicePreferences": {
+    "responseSection": "Response style",
+    "announceSection": "Announcements",
+    "groupsSection": "Group notifications",
     "notifications": "Message notifications",
     "loading": "Loading preferences…",
     "saving": "Saving…",
@@ -489,6 +492,7 @@
   "codexVoiceAssistantSaid": "Voice response",
   "codexVoiceConversation": "Conversation",
   "codexVoiceConversationListening": "Listening for your next thought…",
+  "codexVoiceConversationEmptyTitle": "No voice conversation yet",
   "codexVoiceConversationReady": "Start voice when you are ready to talk.",
   "codexVoiceAnalystTitle": "Voice Analyst",
   "codexVoiceAnalystPhase": {
@@ -502,7 +506,6 @@
   "codexVoiceCancelInvestigation": "Cancel investigation",
   "codexVoiceAudioSettings": "Audio settings",
   "codexVoiceSettings": "Codex Voice settings",
-  "codexVoiceSettingsHint": "Preferences save automatically. Analyst drafts are kept until you save or discard them.",
   "codexVoiceSettingsVoiceAudio": "Voice & audio",
   "codexVoiceVoiceLabel": "Speaking voice",
   "codexVoiceRefreshDevices": "Refresh",
@@ -542,6 +545,7 @@
   "codexVoiceAnalystRuntimeMissing": "The configured Voice Analyst runtime ({{runtime}}) is unavailable. Check its Runtime Profile or restart CCCC from a shell that can run it.",
   "codexVoiceAntigravityAcpSetupRequired": "The Antigravity ACP component is not installed. On the machine running CCCC, run cccc setup --runtime antigravity --runtime-mode acp --login to install it and complete its separate Google login, then try again. ACP uses a different login environment from native agy.",
   "codexVoiceCodexLoginRequired": "Realtime Voice has no ChatGPT login. Run codex login for the CCCC host, then refresh this page. Voice Analyst Profile credentials are separate.",
+  "codexVoiceAnalystEmptyTitle": "Analyst isn't ready yet",
   "codexVoiceAnalystTerminalPending": "The Analyst terminal appears here when its managed session is ready.",
   "codexVoiceTerminalDisconnected": "Terminal disconnected",
   "codexVoiceTerminalRejected": "The active Voice Analyst no longer accepts this terminal connection.",
@@ -645,5 +649,6 @@
   "codexVoiceHideAnalyst": "Hide Analyst",
   "codexVoiceShowAnalyst": "Show Analyst",
   "codexVoiceConversationHistoryHint": "Recent speech from this call · up to 40 entries",
+  "codexVoiceDevicesSection": "Voice and devices",
   "codexVoiceAudioPreferencesHint": "Saved in this browser. Voice and device choices apply when you start the next call."
 }

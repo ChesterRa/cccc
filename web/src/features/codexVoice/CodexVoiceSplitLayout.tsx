@@ -106,7 +106,7 @@ export function CodexVoiceSplitLayout({
         })}
         title={t("codexVoiceResizePanesHint")}
         hidden={!enabled}
-        className={`${enabled ? "flex" : "hidden"} group touch-none select-none cursor-col-resize items-center justify-center bg-[var(--glass-panel-bg)] outline-none hover:bg-[var(--glass-tab-bg-active)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent-primary)]`}
+        className={`${enabled ? "flex" : "hidden"} group relative touch-none select-none cursor-col-resize items-center justify-center outline-none hover:bg-[var(--glass-tab-bg-active)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent-primary)]`}
         onPointerDown={(event) => {
           if (event.button !== 0 || !enabled || !active || drag.current) return;
           event.preventDefault();
@@ -158,9 +158,14 @@ export function CodexVoiceSplitLayout({
           updateRatio(clamp(next), true);
         }}
       >
+        {/* A full-height rule separates the panes; the grip marks the drag target. */}
         <span
           aria-hidden="true"
-          className="h-10 w-0.5 rounded-full bg-[var(--glass-border-subtle)] group-hover:bg-[var(--color-text-muted)] group-focus-visible:bg-[var(--color-accent-primary)]"
+          className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--glass-border-subtle)]"
+        />
+        <span
+          aria-hidden="true"
+          className="relative h-10 w-1 rounded-full bg-[var(--glass-border-subtle)] group-hover:bg-[var(--color-text-muted)] group-focus-visible:bg-[var(--color-accent-primary)]"
         />
       </div>
       {analyst}

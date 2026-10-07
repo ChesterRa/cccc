@@ -6,6 +6,10 @@ import { useModalA11y } from "../../hooks/useModalA11y";
 import { classNames } from "../../utils/classNames";
 import { isValidPresentationWebUrl, normalizePresentationUrlInput } from "../../utils/presentation";
 import { ModalFrame } from "../modals/ModalFrame";
+import {
+  PresentationPinSourcePicker,
+  type PresentationPinSource as PinSource,
+} from "./PresentationPinSourcePicker";
 
 type PresentationPinModalProps = {
   isOpen: boolean;
@@ -36,7 +40,9 @@ type PresentationPinModalProps = {
   }) => Promise<void> | void;
 };
 
-type PinSource = "url" | "workspace" | "upload";
+const FIELD_LABEL = "text-[13px] font-medium text-[var(--color-text-secondary)]";
+const FIELD_INPUT =
+  "w-full rounded-[10px] border px-3.5 text-[15px] outline-none transition-colors sm:text-sm glass-input text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]";
 
 function dirname(pathText: string): string {
   const parts = String(pathText || "")
@@ -325,30 +331,19 @@ export function PresentationPinModal({
       onClose={busy ? () => void 0 : onClose}
       titleId="presentation-pin-title"
       title={
-        replaceMode
-          ? t("presentationReplaceSlotTitle", {
-              index: slotIndex,
-              defaultValue: `Edit slot ${slotIndex}`,
-            })
-          : t("presentationPinSlotTitle", {
-              index: slotIndex,
-              defaultValue: `Pin to slot ${slotIndex}`,
-            })
-      }
-      closeAriaLabel={t("presentationClosePinModal", {
-        defaultValue: "Close presentation pin dialog",
-      })}
-      panelClassName="h-full w-full sm:h-auto sm:max-w-3xl"
-      modalRef={modalRef}
-    >
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div
-          className={classNames(
-            "border-b px-5 py-4 text-sm",
-            isDark ? "border-white/10 text-slate-300" : "border-black/10 text-gray-700",
-          )}
-        >
-          <div className="font-medium">
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="text-lg font-semibold">
+            {replaceMode
+              ? t("presentationReplaceSlotTitle", {
+                  index: slotIndex,
+                  defaultValue: `Edit slot ${slotIndex}`,
+                })
+              : t("presentationPinSlotTitle", {
+                  index: slotIndex,
+                  defaultValue: `Pin to slot ${slotIndex}`,
+                })}
+          </span>
+          <span className="text-[13px] leading-5 font-normal text-[var(--color-text-tertiary)]">
             {replaceMode
               ? t("presentationReplaceHelp", {
                   defaultValue:
@@ -358,79 +353,50 @@ export function PresentationPinModal({
                   defaultValue:
                     "Pin a URL, a workspace file, or an uploaded snapshot so it stays visible in this group's Presentation rail.",
                 })}
-          </div>
+          </span>
           {card ? (
-            <div className={classNames("mt-2 text-xs", "text-[var(--color-text-tertiary)]")}>
+            <span className="text-xs font-normal text-[var(--color-text-tertiary)]">
               {t("presentationCurrentCard", {
                 title: card.title,
                 defaultValue: `Current: ${card.title}`,
               })}
-            </div>
+            </span>
           ) : null}
         </div>
+      }
+      closeAriaLabel={t("presentationClosePinModal", {
+        defaultValue: "Close presentation pin dialog",
+      })}
+      headerClassName="!items-start max-sm:!py-4 max-sm:!pr-3"
+      panelClassName="h-full w-full sm:h-auto sm:max-w-3xl"
+      modalRef={modalRef}
+    >
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex flex-1 flex-col gap-5 overflow-auto px-5 py-5">
+          <PresentationPinSourcePicker
+            value={source}
+            legend={t("presentationPinSourceLabel", { defaultValue: "Choose a source type" })}
+            labels={{
+              url: t("presentationPinSourceUrl", { defaultValue: "URL" }),
+              workspace: t("presentationPinSourceWorkspace", {
+                defaultValue: "Pick from workspace (host)",
+              }),
+              upload: t("presentationPinSourceUpload", { defaultValue: "Upload from this device" }),
+            }}
+            onChange={(value) => {
+              setSource(value);
+              setError("");
+              if (value === "workspace" && !workspaceRootPath && !workspaceBusy) {
+                void loadWorkspaceDir(defaultWorkspaceDir);
+              }
+            }}
+          />
 
-        <div className="flex-1 space-y-5 overflow-auto px-5 py-5">
-          <div
-            className={classNames(
-              "inline-flex flex-wrap rounded-full border p-1",
-              "border-[var(--color-border-primary)] bg-[var(--glass-tab-bg)]",
-            )}
-            role="tablist"
-            aria-label={t("presentationPinSourceLabel", { defaultValue: "Choose a source type" })}
-          >
-            {(
-              [
-                ["url", t("presentationPinSourceUrl", { defaultValue: "URL" })],
-                [
-                  "workspace",
-                  t("presentationPinSourceWorkspace", {
-                    defaultValue: "Pick from workspace (host)",
-                  }),
-                ],
-                [
-                  "upload",
-                  t("presentationPinSourceUpload", { defaultValue: "Upload from this device" }),
-                ],
-              ] as const
-            ).map(([value, label]) => {
-              const active = source === value;
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => {
-                    setSource(value);
-                    setError("");
-                    if (value === "workspace" && !workspaceRootPath && !workspaceBusy) {
-                      void loadWorkspaceDir(defaultWorkspaceDir);
-                    }
-                  }}
-                  className={classNames(
-                    "rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                    active
-                      ? isDark
-                        ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
-                        : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
-                      : isDark
-                        ? "text-slate-300 hover:bg-slate-800/70"
-                        : "text-gray-700 hover:bg-white",
-                  )}
-                  aria-pressed={active}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
+          <div className="h-px bg-[var(--glass-border-subtle)]" aria-hidden="true" />
 
           {source === "url" ? (
-            <label className="block space-y-2">
-              <span
-                className={classNames(
-                  "text-sm font-medium",
-                  isDark ? "text-slate-200" : "text-gray-900",
-                )}
-              >
+            <label className="flex flex-col gap-1.5">
+              <span className={FIELD_LABEL}>
                 {t("presentationUrlLabel", { defaultValue: "URL" })}
               </span>
               <input
@@ -440,10 +406,7 @@ export function PresentationPinModal({
                 placeholder={t("presentationUrlPlaceholder", {
                   defaultValue: "https://example.com/report",
                 })}
-                className={classNames(
-                  "w-full rounded-2xl border px-4 py-3 text-sm outline-none transition-colors",
-                  "glass-input text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]",
-                )}
+                className={`${FIELD_INPUT} h-[46px]`}
               />
             </label>
           ) : null}
@@ -472,17 +435,12 @@ export function PresentationPinModal({
                 }}
               />
               <div className="space-y-2">
-                <span
-                  className={classNames(
-                    "text-sm font-medium",
-                    isDark ? "text-slate-200" : "text-gray-900",
-                  )}
-                >
+                <span className={FIELD_LABEL}>
                   {t("presentationWorkspaceSelectionLabel", { defaultValue: "Selected file" })}
                 </span>
                 <div
                   className={classNames(
-                    "rounded-2xl border px-4 py-3 text-sm font-mono",
+                    "rounded-[10px] border px-3.5 py-3 text-sm font-mono",
                     "glass-input text-[var(--color-text-primary)]",
                   )}
                 >
@@ -493,20 +451,15 @@ export function PresentationPinModal({
           ) : null}
 
           {source === "upload" ? (
-            <label className="block space-y-2">
-              <span
-                className={classNames(
-                  "text-sm font-medium",
-                  isDark ? "text-slate-200" : "text-gray-900",
-                )}
-              >
+            <label className="flex flex-col gap-1.5">
+              <span className={FIELD_LABEL}>
                 {t("presentationFileLabel", { defaultValue: "Upload from this device" })}
               </span>
               <input
                 type="file"
                 onChange={(event) => setFile(event.target.files?.[0] || null)}
                 className={classNames(
-                  "block w-full rounded-2xl border px-4 py-3 text-sm file:mr-4 file:rounded-full file:border-0 file:px-3 file:py-2 file:text-sm file:font-medium",
+                  "block w-full rounded-[10px] border px-3.5 py-2.5 text-sm file:mr-4 file:rounded-full file:border-0 file:px-3 file:py-2 file:text-sm file:font-medium",
                   "glass-input text-[var(--color-text-primary)] file:bg-[var(--glass-tab-bg)] file:text-[var(--color-text-primary)]",
                 )}
               />
@@ -521,13 +474,8 @@ export function PresentationPinModal({
             </label>
           ) : null}
 
-          <label className="block space-y-2">
-            <span
-              className={classNames(
-                "text-sm font-medium",
-                isDark ? "text-slate-200" : "text-gray-900",
-              )}
-            >
+          <label className="flex flex-col gap-1.5">
+            <span className={FIELD_LABEL}>
               {t("presentationTitleLabel", { defaultValue: "Title" })}
             </span>
             <input
@@ -537,20 +485,12 @@ export function PresentationPinModal({
               placeholder={t("presentationTitlePlaceholder", {
                 defaultValue: "Optional title override",
               })}
-              className={classNames(
-                "w-full rounded-2xl border px-4 py-3 text-sm outline-none transition-colors",
-                "glass-input text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]",
-              )}
+              className={`${FIELD_INPUT} h-[46px]`}
             />
           </label>
 
-          <label className="block space-y-2">
-            <span
-              className={classNames(
-                "text-sm font-medium",
-                isDark ? "text-slate-200" : "text-gray-900",
-              )}
-            >
+          <label className="flex flex-col gap-1.5">
+            <span className={FIELD_LABEL}>
               {t("presentationSummaryLabel", { defaultValue: "Summary" })}
             </span>
             <textarea
@@ -560,10 +500,7 @@ export function PresentationPinModal({
               placeholder={t("presentationSummaryPlaceholder", {
                 defaultValue: "Optional summary shown in the slot preview",
               })}
-              className={classNames(
-                "w-full rounded-2xl border px-4 py-3 text-sm outline-none transition-colors",
-                "glass-input text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]",
-              )}
+              className={`${FIELD_INPUT} resize-none py-3`}
             />
           </label>
 
@@ -576,7 +513,7 @@ export function PresentationPinModal({
 
         <div
           className={classNames(
-            "flex items-center justify-end gap-3 border-t px-5 py-4",
+            "grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2.5 border-t px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:flex sm:items-center sm:justify-end sm:gap-3 sm:py-4",
             isDark ? "border-white/10" : "border-black/10",
           )}
         >
@@ -585,7 +522,7 @@ export function PresentationPinModal({
             onClick={onClose}
             disabled={busy}
             className={classNames(
-              "rounded-full px-4 py-2 text-sm font-medium transition-colors",
+              "min-h-12 rounded-xl border border-[var(--color-border-primary)] px-4 text-[15px] font-medium transition-colors sm:min-h-0 sm:rounded-full sm:border-transparent sm:py-2 sm:text-sm",
               isDark ? "text-slate-300 hover:bg-slate-800/70" : "text-gray-700 hover:bg-gray-100",
               busy && "cursor-not-allowed opacity-60",
             )}
@@ -597,7 +534,7 @@ export function PresentationPinModal({
             onClick={() => void handleSubmit()}
             disabled={busy}
             className={classNames(
-              "rounded-full px-4 py-2 text-sm font-medium text-white transition-colors",
+              "min-h-12 rounded-xl px-4 text-[15px] font-semibold text-white transition-colors sm:min-h-0 sm:rounded-full sm:py-2 sm:text-sm sm:font-medium",
               busy
                 ? "bg-black/40 dark:bg-white/40"
                 : "border border-[rgb(35,36,37)] bg-[rgb(35,36,37)] hover:bg-black dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:bg-white/92",

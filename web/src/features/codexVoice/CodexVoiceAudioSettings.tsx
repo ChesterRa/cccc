@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { HeadphonesIcon, MicrophoneIcon, VolumeIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
+import { CodexVoiceSettingsSection } from "./CodexVoiceSettingsSection";
 import { formatCodexVoiceName } from "./codexVoicePreferences";
 import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
 
@@ -54,87 +55,91 @@ export function CodexVoiceAudioSettings({
     "mt-1.5 h-10 w-full rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 text-sm text-[var(--color-text-primary)] outline-none transition-colors focus-visible:border-[var(--color-accent-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent-primary)]/20";
 
   return (
-    <div className="grid gap-5 px-5 py-5 sm:grid-cols-3 sm:px-6 sm:py-6">
-      <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
-        <span className="inline-flex items-center gap-1.5">
-          <HeadphonesIcon size={14} aria-hidden="true" />
-          {t("codexVoiceVoiceLabel")}
-        </span>
-        <select
-          className={selectClass}
-          value={controller.preferences.voice}
-          onChange={(event) => controller.updatePreferences({ voice: event.target.value as never })}
-        >
-          {controller.supportedVoices.map((voice) => (
-            <option key={voice} value={voice}>
-              {formatCodexVoiceName(voice)}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
-        <span className="inline-flex items-center gap-1.5">
-          <MicrophoneIcon size={14} aria-hidden="true" />
-          {t("codexVoiceMicrophoneLabel")}
-        </span>
-        <select
-          className={selectClass}
-          value={controller.preferences.inputDeviceId}
-          onChange={(event) => controller.updatePreferences({ inputDeviceId: event.target.value })}
-        >
-          <option value="">{t("codexVoiceSystemDefault")}</option>
-          {inputs.map((device, index) => (
-            <option key={device.deviceId} value={device.deviceId}>
-              {device.label || t("codexVoiceMicrophoneFallback", { number: index + 1 })}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <div>
-        {supportsOutputSelection ? (
-          <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
-            <span className="inline-flex items-center gap-1.5">
-              <VolumeIcon size={14} aria-hidden="true" />
-              {t("codexVoiceSpeakerLabel")}
-            </span>
-            <select
-              className={selectClass}
-              value={controller.preferences.outputDeviceId}
-              onChange={(event) =>
-                controller.updatePreferences({ outputDeviceId: event.target.value })
-              }
-            >
-              <option value="">{t("codexVoiceSystemDefault")}</option>
-              {outputs.map((device, index) => (
-                <option key={device.deviceId} value={device.deviceId}>
-                  {device.label || t("codexVoiceSpeakerFallback", { number: index + 1 })}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          <div className="text-xs leading-5 text-[var(--color-text-muted)]">
-            {t("codexVoiceOutputSelectionUnavailable")}
-          </div>
-        )}
-        <div className="mt-1.5 flex items-start justify-between gap-2 text-[11px] leading-4 text-[var(--color-text-muted)]">
-          <span>{deviceError || t("codexVoiceDevicePrivacyHint")}</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-6 flex-none px-1.5 text-[11px]"
-            onClick={() => void refreshDevices()}
+    <CodexVoiceSettingsSection
+      title={t("codexVoiceDevicesSection")}
+      description={t("codexVoiceAudioPreferencesHint")}
+      aside={
+        <Button type="button" variant="ghost" size="sm" onClick={() => void refreshDevices()}>
+          {t("codexVoiceRefreshDevices")}
+        </Button>
+      }
+    >
+      <div className="grid gap-4 sm:grid-cols-3">
+        <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
+          <span className="inline-flex items-center gap-1.5">
+            <HeadphonesIcon size={14} aria-hidden="true" />
+            {t("codexVoiceVoiceLabel")}
+          </span>
+          <select
+            className={selectClass}
+            value={controller.preferences.voice}
+            onChange={(event) =>
+              controller.updatePreferences({ voice: event.target.value as never })
+            }
           >
-            {t("codexVoiceRefreshDevices")}
-          </Button>
+            {controller.supportedVoices.map((voice) => (
+              <option key={voice} value={voice}>
+                {formatCodexVoiceName(voice)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
+          <span className="inline-flex items-center gap-1.5">
+            <MicrophoneIcon size={14} aria-hidden="true" />
+            {t("codexVoiceMicrophoneLabel")}
+          </span>
+          <select
+            className={selectClass}
+            value={controller.preferences.inputDeviceId}
+            onChange={(event) =>
+              controller.updatePreferences({ inputDeviceId: event.target.value })
+            }
+          >
+            <option value="">{t("codexVoiceSystemDefault")}</option>
+            {inputs.map((device, index) => (
+              <option key={device.deviceId} value={device.deviceId}>
+                {device.label || t("codexVoiceMicrophoneFallback", { number: index + 1 })}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div>
+          {supportsOutputSelection ? (
+            <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
+              <span className="inline-flex items-center gap-1.5">
+                <VolumeIcon size={14} aria-hidden="true" />
+                {t("codexVoiceSpeakerLabel")}
+              </span>
+              <select
+                className={selectClass}
+                value={controller.preferences.outputDeviceId}
+                onChange={(event) =>
+                  controller.updatePreferences({ outputDeviceId: event.target.value })
+                }
+              >
+                <option value="">{t("codexVoiceSystemDefault")}</option>
+                {outputs.map((device, index) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label || t("codexVoiceSpeakerFallback", { number: index + 1 })}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="text-xs leading-5 text-[var(--color-text-muted)]">
+              {t("codexVoiceOutputSelectionUnavailable")}
+            </div>
+          )}
         </div>
       </div>
-      <p className="col-span-full text-xs leading-5 text-[var(--color-text-muted)]">
-        {t("codexVoiceAudioPreferencesHint")}
+      <p
+        className={`mt-3 text-xs leading-5 ${deviceError ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}
+      >
+        {deviceError || t("codexVoiceDevicePrivacyHint")}
       </p>
-    </div>
+    </CodexVoiceSettingsSection>
   );
 }

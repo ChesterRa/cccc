@@ -186,7 +186,12 @@ it("does not take over or resize a read-only attachment and limits explicit take
       resize({ cols: 100, rows: 30 });
     });
     await act(async () => root.render(<Probe />));
-    // A changed fit already emits the resize; do not send a second repaint.
+    // A changed fit already emits the resize; do not send a second repaint. The
+    // fit's resize reaches the PTY once its size has settled.
+    expect(resizeFrames()).toHaveLength(beforeHiddenGrant + 1);
+    await act(async () => vi.advanceTimersByTime(150));
+    expect(resizeFrames()).toHaveLength(beforeHiddenGrant + 2);
+    await act(async () => vi.advanceTimersByTime(1000));
     expect(resizeFrames()).toHaveLength(beforeHiddenGrant + 2);
     expect(JSON.parse(new TextDecoder().decode(resizeFrames().at(-1)!.slice(1)))).toEqual({
       cols: 100,

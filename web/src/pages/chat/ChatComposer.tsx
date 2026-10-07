@@ -33,6 +33,7 @@ import { SlashCommandMenu } from "./SlashCommandMenu";
 import { useGroupStore } from "../../stores";
 import {
   filterSlashCommands,
+  normalizeSlashCommandInput,
   getVisibleSlashCommandPage,
   type SlashCommandItem,
 } from "../../utils/slashCommands";
@@ -528,7 +529,10 @@ export function ChatComposer({
   // Handle text changes.
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     exitComposerHistory();
-    const val = e.target.value;
+    // Rewriting the value mid-composition would break the IME; normalize once committed.
+    const val = (e.nativeEvent as InputEvent).isComposing
+      ? e.target.value
+      : normalizeSlashCommandInput(e.target.value);
     if (showSuggestedUserMessage && val.trim()) {
       markSuggestedUserMessageConsumed();
     }
@@ -540,7 +544,9 @@ export function ChatComposer({
       pruneComposerAgentMentionTokens({ text: val, tokens }),
     );
     const slashModeActive =
-      val === val.trimStart() && val.startsWith("/") && !val.slice(1).includes(" ");
+      val === val.trimStart() &&
+      normalizeSlashCommandInput(val).startsWith("/") &&
+      !val.slice(1).includes(" ");
     // A user's `#<group>` token is a local-group agent delegation hint, not a
     // cross-group route: keep the destination pinned to the local group so the
     // message is never sent directly to the referenced group. The token itself

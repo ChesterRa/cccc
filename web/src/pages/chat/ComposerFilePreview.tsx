@@ -65,7 +65,7 @@ export function ComposerFilePreview({
     <div
       ref={rootRef}
       className={classNames(
-        "group inline-flex max-w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-xs shadow-sm transition-all",
+        "group inline-flex max-w-full items-center gap-1.5 rounded-lg border py-1 pl-2.5 pr-1 text-xs shadow-sm transition-all",
         "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]",
       )}
       onMouseEnter={openPreview}
@@ -83,7 +83,8 @@ export function ComposerFilePreview({
       </span>
       <button
         className={classNames(
-          "flex-shrink-0 p-1.5 -mr-1 rounded-full",
+          // Touch keeps its 44px target; the negative margins stop it from inflating the chip.
+          "flex-shrink-0 -my-3 flex h-6 w-6 items-center justify-center rounded-full",
           "text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
         )}
         onClick={onRemove}

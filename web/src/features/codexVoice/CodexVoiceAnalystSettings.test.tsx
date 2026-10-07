@@ -82,7 +82,9 @@ async function renderSettings(sessionController = controller()) {
   document.body.appendChild(host);
   const root = createRoot(host);
   await act(async () =>
-    root.render(<CodexVoiceAnalystSettings active controller={sessionController} />),
+    root.render(
+      <CodexVoiceAnalystSettings active controller={sessionController} heading="Voice Analyst" />,
+    ),
   );
   await act(async () => undefined);
   return { host, root };
@@ -143,10 +145,18 @@ describe("CodexVoiceAnalystSettings", () => {
     const sessionController = controller();
     const { host, root } = await renderSettings(sessionController);
     await act(async () =>
-      root.render(<CodexVoiceAnalystSettings active={false} controller={sessionController} />),
+      root.render(
+        <CodexVoiceAnalystSettings
+          active={false}
+          controller={sessionController}
+          heading="Voice Analyst"
+        />,
+      ),
     );
     await act(async () =>
-      root.render(<CodexVoiceAnalystSettings active controller={sessionController} />),
+      root.render(
+        <CodexVoiceAnalystSettings active controller={sessionController} heading="Voice Analyst" />,
+      ),
     );
     expect(api.fetchSettings).toHaveBeenCalledTimes(2);
     expect(host.querySelector('[role="combobox"]')?.textContent).toContain("Claude");
@@ -171,10 +181,22 @@ describe("CodexVoiceAnalystSettings", () => {
       await act(async () => toggle.click());
       expect(toggle.checked).toBe(false);
       await act(async () =>
-        root.render(<CodexVoiceAnalystSettings active={false} controller={sessionController} />),
+        root.render(
+          <CodexVoiceAnalystSettings
+            active={false}
+            controller={sessionController}
+            heading="Voice Analyst"
+          />,
+        ),
       );
       await act(async () =>
-        root.render(<CodexVoiceAnalystSettings active controller={sessionController} />),
+        root.render(
+          <CodexVoiceAnalystSettings
+            active
+            controller={sessionController}
+            heading="Voice Analyst"
+          />,
+        ),
       );
       expect(api.fetchSettings).toHaveBeenCalledOnce();
       expect(toggle.checked).toBe(false);

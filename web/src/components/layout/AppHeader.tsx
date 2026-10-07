@@ -165,7 +165,7 @@ export function AppHeader({
                     status={selectedStatus}
                     connectionStatus={sseStatus}
                     variant="badge"
-                    className="min-h-8 min-w-8 justify-center pointer-coarse:min-h-10 pointer-coarse:min-w-10 [&>span:last-child]:hidden @min-[480px]/group-work-header:[&>span:last-child]:inline cursor-pointer transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
+                    className="min-h-8 min-w-8 justify-center pointer-coarse:min-h-10 pointer-coarse:min-w-10 [&>span:last-child]:hidden @min-[480px]/group-work-header:[&>span:last-child]:inline !border-transparent !bg-transparent @min-[480px]/group-work-header:!border-[var(--glass-border-subtle)] @min-[480px]/group-work-header:!bg-[var(--glass-tab-bg)] cursor-pointer transition-colors hover:text-[var(--color-text-primary)]"
                   />
                 </button>
               ) : (
