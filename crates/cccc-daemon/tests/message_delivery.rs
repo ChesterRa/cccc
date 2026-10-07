@@ -2287,3 +2287,78 @@ while True:
         std::panic::resume_unwind(error);
     }
 }
+
+#[test]
+fn local_cross_group_reply_routes_back_to_origin_and_threads_there() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let source = call(&home, "group_create", json!({"title":"source","by":"user"}));
+    let destination = call(
+        &home,
+        "group_create",
+        json!({"title":"destination","by":"user"}),
+    );
+    let source_id = source.result["group"]["group_id"].as_str().expect("source");
+    let destination_id = destination.result["group"]["group_id"]
+        .as_str()
+        .expect("destination");
+    for (group_id, actor_id) in [(source_id, "sender"), (destination_id, "receiver")] {
+        call(
+            &home,
+            "actor_add",
+            json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+        );
+    }
+    let sent = call(
+        &home,
+        "send_cross_group",
+        json!({
+            "group_id":source_id,"dst_group_id":destination_id,"by":"sender",
+            "to":["receiver"],"text":"question","message_mode":"mail"
+        }),
+    );
+    let source_event_id = sent.result["source_event"]["id"].clone();
+    let delivered_id = sent.result["event"]["id"].clone();
+    let reply = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":destination_id,"by":"receiver","reply_to":delivered_id,
+            "text":"answer","message_mode":"mail"
+        }),
+    );
+    assert_eq!(reply.result["transport"], "local");
+    assert_eq!(reply.result["event"]["group_id"], source_id);
+    assert_eq!(
+        reply.result["event"]["by"],
+        format!("{destination_id}::receiver")
+    );
+    assert_eq!(reply.result["event"]["data"]["to"], json!(["sender"]));
+    assert_eq!(reply.result["event"]["data"]["reply_to"], source_event_id);
+
+    let store = GroupStore::new(home.clone()).expect("store");
+    let count = |group_id| {
+        ledger::read_all(&store.ledger_path(group_id).expect("path"))
+            .expect("events")
+            .len()
+    };
+    let before = (count(source_id), count(destination_id));
+    for to in [
+        json!([format!("{source_id}::sender"), "receiver"]),
+        json!([format!("{source_id}::sender"), "g_other::sender"]),
+    ] {
+        let rejected = call_raw(
+            &home,
+            "reply",
+            json!({
+                "group_id":destination_id,"by":"receiver","reply_to":delivered_id,
+                "text":"invalid audience","to":to,"message_mode":"mail"
+            }),
+        );
+        assert_eq!(
+            rejected.error.as_ref().map(|error| error.code.as_str()),
+            Some("invalid_recipient")
+        );
+    }
+    assert_eq!((count(source_id), count(destination_id)), before);
+}
