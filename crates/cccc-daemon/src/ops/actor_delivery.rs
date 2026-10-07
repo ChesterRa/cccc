@@ -627,14 +627,22 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 }
             }
             let mut delivered = false;
+            let mut terminal_reason = None;
             for attempt in 0..3 {
-                if actor_delivery_worker::process_batch(
+                match actor_delivery_worker::process_batch(
                     &batch,
                     &mut preamble_session,
                     &thread_cancelled,
                 ) {
-                    delivered = true;
-                    break;
+                    actor_delivery_worker::BatchOutcome::Delivered => {
+                        delivered = true;
+                        break;
+                    }
+                    actor_delivery_worker::BatchOutcome::Terminal(reason) => {
+                        terminal_reason = Some(reason);
+                        break;
+                    }
+                    actor_delivery_worker::BatchOutcome::Retry => {}
                 }
                 if thread_cancelled.load(Ordering::Acquire) {
                     break;
@@ -646,7 +654,10 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                     break;
                 }
             }
-            if !delivered {
+            if let Some(reason) = terminal_reason {
+                fail_jobs(&batch, &reason);
+                deferred_failures = 0;
+            } else if !delivered {
                 deferred = batch;
                 deferred_failures = deferred_failures.saturating_add(1);
             } else {
@@ -683,6 +694,76 @@ fn deferred_retry_delay(failures: u32) -> std::time::Duration {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scopeless_worker_records_failure_and_releases_claim() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("scopeless worker", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"to":["peer1"],"text":"work","message_mode":"send"})
+            .as_object()
+            .expect("data")
+            .clone();
+        let job = DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: event.clone(),
+        };
+        let key = (group.group_id.clone(), actor.id.clone(), event.id.clone());
+        in_flight().lock().expect("claims").insert(key.clone());
+        crate::ops::runtime_delivery::append_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            &event.id,
+            delivery_transport(&home, &group, &actor),
+            crate::ops::runtime_delivery::DeliveryOutcome::Claimed,
+        )
+        .expect("claim");
+        let worker = spawn_worker(&(group.group_id.clone(), actor.id.clone()));
+        worker
+            .sender
+            .as_ref()
+            .expect("sender")
+            .send(job)
+            .expect("enqueue");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            let state = crate::ops::runtime_delivery::latest_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &event.id,
+            )
+            .expect("state");
+            if state.is_some_and(|(state, _)| state == "failed") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "delivery must fail without retrying forever"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        worker.shutdown();
+        assert!(!in_flight().lock().expect("claims").contains(&key));
+        let events =
+            ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger")).expect("events");
+        let states: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "runtime.delivery")
+            .filter_map(|event| event.data.get("state").and_then(serde_json::Value::as_str))
+            .collect();
+        assert_eq!(states, ["claimed", "failed"]);
+    }
+
     #[test]
     fn configured_browser_transport_does_not_require_a_completed_pairing() {
         let temp = tempfile::tempdir().expect("temp");
