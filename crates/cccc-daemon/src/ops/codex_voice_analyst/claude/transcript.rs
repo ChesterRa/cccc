@@ -70,6 +70,12 @@ impl TranscriptState {
         self.active.as_ref().map(|turn| turn.turn_id.as_str())
     }
 
+    /// Claude has received hidden input while idle and may be starting a turn of its own.
+    #[cfg(test)]
+    pub(super) fn hidden_input_pending(&self) -> bool {
+        self.active.is_none() && !self.meta_prompt_ids.is_empty()
+    }
+
     #[cfg(test)]
     pub(super) fn ingest(
         &mut self,
@@ -107,6 +113,8 @@ impl TranscriptState {
             return invalid("Claude transcript record belongs to a different session");
         }
         if super::transcript_ack::is_resume_ack(record) {
+            // The acknowledgement answers the hidden resume prompt; nothing else may claim it.
+            self.meta_prompt_ids.clear();
             return Ok(IngestOutcome::None);
         }
         match record.get("type").and_then(Value::as_str) {
@@ -285,7 +293,13 @@ impl TranscriptState {
     /// Hidden user input never starts a CCCC-owned turn and never matches a pending CCCC
     /// prompt, but Claude may answer it in a turn of its own, so remember its promptId.
     fn ingest_meta(&mut self, record: &Value) {
-        if record.get("type").and_then(Value::as_str) != Some("user") {
+        if record.get("type").and_then(Value::as_str) != Some("user")
+            || record
+                .get("sessionId")
+                .or_else(|| record.get("session_id"))
+                .and_then(Value::as_str)
+                .is_some_and(|observed| observed != self.session_id)
+        {
             return;
         }
         let content = record.pointer("/message/content").unwrap_or(&Value::Null);
