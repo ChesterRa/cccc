@@ -155,7 +155,7 @@ pub(super) fn apply(group: &GroupDoc, request: &DaemonRequest) -> Result<Outcome
                     .and_then(Value::as_array)
                     .ok_or_else(|| OpError::new("invalid_request", "rules must be an array"))?;
                 order.clear();
-                rules.clear();
+                let previous = std::mem::take(&mut rules);
                 for value in replacement {
                     let mut rule = value
                         .as_object()
@@ -168,7 +168,7 @@ pub(super) fn apply(group: &GroupDoc, request: &DaemonRequest) -> Result<Outcome
                             format!("duplicate rule id: {id}"),
                         ));
                     }
-                    validate_rule(&mut rule, &by, false, None)?;
+                    validate_rule(&mut rule, &by, false, previous.get(&id))?;
                     order.push(id.clone());
                     rules.insert(id, Value::Object(rule));
                 }

@@ -186,6 +186,16 @@ fn dow_range(start: &str, end: &str) -> Option<Vec<usize>> {
     )
 }
 
+/// Every `step`th numeric day from `start` to `end`, folded to 0-6 without repeats.
+fn dow_range_values(start: usize, end: usize, step: usize) -> Vec<usize> {
+    let mut seen = [false; 7];
+    (start..=end)
+        .step_by(step)
+        .map(|day| day % 7)
+        .filter(|day| !std::mem::replace(&mut seen[*day], true))
+        .collect()
+}
+
 fn dow_list(days: impl IntoIterator<Item = usize>) -> String {
     days.into_iter().map(dow_name).collect::<Vec<_>>().join(",")
 }
@@ -227,7 +237,10 @@ fn expand_dow_step(base: &str, step: &str) -> String {
             None => return format!("{base}/{step}"),
         },
         None if base == "*" || base == "?" => (0..=6).step_by(step).collect(),
-        None => match dow_index(base) {
+        // A start runs to the end of the week like an explicit range: a number up to 7
+        // (so `1/2` matches `1-7/2` and `7/2` is Sunday alone), a name up to Saturday.
+        None => match dow_raw(base) {
+            Some(a) if base.parse::<usize>().is_ok() => dow_range_values(a, 7, step),
             Some(a) => (a..=6).step_by(step).collect(),
             None => return format!("{base}/{step}"),
         },
@@ -326,6 +339,19 @@ mod tests {
         assert_eq!(fire_weekdays("0 9 * * 0-7/2"), vec![Sun, Tue, Thu, Sat]);
         assert_eq!(fire_weekdays("0 9 * * 1-7/2"), vec![Sun, Mon, Wed, Fri]);
         assert_eq!(fire_weekdays("0 9 * * */2"), vec![Sun, Tue, Thu, Sat]);
+    }
+
+    #[test]
+    fn cron_day_of_week_bare_step_runs_to_the_explicit_range_end() {
+        use Weekday::{Fri, Mon, Sat, Sun, Thu, Tue, Wed};
+        // A numeric start steps to 7 exactly like the written range does.
+        assert_eq!(fire_weekdays("0 9 * * 1/2"), fire_weekdays("0 9 * * 1-7/2"));
+        assert_eq!(fire_weekdays("0 9 * * 1/2"), vec![Sun, Mon, Wed, Fri]);
+        assert_eq!(fire_weekdays("0 9 * * 0/2"), vec![Sun, Tue, Thu, Sat]);
+        // 7 is Sunday at the end of the week, so stepping from it stays on Sunday.
+        assert_eq!(fire_weekdays("0 9 * * 7/2"), vec![Sun]);
+        assert_eq!(fire_weekdays("0 9 * * 5/1"), vec![Sun, Fri, Sat]);
+        assert_eq!(fire_weekdays("0 9 * * wed/2"), vec![Wed, Fri]);
     }
 
     #[test]
