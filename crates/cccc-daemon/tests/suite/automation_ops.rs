@@ -563,6 +563,92 @@ fn automation_writes_reject_malformed_cross_engine_state() {
     );
 }
 
+#[test]
+fn cron_writes_reject_new_bad_expressions_but_keep_unchanged_legacy_rules_saveable() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let created = ok(&home, "group_create", json!({"title":"cron legacy"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    let cron_rule = |id: &str, cron: &str, message: &str| {
+        json!({
+            "id":id,"enabled":false,"to":["@all"],
+            "trigger":{"kind":"cron","cron":cron},
+            "action":{"kind":"notify","message":message}
+        })
+    };
+    // A rule saved before expressions were validated, which can no longer be written fresh.
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let mut group = store.load(group_id).expect("load group");
+    group.automation.insert(
+        "rules".into(),
+        json!([cron_rule("legacy", "not a cron", "old")]),
+    );
+    store.save(&group).expect("seed legacy rule");
+
+    // Saving the ruleset with the legacy rule untouched and another rule edited succeeds.
+    let saved = raw(
+        &home,
+        "group_automation_update",
+        json!({
+            "group_id":group_id,
+            "ruleset":{
+                "rules":[
+                    cron_rule("legacy", "not a cron", "old"),
+                    cron_rule("weekly", "0 9 * * 1", "monday")
+                ],
+                "snippets":{}
+            }
+        }),
+    );
+    assert!(
+        saved.ok,
+        "unchanged legacy rule blocked the save: {:?}",
+        saved.error
+    );
+    let replaced = raw(
+        &home,
+        "group_automation_manage",
+        json!({
+            "group_id":group_id,
+            "actions":[{"type":"replace_all_rules","ruleset":{
+                "rules":[cron_rule("legacy", "not a cron", "still old")],
+                "snippets":{}
+            }}]
+        }),
+    );
+    assert!(
+        replaced.ok,
+        "replace_all_rules rejected the unchanged legacy rule: {:?}",
+        replaced.error
+    );
+
+    // Writing a bad expression, new or changed, is still rejected on every write path.
+    for args in [
+        json!({"group_id":group_id,"ruleset":{"rules":[cron_rule("legacy", "still not a cron", "old")],"snippets":{}}}),
+        json!({"group_id":group_id,"ruleset":{"rules":[cron_rule("fresh", "not a cron", "new")],"snippets":{}}}),
+    ] {
+        let response = raw(&home, "group_automation_update", args);
+        assert_cron_rejected(response);
+    }
+    let changed = raw(
+        &home,
+        "group_automation_manage",
+        json!({
+            "group_id":group_id,
+            "actions":[{"type":"update_rule","rule":cron_rule("legacy", "0 0 * * 8", "old")}]
+        }),
+    );
+    assert_cron_rejected(changed);
+}
+
+fn assert_cron_rejected(response: DaemonResponse) {
+    assert!(!response.ok, "a bad cron expression was persisted");
+    let message = response.error.expect("rejected").message;
+    assert!(message.contains("invalid cron expression"), "{message}");
+}
+
 fn ok(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     let response = raw(home, op, args);
     assert!(response.ok, "{op} failed: {:?}", response.error);

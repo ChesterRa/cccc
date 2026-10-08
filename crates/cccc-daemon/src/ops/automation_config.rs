@@ -31,7 +31,8 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .and_then(Value::as_object)
         .cloned()
         .ok_or_else(|| OpError::new("invalid_args", "ruleset must be an object"))?;
-    let (rules, snippets) = normalize_ruleset(&ruleset, &caller(request))?;
+    let stored = group.automation.get("rules").and_then(Value::as_array);
+    let (rules, snippets) = normalize_ruleset(&ruleset, &caller(request), stored)?;
     let expected = expected_version(&request.args)?;
     let current = group
         .automation
@@ -284,6 +285,7 @@ fn default_rules() -> Value {
 fn normalize_ruleset(
     ruleset: &Map<String, Value>,
     by: &str,
+    stored: Option<&Vec<Value>>,
 ) -> Result<(Vec<Value>, Map<String, Value>), OpError> {
     if let Some(key) = ruleset
         .keys()
@@ -327,7 +329,8 @@ fn normalize_ruleset(
                 format!("rules[{index}] must be an object"),
             )
         })?;
-        validate_rule(&mut rule, by, false, None)?;
+        let previous = stored_rule(stored, rule.get("id"));
+        validate_rule(&mut rule, by, false, previous)?;
         let id = rule
             .get("id")
             .and_then(Value::as_str)
@@ -342,6 +345,14 @@ fn normalize_ruleset(
         rules.push(Value::Object(rule));
     }
     Ok((rules, snippets))
+}
+
+/// The saved rule a submitted rule replaces, matched by id.
+fn stored_rule<'a>(stored: Option<&'a Vec<Value>>, id: Option<&Value>) -> Option<&'a Value> {
+    let id = id?.as_str()?;
+    stored?
+        .iter()
+        .find(|rule| rule.get("id").and_then(Value::as_str) == Some(id))
 }
 
 fn mutate_automation(

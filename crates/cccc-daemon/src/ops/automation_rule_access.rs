@@ -52,9 +52,14 @@ pub(super) fn validate(
     {
         return Err(invalid("to must be an array of strings"));
     }
+    let stored_cron = existing
+        .and_then(|rule| rule.get("trigger"))
+        .and_then(|trigger| trigger.get("cron"))
+        .and_then(Value::as_str);
     let trigger_kind = validate_trigger(
         rule.get_mut("trigger")
             .ok_or_else(|| invalid("trigger is required"))?,
+        stored_cron,
     )?;
     let action = rule.entry("action").or_insert_with(|| {
         json!({
@@ -127,7 +132,9 @@ pub(super) fn required_text<'a>(
         .ok_or_else(|| OpError::new("invalid_request", format!("{key} is required")))
 }
 
-fn validate_trigger(value: &mut Value) -> Result<String, OpError> {
+/// `stored_cron` is the rule's saved expression: an unchanged one is accepted as-is so a
+/// legacy unparsable rule cannot block saving the rest of its ruleset.
+fn validate_trigger(value: &mut Value, stored_cron: Option<&str>) -> Result<String, OpError> {
     let trigger = value
         .as_object_mut()
         .ok_or_else(|| invalid("trigger must be an object"))?;
@@ -145,7 +152,12 @@ fn validate_trigger(value: &mut Value) -> Result<String, OpError> {
         }
         "cron" => {
             reject_unknown(trigger, &["kind", "cron", "timezone"], "cron trigger")?;
-            required_text(trigger, "cron")?;
+            let expression = required_text(trigger, "cron")?;
+            if stored_cron.map(str::trim) != Some(expression)
+                && let Some(error) = cccc_core::automation::cron_expression_error(expression)
+            {
+                return Err(invalid(format!("invalid cron expression: {error}")));
+            }
             match trigger.get("timezone") {
                 Some(value) if value.as_str().is_none() => {
                     return Err(invalid("cron timezone must be a string"));
