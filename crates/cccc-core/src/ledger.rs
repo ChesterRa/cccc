@@ -486,6 +486,9 @@ pub fn tail_filtered(
         return Ok((Vec::new(), false));
     }
 
+    // Compaction replaces the active file and adds segments; read one stable
+    // set of sources rather than racing a rename between listing and open.
+    let _lock = acquire_reader_lock(path)?;
     let target = limit.saturating_add(1);
     let mut newest_first = Vec::with_capacity(target);
     let group_id = ledger_group_id(path);
@@ -808,6 +811,28 @@ mod tests {
             .expect("read ledger");
         reader.join().expect("join reader");
         assert_eq!(events, vec![event]);
+    }
+
+    #[test]
+    fn tail_waits_for_a_rotation_in_progress() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let first = Event::new("chat.message", "g_fixture");
+        append(&path, &first).expect("first event");
+
+        // Compaction holds the writer lock while it renames the active file.
+        let rotation = acquire_writer_lock(&path).expect("writer lock");
+        let reader_path = path.clone();
+        let reader = std::thread::spawn(move || tail(&reader_path, 10));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(
+            !reader.is_finished(),
+            "tail must not read sources while a rotation holds the ledger"
+        );
+        FileExt::unlock(&rotation).expect("finish rotation");
+        drop(rotation);
+        let events = reader.join().expect("reader thread").expect("tail");
+        assert_eq!(events, vec![first]);
     }
 
     #[test]

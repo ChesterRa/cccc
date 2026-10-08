@@ -160,14 +160,22 @@ fn estimate_value_bytes(value: &serde_json::Value) -> u64 {
 }
 
 fn current(path: &Path) -> io::Result<Arc<RwLock<LedgerIndex>>> {
-    let next_revisions = revisions(path)?;
-    let weight = next_revisions.iter().map(|revision| revision.len).sum();
+    // Observe the sources under the stable ledger lock, then release it before
+    // taking the index lock below so the lock order stays index -> ledger.
+    // Compaction renames the active file and adds segments; outside the lock a
+    // look can miss a source, and a partial list can even match a cached one
+    // (path, length and mtime are not a file generation), returning stale events.
+    let observed = {
+        let _source_lock = crate::ledger::acquire_reader_lock(path)?;
+        revisions(path)?
+    };
+    let weight = observed.iter().map(|revision| revision.len).sum();
     let entry = cache::entry(path, weight);
     if entry
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .revisions
-        == next_revisions
+        == observed
     {
         return Ok(entry);
     }
@@ -299,6 +307,59 @@ mod tests {
             entry.read().expect("index").revisions,
             revisions(&path).expect("revisions")
         );
+    }
+
+    #[test]
+    fn a_warm_query_waits_for_a_rotation_in_progress() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let first = Event::new("chat.message", "g_fixture");
+        crate::ledger::append(&path, &first).expect("first event");
+        assert_eq!(
+            crate::ledger::read_all(&path).expect("warm"),
+            vec![first.clone()]
+        );
+
+        // Compaction holds the writer lock while it moves sources. Even a warm
+        // index must not compare against a source list taken mid-rotation.
+        let rotation = crate::ledger::acquire_writer_lock(&path).expect("writer lock");
+        let reader_path = path.clone();
+        let reader = std::thread::spawn(move || crate::ledger::read_all(&reader_path));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(
+            !reader.is_finished(),
+            "a warm query must not observe sources while a rotation holds the ledger"
+        );
+        drop(rotation);
+        assert_eq!(reader.join().expect("reader").expect("read"), vec![first]);
+    }
+
+    #[test]
+    fn a_stale_warm_index_catches_up_with_an_unnotified_commit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let first = Event::new("chat.message", "g_fixture");
+        let second = Event::new("chat.message", "g_fixture");
+        crate::ledger::append(&path, &first).expect("first event");
+        let entry = current(&path).expect("warm index");
+
+        // Commit without the append notification so the cache really is stale.
+        let mut encoded = serde_json::to_vec(&second).expect("encode");
+        encoded.push(b'\n');
+        let writer = crate::ledger::acquire_writer_lock(&path).expect("writer lock");
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("source");
+        std::io::Write::write_all(&mut file, &encoded).expect("second event");
+        file.sync_data().expect("commit");
+        drop(writer);
+        assert_eq!(entry.read().expect("index").events.len(), 1);
+
+        let index = current(&path).expect("caught up");
+        let index = index.read().expect("index");
+        assert_eq!(index.events, vec![first, second]);
+        assert_eq!(index.revisions, revisions(&path).expect("revisions"));
     }
 
     #[cfg(unix)]
