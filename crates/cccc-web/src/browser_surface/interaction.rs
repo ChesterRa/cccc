@@ -3,10 +3,7 @@ use axum::extract::ws::{Message, WebSocket};
 use cccc_contracts::utc_now;
 use chromiumoxide::Page;
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
-use chromiumoxide::cdp::browser_protocol::input::{
-    DispatchKeyEventParams, DispatchKeyEventType, DispatchMouseEventParams, DispatchMouseEventType,
-    InsertTextParams, MouseButton,
-};
+use chromiumoxide::cdp::browser_protocol::input::{InsertTextParams, MouseButton};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -41,16 +38,16 @@ impl BrowserSurfaces {
                 super::navigation::goto_dom_content_loaded(&session.page, url).await?;
             }
             "click" => {
-                let (button, buttons) = match command
-                    .get("button")
-                    .and_then(Value::as_str)
-                    .unwrap_or("left")
-                {
-                    "left" => (MouseButton::Left, 1),
-                    "middle" => (MouseButton::Middle, 4),
-                    "right" => (MouseButton::Right, 2),
-                    value => bail!("unsupported browser mouse button: {value}"),
-                };
+                let x = number(command, "x");
+                let y = number(command, "y");
+                let (pressed, released) = super::input_events::click_events(
+                    x,
+                    y,
+                    command
+                        .get("button")
+                        .and_then(Value::as_str)
+                        .unwrap_or("left"),
+                )?;
                 let existing_pages = if session.shared_browser {
                     HashSet::new()
                 } else {
@@ -65,25 +62,13 @@ impl BrowserSurfaces {
                         .map(|page| page.target_id().clone())
                         .collect::<HashSet<_>>()
                 };
-                let x = number(command, "x");
-                let y = number(command, "y");
-                if button == MouseButton::Left {
+                if pressed.button == Some(MouseButton::Left) {
                     let retarget_script = format!(
                         "(() => {{ const node = document.elementFromPoint({x}, {y}); const link = node?.closest?.('a[href]'); if (link?.target === '_blank') link.target = '_self'; }})()"
                     );
                     session.page.evaluate(retarget_script).await?;
                 }
-                let mut pressed =
-                    DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, x, y);
-                pressed.button = Some(button.clone());
-                pressed.buttons = Some(buttons);
-                pressed.click_count = Some(1);
                 session.page.execute(pressed).await?;
-                let mut released =
-                    DispatchMouseEventParams::new(DispatchMouseEventType::MouseReleased, x, y);
-                released.button = Some(button);
-                released.buttons = Some(0);
-                released.click_count = Some(1);
                 session.page.execute(released).await?;
                 // A shared browser may gain another Actor's window concurrently.
                 // Keep this surface on its registered target; shared login popups
@@ -124,10 +109,12 @@ impl BrowserSurfaces {
                     .get("y")
                     .and_then(Value::as_f64)
                     .unwrap_or(f64::from(session.height) / 2.0);
-                let mut wheel =
-                    DispatchMouseEventParams::new(DispatchMouseEventType::MouseWheel, x, y);
-                wheel.delta_x = Some(number(command, "dx"));
-                wheel.delta_y = Some(number(command, "dy"));
+                let wheel = super::input_events::wheel_event(
+                    x,
+                    y,
+                    number(command, "dx"),
+                    number(command, "dy"),
+                );
                 session.page.execute(wheel).await?;
             }
             "back" => {
@@ -353,37 +340,9 @@ fn number(value: &Value, key: &str) -> f64 {
 }
 
 async fn press_key(page: &Page, key: &str) -> Result<()> {
-    let definition = chromiumoxide::keys::get_key_definition(key)
-        .with_context(|| format!("unsupported browser key: {key}"))?;
-    let mut command = DispatchKeyEventParams::builder()
-        .key(definition.key)
-        .code(definition.code)
-        .windows_virtual_key_code(definition.key_code)
-        .native_virtual_key_code(definition.key_code);
-    let down_type = if let Some(text) = definition.text {
-        command = command.text(text);
-        DispatchKeyEventType::KeyDown
-    } else if definition.key.len() == 1 {
-        command = command.text(definition.key);
-        DispatchKeyEventType::KeyDown
-    } else {
-        DispatchKeyEventType::RawKeyDown
-    };
-    page.execute(
-        command
-            .clone()
-            .r#type(down_type)
-            .build()
-            .map_err(anyhow::Error::msg)?,
-    )
-    .await?;
-    page.execute(
-        command
-            .r#type(DispatchKeyEventType::KeyUp)
-            .build()
-            .map_err(anyhow::Error::msg)?,
-    )
-    .await?;
+    let [down, up] = super::input_events::key_events(key)?;
+    page.execute(down).await?;
+    page.execute(up).await?;
     Ok(())
 }
 

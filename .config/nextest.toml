@@ -1,0 +1,112 @@
+# cargo-nextest runs every test in its own process, so tests that once needed a
+# serial cargo-test run (process-global state) can share one parallel run.
+
+# PR and main CI: every test except the real-Chrome fixtures below (the nightly
+# `chrome` profile runs those) and the process lifecycle tests, which CI runs
+# serially in a later step. CI also sets CCCC_TEST_FORBID_REAL_CHROME, so a new
+# fixture that launches Chrome fails until it is listed in both filters here.
+[profile.ci]
+fail-fast = false
+failure-output = "immediate-final"
+default-filter = '''
+not (package(cccc-pair-web) & (
+    test(=browser_surface::browser_surface_tests::click_command_preserves_the_requested_mouse_button)
+  | test(=browser_surface::browser_surface_tests::composer_readiness_waits_for_login_and_interactive_verification)
+  | test(=browser_surface::browser_surface_tests::concurrent_ensure_open_reuses_one_profile_owner)
+  | test(=browser_surface::browser_surface_tests::core_interaction_commands_complete_a_real_page_journey)
+  | test(=browser_surface::browser_surface_tests::failed_open_releases_profile_registration)
+  | test(=browser_surface::browser_surface_tests::info_reaps_a_finished_browser_handler_instead_of_reporting_active)
+  | test(=browser_surface::browser_surface_tests::interactive_system_browser_keeps_native_mode_and_reuses_its_session)
+  | test(=browser_surface::browser_surface_tests::launches_chromium_and_captures_nonempty_frame)
+  | test(=browser_surface::browser_surface_tests::open_and_close_share_one_profile_lifecycle_boundary)
+  | test(=browser_surface::browser_surface_tests::open_completes_after_dom_content_loaded_without_waiting_for_subresources)
+  | test(=browser_surface::browser_surface_tests::page_enumeration::candidate_enumeration_skips_only_confirmed_disappeared_targets)
+  | test(=browser_surface::browser_surface_tests::reopens_same_profile_after_process_exit)
+  | test(=browser_surface::browser_surface_tests::resource_cleanup::actor_cleanup_checks_surfaces_opened_after_an_empty_pass)
+  | test(=browser_surface::browser_surface_tests::resource_cleanup::actor_cleanup_preserves_other_surface_owners_and_disabled_actors)
+  | test(=browser_surface::browser_surface_tests::resource_cleanup::closed_actor_windows_retire_with_their_generation)
+  | test(=browser_surface::browser_surface_tests::resource_cleanup::legacy_actor_pairing_does_not_replace_or_reap_its_window)
+  | test(=browser_surface::browser_surface_tests::restores_seeded_cookie_and_detects_real_auth_tokens)
+  | test(=browser_surface::browser_surface_tests::scroll_command_targets_the_nested_container_under_the_pointer)
+  | test(=browser_surface::browser_surface_tests::shared_owner::actor_window_remains_visible_and_closable_during_slow_navigation)
+  | test(=browser_surface::browser_surface_tests::shared_owner::shared_login_open_recovers_blank_without_replacing_actor_pages)
+  | test(=browser_surface::browser_surface_tests::shared_owner::shared_login_window_is_available_before_document_readiness)
+  | test(=browser_surface::browser_surface_tests::shared_owner::shared_page_commands_do_not_adopt_popups_or_block_other_surfaces)
+  | test(=browser_surface::browser_surface_tests::shared_owner::shared_windows_keep_login_and_close_only_their_own_surface)
+  | test(=browser_surface::browser_surface_tests::shared_owner::shared_windows_submit_independent_batches_while_viewers_capture)
+  | test(=browser_surface::browser_surface_tests::shutdown_closes_all_browser_processes)
+  | test(=browser_surface::browser_surface_tests::special_key_command_applies_native_input_behavior)
+  | test(=browser_surface::prompt_submission::grok_tests::grok_controls_busy_state_drafts_and_user_receipts)
+  | test(=browser_surface::prompt_submission::readiness_tests::chatgpt_auth_and_landing_inputs_are_not_conversation_composers)
+  | test(=browser_surface::prompt_submission::readiness_tests::image_compat_submission_waits_for_enabled_button_and_sends_once)
+  | test(=browser_surface::prompt_submission::readiness_tests::owned_draft_recovery_rechecks_composer_and_page_before_replacement)
+  | test(=browser_surface::prompt_submission::readiness_tests::send_activation_rechecks_ownership_and_uses_the_button_handler_once)
+  | test(=browser_surface::prompt_submission::readiness_tests::send_wait_preserves_covered_controls_and_changed_drafts)
+  | test(=browser_surface::prompt_submission::readiness_tests::submission_receipt_requires_the_current_batch_in_a_user_message)
+  | test(=browser_surface::prompt_submission::readiness_tests::unverified_submission_and_user_drafts_are_never_overwritten)
+  | test(=routes::web_model_browser::draft_tests::grok_binding_aligns_existing_page_without_viewer_and_preserves_drafts)
+  | test(=routes::web_model_browser::draft_tests::grok_binding_replaces_chatgpt_surface_before_navigation)
+  | test(=routes::web_model_browser::draft_tests::preview_and_saved_alignment_preserve_attachment_only_drafts)
+  | test(=routes::web_model_delivery::login_tests::existing_chat_requires_review_and_empty_composer_before_resuming)
+  | test(=routes::web_model_delivery::login_tests::login_verification_and_generation_do_not_claim_delivery_or_leave_the_page)
+  | test(=routes::web_model_delivery::recovery_tests::contended_worker_recovers_manual_send_and_only_delivers_later_work)
+  | test(=routes::web_model_delivery::recovery_tests::verified_legacy_draft_recovers_through_rebuilt_prompt_once)
+  | test(=routes::web_model_pairing::tests::automatic_pairing_verifies_owned_receipts_and_preserves_drafts_routes_and_cancellation)
+  | test(=routes::web_model_shared_browser::tests::closing_login_keeps_actor_page_draft_and_shared_login)
+))
+& not test(/^daemon_self_launch::/)
+'''
+
+# Nightly: only the fixtures that launch a real Chrome. They run one at a time
+# so a small runner never cold-launches several browsers at once.
+[profile.chrome]
+fail-fast = false
+failure-output = "immediate-final"
+test-threads = 1
+default-filter = '''
+package(cccc-pair-web) & (
+    test(=browser_surface::browser_surface_tests::click_command_preserves_the_requested_mouse_button)
+  | test(=browser_surface::browser_surface_tests::composer_readiness_waits_for_login_and_interactive_verification)
+  | test(=browser_surface::browser_surface_tests::concurrent_ensure_open_reuses_one_profile_owner)
+  | test(=browser_surface::browser_surface_tests::core_interaction_commands_complete_a_real_page_journey)
+  | test(=browser_surface::browser_surface_tests::failed_open_releases_profile_registration)
+  | test(=browser_surface::browser_surface_tests::info_reaps_a_finished_browser_handler_instead_of_reporting_active)
+  | test(=browser_surface::browser_surface_tests::interactive_system_browser_keeps_native_mode_and_reuses_its_session)
+  | test(=browser_surface::browser_surface_tests::launches_chromium_and_captures_nonempty_frame)
+  | test(=browser_surface::browser_surface_tests::open_and_close_share_one_profile_lifecycle_boundary)
+  | test(=browser_surface::browser_surface_tests::open_completes_after_dom_content_loaded_without_waiting_for_subresources)
+  | test(=browser_surface::browser_surface_tests::page_enumeration::candidate_enumeration_skips_only_confirmed_disappeared_targets)
+  | test(=browser_surface::browser_surface_tests::reopens_same_profile_after_process_exit)
+  | test(=browser_surface::browser_surface_tests::resource_cleanup::actor_cleanup_checks_surfaces_opened_after_an_empty_pass)
+  | test(=browser_surface::browser_surface_tests::resource_cleanup::actor_cleanup_preserves_other_surface_owners_and_disabled_actors)
+  | test(=browser_surface::browser_surface_tests::resource_cleanup::closed_actor_windows_retire_with_their_generation)
+  | test(=browser_surface::browser_surface_tests::resource_cleanup::legacy_actor_pairing_does_not_replace_or_reap_its_window)
+  | test(=browser_surface::browser_surface_tests::restores_seeded_cookie_and_detects_real_auth_tokens)
+  | test(=browser_surface::browser_surface_tests::scroll_command_targets_the_nested_container_under_the_pointer)
+  | test(=browser_surface::browser_surface_tests::shared_owner::actor_window_remains_visible_and_closable_during_slow_navigation)
+  | test(=browser_surface::browser_surface_tests::shared_owner::shared_login_open_recovers_blank_without_replacing_actor_pages)
+  | test(=browser_surface::browser_surface_tests::shared_owner::shared_login_window_is_available_before_document_readiness)
+  | test(=browser_surface::browser_surface_tests::shared_owner::shared_page_commands_do_not_adopt_popups_or_block_other_surfaces)
+  | test(=browser_surface::browser_surface_tests::shared_owner::shared_windows_keep_login_and_close_only_their_own_surface)
+  | test(=browser_surface::browser_surface_tests::shared_owner::shared_windows_submit_independent_batches_while_viewers_capture)
+  | test(=browser_surface::browser_surface_tests::shutdown_closes_all_browser_processes)
+  | test(=browser_surface::browser_surface_tests::special_key_command_applies_native_input_behavior)
+  | test(=browser_surface::prompt_submission::grok_tests::grok_controls_busy_state_drafts_and_user_receipts)
+  | test(=browser_surface::prompt_submission::readiness_tests::chatgpt_auth_and_landing_inputs_are_not_conversation_composers)
+  | test(=browser_surface::prompt_submission::readiness_tests::image_compat_submission_waits_for_enabled_button_and_sends_once)
+  | test(=browser_surface::prompt_submission::readiness_tests::owned_draft_recovery_rechecks_composer_and_page_before_replacement)
+  | test(=browser_surface::prompt_submission::readiness_tests::send_activation_rechecks_ownership_and_uses_the_button_handler_once)
+  | test(=browser_surface::prompt_submission::readiness_tests::send_wait_preserves_covered_controls_and_changed_drafts)
+  | test(=browser_surface::prompt_submission::readiness_tests::submission_receipt_requires_the_current_batch_in_a_user_message)
+  | test(=browser_surface::prompt_submission::readiness_tests::unverified_submission_and_user_drafts_are_never_overwritten)
+  | test(=routes::web_model_browser::draft_tests::grok_binding_aligns_existing_page_without_viewer_and_preserves_drafts)
+  | test(=routes::web_model_browser::draft_tests::grok_binding_replaces_chatgpt_surface_before_navigation)
+  | test(=routes::web_model_browser::draft_tests::preview_and_saved_alignment_preserve_attachment_only_drafts)
+  | test(=routes::web_model_delivery::login_tests::existing_chat_requires_review_and_empty_composer_before_resuming)
+  | test(=routes::web_model_delivery::login_tests::login_verification_and_generation_do_not_claim_delivery_or_leave_the_page)
+  | test(=routes::web_model_delivery::recovery_tests::contended_worker_recovers_manual_send_and_only_delivers_later_work)
+  | test(=routes::web_model_delivery::recovery_tests::verified_legacy_draft_recovers_through_rebuilt_prompt_once)
+  | test(=routes::web_model_pairing::tests::automatic_pairing_verifies_owned_receipts_and_preserves_drafts_routes_and_cancellation)
+  | test(=routes::web_model_shared_browser::tests::closing_login_keeps_actor_page_draft_and_shared_login)
+)
+'''

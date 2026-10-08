@@ -212,14 +212,21 @@ jobs:
         run: |
           scripts/tests/install_unix.sh
           scripts/tests/release_assets.sh
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.148
       - name: Test Rust workspace
+        env:
+          # Real-Chrome fixtures run nightly; any that reach PR CI fail loudly.
+          CCCC_TEST_FORBID_REAL_CHROME: "1"
         run: |
-          # Process lifecycle tests run serially in the final step because they
-          # spawn and stop a combined daemon/Web process.
-          cargo test --workspace --exclude cccc-pair-daemon --locked -- \
-            --skip daemon_self_launch::
-          cargo test --package cccc-pair-daemon --locked -- \
-            --test-threads=1
+          # One build for the whole workspace: selecting a single package
+          # resolves dependency features differently and recompiles the
+          # workspace crates. The ci profile (.config/nextest.toml) leaves out
+          # real-Chrome fixtures, which run nightly, and the process lifecycle
+          # tests, which run serially in the next step.
+          cargo nextest run --workspace --locked --profile ci
       - name: Test combined daemon and Web process lifecycle serially
         run: >-
           cargo test --package cccc --test integration --locked
@@ -240,13 +247,15 @@ jobs:
           CCCC_KILO_MODEL_SYNC_LIVE: "1"
         run: |
           cargo build --package cccc --bin cccc --locked
-          cargo test --package cccc-pair-daemon --lib --locked -- --list > offline-native-tests.txt
+          # --workspace reuses the test build above; the live probes exist only
+          # in cccc-pair-daemon.
+          cargo test --workspace --lib --locked -- --list > offline-native-tests.txt
           python3 scripts/check_offline_native_tests.py offline-native-tests.txt
-          cargo test --package cccc-pair-daemon --lib --locked \
+          cargo test --workspace --lib --locked \
             live_codex_empty_actor_and_analyst_resume_with_native_terminal -- --test-threads=1
-          cargo test --package cccc-pair-daemon --lib --locked \
+          cargo test --workspace --lib --locked \
             live_claude_empty_session_resumes_without_a_prompt -- --test-threads=1
-          cargo test --package cccc-pair-daemon --lib --locked \
+          cargo test --workspace --lib --locked \
             live_kilo -- --test-threads=1
 
   ci-required:

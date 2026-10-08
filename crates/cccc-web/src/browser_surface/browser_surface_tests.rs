@@ -818,7 +818,6 @@ async fn scroll_command_targets_the_nested_container_under_the_pointer() {
         )
         .await
         .expect("dispatch wheel");
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     let page = manager
         .sessions
         .lock()
@@ -827,12 +826,22 @@ async fn scroll_command_targets_the_nested_container_under_the_pointer() {
         .expect("browser session")
         .page
         .clone();
-    let scroll_top: f64 = page
-        .evaluate("document.querySelector('#scroller').scrollTop")
-        .await
-        .expect("read nested scroll position")
-        .into_value()
-        .expect("numeric scroll position");
+    // The wheel is applied asynchronously after dispatch; a loaded runner can take
+    // well over a fixed delay, so wait for the position instead of sleeping.
+    let mut scroll_top = 0.0;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        scroll_top = page
+            .evaluate("document.querySelector('#scroller').scrollTop")
+            .await
+            .expect("read nested scroll position")
+            .into_value()
+            .expect("numeric scroll position");
+        if scroll_top >= 200.0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 
     assert!(
         scroll_top >= 200.0,

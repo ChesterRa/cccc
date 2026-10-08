@@ -134,13 +134,30 @@ def test_rust_linux_job_is_python_free_and_reuses_one_workspace() -> None:
     assert "python -m" not in test_runs.lower()
     assert "pip install" not in test_runs.lower()
     assert "scripts/check_version_parity.sh" not in test_runs
-    assert "cargo test --workspace --exclude cccc-pair-daemon --locked" in test_runs
-    assert (
-        "cargo test --package cccc-pair-daemon --locked"
-        in test_runs
-    )
+    # One workspace build serves every test step: a single-package selection
+    # resolves dependency features differently and recompiles the workspace.
+    assert "cargo nextest run --workspace --locked --profile ci\n" in test_runs
+    assert "--package cccc-pair-daemon" not in test_runs
+    assert "cargo test --workspace --lib --locked -- --list" in test_runs
+    nextest = next(step for step in job["steps"] if step.get("name") == "Install cargo-nextest")
+    assert nextest["uses"].startswith("taiki-e/install-action@")
+    assert nextest["with"]["tool"].startswith("cargo-nextest@0.9.")
+    profile = tomllib.loads((ROOT / ".config/nextest.toml").read_text(encoding="utf-8"))
+    assert profile["profile"]["ci"]["fail-fast"] is False
+    ci_filter = " ".join(profile["profile"]["ci"]["default-filter"].split())
+    chrome_filter = " ".join(profile["profile"]["chrome"]["default-filter"].split())
+    # Nightly runs exactly the real-Chrome fixtures that CI leaves out, and the
+    # serial lifecycle step owns its tests.
+    assert ci_filter == f"not ({chrome_filter}) & not test(/^daemon_self_launch::/)"
+    # Fixtures are listed one by one so a fast test added beside them stays in PR CI.
+    assert chrome_filter.startswith("package(cccc-pair-web) & ( test(=")
+    assert "test(/" not in chrome_filter
+    # Real Chrome must never reach PR CI unnoticed, and nightly launches one at a time.
+    test_step = next(step for step in job["steps"] if step.get("name") == "Test Rust workspace")
+    assert test_step["env"]["CCCC_TEST_FORBID_REAL_CHROME"] == "1"
+    assert profile["profile"]["chrome"]["test-threads"] == 1
+
     assert "python_interop_" not in test_runs
-    assert "--skip daemon_self_launch::" in test_runs
     assert "--test integration" in test_runs
     assert "daemon_self_launch::" in test_runs
     assert "--test-threads=1" in test_runs
@@ -152,6 +169,36 @@ def test_rust_linux_job_is_python_free_and_reuses_one_workspace() -> None:
         "daemon_self_launch::combined_web_bind_failure_stops_its_owned_daemon"
         in windows_runs
     )
+
+
+def test_nightly_runs_the_real_chrome_fixtures_ci_leaves_out() -> None:
+    job = _nightly_workflow()["jobs"]["browser-surface"]
+    runs = _runs(job)
+    uses = {step.get("uses", "") for step in job["steps"]}
+
+    assert job["needs"] == "web-bundle"
+    assert any(item.startswith("actions/download-artifact") for item in uses)
+    assert any(item.startswith("taiki-e/install-action") for item in uses)
+    # A missing browser must fail the job rather than let fixtures skip silently.
+    assert "test -x /usr/bin/google-chrome" in runs
+    assert "test -x /usr/bin/Xvfb" in runs
+    assert runs.index("google-chrome") < runs.index("--profile chrome")
+    assert runs.index("Xvfb") < runs.index("--profile chrome")
+    assert "cargo nextest run --workspace --locked --profile chrome" in runs
+
+
+def test_nightly_failure_reaches_the_team_without_committing_the_webhook() -> None:
+    workflow = _nightly_workflow()
+    notify = workflow["jobs"]["notify-failure"]
+
+    assert notify["if"] == "${{ failure() }}"
+    assert set(notify["needs"]) == set(workflow["jobs"]) - {"notify-failure"}
+    step = notify["steps"][0]
+    assert step["env"]["WEBHOOK"] == "${{ secrets.NIGHTLY_DISCORD_WEBHOOK }}"
+    # An unset secret must turn the job red rather than drop the alert silently.
+    assert "exit 1" in step["run"]
+    nightly_text = (ROOT / ".github/workflows/nightly.yml").read_text(encoding="utf-8")
+    assert "discord.com/api/webhooks" not in nightly_text
 
 
 def test_retired_python_product_and_cross_language_suites_are_absent() -> None:
@@ -258,7 +305,13 @@ def test_nightly_workflow_owns_slow_native_verification() -> None:
         "group": "nightly-${{ github.ref }}",
         "cancel-in-progress": "false",
     }
-    assert set(jobs) == {"web-bundle", "rust-dist", "windows-installer"}
+    assert set(jobs) == {
+        "web-bundle",
+        "rust-dist",
+        "browser-surface",
+        "windows-installer",
+        "notify-failure",
+    }
     assert not any(
         step.get("uses", "").startswith("actions/setup-python")
         for job in jobs.values()
