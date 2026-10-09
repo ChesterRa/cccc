@@ -59,6 +59,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     buildCustomWebSocketUrl,
     inspectActorTail = true,
     takeoverOnAttach = true,
+    resizeReadOnly = false,
   } = args;
 
   const [connectionStatus, setConnectionStatus] =
@@ -226,8 +227,14 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
           takeover: canControlRef.current && (takeoverOnAttach || takeoverRequestedRef.current),
           outputFlowControl: "ack_v1",
           bootstrap: "snapshot_v1",
-          cols: canControlRef.current && visibleRef.current ? fittedTerm?.cols : undefined,
-          rows: canControlRef.current && visibleRef.current ? fittedTerm?.rows : undefined,
+          cols:
+            (canControlRef.current || resizeReadOnly) && visibleRef.current
+              ? fittedTerm?.cols
+              : undefined,
+          rows:
+            (canControlRef.current || resizeReadOnly) && visibleRef.current
+              ? fittedTerm?.rows
+              : undefined,
         });
         // An explicit takeover authorizes one attempt, not every future reconnect.
         takeoverRequestedRef.current = false;
@@ -469,13 +476,14 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
             }
             ws.send(encodeTerminalInputFrame(input));
           });
-
-          // Conditions are checked when the settled size is sent, not when it was queued.
+        }
+        if (term && (canControlRef.current || resizeReadOnly)) {
+          // Check ownership when the settled size is sent, including read-only attachments.
           const resizes = createTerminalResizeCoalescer((cols, rows) => {
             if (
               ws.readyState === WebSocket.OPEN &&
               visibleRef.current &&
-              terminalWritableRef.current &&
+              (terminalWritableRef.current || resizeReadOnly) &&
               cols >= 10 &&
               rows >= 2
             ) {
@@ -532,6 +540,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     isRunning,
     fitBeforeAttach,
     buildCustomWebSocketUrl,
+    resizeReadOnly,
     inspectActorTail,
     takeoverOnAttach,
     terminalConnectionKey,
@@ -540,11 +549,17 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
   ]);
 
   useEffect(() => {
-    if (!isVisible || !activated || isHeadless || !isRunning || !canControl || !canSendInput())
+    if (
+      !isVisible ||
+      !activated ||
+      isHeadless ||
+      !isRunning ||
+      (!resizeReadOnly && (!canControl || !canSendInput()))
+    )
       return;
     const term = terminalRef.current;
     const ws = wsRef.current;
-    if (!term || !ws) return;
+    if (!term || ws?.readyState !== WebSocket.OPEN) return;
     const { cols, rows } = term;
     fitBeforeAttach?.();
     // A retained writer may regain control while hidden, after another window
@@ -560,6 +575,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     isHeadless,
     isRunning,
     isVisible,
+    resizeReadOnly,
     terminalRef,
   ]);
 

@@ -18,6 +18,11 @@ pub struct GlobalSettings {
     pub remote_access: Map<String, Value>,
     #[serde(default, skip_serializing_if = "CodexVoiceSettings::is_default")]
     pub codex_voice: CodexVoiceSettings,
+    #[serde(
+        default,
+        skip_serializing_if = "cccc_contracts::voice_secretary::VoiceSecretarySettings::is_default"
+    )]
+    pub voice_secretary: cccc_contracts::voice_secretary::VoiceSecretarySettings,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

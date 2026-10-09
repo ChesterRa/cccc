@@ -88,6 +88,12 @@ pub fn effective_role(group: &GroupDoc, actor_id: &str) -> Option<ActorRole> {
 }
 
 pub fn add(group: &mut GroupDoc, mut actor: Actor) -> io::Result<Actor> {
+    if actor.id == "voice-secretary" {
+        return Err(io::Error::other(
+            "Voice Secretary is an instance service, not a Group Actor",
+        ));
+    }
+
     actor.id = validate_actor_id(&actor.id)?;
     actor
         .runtime_mode

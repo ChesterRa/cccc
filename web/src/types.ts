@@ -384,6 +384,7 @@ export type ActorProfile = {
 };
 
 export type ActorProfileUsage = {
+  consumer?: "voice_secretary";
   group_id: string;
   group_title?: string;
   actor_id: string;
@@ -885,6 +886,7 @@ export type AssistantStateResult = {
   capture_target_document_path?: string;
   documents_by_path?: Record<string, AssistantVoiceDocument>;
   new_input_available?: boolean;
+  secretary_tasks?: SecretaryTaskSummary[];
   prompt_draft?: AssistantVoicePromptDraft;
   ask_requests?: AssistantVoiceAskFeedback[];
   latest_ask_request?: AssistantVoiceAskFeedback;
@@ -904,6 +906,62 @@ export type AssistantVoiceRecordingLease = {
   created_at?: string;
   updated_at?: string;
   expires_at?: string;
+};
+
+export type SecretaryTaskPhase =
+  | "queued"
+  | "starting"
+  | "running"
+  | "done"
+  | "needs_user"
+  | "conflict"
+  | "failed"
+  | "cancelled"
+  | "unconfirmed";
+export type SecretaryTaskSummary = {
+  task_id: string;
+  target: {
+    group_id: string;
+    scope_key: string;
+    kind: "document" | "ask" | "prompt";
+    document_path: string;
+    document_id?: string;
+    request_id: string;
+  };
+  phase: SecretaryTaskPhase;
+  created_at: string;
+  updated_at: string;
+  cleanup_confirmed: boolean;
+  source_count: number;
+  preview: string;
+  diagnostic: string;
+  projection_error: string;
+  projected_at?: string;
+  prompt_draft_status?: "pending" | "applied" | "dismissed" | "stale" | "no_change";
+  previous_task_id: string;
+  superseded_by: string;
+  candidate_available: boolean;
+  forwarded_event_id?: string;
+  cancellation_reason?: string;
+  recovery_attempts?: number;
+  execution?: {
+    generation: string;
+    runtime: string;
+    native_terminal: boolean;
+    progress: string;
+    activity?: string;
+  };
+  receipt?: {
+    status: SecretaryTaskPhase;
+    document_version?: string;
+    output: {
+      no_op?: boolean;
+      reply_text?: string;
+      draft_text?: string;
+      handoff_target?: string;
+      handoff_text?: string;
+    };
+  } | null;
 };
 
 export type AssistantVoiceRecordingLeaseResult = {
@@ -972,12 +1030,8 @@ export type AssistantVoiceTranscriptSegmentResult = {
   document_updated?: boolean;
   input_event?: Record<string, unknown>;
   input_event_created?: boolean;
-  input_notify_emitted?: boolean;
-  input_notify_error?: string;
-  actor_woken?: boolean;
-  actor_wake_error?: string;
-  actor_notify_delivered?: boolean;
-  actor_notify_delivery_error?: string;
+  secretary_processing_deferred?: boolean;
+  secretary_processing_error?: string;
 };
 
 export type AssistantVoiceMeetingSession = {
@@ -1007,12 +1061,8 @@ export type AssistantVoiceDocumentMutationResult = {
   document?: AssistantVoiceDocument;
   input_event?: Record<string, unknown>;
   input_event_created?: boolean;
-  input_notify_emitted?: boolean;
-  input_notify_error?: string;
-  actor_woken?: boolean;
-  actor_wake_error?: string;
-  actor_notify_delivered?: boolean;
-  actor_notify_delivery_error?: string;
+  secretary_processing_deferred?: boolean;
+  secretary_processing_error?: string;
   event?: unknown;
   request_id?: string;
   input_append_id?: string;
@@ -1020,7 +1070,7 @@ export type AssistantVoiceDocumentMutationResult = {
 
 export type AssistantVoicePromptDraft = {
   request_id: string;
-  status: "pending" | "applied" | "dismissed" | "stale" | string;
+  status: "pending" | "no_change" | "applied" | "dismissed" | "stale" | string;
   operation?: string;
   draft_text: string;
   draft_preview?: string;
@@ -1058,12 +1108,8 @@ export type AssistantVoiceInputResult = {
   document?: AssistantVoiceDocument;
   input_event?: Record<string, unknown>;
   input_event_created?: boolean;
-  input_notify_emitted?: boolean;
-  input_notify_error?: string;
-  actor_woken?: boolean;
-  actor_wake_error?: string;
-  actor_notify_delivered?: boolean;
-  actor_notify_delivery_error?: string;
+  secretary_processing_deferred?: boolean;
+  secretary_processing_error?: string;
   event?: unknown;
   request_id?: string;
   input_append_id?: string;

@@ -75,6 +75,30 @@ struct Job {
     cli_version: command::Version,
 }
 
+mod secretary_owner;
+
+pub(super) fn secretary_owner_path(cwd: &Path) -> io::Result<PathBuf> {
+    secretary_owner::path(cwd)
+}
+
+pub(super) async fn cleanup_secretary_owner(
+    home: &cccc_core::HomeLayout,
+    cwd: &Path,
+) -> io::Result<()> {
+    secretary_owner::cleanup(home, cwd).await
+}
+
+pub(super) fn remove_secretary_settings(
+    home: &cccc_core::HomeLayout,
+    owner: &str,
+) -> io::Result<()> {
+    command::remove_settings_owner(home, owner)
+}
+
+pub(super) fn settings_path(home: &cccc_core::HomeLayout, owner: &str) -> PathBuf {
+    command::settings_path(home, owner)
+}
+
 pub(super) async fn launch(
     prepared: command::PreparedClaude,
     cwd: &Path,
@@ -124,6 +148,7 @@ async fn launch_inner(
         match purpose {
             SessionPurpose::VoiceAnalyst => "voice-analyst",
             SessionPurpose::Actor => "actor",
+            SessionPurpose::VoiceSecretary => "voice-secretary",
         },
         &generation[..generation.len().min(8)]
     );
@@ -141,6 +166,9 @@ async fn launch_inner(
         &arguments,
         &prepared.launch_environment,
     )?;
+    if purpose == SessionPurpose::VoiceSecretary {
+        secretary_owner::record(cwd, &prepared)?;
+    }
     command
         .current_dir(cwd)
         .env_clear()

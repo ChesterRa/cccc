@@ -1,16 +1,59 @@
 import type { CodexVoiceReadiness } from "../../services/api";
+import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
+
+/** One call-status projection for the dock, visible header and accessibility announcement. */
+export function codexVoiceCallStatus(
+  controller: Pick<
+    CodexVoiceSessionController,
+    "externalCall" | "checking" | "isEngaged" | "readiness" | "phase" | "error"
+  >,
+) {
+  const blocked =
+    !controller.isEngaged &&
+    Boolean(
+      controller.readiness &&
+      (!controller.readiness.realtime_credentials_available ||
+        !controller.readiness.analyst_runtime_available),
+    );
+  const labelKey = controller.externalCall
+    ? "codexVoiceActiveElsewhere"
+    : !controller.isEngaged && controller.checking
+      ? "codexVoiceChecking"
+      : blocked
+        ? "codexVoiceCallBlocked"
+        : !controller.isEngaged && controller.error
+          ? "codexVoicePhase.failed"
+          : !controller.isEngaged && !controller.readiness && controller.phase === "idle"
+            ? "codexVoiceChecking"
+            : `codexVoicePhase.${controller.phase}`;
+  return { blocked, labelKey };
+}
 
 export function codexVoiceReadinessProblem(
   t: (key: string, options?: Record<string, unknown>) => string,
   readiness: CodexVoiceReadiness | null,
 ): string {
-  if (!readiness) return "";
-  if (!readiness.analyst_runtime_available) {
-    return readiness.analyst_runtime_setup_required
-      ? t("codexVoiceAntigravityAcpSetupRequired")
-      : t("codexVoiceAnalystRuntimeMissing", { runtime: readiness.analyst_runtime });
-  }
-  return readiness.realtime_credentials_available ? "" : t("codexVoiceCodexLoginRequired");
+  return (
+    codexVoiceAnalystReadinessProblem(t, readiness) || codexVoiceCallReadinessProblem(t, readiness)
+  );
+}
+
+export function codexVoiceAnalystReadinessProblem(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  readiness: CodexVoiceReadiness | null,
+): string {
+  if (!readiness || readiness.analyst_runtime_available) return "";
+  return readiness.analyst_runtime_setup_required
+    ? t("codexVoiceAntigravityAcpSetupRequired")
+    : t("codexVoiceAnalystRuntimeMissing", { runtime: readiness.analyst_runtime });
+}
+
+export function codexVoiceCallReadinessProblem(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  readiness: CodexVoiceReadiness | null,
+): string {
+  if (!readiness || readiness.realtime_credentials_available) return "";
+  return t("codexVoiceCodexLoginRequired");
 }
 
 export function codexVoiceErrorText(

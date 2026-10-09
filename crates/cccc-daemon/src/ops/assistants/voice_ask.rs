@@ -10,8 +10,7 @@ use crate::dispatch::{
     OpError, OpResult, bool_arg, first_non_blank_arg, object, required_arg, string_arg,
 };
 
-const MAX_ASK_REQUESTS: usize = 30;
-const ACTOR_ID: &str = "voice-secretary";
+const MAX_COMPLETED_ASK_REQUESTS: usize = 30;
 const ASSISTANT_PRINCIPAL: &str = "assistant:voice_secretary";
 
 pub(super) fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -35,9 +34,13 @@ pub(super) fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         ));
     }
 
-    let request_id = request_id_or_new(string_arg(request, "request_id"));
-    let input_append_id = voice_semantic_input::requested_input_append_id(request)
-        .unwrap_or_else(|| request_id.clone());
+    let append_key = voice_semantic_input::requested_input_append_id(request);
+    let request_id = request_id_or_new(string_arg(request, "request_id").or_else(|| {
+        append_key
+            .as_ref()
+            .map(|key| format!("voice-ask-{:x}", Sha256::digest(key.as_bytes())))
+    }));
+    let input_append_id = append_key.unwrap_or_else(|| request_id.clone());
     let document_path = string_arg(request, "document_path")
         .unwrap_or_default()
         .trim()
@@ -70,7 +73,22 @@ pub(super) fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
         Some(document)
     };
-    let target_kind = if document.is_some() {
+    let task_kind = string_arg(request, "task_kind").unwrap_or_else(|| {
+        if document.is_some() {
+            "document".into()
+        } else {
+            "ask".into()
+        }
+    });
+    if !matches!(task_kind.as_str(), "ask" | "document")
+        || task_kind == "document" && document.is_none()
+    {
+        return Err(OpError::new(
+            "invalid_args",
+            "task_kind must be ask or document; document requires a registered document_path",
+        ));
+    }
+    let target_kind = if document.is_some() && task_kind == "document" {
         "document"
     } else {
         "secretary"
@@ -117,8 +135,20 @@ pub(super) fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    metadata.insert(
+        "user_preview".into(),
+        json!(clean_text(
+            if instruction.is_empty() {
+                &source_text
+            } else {
+                &instruction
+            },
+            240
+        )),
+    );
     metadata.insert("target_kind".into(), json!(target_kind));
     metadata.insert("request_id".into(), json!(request_id));
+    metadata.insert("task_kind".into(), json!(task_kind));
 
     let now = utc_now();
     let pending = json!({
@@ -180,8 +210,7 @@ pub(super) fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 pub(super) fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    let by = string_arg(request, "by").unwrap_or_else(|| ACTOR_ID.into());
-    if !matches!(by.as_str(), ACTOR_ID | ASSISTANT_PRINCIPAL) {
+    if string_arg(request, "by").as_deref() != Some(ASSISTANT_PRINCIPAL) {
         return Err(OpError::new(
             "assistant_voice_instruction_feedback_forbidden",
             "voice instruction feedback can only be submitted by voice-secretary",
@@ -276,6 +305,7 @@ pub(super) fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         item["last_feedback_at"] = json!(now);
         item["updated_at"] = json!(now);
         asks.insert(0, item.clone());
+        trim_completed_requests(asks);
         let assistant = update_runtime_after_feedback(root, &request_id, &status, &now);
         Ok((item, assistant))
     })
@@ -290,7 +320,15 @@ pub(super) fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
     })?;
 
-    let event = append_feedback_event(&store, &group_id, &request_id, &status, &ask_request)?;
+    let event = append_feedback_event(
+        &store,
+        &group_id,
+        &request_id,
+        &status,
+        &ask_request,
+        &string_arg(request, "scope_key").unwrap_or_default(),
+        &string_arg(request, "secretary_task_id").unwrap_or_default(),
+    )?;
     object(json!({
         "group_id":group_id,
         "assistant":assistant,
@@ -352,7 +390,7 @@ fn ensure_pending(root: &mut Map<String, Value>, pending: Value) -> io::Result<(
         return Ok(());
     }
     asks.insert(0, pending.clone());
-    asks.truncate(MAX_ASK_REQUESTS);
+    trim_completed_requests(asks);
     set_runtime(
         root,
         "working",
@@ -368,6 +406,19 @@ fn ensure_pending(root: &mut Map<String, Value>, pending: Value) -> io::Result<(
         }),
     );
     Ok(())
+}
+
+fn trim_completed_requests(asks: &mut Vec<Value>) {
+    let mut completed = 0;
+    asks.retain(|item| {
+        // Pending, failed and needs-user requests still authorize accepted work
+        // and its explicit continuations, even if the user hid their history.
+        if item["status"] != "done" {
+            return true;
+        }
+        completed += 1;
+        completed <= MAX_COMPLETED_ASK_REQUESTS
+    });
 }
 
 fn update_runtime_after_feedback(
@@ -484,8 +535,10 @@ fn append_feedback_event(
     request_id: &str,
     status: &str,
     ask_request: &Value,
+    scope_key: &str,
+    secretary_task_id: &str,
 ) -> Result<Event, OpError> {
-    let data = json!({
+    let mut data = json!({
         "assistant_id":"voice_secretary",
         "request_id":request_id,
         "source_request_id":request_id,
@@ -499,6 +552,9 @@ fn append_feedback_event(
         "request_preview":ask_request["request_preview"],
         "reply_text":ask_request["reply_text"]
     });
+    if !secretary_task_id.is_empty() {
+        data["secretary_task_id"] = json!(secretary_task_id);
+    }
     let event_id = format!(
         "{:x}",
         Sha256::digest(
@@ -516,6 +572,7 @@ fn append_feedback_event(
     }
     let mut event = Event::new("assistant.voice.request", group_id);
     event.id = event_id;
+    event.scope_key = scope_key.into();
     event.by = ASSISTANT_PRINCIPAL.into();
     event.data = data.as_object().cloned().unwrap_or_default();
     ledger::append(&path, &event).map_err(OpError::io)?;
@@ -569,8 +626,8 @@ fn instruction_policy() -> Value {
         "mixed":"split_memo_secretary_work_and_peer_handoffs",
         "document_updates":"safe_to_apply_when_instruction_or_memo_is_clear",
         "new_document":"create_only_when_separate_deliverable_is_clear",
-        "handoff":"use_voice_secretary_request_for_explicit_user_requested_peer_or_foreman_work",
-        "request_notify":"use_voice_secretary_request_only_for_explicit_handoff_to_foreman_or_one_actor",
+        "handoff":"propose_explicit_user_requested_peer_or_foreman_work_for_user_confirmation",
+        "request_notify":"the_user_confirms_one_peer_handoff_proposal",
         "queue_priority":"while_transcript_jobs_are_pending_prioritize_intake_then_process_secretary_queue",
         "unclear":"record_as_context_or_open_question_do_not_notify_peers"
     })

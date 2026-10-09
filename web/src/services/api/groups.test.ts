@@ -17,6 +17,53 @@ describe("assistant API helpers", () => {
     vi.unstubAllGlobals();
   });
 
+  it("keeps a no-change Prompt receipt with empty text", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g1",
+            prompt_draft: {
+              request_id: "r-unchanged",
+              status: "no_change",
+              draft_text: "",
+              composer_snapshot_hash: "original",
+            },
+          },
+        }),
+      ),
+    );
+    const response = await fetchVoiceAssistantStatus("g1", { promptRequestId: "r-unchanged" });
+    expect(response.ok).toBe(true);
+    if (response.ok)
+      expect(response.result.prompt_draft).toMatchObject({
+        request_id: "r-unchanged",
+        status: "no_change",
+        draft_text: "",
+        composer_snapshot_hash: "original",
+      });
+  });
+
+  it("still rejects empty text when the result promises a Prompt candidate", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g1",
+            prompt_draft: { request_id: "r-empty", status: "pending", draft_text: "" },
+          },
+        }),
+      ),
+    );
+    const response = await fetchVoiceAssistantStatus("g1", { promptRequestId: "r-empty" });
+    expect(response.ok).toBe(true);
+    if (response.ok) expect(response.result.prompt_draft).toBeUndefined();
+  });
+
   it("requests the compact Voice Secretary status view", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
     const fetchMock = vi

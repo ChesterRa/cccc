@@ -22,6 +22,7 @@ function controller(
   overrides: Partial<CodexVoiceSessionController> = {},
 ): CodexVoiceSessionController {
   return {
+    audioDeviceSnapshot: null,
     audioRef: createRef<HTMLAudioElement>(),
     phase: "idle",
     call: null,
@@ -159,7 +160,34 @@ describe("CodexVoiceAnalystModal", () => {
     expect(html).not.toContain("codexVoiceOpenTerminal");
   });
 
-  it("puts owned call controls in the header and embeds the Analyst terminal", () => {
+  it("names call and Analyst readiness separately with one settings action", () => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceAnalystModal
+        isOpen
+        isDark={false}
+        isSmallScreen={false}
+        controller={controller({
+          readiness: {
+            supported_modes: ["assistant", "persona"],
+            analyst_runtime: "claude",
+            analyst_runtime_available: true,
+            realtime_credentials_available: false,
+          },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(html).toContain("codexVoiceCallBlocked");
+    expect(html).not.toContain("codexVoicePhase.idle");
+    expect(html).toMatch(/aria-live="polite"[^>]*>codexVoiceCallBlocked</);
+    expect(html).toContain("data-codex-voice-readiness");
+    expect(html).toContain("codexVoiceCodexLoginRequired");
+    expect(html).toContain("codexVoiceReadinessOk");
+    expect(html.match(/codexVoiceOpenSettings/g)).toHaveLength(1);
+    expect(html).not.toContain("codexVoiceAnalystNotReady");
+  });
+
+  it("keeps the embedded Analyst terminal collapsed and disconnected by default", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
         isOpen
@@ -178,7 +206,9 @@ describe("CodexVoiceAnalystModal", () => {
     expect(html).toContain('aria-label="codexVoiceMute"');
     expect(html).toContain("codexVoiceStop");
     expect(html).toContain("embedded-analyst-terminal");
-    expect(html).toContain('data-visible="true"');
+    expect(html).toContain('data-visible="false"');
+    expect(html).toContain("data-codex-voice-analyst-bar");
+    expect(html).not.toContain("codexVoiceHideAnalyst");
     expect(html).not.toContain("External terminal diagnostics");
     expect(html).not.toContain("Alpha");
   });

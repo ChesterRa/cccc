@@ -49,19 +49,6 @@ const WEB_MODEL_EXTRA_TOOL_NAMES: &[&str] = &[
     "cccc_git",
 ];
 
-const VOICE_SECRETARY_TOOL_NAMES: &[&str] = &[
-    "cccc_help",
-    "cccc_bootstrap",
-    "cccc_project_info",
-    "cccc_inbox_read",
-    "cccc_message_history",
-    "cccc_context_get",
-    "cccc_agent_state",
-    "cccc_voice_secretary_document",
-    "cccc_voice_secretary_composer",
-    "cccc_voice_secretary_request",
-];
-
 pub fn web_model_tool_names() -> impl Iterator<Item = &'static str> {
     CORE_TOOL_NAMES
         .iter()
@@ -72,28 +59,24 @@ pub fn web_model_tool_names() -> impl Iterator<Item = &'static str> {
 /// Base exposure only. Enabled capability packs and administrative permissions
 /// remain the daemon's responsibility; loss of IPC must not change this profile.
 pub fn actor_base_tool_names(
-    actor_id: &str,
+    _actor_id: &str,
     actor: Option<&cccc_contracts::Actor>,
 ) -> impl Iterator<Item = &'static str> {
-    let secretary = actor_id == "voice-secretary"
-        || actor.and_then(|a| a.internal_kind.as_deref()) == Some("voice_secretary");
-    let base = if secretary {
-        VOICE_SECRETARY_TOOL_NAMES
-    } else {
-        CORE_TOOL_NAMES
-    };
-    let extra = if !secretary && actor.is_some_and(|a| a.runtime.is_web_model()) {
+    let extra = if actor.is_some_and(|a| a.runtime.is_web_model()) {
         WEB_MODEL_EXTRA_TOOL_NAMES
     } else {
         &[]
     };
-    base.iter().chain(extra).copied()
+    CORE_TOOL_NAMES.iter().chain(extra).copied()
 }
 
 /// Local user-authority MCP sessions need the Group control plane without
 /// first mutating capability state. Actor sessions keep the smaller core and
 /// opt into these operations through `pack:group-runtime`.
 pub const USER_CONTROL_TOOL_NAMES: &[&str] = &["cccc_group", "cccc_actor"];
+
+/// Capability-bound global secretary sessions expose no Actor or user tools.
+pub const VOICE_SECRETARY_TASK_TOOL_NAMES: &[&str] = &["cccc_voice_secretary_task"];
 
 pub fn is_builtin_capability_pack_tool(name: &str) -> bool {
     all()

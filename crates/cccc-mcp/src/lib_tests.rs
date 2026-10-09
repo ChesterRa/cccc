@@ -2,6 +2,55 @@ use std::collections::BTreeSet;
 
 use serde_json::json;
 
+#[tokio::test]
+async fn secretary_stdio_exposes_only_its_task_tool_and_rejects_target_overrides() {
+    const ENV: &str = "CCCC_SECRETARY_MCP_FIXTURE";
+    if std::env::var_os(ENV).is_none() {
+        let output=std::process::Command::new(std::env::current_exe().expect("test exe"))
+            .args(["--exact","lib_tests::secretary_stdio_exposes_only_its_task_tool_and_rejects_target_overrides","--nocapture"])
+            .env(ENV,"1").env("CCCC_SECRETARY_TASK_TOKEN","isolated-test-grant")
+            .env_remove("CCCC_GROUP_ID").env_remove("CCCC_ACTOR_ID").output().expect("isolated fixture");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let temp = tempfile::tempdir().expect("temp");
+    let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("init");
+    let tools = crate::handle_request(&home, &json!({"id":1,"method":"tools/list"})).await;
+    let list = tools["result"]["tools"].as_array().expect("tools");
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["name"], "cccc_voice_secretary_task");
+    assert!(
+        list[0]["inputSchema"]["properties"]
+            .get("_cccc_secretary_token")
+            .is_none()
+    );
+    for (name, args) in [
+        ("cccc_message_send", json!({})),
+        ("cccc_capability_use", json!({})),
+        (
+            "cccc_voice_secretary_task",
+            json!({"action":"context","group_id":"other"}),
+        ),
+    ] {
+        let result = crate::handle_request(
+            &home,
+            &json!({"id":2,"method":"tools/call","params":{"name":name,"arguments":args}}),
+        )
+        .await;
+        assert_eq!(
+            result["result"]["isError"], true,
+            "restricted stdio tool call: {name}"
+        );
+        assert!(!result.to_string().contains("isolated-test-grant"));
+    }
+}
+
 #[test]
 fn paired_catalog_describes_identity_without_changing_management_targets() {
     let mut catalog = crate::tools::catalog();
@@ -388,4 +437,125 @@ async fn web_model_schema_stays_fixed_while_daemon_is_unavailable() {
     }
 
     assert_eq!(names, expected);
+}
+
+#[tokio::test]
+async fn secretary_profile_without_a_grant_never_falls_back_to_user_tools() {
+    const CHILD: &str = "CCCC_TEST_SECRETARY_NO_GRANT";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test"))
+            .args([
+                "--exact",
+                "lib_tests::secretary_profile_without_a_grant_never_falls_back_to_user_tools",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("CCCC_MCP_TOOL_PROFILE", "secretary-task")
+            .env_remove("CCCC_SECRETARY_TASK_TOKEN")
+            .output()
+            .expect("fixture");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let temp = tempfile::tempdir().expect("temp");
+    let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("init");
+    let tools = crate::handle_request(&home, &json!({"id":1,"method":"tools/list"})).await;
+    assert!(
+        tools["result"]["tools"]
+            .as_array()
+            .expect("tools")
+            .is_empty()
+    );
+    for name in [
+        "cccc_voice_secretary_task",
+        "cccc_message_send",
+        "cccc_capability_use",
+    ] {
+        let result = crate::handle_request(
+            &home,
+            &json!({"id":2,"method":"tools/call","params":{"name":name,"arguments":{}}}),
+        )
+        .await;
+        assert_eq!(result["result"]["isError"], true);
+    }
+}
+
+#[tokio::test]
+async fn secretary_bootstrap_handles_sanitized_env_and_rejects_outside_paths() {
+    const ENV: &str = "CCCC_SECRETARY_BOOTSTRAP_FIXTURE";
+    if std::env::var_os(ENV).is_none() {
+        let temp = tempfile::tempdir().expect("temporary Home");
+        let home = cccc_core::HomeLayout::from_path(temp.path()).expect("Home");
+        home.initialize().expect("initialize");
+        let file = home.root().join("voice-secretary/session-grant");
+        std::fs::create_dir_all(file.parent().expect("directory")).expect("directory");
+        std::fs::write(&file, "a".repeat(64)).expect("synthetic grant");
+        let outside = temp.path().join("outside");
+        std::fs::write(&outside, "a".repeat(64)).expect("outside synthetic grant");
+        for variant in ["good", "expired", "outside", "symlink"] {
+            if variant == "expired" {
+                std::fs::remove_file(&file).expect("revoke");
+            }
+            if variant == "symlink" {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::symlink;
+                    symlink(&outside, &file).expect("symlink");
+                }
+                #[cfg(not(unix))]
+                {
+                    continue;
+                }
+            }
+            let path = if variant == "outside" {
+                &outside
+            } else {
+                &file
+            };
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("test executable"),
+            )
+            .args([
+                "--exact",
+                "lib_tests::secretary_bootstrap_handles_sanitized_env_and_rejects_outside_paths",
+                "--nocapture",
+            ])
+            .env(ENV, variant)
+            .env("CCCC_HOME", home.root())
+            .env("CCCC_MCP_TOOL_PROFILE", "secretary-task")
+            .env("CCCC_SECRETARY_TASK_TOKEN_FILE", path)
+            .env_remove("CCCC_SECRETARY_TASK_TOKEN")
+            .env_remove("CCCC_GROUP_ID")
+            .env_remove("CCCC_ACTOR_ID")
+            .output()
+            .expect("isolated child");
+            assert!(
+                output.status.success(),
+                "{variant} bootstrap fixture failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        return;
+    }
+    let home =
+        cccc_core::HomeLayout::from_path(std::env::var_os("CCCC_HOME").expect("isolated Home"))
+            .expect("Home");
+    let valid = std::env::var(ENV).expect("case") == "good";
+    assert_eq!(crate::secretary_task_token(&home).is_some(), valid);
+    let result = crate::handle_request(&home, &json!({"id":1,"method":"tools/list"})).await;
+    let tools = result["result"]["tools"].as_array().expect("catalog");
+    assert_eq!(tools.len(), usize::from(valid));
+    let client = cccc_client::DaemonClient::new(home.clone());
+    let actor_tools =
+        crate::visible_tools_for_actor(&home, &client, "unrelated-group", "unrelated-actor").await;
+    assert_eq!(actor_tools.len(), usize::from(valid));
+    if valid {
+        assert_eq!(tools[0]["name"], "cccc_voice_secretary_task");
+    }
 }

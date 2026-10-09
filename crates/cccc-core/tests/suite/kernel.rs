@@ -172,8 +172,8 @@ fn internal_assistant_is_not_a_peer_recipient() {
         .mutate(&group_id, |group| {
             actors::add(group, Actor::new("lead"))?;
             actors::add(group, Actor::new("peer"))?;
-            let mut secretary = Actor::new("voice-secretary");
-            secretary.internal_kind = Some("voice_secretary".into());
+            let mut secretary = Actor::new("fixture-internal");
+            secretary.internal_kind = Some("fixture_helper".into());
             actors::add(group, secretary)?;
             Ok(())
         })
@@ -193,31 +193,31 @@ fn internal_assistant_is_not_a_peer_recipient() {
     assert!(!inbox::is_for_actor(
         &group,
         &message(&["@peers"]),
-        "voice-secretary"
+        "fixture-internal"
     ));
     assert!(!inbox::is_for_actor(
         &group,
         &message(&["@all"]),
-        "voice-secretary"
+        "fixture-internal"
     ));
     assert!(!inbox::is_for_actor(
         &group,
         &message(&[]),
-        "voice-secretary"
+        "fixture-internal"
     ));
     assert!(inbox::is_for_actor(
         &group,
-        &message(&["voice-secretary"]),
-        "voice-secretary"
+        &message(&["fixture-internal"]),
+        "fixture-internal"
     ));
 
     let mut notify = Event::new("system.notify", &group_id);
     notify.by = "system".into();
-    notify.data = json!({"actor_id":"voice-secretary","text":"wake up"})
+    notify.data = json!({"actor_id":"fixture-internal","text":"wake up"})
         .as_object()
         .cloned()
         .expect("notify data");
-    assert!(inbox::is_for_actor(&group, &notify, "voice-secretary"));
+    assert!(inbox::is_for_actor(&group, &notify, "fixture-internal"));
 }
 
 #[test]

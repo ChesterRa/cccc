@@ -182,6 +182,19 @@ pub fn protect_owned_process_groups(ledger: &std::path::Path) -> io::Result<()> 
     Ok(())
 }
 
+/// A previous owner's groups could not be safely reconciled. Capacity owners
+/// must not count those trees as released merely because their client died.
+pub fn owned_process_recovery_pending() -> bool {
+    #[cfg(unix)]
+    {
+        guard::recovery_pending()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// Permanently close process admission and terminate this process's owned trees.
 /// This is a final-exit operation, not a replacement for ordinary actor_stop.
 /// The registry lock only protects spawn, nonblocking polling and OS signals;

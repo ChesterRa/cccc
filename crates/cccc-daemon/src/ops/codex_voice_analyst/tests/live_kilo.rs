@@ -119,6 +119,7 @@ async fn shared_actor_and_analyst(runtime: ActorRuntime, prefix: &str) {
                         )
                         .await
                     }
+                    SessionPurpose::VoiceSecretary => unreachable!("separate secretary admission"),
                 }
                 .expect("launch managed Kilo");
                 let result = std::panic::AssertUnwindSafe(async {

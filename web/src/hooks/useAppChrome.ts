@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "../services/api";
-import { useGroupStore, useObservabilityStore } from "../stores";
+import { useGroupStore, useObservabilityStore, useUIStore } from "../stores";
 import type { DirSuggestion } from "../types";
 import { MOBILE_VIEWPORT_MEDIA_QUERY } from "../utils/responsiveLayout";
 
@@ -35,7 +35,8 @@ export function useAppChrome({
   editingActor,
 }: UseAppChromeOptions): UseAppChromeResult {
   const [ccccHome, setCcccHome] = useState("");
-  const [canAccessGlobalSettings, setCanAccessGlobalSettings] = useState<boolean | null>(null);
+  const canAccessGlobalSettings = useUIStore((state) => state.canAccessGlobalSettings);
+  const setCanAccessGlobalSettings = useUIStore((state) => state.setCanAccessGlobalSettings);
 
   const refreshWebAccessSession = useCallback(async () => {
     try {
@@ -58,7 +59,7 @@ export function useAppChrome({
       setCanAccessGlobalSettings(null);
       return null;
     }
-  }, []);
+  }, [setCanAccessGlobalSettings]);
 
   useEffect(() => {
     void refreshWebAccessSession();

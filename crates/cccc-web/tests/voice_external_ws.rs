@@ -12,10 +12,12 @@ async fn external_capture_routes_without_local_models_and_releases_lease_on_star
     home.initialize().expect("initialize");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("external voice", "").expect("group");
-    store.mutate(&group.group_id,|group|{
-        group.extra.insert("assistants".into(),json!({"assistant":{"assistant_id":"voice_secretary","enabled":false,
-            "config":{"recognition_backend":"external_provider_asr","external_asr_provider":"bailian"}}}));Ok(())
-    }).expect("external configuration");
+    cccc_core::settings::update(&home, |settings| {
+        settings.voice_secretary.config.recognition_backend = "external_provider_asr".into();
+        settings.voice_secretary.config.external_asr_provider = "bailian".into();
+        Ok(())
+    })
+    .expect("global external ASR configuration");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");

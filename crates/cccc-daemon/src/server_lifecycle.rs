@@ -48,9 +48,25 @@ impl DaemonLifecycle {
 /// may wait for protocol closure, session locks and output draining.
 pub fn stop_every_runtime(home: &HomeLayout) -> Result<Vec<cccc_runtime::SessionStatus>> {
     let _ = crate::runtime_start_gate::prevent(home);
+    let secretary = crate::ops::voice_secretary::stop(home);
     crate::ops::actor_delivery::shutdown_all();
     let managed = crate::ops::local_headless::stop_all();
     let runtimes = crate::ops::actor_runtime::stop_all();
+    if let Err(secretary) = secretary {
+        let other = managed
+            .err()
+            .into_iter()
+            .chain(
+                runtimes
+                    .as_ref()
+                    .err()
+                    .map(|e| std::io::Error::other(e.to_string())),
+            )
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(anyhow::anyhow!("{secretary}; {other}"));
+    }
     match (managed, runtimes) {
         (Ok(()), Ok(statuses)) => Ok(statuses),
         (Err(error), Ok(_)) => Err(error.into()),

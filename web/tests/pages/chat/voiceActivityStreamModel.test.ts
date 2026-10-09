@@ -1,26 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  newestVoiceActivityItemsFirst,
-  shouldSettleLiveVoiceActivityStream,
-  voiceActivityStreamItemFromPreview,
-} from "../../../src/pages/chat/voice-secretary/voiceActivityStreamModel";
+import { shouldSettleLiveVoiceActivityStream } from "../../../src/pages/chat/voice-secretary/voiceActivityStreamModel";
 
 describe("voice activity stream model", () => {
-  it("builds a current live activity item from the transient preview", () => {
-    const item = voiceActivityStreamItemFromPreview({
-      id: "stream-1",
-      phase: "interim",
-      text: "Speaker ?: live text",
-      mode: "instruction",
-      updatedAt: 1000,
-    });
-
-    expect(item?.id).toBe("stream-1-live");
-    expect(item?.text).toBe("live text");
-    expect(item?.mode).toBe("instruction");
-  });
-
   it("settles the current live card before a new short hypothesis replaces it", () => {
     expect(
       shouldSettleLiveVoiceActivityStream(
@@ -61,18 +43,5 @@ describe("voice activity stream model", () => {
         "interim",
       ),
     ).toBe(false);
-  });
-
-  it("keeps recent activity ordered newest first", () => {
-    expect(
-      newestVoiceActivityItemsFirst(
-        [
-          { id: "old", sortAt: 1000 },
-          { id: "new", sortAt: 3000 },
-          { id: "middle", sortAt: 2000 },
-        ],
-        2,
-      ).map((item) => item.id),
-    ).toEqual(["new", "middle"]);
   });
 });

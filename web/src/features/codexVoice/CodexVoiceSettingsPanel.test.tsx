@@ -9,14 +9,9 @@ vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => k
 vi.mock("./useVoicePreferences", () => ({ useVoicePreferences: () => ({}) }));
 vi.mock("./CodexVoiceAudioSettings", () => ({ CodexVoiceAudioSettings: () => null }));
 vi.mock("./CodexVoicePreferenceFields", () => ({ CodexVoicePreferenceFields: () => null }));
-vi.mock("./CodexVoiceAnalystSettings", async () => {
-  const { CodexVoiceSettingsHeading } = await import("./CodexVoiceSettingsSection");
-  return {
-    CodexVoiceAnalystSettings: ({ heading }: { heading: string }) => (
-      <CodexVoiceSettingsHeading>{heading}</CodexVoiceSettingsHeading>
-    ),
-  };
-});
+vi.mock("./CodexVoiceAnalystSettings", () => ({
+  CodexVoiceAnalystSettingsFields: () => <div>Analyst fields</div>,
+}));
 
 let host: HTMLDivElement;
 let root: Root;
@@ -33,11 +28,16 @@ afterEach(() => {
 
 const visiblePanel = () => host.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!;
 
-it("titles each visible section with its own tab label and switches on tab click", () => {
-  const onClose = vi.fn();
+it("switches shared settings tabs without recreating the Analyst form", () => {
+  const onAnalystSettingsActive = vi.fn();
   act(() =>
     root.render(
-      <CodexVoiceSettingsPanel active={false} controller={{} as never} onClose={onClose} />,
+      <CodexVoiceSettingsPanel
+        active
+        controller={{} as never}
+        analystSettings={{} as never}
+        onAnalystSettingsActive={onAnalystSettingsActive}
+      />,
     ),
   );
 
@@ -47,15 +47,14 @@ it("titles each visible section with its own tab label and switches on tab click
     "voicePreferences.notifications",
     "codexVoiceAnalystTitle",
   ]);
-  for (const [index, tab] of tabs.entries()) {
+  for (const tab of tabs) {
     act(() => tab.click());
     expect(tab.getAttribute("aria-selected")).toBe("true");
     expect(visiblePanel().id).toBe(tab.getAttribute("aria-controls"));
-    expect(visiblePanel().querySelector("h4")?.textContent).toBe(tabs[index].textContent);
+    expect(visiblePanel().getAttribute("aria-labelledby")).toBe(tab.id);
   }
 
-  act(() =>
-    host.querySelector<HTMLButtonElement>('[aria-label="codexVoiceBackToConversation"]')!.click(),
-  );
-  expect(onClose).toHaveBeenCalledOnce();
+  expect(onAnalystSettingsActive).toHaveBeenLastCalledWith(true);
+  act(() => tabs[0].click());
+  expect(onAnalystSettingsActive).toHaveBeenLastCalledWith(false);
 });

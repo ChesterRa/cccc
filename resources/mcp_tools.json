@@ -536,211 +536,6 @@
     }
   },
   {
-    "name": "cccc_voice_secretary_document",
-    "description": "Voice Secretary-only input/document surface. voice_secretary_input notifications normally include a daemon-delivered input_envelope rendered as Work orders; use read_new_input only for legacy pointer notifications, recovery, or manual debugging. Use list/create/archive for document lifecycle. Edit repo markdown directly; this tool has no save action.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "actor_id": {
-          "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "list",
-            "create",
-            "read_new_input",
-            "archive"
-          ],
-          "default": "list"
-        },
-        "document_path": {
-          "type": "string",
-          "description": "Repository-relative markdown path returned by list/create/read_new_input."
-        },
-        "title": {
-          "type": "string"
-        },
-        "include_archived": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "required": []
-    },
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true,
-      "idempotentHint": false,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "cccc_voice_secretary_request",
-    "description": "Voice Secretary-only request surface. Use report for user-visible Ask replies; use handoff only for explicit non-secretary work that must go to foreman or one concrete actor.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "actor_id": {
-          "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "handoff",
-            "report"
-          ],
-          "default": "handoff"
-        },
-        "target": {
-          "type": "string",
-          "description": "Required for action=handoff: @foreman or one concrete actor id. Do not omit it for handoff."
-        },
-        "request_text": {
-          "type": "string",
-          "description": "Short actionable handoff request. Do not include raw transcript dumps or secretary-scope work."
-        },
-        "summary": {
-          "type": "string",
-          "description": "For action=handoff only: optional one-line context summary for the receiving peer."
-        },
-        "request_id": {
-          "type": "string",
-          "description": "Required for action=report: Request id from Target: secretary/document input."
-        },
-        "source_request_id": {
-          "type": "string",
-          "description": "For action=handoff, the original Ask request id being handed off."
-        },
-        "status": {
-          "type": "string",
-          "enum": [
-            "working",
-            "done",
-            "needs_user",
-            "failed"
-          ],
-          "description": "Required for action=report."
-        },
-        "reply_text": {
-          "type": "string",
-          "description": "For action=report, the concise user-visible reply shown near the composer."
-        },
-        "document_path": {
-          "type": "string"
-        },
-        "artifact_paths": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "For action=report, optional repo-relative document/artifact paths to show as links instead of repeating them in reply_text."
-        },
-        "source_summary": {
-          "type": "string",
-          "description": "For action=report, optional concise source/evidence note for factual answers."
-        },
-        "checked_at": {
-          "type": "string",
-          "description": "For action=report, optional ISO timestamp or short freshness note for factual answers."
-        },
-        "source_urls": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "For action=report, optional source URLs for factual answers."
-        },
-        "source_event_id": {
-          "type": "string"
-        },
-        "priority": {
-          "type": "string",
-          "enum": [
-            "low",
-            "normal",
-            "high",
-            "urgent"
-          ],
-          "default": "normal"
-        }
-      },
-      "required": []
-    },
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": false,
-      "idempotentHint": false,
-      "openWorldHint": true
-    }
-  },
-  {
-    "name": "cccc_voice_secretary_composer",
-    "description": "Voice Secretary-only composer result surface. Use submit_prompt_draft for prompt_refine results instead of sending chat.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "actor_id": {
-          "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "submit_prompt_draft"
-          ],
-          "default": "submit_prompt_draft"
-        },
-        "request_id": {
-          "type": "string",
-          "description": "Request id from the prompt_refine input batch."
-        },
-        "draft_text": {
-          "type": "string",
-          "description": "Composer text to insert. Required unless no_op=true. Follow the prompt_refine Operation: append operations return an addition; replace operations return a complete replacement."
-        },
-        "no_op": {
-          "type": "boolean",
-          "description": "Set true only when the prompt_refine result should make no composer change, such as empty or non-substantive speech."
-        },
-        "summary": {
-          "type": "string",
-          "description": "Optional one-line summary of what changed."
-        },
-        "operation": {
-          "type": "string",
-          "description": "Optional; omit to inherit the Operation from the prompt_refine input."
-        },
-        "composer_snapshot_hash": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "request_id"
-      ]
-    },
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": false,
-      "idempotentHint": false,
-      "openWorldHint": false
-    }
-  },
-  {
     "name": "cccc_file",
     "description": "Read a file in the active workspace or a delivered attachment. read returns UTF-8 text, native PNG/JPEG/WebP images, or original PDF/PPTX resources for the client file reader. Binary limit: 20 MiB; no local conversion or OCR. info/blob_path return metadata/path only. In cccc_code_exec, native media is emitted automatically and JavaScript receives metadata. This tool never sends files or changes messages; use cccc_file_send for attachments.",
     "inputSchema": {
@@ -3273,6 +3068,109 @@
       "readOnlyHint": false,
       "destructiveHint": true,
       "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "cccc_voice_secretary_task",
+    "description": "Voice Secretary task operations. Always supply the exact task_id from the current host turn. The host fixes the Group, scope and result target; this tool cannot choose another target.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "context",
+            "read",
+            "commit",
+            "report",
+            "draft"
+          ],
+          "default": "context"
+        },
+        "base_version": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "done",
+            "needs_user",
+            "failed"
+          ]
+        },
+        "reply_text": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "draft_text": {
+          "type": "string",
+          "maxLength": 32000
+        },
+        "no_op": {
+          "type": "boolean"
+        },
+        "source_summary": {
+          "type": "string",
+          "maxLength": 1200
+        },
+        "checked_at": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "source_urls": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "handoff_target": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Optional exact Group peer id from context. Creates a proposal for user confirmation only."
+        },
+        "handoff_text": {
+          "type": "string",
+          "maxLength": 8000,
+          "description": "Proposed message, never sent by this tool."
+        },
+        "resource": {
+          "type": "string",
+          "enum": [
+            "messages",
+            "document",
+            "files",
+            "file",
+            "search"
+          ],
+          "description": "For read. document uses the fixed registered reference. Files/search use only the accepted scope."
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 1024,
+          "description": "Scope-relative file/directory for read file/files/search. Empty directory means the scope root. No path for read document."
+        },
+        "query": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Literal text for read search. Results are bounded; narrow path/query when needed."
+        },
+        "task_id": {
+          "type": "string",
+          "description": "Exact TASK_ID supplied in the current host turn. Required on every call; never reuse an earlier task ID."
+        }
+      },
+      "required": [
+        "task_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
       "openWorldHint": false
     }
   }

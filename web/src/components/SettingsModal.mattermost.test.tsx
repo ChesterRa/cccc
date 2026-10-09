@@ -107,6 +107,9 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     await act(async () => {
       root.render(
         <SettingsModal
+          codexVoice={
+            {} as import("../features/codexVoice/useCodexVoiceShell").CodexVoiceShellState
+          }
           isOpen
           onClose={() => {}}
           settings={null}

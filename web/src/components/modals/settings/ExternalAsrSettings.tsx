@@ -6,15 +6,23 @@ import type {
   VoiceAsrProviderConfig,
 } from "../../../services/api/voiceAsrProviders";
 import { useExternalAsrProvider } from "./useExternalAsrProvider";
+import { useEffect } from "react";
 
 interface Props {
   provider: VoiceAsrProvider;
   onProviderChange: (provider: VoiceAsrProvider) => void;
   disabled: boolean;
   onConfigured: () => void;
+  onEditingStateChange?: (dirty: boolean, busy: boolean) => void;
 }
 
-export function ExternalAsrSettings({ provider, onProviderChange, disabled, onConfigured }: Props) {
+export function ExternalAsrSettings({
+  provider,
+  onProviderChange,
+  disabled,
+  onConfigured,
+  onEditingStateChange,
+}: Props) {
   const {
     selected,
     secrets,
@@ -23,6 +31,7 @@ export function ExternalAsrSettings({ provider, onProviderChange, disabled, onCo
     notice,
     locked,
     canProbe,
+    hasChanges,
     label,
     t,
     update,
@@ -30,6 +39,9 @@ export function ExternalAsrSettings({ provider, onProviderChange, disabled, onCo
     probe,
     setSecrets,
   } = useExternalAsrProvider(provider, disabled, onConfigured);
+  useEffect(() => {
+    onEditingStateChange?.(hasChanges, busy);
+  }, [hasChanges, busy, onEditingStateChange]);
   const combo = (
     key: keyof VoiceAsrProviderConfig,
     title: string,
@@ -78,7 +90,7 @@ export function ExternalAsrSettings({ provider, onProviderChange, disabled, onCo
         emptyText={t("common:noResults")}
         ariaLabel={label("provider")}
         value={provider}
-        disabled={disabled || busy}
+        disabled={locked}
         searchable={false}
         matchTriggerWidth
         triggerClassName="min-h-[44px] w-full"
@@ -86,7 +98,10 @@ export function ExternalAsrSettings({ provider, onProviderChange, disabled, onCo
           { value: "bailian", label: label("bailian") },
           { value: "volcengine", label: label("volcengine") },
         ]}
-        onChange={(value) => onProviderChange(value as VoiceAsrProvider)}
+        onChange={(value) => {
+          if (hasChanges && !window.confirm(t("voiceSettings.discardChanges"))) return;
+          onProviderChange(value as VoiceAsrProvider);
+        }}
       />
       {selected && (
         <>

@@ -353,6 +353,16 @@ impl ProfileStore {
                 }
             }
         }
+        let secretary = crate::settings::load(&self.home)?.voice_secretary;
+        if secretary.profile_id == profile_id
+            && secretary.profile_scope == scope
+            && secretary.profile_owner == owner_id
+        {
+            usage.push(
+                json!({"consumer":"voice_secretary","group_id":"","group_title":"Entire instance",
+                "actor_id":"","actor_title":"Voice Secretary"}),
+            );
+        }
         Ok(usage)
     }
 

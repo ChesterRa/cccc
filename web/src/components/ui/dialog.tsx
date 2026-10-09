@@ -21,11 +21,43 @@ const DialogOverlay = React.forwardRef<
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
+type AutoFocusHandlers = Pick<
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>,
+  "onOpenAutoFocus" | "onCloseAutoFocus"
+>;
+
+// Dialogs opened from state have no Radix Trigger, so Radix would drop focus on <body> when closing.
+// Content must not use autoFocus: the opener is read when Radix starts its own initial focus.
+function useReturnFocus({ onOpenAutoFocus, onCloseAutoFocus }: AutoFocusHandlers) {
+  const openerRef = React.useRef<HTMLElement | null>(null);
+  return {
+    onOpenAutoFocus: (event: Event) => {
+      const active = document.activeElement;
+      openerRef.current =
+        active instanceof HTMLElement &&
+        active !== document.body &&
+        !(event.target instanceof Node && event.target.contains(active))
+          ? active
+          : null;
+      onOpenAutoFocus?.(event);
+    },
+    onCloseAutoFocus: (event: Event) => {
+      onCloseAutoFocus?.(event);
+      const opener = openerRef.current;
+      openerRef.current = null;
+      if (event.defaultPrevented || !opener?.isConnected) return;
+      event.preventDefault();
+      opener.focus();
+    },
+  } satisfies AutoFocusHandlers;
+}
+
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => {
   const ariaDescribedBy = props["aria-describedby"];
+  const returnFocus = useReturnFocus(props);
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -37,6 +69,7 @@ const DialogContent = React.forwardRef<
           className,
         )}
         {...props}
+        {...returnFocus}
       >
         {children}
         <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]/45">
@@ -54,6 +87,7 @@ const DialogSheetContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, style, ...props }, ref) => {
   const ariaDescribedBy = props["aria-describedby"];
+  const returnFocus = useReturnFocus(props);
   return (
     <DialogPortal>
       <DialogOverlay className="z-[1000]" />
@@ -66,6 +100,7 @@ const DialogSheetContent = React.forwardRef<
         )}
         style={{ top: 0, right: 0, bottom: 0, height: "100dvh", ...style }}
         {...props}
+        {...returnFocus}
       >
         {children}
         <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]/45">

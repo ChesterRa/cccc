@@ -1840,21 +1840,23 @@ Secretary service-local ASR runs in-process through the Rust `sherpa-onnx`
 binding. The native runtime is linked into the CCCC binary; model weights remain
 explicit, checksummed downloads under `CCCC_HOME/cache/voice-models`.
 
-Voice Secretary configuration (`enabled` and `config`) remains in
-`group.yaml:assistants.voice_secretary`. Durable workflow records live in
+Voice Secretary configuration is instance-owned in settings; every Group read
+projects the same nonsecret defaults with its own task status. Old Group enablement
+and configuration are ignored. Durable workflow records live in
 `groups/<group_id>/state/assistants.json`: lifecycle, durable health, sessions,
 prompt drafts/requests, and ask requests. Process observations such as PID,
 port, live service/socket state, and actor handles MUST NOT be persisted there.
 Implementations MUST preserve the reserved `rust_state` object when updating
 the common records. A legacy Rust workflow embedded in `group.yaml:assistants`
-is imported canonical-first; after the canonical file commits, only assistant
-configuration remains in `group.yaml`.
+is imported canonical-first to preserve runtime history; any remaining legacy
+configuration in `group.yaml` does not control the global service.
 
 Args:
 ```ts
 {
   group_id: string
   assistant_id?: "voice_secretary"
+  prompt_request_id?: string
   view?: "voice_session" | string
   session_id?: string
   document_path?: string
@@ -1910,8 +1912,30 @@ Result:
   service_runtime?: Record<string, unknown>
   service_models?: Array<Record<string, unknown>>
   service_models_by_id?: Record<string, unknown>
+  secretary_tasks?: Array<Record<string, unknown>> // recent tasks for this Group only
+  prompt_draft?: Record<string, unknown> | null
 }
 ```
+
+For ordinary Secretary status/workspace reads, `prompt_request_id` selects only
+that request's canonical `pending` or `no_change` draft. An unknown or unfinished
+request returns `prompt_draft=null`, never another request's draft. Without the
+selector, the latest pending draft remains the default. `no_change` is a terminal
+success with empty draft text: consumers end their matching request's waiting
+state, keep the composer unchanged and show that no changes were needed. HTTP
+Assistant list/detail reads forward the same query selector to the daemon;
+polling neither creates nor retries work.
+
+Clients MUST retain the accepted Group/request identity while observing queued or
+running work; elapsed time alone does not complete or invalidate a request. Before
+automatically applying a Prompt draft, the client MUST compare the accepted composer
+snapshot with the current text of the original Group, including an inactive Group's
+saved draft. Changed text is preserved and the candidate remains pending for explicit
+review. An `applied` acknowledgement follows actual local application, never model
+completion alone. Ask display status comes from its persisted outcome, not its age.
+A failed or cancelled Prompt request with confirmed owner cleanup may be replaced by
+an explicit new request, including from another Group. This does not authorize an
+automatic retry or release ownership of running, needs-user or unconfirmed work.
 
 `service_runtime` is read-only engine metadata with the stable runtime ID
 `sherpa_onnx_streaming`, readiness, and the linked sherpa-onnx version. The
@@ -1920,51 +1944,386 @@ lifecycle; only voice models are downloaded or removed. Voice model records may 
 `update_available`, `last_update_error`, and artifact source fields (`url`,
 `sha256`, `archive`) so model updates remain explicit and inspectable.
 
-#### `assistant_settings_update`
+Shared model maintenance is exposed by the thin Web port at
+`GET /api/v1/voice/asr/models` and
+`POST /api/v1/voice/asr/models/{model_id}/install|remove`.
+It uses the existing instance model cache; mutation requires administrator
+access. Global Secretary settings select the backend/model; Groups do not own another cache.
 
-Update group-scoped built-in assistant settings.
+#### `voice_secretary_settings_get`
 
-When `voice_secretary.enabled=true`, the daemon also materializes a hidden
-internal actor with `internal_kind="voice_secretary"` and `actor_id="voice-secretary"`.
-That actor is a distinct assistant identity, not the foreman and not a normal
-peer. Its startup runtime config (Runtime-derived execution surface, `command`,
-env/secrets, scope, submit behavior) is copied from the current stable foreman actor so the user
-does not configure a second runtime profile. The foreman's enabled/running state
-does not affect assistant config inheritance. If no foreman actor exists,
-enabling Voice Secretary fails. An explicit `enabled=true` request also enables
-the internal actor and, if the group is already running, starts it as needed.
-Saving configuration alone MUST NOT start a stopped actor. Startup confirmation
-and `health.actor.running` MUST use the runtime owner's live state; a managed
-session does not return a traditional PTY launch status, and a retained error
-record does not prove it is running. Structured external runtimes retain their
-enabled/Group-running semantics. A failed start rolls back assistant settings,
-actor configuration, and private env. Disabling Voice Secretary stops/removes
-the actor and its private env.
+Read instance-owned Secretary configuration and saved-input counts. Read-only;
+it MUST NOT start a manager, process, recovery job or model task.
 
-Args:
+Args: `{ by?: "user" }`.
+Result: `{ settings: VoiceSecretarySettings, environment_keys: string[], default_guidance: string,
+configured: boolean, readiness_error?: string, profiles: Array<Record<string, unknown>>,
+backlog_sources: number, held_sources: number, invalid_sources: number }`.
+The Profile list contains compatible global/user Profiles with their scope and owner.
+Secretary and Analyst support the same structured runtimes: Codex, Claude Code,
+Grok Build, OpenCode, Kilo, and Antigravity/Copilot/Devin/Cursor in ACP mode.
+Native TUI Profiles are excluded. No implicit Analyst/foreman settings or credential copy.
+Native tools retain the Runtime permission model; task tools are not a filesystem sandbox.
+
+#### `voice_secretary_settings_update`
+
+User-only global mutation. The configuration is instance-owned; there
+is no per-Group Voice setting or enable toggle.
+
 ```ts
 {
-  group_id: string
-  by?: string
-  assistant_id: "voice_secretary"
-  patch: {
-    enabled?: boolean
+  by?: "user"
+  settings: {
+    runtime?: ActorRuntime | null // absent/null with no Profile pauses model admission
+    runtime_mode?: "default" | "acp"
+    command?: string[] // Web also accepts a shell command string and parses it at its port
+    profile_id?: string
+    profile_scope?: "global" | "user"
+    profile_owner?: string
     config?: {
-      capture_mode?: "browser" | "service"
-      recognition_backend?: "mock" | "assistant_service_local_asr" | "browser_asr" | "external_provider_asr"
-      recognition_language?: "auto" | string
-      retention_ttl_seconds?: number
-      auto_document_enabled?: boolean
-      document_default_dir?: string
-      auto_document_quiet_ms?: number
-      auto_document_min_chars?: number
-      auto_document_max_window_seconds?: number
+      recognition_backend?: "browser_asr" | "assistant_service_local_asr" | "external_provider_asr"
+      recognition_language?: string // auto, mixed, or a language tag; at most 64 UTF-8 bytes
+      external_asr_provider?: "bailian" | "volcengine"
       service_model_id?: string
-      tts_enabled?: boolean
+      service_diarization_model_id?: string
+      auto_document_max_window_seconds?: number | null // 10..300; default 300; null disables periodic checkpoints
+      guidance?: string // global work rules, at most 512 KiB; empty uses built-in rules
     }
   }
+  environment?: { set?: Record<string,string>, unset?: string[], clear?: boolean }
+  backlog_action?: "process" | "hold"
 }
 ```
+
+Alternatively, `{by?: "user", preferences: Partial<VoiceSecretaryPreferences>}`
+atomically updates only the supplied preference fields. This form MUST NOT include
+`settings`, `environment` or `backlog_action`; unknown fields and invalid values
+are rejected before persistence. It preserves the Runtime, credentials, held-input
+policy and unspecified preferences, and does not require Runtime availability.
+Web uses this form for automatic short-choice preferences and explicitly saved
+work rules. A failed update preserves every saved field.
+
+Unknown settings/preferences/environment-patch fields are rejected. Omitting
+`settings.config` preserves the latest saved preferences, so saving a Runtime draft
+cannot overwrite independently saved preferences. A supplied config uses defaults
+for its omitted fields. Runtime resolution and command/private-env
+validation reuse the Analyst's shared AgentRuntimeSettings rules. Secretary custom
+credentials have their own `state/secrets/voice-secretary.json`; values are
+write-only and never returned by GET. Linked Profiles use their own credentials.
+Invalid configuration leaves the saved settings and custom environment unchanged.
+A custom Runtime is optional: recognition defaults can be saved while the model
+service is unconfigured. Saving preferences MUST NOT launch a provider task.
+
+Changing a configured Runtime or its environment while saved unclaimed input
+exists requires an explicit backlog_action before any mutation. A preferences-only
+save does not release held input or require another choice. `process` releases
+retained input for bounded admission; `hold` records a source boundary and processes
+only subsequent input. Holding is not completion or deletion. Held input stays
+visible after restart and can be released by an explicit `process` save with the
+same Runtime. Unconfigured input remains saved without filling the execution queue.
+
+Runtime and rules apply to subsequent task starts/acceptance respectively; a running
+execution keeps its resolved configuration. Recognition, language and checkpoint
+defaults apply to the next recording. An active recording keeps its target,
+recognition configuration and operation mode; lease acquisition snapshots the
+nonsecret recognition configuration, and a heartbeat preserves it. Dictation is
+an explicit client operation routed to `composer`, not a Group enablement setting;
+it creates no Secretary task, transcript sidecar or speaker-analysis job. Disabling
+periodic checkpoints does not suppress final document processing on recording stop.
+
+Result matches settings_get. There is no Group Actor execution path. Startup
+retires obsolete secretary Actors through the existing stop/remove lifecycle
+before restoring Group runtimes. Failed cleanup retains its recovery state;
+obsolete Actors cannot start. Documents, transcripts and unrelated Actors are
+preserved. Old input without an accepted fixed target is not automatically replayed.
+Startup skips registry entries whose Group file no longer exists without editing
+the registry. The retirement scan reads only Actor identities; unrelated Runtime
+configuration (including a removed Runtime) MUST NOT block the global service.
+Full Group configuration is required only when an obsolete Actor needs cleanup.
+Unreadable Actor identities, invalid configuration needed for cleanup, and
+unresolved resource cleanup remain startup failures; they MUST NOT be treated as
+missing Groups. The owner is published only after reconciliation and cleanup.
+
+#### `voice_secretary_tasks`
+
+Args: `{ group_id: string, by?: "user" }`. Read-only result:
+`{ group_id: string, global_owner: boolean, configured: boolean, readiness_error?: string | null, tasks: SecretaryTask[],
+deferred_sources: number, held_sources: number, invalid_sources: number,
+unprocessed_document_sources: number }`.
+Unresolved tasks first, followed by up to 12 recent terminal records for the requested Group; no other Group data or task grant.
+The same nonsecret `readiness_error` is included in `assistant.health.secretary`
+and the settings read. An unavailable owner can have no tasks; that empty list
+MUST NOT conceal the readiness failure. Reads never start or repair the owner.
+Startup failure diagnostics survive in the daemon's owner state and identify the
+stage and affected Group/task. They are bounded to 1600 characters and expose
+error categories and parser locations, never raw configuration values. The same
+cause is returned when saved input cannot be queued. A successful explicit start
+replaces the failure; no terminal log or polling-triggered recovery is required.
+A task has immutable `target` (Group, scope, kind and document/request/composer
+identity), `task_id`, timestamps, `source_count`, `preview`, `phase`,
+`cleanup_confirmed`, optional `receipt`, diagnostics, projection error,
+`previous_task_id`, `superseded_by`, candidate availability and forwarding receipt.
+`preview` is a bounded user-input summary (at most 240 Unicode characters),
+not the model instruction envelope. It survives task artifact retirement; missing
+original text is shown as an unnamed task rather than parsed from instructions.
+`projected_at` records successful synchronization into Group results, not browser
+application. Prompt tasks MAY expose `prompt_draft_status` (`pending`, `applied`,
+`dismissed`, `stale`, `no_change`) from the canonical draft only when its
+`secretary_task_id` matches this task. An absent acknowledgment MUST NOT be
+presented as an applied draft. These read projections never start work.
+An executing task MAY also expose `execution: { generation, runtime,
+native_terminal, progress, activity }`. This is a live owner snapshot, not a task
+grant or resumable session. `progress` is bounded to 8192 UTF-8 bytes and contains
+provider message output; `activity` is a bounded tool title without raw arguments
+or results. Both redact the session grant and configured private environment values.
+Progress redaction MUST span streaming delta boundaries before publishing a
+snapshot. A trailing fragment that could still become a private value is withheld
+until subsequent output or a complete message resolves it; incomplete raw tails
+are never included in task or shared-runtime reads.
+Reads MUST NOT open a native terminal or change task/provider lifetime. Terminal
+console output and progress are observations, never a business completion receipt.
+Optional `cancellation_reason` distinguishes `user`, `shutdown` and `group_deleted`;
+`recovery_attempts` records bounded automatic document recovery. Cancelled document
+sources remain visible as unprocessed, never silently considered committed.
+Phases: `queued`, `starting`, `running`, `done`, `needs_user`, `conflict`,
+`failed`, `cancelled`, `unconfirmed`.
+Blocking Runtime permission requests and user interactions, including normalized
+ACP notifications without a provider request ID, settle as `needs_user` with a
+bounded, redacted explanation. The owner does not approve them and closes the resident process before releasing
+the execution position. A normal model-submitted clarification followed by a confirmed
+turn end keeps the resident available for the next task. An existing terminal
+business receipt is preserved; further information uses the ordinary retry path.
+
+#### `voice_secretary_runtime`
+
+User-only read of the shared Secretary session. Args: `{ by?: "user" }`.
+Result: `{ phase, generation?, runtime?, native_terminal?, manual_turn?, task?, group_title?,
+progress?, activity?, diagnostic? }`. Phases: `not_started`, `starting`, `working`,
+`ready`, `stopping`, `disconnected`, `unavailable`. `task` is the current or most
+recent task snapshot; `ready` means the process remains available, not that the
+last result has been applied. This global observation can include another Group,
+so the Web endpoint `/api/v1/voice-secretary/runtime` is administrator-only.
+Reads never start a provider, open its terminal, or replay work.
+Native turn lifecycle is observed for the whole resident lifetime, including when
+the panel is closed. A manual terminal turn reports `working`, `manual_turn=true`
+and no borrowed last-task/Group target. Queued tasks wait for its confirmed end.
+Losing lifecycle observation invalidates the resident instead of guessing idle.
+
+#### `voice_secretary_runtime_reset`
+
+User-only mutation: `{ generation: string, by?: "user" }`. Rejects stale generations
+and any active admission/turn, including manual terminal turns. Result: `{ resetting: true }`. The owner closes the
+idle session and its native viewer, discards shared model context, and starts a
+fresh session only when another task arrives. Durable sources/results are retained.
+Web uses `POST /api/v1/voice-secretary/runtime/reset`.
+
+#### `voice_secretary_terminal_attach` (streaming upgrade)
+
+Args: `{ generation: string, by?: "user", since?: number,
+bootstrap?: "snapshot_v1", cols?: number, rows?: number,
+mode?: "control" | "viewer", takeover?: boolean }`.
+Explicit administrator attachment to the current global Secretary session,
+including between tasks. Group/task IDs do not select a different session.
+The owner validates the exact live generation and available native TUI. ACP-only,
+disconnected or replaced sessions cannot be attached. This MAY start a native
+viewer for the existing session; it MUST NOT start a provider or model turn.
+Web uses `/api/v1/voice-secretary/term` in interactive mode, with administrator
+checks on connection and throughout the stream.
+
+Framing, replay/snapshot and output acknowledgments follow `term_attach`.
+`mode` defaults to `control`; writer ownership and optional takeover follow
+`term_attach`. Native keyboard/mouse input is forwarded only by the current writer;
+viewer attachments remain read-only. Ownership changes are reflected in the stream.
+Manual input creates no Secretary task or target association. Task submission and
+commit checks keep their existing immutable destinations.
+Ordinary task completion keeps the viewer and provider alive. Closing the panel
+only detaches its browser. Cancellation, unresolved turn termination, configuration
+replacement, explicit reset or daemon shutdown owns viewer/provider cleanup.
+Cleanup failure retains ownership and blocks further admission.
+
+#### `voice_secretary_terminal_resize`
+
+Args: `{ generation: string, attachment_id: number, by?: "user", cols: number, rows: number }`.
+User-only layout mutation for the current writer of the same live native terminal. Both dimensions are
+integers (`cols`: 10–4096; `rows`: 2–4096). Result: `{ resized: boolean }`.
+No task, provider start or terminal input authority is granted.
+
+#### `voice_secretary_task_cancel`
+
+Args: `{ group_id: string, task_id: string, by?: "user" }`. User-only, fixed Group.
+Cancels a queued or executing task, revokes its capability before cleanup, and
+retains the original source. Admission waits are interruptible. A completed
+business receipt remains valid if cancellation races after its commit. Recording,
+other tasks and the Group lifecycle are unaffected. Cleanup must be confirmed
+before releasing that execution position.
+
+#### `voice_secretary_task_retry`
+
+Args: `{ group_id: string, task_id: string, by?: "user", followup?: string,
+confirm_unconfirmed?: boolean }`. Explicit user action after confirmed cleanup.
+`needs_user` requires nonempty information (up to 8,000 characters);
+`unconfirmed` requires acknowledgement that the previous work may have run.
+Creates one distinct successor, preserving the original receipt/candidate and
+fixed target. The shared session receives the preceding clarification question and
+all confirmed follow-up answers for this request (up to 32,000 accumulated
+characters), so short answers retain their meaning. Repeating the same action
+returns that successor; changed information is rejected instead of being silently
+ignored. A `done` task
+with a projection error only reprojects its saved receipt; it does not run a model.
+A removed/archived target or replaced composer/request must not be resurrected.
+
+#### `voice_secretary_task_candidate`
+
+Args: `{ group_id: string, task_id: string, by?: "user" }`. Read-only, fixed Group.
+Returns a retained terminal document candidate after process cleanup, with its
+target and base digest. It does not apply or merge it; the user reviews and copies
+changes through the ordinary document editor. No other task files are exposed.
+
+#### `voice_secretary_task_handoff`
+
+Args: `{ group_id: string, task_id: string, by?: "user" }`. User-only confirmation
+of an Ask receipt's proposed message to one current peer in the original Group.
+Uses the existing ledger notification/Actor delivery path, records `by=user`
+and the original scope/task ID, and deduplicates from its ledger receipt.
+The model cannot send messages or choose a different Group through this operation.
+
+#### `voice_secretary_task`
+
+Internal stdio operation. The MCP broker injects the resident session's private
+grant; EVERY call MUST include `task_id`, exactly matching the current host turn.
+The owner binds that ID to the accepted task. A missing, stale, completed or
+cancelled ID is rejected, including after the same session starts another task.
+Caller arguments cannot choose Group, scope, Actor or the original commit target. Scope-relative read paths do not change that target. The grant is
+never in tool schemas, command lines, task records or diagnostics. Claude Agent
+View receives its grant through the existing per-job private settings env because
+its supervisor filters caller environment. The owner deletes that private launch
+file after cleanup (or failed launch); it is not a resumable Secretary receipt.
+`cccc_voice_secretary_task` is the only tool exposed to this process. Other MCP
+profiles cannot acquire this tool by supplying arguments or capability activation.
+
+Actions: `context` reads the fixed packet and working-copy digest;
+`read(resource, path?, query?)` provides bounded current `messages`, the fixed
+reference `document`, or scope-relative `files`, `file` and literal `search`.
+The host fixes Group/scope from the grant, revalidates attachment/registration,
+uses the existing workspace boundary and excludes private/generated paths.
+Reads report freshness and truncation; they grant no native filesystem write
+or runtime-state access. An Ask may have a registered document reference and
+uses report, not commit. `task_kind: "ask"` on
+`assistant_voice_document_instruction` explicitly selects this behavior; omission
+preserves document editing for a nonempty document_path. A general Ask may use
+`trigger.current_document_path` as a read reference only when that active registered
+document belongs to the accepted scope; an old visible reference cannot redirect
+the request to another scope. An explicit document question uses that document's
+registered scope and retains its read-only answer channel.
+
+`commit(base_version)` submits only the current task's `working_document` from context;
+`report(status, reply_text, source_summary?, checked_at?, source_urls?,
+handoff_target?, handoff_text?)` terminates Ask with `done`, or any task with
+`needs_user`/`failed`; `draft(draft_text?, no_op?)` terminates Prompt refinement.
+Replies are limited to 4,000 characters, drafts to 32,000, and sources to 12 HTTP
+URLs. A handoff is a proposal only; the user confirms sending it.
+Group guidance and ASR/quoted source are data, never authority to change the target.
+Repeated terminal calls while the grant is live return the same receipt.
+Cancellation, generation changes or process exit invalidate it.
+
+The daemon owns `CCCC_HOME/voice-secretary/jobs/<task_id>/task.json` and commit
+journals. Writable copies live in `voice-secretary/workspace/<task_id>/document.md`;
+context returns this path relative to the resident workspace. Existing retained
+working copies are moved without discarding candidates or receipts. Conflicting
+old/new copies stop migration rather than overwriting either.
+
+One on-demand resident provider process and model conversation serves all Groups.
+All task kinds run serially; long document turns may delay Ask/Prompt. Shared model
+history is intentional and is NOT a Group confidentiality boundary. Each turn
+supplies a fresh explicit TASK_ID and target, and reads authoritative current
+requirements through the task tool. Task routing, source identities, document
+versions and composer checks remain daemon-owned. Task and session lifetime are
+separate: `cleanup_confirmed` means task authority is revoked and its turn has
+settled, or the uncertain process was cleaned; it does not mean an idle resident
+was stopped. Business submission alone is insufficient to reuse a busy provider.
+A confirmed provider turn end permits reuse; uncertain admission/termination,
+cancellation and blocking approval close the session before subsequent work.
+The owner bounds post-submission completion waiting and does not replay uncertain
+Ask/Prompt work. No idle timer, pool, custom memory/summary store or per-Group
+resident is introduced. Config changes apply after the current turn; the stale
+resident is stopped. Daemon restart begins a new conversation on demand.
+
+Secretary sessions MUST NOT use/update Actor or Analyst resume receipts or origins.
+Claude Agent View retains its resolved home/private launch settings and is cleaned
+through its control service using the exact owned cwd. Unavailable control with
+remaining job records retains ownership and blocks admission; process-group
+recovery alone cannot confirm cleanup. Old per-task owners are cleaned before
+moving their directories. The current resident's owner is recovered even with no
+active task record.
+
+The session grant reaches MCP through environment or a pointer to the private
+`voice-secretary/session-grant` file, outside the writable workspace. The broker
+validates that exact path before reading it; the pointer is not a bearer credential.
+It is removed on session close and revoked on daemon startup. No active task means
+no task authority even while the session grant exists. Missing, malformed, outside
+or expired grants fail closed. Grants never appear in argv or tool arguments.
+The Secretary MCP profile MUST reject calls when the grant is missing, rather
+than falling back to user/Actor authority.
+The task MCP restriction controls CCCC authority, not arbitrary native IO. Codex sessions
+use Secretary-workspace filesystem permissions, no native-command networking, no
+inherited Apps/plugins/browser hooks/skills/memories, and only the task MCP.
+Model-side research may use permitted provider web search; this is not arbitrary
+local network access or access to connected user services.
+Claude Secretary sessions use strict MCP configuration. Copilot Secretary sessions
+inspect the CLI's configuration catalog, disable other named servers and built-in
+MCPs for that process, and inject the task server. Catalog failure stops startup
+before a prompt. These controls MUST NOT edit user MCP configuration or change
+Actor/Analyst launch behavior. Other native providers may inherit user MCP services;
+task instructions prohibit using them, without claiming a vendor sandbox.
+
+Global acceptance intent and its target/guidance are persisted with the canonical
+input before publishing a job. Capture success is independent of scheduling:
+unconfigured/full/unavailable execution retains the source and returns
+`secretary_processing_deferred: true`, rather than failing persisted transcription.
+Unconfigured inputs do not allocate jobs. Startup loads the task/source index once
+and reconstructs unclaimed sources in one pass; subsequent capacity/configuration
+changes drain those pending sources without rereading all history. Input
+with invalid task information is retained and counted separately; it MUST NOT
+prevent later valid input or other Groups from admission. Shared storage errors
+remain errors rather than silently discarding input. Explicitly held sources do
+not drain until released by a user action. Executing work
+without a terminal receipt becomes `unconfirmed`. Only ASR document batches
+whose original execution confirmed task-only native writes (no request_id), after confirmed cleanup and no prepared
+commit journal, may get one fresh attempt for conflict, shutdown or failed/
+unconfirmed execution. The new attempt snapshots the current document; it never
+applies a stale candidate. Recovered ASR sources precede newer queued document
+batches, preserving source chronology. User cancellations, removed targets, Ask/Prompt and
+prepared/uncertain commits are not automatically replayed. Unisolated execution is never automatically replayed, even if a subsequent
+Profile change selects Codex. Exhausted recovery
+remains visible and requires explicit user action. A prepared document commit is reconciled from its immutable
+candidate and digest without rerunning the model. Required owned-process
+reconciliation precedes capacity reuse. Reads/polling cannot trigger these actions.
+Deleting/resetting a Group cancels its queued tasks and revokes its active grants;
+provider cleanup remains owned by the task worker and cannot join while the Group
+mutation permit is held. Once cleanup is confirmed, deleted Groups lose their
+owned task/source directories; startup completes interrupted retirement. Completed
+projected tasks retire working/prepared copies and compact their input previews,
+while retaining source IDs and business receipts for durable deduplication.
+Unresolved conflict, needs_user, unconfirmed or cleanup-pending artifacts are
+retained. Once a confirmed successor covers the original target and sources, its
+obsolete predecessors also retire their copies while retaining diagnostic receipts.
+Other Groups and ordinary stop/start are unaffected.
+Projected results carry the task's original `scope_key` and `secretary_task_id`;
+terminal projection is idempotent, including after interrupted receipt bookkeeping.
+
+Voice configuration uses one Web editor at **Settings → This instance → Voice**,
+with two feature tabs: **Voice Secretary** and **Codex Voice**. Secretary contains
+Runtime/model, capture/recognition and document-processing sections. Both services
+provide direct Runtime configuration or a linked Profile using the same form,
+while preserving independent credentials, contexts and results. Workspaces open
+the corresponding tab directly and return without starting/stopping calls or tasks.
+Analyst drafts survive closing settings; one call controller owns the call.
+Group settings contain no Voice page or writable assistant configuration. Group
+workflow reads project the nonsecret global defaults; Group documents, transcripts
+and requests retain their original Group/scope. Specific work requirements belong
+to the submitted task. Old Actor HELP instructions are not imported.
+
+#### Shared recognition defaults and task input
 
 `browser_asr` means browser-managed speech recognition and does not guarantee
 browser-device-local model execution. `assistant_service_local_asr` means ASR
@@ -1977,26 +2336,17 @@ selects a daemon-managed local ASR model for on-demand install/use.
 `recognition_language="auto"` means the browser/client chooses the best language
 hint; otherwise callers should pass a BCP-47-like tag such as `zh-CN`, `en-US`,
 or `ja-JP`. `auto_document_enabled=true` is the default path: stable transcript
-segments are compacted into the Voice Secretary input stream, then the
-`voice-secretary` runtime actor pulls unread input and edits the working markdown
-document directly in the repository. `auto_document_quiet_ms` is the client
-silence window before flushing speech into that semantic lane;
-`auto_document_min_chars` and `auto_document_max_window_seconds` are daemon-side
-guardrails that keep long continuous speech from waiting forever for a pause.
-The runtime actor should treat transcript as source material for
-evidence-bounded reconstruction: it may use transcript, group context, existing
-documents, common knowledge, and verified lightweight research to produce a
-coherent artifact, but must not fabricate facts and should compactly mark
-low-confidence entities, numbers, quotations, or dates.
-The document loop should be incremental and non-lossy: each unread input batch
-should be organized into the best current document structure while preserving
-useful concrete details, and idle review should refine/reorganize/enrich rather
-than replace detail-rich material with a short executive summary.
-The daemon does not track per-job completion: it stores an input cursor, nudges
-the actor when unread input exists, and sends idle-review nudges only on
-recording stop or after enough new transcript input plus the group cooldown
-(default: stop flush immediately, otherwise 8 new transcript input flushes and
-at least 5 minutes since the previous idle review).
+segments are compacted into the Voice Secretary input stream and accepted as
+fixed-target tasks. A document task incrementally edits a private working copy;
+only the daemon commits the original after checking its registration, original
+scope and base content digest. A conflict preserves the candidate and does not
+merge or overwrite newer user work. Document/Ask/Prompt completion requires a
+business submission; provider turn completion, input read/delivery cursors and
+console text are not business receipts.
+The document loop remains incremental and non-lossy: preserve useful concrete
+details, uncertainty, entities, numbers and conditions instead of replacing a
+detailed record with a short summary. Structured provider events determine
+execution/cleanup, not TUI idle or elapsed-time guesses.
 If the group has an active workspace scope,
 `document_default_dir` (default `docs/voice-secretary`) is
 resolved under that workspace; otherwise the daemon falls back to CCCC_HOME.
@@ -2005,13 +2355,8 @@ Raw transcript/source/input sidecars stay in CCCC_HOME.
 
 The semantic input authority is
 `$CCCC_HOME/voice-secretary/<group_id>/input_events.jsonl`; its daemon-owned
-read/delivery cursor and retry timing live in the sibling `input_state.json`.
-Implementations MUST NOT maintain an engine-private sequence or cursor. The
-former Rust `inputs.jsonl` and `groups/<group_id>/state/assistants.json:rust_state.input_*`
-shape is a one-way migration source: canonical input/state commit first, then
-the legacy log and cursor fields are retired. If independently written streams
-must be merged, migration may conservatively replay an already-read item but
-MUST NOT advance across or skip an unread item.
+source sequence lives in the sibling `input_state.json`. Fixed task/source receipts
+own deduplication and completion; no Actor read/delivery cursor is maintained.
 
 Result:
 ```ts
@@ -2073,8 +2418,8 @@ Content-Type: audio/pcm | audio/wav | application/octet-stream
 ```
 
 Preconditions:
-- `voice_secretary` is enabled for the group.
-- `recognition_backend` is `assistant_service_local_asr`.
+- The Group exists. No per-Group Secretary enable setting or model Runtime is required.
+- The global `recognition_backend` is `assistant_service_local_asr`.
 - The selected offline `service_model_id` is installed and its manifest exposes
   a supported sherpa-onnx model configuration. HTTP transcription accepts mono
   PCM16 or WAV up to 100 MiB. The HTTP body and WebSocket PCM16 frames are
@@ -2240,17 +2585,12 @@ updates the bounded shared session projection in
 to `$CCCC_HOME/voice-secretary/<group_id>/documents/<document_id>/transcript.jsonl`, and
 by default appends a semantic input event for the current Voice Secretary
 markdown working document. The working document is a user-facing repo artifact;
-raw transcript/source/revision sidecars remain in CCCC_HOME. When new input is
-available, the daemon emits a targeted `system.notify` to `voice-secretary` with
-`context.kind="voice_secretary_input"` and a daemon-owned `input_envelope`. The
-envelope is the canonical work item delivered to every actor runtime;
-`assistant_voice_document_input_read` /
-`cccc_voice_secretary_document(action="read_new_input")` remains a legacy,
-recovery, and debugging entrypoint. Input append is durable before runtime actor
-wake-up; if wake-up fails, the input remains readable and the API reports the
-best-effort wake error separately. If wake-up succeeds after the notify was
-created while the actor was stopped, the daemon re-dispatches that same notify
-through the actor's normal runtime input so lazy startup instructions are included.
+raw transcript/source/revision sidecars remain in CCCC_HOME. Global input is
+accepted into a fixed-target task after canonical input and ledger persistence.
+An unavailable execution owner leaves the source intact for daemon-startup
+reconciliation and reports `secretary_processing_deferred=true`; capture stays
+successful after source persistence. Submission cannot create a second manager
+without daemon lifecycle locks. No Actor notification or legacy read tool is used.
 
 The group operation validates or creates the Markdown target before committing
 transcript/session/input state. Retrying the same `session_id` and `segment_id`
@@ -2356,12 +2696,9 @@ Result:
   document_updated: boolean
   input_event?: Record<string, unknown>
   input_event_created: boolean
-  input_notify_emitted: boolean
-  input_notify_error?: string
-  actor_woken?: boolean
-  actor_wake_error?: string
-  actor_notify_delivered?: boolean
-  actor_notify_delivery_error?: string
+  secretary_task_id?: string
+  secretary_processing_deferred: boolean
+  secretary_processing_error?: string
 }
 ```
 
@@ -2457,47 +2794,12 @@ Result:
 }
 ```
 
-#### `assistant_voice_document_input_read`
-
-Read all unread Voice Secretary input events since the actor's last successful
-read. Reading advances the daemon-managed cursor immediately; the actor does not
-see or manage cursor/sequence values. This intentionally avoids a separate
-job-completion protocol. If the actor crashes after reading, the raw input log
-remains in CCCC_HOME for debugging/replay, but the normal live cursor has moved.
-
-Args:
-```ts
-{ group_id: string; by?: "voice-secretary" | "assistant:voice_secretary" }
-```
-
-Result:
-```ts
-{
-  group_id: string
-  item_count: number
-  document_count: number
-  input_text: string
-  input_batches: Array<{
-    document_path: string
-    filename?: string
-    title?: string
-    item_count: number
-    kinds?: string[]
-    intent_hints?: string[]
-    languages?: string[]
-    sources?: string[]
-  }>
-  documents: Array<Record<string, unknown>>
-  has_new_input: boolean
-}
-```
-
 #### `assistant_voice_document_save`
 
 Save or create a Voice Secretary working markdown document. This is the daemon
-path used by Web when the user edits the document surface. The `voice-secretary`
-actor should normally edit repository-backed markdown directly at
-`document_path`; the MCP document tool intentionally has no save action.
+path used by Web when the user edits the document surface. Global Secretary
+processes edit only their task working copy and submit through
+`voice_secretary_task(action="commit")`; they cannot call this general save operation.
 When `content` is omitted for an unindexed path, an implementation MUST NOT
 rewrite an existing repository file: it MAY read the file into the document
 index or reject the request. An empty file MAY be created only when the target
@@ -2525,19 +2827,21 @@ Result:
 #### `assistant_voice_document_instruction`
 
 Append a user instruction for one active working document into the same Voice
-Secretary input stream used for ASR transcript. The daemon emits a targeted
-`voice_secretary_input` notify and the runtime actor works from the inline
-`input_envelope`. The daemon does not directly append the instruction to a
-document. Cross-peer handoff is intentionally handled only by
-`assistant_voice_request`, and only when the Voice Secretary decides the work
-belongs to foreman or one concrete peer.
+Secretary input stream used for ASR transcript. Global work receives a
+document-bound task with a host-prepared working copy; the instruction is not
+directly appended to the document. `task_kind="ask"` returns an answer without
+editing the referenced document; `task_kind="document"` requires an active
+registered `document_path`. Omission selects document work when a path is supplied,
+otherwise a general Ask. Cross-peer forwarding uses a reviewed Ask proposal and
+`voice_secretary_task_handoff`; the model cannot send it directly.
 
 Args:
 ```ts
 {
   group_id: string
   by?: string
-  document_path: string
+  document_path?: string
+  task_kind?: "ask" | "document"
   request_id?: string
   input_append_id?: string
   instruction?: string
@@ -2551,35 +2855,37 @@ Result:
 {
   group_id: string
   assistant?: Record<string, unknown>
-  document: Record<string, unknown>
+  document?: Record<string, unknown>
   request_id: string
   input_append_id?: string
   ask_request?: Record<string, unknown>
   input_event?: Record<string, unknown>
   input_event_created?: boolean
-  input_notify_emitted?: boolean
-  input_notify_error?: string
-  actor_woken?: boolean
-  actor_wake_error?: string
-  actor_notify_delivered?: boolean
-  actor_notify_delivery_error?: string
+  secretary_task_id?: string
+  secretary_processing_deferred: boolean
+  secretary_processing_error?: string
   event?: CCCSEventV1
 }
 ```
 
 `request_id` identifies the logical Ask request. `input_append_id` identifies
 one durable append attempt. A caller retrying an accepted append MUST reuse both
-values. The daemon MUST then return the existing input with
-`input_event_created=false` and MUST NOT append a second semantic input, request
-event, or notification. When either value is omitted, the daemon may generate
-it and no retry guarantee exists until the caller retains the returned values.
+returned values. When only a stable `input_append_id` is supplied, the daemon
+also derives a stable request identity for that append. The daemon MUST return
+the existing input with `input_event_created=false` and MUST NOT append a second
+semantic input, request event, or notification. With no `input_append_id`, an
+exact-append retry guarantee requires retaining the returned identifiers.
+Outstanding Ask records remain authoritative for accepted tasks and their
+explicit continuations. The 30-record history limit applies only to completed
+(`done`) requests; pending, working, failed and needs-user records MUST NOT be
+evicted by that limit.
 
 #### `assistant_voice_input_append`
 
 Append a general Voice Secretary Ask or create/update a composer refinement
-request. The daemon persists the request before emitting one targeted
-`voice_secretary_input` notification. This operation creates work for Voice
-Secretary; it does not create a prompt draft.
+request. The daemon persists the request and input before accepting one global
+task. This
+operation creates work for Voice Secretary; it does not create a prompt draft.
 
 Args:
 ```ts
@@ -2618,56 +2924,27 @@ Result:
   ask_request?: Record<string, unknown>
   input_event?: Record<string, unknown>
   input_event_created: boolean
-  input_notify_emitted: boolean
-  input_notify_error?: string
-  actor_woken?: boolean
-  actor_wake_error?: string
-  actor_notify_delivered?: boolean
-  actor_notify_delivery_error?: string
+  secretary_task_id?: string
+  secretary_processing_deferred: boolean
+  secretary_processing_error?: string
   event?: CCCSEventV1
 }
 ```
 
-#### `assistant_voice_instruction_feedback`
-
-Report progress or the terminal result for an existing Voice Secretary Ask.
-Only the `voice-secretary` actor/principal may submit feedback.
-
-Args:
-```ts
-{
-  group_id: string
-  by?: "voice-secretary" | "assistant:voice_secretary"
-  request_id: string
-  status: "working" | "done" | "needs_user" | "failed"
-  reply_text?: string
-  result_text?: string
-  message?: string
-  document_path?: string
-  artifact_paths?: string[]
-  source_summary?: string
-  checked_at?: string
-  source_urls?: string[]
-}
-```
-
-Result:
-```ts
-{
-  group_id: string
-  assistant: Record<string, unknown>
-  ask_request: Record<string, unknown>
-  event: CCCSEventV1
-}
-```
+`secretary_processing_deferred=true` means the source was saved but execution
+has not started. Clients MUST show the saved/deferred outcome and any
+`secretary_processing_error` instead of claiming active refinement. They retain
+the request identity for a later admitted task or matching draft; status reads
+MUST NOT resubmit the input.
 
 #### `assistant_voice_ask_requests_clear`
 
 Hide Ask history from the current projection. `keep_active=true` preserves
 `pending` and `working` requests in the visible result. Clearing is a display
-operation, not cancellation: the daemon MUST retain enough bounded state to
-accept later feedback for a cleared in-flight request. User-visible feedback
-may make that request visible again.
+operation, not cancellation: the daemon MUST retain the request identity and state
+needed to accept later feedback for a cleared in-flight request, regardless of
+subsequent history growth. User-visible feedback may make that request visible
+again.
 
 Args:
 ```ts
@@ -2687,32 +2964,6 @@ Result:
 }
 ```
 
-#### `assistant_voice_prompt_draft_submit`
-
-Submit the Voice Secretary result for an existing prompt refinement request.
-Only `voice-secretary` / `assistant:voice_secretary` may call this operation.
-The daemon inherits a missing operation and composer snapshot hash from the
-request, stores the result as `pending`, and emits
-`assistant.voice.prompt_draft`. `no_op=true` stores `no_change` with empty draft
-text. Submission MUST NOT append another semantic input or emit another
-`voice_secretary_input` notification.
-
-Args:
-```ts
-{
-  group_id: string
-  by?: "voice-secretary" | "assistant:voice_secretary"
-  request_id: string
-  draft_text?: string
-  no_op?: boolean
-  summary?: string
-  operation?: string
-  composer_snapshot_hash?: string
-}
-```
-
-`draft_text` is required unless `no_op=true`.
-
 #### `assistant_voice_prompt_draft_ack`
 
 Mark a submitted draft as `applied`, `dismissed`, or `stale`. Acknowledgement
@@ -2725,42 +2976,6 @@ Args:
   group_id: string
   request_id: string
   status: "applied" | "dismissed" | "stale"
-}
-```
-
-#### `assistant_voice_request`
-
-Send a structured Voice Secretary action request to `@foreman` or one concrete
-actor without exposing normal `chat.message` send tools to the
-`voice-secretary` runtime actor. The daemon records an `assistant.voice.request`
-event and delivers a targeted `system.notify` with
-`context.kind="voice_secretary_action_request"`. This is the default path for
-spoken "please do X / ask Y to do X" content; ordinary memo/document updates
-MUST stay in the Voice Secretary document surface.
-
-Args:
-```ts
-{
-  group_id: string
-  by?: "voice-secretary" | "assistant:voice_secretary"
-  target?: "@foreman" | string   // one concrete actor id; no @all/user broadcast
-  request_text: string           // concise actionable handoff, not raw transcript
-  summary?: string
-  document_path?: string
-  artifact_paths?: string[]      // repo-relative produced docs/artifacts for user-visible links
-  source_event_id?: string
-  priority?: "low" | "normal" | "high" | "urgent"
-}
-```
-
-Result:
-```ts
-{
-  group_id: string
-  assistant: Record<string, unknown>
-  request: Record<string, unknown>
-  notify_event: CCCSEventV1
-  event: CCCSEventV1
 }
 ```
 
@@ -2861,22 +3076,6 @@ saves, transcript appends and archive requests and are not rediscovered as activ
 documents. The Web consumer clears quoted references and capture targets only
 after a successful response.
 
-#### `assistant_status_update`
-
-Update lifecycle/health for a built-in assistant service. The assistant principal
-(`assistant:<assistant_id>`) may update its own status; users/foremen may also
-update it for control-plane repair.
-
-Args:
-```ts
-{ group_id: string; by?: string; assistant_id: "voice_secretary"; lifecycle: "disabled" | "idle" | "running" | "working" | "waiting" | "failed"; health?: Record<string, unknown> }
-```
-
-Result:
-```ts
-{ group_id: string; assistant: Record<string, unknown>; event: CCCSEventV1 }
-```
-
 #### `group_automation_update`
 
 Replace group automation rules + snippets (scheduled `system.notify`).
@@ -2956,6 +3155,12 @@ Notes:
 - Rule IDs are non-empty and unique within a ruleset. Unknown fields and invalid
   trigger/action combinations are rejected instead of being persisted for one
   engine to ignore later.
+- Cron day-of-week numbers use POSIX numbering: `0` and `7` mean Sunday,
+  `1` means Monday, and `6` means Saturday. Names, lists, ranges and steps are
+  accepted; a numeric bare step such as `1/2` expands through `7`.
+- New or changed cron expressions must parse before saving. An existing rule's
+  unchanged expression may be preserved even if invalid, so it does not block
+  edits to other rules; an invalid expression does not fire.
 - `group_state` and `actor_control` actions require an `at` trigger. Actor
   callers may manage only `notify` rules; a peer may mutate only its own
   personal notification rule targeting itself.
@@ -3726,7 +3931,8 @@ Result:
 
 #### `actor_profile_copy_voice_analyst_secrets`
 
-Copy the Voice Analyst custom private environment into a Runtime Profile without returning values.
+Copy the named voice identity's custom private environment into a Runtime Profile without returning values.
+Secretary and Analyst sources remain independent; neither operation reads the other's credentials.
 This operation is administrator-only and is used when the Voice settings surface saves its Custom
 configuration as a reusable Profile.
 
@@ -3744,6 +3950,12 @@ Result:
 ```ts
 { profile_id: string; keys: string[] }
 ```
+
+#### `actor_profile_copy_voice_secretary_secrets`
+
+Same administrator-only Profile access checks, arguments and key-only response as
+`actor_profile_copy_voice_analyst_secrets`, using the Secretary's custom private
+environment. It never copies Analyst, Actor or ASR credentials.
 
 ### 8.6 Chat Messaging
 

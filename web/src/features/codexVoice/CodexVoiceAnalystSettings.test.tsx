@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { useCodexVoiceAnalystSettings } from "./useCodexVoiceAnalystSettings";
 import { CodexVoiceAnalystSettings } from "./CodexVoiceAnalystSettings";
 import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
 
@@ -82,9 +83,7 @@ async function renderSettings(sessionController = controller()) {
   document.body.appendChild(host);
   const root = createRoot(host);
   await act(async () =>
-    root.render(
-      <CodexVoiceAnalystSettings active controller={sessionController} heading="Voice Analyst" />,
-    ),
+    root.render(<CodexVoiceAnalystSettings active controller={sessionController} />),
   );
   await act(async () => undefined);
   return { host, root };
@@ -145,18 +144,10 @@ describe("CodexVoiceAnalystSettings", () => {
     const sessionController = controller();
     const { host, root } = await renderSettings(sessionController);
     await act(async () =>
-      root.render(
-        <CodexVoiceAnalystSettings
-          active={false}
-          controller={sessionController}
-          heading="Voice Analyst"
-        />,
-      ),
+      root.render(<CodexVoiceAnalystSettings active={false} controller={sessionController} />),
     );
     await act(async () =>
-      root.render(
-        <CodexVoiceAnalystSettings active controller={sessionController} heading="Voice Analyst" />,
-      ),
+      root.render(<CodexVoiceAnalystSettings active controller={sessionController} />),
     );
     expect(api.fetchSettings).toHaveBeenCalledTimes(2);
     expect(host.querySelector('[role="combobox"]')?.textContent).toContain("Claude");
@@ -181,22 +172,10 @@ describe("CodexVoiceAnalystSettings", () => {
       await act(async () => toggle.click());
       expect(toggle.checked).toBe(false);
       await act(async () =>
-        root.render(
-          <CodexVoiceAnalystSettings
-            active={false}
-            controller={sessionController}
-            heading="Voice Analyst"
-          />,
-        ),
+        root.render(<CodexVoiceAnalystSettings active={false} controller={sessionController} />),
       );
       await act(async () =>
-        root.render(
-          <CodexVoiceAnalystSettings
-            active
-            controller={sessionController}
-            heading="Voice Analyst"
-          />,
-        ),
+        root.render(<CodexVoiceAnalystSettings active controller={sessionController} />),
       );
       expect(api.fetchSettings).toHaveBeenCalledOnce();
       expect(toggle.checked).toBe(false);
@@ -572,4 +551,45 @@ describe("CodexVoiceAnalystSettings", () => {
     expect(host.textContent).toContain("OPENAI_API_KEY");
     await act(async () => root.unmount());
   });
+});
+
+it("keeps a Custom credential draft when choosing a Profile and returning before saving", async () => {
+  api.fetchSettings.mockResolvedValue({
+    ok: true,
+    result: { settings: customSettings, environment_keys: [] },
+  });
+  api.listProfiles.mockResolvedValue({
+    ok: true,
+    result: {
+      profiles: [
+        { id: "fixture-linked", scope: "global", owner_id: "", runtime: "codex", command: [] },
+      ],
+    },
+  });
+  const sessionController = controller();
+  let form!: ReturnType<typeof useCodexVoiceAnalystSettings>;
+  function Harness() {
+    form = useCodexVoiceAnalystSettings(true, sessionController);
+    return null;
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Harness />));
+    await act(async () =>
+      form.setEnvironmentChanges({
+        setVars: { FIXTURE_KEY: "staged-only" },
+        unsetKeys: [],
+        clearAll: false,
+      }),
+    );
+    await act(async () => form.changeMode("profile"));
+    await act(async () => form.changeMode("custom"));
+    expect(form.environmentChanges.setVars).toEqual({ FIXTURE_KEY: "staged-only" });
+    expect(api.updateSettings).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
 });

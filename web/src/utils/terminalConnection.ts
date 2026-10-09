@@ -219,6 +219,7 @@ export function isTerminalAttachNonRetryableErrorCode(code: unknown): boolean {
     "not_pty_actor",
     "permission_denied",
     "read_only_terminal",
+    "voice_secretary_terminal_unavailable",
   ].includes(normalized);
 }
 

@@ -104,10 +104,26 @@ pub(super) fn handle_notification(
             }
             "tool_call" if active.as_ref().is_some_and(|turn| turn.admitted) => {
                 remember_tool_call(update, tool_calls);
+                publish_tool_activity(
+                    update,
+                    tool_calls,
+                    events,
+                    generation,
+                    session_id,
+                    active.as_ref(),
+                );
             }
             "tool_call_update" => {
                 if active.as_ref().is_some_and(|turn| turn.admitted) {
                     remember_tool_call(update, tool_calls);
+                    publish_tool_activity(
+                        update,
+                        tool_calls,
+                        events,
+                        generation,
+                        session_id,
+                        active.as_ref(),
+                    );
                     if update.get("status").and_then(Value::as_str) == Some("completed") {
                         publish_mcp_result(
                             update,
@@ -137,6 +153,33 @@ pub(super) fn handle_notification(
     // Grok emits `prompt_complete` as a fire-and-forget duplicate of the
     // persisted `turn_completed` update. It can arrive after the next turn has
     // started and carries no CCCC turn id, so it must never settle `active`.
+}
+
+fn publish_tool_activity(
+    update: &Value,
+    tool_calls: &HashMap<String, ToolCall>,
+    events: &broadcast::Sender<AnalystEvent>,
+    generation: &str,
+    session_id: &str,
+    active: Option<&ActiveTurn>,
+) {
+    let Some(turn) = active else {
+        return;
+    };
+    let title = update["toolCallId"]
+        .as_str()
+        .and_then(|id| tool_calls.get(id))
+        .map(|call| call.title.as_str())
+        .unwrap_or_default();
+    if title.is_empty() {
+        return;
+    }
+    // Observation only. Do not expose arguments, results, or permission authority.
+    publish(
+        events,
+        generation,
+        json!({"method":"cccc/toolActivity","params":{"threadId":session_id,"turnId":turn.turn_id,"title":title.chars().take(400).collect::<String>()}}),
+    );
 }
 
 // Grok's persisted event IDs are session-scoped monotonically increasing

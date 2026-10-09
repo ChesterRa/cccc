@@ -92,7 +92,6 @@ export function VoiceFolderDialog({
           >
             <Input
               aria-label={title}
-              autoFocus
               value={name}
               maxLength={80}
               onChange={(event) => setName(event.target.value)}

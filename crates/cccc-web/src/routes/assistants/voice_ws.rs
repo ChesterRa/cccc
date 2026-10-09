@@ -22,7 +22,18 @@ pub(super) async fn serve(
         .unwrap_or_else(|_| group_id.clone());
     let loaded = load(&state, &group_id);
     let assistant = match loaded
-        .map(|value| assistant(&value))
+        .map(|value| {
+            let mut item = assistant(&value);
+            if let Some(config) = recording_lease
+                .get("recognition_config")
+                .and_then(Value::as_object)
+            {
+                for (key, value) in config {
+                    item["config"][key] = value.clone();
+                }
+            }
+            item
+        })
         .and_then(|item| voice_backend_access::require_service_asr(&item).map(|_| item))
     {
         Ok(value) => value,

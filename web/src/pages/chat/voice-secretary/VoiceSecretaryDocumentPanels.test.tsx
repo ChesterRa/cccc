@@ -205,21 +205,26 @@ describe("Voice Secretary document panels", () => {
     expect(onSelectDocument).toHaveBeenCalledWith(documents[1]);
   });
 
-  it("keeps behavioral status and repo metadata while removing duplicate type chips", async () => {
+  it("keeps status and the repo path in one plain meta line, with secondary actions in a menu", async () => {
     await act(async () => {
       root.render(workspacePanel());
     });
 
     expect(host.textContent).not.toContain("TYPE_CHIP");
     expect(host.textContent).not.toContain("STORAGE_CHIP");
-    expect(host.textContent).toContain("Default document");
-    expect(host.textContent).toContain("Repo markdown");
-    expect(host.textContent).toContain("docs/voice/primary.md");
+    const meta = host.querySelector("[data-voice-document-meta]");
+    expect(meta?.textContent).toContain("Default document");
+    expect(meta?.textContent).toContain("docs/voice/primary.md");
+    expect(meta?.querySelector("button")).toBeNull();
+    expect(host.textContent).not.toContain("Quote in chat");
 
-    const lightQuoteAction = Array.from(host.querySelectorAll("button")).find((button) =>
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>("[data-voice-document-more]")!.click(),
+    );
+    const quoteAction = Array.from(document.body.querySelectorAll("button")).find((button) =>
       button.textContent?.includes("Quote in chat"),
     );
-    expect(lightQuoteAction?.querySelector(".lucide-message-square-quote")).toBeTruthy();
+    expect(quoteAction?.querySelector(".lucide-message-square-quote")).toBeTruthy();
 
     await act(async () => {
       root.render(
@@ -227,11 +232,14 @@ describe("Voice Secretary document panels", () => {
           activeDocumentPath: "",
           activeDocumentWritePath: "",
           captureTargetDocumentPath: "",
+          documentDraft: "",
         }),
       );
     });
-    expect(host.textContent).toContain("Waiting for transcript");
     expect(host.textContent).toContain("Auto-create on transcript");
+    expect(host.querySelector("[data-voice-document-empty]")).not.toBeNull();
+    expect(host.querySelector("[data-voice-document-more]")).toBeNull();
+    expect(host.textContent).not.toContain("Waiting for transcript");
   });
 });
 

@@ -145,6 +145,15 @@ export function useModalA11y(
       const modal = modalRef.current;
       if (!modal) return;
 
+      // A dialog layered from a portal (e.g. Radix) traps its own focus; the parent must not reclaim it.
+      const active = document.activeElement;
+      if (
+        active instanceof Element &&
+        !modal.contains(active) &&
+        active.closest('[role="dialog"], [role="alertdialog"]')
+      )
+        return;
+
       const focusables = focusableElements(modal);
       if (focusables.length === 0) {
         e.preventDefault();
@@ -155,7 +164,6 @@ export function useModalA11y(
 
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
-      const active = document.activeElement;
 
       if (e.shiftKey) {
         if (active === first || !modal.contains(active)) {

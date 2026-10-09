@@ -154,6 +154,12 @@ pub(super) fn now() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
+pub(super) fn recovery_pending() -> bool {
+    guard()
+        .as_ref()
+        .is_some_and(|guard| !guard.retained.is_empty())
+}
+
 /// Terminate what a previous owner using `ledger` left behind, then record this
 /// process's groups there. A process that already guards another ledger (a daemon
 /// restarted for another home) moves to it with a new watchdog. Returns false when

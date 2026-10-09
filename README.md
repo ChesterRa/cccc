@@ -57,7 +57,7 @@ CCCC installs with one command and needs no separately operated database, messag
 | **Multi-runtime orchestration** | Mix supported coding-agent runtimes in one Group, with `custom` for other command-line agents |
 | **CCCC Connect** | Connect your own instances, selected Groups across member accounts, or two Groups directly without an account |
 | **Workspace tools** | Browse and edit files, inspect Git changes, pin documents in Presentation, and operate tiled native terminals |
-| **Voice workflows** | Voice Secretary turns speech into documents or composer drafts; experimental Codex Voice pairs realtime conversation with a Runtime-backed Analyst |
+| **Voice workflows** | One global Voice Secretary handles speech, documents and composer drafts for all Groups in a shared conversation; experimental Codex Voice uses a separate Realtime Analyst |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
@@ -370,7 +370,7 @@ The built-in Web UI at `http://127.0.0.1:8848` provides:
 - **Project Context** — shared coordination, tasks, Agent state and self-evolving skills
 - **Group Space** — NotebookLM integration for shared knowledge management
 - **ChatGPT Web Model setup** — connect one ChatGPT Web conversation as a CCCC actor
-- **Voice Secretary & Codex Voice** — speech-to-document/composer workflows and experimental realtime Voice with a retained Analyst
+- **Voice Secretary & Codex Voice** — a global Secretary with Custom runtime settings or a linked Profile, processing tasks sequentially in a shared conversation while preserving each task's Group destination. Experimental realtime Voice keeps a separate Analyst. Both workflows share voice settings and audio device preferences; each Group retains its documents, requests and capture choices, without a per-Group secretary Actor.
 - **CCCC Connect settings** — account discovery, selected Group connections and Direct pairing
 - **IM bridge configuration** — Telegram, Slack, Discord, Mattermost, Feishu, DingTalk, WeCom and Weixin
 - **Settings** — messaging policies, delivery tuning, terminal transcript controls

@@ -65,6 +65,7 @@ const render = (groupId = "a") =>
   act(async () =>
     root.render(
       <SettingsModal
+        codexVoice={{} as import("../features/codexVoice/useCodexVoiceShell").CodexVoiceShellState}
         isOpen
         onClose={() => {}}
         settings={null}

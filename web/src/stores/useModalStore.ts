@@ -54,6 +54,8 @@ interface ModalState {
     scope?: "group" | "global";
     tab?: string;
     webModelProvider?: "chatgpt_web" | "grok_web";
+    voiceSection?: "secretary" | "realtime";
+    voiceAudio?: boolean;
     nonce: number;
   } | null;
 
@@ -64,8 +66,11 @@ interface ModalState {
     scope?: "group" | "global";
     tab?: string;
     webModelProvider?: "chatgpt_web" | "grok_web";
+    voiceSection?: "secretary" | "realtime";
+    voiceAudio?: boolean;
   }) => void;
   clearSettingsTarget: () => void;
+  openCodexVoiceSettings: () => void;
   setRecipientsModal: (eventId: string | null) => void;
   setRelayModal: (eventId: string | null, groupId?: string, event?: LedgerEvent | null) => void;
   openContextTask: (taskId: string) => void;
@@ -121,10 +126,22 @@ export const useModalStore = create<ModalState>((set) => ({
           target.scope === "global" ? "global" : target.scope === "group" ? "group" : undefined,
         tab: typeof target.tab === "string" ? target.tab : undefined,
         webModelProvider: target.webModelProvider,
+        voiceSection: target.voiceSection,
+        voiceAudio: target.voiceAudio,
         nonce: Date.now(),
       },
     })),
   clearSettingsTarget: () => set({ settingsTarget: null }),
+  openCodexVoiceSettings: () =>
+    set((state) => ({
+      modals: { ...state.modals, settings: true },
+      settingsTarget: {
+        scope: "global",
+        tab: "voice",
+        voiceSection: "realtime",
+        nonce: Date.now(),
+      },
+    })),
   setGroupConnections: (groupId) => set({ groupConnectionsId: groupId }),
 
   setRecipientsModal: (eventId) => set({ recipientsEventId: eventId }),

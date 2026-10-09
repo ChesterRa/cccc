@@ -16,6 +16,7 @@ export function RuntimeSelector({
   allowUndetected = false,
   ariaLabel,
   className,
+  allowedRuntimes,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -24,6 +25,7 @@ export function RuntimeSelector({
   allowUndetected?: boolean;
   ariaLabel?: string;
   className?: string;
+  allowedRuntimes?: string[];
 }) {
   const { t } = useTranslation("actors");
   const runtimes = useGroupStore((s) => s.runtimes);
@@ -50,7 +52,9 @@ export function RuntimeSelector({
         onChange={onChange}
         disabled={disabled}
         ariaLabel={ariaLabel || t("runtime")}
-        items={SUPPORTED_RUNTIMES.map((runtime) => {
+        items={SUPPORTED_RUNTIMES.filter(
+          (runtime) => !allowedRuntimes || allowedRuntimes.includes(runtime),
+        ).map((runtime) => {
           const info = runtimes.find((item) => item.name === runtime);
           const key = runtimeDetectionKey(runtime, info, status);
           const description =

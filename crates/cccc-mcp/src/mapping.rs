@@ -102,58 +102,10 @@ pub fn daemon_call(
         "cccc_im_bind" => "im_bind_chat",
         "cccc_runtime_wait_next_turn" => "runtime_wait_next_turn",
         "cccc_runtime_complete_turn" => "runtime_complete_turn",
-        "cccc_voice_secretary_document" => return voice_document(args),
-        "cccc_voice_secretary_composer" => return voice_composer(args),
-        "cccc_voice_secretary_request" => return voice_request(args),
+        "cccc_voice_secretary_task" => "voice_secretary_task",
         _ => return Err(format!("tool is not a daemon operation: {name}")),
     };
     Ok((op.into(), args))
-}
-
-fn voice_document(mut args: Map<String, Value>) -> Result<(String, Map<String, Value>), String> {
-    let action_name = args
-        .remove("action")
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "list".into());
-    let op = actions::voice_document(&action_name)
-        .ok_or_else(|| format!("unsupported action: {action_name}"))?;
-    args.insert(
-        "by".into(),
-        Value::String("assistant:voice_secretary".into()),
-    );
-    if action_name == "create" {
-        args.insert("create_new".into(), Value::Bool(true));
-    }
-    Ok((op.into(), args))
-}
-
-fn voice_composer(mut args: Map<String, Value>) -> Result<(String, Map<String, Value>), String> {
-    let action_name = args
-        .remove("action")
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "submit_prompt_draft".into());
-    let op = actions::voice_composer(&action_name)
-        .ok_or_else(|| format!("unsupported action: {action_name}"))?;
-    args.insert(
-        "by".into(),
-        Value::String("assistant:voice_secretary".into()),
-    );
-    Ok((op.into(), args))
-}
-
-fn voice_request(mut args: Map<String, Value>) -> Result<(String, Map<String, Value>), String> {
-    let action_name = args
-        .remove("action")
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "handoff".into());
-    match action_name.as_str() {
-        "handoff" => Ok(("assistant_voice_request".into(), args)),
-        "report" => {
-            alias(&mut args, "source_request_id", "request_id");
-            Ok(("assistant_voice_instruction_feedback".into(), args))
-        }
-        _ => Err(format!("unsupported action: {action_name}")),
-    }
 }
 
 fn space(mut args: Map<String, Value>) -> Result<(String, Map<String, Value>), String> {
@@ -636,37 +588,6 @@ mod tests {
             assert!(!args.contains_key("action"));
             assert_eq!(args["target_actor_id"], "peer");
         }
-    }
-
-    #[test]
-    fn voice_secretary_actions_use_python_contract() {
-        let create = json!({"action":"create","title":"Notes"})
-            .as_object()
-            .cloned()
-            .expect("args");
-        let (op, args) = daemon_call("cccc_voice_secretary_document", create).expect("create");
-        assert_eq!(op, "assistant_voice_document_save");
-        assert_eq!(args["create_new"], true);
-        assert_eq!(args["by"], "assistant:voice_secretary");
-
-        let composer = json!({"action":"submit_prompt_draft","draft_text":"Refined"})
-            .as_object()
-            .cloned()
-            .expect("args");
-        let (op, args) = daemon_call("cccc_voice_secretary_composer", composer).expect("composer");
-        assert_eq!(op, "assistant_voice_prompt_draft_submit");
-        assert_eq!(args["draft_text"], "Refined");
-        assert!(args.get("text").is_none());
-        assert_eq!(args["by"], "assistant:voice_secretary");
-
-        let report = json!({"action":"report","source_request_id":"request-1","status":"done"})
-            .as_object()
-            .cloned()
-            .expect("args");
-        let (op, args) =
-            daemon_call("cccc_voice_secretary_request", report).expect("report mapping");
-        assert_eq!(op, "assistant_voice_instruction_feedback");
-        assert_eq!(args["request_id"], "request-1");
     }
 
     #[test]

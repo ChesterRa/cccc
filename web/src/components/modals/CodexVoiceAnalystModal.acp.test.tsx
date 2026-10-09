@@ -28,6 +28,7 @@ vi.mock("../../services/api/codexVoice", () => ({
 
 function fixtureController(): CodexVoiceSessionController {
   return {
+    audioDeviceSnapshot: null,
     audioRef: createRef<HTMLAudioElement>(),
     phase: "listening",
     call: null,
@@ -114,7 +115,7 @@ describe("Voice ACP console in the complete modal", () => {
     return found!;
   }
 
-  async function render(desktop = true, isOpen = true) {
+  async function render(desktop = true, isOpen = true, expandAnalyst = desktop) {
     vi.stubGlobal("matchMedia", () => ({
       matches: desktop,
       addEventListener: vi.fn(),
@@ -131,7 +132,48 @@ describe("Voice ACP console in the complete modal", () => {
         />,
       ),
     );
+    const show = [...host.querySelectorAll("button")].find(
+      (item) => item.textContent === "codexVoiceShowAnalyst",
+    );
+    if (expandAnalyst && isOpen && show) await act(async () => show.click());
   }
+
+  it("keeps a collapsed Analyst summary current during its call", async () => {
+    controller.call = {
+      generation: "call",
+      analyst_generation: "fixture-acp",
+      mode: "assistant",
+      connected: true,
+    } as never;
+    controller.analyst = { ...controller.analyst!, permissions: backend.analyst!.permissions };
+    await render(true, true, false);
+    const bar = host.querySelector("[data-codex-voice-analyst-bar]");
+    expect(bar?.textContent).toContain("codexVoiceAnalystNeedsInput");
+    expect(bar?.textContent).toContain("Antigravity");
+    expect(host.querySelector("#codex-voice-analyst-pane")?.parentElement?.className).toBe(
+      "hidden",
+    );
+    expect(fetchActiveCodexVoiceCall).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[aria-live="polite"]')?.textContent).toBe("codexVoiceInCall");
+
+    await act(async () => button("codexVoiceShowAnalyst").click());
+    expect(host.querySelector("[data-codex-voice-analyst-bar]")).toBeNull();
+    expect(fetchActiveCodexVoiceCall).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("Run search_web?");
+  });
+
+  it("marks the narrow Analyst tab without switching to it", async () => {
+    controller.analyst = { ...controller.analyst!, permissions: backend.analyst!.permissions };
+    await render(false);
+    const tab = button("codexVoiceAnalystTitle");
+    expect(tab.getAttribute("aria-pressed")).toBe("false");
+    expect(tab.querySelector("[data-codex-voice-analyst-dot]")).not.toBeNull();
+    expect(tab.getAttribute("aria-label")).toBe(
+      "codexVoiceAnalystTitle · codexVoiceAnalystHasUpdates",
+    );
+    await act(async () => tab.click());
+    expect(tab.querySelector("[data-codex-voice-analyst-dot]")).toBeNull();
+  });
 
   it("fetches a pending ACP search permission without a native TUI, then displays its result", async () => {
     await render();
@@ -158,7 +200,12 @@ describe("Voice ACP console in the complete modal", () => {
   });
 
   it("pauses reads when collapsed or closed and refreshes when shown again", async () => {
-    await render();
+    controller.call = null;
+    controller.owned = false;
+    await render(true, true, false);
+    expect(fetchActiveCodexVoiceCall).not.toHaveBeenCalled();
+    await act(async () => button("codexVoiceShowAnalyst").click());
+    expect(fetchActiveCodexVoiceCall).toHaveBeenCalledTimes(1);
     await act(async () => button("codexVoiceHideAnalyst").click());
     vi.mocked(fetchActiveCodexVoiceCall).mockClear();
     await act(async () => vi.advanceTimersByTimeAsync(2400));
@@ -174,6 +221,8 @@ describe("Voice ACP console in the complete modal", () => {
   });
 
   it("waits for the Analyst tab on narrow screens and keeps Deny request-scoped", async () => {
+    controller.call = null;
+    controller.owned = false;
     await render(false);
     expect(fetchActiveCodexVoiceCall).not.toHaveBeenCalled();
     await act(async () => button("codexVoiceAnalystTitle").click());

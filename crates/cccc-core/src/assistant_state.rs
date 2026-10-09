@@ -1,6 +1,6 @@
 //! Canonical durable state for built-in assistants.
 //!
-//! User configuration remains in `group.yaml:assistants`. Recoverable workflow
+//! Voice configuration belongs to instance settings. Recoverable workflow
 //! state lives in the stable `state/assistants.json` contract inherited from
 //! 0.4.35. Older native builds mixed both classes under
 //! `group.yaml:assistants`; that shape is imported once and then reduced to
@@ -12,7 +12,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::fs::{read_json, with_exclusive_lock, write_json_committed};
-use crate::{GroupDoc, GroupStore, HomeLayout};
+use crate::{GroupStore, HomeLayout};
 
 const SCHEMA: u64 = 1;
 const ASSISTANT_ID: &str = "voice_secretary";
@@ -33,11 +33,12 @@ const COMMON_FLAT_KEYS: &[&str] = &[
 pub fn load(home: &HomeLayout, group_id: &str) -> io::Result<Value> {
     migrate_legacy_group_state(home, group_id)?;
     let store = GroupStore::new(home.clone())?;
-    let group = store.load(group_id)?;
+    store.load(group_id)?;
+    let assistant = crate::voice_secretary_settings::assistant_view(home)?;
     let path = state_path(&store, group_id)?;
     with_exclusive_lock(&lock_path(&path), || {
         let canonical = load_canonical_unlocked(&path, group_id)?;
-        Ok(canonical_to_flat(&canonical, &group))
+        Ok(canonical_to_flat(&canonical, &assistant))
     })
 }
 
@@ -49,11 +50,12 @@ pub fn update<T>(
 ) -> io::Result<T> {
     migrate_legacy_group_state(home, group_id)?;
     let store = GroupStore::new(home.clone())?;
-    let group = store.load(group_id)?;
+    store.load(group_id)?;
+    let assistant = crate::voice_secretary_settings::assistant_view(home)?;
     let path = state_path(&store, group_id)?;
     with_exclusive_lock(&lock_path(&path), || {
         let mut canonical = load_canonical_unlocked(&path, group_id)?;
-        let mut flat = canonical_to_flat(&canonical, &group);
+        let mut flat = canonical_to_flat(&canonical, &assistant);
         let result = change(flat.as_object_mut().expect("assistant state initialized"))?;
         persist_flat_unlocked(&path, group_id, &mut canonical, &flat)?;
         Ok(result)
@@ -128,7 +130,7 @@ fn normalize_canonical(root: &mut Map<String, Value>, group_id: &str) {
     }
 }
 
-fn canonical_to_flat(canonical: &Value, group: &GroupDoc) -> Value {
+fn canonical_to_flat(canonical: &Value, global_assistant: &Value) -> Value {
     let mut flat = canonical
         .get(RUST_STATE_KEY)
         .and_then(Value::as_object)
@@ -149,13 +151,7 @@ fn canonical_to_flat(canonical: &Value, group: &GroupDoc) -> Value {
         map_records_as_array(canonical.get("voice_ask_requests"), "request_id", true),
     );
 
-    let mut assistant = group
-        .extra
-        .get("assistants")
-        .and_then(|value| value.get(ASSISTANT_ID))
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let mut assistant = global_assistant.as_object().cloned().unwrap_or_default();
     if let Some(runtime) = canonical
         .get("assistants")
         .and_then(|value| value.get(ASSISTANT_ID))
@@ -527,6 +523,7 @@ fn merge_missing_records(target: &mut Value, source: Option<&Value>, id_field: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::GroupDoc;
 
     fn fixture() -> (tempfile::TempDir, HomeLayout, GroupStore, GroupDoc) {
         let temp = tempfile::tempdir().expect("tempdir");

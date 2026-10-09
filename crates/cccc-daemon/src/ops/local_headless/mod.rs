@@ -29,8 +29,8 @@ pub(crate) use supervisor::{
 use cccc_core::HomeLayout;
 use serde::Serialize;
 use std::future::Future;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Mutex, OnceLock};
 
 pub use supervisor::{
     detach_after_viewer_exit, ensure_viewer, kill_all_requests, running, start, status, stop,
@@ -103,15 +103,7 @@ fn poisoned() -> std::io::Error {
 }
 
 fn managed_runtime() -> &'static tokio::runtime::Runtime {
-    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("cccc-managed-agent")
-            .enable_all()
-            .build()
-            .expect("build shared managed Agent runtime")
-    })
+    super::codex_voice_analyst::managed_runtime()
 }
 
 fn run_managed_launch<F, T>(future: F) -> std::io::Result<T>

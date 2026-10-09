@@ -103,11 +103,6 @@ pub(super) fn append_with_state(
         &by,
         candidate_input.as_ref(),
     )?;
-    if delivery.notify.is_some() {
-        if let Some(input) = candidate_input.as_ref() {
-            voice_input::mark_delivered(home, &group_id, input).map_err(OpError::io)?;
-        }
-    }
     let current = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     object(json!({
         "group_id":group_id,
@@ -121,12 +116,8 @@ pub(super) fn append_with_state(
         "input_event":candidate_input,
         "input_event_created":input_created,
         "event":delivery.event,
-        "input_notify_event":delivery.notify,
-        "input_notify_emitted":delivery.notify.is_some(),
-        "actor_woken":delivery.actor_woken,
-        "actor_wake_error":delivery.wake_error,
-        "actor_notify_delivered":delivery.delivery.as_ref().and_then(|item|item["queued"].as_u64()).unwrap_or(0)>0,
-        "actor_notify_delivery":delivery.delivery
+        "secretary_processing_error":delivery.wake_error
+        ,"secretary_task_id":delivery.task_id,"secretary_processing_deferred":delivery.processing_deferred
     }))
 }
 

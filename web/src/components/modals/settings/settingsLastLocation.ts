@@ -6,7 +6,6 @@ const groupTabIds = new Set<GroupTabId>([
   "automation",
   "delivery",
   "guidance",
-  "assistants",
   "space",
   "messaging",
   "im",
@@ -23,6 +22,7 @@ const globalTabIds = new Set<GlobalTabId>([
   "branding",
   "webAccess",
   "webModels",
+  "voice",
   "developer",
 ]);
 

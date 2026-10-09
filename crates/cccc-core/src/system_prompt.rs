@@ -5,25 +5,17 @@ use crate::actors::{effective_role, visible};
 use crate::group_prompts::{DEFAULT_PREAMBLE_BODY, read_preamble};
 use crate::{GroupDoc, GroupStore, HomeLayout};
 
-mod voice_secretary;
-
 pub const NEW_MESSAGE_MODE_GUIDANCE: &str = "New messages: use mode=\"mail\" unless delayed awareness would cost more than interrupting the recipient; then use mode=\"send\". Use mode=\"request_reply\" only when a concrete reply is also required. Do not send routine noise. Mail is agent-only. Never mix user and agent recipients in one message; send separate messages when both audiences need different actions.";
 pub const EXISTING_MESSAGE_REPLY_GUIDANCE: &str =
     "For an existing event, use cccc_message_reply instead of cccc_message_send.";
 
 #[must_use]
 pub fn render(group: &GroupDoc, actor: &Actor) -> String {
-    if voice_secretary::is_actor(actor) {
-        return voice_secretary::render(group, actor);
-    }
     render_with_body(group, actor, DEFAULT_PREAMBLE_BODY)
 }
 
 #[must_use]
 pub fn render_session(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> String {
-    if voice_secretary::is_actor(actor) {
-        return voice_secretary::render(group, actor);
-    }
     let custom = GroupStore::new(home.clone()).ok().and_then(|store| {
         read_preamble(&store, &group.group_id)
             .ok()
@@ -252,21 +244,5 @@ mod tests {
         let peer = group.actors.last().expect("peer");
         assert!(render(&group, peer).contains(crate::peer_insight::TEAM_MODE_SEED));
         assert!(!render(&group, peer).contains(crate::peer_insight::FOREMAN_TEAM_MODE_SEED));
-    }
-
-    #[test]
-    fn voice_secretary_uses_its_python_compatible_runtime_prompt() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let store = GroupStore::new(home).expect("store");
-        let mut group = store.create("test", "migration").expect("group");
-        let mut actor = Actor::new("voice-secretary");
-        actor.internal_kind = Some("voice_secretary".into());
-        group.actors.push(actor.clone());
-
-        let prompt = render(&group, &actor);
-        assert!(prompt.starts_with("[CCCC Voice Secretary Runtime Actor]\n"));
-        assert!(prompt.contains("The input_envelope is the canonical work item."));
-        assert!(!prompt.contains("CCCC Protocol:"));
     }
 }

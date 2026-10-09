@@ -62,6 +62,28 @@ impl ResolvedAgentRuntime {
     }
 }
 
+/// Structured adapters shared by Voice Analyst and the global ASR Secretary.
+/// Native-terminal-only runtimes and native ACP providers in TUI mode are excluded.
+#[must_use]
+pub fn supports_structured_runtime(
+    runtime: ActorRuntime,
+    mode: cccc_contracts::RuntimeMode,
+) -> bool {
+    matches!(
+        runtime,
+        ActorRuntime::Antigravity
+            | ActorRuntime::Copilot
+            | ActorRuntime::Devin
+            | ActorRuntime::Cursor
+            | ActorRuntime::Claude
+            | ActorRuntime::Codex
+            | ActorRuntime::Grok
+            | ActorRuntime::Opencode
+            | ActorRuntime::Kilo
+    ) && mode.validate(runtime).is_ok()
+        && (!runtime.supports_acp_mode() || mode == cccc_contracts::RuntimeMode::Acp)
+}
+
 pub fn load(home: &HomeLayout) -> io::Result<CodexVoiceAnalystSettings> {
     Ok(crate::settings::load(home)?.codex_voice.analyst)
 }
@@ -112,26 +134,6 @@ pub fn resolve(
             environment: custom_environment.clone(),
         }
     };
-    if !matches!(
-        resolved.runtime,
-        ActorRuntime::Antigravity
-            | ActorRuntime::Copilot
-            | ActorRuntime::Devin
-            | ActorRuntime::Cursor
-            | ActorRuntime::Claude
-            | ActorRuntime::Codex
-            | ActorRuntime::Grok
-            | ActorRuntime::Opencode
-            | ActorRuntime::Kilo
-    ) {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!(
-                "Voice Analyst does not yet support the {:?} runtime",
-                resolved.runtime
-            ),
-        ));
-    }
     resolved
         .runtime_mode
         .validate(resolved.runtime)
@@ -141,6 +143,15 @@ pub fn resolve(
     {
         return Err(io::Error::other(
             "This Voice Analyst Runtime requires runtime_mode=acp",
+        ));
+    }
+    if !supports_structured_runtime(resolved.runtime, resolved.runtime_mode) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "Voice Analyst does not yet support the {:?} runtime",
+                resolved.runtime
+            ),
         ));
     }
     if resolved.runtime == ActorRuntime::Antigravity {

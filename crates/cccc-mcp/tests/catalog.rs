@@ -31,7 +31,7 @@ async fn actor_catalog_keeps_core_routes_with_and_without_a_daemon() {
     home.initialize().expect("initialize");
     let store = GroupStore::new(home.clone()).expect("store");
     let mut group = store.create("catalog", "").expect("group");
-    for id in ["lead", "peer", "voice-secretary"] {
+    for id in ["lead", "peer"] {
         cccc_core::actors::add(&mut group, Actor::new(id)).expect("actor");
     }
     for (id, runtime) in [
@@ -50,7 +50,6 @@ async fn actor_catalog_keeps_core_routes_with_and_without_a_daemon() {
         profiles_before.push((id, tools(&home, &group.group_id, id).await));
     }
     let before = tools(&home, &group.group_id, "peer").await;
-    let secretary_before = tools(&home, &group.group_id, "voice-secretary").await;
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     let client = DaemonClient::new(home.clone());
@@ -74,7 +73,6 @@ async fn actor_catalog_keeps_core_routes_with_and_without_a_daemon() {
     .expect("daemon ready");
     let peer = tools(&home, &group.group_id, "peer").await;
     let lead = tools(&home, &group.group_id, "lead").await;
-    let secretary = tools(&home, &group.group_id, "voice-secretary").await;
     for (id, before) in profiles_before {
         let after = tools(&home, &group.group_id, id).await;
         assert_eq!(names(&before), names(&after), "runtime profile for {id}");
@@ -113,8 +111,5 @@ async fn actor_catalog_keeps_core_routes_with_and_without_a_daemon() {
         }
     }
     assert_eq!(names(&before), names(&peer));
-    assert_eq!(names(&secretary_before), names(&secretary));
-    assert!(names(&secretary).contains("cccc_voice_secretary_document"));
-    assert!(!names(&secretary).contains("cccc_message_send"));
     assert!(!names(&peer).contains("cccc_actor"));
 }

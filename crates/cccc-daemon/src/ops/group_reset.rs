@@ -40,6 +40,14 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         })
         .map_err(|error| rollback_new(&store, &old, &created.group_id, error))?;
 
+    if let Err(error) = super::voice_secretary::cancel_group(home, &old.group_id) {
+        return Err(rollback_new(
+            &store,
+            &old,
+            &replacement.group_id,
+            OpError::io(error),
+        ));
+    }
     super::actor_delivery::shutdown_group(&old.group_id);
     if let Err(error) = super::actor_runtime::stop_group(&old) {
         return Err(rollback_new(&store, &old, &replacement.group_id, error));
@@ -51,6 +59,7 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let old_delete_error = settle_old_delete(&store, &old, store.delete(&old.group_id));
     if old_delete_error.is_none() {
         super::actor_secrets::remove_group(home, &old.group_id)?;
+        super::voice_secretary::purge_deleted_group(home, &old.group_id).map_err(OpError::io)?;
     }
     object(json!({
         "old_group_id":old.group_id,

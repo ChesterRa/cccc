@@ -128,7 +128,10 @@ When a send request omits recipients or supplies an empty list, the daemon MUST 
 - `@foreman`: foreman actor(s)
 - `@user`: the human user (UI recipient)
 
-Internal assistants such as Voice Secretary are not members of `@all`, `@peers`, or `@foreman`; they MUST be addressed by their explicit actor ID.
+Internal assistant Actors are not members of `@all`, `@peers`, or `@foreman`.
+The global Voice Secretary and Voice Analyst are services, not chat recipients or
+Group Actors. Their dedicated operations define their inputs; confirmed Secretary
+handoffs use `by="user"` and retain the original Group/scope through normal peer delivery.
 
 Selector membership describes the logical audience, not permission to start a runtime.
 A user broadcast to `@all` or `@peers` MUST NOT re-enable disabled actors. Explicitly

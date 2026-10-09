@@ -17,6 +17,8 @@ type MarkdownDocumentSurfaceProps = {
   editPlaceholder?: string;
   editAriaLabel?: string;
   onEditValueChange?: (value: string) => void;
+  /** Render on the parent surface; only the editor keeps a field border. */
+  bare?: boolean;
 };
 
 export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
@@ -34,6 +36,7 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
   editPlaceholder,
   editAriaLabel,
   onEditValueChange,
+  bare,
 }: MarkdownDocumentSurfaceProps) {
   const value = String(editing ? (editValue ?? content) : content || "");
   const hasContent = value.trim().length > 0;
@@ -41,10 +44,13 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
   return (
     <div
       className={classNames(
-        "rounded-xl border",
-        editing ? "overflow-hidden p-0" : "p-4",
+        bare && !editing
+          ? "py-1"
+          : classNames(
+              "rounded-xl border border-[var(--color-border-primary)] bg-[var(--color-bg-primary)]",
+              editing ? "overflow-hidden p-0" : "p-4",
+            ),
         minHeightClassName,
-        "border-[var(--color-border-primary)] bg-[var(--color-bg-primary)]",
         className,
       )}
     >

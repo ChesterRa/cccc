@@ -8,18 +8,52 @@ use std::sync::{
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+pub(super) fn delegated(name: &str) -> bool {
+    const KEY: &str = "CCCC_VOICE_PERSISTENCE_DAEMON_FIXTURE";
+    if std::env::var(KEY).as_deref() == Ok(name) {
+        return false;
+    }
+    // A real daemon owns global runtime registries. Keep it out of other Web
+    // unit tests while exercising the native acceptance/recovery boundary.
+    let temp = tempfile::tempdir().expect("isolated daemon environment");
+    let test = format!("routes::assistants::voice_external::tests::persistence_tests::{name}");
+    let result = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args(["--exact", &test, "--nocapture"])
+        .env(KEY, name)
+        .env("HOME", temp.path())
+        .env("CCCC_HOME", temp.path().join("state"))
+        .env("CODEX_HOME", temp.path().join("codex"))
+        .env_remove("CCCC_GROUP_ID")
+        .env_remove("CCCC_ACTOR_ID")
+        .env_remove("CCCC_SECRETARY_TASK_TOKEN")
+        .env_remove("CCCC_MCP_TOOL_PROFILE")
+        .output()
+        .expect("isolated daemon test");
+    assert!(
+        result.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    true
+}
+
 pub(super) struct Fixture {
     _temp: tempfile::TempDir,
     pub(super) state: AppState,
     pub(super) group: String,
     pub(super) requests: Arc<Mutex<Vec<DaemonRequest>>>,
     pub(super) failures: Arc<AtomicUsize>,
-    daemon: tokio::task::JoinHandle<()>,
+    proxy: tokio::task::JoinHandle<()>,
+    daemon: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        self.daemon.abort();
+        self.proxy.abort();
+        if let Some(daemon) = &self.daemon {
+            daemon.abort();
+        }
     }
 }
 
@@ -48,15 +82,26 @@ impl Fixture {
             .expect("initialize persistence fixture");
         let enabled = cccc_daemon::handle_request(&home, &DaemonRequest {
             v: 1,
-            op: "assistant_settings_update".into(),
-            args: json!({"group_id":group,"assistant_id":"voice_secretary","by":"user","patch":{"enabled":true,"config":{"recognition_backend":"external_provider_asr","external_asr_provider":"volcengine"}}}).as_object().expect("request arguments object").clone(),
+            op: "voice_secretary_settings_update".into(),
+            args: json!({"by":"user","settings":{"config":{"recognition_backend":"external_provider_asr","external_asr_provider":"volcengine"}}}).as_object().expect("request arguments object").clone(),
         });
         assert!(enabled.ok, "{:?}", enabled.error);
+        let daemon = tokio::spawn(cccc_daemon::run(home.clone()));
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !cccc_daemon::DaemonPaths::new(home.clone()).address.exists() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "native daemon startup"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let proxy_home = HomeLayout::from_path(temp.path().join("proxy-home")).expect("proxy home");
+        proxy_home.initialize().expect("proxy initialization");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("initialize persistence fixture");
         cccc_core::fs::write_json(
-            &home.daemon_dir().join("ccccd.addr.json"),
+            &proxy_home.daemon_dir().join("ccccd.addr.json"),
             &serde_json::to_value(DaemonAddress {
                 v: 1,
                 transport: Transport::Tcp,
@@ -72,8 +117,8 @@ impl Fixture {
         .expect("initialize persistence fixture");
         let requests = Arc::new(Mutex::new(Vec::new()));
         let failures = Arc::new(AtomicUsize::new(0));
-        let daemon = tokio::spawn({
-            let home = home.clone();
+        let proxy = tokio::spawn({
+            let client = cccc_client::DaemonClient::new(home.clone());
             let requests = Arc::clone(&requests);
             let failures = Arc::clone(&failures);
             async move {
@@ -110,7 +155,7 @@ impl Fixture {
                             .expect("initialize persistence fixture");
                         continue;
                     }
-                    let reply = cccc_daemon::handle_request(&home, &request);
+                    let reply = client.call(&request).await.expect("native daemon request");
                     assert!(
                         reply.ok,
                         "fixture daemon rejected request: {:?}",
@@ -136,8 +181,7 @@ impl Fixture {
         });
         let ledger_events = crate::ledger_event_hub::LedgerEventHub::new(home.clone());
         let state = AppState {
-            client: cccc_client::DaemonClient::new(home.clone())
-                .with_timeout(Duration::from_secs(2)),
+            client: cccc_client::DaemonClient::new(proxy_home).with_timeout(Duration::from_secs(2)),
             home,
             browser_surfaces: Arc::new(crate::browser_surface::BrowserSurfaces::default()),
             connect_frames: Arc::new(crate::connect_frames::ConnectFrames::default()),
@@ -162,8 +206,27 @@ impl Fixture {
             group,
             requests,
             failures,
-            daemon,
+            proxy,
+            daemon: Some(daemon),
         }
+    }
+
+    pub(super) async fn shutdown(mut self) {
+        self.proxy.abort();
+        let response = cccc_client::DaemonClient::new(self.state.home.clone())
+            .call(&DaemonRequest {
+                v: 1,
+                op: "shutdown".into(),
+                args: Default::default(),
+            })
+            .await
+            .expect("shutdown request");
+        assert!(response.ok, "{:?}", response.error);
+        tokio::time::timeout(Duration::from_secs(5), self.daemon.take().expect("daemon"))
+            .await
+            .expect("bounded shutdown")
+            .expect("daemon join")
+            .expect("daemon cleanup");
     }
 
     pub(super) async fn active(&self) -> (active::Active, tokio::net::TcpStream) {

@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { VoiceStatusDot } from "../../features/codexVoice/CodexVoiceStatus";
+import { codexVoiceCallStatus } from "../../features/codexVoice/codexVoiceControllerText";
 import { classNames } from "../../utils/classNames";
 import { AlertIcon, HeadphonesIcon, StopIcon, VoiceWaveformIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
@@ -13,22 +14,24 @@ export function CodexVoiceDock({
   onStart,
 }: CodexVoiceDockProps) {
   const { t } = useTranslation(["layout", "modals"]);
+  const callStatus = codexVoiceCallStatus(controller);
   const attention = Boolean(
     controller.error ||
     controller.playbackBlocked ||
     controller.analyst?.warning ||
     controller.analyst?.phase === "needs_attention",
   );
-  const phaseLabel = controller.externalCall
-    ? t("modals:codexVoiceActiveElsewhere")
-    : controller.checking && !controller.isEngaged
-      ? t("modals:codexVoiceChecking")
-      : t(`modals:codexVoicePhase.${controller.phase}`);
-  const statusLabel = attention
-    ? t("layout:codexVoiceAttention")
-    : controller.analyst && !controller.isEngaged
-      ? t("layout:codexVoiceAnalystReady")
-      : phaseLabel;
+  const phaseLabel = t(`modals:${callStatus.labelKey}`);
+  const statusLabel =
+    callStatus.blocked || controller.checking
+      ? phaseLabel
+      : attention
+        ? t("layout:codexVoiceAttention")
+        : controller.analyst && !controller.isEngaged && controller.readiness
+          ? controller.analystWorking
+            ? t("modals:codexVoiceAnalystPhase.working")
+            : t("layout:codexVoiceAnalystReady")
+          : phaseLabel;
   const stopLabel = t(
     controller.externalCall ? "modals:codexVoiceStopExisting" : "modals:codexVoiceStop",
   );
@@ -65,7 +68,7 @@ export function CodexVoiceDock({
       <div className="relative z-10 flex min-h-12 items-center gap-2 border-b border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2 md:hidden">
         <ConsoleButton
           onOpen={onOpen}
-          attention={attention}
+          attention={attention || callStatus.blocked}
           active={controller.isEngaged}
           status={statusLabel}
           label={t("layout:codexVoiceOpenConsole")}
@@ -91,7 +94,10 @@ export function CodexVoiceDock({
         >
           {attention ? <AlertIcon size={18} /> : <HeadphonesIcon size={18} />}
           <span className="absolute bottom-1.5 right-1.5">
-            <VoiceStatusDot active={controller.isEngaged} attention={attention} />
+            <VoiceStatusDot
+              active={controller.isEngaged}
+              attention={attention || callStatus.blocked}
+            />
           </span>
         </IconButton>
         {callControl}
@@ -104,7 +110,7 @@ export function CodexVoiceDock({
       <div className="flex items-center gap-2">
         <ConsoleButton
           onOpen={onOpen}
-          attention={attention}
+          attention={attention || callStatus.blocked}
           active={controller.isEngaged}
           status={statusLabel}
           label={t("layout:codexVoiceOpenConsole")}

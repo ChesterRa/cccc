@@ -28,7 +28,8 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "actor_profile_copy_profile_secrets" | "actor_profile_secret_copy_from_profile" => {
             Operation::new(Write, copy_profile)
         }
-        "actor_profile_copy_voice_analyst_secrets" => Operation::new(Write, copy_voice_analyst),
+        "actor_profile_copy_voice_analyst_secrets"
+        | "actor_profile_copy_voice_secretary_secrets" => Operation::new(Write, copy_voice_secrets),
         _ => return None,
     })
 }
@@ -164,6 +165,18 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     if force_detach {
         for linked in &usage {
+            if linked["consumer"] == "voice_secretary" {
+                cccc_core::settings::update(home, |settings| {
+                    settings.voice_secretary.profile_id.clear();
+                    settings.voice_secretary.profile_scope = "global".into();
+                    settings.voice_secretary.profile_owner.clear();
+                    settings.voice_secretary.runtime = None;
+                    settings.voice_secretary.command.clear();
+                    Ok(())
+                })
+                .map_err(OpError::io)?;
+                continue;
+            }
             let group_id = linked["group_id"]
                 .as_str()
                 .ok_or_else(|| OpError::new("invalid_state", "profile usage has no group_id"))?;
@@ -355,11 +368,11 @@ fn copy_profile(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"profile_id":profile_id,"source_profile_id":source,"keys":keys}))
 }
 
-fn copy_voice_analyst(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+fn copy_voice_secrets(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if !bool_arg(request, "is_admin", false) {
         return Err(OpError::new(
             "permission_denied",
-            "administrator access is required to copy Voice Analyst secrets",
+            "administrator access is required to copy voice runtime secrets",
         ));
     }
     let profile_id = required_arg(request, "profile_id")?;
@@ -373,7 +386,12 @@ fn copy_voice_analyst(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "profile not found"))?;
     super::profile_access::require_write(request, &profile)?;
-    let values = cccc_core::codex_voice_settings::private_environment(home).map_err(OpError::io)?;
+    let values = if request.op == "actor_profile_copy_voice_secretary_secrets" {
+        cccc_core::voice_secretary_settings::private_environment(home)
+    } else {
+        cccc_core::codex_voice_settings::private_environment(home)
+    }
+    .map_err(OpError::io)?;
     let keys = profiles
         .replace_secrets_ref(
             &profile_id,

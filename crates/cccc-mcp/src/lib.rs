@@ -346,12 +346,58 @@ pub(crate) async fn visible_tools_for_actor(
     .await
 }
 
+pub(crate) fn secretary_task_mode() -> bool {
+    std::env::var("CCCC_MCP_TOOL_PROFILE")
+        .is_ok_and(|v| v.trim().eq_ignore_ascii_case("secretary-task"))
+        || std::env::var("CCCC_SECRETARY_TASK_TOKEN").is_ok_and(|v| !v.is_empty())
+        || std::env::var("CCCC_SECRETARY_TASK_TOKEN_FILE").is_ok_and(|v| !v.is_empty())
+}
+
+/// Task-owned bootstrap for providers that sanitize inherited MCP env. Never
+/// accept an arbitrary credential path or return file contents in an error.
+pub(crate) fn secretary_task_token(home: &HomeLayout) -> Option<String> {
+    let path = match std::env::var("CCCC_SECRETARY_TASK_TOKEN_FILE")
+        .ok()
+        .filter(|path| !path.is_empty())
+    {
+        Some(path) => std::path::PathBuf::from(path),
+        None => {
+            return std::env::var("CCCC_SECRETARY_TASK_TOKEN")
+                .ok()
+                .filter(|token| !token.is_empty());
+        }
+    };
+    let root = home.root().join("voice-secretary");
+    if path != root.join("session-grant") {
+        return None;
+    }
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    if !metadata.is_file() || metadata.len() != 64 {
+        return None;
+    }
+    if path.canonicalize().ok()? != root.canonicalize().ok()?.join("session-grant") {
+        return None;
+    }
+    let token = std::fs::read_to_string(path).ok()?;
+    (token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(token)
+}
+
 async fn visible_tools_with_context(
     home: &HomeLayout,
     client: &DaemonClient,
     context: Option<RequestContext<'_>>,
 ) -> Vec<Value> {
     let mut catalog = tools::catalog();
+    if secretary_task_mode() {
+        if secretary_task_token(home).is_none() {
+            return Vec::new();
+        }
+        return catalog
+            .into_iter()
+            .filter(|tool| tool["name"] == "cccc_voice_secretary_task")
+            .collect();
+    }
+    catalog.retain(|tool| tool["name"] != "cccc_voice_secretary_task");
     if context.is_none()
         && std::env::var("CCCC_MCP_TOOL_PROFILE")
             .ok()

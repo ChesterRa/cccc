@@ -3,7 +3,7 @@ use super::operation::{
     Policy::{GlobalWrite, Read, Write},
 };
 use cccc_contracts::{ActorRole, DaemonRequest, Event, utc_now};
-use cccc_core::{GroupStore, HomeLayout};
+use cccc_core::{GroupStore, HomeLayout, ledger};
 use cccc_core::{assistant_state, voice_recording_lease};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -11,6 +11,17 @@ use std::fs::OpenOptions;
 use std::io;
 use uuid::Uuid;
 mod document_reconcile;
+mod global_secretary;
+pub(super) use global_secretary::{
+    document_file as secretary_document_file, guidance as secretary_guidance,
+    project_result as secretary_project_result, target as secretary_target,
+    validate_document as secretary_validate_document,
+    validate_request as secretary_validate_request,
+};
+
+pub(super) fn secretary_global_inputs(home: &HomeLayout, group_id: &str) -> io::Result<Vec<Value>> {
+    voice_input::global_inputs(home, group_id)
+}
 mod voice_document_archive;
 mod voice_document_delete;
 mod voice_document_library;
@@ -44,8 +55,6 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
             document_reconcile::run(home, request)
                 .and_then(|_| voice_settings::index(home, request))
         }),
-        "assistant_settings_update" => Operation::new(Write, voice_settings::update),
-        "assistant_status_update" => Operation::new(Write, voice_settings::status),
         "assistant_voice_recording_lease" => Operation::new(GlobalWrite, recording_lease),
         "assistant_voice_transcript_append" => Operation::new(Write, voice_input::append),
         "assistant_voice_session_transcript_clear" => Operation::new(Write, |home, request| {
@@ -58,7 +67,6 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         }),
         "assistant_voice_document_list" => Operation::new(Read, documents),
         "assistant_voice_document_select" => Operation::new(Write, select),
-        "assistant_voice_document_input_read" => Operation::new(Read, voice_input::read),
         "assistant_voice_document_save" => Operation::new(Write, save),
         "assistant_voice_document_instruction" => Operation::new(Write, voice_ask::input),
         "assistant_voice_document_archive" => Operation::new(Write, archive),
@@ -72,11 +80,8 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
             Operation::new(Write, voice_ask::input)
         }
         "assistant_voice_input_append" => Operation::new(Write, prompt_refine::input),
-        "assistant_voice_prompt_draft_submit" => Operation::new(Write, prompt_refine::submit),
         "assistant_voice_prompt_draft_ack" => Operation::new(Write, prompt_refine::ack),
-        "assistant_voice_instruction_feedback" => Operation::new(Write, voice_ask::feedback),
         "assistant_voice_ask_requests_clear" => Operation::new(Write, voice_ask::clear),
-        "assistant_voice_request" => Operation::new(Write, voice_request),
         _ => return voice_document_library::resolve(request),
     })
 }
@@ -252,7 +257,7 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         let changed = is_new
             || old["content"].as_str() != Some(text.as_str())
             || old["title"].as_str() != Some(effective_title);
-        let document = json!({"document_id":old["document_id"].as_str().map(str::to_owned).unwrap_or_else(||format!("vdoc_{}",short_id())),"folder_id":old["folder_id"].as_str().unwrap_or(""),"document_path":path,"workspace_path":path,"absolute_path":storage_path,"filename":path.rsplit('/').next().unwrap_or(&path),"assistant_id":"voice_secretary","title":effective_title,"status":old["status"].as_str().unwrap_or("active"),"storage_kind":storage_kind,"content":text,"content_sha256":format!("{:x}",Sha256::digest(text.as_bytes())),"content_chars":text.chars().count(),"revision_count":old["revision_count"].as_u64().unwrap_or(0)+u64::from(changed),"created_at":created_at,"updated_at":utc_now(),"created_by":string_arg(request,"by").unwrap_or_else(||"user".into())});
+        let document = json!({"document_id":old["document_id"].as_str().map(str::to_owned).unwrap_or_else(||format!("vdoc_{}",short_id())),"scope_key":group.active_scope_key,"folder_id":old["folder_id"].as_str().unwrap_or(""),"document_path":path,"workspace_path":path,"absolute_path":storage_path,"filename":path.rsplit('/').next().unwrap_or(&path),"assistant_id":"voice_secretary","title":effective_title,"status":old["status"].as_str().unwrap_or("active"),"storage_kind":storage_kind,"content":text,"content_sha256":format!("{:x}",Sha256::digest(text.as_bytes())),"content_chars":text.chars().count(),"revision_count":old["revision_count"].as_u64().unwrap_or(0)+u64::from(changed),"created_at":created_at,"updated_at":utc_now(),"created_by":string_arg(request,"by").unwrap_or_else(||"user".into())});
         if let Some(index) = index {
             docs[index] = document.clone();
         } else {
@@ -368,12 +373,28 @@ fn read_or_create_empty_document(path: &std::path::Path) -> io::Result<(String, 
 fn write_document_bytes(path: &std::path::Path, content: &[u8]) -> io::Result<()> {
     cccc_core::fs::atomic_write(path, content)
 }
-fn voice_request(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+pub(super) fn confirm_secretary_handoff(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let text = first_non_blank_arg(request, &["text", "instruction", "request_text"])
         .ok_or_else(|| OpError::new("invalid_args", "text is required"))?;
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let group = store.load(&group_id).map_err(OpError::not_found)?;
+    let task_id = required_arg(request, "secretary_task_id")?;
+    if string_arg(request, "by").as_deref() != Some("user") {
+        return Err(OpError::new(
+            "permission_denied",
+            "Secretary proposals require user confirmation",
+        ));
+    }
+    if let Some(event) = ledger::read_all(&store.ledger_path(&group_id).map_err(OpError::io)?)
+        .map_err(OpError::io)?
+        .into_iter()
+        .find(|event| {
+            event.kind == "system.notify" && event.data["context"]["secretary_task_id"] == task_id
+        })
+    {
+        return object(json!({"group_id":group_id,"notify_event":event,"already_forwarded":true}));
+    }
     let requested = string_arg(request, "target").unwrap_or_else(|| "@foreman".into());
     let target = if requested == "@foreman" {
         group
@@ -407,8 +428,10 @@ fn voice_request(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "peer_request",
     )?;
     let mut event = Event::new("system.notify", &group_id);
-    event.by = "voice-secretary".into();
+    event.by = "user".into();
     event.data=json!({"kind":"voice_secretary_request","title":"Voice Secretary request","text":text,"to":[target],"priority":string_arg(request,"priority").unwrap_or_else(||"normal".into()),"context":{"kind":"voice_secretary_action_request","request":item}}).as_object().cloned().unwrap_or_default();
+    event.data.get_mut("context").expect("context")["secretary_task_id"] = json!(task_id);
+    event.scope_key = string_arg(request, "scope_key").unwrap_or_default();
     cccc_core::ledger::append(&store.ledger_path(&group_id).map_err(OpError::io)?, &event)
         .map_err(OpError::io)?;
     let delivery = actor_delivery::dispatch(home, &group, &event);

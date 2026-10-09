@@ -3,10 +3,10 @@ import type { VoiceSecretaryCaptureMode } from "./voiceSecretaryTypes";
 export type VoiceCaptureDispatchTarget = "composer" | "document" | "instruction" | "prompt";
 
 export function voiceCaptureDispatchTarget(params: {
-  assistantEnabled: boolean;
   captureMode: VoiceSecretaryCaptureMode;
+  promptAutoRefine?: boolean;
 }): VoiceCaptureDispatchTarget {
-  if (!params.assistantEnabled) return "composer";
+  if (params.captureMode === "prompt" && !params.promptAutoRefine) return "composer";
   return params.captureMode;
 }
 

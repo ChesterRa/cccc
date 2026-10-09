@@ -23,11 +23,11 @@ export function VoiceWorkspaceFrame({
       processing={analyzing}
       theme={isDark ? "dark" : "light"}
       data-voice-workspace-glow
-      className="flex min-h-0 flex-col"
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <section
         data-voice-document-panel
-        className="flex min-h-0 flex-1 flex-col rounded-xl border border-[var(--glass-panel-border)] bg-[var(--color-bg-primary)] p-3"
+        className="flex min-h-0 flex-1 flex-col bg-[var(--color-bg-primary)] px-4 pb-4 pt-3 sm:px-6"
       >
         {children}
       </section>

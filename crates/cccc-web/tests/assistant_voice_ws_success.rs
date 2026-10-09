@@ -21,21 +21,11 @@ async fn mock_streaming_recordings_complete_twice_without_poisoning_the_daemon()
         .expect("test admin token");
     let groups = GroupStore::new(home.clone()).expect("groups");
     let group = groups.create("voice websocket", "").expect("group");
-    groups
-        .mutate(&group.group_id, |group| {
-            group.extra.insert(
-                "assistants".into(),
-                json!({
-                    "assistant": {
-                        "assistant_id":"voice_secretary",
-                        "enabled":true,
-                        "config":{"recognition_backend":"assistant_service_local_asr"}
-                    }
-                }),
-            );
-            Ok(())
-        })
-        .expect("enable local ASR route");
+    cccc_core::settings::update(&home, |settings| {
+        settings.voice_secretary.config.recognition_backend = "assistant_service_local_asr".into();
+        Ok(())
+    })
+    .expect("global recognition configuration");
 
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });

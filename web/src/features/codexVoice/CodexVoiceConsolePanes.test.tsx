@@ -44,19 +44,17 @@ function render(state: { isEngaged?: boolean; isStarting?: boolean; conversation
 const startButton = () =>
   [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("codexVoiceStart"));
 
-it("offers starting voice from the empty conversation", () => {
+it("keeps the empty conversation informational without duplicating the shell start action", () => {
   const controller = render({});
   expect(host.textContent).toContain("codexVoiceConversationEmptyTitle");
-  act(() => startButton()!.click());
-  expect(controller.start).toHaveBeenCalledTimes(1);
+  expect(startButton()).toBeUndefined();
+  expect(controller.start).not.toHaveBeenCalled();
 });
 
-it("disables the start action while a call is starting", () => {
-  render({ isStarting: true });
-  const button = [...host.querySelectorAll("button")].find((b) =>
-    b.textContent?.includes("codexVoiceStarting"),
-  );
-  expect(button?.disabled).toBe(true);
+it("does not start another call when the conversation rerenders during startup", () => {
+  const controller = render({ isStarting: true });
+  expect(startButton()).toBeUndefined();
+  expect(controller.start).not.toHaveBeenCalled();
 });
 
 it("shows listening instead of a start action during a call", () => {

@@ -27,6 +27,7 @@ impl AnalystSession {
             .map_or(("", "user", Some("full")), |(group_id, actor_id)| {
                 (group_id, actor_id, None)
             });
+        let tool_profile = task_tool_profile(purpose, tool_profile);
         env.insert("CCCC_GROUP_ID".into(), group_id.into());
         env.insert("CCCC_ACTOR_ID".into(), actor_id.into());
         if let Some(profile) = tool_profile {

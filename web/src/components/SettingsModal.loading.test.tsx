@@ -84,6 +84,7 @@ async function render(groupId = "g1", isOpen = true) {
   await act(async () =>
     root.render(
       <SettingsModal
+        codexVoice={{} as import("../features/codexVoice/useCodexVoiceShell").CodexVoiceShellState}
         isOpen={isOpen}
         onClose={() => {}}
         settings={null}

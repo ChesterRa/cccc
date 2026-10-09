@@ -14,6 +14,9 @@ mod control;
 mod grok;
 mod launch;
 pub(crate) use launch::ANALYST_INSTRUCTIONS;
+pub(crate) use launch_secretary::{
+    INSTRUCTIONS as SECRETARY_INSTRUCTIONS, cleanup_secretary_runtime, secretary_cleanup_pending,
+};
 mod launch_antigravity;
 mod native_acp;
 pub(crate) use native_acp::{name as native_acp_name, valid_id as valid_native_acp_id};
@@ -23,6 +26,7 @@ mod launch_command;
 mod launch_grok;
 mod launch_native_acp;
 mod launch_opencode;
+mod launch_secretary;
 pub(crate) use launch_antigravity::login_antigravity;
 pub(crate) mod lifecycle_timing;
 mod native_input;
@@ -32,6 +36,18 @@ mod protocol;
 #[cfg(test)]
 mod tests;
 mod turns;
+
+pub(crate) fn managed_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("cccc-managed-agent")
+            .enable_all()
+            .build()
+            .expect("build shared managed Agent runtime")
+    })
+}
 
 /// The workspace Claude Code refused to launch in because its trust prompt was never accepted.
 pub(crate) fn untrusted_claude_workspace(error: &io::Error) -> Option<&std::path::Path> {
@@ -114,6 +130,7 @@ pub struct AnalystEvent {
 enum SessionPurpose {
     VoiceAnalyst,
     Actor,
+    VoiceSecretary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,10 +179,57 @@ pub(crate) struct AnalystSession {
     delegations: tokio::sync::Mutex<HashMap<String, DelegationState>>,
 }
 
+/// Failed startup still owns its process until cleanup is confirmed. Keeping
+/// this error alive lets the caller retain capacity and retry cleanup at stop.
+#[derive(Clone)]
+pub(crate) struct PendingManagedStartup(Arc<ChildOwner>);
+
+impl PendingManagedStartup {
+    pub(crate) fn from_error(error: &io::Error) -> Option<Self> {
+        error
+            .get_ref()?
+            .downcast_ref::<StartupCleanupFailure>()
+            .map(|failure| failure.owner.clone())
+    }
+    pub(crate) fn stop(&self) -> io::Result<()> {
+        self.0.stop()
+    }
+}
+
+struct StartupCleanupFailure {
+    owner: PendingManagedStartup,
+    startup: io::Error,
+    cleanup: io::Error,
+}
+impl std::fmt::Debug for StartupCleanupFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+impl std::fmt::Display for StartupCleanupFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}; provider cleanup is unresolved: {}",
+            self.startup, self.cleanup
+        )
+    }
+}
+impl std::error::Error for StartupCleanupFailure {}
+
 enum ManagedProtocol {
     Codex(ProtocolClient),
     Acp(AcpClient),
     Claude(ClaudeClient),
+}
+
+/// Select the task authority surface without putting grants in MCP descriptors.
+fn task_tool_profile(purpose: SessionPurpose, ordinary: Option<&str>) -> Option<&str> {
+    if purpose == SessionPurpose::VoiceSecretary {
+        Some("secretary-task")
+    } else {
+        ordinary
+    }
 }
 
 fn acp_mcp_server(
@@ -196,6 +260,12 @@ fn add_voice_mcp_origin(
     environment: &BTreeMap<String, String>,
     purpose: SessionPurpose,
 ) {
+    if purpose == SessionPurpose::VoiceSecretary
+        && let Some(path) = environment.get("CCCC_SECRETARY_TASK_TOKEN_FILE")
+        && let Some(env) = server["env"].as_array_mut()
+    {
+        env.push(serde_json::json!({"name":"CCCC_SECRETARY_TASK_TOKEN_FILE","value":path}));
+    }
     if purpose == SessionPurpose::VoiceAnalyst
         && let Some(origin) = environment.get(cccc_core::voice_notifications::ORIGIN_ENV)
         && let Some(env) = server["env"].as_array_mut()

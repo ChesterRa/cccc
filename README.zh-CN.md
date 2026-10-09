@@ -57,7 +57,7 @@ CCCC 只需一条安装命令，无需单独运维数据库、消息队列或 Do
 | **多运行时编排** | 同一 Group 可混用受支持的编码智能体运行时；其它命令行智能体可使用 `custom` |
 | **CCCC Connect** | 连接自己的实例、不同会员的指定 Group，或免账号直连两个 Group |
 | **工作区工具** | 浏览和编辑文件、查看 Git 变更、在 Presentation 固定文档，并操作平铺原生终端 |
-| **语音工作流** | Voice Secretary 将语音整理为文档或输入框草稿；实验性 Codex Voice 将实时对话与 Runtime 驱动的 Analyst 配合使用 |
+| **语音工作流** | 全局语音秘书在共享会话中处理各 Group 的语音、文档和输入框草稿；实验性 Codex Voice 使用独立的实时语音 Analyst |
 | **角色化协调** | Foreman + Peer 角色模型，权限边界清晰，收件人路由精确（`@all`、`@peers`、`@foreman`） |
 | **本地优先的运行时状态** | 运行时数据保存在 `CCCC_HOME` 而不是代码仓库里，同时仍可通过 Web Access 与 IM 做远程运维 |
 
@@ -362,7 +362,7 @@ CCCC 实现的是 IM 级消息语义，而不是"往终端里粘贴一段文字"
 - **Project Context** — 共享协调、任务、Agent 状态与自演化技能
 - **Group Space** — NotebookLM 集成，共享知识管理
 - **ChatGPT Web Model 设置** — 将一个 ChatGPT Web 对话接入为 CCCC Actor
-- **Voice Secretary 与 Codex Voice** — 语音转文档／输入框草稿，以及带持久 Analyst 的实验性实时语音
+- **Voice Secretary 与 Codex Voice** — 全局秘书可直接配置 Runtime 或关联 Profile，在共享会话中串行处理任务，并保持每个任务原有的 Group 归属。实验性实时语音保留独立 Analyst。两套功能共用语音设置入口和音频设备偏好；各组保留文档、请求和采集偏好，不再创建秘书 Actor。
 - **CCCC Connect 设置** — 账户发现、指定 Group 连接与 Direct 配对
 - **IM 桥接配置** — Telegram、Slack、Discord、Mattermost、飞书、钉钉、企业微信和微信
 - **设置** — 消息策略、投递调优、终端日志控制

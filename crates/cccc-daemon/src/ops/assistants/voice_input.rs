@@ -3,7 +3,6 @@ use cccc_core::{GroupStore, HomeLayout, assistant_state};
 use fs2::FileExt;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
@@ -15,7 +14,6 @@ use super::{
 };
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 
-const ACTOR_ID: &str = "voice-secretary";
 const INPUT_STATE_SCHEMA: u64 = 1;
 pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
@@ -134,11 +132,6 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         segment["by"].as_str().unwrap_or("user"),
         candidate_input.as_ref(),
     )?;
-    if delivery.notify.is_some() {
-        if let Some(input) = candidate_input.as_ref() {
-            mark_delivered(home, &group_id, input).map_err(OpError::io)?;
-        }
-    }
     let current = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     let document_state = voice_document_state::load(home, &group_id).map_err(OpError::io)?;
     let document = document_state
@@ -154,47 +147,13 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "group_id":group_id,"assistant":current.get("assistant").cloned().unwrap_or_else(default_assistant),
         "session_id":session_id,"segment":segment,"segment_path":segment_path,"document":document,
         "document_updated":false,"input_event":candidate_input,"input_event_created":input_created,
-        "event":delivery.event,"input_notify_event":delivery.notify,"input_notify_emitted":delivery.notify.is_some(),
-        "actor_woken":delivery.actor_woken,"actor_wake_error":delivery.wake_error,
-        "actor_notify_delivered":delivery.delivery.as_ref().and_then(|item|item["queued"].as_u64()).unwrap_or(0)>0,
-        "actor_notify_delivery":delivery.delivery
+        "event":delivery.event,"secretary_processing_error":delivery.wake_error,"secretary_task_id":delivery.task_id,"secretary_processing_deferred":delivery.processing_deferred
     }))
 }
 pub fn named(home: &HomeLayout, request: &DaemonRequest, kind: &str, text: String) -> OpResult {
     voice_semantic_input::append(home, request, kind, text)
 }
-pub fn read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let by = string_arg(request, "by").unwrap_or_else(|| "assistant:voice_secretary".into());
-    if !matches!(by.as_str(), ACTOR_ID | "assistant:voice_secretary") {
-        return Err(OpError::new(
-            "assistant_voice_document_input_read_failed",
-            "read_new_input is only available to voice-secretary",
-        ));
-    }
-    let inputs = take_unread(home, &group_id).map_err(OpError::io)?;
-    let document_state = voice_document_state::load(home, &group_id).map_err(OpError::io)?;
-    let mut grouped = BTreeMap::<String, Vec<&Value>>::new();
-    for item in &inputs {
-        grouped
-            .entry(item["document_path"].as_str().unwrap_or("").into())
-            .or_default()
-            .push(item);
-    }
-    let batches=grouped.into_iter().map(|(path,items)|{
-        let kinds=items.iter().filter_map(|item|item["kind"].as_str()).collect::<BTreeSet<_>>();
-        let languages=items.iter().filter_map(|item|item["language"].as_str()).filter(|v|!v.is_empty()).collect::<BTreeSet<_>>();
-        json!({"document_path":path,"filename":Path::new(&path).file_name().and_then(|v|v.to_str()).unwrap_or(""),"item_count":items.len(),"kinds":kinds,"languages":languages,"items":items})
-    }).collect::<Vec<_>>();
-    let input_text = inputs
-        .iter()
-        .filter_map(|item| item["text"].as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    object(
-        json!({"group_id":group_id,"item_count":inputs.len(),"document_count":batches.len(),"input_text":input_text,"input_batches":batches,"documents":document_state["documents"],"has_new_input":false}),
-    )
-}
+
 fn effective_document_path(
     home: &HomeLayout,
     group_id: &str,
@@ -339,9 +298,7 @@ fn segment_log_path(home: &HomeLayout, group_id: &str, session_id: &str) -> Path
 pub(super) fn input_log_path(home: &HomeLayout, group_id: &str) -> PathBuf {
     voice_root(home, group_id).join("input_events.jsonl")
 }
-fn legacy_input_log_path(home: &HomeLayout, group_id: &str) -> PathBuf {
-    voice_root(home, group_id).join("inputs.jsonl")
-}
+
 fn input_state_path(home: &HomeLayout, group_id: &str) -> PathBuf {
     voice_root(home, group_id).join("input_state.json")
 }
@@ -353,18 +310,7 @@ fn default_input_state(group_id: &str) -> Map<String, Value> {
         "schema":INPUT_STATE_SCHEMA,
         "group_id":group_id,
         "latest_seq":0,
-        "secretary_read_cursor":0,
-        "secretary_delivery_cursor":0,
-        "last_notify_at":"",
-        "retry_count":0,
-        "flush_count_since_idle_review":0,
-        "last_idle_review_at":"",
-        "last_idle_review_input_seq":0,
         "last_input_appended_at":"",
-        "last_notify_emitted_at":"",
-        "last_input_envelope_at":"",
-        "last_input_envelope_id":"",
-        "last_read_new_input_at":""
     })
     .as_object()
     .cloned()
@@ -390,11 +336,7 @@ fn load_input_state_unlocked(
     }
     state.insert("schema".into(), json!(INPUT_STATE_SCHEMA));
     state.insert("group_id".into(), json!(group_id));
-    for (key, fallback) in [
-        ("latest_seq", json!(0)),
-        ("secretary_read_cursor", json!(0)),
-        ("secretary_delivery_cursor", json!(0)),
-    ] {
+    for (key, fallback) in [("latest_seq", json!(0))] {
         if !state.get(key).is_some_and(Value::is_number) {
             state.insert(key.into(), fallback);
         }
@@ -431,117 +373,13 @@ fn with_input_state_lock<T>(
     let unlock = FileExt::unlock(&file);
     result.and_then(|value| unlock.map(|()| value))
 }
-fn input_event_key(value: &Value) -> Option<String> {
-    let session_id = value["session_id"].as_str().unwrap_or_default().trim();
-    let segment_id = value["segment_id"].as_str().unwrap_or_default().trim();
-    if !session_id.is_empty() && !segment_id.is_empty() {
-        return Some(format!("segment\0{session_id}\0{segment_id}"));
-    }
-    for field in ["input_append_id", "input_id"] {
-        if let Some(value) = value[field]
-            .as_str()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Some(format!("{field}\0{value}"));
-        }
-    }
-    None
-}
-fn covered_cursor(mut coverage: Vec<(u64, bool)>) -> u64 {
-    coverage.sort_unstable_by_key(|(seq, _)| *seq);
-    let mut cursor = 0;
-    for (seq, covered) in coverage {
-        if !covered {
-            break;
-        }
-        cursor = seq;
-    }
-    cursor
-}
-fn migrate_legacy_input(home: &HomeLayout, group_id: &str) -> std::io::Result<()> {
-    let legacy_path = legacy_input_log_path(home, group_id);
-    if !legacy_path.is_file() {
-        return Ok(());
-    }
-    let legacy = read_jsonl_matching(&legacy_path, |_| true)?;
-    let legacy_state = assistant_state::load(home, group_id)?;
-    let legacy_read_cursor = legacy_state["input_read_cursor"].as_u64().unwrap_or(0);
-    with_input_state_lock(home, group_id, || {
-        let canonical = read_jsonl_matching(&input_log_path(home, group_id), |_| true)?;
-        let mut state = load_input_state_unlocked(home, group_id)?;
-        let canonical_read = state
-            .get("secretary_read_cursor")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let canonical_delivery = state
-            .get("secretary_delivery_cursor")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            .max(canonical_read);
-        let mut latest = state.get("latest_seq").and_then(Value::as_u64).unwrap_or(0);
-        let mut key_to_index = HashMap::new();
-        let mut read_coverage = Vec::new();
-        let mut delivery_coverage = Vec::new();
-        for (index, value) in canonical.iter().enumerate() {
-            let seq = value["seq"].as_u64().unwrap_or(0);
-            latest = latest.max(seq);
-            read_coverage.push((seq, seq > 0 && seq <= canonical_read));
-            delivery_coverage.push((seq, seq > 0 && seq <= canonical_delivery));
-            if let Some(key) = input_event_key(value) {
-                key_to_index.insert(key, index);
-            }
-        }
-        for mut value in legacy {
-            let legacy_seq = value["seq"].as_u64().unwrap_or(0);
-            let was_read = legacy_seq > 0 && legacy_seq <= legacy_read_cursor;
-            if let Some(index) =
-                input_event_key(&value).and_then(|key| key_to_index.get(&key).copied())
-            {
-                if was_read {
-                    read_coverage[index].1 = true;
-                    delivery_coverage[index].1 = true;
-                }
-                continue;
-            }
-            latest += 1;
-            value["seq"] = json!(latest);
-            let index = read_coverage.len();
-            if let Some(key) = input_event_key(&value) {
-                key_to_index.insert(key, index);
-            }
-            append_jsonl_io(&input_log_path(home, group_id), &value)?;
-            read_coverage.push((latest, was_read));
-            delivery_coverage.push((latest, was_read));
-        }
-        state.insert("latest_seq".into(), json!(latest));
-        state.insert(
-            "secretary_read_cursor".into(),
-            json!(covered_cursor(read_coverage)),
-        );
-        state.insert(
-            "secretary_delivery_cursor".into(),
-            json!(covered_cursor(delivery_coverage)),
-        );
-        save_input_state_unlocked(home, group_id, &state)
-    })?;
-    // Canonical log/state commit first. If cleanup fails, the next attempt
-    // deduplicates the still-present legacy log and cannot resurrect work.
-    assistant_state::update(home, group_id, |state| {
-        for key in ["input_latest_seq", "input_read_cursor", "input_updated_at"] {
-            state.remove(key);
-        }
-        Ok(())
-    })?;
-    std::fs::remove_file(legacy_path)
-}
+
 pub(super) fn find_input(
     home: &HomeLayout,
     group_id: &str,
     session_id: &str,
     segment_id: &str,
 ) -> std::io::Result<Option<Value>> {
-    migrate_legacy_input(home, group_id)?;
     find_segment_io(&input_log_path(home, group_id), session_id, segment_id)
 }
 pub(super) fn append_input(
@@ -550,7 +388,13 @@ pub(super) fn append_input(
     mut record: Value,
     policy: voice_input_dedupe::Policy,
 ) -> std::io::Result<(Option<Value>, bool)> {
-    migrate_legacy_input(home, group_id)?;
+    if record["scope_key"].as_str().is_none() {
+        record["scope_key"] = json!(
+            GroupStore::new(home.clone())?
+                .load(group_id)?
+                .active_scope_key
+        );
+    }
     with_input_state_lock(home, group_id, || {
         let session_id = record["session_id"].as_str().unwrap_or_default();
         let segment_id = record["segment_id"].as_str().unwrap_or_default();
@@ -579,6 +423,22 @@ pub(super) fn append_input(
         if voice_input_dedupe::should_skip(&values, &record, policy) {
             return Ok((None, false));
         }
+        // Acceptance intent is durable with the source, before publishing a
+        // job. Startup can reconstruct only these never-admitted sources;
+        // legacy delivery/read cursors are never treated as completion.
+        record["secretary_target"] =
+            serde_json::to_value(super::global_secretary::target(home, group_id, &record)?)?;
+        record["secretary_guidance"] = json!(super::global_secretary::guidance(home, group_id)?);
+        // Legacy Actor instructions refer to tools and authority that a
+        // fixed-target task deliberately does not have.
+        if record["trigger"].is_object() {
+            record["trigger"]["instruction_policy"] = json!({
+                "document":"edit_the_working_copy_and_commit_with_base_version",
+                "ask":"report_result_or_propose_one_peer_handoff_for_user_confirmation",
+                "prompt":"submit_a_draft_for_user_review_never_send_it",
+                "unclear":"report_needs_user_and_release_the_execution_slot"
+            });
+        }
         let next_seq = state
             .get("latest_seq")
             .and_then(Value::as_u64)
@@ -599,76 +459,12 @@ pub(super) fn append_input(
         Ok((Some(record), true))
     })
 }
-fn take_unread(home: &HomeLayout, group_id: &str) -> std::io::Result<Vec<Value>> {
-    migrate_legacy_input(home, group_id)?;
-    with_input_state_lock(home, group_id, || {
-        let mut state = load_input_state_unlocked(home, group_id)?;
-        let cursor = state
-            .get("secretary_read_cursor")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let inputs = read_jsonl_matching(&input_log_path(home, group_id), |item| {
-            item["seq"].as_u64().unwrap_or(0) > cursor
-        })?;
-        let latest = inputs
-            .iter()
-            .filter_map(|item| item["seq"].as_u64())
-            .max()
-            .unwrap_or(cursor);
-        if latest > cursor {
-            state.insert("secretary_read_cursor".into(), json!(latest));
-            let delivered = state
-                .get("secretary_delivery_cursor")
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-                .max(latest);
-            state.insert("secretary_delivery_cursor".into(), json!(delivered));
-        }
-        state.insert("last_read_new_input_at".into(), json!(utc_now()));
-        save_input_state_unlocked(home, group_id, &state)?;
-        Ok(inputs)
+pub(super) fn global_inputs(home: &HomeLayout, group_id: &str) -> std::io::Result<Vec<Value>> {
+    read_jsonl_matching(&input_log_path(home, group_id), |input| {
+        input["secretary_target"].is_object()
     })
 }
-pub(super) fn mark_delivered(
-    home: &HomeLayout,
-    group_id: &str,
-    input: &Value,
-) -> std::io::Result<()> {
-    let seq = input["seq"].as_u64().unwrap_or(0);
-    if seq == 0 {
-        return Ok(());
-    }
-    migrate_legacy_input(home, group_id)?;
-    with_input_state_lock(home, group_id, || {
-        let mut state = load_input_state_unlocked(home, group_id)?;
-        let delivered = state
-            .get("secretary_delivery_cursor")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            .max(seq);
-        state.insert("secretary_delivery_cursor".into(), json!(delivered));
-        state.insert("last_notify_emitted_at".into(), json!(utc_now()));
-        save_input_state_unlocked(home, group_id, &state)
-    })
-}
-pub(super) fn status(home: &HomeLayout, group_id: &str) -> std::io::Result<(u64, u64)> {
-    migrate_legacy_input(home, group_id)?;
-    with_input_state_lock(home, group_id, || {
-        let state = load_input_state_unlocked(home, group_id)?;
-        let latest = state.get("latest_seq").and_then(Value::as_u64).unwrap_or(0);
-        let covered = state
-            .get("secretary_read_cursor")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            .max(
-                state
-                    .get("secretary_delivery_cursor")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-            );
-        Ok((latest, covered))
-    })
-}
+
 fn ensure_document_file(
     home: &HomeLayout,
     group: &cccc_core::GroupDoc,

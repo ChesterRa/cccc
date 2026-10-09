@@ -18,7 +18,6 @@ pub(in crate::ops::codex_voice_analyst) struct PreparedClaude {
     pub(super) arguments: Vec<String>,
     pub(super) launch_environment: BTreeMap<String, String>,
     pub(super) config_dir: PathBuf,
-    #[cfg(test)]
     pub(super) settings_path: PathBuf,
 }
 
@@ -54,17 +53,18 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
         Some(value) => load_settings(&value, cwd)?,
         None => Map::new(),
     };
+    // Agent View forwards a selected environment, not arbitrary caller keys.
+    // Task grants use its per-job private settings env, then expire with the job.
     merge_environment(&mut settings, environment)?;
     network_environment::inherit(&mut settings, std::env::vars())?;
     let config_dir = config_dir(environment)?;
     let settings_root = home.daemon_dir().join("claude-managed");
     std::fs::create_dir_all(&settings_root)?;
     set_private_directory(&settings_root)?;
-    let settings_digest = format!("{:x}", Sha256::digest(settings_owner.as_bytes()));
     // Agent View stores this path in the durable session's respawn metadata.
-    // Keep one stable, owner-scoped file so stop/start can resume the same
-    // session while still allowing actor removal to erase the private copy.
-    let settings_path = settings_root.join(format!("{}.json", &settings_digest[..24]));
+    // Actor/Analyst owners are stable for resume; task owners are per-job and
+    // disposable after cleanup.
+    let settings_path = settings_path(home, settings_owner);
     let mut launch_environment = launcher_environment(environment);
     network_environment::extend_launcher(&mut launch_environment, &settings);
     cccc_core::fs::write_secret_json(&settings_path, &Value::Object(settings))?;
@@ -76,8 +76,16 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
         "--mcp-config".into(),
         json!({"mcpServers":{"cccc":mcp_server}}).to_string(),
     ]);
-    if purpose == SessionPurpose::VoiceAnalyst {
-        arguments.extend(["--append-system-prompt".into(), ANALYST_INSTRUCTIONS.into()]);
+    match purpose {
+        SessionPurpose::VoiceAnalyst => {
+            arguments.extend(["--append-system-prompt".into(), ANALYST_INSTRUCTIONS.into()])
+        }
+        SessionPurpose::VoiceSecretary => arguments.extend([
+            "--strict-mcp-config".into(),
+            "--append-system-prompt".into(),
+            super::super::launch_secretary::INSTRUCTIONS.into(),
+        ]),
+        SessionPurpose::Actor => {}
     }
     arguments.push("--dangerously-skip-permissions".into());
 
@@ -86,9 +94,18 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
         arguments,
         launch_environment,
         config_dir,
-        #[cfg(test)]
         settings_path,
     })
+}
+
+pub(in crate::ops::codex_voice_analyst) fn settings_path(
+    home: &HomeLayout,
+    owner: &str,
+) -> PathBuf {
+    let digest = format!("{:x}", Sha256::digest(owner.as_bytes()));
+    home.daemon_dir()
+        .join("claude-managed")
+        .join(format!("{}.json", &digest[..24]))
 }
 
 pub(super) fn remove_settings_owner(home: &HomeLayout, settings_owner: &str) -> io::Result<()> {

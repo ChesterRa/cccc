@@ -1,1 +1,1 @@
-export type VoiceSecretaryCaptureMode = "document" | "instruction" | "prompt";
+export type VoiceSecretaryCaptureMode = "prompt" | "document" | "instruction";

@@ -189,6 +189,13 @@ export class CodexVoiceBrowserSession {
     }
   }
 
+  audioPreferences() {
+    return {
+      inputDeviceId: this.preferences.inputDeviceId,
+      outputDeviceId: this.preferences.outputDeviceId,
+    };
+  }
+
   updateAnalystSnapshot(analyst: CodexVoiceAnalystInfo): void {
     if (this.stopping || this.analyst?.generation !== analyst.generation) return;
     this.analyst = analyst;

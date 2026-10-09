@@ -1,9 +1,10 @@
 use cccc_contracts::{Actor, ActorRole, DaemonRequest, DaemonResponse};
 use cccc_core::{GroupStore, HomeLayout, Scope, assistant_state, ledger};
 use serde_json::{Map, Value, json};
+use std::time::Duration;
 
-#[test]
-fn final_revision_supersedes_live_projection_without_deleting_raw_segments() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn final_revision_supersedes_live_projection_without_deleting_raw_segments() {
     let temp = tempfile::tempdir().expect("tempdir");
     let workspace = temp.path().join("workspace");
     std::fs::create_dir(&workspace).expect("workspace");
@@ -27,11 +28,12 @@ fn final_revision_supersedes_live_projection_without_deleting_raw_segments() {
             Ok(())
         })
         .expect("seed group");
-    ok(
-        &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"patch":{"enabled":true}}),
-    );
+    let daemon = tokio::spawn(cccc_daemon::run(home.clone()));
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !cccc_daemon::DaemonPaths::new(home.clone()).address.exists() {
+        assert!(tokio::time::Instant::now() < deadline, "daemon startup");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let short_final = ok(
         &home,
         "assistant_voice_transcript_append",
@@ -155,6 +157,42 @@ fn final_revision_supersedes_live_projection_without_deleting_raw_segments() {
         4,
         "final revisions and late live checkpoints must not enqueue duplicate secretary work"
     );
+    let tasks = cccc_core::voice_secretary::SecretaryTaskStore::new(home.clone())
+        .list()
+        .expect("global tasks");
+    assert!(
+        tasks.is_empty(),
+        "unconfigured transcription saves sources without allocating execution jobs"
+    );
+    let view = ok(&home, "assistant_state", json!({"group_id":group.group_id}));
+    assert_eq!(
+        view.result["assistant"]["health"]["secretary"]["deferred_sources"],
+        4
+    );
+    assert!(
+        events
+            .iter()
+            .filter(|event| event.kind == "assistant.voice.input")
+            .all(
+                |event| event.data["secretary_target"]["group_id"] == group.group_id
+                    && event.data["secretary_target"]["scope_key"] == "scope"
+            )
+    );
+    assert_eq!(store.load(&group.group_id).expect("group").actors.len(), 1);
+    let stopped = cccc_client::DaemonClient::new(home.clone())
+        .call(&DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: Map::new(),
+        })
+        .await
+        .expect("shutdown request");
+    assert!(stopped.ok, "{:?}", stopped.error);
+    tokio::time::timeout(Duration::from_secs(5), daemon)
+        .await
+        .expect("bounded shutdown")
+        .expect("daemon join")
+        .expect("daemon cleanup");
 }
 
 fn ok(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {

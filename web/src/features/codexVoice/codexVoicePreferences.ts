@@ -63,7 +63,7 @@ export function saveCodexVoicePreferences(preferences: CodexVoicePreferences): v
   try {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(normalizeCodexVoicePreferences(preferences)),
+      JSON.stringify({ voice: normalizeCodexRealtimeVoice(preferences.voice) }),
     );
   } catch {
     // Browsers can disable local storage. The in-memory selection still works

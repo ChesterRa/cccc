@@ -457,3 +457,47 @@ fn raw_call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
         },
     )
 }
+
+#[test]
+fn secretary_profile_secret_copy_is_admin_only_and_keeps_voice_identities_separate() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    call(
+        &home,
+        "actor_profile_upsert",
+        json!({"profile_id":"secretary-profile","name":"Secretary Profile"}),
+    );
+    cccc_core::voice_secretary_settings::replace_private_environment(
+        &home,
+        &std::collections::BTreeMap::from([(
+            "SECRETARY_FIXTURE".into(),
+            "secretary-fixture".into(),
+        )]),
+    )
+    .expect("Secretary environment");
+    cccc_core::codex_voice_settings::replace_private_environment(
+        &home,
+        &std::collections::BTreeMap::from([("ANALYST_FIXTURE".into(), "analyst-fixture".into())]),
+    )
+    .expect("Analyst environment");
+    assert_denied(raw_call(
+        &home,
+        "actor_profile_copy_voice_secretary_secrets",
+        json!({"profile_id":"secretary-profile","caller_id":"user-a","is_admin":false}),
+    ));
+    let response = call(
+        &home,
+        "actor_profile_copy_voice_secretary_secrets",
+        json!({"profile_id":"secretary-profile","is_admin":true}),
+    );
+    assert_eq!(response.result["keys"], json!(["SECRETARY_FIXTURE"]));
+    let secrets = cccc_core::profiles::ProfileStore::new(home)
+        .expect("store")
+        .secret_values("secretary-profile")
+        .expect("profile secrets");
+    assert_eq!(secrets.len(), 1);
+    assert_eq!(
+        secrets.get("SECRETARY_FIXTURE").map(String::as_str),
+        Some("secretary-fixture")
+    );
+}

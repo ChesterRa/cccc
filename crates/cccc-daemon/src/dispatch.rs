@@ -188,7 +188,10 @@ mod tests {
             }) {
                 // These change the connection protocol and are handled before
                 // ordinary dispatch in server_connection (with stream regressions).
-                if matches!(op, "term_attach" | "events_stream") {
+                if matches!(
+                    op,
+                    "term_attach" | "events_stream" | "voice_secretary_terminal_attach"
+                ) {
                     continue;
                 }
                 let request = DaemonRequest {

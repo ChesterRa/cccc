@@ -209,3 +209,84 @@ describe("workspace editor visibility", () => {
     expect(mod.groupMessagesVisible("files-group", store.getState())).toBe(true);
   });
 });
+
+describe("Group voice preferences", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    localStorageMock.clear();
+  });
+
+  it("restores each Group's mode and language after switching and reloading", async () => {
+    let mod = await import("../../src/stores/useUIStore");
+    mod.useUIStore
+      .getState()
+      .setChatVoicePreferences("A", {
+        voiceCaptureMode: "document",
+        voicePromptAutoRefine: true,
+        voiceRecognitionLanguage: "ja-JP",
+      });
+    const recording = { ...mod.getChatSession("A", mod.useUIStore.getState().chatSessions) };
+    mod.useUIStore
+      .getState()
+      .setChatVoicePreferences("B", {
+        voiceCaptureMode: "instruction",
+        voiceRecognitionLanguage: "zh-CN",
+      });
+    mod.useUIStore.getState().setChatVoicePreferences("A", { voiceCaptureMode: "prompt" });
+    vi.resetModules();
+    mod = await import("../../src/stores/useUIStore");
+    const read = (id: string) => mod.getChatSession(id, mod.useUIStore.getState().chatSessions);
+    expect(read("A")).toMatchObject({
+      voiceCaptureMode: "prompt",
+      voicePromptAutoRefine: true,
+      voiceRecognitionLanguage: "ja-JP",
+    });
+    expect(read("B")).toMatchObject({
+      voiceCaptureMode: "instruction",
+      voicePromptAutoRefine: false,
+      voiceRecognitionLanguage: "zh-CN",
+    });
+    expect(read("new")).toMatchObject({
+      voiceCaptureMode: "prompt",
+      voicePromptAutoRefine: false,
+      voiceRecognitionLanguage: "",
+    });
+    expect(recording).toMatchObject({
+      voiceCaptureMode: "document",
+      voiceRecognitionLanguage: "ja-JP",
+    });
+  });
+
+  it("keeps an explicit system-language choice separate from following the global default", async () => {
+    const mod = await import("../../src/stores/useUIStore");
+    mod.useUIStore.getState().setChatVoicePreferences("A", { voiceRecognitionLanguage: "auto" });
+    const sessions = mod.useUIStore.getState().chatSessions;
+    const effective = (id: string, fallback: string) =>
+      mod.getChatSession(id, sessions).voiceRecognitionLanguage || fallback;
+    expect(effective("A", "ja-JP")).toBe("auto");
+    expect(effective("B", "ja-JP")).toBe("ja-JP");
+    expect(effective("B", "en-US")).toBe("en-US");
+    expect(localStorageMock.getItem("cccc-chat-sessions")).not.toContain('"B"');
+  });
+
+  it("uses safe defaults for malformed persisted preferences and keeps unrelated UI state", async () => {
+    localStorageMock.setItem(
+      "cccc-chat-sessions",
+      JSON.stringify({
+        A: {
+          voiceCaptureMode: "invalid",
+          voicePromptAutoRefine: "true",
+          voiceRecognitionLanguage: {},
+          workView: "terminals",
+        },
+      }),
+    );
+    const mod = await import("../../src/stores/useUIStore");
+    expect(mod.getChatSession("A", mod.useUIStore.getState().chatSessions)).toMatchObject({
+      voiceCaptureMode: "prompt",
+      voicePromptAutoRefine: false,
+      voiceRecognitionLanguage: "",
+      workView: "terminals",
+    });
+  });
+});

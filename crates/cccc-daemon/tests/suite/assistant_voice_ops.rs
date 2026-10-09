@@ -1,5 +1,5 @@
-use cccc_contracts::{Actor, ActorRole, ActorRuntime, DaemonRequest, DaemonResponse, Event};
-use cccc_core::{GroupStore, HomeLayout, Scope, assistant_state, ledger, ledger_archive};
+use cccc_contracts::{Actor, ActorRole, DaemonRequest, DaemonResponse};
+use cccc_core::{GroupStore, HomeLayout, Scope, assistant_state, ledger};
 use fs2::FileExt;
 use serde_json::{Map, Value, json};
 use std::fs::OpenOptions;
@@ -9,10 +9,6 @@ use std::time::Duration;
 
 #[path = "assistant_voice_ops/settings_autosave.rs"]
 mod settings_autosave;
-
-#[cfg(unix)]
-#[path = "assistant_voice_ops/managed_start.rs"]
-mod managed_start;
 
 #[path = "assistant_voice_ops/document_delete.rs"]
 mod document_delete;
@@ -58,188 +54,6 @@ fn set_voice_active_document_id(home: &HomeLayout, group_id: &str, document_id: 
     let mut bytes = serde_json::to_vec_pretty(&index).expect("serialize voice document index");
     bytes.push(b'\n');
     cccc_core::fs::atomic_write(&path, &bytes).expect("write voice document index");
-}
-
-#[test]
-fn voice_input_is_durable_idempotent_and_delivered_to_internal_actor() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let workspace = temp.path().join("workspace");
-    std::fs::create_dir(&workspace).expect("workspace");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    home.initialize().expect("initialize");
-    let store = GroupStore::new(home.clone()).expect("store");
-    let group = store.create("voice", "").expect("group");
-    store
-        .mutate(&group.group_id, |doc| {
-            let mut foreman = Actor::new("foreman");
-            foreman.role = Some(ActorRole::Foreman);
-            foreman.command = vec!["true".into()];
-            doc.actors.push(foreman);
-            doc.scopes.push(Scope {
-                scope_key: "scope".into(),
-                url: workspace.to_string_lossy().into_owned(),
-                label: "workspace".into(),
-                git_remote: String::new(),
-            });
-            doc.active_scope_key = "scope".into();
-            Ok(())
-        })
-        .expect("seed group");
-    ok(
-        &home,
-        "actor_env_private_update",
-        json!({"group_id":group.group_id,"actor_id":"foreman","set":{"VOICE_TEST_SECRET":"kept-private"}}),
-    );
-
-    let enabled = ok(
-        &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"assistant_id":"voice_secretary","by":"user","patch":{"enabled":true,"config":{"recognition_backend":"assistant_service_local_asr"}}}),
-    );
-    assert_eq!(enabled.result["assistant"]["enabled"], true);
-    assert_eq!(
-        enabled.result["assistant"]["health"]["actor"]["configured"],
-        true
-    );
-    assert_eq!(
-        enabled.result["assistant"]["health"]["actor"]["running"],
-        false
-    );
-    assert_eq!(enabled.result["assistant"]["lifecycle"], "idle");
-    let loaded = store.load(&group.group_id).expect("load");
-    let secretary = loaded
-        .actors
-        .iter()
-        .find(|actor| actor.id == "voice-secretary")
-        .expect("secretary actor");
-    assert_eq!(secretary.internal_kind.as_deref(), Some("voice_secretary"));
-    assert_eq!(secretary.runtime, loaded.actors[0].runtime);
-    let secret_keys = ok(
-        &home,
-        "actor_env_private_keys",
-        json!({"group_id":group.group_id,"actor_id":"voice-secretary"}),
-    );
-    assert!(
-        secret_keys.result["keys"]
-            .as_array()
-            .is_some_and(|keys| keys.iter().any(|key| key == "VOICE_TEST_SECRET"))
-    );
-
-    let args = json!({"group_id":group.group_id,"by":"user","session_id":"session-1","segment_id":"segment-1","text":"讨论发布计划和负责人。","language":"zh-CN","document_path":"docs/voice-secretary/meeting.md","is_final":true});
-    let first = ok(&home, "assistant_voice_transcript_append", args.clone());
-    assert_eq!(first.result["input_event_created"], true);
-    assert_eq!(first.result["input_notify_emitted"], true);
-    assert!(workspace.join("docs/voice-secretary/meeting.md").is_file());
-    let duplicate = ok(&home, "assistant_voice_transcript_append", args);
-    assert_eq!(duplicate.result["input_event_created"], false);
-    let document_id = first.result["document"]["document_id"]
-        .as_str()
-        .expect("voice document id");
-    let transcript_path = home
-        .root()
-        .join("voice-secretary")
-        .join(&group.group_id)
-        .join("documents")
-        .join(document_id)
-        .join("transcript.jsonl");
-    let transcript_lines = std::fs::read_to_string(transcript_path)
-        .expect("shared document transcript")
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("transcript row"))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        transcript_lines.len(),
-        1,
-        "retry must not duplicate transcript"
-    );
-    assert_eq!(transcript_lines[0]["session_id"], "session-1");
-    assert_eq!(transcript_lines[0]["segment_id"], "segment-1");
-    assert_eq!(transcript_lines[0]["text"], "讨论发布计划和负责人。");
-    let failed_update = ok(
-        &home,
-        "assistant_voice_session_update",
-        json!({
-            "group_id":group.group_id,
-            "session_id":"session-1",
-            "by":"assistant:voice_secretary",
-            "patch":{
-                "status":"closed",
-                "diarization_ready":false,
-                "diarization_error":{"code":"temporary","message":"retry"},
-                "error":{"code":"temporary","message":"retry"}
-            }
-        }),
-    );
-    assert_eq!(failed_update.result["session"]["diarization_ready"], false);
-    let updated = ok(
-        &home,
-        "assistant_voice_session_update",
-        json!({
-            "group_id":group.group_id,
-            "session_id":"session-1",
-            "by":"assistant:voice_secretary",
-            "patch":{
-                "status":"closed",
-                "diarization_ready":true,
-                "diarization":{
-                    "model_id":"diarization-model",
-                    "speaker_transcript_model_id":"transcript-model",
-                    "speaker_transcript_segments":[{"text":"讨论发布计划和负责人。","speaker_label":"Speaker 1"}]
-                },
-                "error":null
-            }
-        }),
-    );
-    assert_eq!(
-        updated.result["session"]["transcript"],
-        "讨论发布计划和负责人。"
-    );
-    assert_eq!(
-        updated.result["session"]["segments"][0]["segment_id"],
-        "segment-1"
-    );
-    assert_eq!(updated.result["session"]["diarization_ready"], true);
-    assert!(updated.result["session"].get("diarization_error").is_none());
-    assert!(updated.result["session"].get("error").is_none());
-    let assistant_state = load_voice_state(&home, &group.group_id);
-    assert_eq!(assistant_state["sessions"][0]["capture_mode"], "document");
-
-    let read = ok(
-        &home,
-        "assistant_voice_document_input_read",
-        json!({"group_id":group.group_id,"by":"voice-secretary"}),
-    );
-    assert_eq!(read.result["item_count"], 1);
-    assert!(
-        read.result["input_text"]
-            .as_str()
-            .unwrap_or("")
-            .contains("发布计划")
-    );
-    let second_read = ok(
-        &home,
-        "assistant_voice_document_input_read",
-        json!({"group_id":group.group_id,"by":"voice-secretary"}),
-    );
-    assert_eq!(second_read.result["item_count"], 0);
-
-    let events = ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger path"))
-        .expect("ledger");
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| event.kind == "assistant.voice.input")
-            .count(),
-        1
-    );
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| event.kind == "system.notify"
-                && event.data["kind"] == "voice_secretary_input")
-            .count(),
-        1
-    );
 }
 
 #[test]
@@ -442,258 +256,6 @@ fn voice_session_mutations_reject_path_like_session_ids() {
 }
 
 #[test]
-fn prompt_refine_round_trip_uses_distinct_input_and_draft_operations() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
-    let input = ok(
-        &home,
-        "assistant_voice_input_append",
-        json!({
-            "group_id":group_id,
-            "kind":"prompt_refine",
-            "request_id":"voice-prompt-test",
-            "text":"",
-            "voice_transcript":"  补充风险和验收标准  ",
-            "composer_text":"检查这个方案",
-            "operation":"append_to_composer_end",
-            "composer_snapshot_hash":"snapshot-1",
-            "composer_context":{"recent_chat_excerpt":"需要补回滚方案"}
-        }),
-    );
-    assert_eq!(input.result["request_id"], "voice-prompt-test");
-    assert_eq!(
-        input.result["input_event"]["request_id"],
-        "voice-prompt-test"
-    );
-    assert_eq!(
-        input.result["input_event"]["metadata"]["target_kind"],
-        "composer"
-    );
-    assert_eq!(
-        input.result["input_event"]["metadata"]["operation"],
-        "append_to_composer_end"
-    );
-    let input_text = input.result["input_event"]["text"]
-        .as_str()
-        .expect("input text");
-    assert!(input_text.contains("Target: composer"));
-    assert!(input_text.contains("Request id: voice-prompt-test"));
-    assert!(input_text.contains("检查这个方案"));
-    assert!(input_text.contains("补充风险和验收标准"));
-    assert!(input_text.contains("需要补回滚方案"));
-
-    let notifications_before = ledger::read_all(&store.ledger_path(&group_id).expect("ledger"))
-        .expect("events")
-        .into_iter()
-        .filter(|event| {
-            event.kind == "system.notify" && event.data["kind"] == "voice_secretary_input"
-        })
-        .count();
-    let submit = ok(
-        &home,
-        "assistant_voice_prompt_draft_submit",
-        json!({
-            "group_id":group_id,
-            "by":"assistant:voice_secretary",
-            "request_id":"voice-prompt-test",
-            "draft_text":"请检查这个方案，补充风险、验收标准和回滚路径。"
-        }),
-    );
-    assert_eq!(submit.result["prompt_draft"]["status"], "pending");
-    assert_eq!(
-        submit.result["prompt_draft"]["operation"],
-        "append_to_composer_end"
-    );
-    assert_eq!(
-        submit.result["prompt_draft"]["composer_snapshot_hash"],
-        "snapshot-1"
-    );
-    assert!(submit.result.get("input_event").is_none());
-
-    let state = load_voice_state(&home, &group_id);
-    assert_eq!(
-        state["voice_prompt_requests"]["voice-prompt-test"]["composer_text"],
-        "检查这个方案"
-    );
-    assert_eq!(
-        state["voice_prompt_drafts"]["voice-prompt-test"]["draft_text"],
-        "请检查这个方案，补充风险、验收标准和回滚路径。"
-    );
-    let notifications_after = ledger::read_all(&store.ledger_path(&group_id).expect("ledger"))
-        .expect("events")
-        .into_iter()
-        .filter(|event| {
-            event.kind == "system.notify" && event.data["kind"] == "voice_secretary_input"
-        })
-        .count();
-    assert_eq!(notifications_after, notifications_before);
-}
-
-#[test]
-fn prompt_refine_reused_request_id_delivers_each_append_and_deduplicates_retries() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
-    let first_args = json!({
-        "group_id":group_id,
-        "kind":"prompt_refine",
-        "request_id":"voice-prompt-reused",
-        "input_append_id":"voice-prompt-append-one",
-        "voice_transcript":"补充风险",
-        "composer_text":"检查方案"
-    });
-    let first = ok(&home, "assistant_voice_input_append", first_args.clone());
-    assert_eq!(first.result["input_event_created"], true);
-    assert_eq!(first.result["input_append_id"], "voice-prompt-append-one");
-
-    ok(
-        &home,
-        "assistant_voice_prompt_draft_submit",
-        json!({
-            "group_id":group_id,
-            "by":"assistant:voice_secretary",
-            "request_id":"voice-prompt-reused",
-            "draft_text":"补充风险后的方案"
-        }),
-    );
-    let retry = ok(&home, "assistant_voice_input_append", first_args);
-    assert_eq!(retry.result["input_event_created"], false);
-    assert_eq!(
-        load_voice_state(&home, &group_id)["voice_prompt_drafts"]["voice-prompt-reused"]["status"],
-        "pending"
-    );
-
-    let second = ok(
-        &home,
-        "assistant_voice_input_append",
-        json!({
-            "group_id":group_id,
-            "kind":"prompt_refine",
-            "request_id":"voice-prompt-reused",
-            "input_append_id":"voice-prompt-append-two",
-            "voice_transcript":"再补充验收标准",
-            "composer_text":"检查方案"
-        }),
-    );
-    assert_eq!(second.result["input_event_created"], true);
-    assert_ne!(
-        first.result["input_event"]["segment_id"],
-        second.result["input_event"]["segment_id"]
-    );
-    let second_text = second.result["input_event"]["text"]
-        .as_str()
-        .expect("second input text");
-    assert!(second_text.contains("补充风险"));
-    assert!(second_text.contains("再补充验收标准"));
-
-    let state = load_voice_state(&home, &group_id);
-    assert_eq!(
-        state["voice_prompt_requests"]["voice-prompt-reused"]["voice_transcripts"],
-        json!(["补充风险", "再补充验收标准"])
-    );
-    assert_eq!(
-        state["voice_prompt_drafts"]["voice-prompt-reused"]["status"],
-        "stale"
-    );
-    let events =
-        ledger::read_all(&store.ledger_path(&group_id).expect("ledger path")).expect("ledger");
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| {
-                event.kind == "assistant.voice.input"
-                    && event.data["request_id"] == "voice-prompt-reused"
-            })
-            .count(),
-        2
-    );
-}
-
-#[test]
-fn voice_instruction_round_trip_persists_and_reports_the_ask_reply() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
-    let args = json!({
-        "group_id":group_id,
-        "kind":"voice_instruction",
-        "request_id":"voice-ask-weather",
-        "input_append_id":"voice-ask-weather-input",
-        "instruction":"厦门天气怎么样？",
-        "language":"mixed",
-        "trigger":{
-            "trigger_kind":"service_voice_instruction",
-            "target_kind":"secretary"
-        }
-    });
-    let input = ok(&home, "assistant_voice_document_instruction", args.clone());
-    assert_eq!(input.result["request_id"], "voice-ask-weather");
-    assert_eq!(input.result["input_event_created"], true);
-    assert_eq!(input.result["ask_request"]["status"], "pending");
-    assert_eq!(
-        input.result["input_event"]["text"],
-        "Task:\n厦门天气怎么样？"
-    );
-    assert_eq!(
-        input.result["input_event"]["metadata"]["target_kind"],
-        "secretary"
-    );
-    assert_eq!(
-        input.result["input_event"]["metadata"]["request_id"],
-        "voice-ask-weather"
-    );
-    assert_eq!(
-        input.result["input_event"]["trigger"]["intent_hint"],
-        "secretary_task"
-    );
-    assert!(input.result["input_event"]["trigger"]["instruction_policy"].is_object());
-
-    let retry = ok(&home, "assistant_voice_document_instruction", args);
-    assert_eq!(retry.result["input_event_created"], false);
-    let state = load_voice_state(&home, &group_id);
-    assert_eq!(state["ask_requests"].as_array().map(Vec::len), Some(1));
-    assert_eq!(state["ask_requests"][0]["request_id"], "voice-ask-weather");
-    assert_eq!(state["assistant"]["lifecycle"], "working");
-
-    let feedback_args = json!({
-        "group_id":group_id,
-        "by":"voice-secretary",
-        "request_id":"voice-ask-weather",
-        "status":"done",
-        "reply_text":"厦门今天多云，外出注意防晒。",
-        "source_urls":["https://www.weather.com.cn/fujian/xiamen/"]
-    });
-    let feedback = ok(
-        &home,
-        "assistant_voice_instruction_feedback",
-        feedback_args.clone(),
-    );
-    assert_eq!(feedback.result["ask_request"]["status"], "done");
-    assert_eq!(
-        feedback.result["ask_request"]["reply_text"],
-        "厦门今天多云，外出注意防晒。"
-    );
-    assert_eq!(feedback.result["assistant"]["lifecycle"], "idle");
-    assert_eq!(feedback.result["event"]["kind"], "assistant.voice.request");
-
-    ok(&home, "assistant_voice_instruction_feedback", feedback_args);
-    let events =
-        ledger::read_all(&store.ledger_path(&group_id).expect("ledger path")).expect("ledger");
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| {
-                event.kind == "assistant.voice.request"
-                    && event.data["request_id"] == "voice-ask-weather"
-            })
-            .count(),
-        1
-    );
-
-    let index = ok(&home, "assistant_index", json!({"group_id":group_id}));
-    assert_eq!(index.result["ask_requests"][0]["status"], "done");
-    assert_eq!(
-        index.result["latest_ask_request"]["reply_text"],
-        "厦门今天多云，外出注意防晒。"
-    );
-}
-
-#[test]
 fn voice_input_append_routes_voice_instruction_to_the_ask_pipeline() {
     let (_temp, home, _store, group_id) = enabled_voice_group();
     let args = json!({
@@ -716,130 +278,6 @@ fn voice_input_append_routes_voice_instruction_to_the_ask_pipeline() {
     let retry = ok(&home, "assistant_voice_input_append", args);
     assert_eq!(retry.result["input_event_created"], false);
     assert_eq!(retry.result["request_id"], "voice-ask-generic-entry");
-}
-
-#[test]
-fn voice_instruction_working_feedback_keeps_that_request_active() {
-    let (_temp, home, _store, group_id) = enabled_voice_group();
-    for request_id in ["voice-ask-older", "voice-ask-current"] {
-        ok(
-            &home,
-            "assistant_voice_document_instruction",
-            json!({
-                "group_id":group_id,
-                "request_id":request_id,
-                "input_append_id":format!("{request_id}-input"),
-                "instruction":format!("Handle {request_id}")
-            }),
-        );
-    }
-
-    let feedback = ok(
-        &home,
-        "assistant_voice_instruction_feedback",
-        json!({
-            "group_id":group_id,
-            "by":"voice-secretary",
-            "request_id":"voice-ask-current",
-            "status":"working"
-        }),
-    );
-
-    assert_eq!(feedback.result["assistant"]["lifecycle"], "working");
-    assert_eq!(
-        feedback.result["assistant"]["health"]["active_request_id"],
-        "voice-ask-current"
-    );
-    assert_eq!(
-        feedback.result["assistant"]["health"]["active_request_status"],
-        "working"
-    );
-}
-
-#[test]
-fn clearing_ask_history_keeps_late_feedback_reportable() {
-    let (_temp, home, _store, group_id) = enabled_voice_group();
-    ok(
-        &home,
-        "assistant_voice_document_instruction",
-        json!({
-            "group_id":group_id,
-            "request_id":"voice-ask-clear-late",
-            "input_append_id":"voice-ask-clear-late-input",
-            "instruction":"Finish this after the history is cleared"
-        }),
-    );
-
-    let cleared = ok(
-        &home,
-        "assistant_voice_ask_requests_clear",
-        json!({"group_id":group_id}),
-    );
-    assert_eq!(cleared.result["cleared_count"], 1);
-    assert_eq!(cleared.result["removed_count"], 1);
-    assert_eq!(cleared.result["kept_count"], 0);
-    assert!(
-        cleared.result["ask_requests"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
-    );
-
-    let feedback = ok(
-        &home,
-        "assistant_voice_instruction_feedback",
-        json!({
-            "group_id":group_id,
-            "by":"voice-secretary",
-            "request_id":"voice-ask-clear-late",
-            "status":"done",
-            "reply_text":"Finished after the user cleared the history."
-        }),
-    );
-    assert_eq!(feedback.result["ask_request"]["status"], "done");
-
-    let index = ok(&home, "assistant_state", json!({"group_id":group_id}));
-    assert_eq!(
-        index.result["latest_ask_request"]["request_id"],
-        "voice-ask-clear-late"
-    );
-}
-
-#[test]
-fn voice_instruction_feedback_requires_an_existing_request_and_secretary_actor() {
-    let (_temp, home, _store, group_id) = enabled_voice_group();
-    let forbidden = call(
-        &home,
-        "assistant_voice_instruction_feedback",
-        json!({
-            "group_id":group_id,
-            "by":"user",
-            "request_id":"voice-ask-missing",
-            "status":"done",
-            "reply_text":"不应写入"
-        }),
-    );
-    assert!(!forbidden.ok);
-    assert_eq!(
-        forbidden.error.as_ref().map(|error| error.code.as_str()),
-        Some("assistant_voice_instruction_feedback_forbidden")
-    );
-
-    let missing = call(
-        &home,
-        "assistant_voice_instruction_feedback",
-        json!({
-            "group_id":group_id,
-            "by":"voice-secretary",
-            "request_id":"voice-ask-missing",
-            "status":"done",
-            "reply_text":"不存在"
-        }),
-    );
-    assert!(!missing.ok);
-    assert_eq!(
-        missing.error.as_ref().map(|error| error.code.as_str()),
-        Some("voice_ask_request_not_found")
-    );
 }
 
 #[test]
@@ -1062,6 +500,107 @@ fn semantic_voice_inputs_do_not_create_meeting_transcripts() {
 }
 
 #[test]
+fn prompt_status_reads_the_requested_result_including_no_change() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    update_voice_state(&home, &group_id, |state| {
+        state.insert("voice_prompt_drafts".into(), json!({
+            "older-pending":{"request_id":"older-pending","status":"pending","draft_text":"Candidate A","updated_at":"2026-10-09T00:00:00Z"},
+            "newer-pending":{"request_id":"newer-pending","status":"pending","draft_text":"Candidate B","updated_at":"2026-10-09T00:01:00Z"},
+            "unchanged":{"request_id":"unchanged","status":"no_change","draft_text":"","updated_at":"2026-10-09T00:02:00Z"}
+        }));
+        Ok(())
+    });
+    let path = home
+        .groups_dir()
+        .join(&group_id)
+        .join("state/assistants.json");
+    let before = std::fs::read(&path).expect("canonical state");
+    for (request_id, expected_status) in [("older-pending", "pending"), ("unchanged", "no_change")]
+    {
+        let result = ok(
+            &home,
+            "assistant_state",
+            json!({
+                "group_id":group_id,"assistant_id":"voice_secretary","prompt_request_id":request_id
+            }),
+        );
+        assert_eq!(result.result["prompt_draft"]["request_id"], request_id);
+        assert_eq!(result.result["prompt_draft"]["status"], expected_status);
+    }
+    let missing = ok(
+        &home,
+        "assistant_state",
+        json!({
+            "group_id":group_id,"prompt_request_id":"not-yet-completed"
+        }),
+    );
+    assert!(
+        missing.result["prompt_draft"].is_null(),
+        "an explicit read must not return another request's candidate"
+    );
+    let default = ok(&home, "assistant_state", json!({"group_id":group_id}));
+    assert_eq!(
+        default.result["prompt_draft"]["request_id"],
+        "newer-pending"
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("state unchanged by reads"),
+        before
+    );
+}
+
+#[test]
+fn prompt_refine_instructions_match_the_published_task_action() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let tools: Vec<Value> =
+        serde_json::from_str(include_str!("../../../../resources/mcp_tools.json"))
+            .expect("published tool catalog");
+    let actions = tools
+        .iter()
+        .find(|tool| tool["name"] == "cccc_voice_secretary_task")
+        .expect("task tool")["inputSchema"]["properties"]["action"]["enum"]
+        .as_array()
+        .expect("published actions");
+    for operation in [
+        "append_to_composer_end",
+        "replace",
+        "replace_with_refined_prompt",
+    ] {
+        let response = ok(
+            &home,
+            "assistant_voice_input_append",
+            json!({
+                "group_id":group_id,"kind":"prompt_refine","request_id":operation,
+                "composer_text":"Improve the proposal","operation":operation
+            }),
+        );
+        let text = response.result["input_event"]["text"]
+            .as_str()
+            .expect("task input");
+        let (_, output) = text
+            .split_once("Required output:\n")
+            .expect("required output");
+        let action = output
+            .split_once("action=\"")
+            .expect("action")
+            .1
+            .split_once('"')
+            .expect("action value")
+            .0;
+        assert!(
+            actions.iter().any(|value| value.as_str() == Some(action)),
+            "Prompt requests unpublished task action: {action}"
+        );
+        assert_eq!(action, "draft");
+        assert!(output.contains(if operation == "append_to_composer_end" {
+            "only the text to add"
+        } else {
+            "complete replacement prompt"
+        }));
+    }
+}
+
+#[test]
 fn prompt_refine_rejects_empty_input_without_persisting_a_request() {
     let (_temp, home, _store, group_id) = enabled_voice_group();
     let response = call(
@@ -1090,243 +629,6 @@ fn prompt_refine_rejects_empty_input_without_persisting_a_request() {
 }
 
 #[test]
-fn prompt_draft_submit_requires_existing_request_and_supports_no_op_and_ack() {
-    let (_temp, home, _store, group_id) = enabled_voice_group();
-    let missing = call(
-        &home,
-        "assistant_voice_prompt_draft_submit",
-        json!({
-            "group_id":group_id,
-            "by":"voice-secretary",
-            "request_id":"missing",
-            "draft_text":"不会保存"
-        }),
-    );
-    assert!(!missing.ok);
-    assert_eq!(
-        missing.error.as_ref().map(|error| error.code.as_str()),
-        Some("prompt_request_not_found")
-    );
-
-    ok(
-        &home,
-        "assistant_voice_input_append",
-        json!({
-            "group_id":group_id,
-            "kind":"prompt_refine",
-            "request_id":"voice-prompt-noop",
-            "composer_text":"请优化这段提示词",
-            "operation":"replace_with_refined_prompt"
-        }),
-    );
-    let no_op = ok(
-        &home,
-        "assistant_voice_prompt_draft_submit",
-        json!({
-            "group_id":group_id,
-            "by":"voice-secretary",
-            "request_id":"voice-prompt-noop",
-            "no_op":true,
-            "draft_text":"该占位文本必须被忽略"
-        }),
-    );
-    assert_eq!(no_op.result["prompt_draft"]["status"], "no_change");
-    assert_eq!(no_op.result["prompt_draft"]["draft_text"], "");
-    assert!(load_voice_state(&home, &group_id)["prompt_draft"].is_null());
-
-    ok(
-        &home,
-        "assistant_voice_input_append",
-        json!({
-            "group_id":group_id,
-            "kind":"prompt_refine",
-            "request_id":"voice-prompt-ack",
-            "composer_text":"待替换内容"
-        }),
-    );
-    ok(
-        &home,
-        "assistant_voice_prompt_draft_submit",
-        json!({
-            "group_id":group_id,
-            "by":"assistant:voice_secretary",
-            "request_id":"voice-prompt-ack",
-            "draft_text":"替换后的内容"
-        }),
-    );
-    let ack = ok(
-        &home,
-        "assistant_voice_prompt_draft_ack",
-        json!({
-            "group_id":group_id,
-            "request_id":"voice-prompt-ack",
-            "status":"applied"
-        }),
-    );
-    assert_eq!(ack.result["prompt_draft"]["status"], "applied");
-    let state = load_voice_state(&home, &group_id);
-    assert!(state["prompt_draft"].is_null());
-    assert_eq!(
-        state["voice_prompt_drafts"]["voice-prompt-ack"]["status"],
-        "applied"
-    );
-}
-
-#[test]
-fn voice_request_skips_empty_modern_alias_and_uses_request_text() {
-    let (_temp, home, _store, group_id) = enabled_voice_group();
-    let response = ok(
-        &home,
-        "assistant_voice_request",
-        json!({
-            "group_id":group_id,
-            "text":"",
-            "instruction":" ",
-            "request_text":"  整理行动项  ",
-            "target":"@foreman"
-        }),
-    );
-
-    assert_eq!(response.result["request"]["request_text"], "整理行动项");
-    assert_eq!(
-        response.result["notify_event"]["data"]["text"],
-        "整理行动项"
-    );
-}
-
-#[test]
-fn disabling_voice_secretary_removes_internal_actor_without_touching_documents() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    home.initialize().expect("initialize");
-    let store = GroupStore::new(home.clone()).expect("store");
-    let group = store.create("voice", "").expect("group");
-    store
-        .mutate(&group.group_id, |doc| {
-            let mut actor = Actor::new("foreman");
-            actor.role = Some(ActorRole::Foreman);
-            doc.actors.push(actor);
-            Ok(())
-        })
-        .expect("foreman");
-    ok(
-        &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"patch":{"enabled":true}}),
-    );
-    ok(
-        &home,
-        "assistant_voice_document_save",
-        json!({"group_id":group.group_id,"document_path":"docs/voice-secretary/notes.md","content":"keep me"}),
-    );
-    ok(
-        &home,
-        "actor_env_private_update",
-        json!({
-            "group_id":group.group_id,
-            "actor_id":"voice-secretary",
-            "by":"user",
-            "set":{"VOICE_TEST_SECRET":"retire-me"}
-        }),
-    );
-    let secret_dir = home
-        .root()
-        .join("state/secrets/actors")
-        .join(&group.group_id);
-    assert!(
-        std::fs::read_dir(&secret_dir)
-            .expect("secret directory")
-            .filter_map(Result::ok)
-            .any(|entry| entry.file_name().to_string_lossy().ends_with(".json"))
-    );
-    ok(
-        &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"patch":{"enabled":false}}),
-    );
-    let loaded = store.load(&group.group_id).expect("load");
-    assert!(
-        !loaded
-            .actors
-            .iter()
-            .any(|actor| actor.id == "voice-secretary")
-    );
-    assert!(
-        !secret_dir.exists()
-            || std::fs::read_dir(secret_dir)
-                .expect("retired secret directory")
-                .filter_map(Result::ok)
-                .all(|entry| !entry.file_name().to_string_lossy().ends_with(".json"))
-    );
-    assert_eq!(
-        load_voice_state(&home, &group.group_id)["documents"][0]["content"],
-        "keep me"
-    );
-}
-
-#[test]
-fn failed_voice_secretary_disable_restores_actor_secrets() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    home.initialize().expect("initialize");
-    let store = GroupStore::new(home.clone()).expect("store");
-    let group = store.create("voice", "").expect("group");
-    store
-        .mutate(&group.group_id, |doc| {
-            let mut actor = Actor::new("foreman");
-            actor.role = Some(ActorRole::Foreman);
-            doc.actors.push(actor);
-            Ok(())
-        })
-        .expect("foreman");
-    ok(
-        &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"patch":{"enabled":true}}),
-    );
-    ok(
-        &home,
-        "actor_env_private_update",
-        json!({
-            "group_id":group.group_id,
-            "actor_id":"voice-secretary",
-            "by":"user",
-            "set":{"VOICE_TEST_SECRET":"restore-me"}
-        }),
-    );
-    let lock_path = home
-        .groups_dir()
-        .join(&group.group_id)
-        .join("group.yaml.lock");
-    std::fs::remove_file(&lock_path).expect("remove lock file");
-    std::fs::create_dir(&lock_path).expect("block group mutation");
-
-    let failed = call(
-        &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"patch":{"enabled":false}}),
-    );
-    assert!(!failed.ok);
-    let loaded = store.load(&group.group_id).expect("unchanged group");
-    assert!(
-        loaded
-            .actors
-            .iter()
-            .any(|actor| actor.id == "voice-secretary")
-    );
-    let secret_dir = home
-        .root()
-        .join("state/secrets/actors")
-        .join(&group.group_id);
-    assert!(
-        std::fs::read_dir(secret_dir)
-            .expect("restored secret directory")
-            .filter_map(Result::ok)
-            .any(|entry| entry.file_name().to_string_lossy().ends_with(".json"))
-    );
-}
-
-#[test]
 fn legacy_voice_secretary_shape_is_migrated_to_canonical_runtime_state() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -1340,19 +642,18 @@ fn legacy_voice_secretary_shape_is_migrated_to_canonical_runtime_state() {
     assert_eq!(legacy_alias.result["assistant"]["enabled"], true);
     ok(
         &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"patch":{"enabled":false,"config":{"recognition_language":"zh-CN"}}}),
+        "voice_secretary_settings_update",
+        json!({"settings":{"config":{"recognition_language":"zh-CN"}}}),
     );
     let loaded = store.load(&group.group_id).expect("load");
     let state = &loaded.extra["assistants"];
     assert!(state.get("assistant").is_none());
     assert_eq!(
-        state["voice_secretary"]["config"]["recognition_language"],
+        load_voice_state(&home, &group.group_id)["assistant"]["config"]["recognition_language"],
         "zh-CN"
     );
-    assert_eq!(state["voice_secretary"]["enabled"], false);
     let runtime = load_voice_state(&home, &group.group_id);
-    assert_eq!(runtime["assistant"]["lifecycle"], "disabled");
+    assert_eq!(runtime["assistant"]["lifecycle"], "idle");
 }
 
 #[test]
@@ -1496,11 +797,6 @@ fn voice_input_retries_cleanly_after_document_preflight_failure() {
             Ok(())
         })
         .expect("seed");
-    ok(
-        &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"patch":{"enabled":true}}),
-    );
     let args = json!({"group_id":group.group_id,"by":"user","session_id":"retry-session","segment_id":"retry-segment","text":"必须可靠送达","document_path":"docs/voice-secretary/retry.md","is_final":true});
     let failed = call(&home, "assistant_voice_transcript_append", args.clone());
     assert!(!failed.ok);
@@ -1518,12 +814,19 @@ fn voice_input_retries_cleanly_after_document_preflight_failure() {
     std::fs::remove_file(workspace.join("docs")).expect("remove blocker");
     let retried = ok(&home, "assistant_voice_transcript_append", args);
     assert_eq!(retried.result["input_event_created"], true);
-    let read = ok(
-        &home,
-        "assistant_voice_document_input_read",
-        json!({"group_id":group.group_id,"by":"voice-secretary"}),
-    );
-    assert_eq!(read.result["item_count"], 1);
+    let source_path = home
+        .root()
+        .join("voice-secretary")
+        .join(&group.group_id)
+        .join("input_events.jsonl");
+    let rows = std::fs::read_to_string(source_path)
+        .expect("source log")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("source"))
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0]["secretary_target"].is_object());
+    assert_eq!(retried.result["secretary_processing_deferred"], true);
 }
 
 #[test]
@@ -1574,7 +877,7 @@ fn voice_document_and_input_permissions_are_enforced() {
 }
 
 #[test]
-fn enabling_voice_secretary_rolls_back_runtime_start_failure() {
+fn global_secretary_enablement_does_not_launch_the_foreman_runtime() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
@@ -1590,101 +893,20 @@ fn enabling_voice_secretary_rolls_back_runtime_start_failure() {
             Ok(())
         })
         .expect("running group");
-    let response = call(
-        &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"patch":{"enabled":true}}),
-    );
-    assert!(!response.ok);
-    assert_eq!(
-        response.error.as_ref().map(|error| error.code.as_str()),
-        Some("voice_secretary_start_failed")
-    );
-    let restored = store.load(&group.group_id).expect("restored group");
+    let response = call(&home, "assistant_state", json!({"group_id":group.group_id}));
+    assert!(response.ok);
+    assert!(response.result.get("actor_started").is_none());
+    let saved = store.load(&group.group_id).expect("saved group");
     assert!(
-        !restored
+        !saved
             .actors
             .iter()
             .any(|actor| actor.id == "voice-secretary")
     );
-    assert!(
-        !restored
-            .extra
-            .get("assistants")
-            .and_then(|state| state.get("voice_secretary"))
-            .and_then(|assistant| assistant.get("enabled"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    );
+    assert_eq!(response.result["assistant"]["enabled"], true);
 }
 
 #[cfg(unix)]
-#[test]
-fn voice_secretary_health_tracks_its_local_process() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let workspace = temp.path().join("workspace");
-    std::fs::create_dir(&workspace).expect("workspace");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    home.initialize().expect("initialize");
-    let store = GroupStore::new(home.clone()).expect("store");
-    let group = store.create("voice", "").expect("group");
-    store
-        .mutate(&group.group_id, |doc| {
-            let mut foreman = Actor::new("foreman");
-            foreman.role = Some(ActorRole::Foreman);
-            foreman.runtime = ActorRuntime::Custom;
-            foreman.command = vec!["sh".into(), "-c".into(), "sleep 30".into()];
-            doc.actors.push(foreman);
-            doc.scopes.push(Scope {
-                scope_key: "scope".into(),
-                url: workspace.to_string_lossy().into_owned(),
-                label: "workspace".into(),
-                git_remote: String::new(),
-            });
-            doc.active_scope_key = "scope".into();
-            doc.running = true;
-            Ok(())
-        })
-        .expect("running group");
-
-    let enabled = ok(
-        &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"patch":{"enabled":true}}),
-    );
-    assert_eq!(
-        enabled.result["assistant"]["health"]["actor"]["running"],
-        true
-    );
-    assert!(
-        enabled.result["assistant"]["health"]["actor"]["pid"]
-            .as_u64()
-            .is_some()
-    );
-
-    ok(
-        &home,
-        "actor_stop",
-        json!({"group_id":group.group_id,"actor_id":"voice-secretary","by":"user"}),
-    );
-    store
-        .mutate(&group.group_id, |doc| {
-            doc.running = true;
-            Ok(())
-        })
-        .expect("keep group running after provider exit");
-    let stopped = ok(&home, "assistant_index", json!({"group_id":group.group_id}));
-    assert_eq!(
-        stopped.result["assistant"]["health"]["actor"]["running"],
-        false
-    );
-    assert_eq!(
-        stopped.result["assistant"]["health"]["actor"]["pid"],
-        Value::Null
-    );
-    assert_eq!(stopped.result["assistant"]["lifecycle"], "failed");
-}
-
 #[test]
 fn durable_log_remains_idempotent_after_session_window_is_trimmed() {
     let (_temp, home, store, group_id) = enabled_voice_group();
@@ -1705,82 +927,6 @@ fn durable_log_remains_idempotent_after_session_window_is_trimmed() {
             .count(),
         1
     );
-}
-
-#[test]
-fn voice_input_ignores_legacy_events_missing_segment_identity() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
-    let ledger_path = store.ledger_path(&group_id).expect("ledger");
-    let mut legacy_input = Event::new("assistant.voice.input", &group_id);
-    legacy_input.data = json!({
-        "assistant_id":"voice_secretary",
-        "input_kind":"asr_transcript",
-        "input_preview":"旧版事件没有录音段标识"
-    })
-    .as_object()
-    .cloned()
-    .expect("legacy input data");
-    ledger::append(&ledger_path, &legacy_input).expect("append legacy input");
-    let mut legacy_notice = Event::new("system.notify", &group_id);
-    legacy_notice.data = json!({
-        "kind":"voice_secretary_input",
-        "context":{"input_envelope":{"input_id":"legacy-input"}}
-    })
-    .as_object()
-    .cloned()
-    .expect("legacy notice data");
-    ledger::append(&ledger_path, &legacy_notice).expect("append legacy notice");
-    ledger_archive::compact(&home, &group_id, "legacy voice fixture")
-        .expect("compact ledger")
-        .expect("archived segment");
-
-    let response = ok(
-        &home,
-        "assistant_voice_transcript_append",
-        json!({
-            "group_id":group_id,
-            "by":"user",
-            "session_id":"current-session",
-            "segment_id":"current-segment",
-            "text":"新语音仍应正常投递",
-            "document_path":"docs/voice-secretary/legacy-compatible.md",
-            "is_final":true
-        }),
-    );
-
-    assert_eq!(response.result["input_event_created"], true);
-    assert_eq!(response.result["input_notify_emitted"], true);
-    let events = ledger::read_all(&ledger_path).expect("events");
-    assert!(events.iter().any(|event| {
-        event.kind == "assistant.voice.input"
-            && event.data.get("session_id").and_then(Value::as_str) == Some("current-session")
-            && event.data.get("segment_id").and_then(Value::as_str) == Some("current-segment")
-    }));
-}
-
-#[test]
-fn durable_log_recovers_missing_ledger_delivery() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
-    let input_root = home.root().join("voice-secretary").join(&group_id);
-    std::fs::create_dir_all(&input_root).expect("input root");
-    std::fs::write(
-        input_root.join("inputs.jsonl"),
-        format!(
-            "{}\n",
-            json!({"schema":1,"seq":1,"input_id":"vin-canonical","kind":"asr_transcript","text":"恢复投递","language":"zh-CN","document_path":"docs/voice-secretary/recover.md","session_id":"recover-session","segment_id":"recover-segment","by":"user","trigger":{},"created_at":"2026-01-01T00:00:00Z"})
-        ),
-    )
-    .expect("seed input log");
-    let response = ok(
-        &home,
-        "assistant_voice_transcript_append",
-        json!({"group_id":group_id,"by":"user","session_id":"recover-session","segment_id":"recover-segment","text":"恢复投递","document_path":"docs/voice-secretary/recover.md","is_final":true}),
-    );
-    assert_eq!(response.result["input_event"]["input_id"], "vin-canonical");
-    let events = ledger::read_all(&store.ledger_path(&group_id).expect("ledger")).expect("events");
-    assert!(events.iter().any(|event| {
-        event.kind == "assistant.voice.input" && event.data["input_id"] == "vin-canonical"
-    }));
 }
 
 #[test]
@@ -1956,7 +1102,7 @@ fn listing_reconciles_repository_document_edits_once() {
     let first = ok(
         &home,
         "assistant_voice_document_list",
-        json!({"group_id":group_id,"by":"voice-secretary"}),
+        json!({"group_id":group_id,"by":"user"}),
     );
     let document = &first.result["documents"][0];
     assert_eq!(document["content"], "# Updated\n\n- 新内容\n");
@@ -1970,7 +1116,7 @@ fn listing_reconciles_repository_document_edits_once() {
     let second = ok(
         &home,
         "assistant_voice_document_list",
-        json!({"group_id":group_id,"by":"voice-secretary"}),
+        json!({"group_id":group_id,"by":"user"}),
     );
     assert_eq!(second.result["documents"][0]["revision_count"], 2);
     assert_eq!(
@@ -2018,7 +1164,7 @@ fn concurrent_document_lists_reconcile_only_once() {
                 ok(
                     &home,
                     "assistant_voice_document_list",
-                    json!({"group_id":group_id,"by":"voice-secretary"}),
+                    json!({"group_id":group_id,"by":"user"}),
                 )
             })
         })
@@ -2097,11 +1243,6 @@ fn enabled_voice_group() -> (tempfile::TempDir, HomeLayout, GroupStore, String) 
             Ok(())
         })
         .expect("group");
-    ok(
-        &home,
-        "assistant_settings_update",
-        json!({"group_id":group.group_id,"patch":{"enabled":true}}),
-    );
     (temp, home, store, group.group_id)
 }
 

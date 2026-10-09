@@ -83,7 +83,7 @@ pub(super) async fn connect_at(
     if !config.configured(provider) {
         return Err(AsrError::new(
             "external_asr_not_configured",
-            "Configure external ASR credentials in Settings > Assistants first",
+            "Configure external ASR credentials in Settings > Voice > Voice Secretary first",
         ));
     }
     let task = uuid::Uuid::new_v4().to_string();

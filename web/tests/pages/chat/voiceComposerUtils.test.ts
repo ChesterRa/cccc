@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  displayAskFeedbackStatus,
   normalizeVoiceRecognitionLanguageForBackend,
   shouldAutoOpenVoiceReplyBubble,
   stripUncertainSpeakerPrefix,
@@ -10,6 +11,20 @@ import {
 } from "../../../src/pages/chat/voice-secretary/voiceComposerUtils";
 
 describe("voice composer utils", () => {
+  it.each(["pending", "working"])(
+    "keeps an old %s request active without inventing a reply",
+    (status) => {
+      expect(
+        displayAskFeedbackStatus({
+          request_id: "old-request",
+          status,
+          reply_text: "",
+          created_at: "2000-01-01T00:00:00Z",
+          updated_at: "2000-01-01T00:00:00Z",
+        }),
+      ).toBe(status);
+    },
+  );
   it("keeps archived and deleted documents out of the working list", () => {
     expect(
       visibleVoiceDocuments([

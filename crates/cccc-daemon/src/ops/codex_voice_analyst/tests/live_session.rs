@@ -73,6 +73,7 @@ async fn live_codex_empty_actor_and_analyst_resume_with_native_terminal() {
                     )
                     .await
                 }
+                SessionPurpose::VoiceSecretary => unreachable!("separate secretary admission"),
             }
             .expect("launch empty managed session");
             let observed = std::panic::AssertUnwindSafe(async {

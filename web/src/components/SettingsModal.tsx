@@ -55,8 +55,10 @@ const TranscriptTab = lazy(() =>
 const GuidanceTab = lazy(() =>
   import("./modals/settings/GuidanceTab").then((module) => ({ default: module.GuidanceTab })),
 );
-const AssistantsTab = lazy(() =>
-  import("./modals/settings/AssistantsTab").then((module) => ({ default: module.AssistantsTab })),
+const VoiceSettingsTab = lazy(() =>
+  import("./modals/settings/VoiceSettingsTab").then((module) => ({
+    default: module.VoiceSettingsTab,
+  })),
 );
 const GroupSpaceTab = lazy(() =>
   import("./modals/settings/GroupSpaceTab").then((module) => ({ default: module.GroupSpaceTab })),
@@ -91,6 +93,7 @@ const DeveloperTab = lazy(() =>
 );
 
 interface SettingsModalProps {
+  codexVoice: import("../features/codexVoice/useCodexVoiceShell").CodexVoiceShellState;
   isOpen: boolean;
   onClose: () => void;
   settings: GroupSettings | null;
@@ -111,6 +114,7 @@ function SettingsTabFallback() {
 }
 
 export function SettingsModal({
+  codexVoice,
   isOpen,
   onClose,
   settings,
@@ -122,7 +126,15 @@ export function SettingsModal({
   groupDoc,
 }: SettingsModalProps) {
   const { t } = useTranslation("settings");
-  const { modalRef } = useModalA11y(isOpen, onClose);
+  const [voiceSection, setVoiceSection] = useState<"secretary" | "realtime">("secretary");
+  const [voiceAudioRequest, setVoiceAudioRequest] = useState(0);
+  const [voiceFeatureRequest, setVoiceFeatureRequest] = useState(0);
+  const voiceBeforeLeave = useRef<() => boolean>(() => true);
+  const requestClose = () => {
+    if (voiceBeforeLeave.current()) onClose();
+  };
+  const initialVoiceFocus = useRef<HTMLElement | null>(null);
+  const { modalRef } = useModalA11y(isOpen, requestClose, { initialFocusRef: initialVoiceFocus });
   const [initialLocation] = useState(() => readSettingsLastLocation(Boolean(groupId)));
   const [scope, setScope] = useState<SettingsScope>(() => initialLocation.scope);
   const [groupTab, setGroupTab] = useState<GroupTabId>(() => initialLocation.groupTab);
@@ -390,6 +402,9 @@ export function SettingsModal({
 
   useEffect(() => {
     if (isOpen) return;
+    initialVoiceFocus.current = null;
+    setVoiceAudioRequest(0);
+    setVoiceFeatureRequest(0);
     observabilityLoaded.current = false;
     setAccountReturnToWebAccess(false);
     setFocusReachOnOpen(false);
@@ -1466,6 +1481,7 @@ export function SettingsModal({
             { id: "account" as const, label: t("tabs.account") },
             { id: "capabilities" as const, label: t("tabs.capabilities") },
             { id: "actorProfiles" as const, label: t("tabs.actorProfiles") },
+            { id: "voice" as const, label: t("tabs.voice") },
           ]
         : []),
       // Non-admin signed-in users see My Profiles; admin already has Actor Profiles covering all
@@ -1497,6 +1513,10 @@ export function SettingsModal({
 
   useEffect(() => {
     if (!isOpen || !settingsTarget) return;
+    if (!voiceBeforeLeave.current()) {
+      clearSettingsTarget();
+      return;
+    }
     const nextScope =
       settingsTarget.scope === "global"
         ? "global"
@@ -1515,13 +1535,17 @@ export function SettingsModal({
       setFocusReachOnOpen(false);
       if (nextTab) setGroupTab(nextTab as GroupTabId);
     }
+    if (settingsTarget.voiceSection) setVoiceSection(settingsTarget.voiceSection);
+    setVoiceAudioRequest(settingsTarget.voiceAudio ? settingsTarget.nonce : 0);
+    setVoiceFeatureRequest(
+      settingsTarget.voiceSection && !settingsTarget.voiceAudio ? settingsTarget.nonce : 0,
+    );
     if (settingsTarget.webModelProvider) setWebModelProvider(settingsTarget.webModelProvider);
     clearSettingsTarget();
   }, [clearSettingsTarget, isOpen, settingsTarget]);
 
   const groupTabs: { id: GroupTabId; label: string }[] = [
     { id: "guidance", label: t("tabs.guidance") },
-    { id: "assistants", label: t("tabs.assistants") },
     { id: "automation", label: t("tabs.automation") },
     { id: "delivery", label: t("tabs.delivery") },
     { id: "space", label: t("tabs.space") },
@@ -1585,7 +1609,7 @@ export function SettingsModal({
   return (
     <ModalFrame
       isDark={isDark}
-      onClose={onClose}
+      onClose={requestClose}
       titleId="settings-modal-title"
       surface="solid"
       title={
@@ -1608,11 +1632,15 @@ export function SettingsModal({
           tabs={tabs}
           activeTab={activeTab}
           onScopeChange={(nextScope) => {
+            if (nextScope !== scope && !voiceBeforeLeave.current()) return;
             setAccountReturnToWebAccess(false);
             setFocusReachOnOpen(false);
             setScope(nextScope);
           }}
-          onTabChange={(tab) => setActiveTab(tab as GroupTabId | GlobalTabId)}
+          onTabChange={(tab) => {
+            if (tab !== activeTab && !voiceBeforeLeave.current()) return;
+            setActiveTab(tab as GroupTabId | GlobalTabId);
+          }}
         />
 
         {/* Main Content Area */}
@@ -1803,15 +1831,6 @@ export function SettingsModal({
 
                 {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} />}
 
-                {activeTab === "assistants" && (
-                  <AssistantsTab
-                    isDark={isDark}
-                    groupId={groupId}
-                    isActive={scope === "group" && activeTab === "assistants"}
-                    busy={busy}
-                  />
-                )}
-
                 {activeTab === "space" && (
                   <GroupSpaceTab
                     isDark={isDark}
@@ -1841,6 +1860,22 @@ export function SettingsModal({
                     isDark={isDark}
                     isActive={scope === "global" && activeTab === "actorProfiles"}
                     scope="global"
+                  />
+                )}
+
+                {activeTab === "voice" && scope === "global" && globalSettingsEnabled && (
+                  <VoiceSettingsTab
+                    voice={codexVoice}
+                    section={voiceSection}
+                    audioRequest={voiceAudioRequest}
+                    featureRequest={voiceFeatureRequest}
+                    initialFocusRef={initialVoiceFocus}
+                    onSectionChange={setVoiceSection}
+                    isDark={isDark}
+                    isActive={isOpen}
+                    onBeforeLeaveChange={(guard) => {
+                      voiceBeforeLeave.current = guard;
+                    }}
                   />
                 )}
 

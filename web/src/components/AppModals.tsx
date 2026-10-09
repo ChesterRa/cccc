@@ -74,6 +74,7 @@ const PresentationViewerModal = lazy(() =>
 );
 
 interface AppModalsProps {
+  codexVoice: import("../features/codexVoice/useCodexVoiceShell").CodexVoiceShellState;
   isDark: boolean;
   theme: Theme;
   textScale: TextScale;
@@ -111,6 +112,7 @@ function LazyModalFallback({ isDark: _ }: { isDark?: boolean }) {
 }
 
 export function AppModals({
+  codexVoice,
   isDark,
   theme,
   textScale,
@@ -2054,6 +2056,7 @@ export function AppModals({
       {modals.settings ? (
         <Suspense fallback={<LazyModalFallback isDark={isDark} />}>
           <SettingsModal
+            codexVoice={codexVoice}
             isOpen={modals.settings}
             onClose={() => closeModal("settings")}
             settings={groupSettings}

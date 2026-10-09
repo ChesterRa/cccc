@@ -24,6 +24,28 @@ pub(crate) async fn call_with_context(
     context: Option<RequestContext<'_>>,
     via_capability_use: bool,
 ) -> Result<Value, ToolCallError> {
+    arguments.remove("_cccc_secretary_token");
+    if crate::secretary_task_mode() {
+        let token = crate::secretary_task_token(home).ok_or(
+            "Secretary task grant is unavailable; no user or Actor authority is available",
+        )?;
+        if name != "cccc_voice_secretary_task" || via_capability_use {
+            return Err("Secretary task sessions cannot call Actor or user tools".into());
+        }
+        if ["group_id", "actor_id", "by", "document_path", "scope_key"]
+            .iter()
+            .any(|key| arguments.contains_key(*key))
+        {
+            return Err("Secretary task targets are fixed by the host".into());
+        }
+        arguments.insert("_cccc_secretary_token".into(), Value::String(token));
+        return Ok(tool_result(Value::Object(
+            daemon(client, "voice_secretary_task", arguments).await?,
+        )));
+    }
+    if name == "cccc_voice_secretary_task" {
+        return Err("This tool requires a host-issued secretary task grant".into());
+    }
     crate::tools::apply_default_action(name, &mut arguments);
     add_runtime_context(home, &mut arguments);
     arguments.remove("_cccc_web_binding");
@@ -149,11 +171,6 @@ fn authorize_tool(
         .get("by")
         .and_then(Value::as_str)
         .unwrap_or("user");
-    if name.starts_with("cccc_voice_secretary_") && actor_id != "voice-secretary" {
-        return Err(format!(
-            "{name} is only available to the voice-secretary actor"
-        ));
-    }
     let group_id = arguments
         .get("group_id")
         .and_then(Value::as_str)

@@ -37,6 +37,12 @@ impl AnalystSession {
                 )
             },
         );
+        let tool_profile = task_tool_profile(purpose, tool_profile);
+        let settings_key = if purpose == SessionPurpose::VoiceSecretary {
+            format!("voice-secretary:{generation}")
+        } else {
+            settings_key
+        };
         environment.insert("CCCC_GROUP_ID".into(), group_id.into());
         environment.insert("CCCC_ACTOR_ID".into(), actor_id.into());
         if let Some(tool_profile) = tool_profile {
@@ -52,6 +58,11 @@ impl AnalystSession {
         ]);
         if let Some(tool_profile) = tool_profile {
             mcp_environment.insert("CCCC_MCP_TOOL_PROFILE".into(), json!(tool_profile));
+        }
+        if purpose == SessionPurpose::VoiceSecretary
+            && let Some(path) = environment.get("CCCC_SECRETARY_TASK_TOKEN_FILE")
+        {
+            mcp_environment.insert("CCCC_SECRETARY_TASK_TOKEN_FILE".into(), json!(path));
         }
         if actor.is_none()
             && let Some(origin) = environment.get(cccc_core::voice_notifications::ORIGIN_ENV)
@@ -106,9 +117,16 @@ impl AnalystSession {
             }
             Err(error) => Err(error),
         };
-        let launched = match result {
+        let mut launched = match result {
             Ok(launched) => launched,
             Err(error) => {
+                if purpose == SessionPurpose::VoiceSecretary
+                    && claude::cleanup_secretary_owner(home, &binding.root)
+                        .await
+                        .is_ok()
+                {
+                    claude::remove_secretary_settings(home, &settings_key)?;
+                }
                 if let Some((group_id, actor_id)) = actor
                     && let Some(attempt) = resume_attempt.as_ref()
                     && let Some((diagnostic, blocked)) = claude::resume_diagnostic(&error)
@@ -127,6 +145,14 @@ impl AnalystSession {
                 return Err(error);
             }
         };
+        if purpose == SessionPurpose::VoiceSecretary {
+            launched
+                .cleanup_paths
+                .push(claude::settings_path(home, &settings_key));
+            launched
+                .cleanup_paths
+                .push(claude::secretary_owner_path(&binding.root)?);
+        }
         if let Some((group_id, actor_id)) = actor
             && let Err(error) = super::super::runtime_session::record_claude_managed_session(
                 home,

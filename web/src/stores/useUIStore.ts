@@ -1,5 +1,6 @@
 // UI state store (tabs, sidebar, toasts, etc.).
 import { create } from "zustand";
+import type { VoiceSecretaryCaptureMode } from "../pages/chat/voice-secretary/voiceSecretaryTypes";
 import {
   clampComposerHeight,
   loadComposerHeight,
@@ -38,6 +39,10 @@ export type MobileSurface = "messages" | "presentation" | "files";
 const MOBILE_SURFACES: MobileSurface[] = ["messages", "presentation", "files"];
 
 export interface ChatSessionState {
+  voiceCaptureMode: VoiceSecretaryCaptureMode;
+  voicePromptAutoRefine: boolean;
+  /** Empty means follow the instance recognition-language default. */
+  voiceRecognitionLanguage: string;
   workView: GroupWorkView;
   terminalPage: number;
   showScrollButton: boolean;
@@ -53,6 +58,9 @@ export interface ChatSessionState {
 }
 
 const DEFAULT_CHAT_SESSION: ChatSessionState = {
+  voiceCaptureMode: "prompt",
+  voicePromptAutoRefine: false,
+  voiceRecognitionLanguage: "",
   workView: "messages",
   terminalPage: 0,
   showScrollButton: false,
@@ -91,6 +99,7 @@ interface UIState {
   chatSessions: Record<string, ChatSessionState>;
   actorBusy: Record<string, number>;
   webReadOnly: boolean;
+  canAccessGlobalSettings: boolean | null;
   workspaceFileViewerGroupId: string;
   sseStatus: "connected" | "connecting" | "disconnected";
 
@@ -122,8 +131,18 @@ interface UIState {
   setChatPresentationDockOpen: (groupId: string, v: boolean) => void;
   setChatPresentationDisplayMode: (groupId: string, v: "modal" | "split") => void;
   setChatFilesPanelOpen: (groupId: string, v: boolean) => void;
+  setChatVoicePreferences: (
+    groupId: string,
+    patch: Partial<
+      Pick<
+        ChatSessionState,
+        "voiceCaptureMode" | "voicePromptAutoRefine" | "voiceRecognitionLanguage"
+      >
+    >,
+  ) => void;
   setWorkspaceFileViewerGroupId: (groupId: string) => void;
   setWebReadOnly: (v: boolean) => void;
+  setCanAccessGlobalSettings: (v: boolean | null) => void;
   setSSEStatus: (v: "connected" | "connecting" | "disconnected") => void;
 }
 
@@ -184,6 +203,14 @@ function sanitizeTerminalPage(value: unknown): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
+function voiceCaptureMode(value: unknown): VoiceSecretaryCaptureMode {
+  return value === "document" || value === "instruction" ? value : "prompt";
+}
+
+function voiceRecognitionLanguage(value: unknown): string {
+  return typeof value === "string" && value.length <= 80 ? value.trim() : "";
+}
+
 export function groupMessagesVisible(
   groupId: string,
   state: Pick<
@@ -208,6 +235,9 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
     const gid = String(groupId || "").trim();
     if (!gid || !raw || typeof raw !== "object") continue;
     const session = raw as {
+      voiceCaptureMode?: unknown;
+      voicePromptAutoRefine?: unknown;
+      voiceRecognitionLanguage?: unknown;
       workView?: unknown;
       terminalPage?: unknown;
       chatFilter?: unknown;
@@ -220,6 +250,9 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
     };
     next[gid] = {
       ...DEFAULT_CHAT_SESSION,
+      voiceCaptureMode: voiceCaptureMode(session.voiceCaptureMode),
+      voicePromptAutoRefine: session.voicePromptAutoRefine === true,
+      voiceRecognitionLanguage: voiceRecognitionLanguage(session.voiceRecognitionLanguage),
       workView: session.workView === "terminals" ? "terminals" : "messages",
       terminalPage: sanitizeTerminalPage(session.terminalPage),
       chatFilter:
@@ -260,6 +293,9 @@ function saveChatSessions(sessions: Record<string, ChatSessionState>): void {
       Object.entries(sessions).map(([groupId, session]) => [
         groupId,
         {
+          voiceCaptureMode: session.voiceCaptureMode,
+          voicePromptAutoRefine: session.voicePromptAutoRefine,
+          voiceRecognitionLanguage: session.voiceRecognitionLanguage,
           workView: session.workView,
           terminalPage: session.terminalPage,
           chatFilter: session.chatFilter,
@@ -317,6 +353,7 @@ export const useUIStore = create<UIState>((set) => ({
   composerHeight: loadComposerHeight(),
   chatSessions: loadChatSessions(),
   webReadOnly: false,
+  canAccessGlobalSettings: null,
   workspaceFileViewerGroupId: "",
   sseStatus: "disconnected" as const,
 
@@ -479,7 +516,24 @@ export const useUIStore = create<UIState>((set) => ({
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),
+  setChatVoicePreferences: (groupId, patch) =>
+    set((state) => {
+      const preferences: Partial<ChatSessionState> = {};
+      if (patch.voiceCaptureMode !== undefined)
+        preferences.voiceCaptureMode = voiceCaptureMode(patch.voiceCaptureMode);
+      if (patch.voicePromptAutoRefine !== undefined)
+        preferences.voicePromptAutoRefine = patch.voicePromptAutoRefine === true;
+      if (patch.voiceRecognitionLanguage !== undefined)
+        preferences.voiceRecognitionLanguage = voiceRecognitionLanguage(
+          patch.voiceRecognitionLanguage,
+        );
+      const chatSessions = updateChatSession(state.chatSessions, groupId, preferences);
+      if (chatSessions === state.chatSessions) return state;
+      saveChatSessions(chatSessions);
+      return { chatSessions };
+    }),
   setWorkspaceFileViewerGroupId: (groupId) => set({ workspaceFileViewerGroupId: groupId }),
   setWebReadOnly: (v) => set({ webReadOnly: v }),
+  setCanAccessGlobalSettings: (v) => set({ canAccessGlobalSettings: v }),
   setSSEStatus: (v) => set({ sseStatus: v }),
 }));

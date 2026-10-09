@@ -1,3 +1,4 @@
+import { useModalA11y } from "../../../hooks/useModalA11y";
 import { supportsAcpMode } from "../../../types";
 import { AcpRuntimeMode } from "../AcpRuntimeMode";
 import { isWebModelRuntime } from "../../../types";
@@ -32,6 +33,11 @@ interface ActorProfilesTabProps {
   isDark: boolean;
   isActive: boolean;
   scope: "global" | "my";
+  editorOnly?: boolean;
+  structuredOnly?: boolean;
+  editorRequest?: { profile?: ActorProfile; nonce: number; defaultName?: string };
+  onEditorClose?: () => void;
+  onSaved?: (profile: ActorProfile) => void;
 }
 
 type EditorState = {
@@ -111,7 +117,16 @@ function buildEditor(profile?: ActorProfile | null): EditorState {
   };
 }
 
-export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabProps) {
+export function ActorProfilesTab({
+  isDark,
+  isActive,
+  scope,
+  editorOnly = false,
+  structuredOnly = false,
+  editorRequest,
+  onEditorClose,
+  onSaved,
+}: ActorProfilesTabProps) {
   const { t } = useTranslation("settings");
   const groups = useGroupStore((s) => s.groups);
   const refreshGroups = useGroupStore((s) => s.refreshGroups);
@@ -196,13 +211,17 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   };
 
   const closeEditor = () => {
+    if (editorBusy) return;
     setDuplicateSourceProfileId("");
     setEditorOpen(false);
+    onEditorClose?.();
   };
+  const { modalRef: editorRef } = useModalA11y(editorOpen, closeEditor);
 
   const editorModal = editorOpen ? (
     <div
       className="fixed inset-0 z-[1000] flex items-stretch justify-center p-3 sm:items-center"
+      ref={editorRef}
       role="dialog"
       aria-modal="true"
       onPointerDown={(e) => {
@@ -249,6 +268,21 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
               <label className={labelClass()}>{t("actorProfiles.runtime")}</label>
               <RuntimeSelector
                 value={editor.runtime}
+                allowedRuntimes={
+                  structuredOnly
+                    ? [
+                        "codex",
+                        "claude",
+                        "grok",
+                        "opencode",
+                        "kilo",
+                        "antigravity",
+                        "copilot",
+                        "devin",
+                        "cursor",
+                      ]
+                    : undefined
+                }
                 runtimeMode={editor.runtimeMode}
                 allowUndetected
                 disabled={editorBusy}
@@ -259,7 +293,8 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                     return {
                       ...prev,
                       runtime: nextRuntime,
-                      runtimeMode: "default",
+                      runtimeMode:
+                        structuredOnly && supportsAcpMode(nextRuntime) ? "acp" : "default",
                       useDefaultCommand: supportsDefault ? prev.useDefaultCommand : false,
                       command: supportsDefault && prev.useDefaultCommand ? "" : prev.command,
                     };
@@ -271,7 +306,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             </div>
           </div>
 
-          {supportsAcpMode(editor.runtime) && (
+          {!structuredOnly && supportsAcpMode(editor.runtime) && (
             <AcpRuntimeMode
               runtime={editor.runtime}
               value={editor.runtimeMode}
@@ -553,11 +588,11 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   };
 
   useEffect(() => {
-    if (isActive) {
+    if (isActive && !editorOnly) {
       void loadProfiles();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive]);
+  }, [isActive, editorOnly]);
 
   const openNew = () => {
     setEditor(buildEditor());
@@ -624,6 +659,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
           const lines = usage
             .slice(0, 6)
             .map((item) => {
+              if (item.consumer === "voice_secretary") return t("voiceSettings.profileUsage");
               const gid = String(item.group_id || "").trim();
               const aid = String(item.actor_id || "").trim();
               if (!gid || !aid) return "";
@@ -710,6 +746,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
       });
       const lines = usage
         .map((item) => {
+          if (item.consumer === "voice_secretary") return t("voiceSettings.profileUsage");
           const gid = String(item.group_id || "").trim();
           const aid = String(item.actor_id || "").trim();
           if (!gid || !aid) return "";
@@ -858,12 +895,25 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
       await loadProfiles();
       setDuplicateSourceProfileId("");
       setEditorOpen(false);
+      onSaved?.(profile);
     } catch {
       setEditorErr(t("actorProfiles.saveFailed"));
     } finally {
       setEditorBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!editorRequest) return;
+    if (editorRequest.profile) void openEdit(editorRequest.profile);
+    else {
+      openNew();
+      setEditor((current) => ({ ...current, name: editorRequest.defaultName || "" }));
+    }
+    // The request is a user action, not a response to form state changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorRequest]);
+  if (editorOnly) return editorModal ? <BodyPortal>{editorModal}</BodyPortal> : null;
 
   return (
     <div className="space-y-5">

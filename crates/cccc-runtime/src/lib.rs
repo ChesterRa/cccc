@@ -62,7 +62,7 @@ pub use manager::{
 pub use output::HistoryPage;
 #[cfg(unix)]
 pub use process_tree::protect_owned_process_groups;
-pub use process_tree::{OwnedProcessTree, force_terminate_owned};
+pub use process_tree::{OwnedProcessTree, force_terminate_owned, owned_process_recovery_pending};
 pub use session::{LaunchSpec, SessionStatus};
 pub use terminal_attach::{TerminalAttachMode, TerminalAttachment, TerminalInput, TerminalOutput};
 pub use terminal_initial_output::{TerminalInitialOutput, TerminalInitialOutputKind};

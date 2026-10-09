@@ -1,6 +1,7 @@
 use cccc_contracts::{DaemonRequest, Event, utc_now};
 use cccc_core::{GroupStore, HomeLayout, assistant_state, ledger};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use std::io;
 use uuid::Uuid;
 
@@ -9,7 +10,6 @@ use crate::dispatch::{
     OpError, OpResult, bool_arg, first_non_blank_arg, object, required_arg, string_arg,
 };
 
-const ACTOR_ID: &str = "voice-secretary";
 const ASSISTANT_PRINCIPAL: &str = "assistant:voice_secretary";
 const DEFAULT_OPERATION: &str = "append_to_composer_end";
 const MAX_RECORDS: usize = 30;
@@ -165,6 +165,7 @@ pub fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     forwarded.args.insert(
         "metadata".into(),
         json!({
+            "user_preview": (if composer_text.is_empty() { &merged_transcript } else { &composer_text }).chars().take(240).collect::<String>(),
             "target_kind": "composer",
             "request_id": request_id,
             "operation": operation,
@@ -180,8 +181,7 @@ pub fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 pub fn submit(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    let by = string_arg(request, "by").unwrap_or_else(|| ACTOR_ID.into());
-    if !matches!(by.as_str(), ACTOR_ID | ASSISTANT_PRINCIPAL) {
+    if string_arg(request, "by").as_deref() != Some(ASSISTANT_PRINCIPAL) {
         return Err(OpError::new(
             "assistant_voice_prompt_draft_forbidden",
             "prompt drafts can only be submitted by voice-secretary",
@@ -242,6 +242,7 @@ pub fn submit(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "status": status,
             "operation": operation,
             "draft_text": if no_op { "" } else { &draft_text },
+            "secretary_task_id": string_arg(request, "secretary_task_id").unwrap_or_default(),
             "draft_preview": if no_op { "" } else { &draft_preview },
             "summary": summary,
             "composer_snapshot_hash": snapshot_hash,
@@ -367,7 +368,7 @@ fn render_input(
         sections.push(format!("Recent context:\n{composer_context}"));
     }
     sections.push(format!(
-        "Required output:\nUse MCP tool cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"{request_id}\", draft_text=\"...\").\n{draft_rule}"
+        "Required output:\nUse the task tool cccc_voice_secretary_task(action=\"draft\", draft_text=\"...\").\n{draft_rule}"
     ));
     sections.join("\n\n")
 }
@@ -460,6 +461,7 @@ fn append_event(
 ) -> Result<Event, OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let mut event = Event::new("assistant.voice.prompt_draft", group_id);
+    event.scope_key = string_arg(request, "scope_key").unwrap_or_default();
     event.by = string_arg(request, "by").unwrap_or_else(|| ASSISTANT_PRINCIPAL.into());
     event.data = json!({
         "assistant_id": "voice_secretary",
@@ -471,6 +473,22 @@ fn append_event(
     .as_object()
     .cloned()
     .unwrap_or_default();
+    if let Some(task_id) = string_arg(request, "secretary_task_id").filter(|id| !id.is_empty()) {
+        event
+            .data
+            .insert("secretary_task_id".into(), json!(task_id));
+        event.id = format!(
+            "{:x}",
+            Sha256::digest(format!("secretary:{task_id}:{action}"))
+        );
+        if let Some(previous) = ledger::read_all(&store.ledger_path(group_id).map_err(OpError::io)?)
+            .map_err(OpError::io)?
+            .into_iter()
+            .find(|item| item.id == event.id)
+        {
+            return Ok(previous);
+        }
+    }
     ledger::append(&store.ledger_path(group_id).map_err(OpError::io)?, &event)
         .map_err(OpError::io)?;
     Ok(event)

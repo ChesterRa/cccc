@@ -7,8 +7,6 @@ import type {
 import { createVoiceTranscriptItem, type VoiceTranscriptItem } from "./voiceStreamModel";
 import { projectVoiceTranscriptRevisions } from "./voiceTranscriptRevisions";
 import { voiceTranscriptSourceDetail, voiceTranscriptSourceLabel } from "./voiceTranscriptSource";
-const VOICE_ASK_ACTIVE_TIMEOUT_MS = 90_000;
-const VOICE_PROMPT_REQUEST_STALE_MS = 180_000;
 const VOICE_TRANSCRIPT_SUMMARY_MAX_CHARS = 72;
 export function visibleVoiceDocuments(
   documents: AssistantVoiceDocument[],
@@ -63,28 +61,34 @@ export function promptDraftApplyMode(draft: AssistantVoicePromptDraft): "append"
   return "append";
 }
 
-export function isVoicePromptRequestFresh(startedAt: number, nowMs = Date.now()): boolean {
-  return startedAt > 0 && nowMs - startedAt < VOICE_PROMPT_REQUEST_STALE_MS;
-}
-
 export function voicePromptRequestOwnership({
   requestId,
   pendingGroupId,
   targetGroupId,
-  startedAt,
-  nowMs = Date.now(),
+  task,
 }: {
   requestId: string;
   pendingGroupId: string;
   targetGroupId: string;
-  startedAt: number;
-  nowMs?: number;
+  task?: {
+    target: { request_id: string; group_id: string };
+    phase: string;
+    cleanup_confirmed: boolean;
+  } | null;
 }): "none" | "same_group" | "other_group" {
-  if (!String(requestId || "").trim() || !isVoicePromptRequestFresh(startedAt, nowMs)) {
+  if (!String(requestId || "").trim() || !String(pendingGroupId || "").trim()) {
     return "none";
   }
   const pending = String(pendingGroupId || "").trim();
   const target = String(targetGroupId || "").trim();
+  // An explicit new request can replace a confirmed failure/cancellation, not uncertain work.
+  if (
+    task?.target.request_id === requestId &&
+    task.target.group_id === pending &&
+    task.cleanup_confirmed &&
+    (task.phase === "failed" || task.phase === "cancelled")
+  )
+    return "none";
   return pending && target && pending === target ? "same_group" : "other_group";
 }
 
@@ -161,16 +165,9 @@ export function shouldAutoOpenVoiceReplyBubble(params: {
   return Boolean(params.previousReplyKey && params.previousReplyKey !== params.dismissKey);
 }
 
-export function displayAskFeedbackStatus(item: AssistantVoiceAskFeedback, nowMs: number): string {
+export function displayAskFeedbackStatus(item: AssistantVoiceAskFeedback): string {
   const status = askFeedbackStatusKey(item.status);
-  if (!isActiveAskFeedbackStatus(status)) {
-    if (status === "done") return "";
-    return status;
-  }
-  const touchedAt =
-    assistantVoiceTimestampMs(item.updated_at) || assistantVoiceTimestampMs(item.created_at);
-  if (touchedAt > 0 && nowMs - touchedAt >= VOICE_ASK_ACTIVE_TIMEOUT_MS) return "";
-  return status === "pending" ? "working" : status;
+  return status === "done" ? "" : status;
 }
 
 export function askFeedbackDisplayText(item: AssistantVoiceAskFeedback): string {

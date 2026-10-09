@@ -49,6 +49,8 @@ mod terminal_ws;
 mod terminal_ws_bootstrap;
 mod terminal_ws_flow;
 mod terminal_ws_protocol;
+mod voice_secretary;
+mod voice_secretary_terminal;
 mod web_model_browser;
 mod web_model_connector_activity;
 mod web_model_connector_provisioning;
@@ -89,6 +91,7 @@ pub fn router() -> Router<AppState> {
         .merge(group_copy::routes())
         .merge(actors::routes())
         .merge(assistants::routes())
+        .merge(voice_secretary::routes())
         .merge(group_space::routes())
         .merge(group_space_provider::routes())
         .merge(group_workspace::routes())

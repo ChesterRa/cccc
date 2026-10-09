@@ -43,7 +43,6 @@ mod tests {
     #[test]
     fn every_published_tool_has_an_intended_exposure_path() {
         let ordinary = cccc_core::actor_base_tool_names("peer", None);
-        let secretary = cccc_core::actor_base_tool_names("voice-secretary", None);
         let temp = tempfile::tempdir().expect("temp");
         let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
         let packs = cccc_core::capabilities::CapabilityStore::new(home)
@@ -52,9 +51,9 @@ mod tests {
             .into_iter()
             .flat_map(|p| p.tool_names);
         let reachable = ordinary
-            .chain(secretary)
             .chain(cccc_core::web_model_tool_names())
             .chain(cccc_core::USER_CONTROL_TOOL_NAMES.iter().copied())
+            .chain(cccc_core::VOICE_SECRETARY_TASK_TOOL_NAMES.iter().copied())
             .map(str::to_owned)
             .chain(packs)
             .collect::<BTreeSet<_>>();
@@ -76,7 +75,15 @@ mod tests {
             .filter_map(|tool| tool["name"].as_str())
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(catalog.len(), 54);
+        assert_eq!(catalog.len(), 52);
+        assert!(names.contains("cccc_voice_secretary_task"));
+        for retired in [
+            "cccc_voice_secretary_document",
+            "cccc_voice_secretary_composer",
+            "cccc_voice_secretary_request",
+        ] {
+            assert!(!names.contains(retired));
+        }
         assert!(names.contains("cccc_connect"));
         assert_eq!(names.len(), catalog.len());
         assert!(names.contains("cccc_code_exec"));

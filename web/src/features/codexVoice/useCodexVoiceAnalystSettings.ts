@@ -10,8 +10,6 @@ import {
   copyVoiceAnalystPrivateEnvToProfile,
   fetchCodexVoiceAnalystSettings,
   listActorProfiles,
-  upsertActorProfile,
-  updateProfilePrivateEnv,
 } from "../../services/api";
 import type { ActorProfile } from "../../types";
 import { actorProfileIdentityKey, actorProfileMatchesRef } from "../../utils/actorProfiles";
@@ -26,6 +24,10 @@ import {
   voiceAnalystIdentityChanged,
   type VoiceAnalystDraftSettings,
 } from "./codexVoiceAnalystSettingsModel";
+import {
+  saveVoiceRuntimeProfile,
+  type VoiceProfileCheckpoint,
+} from "../voice/saveVoiceRuntimeProfile";
 import { saveVoiceAnalystSettingsWithConsent } from "./codexVoiceAnalystSettingsSave";
 
 export function useCodexVoiceAnalystSettings(
@@ -50,7 +52,7 @@ export function useCodexVoiceAnalystSettings(
   const [profileSaving, setProfileSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
-  const profileSaveRef = useRef<{ profile: ActorProfile; copied: boolean } | null>(null);
+  const profileSaveRef = useRef<VoiceProfileCheckpoint | null>(null);
   const dirty = useRef(false);
   const loadInFlight = useRef(false);
 
@@ -168,7 +170,6 @@ export function useCodexVoiceAnalystSettings(
       setSettings((current) => bindVoiceAnalystProfile(current));
       return;
     }
-    setEnvironmentChangesState(emptyActorSecretChanges());
     setSettings((current) =>
       bindVoiceAnalystProfile(current, selectedProfile || compatibleProfiles[0]),
     );
@@ -298,56 +299,13 @@ export function useCodexVoiceAnalystSettings(
     setError("");
     setSaved("");
     try {
-      const response = await upsertActorProfile(
-        {
-          id: profileSaveRef.current?.profile.id,
-          name: name.trim(),
-          runtime: settings.runtime,
-          ...(supportsAcpMode(settings.runtime) ? { runtime_mode: "acp" } : {}),
-          command: settings.command.trim(),
-          submit: "enter",
-          env: {},
-        },
-        profileSaveRef.current?.profile.revision,
+      const profile = await saveVoiceRuntimeProfile(
+        name,
+        settings,
+        environmentSaveChanges,
+        profileSaveRef,
+        copyVoiceAnalystPrivateEnvToProfile,
       );
-      if (!response.ok) {
-        setError(t("codexVoiceAnalystProfileSaveFailed", { detail: response.error.message }));
-        return;
-      }
-      const profile = response.result.profile;
-      const profileId = String(profile?.id || "").trim();
-      if (!profileId) {
-        setError(t("codexVoiceAnalystProfileSaveFailed", { detail: "profile id is missing" }));
-        return;
-      }
-      profileSaveRef.current = { profile, copied: profileSaveRef.current?.copied || false };
-      if (!profileSaveRef.current.copied) {
-        const copyResponse = await copyVoiceAnalystPrivateEnvToProfile(profileId);
-        if (!copyResponse.ok) {
-          setError(t("codexVoiceAnalystProfileSaveFailed", { detail: copyResponse.error.message }));
-          return;
-        }
-        profileSaveRef.current.copied = true;
-      }
-      if (
-        environmentSaveChanges.clear ||
-        environmentSaveChanges.unsetKeys.length > 0 ||
-        Object.keys(environmentSaveChanges.setVars).length > 0
-      ) {
-        const environmentResponse = await updateProfilePrivateEnv(
-          profileId,
-          environmentSaveChanges.setVars,
-          environmentSaveChanges.unsetKeys,
-          environmentSaveChanges.clear,
-          { scope: "global", ownerId: "" },
-        );
-        if (!environmentResponse.ok) {
-          setError(
-            t("codexVoiceAnalystProfileSaveFailed", { detail: environmentResponse.error.message }),
-          );
-          return;
-        }
-      }
       setProfiles((current) => [
         ...current.filter(
           (candidate) => actorProfileIdentityKey(candidate) !== actorProfileIdentityKey(profile),
@@ -368,6 +326,18 @@ export function useCodexVoiceAnalystSettings(
     } finally {
       setProfileSaving(false);
     }
+  };
+  const acceptProfile = (profile: ActorProfile) => {
+    setProfiles((current) => [
+      ...current.filter(
+        (candidate) => actorProfileIdentityKey(candidate) !== actorProfileIdentityKey(profile),
+      ),
+      profile,
+    ]);
+    setMode("profile");
+    setSettings((current) => bindVoiceAnalystProfile(current, profile));
+    setSaved("");
+    setError("");
   };
   const setEnvironmentChanges = (changes: ActorSecretChanges) => {
     setEnvironmentChangesState(changes);
@@ -390,6 +360,8 @@ export function useCodexVoiceAnalystSettings(
     mode,
     compatibleProfiles,
     profileIdentity,
+    selectedProfile,
+    acceptProfile,
     environmentKeys,
     environmentChanges,
     loading,

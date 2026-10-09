@@ -75,15 +75,16 @@ function Library(props: Props) {
           ) : null
         }
         footer={
-          <div className="shrink-0 border-t border-[var(--glass-border-subtle)] p-2.5">
+          <div className="shrink-0 border-t border-[var(--glass-border-subtle)] p-2">
             <Button
               variant="ghost"
-              className="w-full justify-start gap-2"
+              size="sm"
+              className="w-full justify-start gap-2 text-[var(--color-text-secondary)]"
               onClick={() => setArchiveOpen(true)}
             >
-              <Archive size={16} />
+              <Archive size={15} aria-hidden="true" />
               {t("voiceArchiveTitle", { defaultValue: "Archived documents" })}
-              <span className="ml-auto text-xs">{archived.length}</span>
+              <span className="ml-auto text-xs tabular-nums">{archived.length}</span>
             </Button>
           </div>
         }

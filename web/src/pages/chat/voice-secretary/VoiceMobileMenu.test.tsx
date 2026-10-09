@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { VoiceMobileMenu } from "./VoiceMobileMenu";
+import type { VoiceSecretaryCaptureMode } from "./voiceSecretaryTypes";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
@@ -11,6 +12,7 @@ describe("mobile voice options", () => {
   let root: ReturnType<typeof createRoot>;
   const onModeChange = vi.fn();
   const onLanguageChange = vi.fn();
+  const onPromptAutoRefineChange = vi.fn();
   const onOptimize = vi.fn();
   const onWorkspace = vi.fn();
   beforeEach(() => {
@@ -26,20 +28,23 @@ describe("mobile voice options", () => {
   });
   async function open(
     settingsLocked = false,
-    assistantEnabled = true,
+    promptAutoRefine = false,
     languageSaving = false,
     disabled = false,
+    mode: VoiceSecretaryCaptureMode = "prompt",
   ) {
     await act(async () => {
       root.render(
         <VoiceMobileMenu
           disabled={disabled}
           settingsLocked={settingsLocked}
-          assistantEnabled={assistantEnabled}
-          mode="prompt"
+          promptAutoRefine={promptAutoRefine}
+          onPromptAutoRefineChange={onPromptAutoRefineChange}
+          mode={mode}
           modes={[
             { key: "prompt", label: "Prompt" },
             { key: "document", label: "Document" },
+            { key: "instruction", label: "Ask" },
           ]}
           onModeChange={onModeChange}
           language="mixed"
@@ -66,12 +71,20 @@ describe("mobile voice options", () => {
       (b) => b.textContent === text,
     )!;
   }
-  it("changes mode through the menu and closes it", async () => {
-    await open();
-    await act(async () => option("Document").click());
-    expect(onModeChange).toHaveBeenCalledWith("document");
-    expect(host.querySelector("button")!.getAttribute("aria-expanded")).toBe("false");
-  });
+  it.each([
+    ["document", "Prompt", "prompt"],
+    ["prompt", "Prompt ✓", "prompt"],
+    ["prompt", "Document", "document"],
+    ["prompt", "Ask", "instruction"],
+  ] as const)(
+    "closes the menu when selecting %s to %s",
+    async (currentMode, label, selectedMode) => {
+      await open(false, false, false, false, currentMode);
+      await act(async () => option(label).click());
+      expect(onModeChange).toHaveBeenCalledWith(selectedMode);
+      expect(host.querySelector("button")!.getAttribute("aria-expanded")).toBe("false");
+    },
+  );
   it("changes language through the same menu", async () => {
     await open();
     await act(async () => option("English").click());
@@ -94,11 +107,29 @@ describe("mobile voice options", () => {
     expect(option("Document").closest("fieldset")!.disabled).toBe(true);
     expect(option("English").closest("fieldset")!.disabled).toBe(true);
     expect(option("Workspace").disabled).toBe(false);
+    expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.disabled).toBe(true);
   });
-  it("keeps direct dictation workspace accessible without assistant-only actions", async () => {
+  it("keeps Prompt polishing available without selecting Prompt or closing the menu", async () => {
+    await open(false, false, false, false, "document");
+    const toggle = document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(toggle.checked).toBe(false);
+    await act(async () => toggle.click());
+    expect(onPromptAutoRefineChange).toHaveBeenCalledWith(true);
+    expect(onModeChange).not.toHaveBeenCalled();
+    expect(onOptimize).not.toHaveBeenCalled();
+    expect(host.querySelector("button")!.getAttribute("aria-expanded")).toBe("true");
+    await open(false, true, false, false, "document");
+    expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(true);
+    expect(option("Document ✓").getAttribute("aria-pressed")).toBe("true");
+  });
+  it("keeps mode and language choices accessible during dictation", async () => {
     await open(false, false);
-    expect(option("Document")).toBeUndefined();
-    expect(option("Optimize")).toBeUndefined();
+    expect(option("Document")).toBeDefined();
+    expect(option("English").closest("fieldset")!.disabled).toBe(false);
+    expect(option("Optimize")).toBeDefined();
+    await act(async () => option("Optimize").click());
+    expect(onOptimize).toHaveBeenCalledOnce();
+    await open(false, false);
     await act(async () => option("Workspace").click());
     expect(onWorkspace).toHaveBeenCalledOnce();
   });

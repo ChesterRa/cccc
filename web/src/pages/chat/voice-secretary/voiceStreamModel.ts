@@ -1,4 +1,5 @@
-export type VoiceStreamCaptureMode = "document" | "instruction" | "prompt";
+import type { VoiceSecretaryCaptureMode } from "./voiceSecretaryTypes";
+export type VoiceStreamCaptureMode = VoiceSecretaryCaptureMode;
 
 export type VoiceTranscriptPreviewPhase = "interim" | "final";
 export type VoiceTranscriptProcessingPhase = "separating_speakers" | "failed";

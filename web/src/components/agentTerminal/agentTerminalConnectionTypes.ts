@@ -23,4 +23,6 @@ export type AgentTerminalConnectionArgs = {
   buildCustomWebSocketUrl?: (query: string) => string;
   inspectActorTail?: boolean;
   takeoverOnAttach?: boolean;
+  /** An explicitly supported task viewer may resize without terminal input authority. */
+  resizeReadOnly?: boolean;
 };

@@ -17,6 +17,7 @@ import {
 } from "./codexVoiceControllerText";
 import { useCodexVoicePolling } from "./useCodexVoicePolling";
 import { useCodexVoicePreferencesState } from "./useCodexVoicePreferencesState";
+import { voiceAudioSnapshot } from "../../stores/useVoiceAudioStore";
 import { useCodexVoiceWindowLifecycle } from "./useCodexVoiceWindowLifecycle";
 import type { VoiceConversationTurn } from "./codexVoiceProtocol";
 import type { CodexVoiceOutputStatus } from "./codexVoiceProviderChannel";
@@ -116,7 +117,7 @@ export function useCodexVoiceSessionController(enabled = true) {
 
     const session = new CodexVoiceBrowserSession({
       audio,
-      preferences,
+      preferences: { ...preferences, ...voiceAudioSnapshot() },
       callbacks: {
         onPhase: (next) => {
           if (mountedRef.current) setPhase(next);
@@ -250,6 +251,7 @@ export function useCodexVoiceSessionController(enabled = true) {
       outputStatus,
       error,
       preferences,
+      audioDeviceSnapshot: sessionRef.current?.audioPreferences() || null,
       supportedVoices,
       isStarting: phase === "preparing" || phase === "connecting",
       isEngaged: call !== null || owned || ENGAGED_PHASES.includes(phase),

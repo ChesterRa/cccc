@@ -45,6 +45,10 @@ fn prepare(
     home: &HomeLayout,
     request: &DaemonRequest,
 ) -> Result<TerminalAttachment, DaemonResponse> {
+    if request.op == "voice_secretary_terminal_attach" {
+        return crate::ops::voice_secretary::terminal::attach(home, request)
+            .map_err(|error| DaemonResponse::failure(error.code, error.message));
+    }
     let group_id = non_blank(request, "group_id")
         .ok_or_else(|| DaemonResponse::failure("missing_group_id", "missing group_id"))?;
     let actor_id = non_blank(request, "actor_id")

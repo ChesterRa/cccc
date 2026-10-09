@@ -5,6 +5,7 @@ const AppModals = lazy(() =>
 );
 import { AppBackground } from "./components/app/AppBackground";
 import { AppFeedback } from "./components/app/AppFeedback";
+import { useCodexVoiceShell } from "./features/codexVoice/useCodexVoiceShell";
 import { AppShell } from "./components/app/AppShell";
 import { useTextScale } from "./hooks/useTextScale";
 import { useTheme } from "./hooks/useTheme";
@@ -385,6 +386,8 @@ export default function App({
     cleanupSSE,
   });
 
+  const codexVoice = useCodexVoiceShell(!webReadOnly && canManageGroups && !connectEmbedded);
+
   return (
     <div
       className="relative min-h-0 w-full overflow-hidden bg-[var(--color-body-bg)] text-[var(--color-text-primary)]"
@@ -393,6 +396,7 @@ export default function App({
       <AppBackground isDark={isDark} />
 
       <AppShell
+        codexVoice={codexVoice}
         connectEmbedded={connectEmbedded}
         connect={connectEmbedded ? undefined : connect}
         remoteWorkspace={
@@ -517,6 +521,7 @@ export default function App({
       {shouldRenderAppModals ? (
         <Suspense fallback={null}>
           <AppModals
+            codexVoice={codexVoice}
             isDark={isDark}
             theme={theme}
             textScale={textScale}

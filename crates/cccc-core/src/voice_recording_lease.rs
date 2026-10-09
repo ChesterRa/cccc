@@ -110,6 +110,13 @@ pub fn update(
                     ttl_seconds,
                     now_ms,
                 ));
+                let preferences = crate::settings::load(home)?.voice_secretary.config;
+                active.as_mut().expect("new lease")["recognition_config"] = json!({
+                    "recognition_backend": preferences.recognition_backend,
+                    "external_asr_provider": preferences.external_asr_provider,
+                    "service_model_id": preferences.service_model_id,
+                    "service_diarization_model_id": preferences.service_diarization_model_id,
+                });
                 acquired = true;
                 save(home, active.as_ref())?;
             }
@@ -286,6 +293,7 @@ fn next_lease(
         "group_title": group_title,
         "capture_mode": capture_mode,
         "recognition_backend": recognition_backend,
+        "recognition_config": generation.and_then(|lease| lease.get("recognition_config")),
         "dispatch_target": dispatch_target,
         "by": by,
         "created_at": created_at,

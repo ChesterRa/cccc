@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+
+- Voice Secretary now uses one global runtime and a resident conversation, started by the first task and retained while idle. Tasks from all Groups run sequentially in that shared conversation, with their original destinations enforced by CCCC. Secretary supports the same structured adapters as Voice Analyst: Codex, Claude Code, Grok Build, OpenCode, Kilo, and official ACP modes for Antigravity, Copilot, Devin and Cursor. Native permissions follow each Runtime; the shared conversation does not isolate confidential Group context.
+- Instance administrators can open the Secretary's native terminal or ACP output from its existing workspace, including while idle. Supported native terminals accept keyboard and mouse input; queued tasks wait for manual turns to finish. Viewing never starts a model task, and hiding the terminal does not stop the session. Results return to the original document, question or composer; ordinary terminal conversation has no automatic Group destination.
+- Secretary tasks retain explicit results, cancellation and unconfirmed outcomes. Document edits use a working copy and a version-checked atomic commit; conflicts retain the candidate for review. Peer messages are proposals until the user confirms forwarding.
+- Shared Voice settings bring Secretary configuration, Realtime preferences and Analyst settings, ASR credentials and local models together. Recognition and processing defaults are global; document/request workspaces stay local; Secretary and Analyst keep independent configuration, context and results.
+
+### Changed
+
+- Share browser microphone/speaker preferences across Voice Secretary and Codex Voice through one device editor. Capture mode, recognition language and automatic polishing are remembered separately for each Group in that browser; active recordings and calls retain their starting settings.
+- Merge Dictation into Prompt, the default and first capture mode. Prompt defaults to dictation only; the compact **Polish after recording** checkbox enables optional model refinement. Manual polishing remains available for typed or dictated text. Selecting Prompt, Doc or Ask closes the menu; the checkbox changes only the Prompt preference.
+- Voice settings have two feature tabs, Voice Secretary and Codex Voice. Both services support Custom runtime configuration or linked Profiles through the same form, with independent credentials. Recognition and call preferences autosave separately from runtime, secret and work-rule drafts. Group Voice settings and enable toggles are removed.
+- Secretary's workspace focuses on documents and questions; capture mode and workspace view no longer control each other. Results use their original destination, with recent task history ordered newest first. Codex Voice keeps its Analyst collapsed by default and reports call and Analyst readiness separately. Shared dialogs preserve keyboard focus and return paths.
+- Daemon startup retires obsolete Group secretary Actors through the ordinary lifecycle while retaining documents and transcripts. Their execution path and three old MCP tools are removed; old Actor inputs are not automatically replayed.
+
+### Fixed
+
+- Missing Group files in the registry no longer prevent the global Voice Secretary from starting. Deferred Prompt input shows its saved state and blocking reason instead of claiming active refinement; startup diagnostics remain visible even when no task was created.
+- Normalize Browser ASR system-language preferences to recognition locales, preserving explicit regions. New recordings read current recognition settings, and composer errors remain visible without claiming reconnection after recording stops.
+- Settle blocking ACP permission requests and Cursor interactions as Secretary tasks needing user input, cleaning up the blocked session before allowing subsequent work. Prompt refinement requests the supported `draft` action, and task completion requires the matching result receipt.
+- Late Prompt results cannot overwrite newer composer text; conflicting drafts remain available for explicit review. Pending Ask and Prompt requests no longer appear complete or stop being observed merely because time has elapsed. Accepted Ask requests survive bounded history cleanup.
+- Secretary progress redacts secrets even when they span streaming chunks. Task and runtime polling no longer starve on slow responses, and leaving a view during an action cannot leave its controls permanently disabled.
+
 ## [0.4.42]
 
 ### Added

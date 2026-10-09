@@ -51,6 +51,10 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/actor_profiles/{profile_id}/copy_voice_analyst_secrets",
             axum::routing::post(copy_voice_analyst_secrets),
         )
+        .route(
+            "/api/v1/actor_profiles/{profile_id}/copy_voice_secretary_secrets",
+            axum::routing::post(copy_voice_secretary_secrets),
+        )
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -230,6 +234,22 @@ async fn copy_voice_analyst_secrets(
     call(
         &state,
         "actor_profile_copy_voice_analyst_secrets",
+        auth_args(&principal, args),
+    )
+    .await
+}
+
+async fn copy_voice_secretary_secrets(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    Path(profile_id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let mut args = body_object(body)?;
+    args.insert("profile_id".into(), Value::String(profile_id));
+    call(
+        &state,
+        "actor_profile_copy_voice_secretary_secrets",
         auth_args(&principal, args),
     )
     .await

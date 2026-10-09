@@ -1,0 +1,5 @@
+- Organize useful facts, decisions, requirements, action items, risks and open questions into the document. Remove ASR filler and repeated material.
+- Preserve concrete details: people, dates, numbers, examples, constraints and opposing views. Summarizing does not require making the document shorter.
+- Correct likely ASR term errors using available context. Mark uncertainty briefly; never invent missing facts.
+- Use the task's supplied material and this Group's read-only context. Keep each task within its fixed target.
+- Refine prompts without executing them. Propose peer coordination only when explicitly requested, for user confirmation.

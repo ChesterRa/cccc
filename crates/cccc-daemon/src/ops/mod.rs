@@ -76,6 +76,7 @@ mod terminal;
 mod terminal_history_source;
 mod terminal_text;
 mod voice_notifications;
+pub(crate) mod voice_secretary;
 mod web_model_connectors;
 mod working_state;
 #[cfg(test)]
@@ -116,6 +117,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         settings::resolve_operation,
         web_model_connectors::resolve_operation,
         voice_notifications::resolve_operation,
+        voice_secretary::resolve_operation,
         terminal::resolve_operation,
     ] {
         if let Some(operation) = resolver(request) {

@@ -122,6 +122,7 @@
   "avatarUploadFailed": "Failed to upload avatar.",
   "runtime": "Runtime",
   "command": "Command",
+  "customCommandOverride": "Custom command",
   "runtimeChangesNote": "Runtime/command changes take effect after restart. Use \"Save & Restart\" to apply immediately.",
   "secretManager": {
     "title": "Environment variables",
@@ -350,5 +351,6 @@
   "acpMode": {
     "label": "{{runtime}} mode",
     "hint": "ACP uses the native CLI login and its own managed session. There is no terminal; inputs queue until the current task finishes."
-  }
+  },
+  "selectRuntime": "Not configured"
 }

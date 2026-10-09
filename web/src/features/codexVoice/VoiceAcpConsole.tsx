@@ -10,16 +10,32 @@ import { AcpPermissionList } from "../../components/headless/AcpPermissionList";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { ChevronDownIcon } from "../../components/Icons";
+import { LazyMarkdownRenderer } from "../../components/LazyMarkdownRenderer";
+
+const RESULT_TEXT_CLASS = "whitespace-pre-wrap break-words font-sans text-sm leading-6";
+
+function AcpResultText({ content, isDark }: { content: string; isDark?: boolean }) {
+  return (
+    <LazyMarkdownRenderer
+      content={content}
+      isDark={isDark}
+      className="text-sm leading-6"
+      fallback={<pre className={RESULT_TEXT_CLASS}>{content}</pre>}
+    />
+  );
+}
 
 export function VoiceAcpConsole({
   analyst,
   visible,
   call,
+  isDark,
   onAnalystSnapshot,
 }: {
   analyst: CodexVoiceAnalystInfo;
   visible: boolean;
   call: CodexVoiceCallInfo | null;
+  isDark?: boolean;
   onAnalystSnapshot: (analyst: CodexVoiceAnalystInfo) => void;
 }) {
   const { t } = useTranslation("actors");
@@ -31,6 +47,9 @@ export function VoiceAcpConsole({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
   const controlRevision = useRef(0);
+  // Call events carry phase/output, but not permissions or the full queue.
+  // Keep that snapshot current while a call uses this Analyst, even collapsed.
+  const pollActive = visible || call?.analyst_generation === analyst.generation;
   const submissionScope = useRef<{ inputId: string; callGeneration: string | null } | null>(null);
   const callGeneration =
     call?.connected && call.mode === "assistant" && call.analyst_generation === analyst.generation
@@ -57,7 +76,7 @@ export function VoiceAcpConsole({
     }));
   }, [analyst]);
   useEffect(() => {
-    if (!visible) return;
+    if (!pollActive) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -83,7 +102,7 @@ export function VoiceAcpConsole({
       alive = false;
       clearTimeout(timer);
     };
-  }, [visible, analyst.generation, onAnalystSnapshot]);
+  }, [pollActive, analyst.generation, onAnalystSnapshot]);
   async function control(command: Parameters<typeof controlCodexVoiceAnalyst>[1]) {
     if (busy) return;
     controlRevision.current += 1;
@@ -143,9 +162,7 @@ export function VoiceAcpConsole({
           </div>
         )}
         {!current.manual_task_id && (current.progress || current.last_result) && (
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6">
-            {current.progress || current.last_result}
-          </pre>
+          <AcpResultText content={current.progress || current.last_result || ""} isDark={isDark} />
         )}
         {!!tasks.length && (
           <div className="space-y-4" aria-label={t("acpControls.investigations")}>
@@ -192,11 +209,7 @@ export function VoiceAcpConsole({
                       {task.result ? ` ${t("acpControls.partialOutput")}` : ""}
                     </p>
                   )}
-                  {task.result && (
-                    <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6">
-                      {task.result}
-                    </pre>
-                  )}
+                  {task.result && <AcpResultText content={task.result} isDark={isDark} />}
                   <p className="text-xs text-[var(--color-text-muted)]">
                     {t(
                       !task.call_generation

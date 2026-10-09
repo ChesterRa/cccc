@@ -118,9 +118,7 @@ for (const candidate of [
       refresh: vi.fn(async () => undefined),
     } as unknown as CodexVoiceSessionController;
     await act(async () =>
-      root.render(
-        <CodexVoiceAnalystSettings active controller={controller} heading="Voice Analyst" />,
-      ),
+      root.render(<CodexVoiceAnalystSettings active controller={controller} />),
     );
     await act(async () => undefined);
 

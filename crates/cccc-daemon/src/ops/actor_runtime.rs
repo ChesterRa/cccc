@@ -46,6 +46,14 @@ pub fn apply(
     if kind == "actor.stop" {
         return stop_registered(group, actor_id);
     }
+    if actor_id == "voice-secretary"
+        || stored_actor.internal_kind.as_deref() == Some("voice_secretary")
+    {
+        return Err(OpError::new(
+            "global_secretary_owner",
+            "This Group's secretary is managed by the global Voice Secretary; it is not an Actor runtime",
+        ));
+    }
     let actor = actor_profile_runtime::resolve(home, stored_actor)?;
     if !matches!(kind, "actor.restart" | "actor.new_session")
         && actor_is_running(group, stored_actor)

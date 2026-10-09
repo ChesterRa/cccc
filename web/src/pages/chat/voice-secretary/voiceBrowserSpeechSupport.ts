@@ -7,6 +7,26 @@ import type {
 } from "./voiceBrowserSpeechTypes";
 import { isConnectFramePath } from "../../../features/connect/protocol";
 
+/** Browser recognition services can reject a bare language even when it is valid BCP 47. */
+export function resolveBrowserSpeechLanguage(language: string, systemLanguage: string): string {
+  const configured = String(language || "").trim();
+  const requested =
+    !configured || configured === "auto" || configured === "mixed"
+      ? String(systemLanguage || "").trim() || "en-US"
+      : configured;
+  try {
+    const locale = new Intl.Locale(requested);
+    const region = locale.region || locale.maximize().region;
+    return region && !locale.region
+      ? new Intl.Locale(locale.baseName, { region }).baseName
+      : locale.baseName;
+  } catch {
+    // Keep an invalid/unsupported preference visible to the recognition service;
+    // selecting another language would silently change the user's recording.
+    return requested;
+  }
+}
+
 export function getBrowserSpeechRecognitionConstructor(): BrowserSpeechRecognitionConstructor | null {
   if (typeof window === "undefined") return null;
   const speechWindow = window as typeof window & {

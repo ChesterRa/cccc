@@ -46,6 +46,7 @@ pub(super) async fn initialize(
             format!("{ANALYST_INSTRUCTIONS}\n\n{configured_rules}")
         }
         SessionPurpose::Actor => configured_rules.to_owned(),
+        SessionPurpose::VoiceSecretary => super::super::launch_secretary::INSTRUCTIONS.to_owned(),
     };
     let cwd = cwd.to_string_lossy().into_owned();
     let session_params = |method: &str, session_id: Option<&str>| {

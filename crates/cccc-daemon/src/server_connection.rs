@@ -76,7 +76,10 @@ where
             )
             .await;
         }
-        if request.op == "term_attach" {
+        if matches!(
+            request.op.as_str(),
+            "term_attach" | "voice_secretary_terminal_attach"
+        ) {
             return crate::server_terminal_attach::handle(
                 stream,
                 home,

@@ -6,6 +6,7 @@ import {
   createComposerGroupMentionToken,
 } from "../../../hooks/composerGroupMentions";
 import { buildComposerConnectGroupRefs } from "../../../hooks/composerLocalGroupRouteRefs";
+import { hashComposerSnapshot } from "./voiceComposerUtils";
 import {
   mergeVoiceComposerDraftText,
   routeVoiceTextToComposerGroup,
@@ -42,6 +43,73 @@ const agentToken = createComposerAgentMentionToken({
 const mentionedText = `${groupToken.token} ${agentToken.token}`;
 
 describe("voice composer draft routing", () => {
+  it("retains new typing when a late refinement tries to replace the active composer", () => {
+    const store = useComposerStore.getState();
+    const expectedSnapshotHash = hashComposerSnapshot(store.composerText);
+    store.setComposerText("new typing that must survive");
+    expect(
+      routeVoiceTextToComposerGroup({
+        groupId: "new-group",
+        text: "late refinement",
+        mode: "replace",
+        expectedSnapshotHash,
+      }),
+    ).toBe("changed");
+    expect(useComposerStore.getState().composerText).toBe("new typing that must survive");
+  });
+
+  it("checks the original Group draft after navigation instead of the visible composer", () => {
+    const store = useComposerStore.getState();
+    const expectedSnapshotHash = hashComposerSnapshot(store.composerText);
+    store.setComposerText("edited original Group");
+    store.switchGroup("new-group", "other-group");
+    store.setComposerText("other Group typing");
+    expect(
+      routeVoiceTextToComposerGroup({
+        groupId: "new-group",
+        text: "late refinement",
+        mode: "replace",
+        expectedSnapshotHash,
+      }),
+    ).toBe("changed");
+    expect(useComposerStore.getState().drafts["new-group"].composerText).toBe(
+      "edited original Group",
+    );
+    expect(useComposerStore.getState().composerText).toBe("other Group typing");
+  });
+
+  it("automatically applies to an unchanged original Group after navigation", () => {
+    const store = useComposerStore.getState();
+    const expectedSnapshotHash = hashComposerSnapshot(store.composerText);
+    store.switchGroup("new-group", "other-group");
+    store.setComposerText("other Group typing");
+    expect(
+      routeVoiceTextToComposerGroup({
+        groupId: "new-group",
+        text: "refinement",
+        mode: "replace",
+        expectedSnapshotHash,
+      }),
+    ).toBe("draft");
+    expect(useComposerStore.getState().drafts["new-group"].composerText).toBe("refinement");
+    expect(useComposerStore.getState().composerText).toBe("other Group typing");
+  });
+
+  it("does not repopulate a composer that the user has sent or cleared", () => {
+    const store = useComposerStore.getState();
+    const expectedSnapshotHash = hashComposerSnapshot(store.composerText);
+    store.clearComposer();
+    expect(
+      routeVoiceTextToComposerGroup({
+        groupId: "new-group",
+        text: "late refinement",
+        mode: "replace",
+        expectedSnapshotHash,
+      }),
+    ).toBe("changed");
+    expect(useComposerStore.getState().composerText).toBe("");
+  });
+
   it("appends speech to the active group", () => {
     expect(
       routeVoiceTextToComposerGroup({ groupId: "new-group", text: "voice", mode: "append" }),

@@ -1,5 +1,6 @@
 import { CodexVoiceDock } from "../../components/layout/CodexVoiceDock";
 import { CodexVoiceAnalystModal } from "../../components/modals/CodexVoiceAnalystModal";
+import { useModalStore } from "../../stores";
 import type { CodexVoiceShellState } from "./useCodexVoiceShell";
 
 type SharedProps = { voice: CodexVoiceShellState };
@@ -39,11 +40,12 @@ export function CodexVoiceOverlays(
   },
 ) {
   const { voice, isDark, isSmallScreen } = props;
+  const settingsOpen = useModalStore((state) => state.modals.settings);
   return (
     <>
       <audio ref={voice.controller.audioRef} autoPlay playsInline className="hidden" />
       <CodexVoiceAnalystModal
-        isOpen={voice.detailsOpen}
+        isOpen={voice.detailsOpen && !settingsOpen}
         isDark={isDark}
         isSmallScreen={isSmallScreen}
         controller={voice.controller}

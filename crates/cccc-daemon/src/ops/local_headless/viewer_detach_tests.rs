@@ -285,7 +285,17 @@ async fn attach_request(
     .expect("attach timeout")
     .expect("response");
     let response = serde_json::from_str(&line).expect("attachment response");
-    drop(client);
-    server.await.expect("server task").expect("server stream");
+    // End input while retaining the read half until the server finishes its
+    // initial terminal output. Dropping both halves races that output write.
+    client
+        .get_mut()
+        .shutdown()
+        .await
+        .expect("end fixture input");
+    tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("detach timeout")
+        .expect("server task")
+        .expect("server stream");
     response
 }

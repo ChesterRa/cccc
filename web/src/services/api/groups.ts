@@ -129,10 +129,11 @@ function normalizeAssistantVoicePromptDraft(value: unknown): AssistantVoicePromp
   if (!record) return undefined;
   const requestId = asString(record.request_id).trim();
   const draftText = asString(record.draft_text).trim();
-  if (!requestId || !draftText) return undefined;
+  const status = asOptionalString(record.status) || "pending";
+  if (!requestId || (!draftText && status !== "no_change")) return undefined;
   return {
     request_id: requestId,
-    status: asOptionalString(record.status) || "pending",
+    status,
     operation: asOptionalString(record.operation) || undefined,
     draft_text: draftText,
     draft_preview: asOptionalString(record.draft_preview) || undefined,
@@ -322,7 +323,10 @@ function normalizeAssistantVoiceMeetingSession(
   };
 }
 
-function normalizeAssistantStateResult(groupId: string, result: unknown): AssistantStateResult {
+export function normalizeAssistantStateResult(
+  groupId: string,
+  result: unknown,
+): AssistantStateResult {
   const record = asRecord(result) ?? {};
   const assistants = Array.isArray(record.assistants)
     ? record.assistants
@@ -421,6 +425,9 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
       asOptionalString(record.active_document_path) ||
       undefined,
     new_input_available: Boolean(record.new_input_available),
+    secretary_tasks: Array.isArray(record.secretary_tasks)
+      ? (record.secretary_tasks as AssistantStateResult["secretary_tasks"])
+      : [],
     prompt_draft: normalizeAssistantVoicePromptDraft(record.prompt_draft),
     ask_requests: askRequests,
     latest_ask_request:
@@ -472,12 +479,8 @@ function normalizeAssistantVoiceTranscriptSegmentResult(
     document_updated: Boolean(record.document_updated),
     input_event: asRecord(record.input_event) ?? undefined,
     input_event_created: Boolean(record.input_event_created),
-    input_notify_emitted: Boolean(record.input_notify_emitted),
-    input_notify_error: asOptionalString(record.input_notify_error) || undefined,
-    actor_woken: Boolean(record.actor_woken),
-    actor_wake_error: asOptionalString(record.actor_wake_error) || undefined,
-    actor_notify_delivered: Boolean(record.actor_notify_delivered),
-    actor_notify_delivery_error: asOptionalString(record.actor_notify_delivery_error) || undefined,
+    secretary_processing_deferred: Boolean(record.secretary_processing_deferred),
+    secretary_processing_error: asOptionalString(record.secretary_processing_error) || undefined,
   };
 }
 
@@ -520,12 +523,8 @@ function normalizeAssistantVoiceDocumentMutationResult(
     document: normalizeAssistantVoiceDocument(record.document) || undefined,
     input_event: asRecord(record.input_event) ?? undefined,
     input_event_created: Boolean(record.input_event_created),
-    input_notify_emitted: Boolean(record.input_notify_emitted),
-    input_notify_error: asOptionalString(record.input_notify_error) || undefined,
-    actor_woken: Boolean(record.actor_woken),
-    actor_wake_error: asOptionalString(record.actor_wake_error) || undefined,
-    actor_notify_delivered: Boolean(record.actor_notify_delivered),
-    actor_notify_delivery_error: asOptionalString(record.actor_notify_delivery_error) || undefined,
+    secretary_processing_deferred: Boolean(record.secretary_processing_deferred),
+    secretary_processing_error: asOptionalString(record.secretary_processing_error) || undefined,
     event: record.event,
     request_id: asOptionalString(record.request_id) || undefined,
     input_append_id: asOptionalString(record.input_append_id) || undefined,
@@ -543,12 +542,8 @@ function normalizeAssistantVoiceInputResult(
     document: normalizeAssistantVoiceDocument(record.document) || undefined,
     input_event: asRecord(record.input_event) ?? undefined,
     input_event_created: Boolean(record.input_event_created),
-    input_notify_emitted: Boolean(record.input_notify_emitted),
-    input_notify_error: asOptionalString(record.input_notify_error) || undefined,
-    actor_woken: Boolean(record.actor_woken),
-    actor_wake_error: asOptionalString(record.actor_wake_error) || undefined,
-    actor_notify_delivered: Boolean(record.actor_notify_delivered),
-    actor_notify_delivery_error: asOptionalString(record.actor_notify_delivery_error) || undefined,
+    secretary_processing_deferred: Boolean(record.secretary_processing_deferred),
+    secretary_processing_error: asOptionalString(record.secretary_processing_error) || undefined,
     event: record.event,
     request_id: asOptionalString(record.request_id) || undefined,
     input_append_id: asOptionalString(record.input_append_id) || undefined,
@@ -621,58 +616,6 @@ export async function fetchVoiceAssistantWorkspace(
     promptRequestId: opts?.promptRequestId,
     view: "voice_workspace",
   });
-}
-
-export async function updateAssistantSettings(
-  groupId: string,
-  assistantId: string,
-  payload: { enabled?: boolean; config?: Record<string, unknown>; by?: string },
-): Promise<ApiResponse<AssistantMutationResult>> {
-  const gid = String(groupId || "").trim();
-  clearAssistantStateRequest(gid);
-  const resp = await apiJson<unknown>(
-    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/${encodeURIComponent(String(assistantId || "").trim())}/settings`,
-    {
-      method: "PUT",
-      body: JSON.stringify({
-        enabled: payload.enabled,
-        config: payload.config,
-        by: String(payload.by || "user").trim() || "user",
-      }),
-    },
-  );
-  clearAssistantStateRequest(gid);
-  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult>;
-  return { ok: true, result: normalizeAssistantMutationResult(gid, resp.result) };
-}
-
-export async function updateAssistantStatus(
-  groupId: string,
-  assistantId: string,
-  payload: {
-    lifecycle: BuiltinAssistant["lifecycle"];
-    health?: Record<string, unknown>;
-    by?: string;
-  },
-): Promise<ApiResponse<AssistantMutationResult>> {
-  const gid = String(groupId || "").trim();
-  const aid = String(assistantId || "").trim();
-  clearAssistantStateRequest(gid);
-  const resp = await apiJson<unknown>(
-    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/${encodeURIComponent(aid)}/status`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        assistant_id: aid,
-        lifecycle: payload.lifecycle,
-        health: payload.health || {},
-        by: String(payload.by || "user").trim() || "user",
-      }),
-    },
-  );
-  clearAssistantStateRequest(gid);
-  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult>;
-  return { ok: true, result: normalizeAssistantMutationResult(gid, resp.result) };
 }
 
 export async function transcribeVoiceAssistantAudio(
@@ -992,6 +935,7 @@ export async function appendVoiceAssistantInput(
   groupId: string,
   payload: {
     kind: "voice_instruction" | "prompt_refine";
+    taskKind?: "ask" | "document";
     text?: string;
     instruction?: string;
     sourceText?: string;
@@ -1016,6 +960,7 @@ export async function appendVoiceAssistantInput(
       method: "POST",
       body: JSON.stringify({
         kind: String(payload.kind || ""),
+        ...(payload.taskKind ? { task_kind: payload.taskKind } : {}),
         text: String(payload.text || ""),
         instruction: String(payload.instruction || ""),
         source_text: String(payload.sourceText || ""),

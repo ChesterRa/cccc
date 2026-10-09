@@ -10,6 +10,7 @@ function controller(
   overrides: Partial<CodexVoiceSessionController> = {},
 ): CodexVoiceSessionController {
   return {
+    audioDeviceSnapshot: null,
     audioRef: createRef<HTMLAudioElement>(),
     phase: "idle",
     call: null,
@@ -50,6 +51,48 @@ function controller(
 }
 
 describe("CodexVoiceDock", () => {
+  it("does not advertise Ready when Realtime credentials are unavailable", () => {
+    const state = controller();
+    state.readiness = { ...state.readiness!, realtime_credentials_available: false };
+    const html = renderToStaticMarkup(
+      <CodexVoiceDock controller={state} onOpen={vi.fn()} onStart={vi.fn()} />,
+    );
+    expect(html).toContain("modals:codexVoiceCallBlocked");
+    expect(html).not.toContain("modals:codexVoicePhase.idle");
+  });
+
+  it("shows a queued or running warm investigation instead of Analyst ready", () => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceDock
+        controller={controller({
+          analyst: {
+            generation: "A",
+            phase: "ready",
+            tui_ready: false,
+            last_result: "",
+            warning: "",
+          },
+          analystWorking: true,
+        })}
+        onOpen={vi.fn()}
+        onStart={vi.fn()}
+      />,
+    );
+    expect(html).toContain("modals:codexVoiceAnalystPhase.working");
+    expect(html).not.toContain("layout:codexVoiceAnalystReady");
+  });
+
+  it("waits for readiness rather than claiming Ready before the first snapshot", () => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceDock
+        controller={controller({ readiness: null })}
+        onOpen={vi.fn()}
+        onStart={vi.fn()}
+      />,
+    );
+    expect(html).toContain("modals:codexVoiceChecking");
+    expect(html).not.toContain("modals:codexVoicePhase.idle");
+  });
   it("keeps two stable global actions: open console and start voice", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceDock controller={controller()} onOpen={vi.fn()} onStart={vi.fn()} />,

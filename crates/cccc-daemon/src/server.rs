@@ -269,6 +269,11 @@ fn publish_address_and_restore(
     crate::ops::runtime_restore::settle_stranded(&paths.home)
         .map_err(|error| anyhow::anyhow!(error.message.clone()))?;
     write_address(paths, transport, path, host, port)?;
+    if let Err(error) =
+        crate::ops::voice_secretary::start(&paths.home, Some(dispatch_locks.clone()))
+    {
+        tracing::error!(%error, "global Voice Secretary startup failed; other daemon ports remain available");
+    }
     restore(paths.home.clone(), dispatch_locks);
     Ok(())
 }

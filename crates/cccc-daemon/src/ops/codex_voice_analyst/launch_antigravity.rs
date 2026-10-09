@@ -59,7 +59,13 @@ impl AnalystSession {
             .map_or(("", "user", Some("full")), |(group, actor)| {
                 (group, actor, None)
             });
-        let mut mcp = acp_mcp_server(home, &cccc, group_id, actor_id, profile);
+        let mut mcp = acp_mcp_server(
+            home,
+            &cccc,
+            group_id,
+            actor_id,
+            task_tool_profile(purpose, profile),
+        );
         add_voice_mcp_origin(&mut mcp, &env, purpose);
         let resume = if let Some((group, actor)) = actor {
             super::super::runtime_session::antigravity::prepare(

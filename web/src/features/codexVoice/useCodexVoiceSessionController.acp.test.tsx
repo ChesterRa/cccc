@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { useVoiceAudioStore } from "../../stores/useVoiceAudioStore";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -12,6 +13,7 @@ const fixture = vi.hoisted(() => ({
   start: vi.fn(),
   stop: vi.fn(),
   control: vi.fn(),
+  capture: vi.fn(async (_device: string) => ({ getTracks: () => [], getAudioTracks: () => [] })),
   t: (key: string) => key,
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: fixture.t }) }));
@@ -30,13 +32,15 @@ vi.mock("../../services/api/codexVoice", () => ({
 }));
 vi.mock("./codexVoiceMedia", () => ({
   applyOutputDevice: async () => {},
-  captureMicrophone: async () => ({ getTracks: () => [], getAudioTracks: () => [] }),
+  captureMicrophone: fixture.capture,
   createClientSessionId: () => "isolated-client",
   waitForIceGathering: async () => {},
   waitForDataChannelOpen: async () => {},
 }));
 
 afterEach(() => {
+  useVoiceAudioStore.getState().update({ inputDeviceId: "", outputDeviceId: "" });
+  fixture.capture.mockClear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -150,6 +154,7 @@ it("keeps cancellation available while the next owned-call input awaits ACP admi
     [...host.querySelectorAll("button")].find(
       (button) => button.textContent === "actors:acpControls.cancel",
     );
+  useVoiceAudioStore.getState().update({ inputDeviceId: "mic-a", outputDeviceId: "speaker-a" });
   try {
     await act(async () => root.render(<App />));
     await act(async () => host.querySelector("button")!.click());
@@ -161,6 +166,15 @@ it("keeps cancellation available while the next owned-call input awaits ACP admi
       }),
     );
     expect(current.owned).toBe(true);
+    expect(fixture.capture).toHaveBeenCalledWith("mic-a");
+    await act(async () =>
+      current.updatePreferences({ inputDeviceId: "mic-b", outputDeviceId: "speaker-b" }),
+    );
+    expect(current.preferences.inputDeviceId).toBe("mic-b");
+    expect(current.audioDeviceSnapshot).toEqual({
+      inputDeviceId: "mic-a",
+      outputDeviceId: "speaker-a",
+    });
     expect(current.call?.connected).toBe(true);
     const field = host.querySelector("textarea")!;
     await act(async () => {
@@ -207,6 +221,20 @@ it("keeps cancellation available while the next owned-call input awaits ACP admi
     );
     expect(current.analyst?.generation).toBe("acp-analyst");
     expect(cancel()).toBeUndefined();
+    await act(async () => current.disconnect());
+    await act(async () => {
+      void current.start();
+    });
+    await act(async () =>
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "ready", call: { ...call, connected: true } }),
+      }),
+    );
+    expect(fixture.capture).toHaveBeenLastCalledWith("mic-b");
+    expect(current.audioDeviceSnapshot).toEqual({
+      inputDeviceId: "mic-b",
+      outputDeviceId: "speaker-b",
+    });
   } finally {
     await act(async () => root.unmount());
     host.remove();

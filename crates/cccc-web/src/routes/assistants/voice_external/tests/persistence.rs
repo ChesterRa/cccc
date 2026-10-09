@@ -7,6 +7,11 @@ use fixture::Fixture;
 
 #[tokio::test]
 async fn later_checkpoint_failures_remain_retryable_before_complete_or_partial_finalization() {
+    if fixture::delegated(
+        "later_checkpoint_failures_remain_retryable_before_complete_or_partial_finalization",
+    ) {
+        return;
+    }
     for complete in [true, false] {
         for lose_reply in [false, true] {
             let f = Fixture::new(lose_reply).await;
@@ -107,12 +112,30 @@ async fn later_checkpoint_failures_remain_retryable_before_complete_or_partial_f
                     .collect::<Vec<_>>(),
                 ["first", "second", "third"]
             );
+            let tasks = cccc_core::voice_secretary::SecretaryTaskStore::new(f.state.home.clone())
+                .list()
+                .expect("accepted global tasks");
+            assert!(
+                tasks.is_empty(),
+                "unconfigured capture does not allocate execution jobs"
+            );
+            assert_eq!(
+                inputs.len(),
+                3,
+                "retry never duplicates accepted semantic inputs"
+            );
+            f.shutdown().await;
         }
     }
 }
 
 #[tokio::test]
 async fn completed_last_packet_retries_failed_or_lost_checkpoint_without_duplicate_input() {
+    if fixture::delegated(
+        "completed_last_packet_retries_failed_or_lost_checkpoint_without_duplicate_input",
+    ) {
+        return;
+    }
     for lose_reply in [false, true] {
         let f = Fixture::new(lose_reply).await;
         let (mut run, _provider) = f.active().await;
@@ -137,11 +160,13 @@ async fn completed_last_packet_retries_failed_or_lost_checkpoint_without_duplica
         assert_eq!(final_event["type"], "final_asr_text");
         assert_eq!(final_event["text"], "最后一句不能丢");
         assert_eq!(final_event["transcript_persisted"], true);
-        let requests = f.requests.lock().expect("recorded requests lock");
-        assert_eq!(
-            requests[0].args["segment_id"],
-            requests[1].args["segment_id"]
-        );
+        {
+            let requests = f.requests.lock().expect("recorded requests lock");
+            assert_eq!(
+                requests[0].args["segment_id"],
+                requests[1].args["segment_id"]
+            );
+        }
         let store = GroupStore::new(f.state.home.clone()).expect("process recording checkpoint");
         let ledger = cccc_core::ledger::read_all(
             &store
@@ -156,11 +181,17 @@ async fn completed_last_packet_retries_failed_or_lost_checkpoint_without_duplica
                 .count(),
             1
         );
+        f.shutdown().await;
     }
 }
 
 #[tokio::test]
 async fn completed_packet_keeps_browser_retry_payload_when_daemon_remains_unavailable() {
+    if fixture::delegated(
+        "completed_packet_keeps_browser_retry_payload_when_daemon_remains_unavailable",
+    ) {
+        return;
+    }
     let f = Fixture::new(false).await;
     let (mut run, _provider) = f.active().await;
     run.audio(&vec![0; 6400]).await.expect("send audio");
@@ -179,10 +210,14 @@ async fn completed_packet_keeps_browser_retry_payload_when_daemon_remains_unavai
     assert_eq!(final_event["transcript_persistence"], "failed");
     assert_eq!(final_event["transcript_persisted"], false);
     assert!(run.persisted.is_empty());
+    f.shutdown().await;
 }
 
 #[tokio::test]
 async fn checkpoint_setting_defers_stable_sentences_until_interval_or_stop() {
+    if fixture::delegated("checkpoint_setting_defers_stable_sentences_until_interval_or_stop") {
+        return;
+    }
     for window in [Value::Null, json!(45)] {
         let f = Fixture::new(false).await;
         let (mut run, _provider) = f.active().await;
@@ -241,15 +276,18 @@ async fn checkpoint_setting_defers_stable_sentences_until_interval_or_stop() {
         persistence::checkpoints(&f.state, &f.group, &mut run, false)
             .await
             .expect("process recording checkpoint");
-        let requests = f.requests.lock().expect("recorded requests lock");
-        assert_eq!(requests.len(), 3);
-        assert_eq!(
-            requests
-                .iter()
-                .map(|r| r.args["start_ms"].as_u64().expect("segment start time"))
-                .collect::<Vec<_>>(),
-            [0, 600, 1200]
-        );
+        {
+            let requests = f.requests.lock().expect("recorded requests lock");
+            assert_eq!(requests.len(), 3);
+            assert_eq!(
+                requests
+                    .iter()
+                    .map(|r| r.args["start_ms"].as_u64().expect("segment start time"))
+                    .collect::<Vec<_>>(),
+                [0, 600, 1200]
+            );
+        }
         assert_eq!(run.persisted.len(), 3);
+        f.shutdown().await;
     }
 }

@@ -60,6 +60,8 @@ pub mod space_credentials;
 pub mod system_prompt;
 pub mod voice_notifications;
 pub mod voice_recording_lease;
+pub mod voice_secretary;
+pub mod voice_secretary_settings;
 pub mod web_bootstrap;
 pub mod web_login_grants;
 pub mod web_model_connectors;
@@ -69,8 +71,8 @@ pub mod workspace_changes;
 pub mod workspace_git;
 
 pub use capability_builtin::{
-    CORE_TOOL_NAMES, USER_CONTROL_TOOL_NAMES, actor_base_tool_names,
-    is_builtin_capability_pack_tool, web_model_tool_names,
+    CORE_TOOL_NAMES, USER_CONTROL_TOOL_NAMES, VOICE_SECRETARY_TASK_TOOL_NAMES,
+    actor_base_tool_names, is_builtin_capability_pack_tool, web_model_tool_names,
 };
 pub use group::{GroupDoc, GroupStore, Scope};
 pub use home::{HomeError, HomeLayout};

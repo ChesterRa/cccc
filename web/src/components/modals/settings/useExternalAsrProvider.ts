@@ -48,6 +48,14 @@ export function useExternalAsrProvider(
     };
   }, [provider, t]);
   const selected = config?.provider === provider ? config : null;
+  const hasChanges = Boolean(
+    selected &&
+    savedConfig &&
+    (Object.values(secrets).some(Boolean) ||
+      (["region", "workspace_id", "model", "resource_id", "auth_mode"] as const).some(
+        (key) => selected[key] !== savedConfig[key],
+      )),
+  );
   const canProbe = Boolean(
     selected?.configured &&
     savedConfig &&
@@ -124,6 +132,7 @@ export function useExternalAsrProvider(
     notice,
     locked,
     canProbe,
+    hasChanges,
     label,
     t,
     update,

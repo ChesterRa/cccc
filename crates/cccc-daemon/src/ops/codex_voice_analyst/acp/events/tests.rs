@@ -179,3 +179,58 @@ fn empty_grok_turn_uses_persisted_start_boundary_and_ignores_older_activity() {
     );
     assert_eq!(observed[2].message["params"]["turn"]["status"], "cancelled");
 }
+
+#[test]
+fn tool_activity_observation_is_correlated_and_does_not_include_arguments() {
+    let (events, mut receiver) = broadcast::channel(8);
+    let mut active = Some(ActiveTurn {
+        turn_id: "turn-1".into(),
+        external: false,
+        admitted: true,
+        provider_prompt_id: Some("prompt-1".into()),
+        provider_start_sequence: None,
+    });
+    let mut tools = HashMap::new();
+    let update = json!({"params":{"sessionId":"session-1","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"tool_call","toolCallId":"tool-1","title":"Read the requested file","rawInput":{"private_fixture":"not-for-display"}}}});
+    handle_notification(
+        "session/update",
+        &update,
+        &events,
+        "generation-1",
+        "session-1",
+        &mut active,
+        &mut tools,
+    );
+    let observed = receiver.try_recv().expect("tool activity");
+    assert_eq!(observed.generation, "generation-1");
+    assert_eq!(observed.message["method"], "cccc/toolActivity");
+    assert_eq!(observed.message["params"]["turnId"], "turn-1");
+    assert_eq!(
+        observed.message["params"]["title"],
+        "Read the requested file"
+    );
+    assert!(!observed.message.to_string().contains("not-for-display"));
+    let mut replay = update.clone();
+    replay["params"]["_meta"]["isReplay"] = json!(true);
+    handle_notification(
+        "session/update",
+        &replay,
+        &events,
+        "generation-1",
+        "session-1",
+        &mut active,
+        &mut tools,
+    );
+    let mut wrong = update;
+    wrong["params"]["_meta"]["promptId"] = json!("old-prompt");
+    handle_notification(
+        "session/update",
+        &wrong,
+        &events,
+        "generation-1",
+        "session-1",
+        &mut active,
+        &mut tools,
+    );
+    assert!(receiver.try_recv().is_err());
+}

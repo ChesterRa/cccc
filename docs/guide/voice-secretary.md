@@ -3,17 +3,187 @@
 Voice Secretary runs in the native CCCC product and uses one durable workflow
 authority. Local ASR is provided by the linked `sherpa-onnx` runtime.
 
-Voice Secretary is a hidden internal actor backed by repository Markdown.
-Enabling it copies the foreman's runtime settings into the dedicated
-`voice-secretary` actor; disabling it removes only that actor and leaves
-documents, transcript sidecars, and model caches intact.
+Voice Secretary is one global, on-demand service with direct Runtime configuration
+or a linked Runtime Profile. Groups keep their own documents, transcripts and requests;
+no secretary appears in the normal Actor roster. Voice Analyst remains a
+separate service for Realtime calls, with its own configuration and context.
+
+In the expanded Secretary workspace, **View Secretary** opens the shared execution
+view. Codex, Claude Code, Grok Build, OpenCode and Kilo offer an interactive native
+terminal; ACP-only runtimes show actual output and tool activity. The header names
+the Group/task currently being processed. Results return to the original document,
+Questions or composer; a model answer alone is not proof of successful application.
+Native terminal input uses the same resident session. The owner observes manual
+turns and waits for them before dispatching queued work; hiding the terminal does
+not stop that observation. Ordinary terminal conversation has no automatic Group
+destination or composer writeback. Changing Groups does not retarget a running task.
+
+The first task starts the Secretary. Its process and conversation remain available
+between tasks, including after a normal clarification question. All Groups share
+this conversation; it is not a boundary for confidential Group information. Tasks
+run one at a time, so a long document task can delay other requests. Each task has
+an immutable destination checked by CCCC, even when the visible Group changes.
+**New session** closes an idle conversation without deleting saved work; the next
+task starts a fresh one. Cancel, connection/termination failure, Runtime changes
+and daemon shutdown can also close the session. Waiting for information does not
+block other tasks. A daemon restart does not restore the shared conversation.
+
+**Recent tasks** is an optional history for the selected Group, with clarification,
+retry and diagnostic controls. Results and follow-up remain associated with their
+original requests. Opening a result destination never reapplies or sends it.
+The matching composer acknowledgment determines whether a draft was inserted.
+Opening a terminal never creates a model task; closing the panel only hides it.
+Shared execution/terminal access requires an instance administrator. Recording
+and Dictation do not depend on the terminal or an available model.
+If the global Secretary cannot start, the workspace and Secretary settings show
+the failed startup stage and affected Group or task. Saved inputs are retained;
+you do not need a terminal log to see this cause. Unrelated old Runtime settings
+do not block the Secretary, and viewing status does not retry failed work.
+
+Open **Settings → This instance → Voice → Voice Secretary** to select a Runtime
+directly or link a Runtime Profile, and manage recognition and document-processing defaults. Secretary supports the same
+structured runtimes as Voice Analyst: **Codex, Claude Code, Grok Build, OpenCode,
+Kilo**, and **Antigravity, GitHub Copilot, Devin and Cursor in ACP mode**. Native
+TUI Profiles are excluded. Tasks have distinct working copies and share one persistent execution session;
+native tools follow the Runtime permission model. CCCC binds its task MCP to the
+accepted target and checks document versions before committing working copies.
+These checks do not sandbox arbitrary native file or network operations.
+Profiles retain the Runtime's normal authentication and workspace-trust requirements.
+For Claude Code, trust `$CCCC_HOME/voice-secretary/workspace` once using the configured
+Claude installation and `CLAUDE_CONFIG_DIR` before starting Secretary work. Create
+the directory first if it does not yet exist. This is the shared runtime workspace. This setup does not require
+sending a model prompt. An untrusted directory
+is reported as a startup failure, not silently bypassed or retried.
+Secretary instructions restrict work to the fixed target and its working copy.
+Codex and Claude use dedicated MCP configurations; Copilot disables other configured
+servers and built-in MCPs for the task process. Other providers may still expose
+user-configured services; this is not a filesystem or connected-service sandbox.
+All voice settings use **Settings → This instance → Voice**, with two tabs:
+**Voice Secretary** and **Codex Voice**. Secretary has Runtime/model, capture and
+recognition, and document-processing sections. Codex Voice has Realtime call
+preferences and Voice Analyst. Their runtime forms use the same direct/Profile
+choices, but credentials, contexts and results stay separate.
+The shared **Audio devices** section above the two tabs owns microphone and speaker
+choices for both workflows and all Groups in the current browser. The Secretary's
+**Adjust devices** shortcut and either workspace's settings open that same editor. Device
+changes apply to the next recording or call, leaving active audio unchanged.
+Local and external ASR capture audio from the browser and use the selected microphone;
+Browser ASR uses the browser's default microphone. The Secretary does not play audio;
+the speaker choice applies to audio-producing workflows such as Codex Voice. Browsers
+without output selection use the system speaker. Missing devices remain selected
+until the user chooses another device; refreshing never requests microphone access.
+If browser storage cannot be written, the editor reports that choices are retained
+only for the current page, without silently restoring a stale device at start.
+
+The composer offers **Prompt**, **Doc** and **Ask**, in that order. Prompt writes to
+the composer and defaults to dictation only, without a Secretary model task.
+Check **Polish after recording** beneath **Prompt** to refine recognized speech
+automatically. This option remains visible whenever the mode menu is open, including
+while Doc or Ask is selected. Changing it only saves the Prompt preference and keeps
+the menu open; selecting any mode closes the menu. The manual polish button also works on typed text and dictated text
+when automatic polishing is off.
+
+The composer remembers its capture mode, automatic-polishing choice and recognition language separately
+for each Group in the current browser, including across page reloads. A new Group
+starts in Prompt with automatic polishing off and follows the instance's default recognition language until
+you choose a language for that Group. Microphone and speaker choices remain shared.
+Each new recording reads the latest shared recognition settings and the Group's
+language choice. Active recordings keep their starting mode, polishing choice, language, devices and
+target even when you switch Groups. For Browser ASR, **System default** follows the
+browser's preferred language rather than detecting the spoken language. Missing
+regions are resolved before recognition starts (for example, `ja` becomes `ja-JP`);
+explicit regions such as `en-GB` or `zh-TW` remain unchanged. Browser recognition
+support and service availability vary by browser. Recognition errors also appear
+beside the composer controls; reconnection is indicated only while recording is active.
+
+The gear in either workspace scrolls to the corresponding feature tab;
+**Adjust devices** instead focuses the common audio section. Closing settings
+returns without ending a call, recording or task. Recognition choices, document
+update preferences and call preferences save automatically. Runtime/credential drafts
+and Secretary work rules have separate explicit Save/Discard controls. A preference
+save never submits the Runtime or credentials. Analyst drafts survive closing settings;
+unsaved Secretary/ASR drafts prompt before leaving.
+
+Choose a model through the custom launch command (for example `--model ...` where
+supported) or the Runtime's native configuration. Linked Profiles use their command
+and private environment; **Edit shared Profile** opens the existing editor in place.
+Both runtime forms support **Add to Runtime Profiles**, **Create Profile** and
+**Edit shared Profile** through the same editor. Creating a Profile from Custom
+settings copies only that service's saved private environment and staged changes;
+values remain write-only. Applying the new Profile is a separate Runtime save.
+Editing a shared Profile also affects its other users. Custom Secretary credentials
+are independent of Analyst and Actor credentials, and secret values are never read back.
+No extra model configuration layer or per-Group secretary Actor is created.
+
+There is no Group Voice settings page or enable switch. Shared recognition backend,
+language, update interval and work rules belong to the global Secretary. Specific
+requirements are entered with a task in that Group's workspace. The recording
+language selector remembers the choice for that Group in the current browser; it does not change the instance default.
+Runtime changes affect the next task; recognition and checkpoint defaults affect
+the next recording. Already running work keeps its settings and target.
+**Prompt with automatic polishing off** writes recognized text into the composer without a model task; no
+Secretary Runtime is required for it. Recognition credentials and local model
+maintenance retain their own explicit save/install controls.
+
+Without a configured Runtime, Secretary input remains saved and does not occupy
+execution capacity. Recognition defaults can be saved on their own. When configuring
+or changing a Runtime with pending inputs, choose whether to process them (consuming
+provider allowance) or retain them and process only new input. Held input remains
+visible after restart; an explicit process choice can release it later with the same
+Runtime. Preferences-only saves never release it implicitly. Invalid task sources
+remain saved and are reported separately without blocking subsequent valid input.
+A full execution queue delays processing, not transcription storage.
+
+Saving a Prompt request does not mean model execution has started. If processing
+is deferred, the composer and Secretary workspace show that the input is saved
+and display the blocking reason. Unavailable execution remains visible even when
+no task could be created. Later admission or a matching returned draft clears the
+waiting problem without resubmitting the input. Startup ignores registry entries
+for missing Groups; actual state or cleanup errors still prevent Secretary startup.
+
+Tasks show saved inputs waiting for processing and uncommitted document sources.
+Status reminders highlight unresolved work. **Recent tasks** is ordered by creation
+time, newest first, matching each row's timestamp regardless of status. Blocking
+Runtime permission requests and Cursor questions/plans become **Needs information** tasks instead of
+holding up other Groups. The Secretary does not approve them; it stops and cleans
+up that task process. Provide the missing information or adjust Runtime permissions,
+then use the ordinary task continuation. User cancellation retains
+these sources for explicit review; it does not mark them committed. After process
+cleanup and commit-journal reconciliation, interrupted/failed ASR document batches
+with previously confirmed task-only native writes can get one fresh attempt
+against the current document. Other Runtime executions require explicit retry;
+changing the selected Profile does not make an earlier uncertain task safe to
+replay. Version conflicts get the same bounded recovery; candidates are never
+automatically merged. Uncertain
+prepared commits and other requests still require review. A recovered ASR batch
+keeps its place before newer queued document sources.
+
+For a typed document request, choose **Update document** or **Ask about the saved
+document**. Ask returns an answer without editing the document. The Secretary
+can read bounded recent Group messages and files/search within the scope fixed
+when the task was accepted. Private/generated paths and runtime state are excluded;
+changing the visible scope cannot redirect an accepted task.
+General Ask also receives the currently referenced document when it belongs to
+that same scope. On narrow screens, use the existing Ask mode for a question;
+recording and document selection remain separate actions.
+
+Completed, projected tasks keep compact source IDs and receipts for deduplication,
+and retire their model guidance and full working copies. Status polling clones
+unresolved work and a bounded recent history rather than the entire retained task
+history. A completed retry also retires
+obsolete predecessor copies, retaining their diagnostic receipts. Deleted Groups release their owned
+source/task data after provider cleanup; original repository files are not removed.
+Claude Agent View jobs keep a recovery record for the Secretary workspace. After
+a CCCC crash, the host stops only those owned jobs before releasing capacity and
+deleting private launch settings. Retained records from the earlier task-based
+execution are cleaned at their original directories before moving working copies;
+an unavailable control service leaves cleanup pending.
 
 On screens narrower than 640 px, the composer keeps the microphone and a
 **Voice options** button in the action bar. Voice options contains capture mode,
 language, prompt polishing, and the workspace entry in a scrollable panel with
-44 px touch targets. Recording locks still disable mode and language changes. Desktop and mobile
-language controls share the same disabled state, including pending saves;
-completion or failure re-enables language selection.
+44 px touch targets. Recording locks disable mode, automatic-polishing and language changes. Desktop and mobile
+language controls share the same recording lock and work for dictation as well as model-assisted modes.
 Menus close when switching Groups, when their controls become unavailable, or
 when responsive layout hides their trigger. Opening the workspace transfers
 keyboard focus into it; closing it returns focus to the Voice options button.
@@ -22,25 +192,33 @@ competing with action buttons. The wider-screen controls remain inline.
 
 ## Workspace modes
 
-**Doc** keeps the document list, document/transcript view and recent activity
-available together on desktop. **Ask** gives the request and its activity the
-main workspace. **Prompt** shows the current composer text, its existing
-optimization action and recent activity. Edit or send the text in the composer;
-choosing Prompt from the mode selector returns there.
+**Prompt** works in the composer. By default, recording adds recognized text
+without starting a model. Automatic polishing after recording, or the manual polish
+button, returns a draft, no-change result, failure or a concise clarification. Prompt does not need a
+separate large-panel view. Applying a draft still checks the original composer
+snapshot in the original Group so a late result cannot overwrite newer typing,
+including after navigation or clearing the composer. If the text changed, **Review
+draft** keeps the candidate available for copying, explicit application or dismissal.
+Only a successful local application is acknowledged as applied. Queue age never
+marks Ask complete or ends Prompt observation; long-running work retains its request
+identity until a result, cancellation or an explicit replacement.
+A confirmed, cleaned-up failure or cancellation permits a new explicit Prompt
+request in another Group; it does not automatically retry the old task.
 
-Open a linked document directly from Ask or Prompt activity, then use **Back to
-activity** to return without changing the capture mode or recording target.
-Doc also provides the full document list. Expanded Prompt controls and activity
-remain scrollable on short screens. Switching views preserves the
-unsaved document draft and typed Ask request; an unsaved-document notice remains
-visible outside Doc. Recording still locks mode changes and keeps its original
-target. Collapsing a section does not stop recording or background processing.
+The workspace has **Documents** and **Ask** views. Switching views does not change
+the composer's capture mode. Documents provides the document library and a
+Document/Transcript view, with document updates and questions submitted from its
+input bar. Ask keeps questions, Markdown answers and sources together. Recording
+fixes its destination at start; viewing another document does not retarget it.
+
+**View Secretary** opens the shared runtime's terminal or structured output.
+Recent tasks remain available for explicit recovery, clarification and reviewing
+retained candidates. Returning to the workspace or closing the panel does not
+stop recording or the resident Secretary.
 
 ## Live transcript and document actions
 
-Wide layouts show live original ASR text in the activity feed. When that feed is
-hidden on narrow screens, the Transcript view shows it below the recording
-indicator. This preview is scoped to the recording group and document;
+The Transcript view shows live original ASR text below the recording indicator. This preview is scoped to the recording group and document;
 it is separate from saved entries and disappears on stop, when final transcript
 processing takes over. The saved-entry count continues to count final entries.
 
@@ -119,9 +297,8 @@ cannot overwrite the current group's library.
 
 ## External realtime ASR: Bailian and Volcengine
 
-Select **Settings > Assistants > Recognition location > External provider ASR**.
-Choose a provider, configure its credentials, save the provider configuration,
-and then save the Group settings. Provider selection is Group-specific;
+Select **Settings → This instance → Voice → Voice Secretary → Capture and recognition → External provider ASR**.
+Choose the provider and explicitly save its credentials in that section. Recognition defaults are global;
 credentials/model settings are shared by this CCCC service instance and can only
 be managed by administrators. Existing recordings retain the provider/model
 selected at start; changes apply to subsequent recordings.
@@ -196,8 +373,8 @@ Protocol references:
 
 ## Local ASR
 
-Open **Settings > Assistants**, enable Voice Secretary, select **Local ASR**, and
-install the final and live models. The sherpa-onnx runtime is linked into the
+Open **Settings → This instance → Voice → Voice Secretary → Capture and recognition** and select **Local ASR**.
+Install the final and live models under **Entire instance → Voice**. The sherpa-onnx runtime is linked into the
 Rust binary, so runtime install/remove actions are compatibility no-ops. Models
 are downloaded into `~/.cccc/cache/voice-models`, verified against the bundled
 manifest, unpacked in staging, and atomically activated. Existing model caches
@@ -326,54 +503,45 @@ punctuation, filler removal, and prose polishing are not part of this path.
 Prompt refinement and document instructions are semantic inputs, not meeting
 transcripts: they never create a session entry or a per-session transcript
 sidecar. Semantic input is appended to the daemon-owned durable input log before
-the daemon writes the corresponding ledger event and targeted `system.notify`.
-Segment identity is independent from the prompt request ID: one prompt request
-may accumulate several speech appends, while each append carries its own
-`input_append_id`. Retrying the same append reuses that ID and does not duplicate
-input or invalidate a pending draft; later speech keeps the request ID but uses a
-new append ID. The internal actor reads unread batches through
-`cccc_voice_secretary_document`, edits the
-repository document, and the daemon reconciles the Markdown content into the
-document index when assistants or documents are next read or selected. A changed
-file advances the indexed revision once; repeated reads are idempotent.
-The durable input log remains the idempotency source after the bounded session
-preview is trimmed, and interrupted ledger notification is completed on retry.
+the daemon records the corresponding ledger event and global task. A task fixes
+its Group, scope and document/request identity at acceptance. Retrying the same
+append returns the same task, including an unconfirmed outcome. The task-bound
+MCP tool supplies context and accepts the terminal business result. The model
+incrementally edits a document working copy; the daemon alone checks its original
+registration/base digest and atomically commits the original. A conflict retains
+the candidate without replacing newer user work. A → B → A uses independent
+processes and threads, never a shared cross-Group model context.
+
+The **Secretary tasks** section in the existing workspace shows this Group's
+queued, processing, needs-information, conflict, failed and unconfirmed tasks.
+Cancel retains source input and does not stop recording. Needs-information work
+releases its process before asking for a follow-up. Explicit continuation starts
+a new task; uncertain outcomes require review and confirmation. Document
+candidates can be reviewed/copied through the ordinary editor, not auto-merged.
+A document lane and a separate Ask/Prompt lane keep long document work from
+blocking interactive requests; no idle processes are retained.
 Archived documents are retained in durable state but omitted from the working
 document projection. Archiving the current document selects the most recently
 updated remaining active document, or clears the active target when none remain.
 
-Only the `voice-secretary` actor may advance the unread input cursor. Document
-paths must be repository-relative Markdown paths; symbolic-link components are
-rejected so the document API cannot write outside the selected workspace.
+There is no per-Group secretary Actor or legacy execution path. Global tasks use their own business receipts. Provider turn completion and console
+text do not count as a delivered answer or committed document.
+Document paths remain repository-relative Markdown paths with symlink rejection.
 
-Prompt mode uses two distinct operations. Web input first calls
-`assistant_voice_input_append(kind="prompt_refine")`, which records the current
-composer text, speech, operation, request ID, and composer snapshot before
-delivering one canonical input envelope. The actor then returns the optimized
-text through
-`cccc_voice_secretary_composer(action="submit_prompt_draft")`, which maps to
-`assistant_voice_prompt_draft_submit`. Draft submission updates only the
-existing request; it never appends another Voice Secretary input. Empty or
-non-substantive refinements use `no_op=true`.
+Prompt polishing records the composer snapshot and returns a draft through the
+fixed task. A replaced request/snapshot cannot be overwritten by a late result.
+Empty refinements use `no_op=true`; drafts are never sent as messages.
+Ask records a durable request before execution. A terminal report updates that
+request and its ledger feedback, allowing results to survive refresh/reconnect.
+For explicit peer coordination, the Secretary may propose a message to one
+current Group Actor. The user reviews and confirms forwarding; the task cannot
+send messages itself. Secretary answers/drafts are not injected into Realtime Voice.
 
-Instruction/Ask mode creates a durable pending `ask_requests` item in the same
-accepted daemon operation as its semantic input, before actor delivery. The
-delivered notification renders an explicit work
-order with the target, request ID, and required MCP output instead of relying on
-the actor to infer routing from raw JSON. User-visible answers must be submitted
-through `cccc_voice_secretary_request(action="report")`; ordinary console text
-is not treated as a delivered reply. A report updates the Ask item, emits an
-`assistant.voice.request` ledger event, and lets the web client restore
-`reply_text` after refresh or reconnect. Exact input and report retries are
-idempotent.
-
-When Voice Secretary is disabled, microphone input remains available as direct
-dictation. Local ASR accepts the explicit `composer` dispatch target, but the
+In **Prompt** with **Polish after recording** off, microphone input routes directly to the composer. Local ASR accepts the explicit `composer` dispatch target, but the
 browser appends the transcript straight to the composer
 without creating a secretary input, running prompt refinement, updating a
 document, persisting a secretary session, or starting speaker diarization.
-Composer acquisition and heartbeats remain valid while Voice Secretary is
-disabled; a heartbeat that omits its dispatch target inherits `composer` from
+Composer acquisition and heartbeats remain valid without a configured Secretary Runtime; a heartbeat that omits its dispatch target inherits `composer` from
 the matching active lease.
 
 An active local-ASR audio stream renews its recording lease. The browser's
@@ -390,13 +558,13 @@ still report an error.
 
 Documents use the active workspace under `docs/voice-secretary/`. Groups without
 an active workspace store the Markdown fallback under CCCC_HOME. Removing a
-model, disabling the assistant, or restarting CCCC does not delete documents or
+model, clearing the Secretary Runtime, or restarting CCCC does not delete documents or
 raw transcript sidecars.
 
-Voice Secretary has one durable authority for lifecycle, durable health,
-sessions, prompt drafts/requests, and ask requests:
-`groups/<group_id>/state/assistants.json`. Assistant enablement and configuration
-remain in `group.yaml`; process-local PID, port, service, and socket observations
+Group sessions, prompt drafts/requests, and Ask feedback have one durable authority:
+`groups/<group_id>/state/assistants.json`. Runtime, recognition defaults and shared
+work rules belong to instance settings; obsolete Group configuration is ignored,
+and task/commit receipts belong to `voice-secretary/jobs`. Process-local PID, port, service, and socket observations
 are rebuilt after startup. Former preview input/document projection fields are
 preserved under `rust_state` rather than being mistaken for common workflow
 records. Every recording-lease mutation and expiry-capable read is serialized
@@ -409,15 +577,22 @@ Native model installation is a Web-owned boundary: the Web UI manages the
 bundled sherpa-onnx model cache, while the daemon reports
 `assistant_voice_model_install=false` in daemon capabilities. Callers must
 inspect that capability instead of assuming a daemon operation is available.
+The shared model list and install/remove controls are in **Settings → This instance → Voice**;
+model maintenance requires administrator access. Recognition defaults are shared,
+and recordings can choose a temporary language without downloading another copy.
 
-### Recognition settings save automatically
+### Saving recognition settings
 
-Recognition backend, external provider, and document update switches save when changed.
-The document interval saves when the input loses focus or Enter is pressed. Failed
-saves show an error and restore the previous settings. These group configuration
-updates do not start the Voice Secretary actor; only an explicit enable request
-starts it. Provider credentials still use their separate save action. Changes to
-recognition settings apply to the next recording.
+Recognition/backend/language/provider choices and the periodic-document toggle
+save automatically. A valid update interval saves on blur or Enter. Failed preference
+writes retain the selection and offer retry. Work rules and Runtime/private credentials
+have independent explicit save/discard controls. Runtime saves preserve the latest
+preferences; preferences do not alter the Runtime, private credentials or held-input
+policy. Backlog processing requires a separate explicit choice, applied with a changed
+Runtime or on its own when the Runtime is unchanged. Provider credentials use their
+own save action; model installation/removal is an explicit operation.
+These settings do not start a provider process. Accepted tasks alone trigger model
+work once a Runtime is configured. Active recordings retain their original defaults.
 
 New Volcengine configurations default to API Key authentication and ASR 2.0 hourly.
 Existing credentials, authentication modes, and resource versions are preserved.
@@ -427,3 +602,13 @@ Secret Key is not used by this streaming API. The selected model version and
 billing plan must be enabled for that account. Connection tests distinguish a
 known resource-not-granted rejection from authentication failure, unspecified
 access denial, and quota limits without exposing upstream response bodies.
+
+## Existing documents and obsolete Actors
+
+Groups retain documents, transcripts and fixed-target tasks; they do not own another
+Secretary configuration. Old Actor HELP files are preserved but their protocol is
+not imported into the task executor. Daemon startup stops and removes obsolete
+secretary Actors through the normal resource lifecycle before restoring Group
+runtimes. No legacy executor or automatic replay of old Actor history is retained.
+Configure the global Secretary explicitly, and choose what to do with unclaimed
+saved input when selecting its Runtime.

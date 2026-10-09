@@ -3,6 +3,7 @@ use std::io;
 use std::path::Path;
 
 pub(super) const VOICE_ANALYST_AGENT: &str = "cccc-voice-analyst";
+pub(super) const VOICE_SECRETARY_AGENT: &str = "cccc-voice-secretary";
 
 pub(super) fn launch_prefix(
     executable: &Path,
@@ -129,10 +130,11 @@ pub(super) fn parse_arguments(arguments: &[String]) -> io::Result<ParsedArgument
     Ok(parsed)
 }
 
-pub(super) fn write_voice_analyst_agent(
+pub(super) fn write_voice_agent(
     cwd: &Path,
     instructions: &str,
     runtime: cccc_contracts::ActorRuntime,
+    agent: &str,
 ) -> io::Result<()> {
     let directory = cwd.join(if runtime == cccc_contracts::ActorRuntime::Kilo {
         ".kilo/agents"
@@ -140,9 +142,10 @@ pub(super) fn write_voice_analyst_agent(
         ".opencode/agents"
     });
     std::fs::create_dir_all(&directory)?;
-    let content =
-        format!("---\ndescription: CCCC Voice Analyst\nmode: primary\n---\n{instructions}\n");
-    let path = directory.join(format!("{VOICE_ANALYST_AGENT}.md"));
+    let content = format!(
+        "---\ndescription: CCCC managed voice assistant\nmode: primary\n---\n{instructions}\n"
+    );
+    let path = directory.join(format!("{agent}.md"));
     if std::fs::read_to_string(&path).ok().as_deref() != Some(content.as_str()) {
         std::fs::write(path, content)?;
     }

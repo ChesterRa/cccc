@@ -11,7 +11,7 @@ import {
   CodexVoiceMobileDock,
   CodexVoiceOverlays,
 } from "../../features/codexVoice/CodexVoiceShellSurfaces";
-import { useCodexVoiceShell } from "../../features/codexVoice/useCodexVoiceShell";
+import type { CodexVoiceShellState } from "../../features/codexVoice/useCodexVoiceShell";
 import { useVoiceViewedMessages } from "../../features/codexVoice/useVoiceViewedMessages";
 import { useUIStore } from "../../stores";
 import { ActorTab } from "../../pages/ActorTab";
@@ -32,6 +32,7 @@ import {
 import type { ComposerMentionKind } from "../../pages/chat/chatMentionSuggestions";
 import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbench";
 type AppShellProps = {
+  codexVoice: CodexVoiceShellState;
   connectEmbedded?: boolean;
   connect?: ConnectWorkbench;
   remoteWorkspace?: React.ReactNode;
@@ -122,6 +123,7 @@ type AppShellProps = {
 };
 
 export function AppShell({
+  codexVoice,
   connectEmbedded = false,
   connect,
   remoteWorkspace,
@@ -215,7 +217,6 @@ export function AppShell({
   const [workControlsHost, setWorkControlsHost] = useState<HTMLDivElement | null>(null);
   const [sidePanelControlsHost, setSidePanelControlsHost] = useState<HTMLDivElement | null>(null);
   const messagesVisible = useUIStore((state) => groupMessagesVisible(selectedGroupId, state));
-  const codexVoice = useCodexVoiceShell(!webReadOnly && canUseVoice);
   useVoiceViewedMessages(
     contentRef,
     selectedGroupId,

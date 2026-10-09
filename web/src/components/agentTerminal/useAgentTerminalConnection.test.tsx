@@ -208,3 +208,103 @@ it("does not take over or resize a read-only attachment and limits explicit take
     vi.useRealTimers();
   }
 });
+
+it("resizes an explicitly supported read-only task viewer without enabling input or takeover", async () => {
+  vi.useFakeTimers();
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const sockets: FakeSocket[] = [];
+  class FakeSocket {
+    static OPEN = 1;
+    static CONNECTING = 0;
+    readyState = 0;
+    onopen?: () => void;
+    onmessage?: (event: { data: string }) => void;
+    sent: Uint8Array[] = [];
+    constructor(public url: string) {
+      sockets.push(this);
+    }
+    send(frame: Uint8Array) {
+      if (this.readyState !== FakeSocket.OPEN) throw new Error("WebSocket is not open");
+      this.sent.push(frame);
+    }
+    close() {
+      this.readyState = 3;
+    }
+  }
+  vi.stubGlobal("WebSocket", FakeSocket);
+  let resize: (size: { cols: number; rows: number }) => void = () => {};
+  const onData = vi.fn();
+  const terminalRef = {
+    current: {
+      cols: 80,
+      rows: 24,
+      reset: vi.fn(),
+      write: (_data: unknown, done?: () => void) => done?.(),
+      onData,
+      onResize: (callback: typeof resize) => {
+        resize = callback;
+        return { dispose: vi.fn() };
+      },
+    } as unknown as Terminal,
+  };
+  let controls: ReturnType<typeof useAgentTerminalConnection>;
+  const noop = vi.fn();
+  function Probe({ visible = true }: { visible?: boolean }) {
+    const [reconnectTrigger, setReconnectTrigger] = useState(0);
+    controls = useAgentTerminalConnection({
+      activated: true,
+      isVisible: visible,
+      isRunning: true,
+      isHeadless: false,
+      groupId: "g1",
+      actorId: "task1",
+      actorRuntime: "codex",
+      canControl: false,
+      resizeReadOnly: true,
+      termEpoch: 0,
+      reconnectTrigger,
+      setReconnectTrigger,
+      terminalRef,
+      inspectActorTail: false,
+      setTerminalSignal: noop,
+      clearTerminalSignal: noop,
+    });
+    return null;
+  }
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Probe />));
+    const query = new URL(sockets[0].url).searchParams;
+    expect(query.get("mode")).toBe("viewer");
+    expect(query.get("takeover")).toBeNull();
+    expect(query.get("cols")).toBe("80");
+    await act(async () => {
+      sockets[0].readyState = 1;
+      sockets[0].onopen?.();
+      sockets[0].onmessage?.({
+        data: JSON.stringify({
+          type: "terminal.attach",
+          ok: true,
+          result: { terminal_writable: false, replay_cursor: 0, replay_end_cursor: 0 },
+        }),
+      });
+    });
+    resize({ cols: 50, rows: 12 });
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    expect(sockets[0].sent.at(-1)?.[0]).toBe(50);
+    expect(controls!.canSendInput()).toBe(false);
+    expect(onData).not.toHaveBeenCalled();
+    controls!.sendInterrupt();
+    expect(sockets[0].sent.every((frame) => frame[0] !== 48)).toBe(true);
+    await act(async () => root.render(<Probe visible={false} />));
+    const before = sockets[0].sent.length;
+    resize({ cols: 40, rows: 10 });
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    expect(sockets[0].sent).toHaveLength(before);
+  } finally {
+    await act(async () => root.unmount());
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  }
+});

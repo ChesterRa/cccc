@@ -57,7 +57,7 @@ CCCC はコマンド一つで導入でき、データベースやメッセージ
 | **マルチランタイム編成** | 対応するランタイムを同じ Group で混在利用し、その他の CLI エージェントには `custom` を使用 |
 | **CCCC Connect** | 自分のインスタンス、異なる会員の指定 Group、またはアカウントなしで二つの Group を直接接続 |
 | **ワークスペースツール** | ファイルの閲覧・編集、Git 差分確認、Presentation への文書固定、タイル表示の純正ターミナル操作 |
-| **音声ワークフロー** | Voice Secretary で音声を文書や入力欄の下書きに整理。実験的な Codex Voice はリアルタイム会話と Runtime を使う Analyst を連携 |
+| **音声ワークフロー** | グローバルな Voice Secretary が共有会話で各 Group の音声・文書・入力欄の下書きを処理。実験的な Codex Voice は独立した Realtime Analyst を使用 |
 | **ロールベース協調** | Foreman + Peer ロールモデル、権限境界と宛先ルーティング（`@all`、`@peers`、`@foreman`） |
 | **ローカルファーストなランタイム状態** | ランタイムデータはリポジトリではなく `CCCC_HOME` に保持しつつ、Web Access と IM ブリッジで遠隔運用も可能 |
 
@@ -365,7 +365,7 @@ CCCC は IM グレードのメッセージングセマンティクスを実装 �
 - **Project Context** — 共有の協調情報、タスク、Agent 状態、自己進化スキル
 - **Group Space** — NotebookLM による共有ナレッジ管理
 - **ChatGPT Web Model 設定** — 共有ログインと各 Actor の ChatGPT 会話を接続
-- **Voice Secretary と Codex Voice** — 音声から文書・入力欄の下書きを作成し、実験的なリアルタイム Voice では Analyst を保持
+- **Voice Secretary と Codex Voice** — Runtime の直接設定または Profile を使うグローバルな Secretary が、共有会話でタスクを順番に処理し、各タスクの元の Group を保持します。実験的なリアルタイム Voice は独立した Analyst を使用。音声設定と音声デバイスの選択を共通化し、各 Group の文書・依頼・録音設定を保持します。Group ごとの秘書 Actor は作成しません。
 - **CCCC Connect 設定** — アカウント経由の検出、指定 Group の接続、Direct ペアリング
 - **IM ブリッジ設定** — Telegram、Slack、Discord、Mattermost、Feishu、DingTalk、WeCom、Weixin
 - **設定** — メッセージポリシー、配信調整、ターミナル履歴

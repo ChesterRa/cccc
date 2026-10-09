@@ -13,12 +13,14 @@ export function CodexVoiceConversationPane({
   children,
   analystExpanded,
   onToggleAnalyst,
+  analystBar,
 }: {
   controller: CodexVoiceSessionController;
   visible: boolean;
   children?: ReactNode;
   analystExpanded: boolean;
   onToggleAnalyst(): void;
+  analystBar?: ReactNode;
 }) {
   const { t } = useTranslation("modals");
   const conversationRef = useRef<HTMLDivElement | null>(null);
@@ -46,23 +48,23 @@ export function CodexVoiceConversationPane({
         >
           {t("codexVoiceConversation")}
         </h3>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onToggleAnalyst}
-          aria-expanded={analystExpanded}
-        >
-          <TerminalIcon size={15} />
-          {t(analystExpanded ? "codexVoiceHideAnalyst" : "codexVoiceShowAnalyst")}
-        </Button>
+        {analystExpanded ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onToggleAnalyst}
+            aria-expanded
+            aria-controls="codex-voice-analyst-pane"
+          >
+            {t("codexVoiceHideAnalyst")}
+          </Button>
+        ) : null}
       </PaneHeader>
       {children}
       <div
         ref={conversationRef}
         className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5"
-        aria-live="polite"
-        aria-atomic="false"
         onScroll={(event) => {
           const element = event.currentTarget;
           followTranscriptRef.current =
@@ -88,17 +90,6 @@ export function CodexVoiceConversationPane({
               icon={<VoiceWaveformIcon size={22} />}
               title={t("codexVoiceConversationEmptyTitle")}
               hint={t("codexVoiceConversationReady")}
-              action={
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => void controller.start()}
-                  disabled={controller.checking || controller.isStarting}
-                >
-                  <VoiceWaveformIcon size={15} />
-                  {controller.isStarting ? t("codexVoiceStarting") : t("codexVoiceStart")}
-                </Button>
-              }
             />
           )
         ) : null}
@@ -108,7 +99,85 @@ export function CodexVoiceConversationPane({
           {t("codexVoiceConversationHistoryHint")}
         </p>
       ) : null}
+      {analystBar}
     </section>
+  );
+}
+
+/** One line for a collapsed Analyst: what it is, whether it is ready, and what needs the user. */
+export function CodexVoiceAnalystSummaryBar({
+  controller,
+  analystPhase,
+  notReady,
+  attentionCount,
+  errorText,
+  hasNewResult,
+  onExpand,
+}: {
+  controller: CodexVoiceSessionController;
+  analystPhase: string;
+  notReady: boolean;
+  attentionCount: number;
+  errorText: string;
+  hasNewResult: boolean;
+  onExpand(): void;
+}) {
+  const { t } = useTranslation("modals");
+  const runtime = controller.readiness?.analyst_runtime;
+  const runtimeLabel = runtime ? RUNTIME_INFO[runtime]?.label || runtime : "";
+  return (
+    <div
+      data-codex-voice-analyst-bar
+      className="hidden min-h-[52px] flex-none flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--glass-border-subtle)] px-5 py-2 text-xs lg:flex"
+    >
+      <TerminalIcon
+        size={15}
+        aria-hidden="true"
+        className="flex-none text-[var(--color-accent-primary)]"
+      />
+      <span className="font-semibold text-[var(--color-text-primary)]">
+        {t("codexVoiceAnalystTitle")}
+      </span>
+      {runtimeLabel ? (
+        <span className="text-[var(--color-text-muted)]">· {runtimeLabel}</span>
+      ) : null}
+      {notReady ? (
+        <span className="text-amber-700 dark:text-amber-300">
+          · {t("codexVoiceAnalystNotReady")}
+        </span>
+      ) : analystPhase ? (
+        <span className="min-w-0 truncate text-[var(--color-text-muted)]">· {analystPhase}</span>
+      ) : null}
+      {attentionCount ? (
+        <span className="rounded-full bg-amber-400/15 px-2 py-0.5 font-semibold text-amber-700 dark:text-amber-200">
+          {t("codexVoiceAnalystNeedsInput", { count: attentionCount })}
+        </span>
+      ) : null}
+      {errorText ? (
+        <span
+          className="min-w-0 max-w-full truncate text-rose-600 dark:text-rose-300"
+          title={errorText}
+        >
+          {errorText}
+        </span>
+      ) : null}
+      {hasNewResult ? (
+        <span className="rounded-full bg-[var(--glass-tab-bg-active)] px-2 py-0.5 font-semibold text-[var(--color-accent-primary)]">
+          {t("codexVoiceAnalystNewResult")}
+        </span>
+      ) : null}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="ml-auto"
+        onClick={onExpand}
+        aria-expanded={false}
+        aria-controls="codex-voice-analyst-pane"
+      >
+        {t("codexVoiceShowAnalyst")}
+      </Button>
+    </div>
   );
 }
 
@@ -117,11 +186,15 @@ export function CodexVoiceAnalystPane({
   analystPhase,
   visible,
   terminalVisible,
+  isDark,
+  notReady = false,
 }: {
   controller: CodexVoiceSessionController;
   analystPhase: string;
   visible: boolean;
   terminalVisible: boolean;
+  isDark?: boolean;
+  notReady?: boolean;
 }) {
   const { t } = useTranslation("modals");
   const analyst = controller.analyst;
@@ -150,7 +223,11 @@ export function CodexVoiceAnalystPane({
               </span>
             ) : null}
           </div>
-          {analystPhase ? (
+          {notReady ? (
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+              {t("codexVoiceAnalystNotReady")}
+            </p>
+          ) : analystPhase ? (
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">{analystPhase}</p>
           ) : null}
         </div>
@@ -202,6 +279,7 @@ export function CodexVoiceAnalystPane({
             analyst={analyst}
             visible={terminalVisible}
             call={controller.owned ? controller.call : null}
+            isDark={isDark}
             onAnalystSnapshot={controller.updateAnalystSnapshot}
           />
         ) : analyst?.tui_ready ? (
@@ -246,13 +324,11 @@ function PaneEmptyState({
   icon,
   title,
   hint,
-  action,
   live = false,
 }: {
   icon: ReactNode;
   title: string;
   hint?: string;
-  action?: ReactNode;
   live?: boolean;
 }) {
   return (
@@ -267,7 +343,6 @@ function PaneEmptyState({
       {hint ? (
         <p className="mt-1.5 max-w-sm text-xs leading-5 text-[var(--color-text-muted)]">{hint}</p>
       ) : null}
-      {action ? <div className="mt-5">{action}</div> : null}
     </div>
   );
 }

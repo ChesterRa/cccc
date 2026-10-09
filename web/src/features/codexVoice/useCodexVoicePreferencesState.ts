@@ -1,4 +1,5 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { subscribeVoiceAudioStorage, useVoiceAudioStore } from "../../stores/useVoiceAudioStore";
 import {
   CODEX_REALTIME_VOICES,
   loadCodexVoicePreferences,
@@ -8,21 +9,19 @@ import {
 } from "./codexVoicePreferences";
 
 export function useCodexVoicePreferencesState() {
-  const [preferences, setPreferences] = useState<CodexVoicePreferences>(() =>
-    loadCodexVoicePreferences(),
-  );
+  const [voice, setVoice] = useState(() => loadCodexVoicePreferences().voice);
+  const audio = useVoiceAudioStore((state) => state.preferences);
+  useEffect(() => subscribeVoiceAudioStorage(), []);
   const [supportedVoices, setSupportedVoices] = useState<string[]>([...CODEX_REALTIME_VOICES]);
 
   const updatePreferences = useCallback((next: Partial<CodexVoicePreferences>) => {
-    setPreferences((current) => {
-      const updated: CodexVoicePreferences = {
-        ...current,
-        ...next,
-        voice: normalizeCodexRealtimeVoice(next.voice ?? current.voice),
-      };
-      saveCodexVoicePreferences(updated);
-      return updated;
-    });
+    if (next.inputDeviceId !== undefined || next.outputDeviceId !== undefined)
+      useVoiceAudioStore.getState().update(next);
+    if (next.voice !== undefined) {
+      const voice = normalizeCodexRealtimeVoice(next.voice);
+      saveCodexVoicePreferences({ voice, ...useVoiceAudioStore.getState().preferences });
+      setVoice(voice);
+    }
   }, []);
 
   const acceptSupportedVoices = useCallback((voices: unknown) => {
@@ -31,5 +30,6 @@ export function useCodexVoicePreferencesState() {
     if (supported.length > 0) setSupportedVoices(supported);
   }, []);
 
+  const preferences = useMemo(() => ({ voice, ...audio }), [voice, audio]);
   return { preferences, supportedVoices, updatePreferences, acceptSupportedVoices };
 }

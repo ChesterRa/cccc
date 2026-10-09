@@ -7,7 +7,6 @@ export type GroupTabId =
   | "automation"
   | "delivery"
   | "guidance"
-  | "assistants"
   | "space"
   | "messaging"
   | "connections"
@@ -22,6 +21,7 @@ export type GlobalTabId =
   | "branding"
   | "webAccess"
   | "webModels"
+  | "voice"
   | "developer";
 
 // Settings share the same controls as the rest of the workbench.

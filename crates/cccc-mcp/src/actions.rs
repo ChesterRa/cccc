@@ -120,21 +120,6 @@ pub fn debug(value: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
-pub fn voice_document(value: &str) -> Option<&'static str> {
-    Some(match value {
-        "list" => "assistant_voice_document_list",
-        "create" => "assistant_voice_document_save",
-        "read_new_input" => "assistant_voice_document_input_read",
-        "archive" => "assistant_voice_document_archive",
-        _ => return None,
-    })
-}
-pub fn voice_composer(value: &str) -> Option<&'static str> {
-    Some(match value {
-        "submit_prompt_draft" => "assistant_voice_prompt_draft_submit",
-        _ => return None,
-    })
-}
 
 #[cfg(test)]
 mod tests {

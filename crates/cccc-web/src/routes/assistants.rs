@@ -22,6 +22,7 @@ mod voice_document_library;
 mod voice_external;
 mod voice_final_asr;
 mod voice_inference;
+mod voice_models;
 mod voice_pcm_recording;
 mod voice_segment_analysis;
 mod voice_segmented_recording;
@@ -30,6 +31,12 @@ mod voice_ws;
 mod voice_ws_capture;
 mod voice_ws_lifecycle;
 mod voice_ws_revision;
+#[derive(Debug, Default, Deserialize)]
+struct AssistantQuery {
+    #[serde(default)]
+    prompt_request_id: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct DocumentQuery {
     #[serde(default)]
@@ -56,20 +63,13 @@ struct TranscriptionQuery {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .merge(voice_models::routes())
         .merge(voice_document_library::routes())
         .merge(voice_external::routes())
         .route("/api/v1/groups/{group_id}/assistants", get(list))
         .route(
             "/api/v1/groups/{group_id}/assistants/{assistant_id}",
             get(show),
-        )
-        .route(
-            "/api/v1/groups/{group_id}/assistants/{assistant_id}/settings",
-            axum::routing::put(update_settings),
-        )
-        .route(
-            "/api/v1/groups/{group_id}/assistants/{assistant_id}/status",
-            post(update_status),
         )
         .route(
             "/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions",
@@ -141,35 +141,24 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-async fn list(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
-    let runtime_state = runtime_state(&state, &group_id).await?;
+async fn list(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<AssistantQuery>,
+) -> ApiResult {
+    let runtime_state = runtime_state(&state, &group_id, &query.prompt_request_id).await?;
     Ok(success(payload(&state, &group_id, &runtime_state)))
 }
 async fn show(
     State(state): State<AppState>,
     Path((group_id, assistant_id)): Path<(String, String)>,
+    Query(query): Query<AssistantQuery>,
 ) -> ApiResult {
     if assistant_id != "voice_secretary" {
         return Err(ApiError::not_found("assistant not found"));
     }
-    let runtime_state = runtime_state(&state, &group_id).await?;
+    let runtime_state = runtime_state(&state, &group_id, &query.prompt_request_id).await?;
     Ok(success(payload(&state, &group_id, &runtime_state)))
-}
-async fn update_settings(
-    State(state): State<AppState>,
-    Path((group_id, assistant_id)): Path<(String, String)>,
-    Json(body): Json<Value>,
-) -> ApiResult {
-    validate_assistant(&assistant_id)?;
-    call(&state,"assistant_settings_update",object(json!({"group_id":group_id,"assistant_id":assistant_id,"by":body["by"].as_str().unwrap_or("user"),"patch":body}))).await
-}
-async fn update_status(
-    State(state): State<AppState>,
-    Path((group_id, assistant_id)): Path<(String, String)>,
-    Json(body): Json<Value>,
-) -> ApiResult {
-    validate_assistant(&assistant_id)?;
-    call(&state,"assistant_status_update",object(json!({"group_id":group_id,"assistant_id":assistant_id,"by":body["by"].as_str().unwrap_or("user"),"lifecycle":body["lifecycle"],"health":body["health"]}))).await
 }
 async fn transcribe(
     State(state): State<AppState>,
@@ -473,10 +462,14 @@ fn payload(state: &AppState, group_id: &str, value: &Value) -> Value {
     if assistant["config"]["recognition_backend"] == "external_provider_asr" {
         assistant["health"]["service"] = voice_external::health(&state.home, &assistant);
     }
-    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"documents_by_path":documents.iter().filter_map(|item|item["document_path"].as_str().map(|path|(path.to_owned(),item.clone()))).collect::<Map<_,_>>(),"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":value["new_input_available"].as_bool().unwrap_or_else(||value["input_latest_seq"].as_u64().unwrap_or(0)>value["input_read_cursor"].as_u64().unwrap_or(0)),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":models,"service_models_by_id":models_by_id,"service_runtime":runtime,"recording_lease":voice_recording_lease::current(&state.home).unwrap_or_else(|_|json!({}))})
+    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"documents_by_path":documents.iter().filter_map(|item|item["document_path"].as_str().map(|path|(path.to_owned(),item.clone()))).collect::<Map<_,_>>(),"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":value["new_input_available"].as_bool().unwrap_or_else(||value["input_latest_seq"].as_u64().unwrap_or(0)>value["input_read_cursor"].as_u64().unwrap_or(0)),"secretary_tasks":value["secretary_tasks"],"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":models,"service_models_by_id":models_by_id,"service_runtime":runtime,"recording_lease":voice_recording_lease::current(&state.home).unwrap_or_else(|_|json!({}))})
 }
 
-async fn runtime_state(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
+async fn runtime_state(
+    state: &AppState,
+    group_id: &str,
+    prompt_request_id: &str,
+) -> Result<Value, ApiError> {
     let Json(response) = call(
         state,
         "assistant_state",
@@ -484,6 +477,7 @@ async fn runtime_state(state: &AppState, group_id: &str) -> Result<Value, ApiErr
             "group_id":group_id,
             "assistant_id":"voice_secretary",
             "view":"voice_workspace",
+            "prompt_request_id":prompt_request_id,
             "suppress_retry_notify":true,
         })),
     )
@@ -529,11 +523,6 @@ fn array<'a>(value: &'a Value, key: &str) -> &'a [Value] {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default()
-}
-fn validate_assistant(value: &str) -> Result<(), ApiError> {
-    (value == "voice_secretary")
-        .then_some(())
-        .ok_or_else(|| ApiError::not_found("assistant not found"))
 }
 fn required(body: &Value, key: &str) -> Result<String, ApiError> {
     body.get(key)

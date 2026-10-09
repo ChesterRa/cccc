@@ -1,5 +1,6 @@
 import type { TFunction } from "i18next";
 import type { ReactNode } from "react";
+import { PlusIcon } from "../../../components/Icons";
 import { VoiceDocumentRow, type VoiceDocumentRowContext } from "./VoiceDocumentRow";
 import type { AssistantVoiceDocument } from "../../../types";
 import { classNames } from "../../../utils/classNames";
@@ -21,7 +22,7 @@ type VoiceSecretaryDocumentListPanelProps = VoiceDocumentRowContext & {
 
 export function VoiceDocumentListEmpty({ t }: { t: TFunction }) {
   return (
-    <div className="flex h-full items-center justify-center px-3 py-6 text-center text-xs text-[var(--color-text-muted)]">
+    <div className="px-2 py-4 text-sm leading-6 text-[var(--color-text-muted)]">
       {t("voiceSecretaryNoDocumentsHint", {
         defaultValue: "Start recording or create a document.",
       })}
@@ -49,40 +50,32 @@ export function VoiceSecretaryDocumentListPanel(props: VoiceSecretaryDocumentLis
   } = props;
   const rowContext: VoiceDocumentRowContext = props;
   return (
-    <aside
-      className={classNames(
-        "flex min-h-0 flex-col rounded-xl border border-[var(--glass-panel-border)] bg-[var(--color-bg-secondary)]",
-      )}
-    >
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-3.5 py-3">
+    <aside className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-2 px-3 pb-2 pt-3">
         <div
           className={classNames(
-            "min-w-0 text-sm font-semibold",
+            "min-w-0 truncate text-sm font-semibold",
             isDark ? "text-slate-100" : "text-gray-900",
           )}
         >
           {t("voiceSecretaryDocumentsTitle", { defaultValue: "Working documents" })}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-0.5">
           {headerActions}
           <button
             type="button"
             onClick={onStartCreateDocument}
             disabled={!!actionBusy}
-            className={classNames(
-              "rounded-full border px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
-              isDark
-                ? "border-white/10 text-slate-300 hover:bg-white/10"
-                : "border-black/10 bg-white text-gray-700 hover:bg-black/5",
-            )}
+            className="inline-flex min-h-8 items-center gap-1 whitespace-nowrap rounded-lg px-2 text-xs font-semibold text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
           >
+            <PlusIcon size={14} aria-hidden="true" />
             {actionBusy === "new_doc"
               ? t("voiceSecretaryCreatingDocument", { defaultValue: "Creating..." })
               : t("voiceSecretaryNewDocumentShort", { defaultValue: "New" })}
           </button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 space-y-0.5 overflow-auto scrollbar-hide p-2.5">
+      <div className="min-h-0 flex-1 space-y-0.5 overflow-auto scrollbar-hide px-2 pb-2">
         {navigation}
         {creatingDocument ? (
           <div
