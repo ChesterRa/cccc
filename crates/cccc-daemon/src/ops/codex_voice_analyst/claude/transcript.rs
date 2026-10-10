@@ -45,6 +45,10 @@ pub(super) struct TranscriptState {
     session_id: String,
     events: broadcast::Sender<AnalystEvent>,
     active: Option<ActiveTurn>,
+    /// promptIds of hidden (isMeta) user inputs seen while idle. Claude Code starts its own
+    /// turns from such inputs (scheduled prompts, cross-session messages); the turn they start
+    /// is attributed to these prompts.
+    meta_prompt_ids: Vec<String>,
 }
 
 impl TranscriptState {
@@ -58,11 +62,18 @@ impl TranscriptState {
             session_id,
             events,
             active: None,
+            meta_prompt_ids: Vec::new(),
         }
     }
 
     pub(super) fn active_turn_id(&self) -> Option<&str> {
         self.active.as_ref().map(|turn| turn.turn_id.as_str())
+    }
+
+    /// Claude has received hidden input while idle and may be starting a turn of its own.
+    #[cfg(test)]
+    pub(super) fn hidden_input_pending(&self) -> bool {
+        self.active.is_none() && !self.meta_prompt_ids.is_empty()
     }
 
     #[cfg(test)]
@@ -86,9 +97,11 @@ impl TranscriptState {
         controlled: Option<PendingPrompt<'_>>,
         native: Option<PendingNativeInput<'_>>,
     ) -> io::Result<IngestOutcome> {
-        if record.get("isSidechain").and_then(Value::as_bool) == Some(true)
-            || record.get("isMeta").and_then(Value::as_bool) == Some(true)
-        {
+        if record.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+            return Ok(IngestOutcome::None);
+        }
+        if record.get("isMeta").and_then(Value::as_bool) == Some(true) {
+            self.ingest_meta(record);
             return Ok(IngestOutcome::None);
         }
         if let Some(observed) = record
@@ -100,6 +113,8 @@ impl TranscriptState {
             return invalid("Claude transcript record belongs to a different session");
         }
         if super::transcript_ack::is_resume_ack(record) {
+            // The acknowledgement answers the hidden resume prompt; nothing else may claim it.
+            self.meta_prompt_ids.clear();
             return Ok(IngestOutcome::None);
         }
         match record.get("type").and_then(Value::as_str) {
@@ -194,28 +209,26 @@ impl TranscriptState {
                 None => (format!("claude-{prompt_id}"), None, IngestOutcome::None),
             },
         };
-        self.active = Some(ActiveTurn {
-            turn_id: turn_id.clone(),
-            prompt_ids: HashSet::from([prompt_id]),
-            text: String::new(),
-            error: None,
-            tools: HashMap::new(),
-        });
-        self.publish(
-            json!({
-                "method":"turn/started",
-                "params":{"threadId":self.session_id,"turn":{"id":turn_id}}
-            }),
-            requested_delegation_id.clone(),
-        );
+        self.open_turn(turn_id, HashSet::from([prompt_id]), requested_delegation_id);
         Ok(outcome)
     }
 
     fn ingest_assistant(&mut self, record: &Value) -> io::Result<()> {
         let mut messages = Vec::new();
-        let Some(active) = self.active.as_mut() else {
-            return invalid("Claude emitted assistant output without an active transcript turn");
-        };
+        if self.active.is_none() {
+            // Claude Code answers some hidden inputs (scheduled prompts, messages from other
+            // Claude sessions, delivery notices) in a turn of its own. Output that follows such an
+            // input belongs to that turn; any other output without a turn is still a desync and
+            // fails closed.
+            let Some(first) = self.meta_prompt_ids.first().cloned() else {
+                return invalid(
+                    "Claude emitted assistant output without an active transcript turn",
+                );
+            };
+            let prompt_ids = self.meta_prompt_ids.drain(..).collect();
+            self.open_turn(format!("claude-{first}"), prompt_ids, None);
+        }
+        let active = self.active.as_mut().expect("active turn");
         let content = record.pointer("/message/content").unwrap_or(&Value::Null);
         for block in content.as_array().into_iter().flatten() {
             match block.get("type").and_then(Value::as_str) {
@@ -277,6 +290,65 @@ impl TranscriptState {
         Ok(())
     }
 
+    /// Hidden user input never starts a CCCC-owned turn and never matches a pending CCCC
+    /// prompt, but Claude may answer it in a turn of its own, so remember its promptId.
+    fn ingest_meta(&mut self, record: &Value) {
+        if record.get("type").and_then(Value::as_str) != Some("user")
+            || record
+                .get("sessionId")
+                .or_else(|| record.get("session_id"))
+                .and_then(Value::as_str)
+                .is_some_and(|observed| observed != self.session_id)
+        {
+            return;
+        }
+        let content = record.pointer("/message/content").unwrap_or(&Value::Null);
+        if contains_tool_result(content) {
+            return;
+        }
+        let Some(prompt_id) = record
+            .get("promptId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            return;
+        };
+        match self.active.as_mut() {
+            Some(active) => {
+                active.prompt_ids.insert(prompt_id.to_owned());
+            }
+            None => {
+                if !self.meta_prompt_ids.iter().any(|id| id == prompt_id) {
+                    self.meta_prompt_ids.push(prompt_id.to_owned());
+                }
+            }
+        }
+    }
+
+    fn open_turn(
+        &mut self,
+        turn_id: String,
+        prompt_ids: HashSet<String>,
+        requested_delegation_id: Option<String>,
+    ) {
+        self.meta_prompt_ids.clear();
+        self.active = Some(ActiveTurn {
+            turn_id: turn_id.clone(),
+            prompt_ids,
+            text: String::new(),
+            error: None,
+            tools: HashMap::new(),
+        });
+        self.publish(
+            json!({
+                "method":"turn/started",
+                "params":{"threadId":self.session_id,"turn":{"id":turn_id}}
+            }),
+            requested_delegation_id,
+        );
+    }
+
     fn ingest_tool_results(&mut self, content: &Value) {
         let Some(active) = self.active.as_mut() else {
             return;
@@ -334,6 +406,7 @@ impl TranscriptState {
     }
 
     fn settle(&mut self, requested_status: &str, requested_error: Option<&str>) {
+        self.meta_prompt_ids.clear();
         let Some(active) = self.active.take() else {
             return;
         };
@@ -745,3 +818,7 @@ mod resume_ack_tests;
 #[cfg(test)]
 #[path = "transcript_interrupt_tests.rs"]
 mod interrupt_tests;
+
+#[cfg(test)]
+#[path = "transcript_autonomous_tests.rs"]
+mod autonomous_tests;
