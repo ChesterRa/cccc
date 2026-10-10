@@ -455,6 +455,7 @@ mod tests {
             chat_id: "D123".into(),
             thread_id: String::new(),
             verbose: false,
+            relay: crate::im_runtime::RelayMode::Mentions,
         };
         let prepared_again = sender.prepare(&attachment).await.expect("prepare again");
         sender
@@ -532,6 +533,7 @@ mod tests {
             chat_id: "C123".into(),
             thread_id: "1700000000.500".into(),
             verbose: false,
+            relay: crate::im_runtime::RelayMode::Mentions,
         };
 
         outbound

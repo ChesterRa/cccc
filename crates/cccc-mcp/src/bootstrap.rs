@@ -223,7 +223,14 @@ fn build_recovery_pack(
         "coordination_brief": clean_object(Map::from_iter([
             ("objective".into(), trimmed_value(brief.and_then(|value| value.get("objective")), 180)),
             ("current_focus".into(), trimmed_value(brief.and_then(|value| value.get("current_focus")), 180)),
-            ("constraints".into(), Value::Array(trimmed_list(brief.and_then(|value| value.get("constraints")), 6, 140))),
+            (
+                "constraints".into(),
+                Value::Array(full_list_with_overflow(
+                    brief.and_then(|value| value.get("constraints")),
+                    6,
+                    "constraints",
+                )),
+            ),
             ("project_brief".into(), trimmed_value(brief.and_then(|value| value.get("project_brief")), 260)),
             ("project_brief_stale".into(), Value::Bool(brief.and_then(|value| value.get("project_brief_stale")).and_then(Value::as_bool).unwrap_or(false))),
         ])),
@@ -897,6 +904,26 @@ fn trimmed_value(value: Option<&Value>, max_chars: usize) -> Value {
     ))
 }
 
+fn full_list_with_overflow(value: Option<&Value>, max_items: usize, label: &str) -> Vec<Value> {
+    let mut items = value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let text = string_value(Some(item)).unwrap_or_default();
+            (!text.is_empty()).then_some(Value::String(text))
+        })
+        .collect::<Vec<_>>();
+    if items.len() > max_items {
+        let extra = items.len() - max_items;
+        items.truncate(max_items);
+        items.push(Value::String(format!(
+            "(truncated: +{extra} more {label} — full list via cccc_context_get)"
+        )));
+    }
+    items
+}
+
 fn trimmed_list(value: Option<&Value>, max_items: usize, max_chars: usize) -> Vec<Value> {
     value
         .and_then(Value::as_array)
@@ -1010,6 +1037,31 @@ mod tests {
             "ready"
         );
         assert!(estimate_tokens(&pack) <= RECOVERY_TOKEN_BUDGET);
+    }
+
+    #[test]
+    fn brief_constraints_are_returned_in_full() {
+        let long_rule = "r".repeat(400);
+        let mut context = fixture_context();
+        context
+            .get_mut("coordination")
+            .and_then(|value| value.pointer_mut("/brief"))
+            .and_then(Value::as_object_mut)
+            .expect("brief")
+            .insert(
+                "constraints".into(),
+                json!([long_rule, "short rule", "a", "b", "c", "d", "e", "f"]),
+            );
+        let pack = build_recovery_pack(&context, "peer1", &Map::new(), Utc::now());
+        let constraints = pack["coordination_brief"]["constraints"]
+            .as_array()
+            .expect("constraints array");
+        assert_eq!(constraints[0].as_str().expect("first"), "r".repeat(400));
+        assert_eq!(constraints.len(), 7);
+        assert_eq!(
+            constraints[6].as_str().expect("overflow marker"),
+            "(truncated: +2 more constraints — full list via cccc_context_get)"
+        );
     }
 
     #[test]
