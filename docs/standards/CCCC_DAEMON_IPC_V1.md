@@ -516,6 +516,10 @@ Attach a directory scope to the supplied group, or create a new group when
 `group_id` is omitted. The attached group becomes the active CLI group. Omitting
 `group_id` does not select an existing group by project path.
 
+Attaching to an existing Group requires the user or that Group's foreman,
+using the same group-administration permission as other shared scope changes.
+Authorization precedes path inspection, configuration changes and ledger writes.
+
 The path is evaluated on the daemon host. The CLI resolves relative paths
 against its invoking terminal's working directory before sending this request;
 the daemon's working directory is not the CLI's project directory.
@@ -1656,6 +1660,9 @@ Notes:
 
 Set the active scope for a group using `path` (must already be attached).
 
+Permission: user or the Group's foreman. A peer or unknown Actor is rejected
+before path inspection, scope selection or ledger changes.
+
 As with `attach`, the CLI resolves relative paths against its own working
 directory before IPC.
 
@@ -1785,6 +1792,9 @@ No stage, unstage, discard, commit, branch-switch, pull or push operation is exp
 
 #### `group_detach_scope`
 
+Permission: user or the Group's foreman, checked before changing Group,
+registry or ledger state.
+
 Args:
 ```ts
 { group_id: string; scope_key: string; by?: string }
@@ -1829,7 +1839,8 @@ Args:
 
 Patch keys used by CCCC include:
 - Messaging: `default_send_to`
-- Delivery: `mail_notice_after_seconds` (default 1800, zero disables),
+- Delivery: `mail_notice_after_seconds` (default 1800, zero disables all Mail notices),
+  `mail_notice_idle_after_seconds` (default 60, zero disables only the early idle notice),
   `reply_notice_after_seconds` (default 900, zero disables)
 - Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
   `keepalive_max_per_actor`,
@@ -1941,7 +1952,16 @@ automatically applying a Prompt draft, the client MUST compare the accepted comp
 snapshot with the current text of the original Group, including an inactive Group's
 saved draft. Changed text is preserved and the candidate remains pending for explicit
 review. An `applied` acknowledgement follows actual local application, never model
-completion alone. Ask display status comes from its persisted outcome, not its age.
+completion alone. Ask execution progress comes from the matching Secretary task's
+phase; a pending Ask feedback record alone does not prove that execution is still
+queued. Replies and final outcomes retain their accepted Group/request identity.
+Canonical Ask feedback also retains the producing `secretary_task_id` from the
+daemon's result projection. This identity remains available after that task leaves
+the bounded recent-task list. When a retry replaces the task, older feedback MUST
+NOT settle the new execution; consumers match the result to its task identity or
+that task's confirmed `projected_at`. Elapsed time alone does not settle Ask.
+Hiding a local status hint MUST NOT cancel work, clear shared request history, or
+stop observation needed to deliver its result.
 A failed or cancelled Prompt request with confirmed owner cleanup may be replaced by
 an explicit new request, including from another Group. This does not authorize an
 automatic retry or release ownership of running, needs-user or unconfirmed work.
@@ -1966,8 +1986,29 @@ it MUST NOT start a manager, process, recovery job or model task.
 
 Args: `{ by?: "user" }`.
 Result: `{ settings: VoiceSecretarySettings, environment_keys: string[], default_guidance: string,
-configured: boolean, readiness_error?: string, profiles: Array<Record<string, unknown>>,
+configured: boolean, ready: boolean, readiness_code: SecretaryReadinessCode | null,
+readiness_error: string | null, profiles: Array<Record<string, unknown>>,
 backlog_sources: number, held_sources: number, invalid_sources: number }`.
+`SecretaryReadinessCode` is `"not_configured" | "invalid_configuration" | "owner_unavailable"`.
+These four readiness fields are shared by this read, `voice_secretary_tasks`,
+`voice_secretary_runtime` and `assistant.health.secretary`:
+- `configured` means a Runtime or linked Profile is saved. It remains true when
+  that configuration cannot be resolved or the execution owner is unavailable.
+- `ready` means saved configuration is valid and the daemon owner can admit work.
+  It does not verify provider authentication or require a running provider process.
+- `readiness_code` identifies the current blocking cause, or is null when ready.
+  Invalid saved configuration takes precedence over owner unavailability.
+- `readiness_error` is a bounded nonsecret diagnostic, or null when ready.
+  Clients select localized guidance and actions by code, never by English text.
+
+A malformed settings body fails with a safe `invalid_configuration` error;
+this operation MUST NOT invent default settings. Task-list and shared-runtime
+reads remain diagnostic observations of that configuration failure; reads that
+require the complete assistant configuration fail with the same safe error. When the selected Profile cannot resolve because its catalog is damaged, or its
+private environment cannot be read, readable saved settings remain editable while
+reporting not ready. An unrelated Profile catalog failure still fails the settings
+read safely; it does not change admission readiness of a valid Custom Runtime.
+Raw parser values and credentials are never exposed.
 The Profile list contains compatible global/user Profiles with their scope and owner.
 Secretary and Analyst support the same structured runtimes: Codex, Claude Code,
 Grok Build, OpenCode, Kilo, and Antigravity/Copilot/Devin/Cursor in ACP mode.
@@ -2056,13 +2097,19 @@ missing Groups. The owner is published only after reconciliation and cleanup.
 #### `voice_secretary_tasks`
 
 Args: `{ group_id: string, by?: "user" }`. Read-only result:
-`{ group_id: string, global_owner: boolean, configured: boolean, readiness_error?: string | null, tasks: SecretaryTask[],
+`{ group_id: string, global_owner: boolean, configured: boolean, ready: boolean,
+readiness_code: SecretaryReadinessCode | null, readiness_error: string | null, tasks: SecretaryTask[],
 deferred_sources: number, held_sources: number, invalid_sources: number,
 unprocessed_document_sources: number }`.
 Unresolved tasks first, followed by up to 12 recent terminal records for the requested Group; no other Group data or task grant.
+A latest task whose result has not been projected is unresolved even after its
+execution and cleanup finish. It remains visible until projection succeeds or an
+explicit continuation supersedes it; read requests never perform that projection.
 The same nonsecret `readiness_error` is included in `assistant.health.secretary`
 and the settings read. An unavailable owner can have no tasks; that empty list
 MUST NOT conceal the readiness failure. Reads never start or repair the owner.
+When initialization fails on an unreadable task record, these reads MUST retain
+the owner's safe diagnostic rather than reread and expose the malformed record.
 Startup failure diagnostics survive in the daemon's owner state and identify the
 stage and affected Group/task. They are bounded to 1600 characters and expose
 error categories and parser locations, never raw configuration values. The same
@@ -2106,11 +2153,14 @@ business receipt is preserved; further information uses the ordinary retry path.
 #### `voice_secretary_runtime`
 
 User-only read of the shared Secretary session. Args: `{ by?: "user" }`.
-Result: `{ phase, generation?, runtime?, native_terminal?, manual_turn?, task?, group_title?,
-progress?, activity?, diagnostic? }`. Phases: `not_started`, `starting`, `working`,
+Result: `{ configured, ready, readiness_code, readiness_error, phase, generation?, runtime?,
+native_terminal?, manual_turn?, task?, group_title?, progress?, activity?, diagnostic? }`. Phases: `not_started`, `starting`, `working`,
 `ready`, `stopping`, `disconnected`, `unavailable`. `task` is the current or most
-recent task snapshot; `ready` means the process remains available, not that the
-last result has been applied. This global observation can include another Group,
+recent task snapshot; `phase="ready"` means the process remains available, not that
+the last result has been applied. The separate `ready` boolean reports host admission
+readiness as defined above. A configured healthy owner may report `ready=true` with
+`phase="not_started"`; an existing process may remain visible while a changed
+configuration prevents new admission. Closing owners report `phase="stopping"`. This global observation can include another Group,
 so the Web endpoint `/api/v1/voice-secretary/runtime` is administrator-only.
 Reads never start a provider, open its terminal, or replay work.
 Native turn lifecycle is observed for the whole resident lifetime, including when
@@ -4356,10 +4406,12 @@ operation returns.
 
 For each concrete recipient handoff, the daemon appends `runtime.delivery`
 using the CCCS contract. `claimed` precedes external I/O; `accepted`, `failed`,
-or `ambiguous` records the outcome. A transport queue accepting a payload is an
-accepted handoff; it is not a claim that the model understood it. Automatic
-retry is forbidden after `accepted` or `ambiguous`. Concurrent claimants treat
-`claimed` as in-progress. Daemon startup settles claims stranded by the prior
+`ambiguous` or `withdrawn` records the outcome. A transport queue accepting a payload is
+an accepted handoff; it is not a claim that the model understood it. Automatic
+retry is forbidden after `accepted`, `ambiguous` or `withdrawn`. An obsolete
+notice is withdrawn only when its owner can establish that no external submission
+occurred; a stranded claim without that evidence remains ambiguous. Concurrent
+claimants treat `claimed` as in-progress. Daemon startup settles claims stranded by the prior
 daemon process to `ambiguous` before attempting runtime recovery.
 Recovery MUST interpret a same-generation legacy `chat.read.event_id` as an
 inclusive ledger watermark for that actor, not as a per-event receipt. It MUST
@@ -4381,8 +4433,16 @@ from `inbox_peek` / `inbox_read`. Concrete-recipient Mail batches retain the
 earliest eligible deadline. New Mail does not reset it. Broadcast-like Mail
 remains visible in the Inbox but does not start an active runtime notice timer.
 
-After `mail_notice_after_seconds`, an active/idle enabled actor may receive one
-content-free `system.notify(kind="mail_notice")` for the concrete batch. The
+An enabled running actor whose managed Runtime positively reports idle may receive
+one content-free `system.notify(kind="mail_notice")` after
+`min(mail_notice_idle_after_seconds, mail_notice_after_seconds)`. Working or
+unknown Runtime states use `mail_notice_after_seconds`; native PTY output is not
+an idle detector. Zero for the idle delay disables only this early notice; zero
+for the ordinary delay disables all Mail notices. Both timers retain the batch's
+earliest eligible deadline. This creates a notice, never an automatic promotion
+or Mail cursor advance. Passive status polling does not create notices.
+Before handoff, the owner rechecks whether the batch remains eligible. An obsolete
+notice established as unsent is withdrawn, not delivered or automatically retried. The
 notice states only that Mail is waiting and directs the actor to `inbox_read`;
 it does not copy message bodies, repeat, escalate, or create another Inbox
 obligation. Bootstrap, the next explicit Push, and low-frequency coordination
@@ -6888,7 +6948,10 @@ For `web_model_pull`, every returned source event MUST already have a durable
 `runtime.delivery` state of `accepted`. For `web_model_browser`, this operation
 only establishes the browser claim; `web_model_browser_delivery_record` settles
 the claim after the submit boundary. A second wait while the actor owns an active
-turn MUST return `turn_in_progress` and MUST NOT replace that turn.
+turn MUST return `turn_in_progress` and MUST NOT replace that turn. The nonempty
+`active_turn_id`, rather than a display status such as working/idle/waiting, owns
+that turn; status heartbeats do not release it. Completion releases only its
+matching active identity and cannot clear a replacement turn.
 `coalesced_text` MUST preserve the complete daemon-rendered batch without a
 secondary character-count truncation. Browser-originated oversized text is
 converted to a `.txt` attachment before daemon delivery; the canonical
@@ -7050,7 +7113,10 @@ terminal outcome. `submitting` and `pending` remain observations only. The
 browser owner MUST record the terminal handoff before `runtime_complete_turn` so
 completion cannot outrun delivery evidence. If the record call itself fails, a
 verified submission remains completion-pending and reconciliation retries this
-operation; it MUST NOT resubmit the browser prompt.
+operation; it MUST NOT resubmit the browser prompt. A verified late submission
+MUST remain recorded even after an earlier ambiguous outcome; it may establish
+accepted handoff without changing a newer active turn. Missing active projection
+alone MUST NOT convert a claimed submission into a withdrawn notice.
 
 #### `web_model_browser_attach`
 

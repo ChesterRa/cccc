@@ -4,7 +4,7 @@ use cccc_core::active;
 use cccc_core::group_scope;
 use cccc_core::ledger;
 use cccc_core::scope;
-use cccc_core::{GroupDoc, HomeLayout, Registry};
+use cccc_core::{GroupDoc, HomeLayout, Registry, permissions};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -21,6 +21,10 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
 }
 
 fn attach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group_id = string_arg(request, "group_id").filter(|id| !id.is_empty());
+    if let Some(id) = &group_id {
+        require_scope_authority(home, request, id)?;
+    }
     let path = string_arg(request, "path").unwrap_or_else(|| ".".into());
     let detected = scope::detect(std::path::Path::new(&path)).map_err(OpError::invalid)?;
     let event_data = json!({
@@ -28,7 +32,7 @@ fn attach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "label": detected.label.clone(),
         "git_remote": detected.git_remote.clone(),
     });
-    let group = if let Some(id) = string_arg(request, "group_id").filter(|id| !id.is_empty()) {
+    let group = if let Some(id) = group_id {
         group_scope::attach(&store(home)?, &id, detected).map_err(OpError::io)?
     } else {
         let created = store(home)?
@@ -55,6 +59,7 @@ fn attach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn detach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let scope_key = required_arg(request, "scope_key")?;
+    require_scope_authority(home, request, &group_id)?;
     let group = group_scope::detach(&store(home)?, &group_id, &scope_key).map_err(OpError::io)?;
     let event = append_scope_event(
         home,
@@ -70,6 +75,7 @@ fn detach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn use_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let path = required_arg(request, "path")?;
+    require_scope_authority(home, request, &group_id)?;
     let detected = scope::detect(std::path::Path::new(&path)).map_err(OpError::invalid)?;
     let updated =
         group_scope::activate(&store(home)?, &group_id, &detected.scope_key).map_err(|error| {
@@ -92,6 +98,19 @@ fn use_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "active_scope_key":updated.active_scope_key,
         "event":event,
     }))
+}
+
+fn require_scope_authority(
+    home: &HomeLayout,
+    request: &DaemonRequest,
+    group_id: &str,
+) -> Result<(), OpError> {
+    let group = store(home)?.load(group_id).map_err(OpError::not_found)?;
+    permissions::require_group(
+        &group,
+        &string_arg(request, "by").unwrap_or_else(|| "user".into()),
+    )
+    .map_err(|error| OpError::new("permission_denied", error.to_string()))
 }
 
 fn append_scope_event(
@@ -169,4 +188,101 @@ fn reconcile(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "removed_group_ids":removed_group_ids,
         "removed_default_scope_keys":removed_default_scope_keys,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cccc_contracts::Actor;
+
+    #[test]
+    fn shared_scope_mutations_require_group_authority_before_any_write() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let groups = store(&home).expect("store");
+        let created = groups.create("scope permissions", "").expect("group");
+        groups
+            .mutate(&created.group_id, |group| {
+                group.actors = vec![Actor::new("lead"), Actor::new("peer")];
+                Ok(())
+            })
+            .expect("actors");
+        let projects = ["one", "two", "three"].map(|name| temp.path().join(name));
+        for project in &projects {
+            std::fs::create_dir(project).expect("project");
+        }
+        let request = |op: &str, args: Value| DaemonRequest {
+            v: 1,
+            op: op.into(),
+            args: args.as_object().expect("args").clone(),
+        };
+        let one = attach(
+            &home,
+            &request(
+                "attach",
+                json!({"group_id":created.group_id,"path":projects[0],"by":"user"}),
+            ),
+        )
+        .expect("user attach");
+        attach(
+            &home,
+            &request(
+                "attach",
+                json!({"group_id":created.group_id,"path":projects[1],"by":"lead"}),
+            ),
+        )
+        .expect("foreman attach");
+        let snapshot = || {
+            (
+                serde_json::to_value(groups.load(&created.group_id).expect("group"))
+                    .expect("group snapshot"),
+                serde_json::to_value(Registry::load(&home).expect("registry"))
+                    .expect("registry snapshot"),
+                std::fs::read(groups.ledger_path(&created.group_id).expect("ledger"))
+                    .expect("ledger bytes"),
+                active::get(&home).expect("active group"),
+            )
+        };
+        let before = snapshot();
+        for by in ["peer", "unknown-actor"] {
+            for (op, args) in [
+                (
+                    "attach",
+                    json!({"group_id":created.group_id,"path":projects[2],"by":by}),
+                ),
+                (
+                    "group_use",
+                    json!({"group_id":created.group_id,"path":projects[0],"by":by}),
+                ),
+                (
+                    "group_detach_scope",
+                    json!({"group_id":created.group_id,"scope_key":one["scope_key"],"by":by}),
+                ),
+            ] {
+                let request = request(op, args);
+                let error = resolve_operation(&request)
+                    .expect("operation")
+                    .execute(&home, &request)
+                    .expect_err("unauthorized scope mutation");
+                assert_eq!(error.code, "permission_denied", "{op}: {by}");
+                assert_eq!(snapshot(), before, "{op}: {by} changed shared state");
+            }
+        }
+        use_group(
+            &home,
+            &request(
+                "group_use",
+                json!({"group_id":created.group_id,"path":projects[0],"by":"lead"}),
+            ),
+        )
+        .expect("foreman use");
+        detach(
+            &home,
+            &request(
+                "group_detach_scope",
+                json!({"group_id":created.group_id,"scope_key":one["scope_key"],"by":"user"}),
+            ),
+        )
+        .expect("user detach");
+    }
 }

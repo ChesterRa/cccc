@@ -6,6 +6,7 @@ import { RUNTIME_INFO } from "../../../types";
 import * as api from "../../../services/api";
 import type { SecretaryRuntimeState } from "../../../services/api/voiceSecretary";
 import { secretaryTaskSubject } from "./secretaryTaskPresentation";
+import { secretaryReadinessIssue } from "../../../features/voice/secretaryReadiness";
 
 const NativeSessionTerminal = lazy(() =>
   import("../../../features/voice/NativeSessionTerminal").then((module) => ({
@@ -102,6 +103,8 @@ export function SecretaryRuntimePanel({ active, isDark }: { active: boolean; isD
   const running = state?.phase === "working" || state?.phase === "starting";
   const connected = state?.phase === "ready" || running;
   const runtime = state?.runtime;
+  const readinessIssue = secretaryReadinessIssue(state);
+  const diagnostic = error || readinessIssue?.detail || (!readinessIssue && state?.diagnostic);
   return (
     <section
       data-secretary-runtime
@@ -111,7 +114,11 @@ export function SecretaryRuntimePanel({ active, isDark }: { active: boolean; isD
         <div className="min-w-0 flex-1">
           <p role="status" className="text-sm font-medium">
             {runtime ? `${RUNTIME_INFO[runtime]?.label || runtime} · ` : ""}
-            {state ? t(`voiceSettings.resident.phases.${state.phase}`) : t("common:loading")}
+            {readinessIssue
+              ? t(readinessIssue.titleKey)
+              : state
+                ? t(`voiceSettings.resident.phases.${state.phase}`)
+                : t("common:loading")}
           </p>
           {running && state?.task ? (
             <p className="mt-1 break-words text-sm text-[var(--color-text-secondary)]">
@@ -122,9 +129,11 @@ export function SecretaryRuntimePanel({ active, isDark }: { active: boolean; isD
           ) : (
             <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
               {t(
-                state?.manual_turn
-                  ? "voiceSettings.resident.manualTurn"
-                  : "voiceSettings.resident.sharedHint",
+                readinessIssue
+                  ? readinessIssue.hintKey
+                  : state?.manual_turn
+                    ? "voiceSettings.resident.manualTurn"
+                    : "voiceSettings.resident.sharedHint",
               )}
             </p>
           )}
@@ -146,9 +155,9 @@ export function SecretaryRuntimePanel({ active, isDark }: { active: boolean; isD
           )
         )}
       </header>
-      {(error || state?.diagnostic) && (
+      {diagnostic && (
         <p role="alert" className="shrink-0 break-words text-sm text-rose-600 dark:text-rose-300">
-          {error || state?.diagnostic}
+          {diagnostic}
         </p>
       )}
       {state?.activity && running && (

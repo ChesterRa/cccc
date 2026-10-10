@@ -120,6 +120,12 @@ impl TranscriptState {
         match record.get("type").and_then(Value::as_str) {
             Some("user") => self.ingest_user(record, controlled, native),
             Some("assistant") => {
+                if controlled.is_some() && self.active.is_none() && !self.meta_prompt_ids.is_empty()
+                {
+                    return invalid(
+                        "Claude autonomous output raced a pending CCCC prompt; turn ownership is ambiguous",
+                    );
+                }
                 self.ingest_assistant(record)?;
                 Ok(IngestOutcome::None)
             }

@@ -88,10 +88,11 @@ impl SecretaryTask {
     pub fn unresolved(&self) -> bool {
         !self.cleanup_confirmed
             || self.superseded_by.is_empty()
-                && self.phase != SecretaryTaskPhase::Done
-                && (self.phase != SecretaryTaskPhase::Cancelled
-                    || self.target.kind
-                        == cccc_contracts::voice_secretary::SecretaryTaskKind::Document)
+                && (self.projected_at.is_empty()
+                    || self.phase != SecretaryTaskPhase::Done
+                        && (self.phase != SecretaryTaskPhase::Cancelled
+                            || self.target.kind
+                                == cccc_contracts::voice_secretary::SecretaryTaskKind::Document))
     }
 
     /// User-facing summary, independent of the model's instruction envelope.
@@ -166,6 +167,50 @@ pub struct SecretaryGroupView {
     pub pending: bool,
     pub status: Option<SecretaryTaskPhase>,
     pub unprocessed_document_sources: usize,
+}
+
+/// Safe record identity and location for startup/status errors. Parser messages
+/// may quote task contents, so neither Display nor Debug retains their values.
+#[derive(Debug)]
+pub struct SecretaryTaskRecordError {
+    task_id: String,
+    diagnostic: String,
+}
+
+impl std::fmt::Display for SecretaryTaskRecordError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Secretary task {}: {}",
+            self.task_id, self.diagnostic
+        )
+    }
+}
+
+impl std::error::Error for SecretaryTaskRecordError {}
+
+fn task_record_error(task_id: &str, error: io::Error) -> io::Error {
+    let diagnostic = if let Some(json) = error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<serde_json::Error>())
+    {
+        format!(
+            "invalid JSON data at line {} column {}",
+            json.line(),
+            json.column()
+        )
+    } else if let Some(code) = error.raw_os_error() {
+        format!("{} (OS error {code})", error.kind())
+    } else {
+        error.kind().to_string()
+    };
+    io::Error::new(
+        error.kind(),
+        SecretaryTaskRecordError {
+            task_id: task_id.into(),
+            diagnostic,
+        },
+    )
 }
 
 impl SecretaryTaskStore {
@@ -273,11 +318,15 @@ impl SecretaryTaskStore {
     }
 
     fn load_disk(&self, task_id: &str) -> io::Result<SecretaryTask> {
-        let task: SecretaryTask = fs::read_json(&self.directory(task_id)?.join("task.json"))?;
+        let task: SecretaryTask = fs::read_json(&self.directory(task_id)?.join("task.json"))
+            .map_err(|error| task_record_error(task_id, error))?;
         if task.schema != 1 || task.task_id != task_id {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unsupported or mismatched secretary task record",
+            return Err(task_record_error(
+                task_id,
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unsupported or mismatched secretary task record",
+                ),
             ));
         }
         Ok(task)

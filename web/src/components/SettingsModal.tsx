@@ -129,6 +129,7 @@ export function SettingsModal({
   const [voiceSection, setVoiceSection] = useState<"secretary" | "realtime">("secretary");
   const [voiceAudioRequest, setVoiceAudioRequest] = useState(0);
   const [voiceFeatureRequest, setVoiceFeatureRequest] = useState(0);
+  const [voiceAnalystRequest, setVoiceAnalystRequest] = useState(0);
   const voiceBeforeLeave = useRef<() => boolean>(() => true);
   const requestClose = () => {
     if (voiceBeforeLeave.current()) onClose();
@@ -1547,6 +1548,7 @@ export function SettingsModal({
     }
     if (settingsTarget.voiceSection) setVoiceSection(settingsTarget.voiceSection);
     setVoiceAudioRequest(settingsTarget.voiceAudio ? settingsTarget.nonce : 0);
+    setVoiceAnalystRequest(settingsTarget.voiceAnalyst ? settingsTarget.nonce : 0);
     setVoiceFeatureRequest(
       settingsTarget.voiceSection && !settingsTarget.voiceAudio ? settingsTarget.nonce : 0,
     );
@@ -1881,6 +1883,15 @@ export function SettingsModal({
                     section={voiceSection}
                     audioRequest={voiceAudioRequest}
                     featureRequest={voiceFeatureRequest}
+                    // A fresh target wins on the first render after reopening;
+                    // the persisted request is updated by the parent effect.
+                    analystRequest={
+                      settingsTarget
+                        ? settingsTarget.voiceAnalyst
+                          ? settingsTarget.nonce
+                          : 0
+                        : voiceAnalystRequest
+                    }
                     initialFocusRef={initialVoiceFocus}
                     onSectionChange={setVoiceSection}
                     isDark={isDark}

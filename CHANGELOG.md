@@ -17,6 +17,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Changed
 
+- Notify managed Actors of pending Mail sooner when their Runtime confirms idle, while retaining the ordinary delay for busy or unknown states and leaving Mail consumption explicit.
+- Simplify the Group header and sidebar, and give terminal panels full-height columns with fewer simultaneous panels on narrow screens.
 - Share browser microphone/speaker preferences across Voice Secretary and Codex Voice through one device editor. Capture mode, recognition language and automatic polishing are remembered separately for each Group in that browser; active recordings and calls retain their starting settings.
 - Merge Dictation into Prompt, the default and first capture mode. Prompt defaults to dictation only; the compact **Polish after recording** checkbox enables optional model refinement. Manual polishing remains available for typed or dictated text. Selecting Prompt, Doc or Ask closes the menu; the checkbox changes only the Prompt preference.
 - Voice settings have two feature tabs, Voice Secretary and Codex Voice. Both services support Custom runtime configuration or linked Profiles through the same form, with independent credentials. Recognition and call preferences autosave separately from runtime, secret and work-rule drafts. Group Voice settings and enable toggles are removed.
@@ -25,6 +27,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- Distinguish saved Voice Secretary configuration from admission readiness, with localized guidance for missing configuration, invalid settings and an unavailable owner. Preserve saved input and keep provider process state separate from configuration.
+- Open Voice Analyst settings directly from its startup failure, and mark ACP snapshots as stale after repeated read failures while retaining existing results and controls.
+- Keep slow Codex Voice status reads useful during focus and visibility refreshes. Separate read failures from execution errors, clear recovered read warnings, and preserve confirmed investigation controls against older snapshots.
+- Keep Runtime Profile private-environment metadata tied to the current editor visit, so delayed reads cannot populate a different Profile or a new draft.
+- Preserve browser delivery ownership across idle heartbeats; obsolete Mail notices with uncertain submission remain ambiguous, and verified late receipts cannot replace a newer active turn.
+- Preserve message scroll position during virtualized history loading, and keep Group menus and mentions usable in constrained viewport heights.
+- Keep Voice Secretary documents current during slow reads and rapid selection changes, and prevent older reads from replacing accepted edits or loading another document into the editor.
+- Preserve Context task IDs after deletion and failed writes, so old message references and delayed updates cannot target newly created work. Keep valid canonical relationships during legacy ID collisions; recover verified missing references and report ambiguous recovery without changing existing files.
+- Check the complete Context task subtree before deletion; a peer cannot remove another owner's descendants, and a denied batch leaves state and history unchanged.
+- Apply existing Group administration permissions to scope attachment, selection and removal before changing configuration or history.
+- Keep Voice Secretary startup and queued-configuration failures visible in status reads, identifying unreadable records without exposing their contents or private environment values.
+- Detect Claude autonomous replies that race an accepted controlled prompt before its transcript receipt; report ambiguous ownership instead of leaving that delivery pending behind unrelated work.
 - Align the English, Chinese and Japanese CLI quick starts with current daemon startup, Group selection and message-viewing behavior; clarify that inbox reads consume Mail and remove obsolete environment settings from the CLI reference.
 - Resolve relative project paths in `cccc attach` and `cccc group use` from the invoking terminal, so the daemon cannot bind them to its own working directory.
 - Keep managed Claude sessions connected when hidden scheduled or peer input starts an autonomous turn, while preserving session and resume checks.
@@ -40,6 +54,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Settle blocking ACP permission requests and Cursor interactions as Secretary tasks needing user input, cleaning up the blocked session before allowing subsequent work. Prompt refinement requests the supported `draft` action, and task completion requires the matching result receipt.
 - Late Prompt results cannot overwrite newer composer text; conflicting drafts remain available for explicit review. Pending Ask and Prompt requests no longer appear complete or stop being observed merely because time has elapsed. Accepted Ask requests survive bounded history cleanup.
 - Secretary progress redacts secrets even when they span streaming chunks. Task and runtime polling no longer starve on slow responses, and leaving a view during an action cannot leave its controls permanently disabled.
+- Keep Ask progress tied to its current task when the workspace is hidden. Its composer hint can open existing details or be hidden without cancelling work, clearing history or losing new replies; older replies cannot settle a retried task.
 
 ## [0.4.42]
 

@@ -5,6 +5,7 @@ import { Switch } from "../../ui/switch";
 import { SelectCombobox } from "../../SelectCombobox";
 import { VoiceRuntimeProfileActions } from "../../../features/voice/VoiceRuntimeProfileActions";
 import { VoiceAudioSettings } from "../../../features/voice/VoiceAudioSettings";
+import { secretaryReadinessIssue } from "../../../features/voice/secretaryReadiness";
 import { StructuredRuntimeSettingsFields } from "../StructuredRuntimeSettingsFields";
 import { CodexVoiceSettingsPanel } from "../../../features/codexVoice/CodexVoiceSettingsPanel";
 import type { CodexVoiceShellState } from "../../../features/codexVoice/useCodexVoiceShell";
@@ -21,6 +22,7 @@ export function VoiceSettingsTab({
   onSectionChange,
   audioRequest = 0,
   featureRequest = 0,
+  analystRequest = 0,
   initialFocusRef,
 }: {
   voice: CodexVoiceShellState;
@@ -29,6 +31,7 @@ export function VoiceSettingsTab({
   isDark: boolean;
   audioRequest?: number;
   featureRequest?: number;
+  analystRequest?: number;
   initialFocusRef?: RefObject<HTMLElement | null>;
   isActive: boolean;
   onBeforeLeaveChange: (guard: () => boolean) => void;
@@ -38,12 +41,12 @@ export function VoiceSettingsTab({
   const form = useVoiceSecretarySettings(isActive);
   const featureTabs = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!isActive || !featureRequest || audioRequest) return;
+    if (!isActive || !featureRequest || audioRequest || analystRequest) return;
     featureTabs.current?.scrollIntoView({ block: "start" });
     featureTabs.current
       ?.querySelector<HTMLButtonElement>('[aria-selected="true"]')
       ?.focus({ preventScroll: true });
-  }, [isActive, featureRequest, audioRequest, section]);
+  }, [isActive, featureRequest, audioRequest, analystRequest, section]);
   const [profileEditing, setProfileEditing] = useState(false);
   const [asrEditing, setAsrEditing] = useState({ dirty: false, busy: false });
   const [modelsBusy, setModelsBusy] = useState(false);
@@ -86,6 +89,7 @@ export function VoiceSettingsTab({
     return () => onBeforeLeaveChange(() => true);
   }, [onBeforeLeaveChange, beforeLeave]);
   const preferences = form.preferences;
+  const secretaryIssue = secretaryReadinessIssue(form.state);
   const external = preferences.recognition_backend === "external_provider_asr";
   const local = preferences.recognition_backend === "assistant_service_local_asr";
   const effectiveRuntime =
@@ -177,16 +181,15 @@ export function VoiceSettingsTab({
             {t("voiceSettings.claudeTrustHint")}
           </p>
         )}
-        {(!!form.state?.settings.runtime || !!form.state?.settings.profile_id) &&
-          !!form.state?.readiness_error &&
-          !form.state.configured && (
-            <p
-              role="status"
-              className="break-words text-xs leading-5 text-[var(--color-text-secondary)]"
-            >
-              {form.state.readiness_error}
-            </p>
-          )}
+        {secretaryIssue && secretaryIssue.code !== "not_configured" && (
+          <p
+            role="status"
+            className="break-words text-xs leading-5 text-[var(--color-text-secondary)]"
+          >
+            <span>{t(secretaryIssue.titleKey)}</span>
+            {secretaryIssue.detail && <span className="block">{secretaryIssue.detail}</span>}
+          </p>
+        )}
         <div className="space-y-3 border-t border-[var(--glass-border-subtle)] pt-4">
           {form.error && (
             <p role="alert" className="break-words text-sm text-rose-600 dark:text-rose-300">
@@ -497,6 +500,8 @@ export function VoiceSettingsTab({
         </p>
         <CodexVoiceSettingsPanel
           active={isActive && section === "realtime"}
+          analystRequest={analystRequest}
+          initialFocusRef={initialFocusRef}
           controller={voice.controller}
           analystSettings={voice.analystSettings}
           onAnalystSettingsActive={voice.setAnalystSettingsActive}

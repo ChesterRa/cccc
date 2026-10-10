@@ -56,6 +56,7 @@ interface ModalState {
     webModelProvider?: "chatgpt_web" | "grok_web";
     voiceSection?: "secretary" | "realtime";
     voiceAudio?: boolean;
+    voiceAnalyst?: boolean;
     nonce: number;
   } | null;
 
@@ -68,6 +69,7 @@ interface ModalState {
     webModelProvider?: "chatgpt_web" | "grok_web";
     voiceSection?: "secretary" | "realtime";
     voiceAudio?: boolean;
+    voiceAnalyst?: boolean;
   }) => void;
   clearSettingsTarget: () => void;
   openCodexVoiceSettings: () => void;
@@ -128,6 +130,7 @@ export const useModalStore = create<ModalState>((set) => ({
         webModelProvider: target.webModelProvider,
         voiceSection: target.voiceSection,
         voiceAudio: target.voiceAudio,
+        voiceAnalyst: target.voiceAnalyst,
         nonce: Date.now(),
       },
     })),

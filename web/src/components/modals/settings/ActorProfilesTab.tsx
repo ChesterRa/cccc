@@ -2,7 +2,7 @@ import { useModalA11y } from "../../../hooks/useModalA11y";
 import { supportsAcpMode } from "../../../types";
 import { AcpRuntimeMode } from "../AcpRuntimeMode";
 import { isWebModelRuntime } from "../../../types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ActorProfile, ActorProfileUsage, RUNTIME_INFO } from "../../../types";
 import * as api from "../../../services/api";
@@ -138,6 +138,13 @@ export function ActorProfilesTab({
   const [usageBusyProfileId, setUsageBusyProfileId] = useState("");
 
   const [editorOpen, setEditorOpen] = useState(false);
+  const editorVisit = useRef(0);
+  useEffect(
+    () => () => {
+      editorVisit.current += 1;
+    },
+    [],
+  );
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorErr, setEditorErr] = useState("");
   const [editor, setEditor] = useState<EditorState>(buildEditor());
@@ -212,6 +219,9 @@ export function ActorProfilesTab({
 
   const closeEditor = () => {
     if (editorBusy) return;
+    editorVisit.current += 1;
+    setSecretKeys([]);
+    setSecretMasks({});
     setDuplicateSourceProfileId("");
     setEditorOpen(false);
     onEditorClose?.();
@@ -560,7 +570,7 @@ export function ActorProfilesTab({
     );
   };
 
-  const loadProfileSecrets = async (profileId: string) => {
+  const loadProfileSecrets = async (profileId: string, visit: number) => {
     if (!profileId) {
       setSecretKeys([]);
       setSecretMasks({});
@@ -572,6 +582,7 @@ export function ActorProfilesTab({
       return;
     }
     const resp = await api.fetchProfilePrivateEnvKeys(profileId, profileLookup);
+    if (visit !== editorVisit.current) return;
     if (!resp.ok) {
       setEditorErr(resp.error?.message || t("actorProfiles.loadSecretsFailed"));
       setSecretKeys([]);
@@ -595,6 +606,7 @@ export function ActorProfilesTab({
   }, [isActive, editorOnly]);
 
   const openNew = () => {
+    editorVisit.current += 1;
     setEditor(buildEditor());
     setSecretKeys([]);
     setSecretMasks({});
@@ -607,17 +619,21 @@ export function ActorProfilesTab({
   };
 
   const openEdit = async (profile: ActorProfile) => {
+    const visit = ++editorVisit.current;
     setEditor(buildEditor(profile));
+    setSecretKeys([]);
+    setSecretMasks({});
     setSecretSetText("");
     setSecretUnsetText("");
     setSecretClear(false);
     setDuplicateSourceProfileId("");
     setEditorErr("");
     setEditorOpen(true);
-    await loadProfileSecrets(String(profile.id || ""));
+    await loadProfileSecrets(String(profile.id || ""), visit);
   };
 
   const openDuplicate = async (profile: ActorProfile) => {
+    const visit = ++editorVisit.current;
     const sourceId = String(profile.id || "").trim();
     setEditor({
       ...buildEditor(profile),
@@ -633,7 +649,7 @@ export function ActorProfilesTab({
     setDuplicateSourceProfileId(sourceId);
     setEditorErr("");
     setEditorOpen(true);
-    await loadProfileSecrets(sourceId);
+    await loadProfileSecrets(sourceId, visit);
   };
 
   const handleDelete = async (profile: ActorProfile) => {
@@ -894,6 +910,7 @@ export function ActorProfilesTab({
       }
       await loadProfiles();
       setDuplicateSourceProfileId("");
+      editorVisit.current += 1;
       setEditorOpen(false);
       onSaved?.(profile);
     } catch {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { CodexVoiceAnalystSettingsFields } from "./CodexVoiceAnalystSettings";
 import { CodexVoiceAudioSettings } from "./CodexVoiceAudioSettings";
@@ -9,6 +9,8 @@ import type { CodexVoiceSessionController } from "./useCodexVoiceSessionControll
 type SettingsSection = "audio" | "notifications" | "analyst";
 type Props = {
   active: boolean;
+  analystRequest?: number;
+  initialFocusRef?: RefObject<HTMLElement | null>;
   controller: CodexVoiceSessionController;
   analystSettings: import("./useCodexVoiceShell").CodexVoiceShellState["analystSettings"];
   onAnalystSettingsActive: (active: boolean) => void;
@@ -20,6 +22,8 @@ const SETTINGS_SECTIONS: SettingsSection[] = ["audio", "notifications", "analyst
 // above the settings surface and survive closing or changing settings tabs.
 export function CodexVoiceSettingsPanel({
   active,
+  analystRequest = 0,
+  initialFocusRef,
   controller,
   analystSettings,
   onAnalystSettingsActive,
@@ -29,6 +33,18 @@ export function CodexVoiceSettingsPanel({
   const [section, setSection] = useState<SettingsSection>("audio");
   const preferences = useVoicePreferences(active);
   const tabRefs = useRef<Partial<Record<SettingsSection, HTMLButtonElement>>>({});
+  const consumedAnalystRequest = useRef(0);
+  useEffect(() => {
+    if (!active || !analystRequest || consumedAnalystRequest.current === analystRequest) return;
+    consumedAnalystRequest.current = analystRequest;
+    setSection("analyst");
+    const frame = requestAnimationFrame(() => {
+      const tab = tabRefs.current.analyst;
+      tab?.scrollIntoView({ block: "nearest" });
+      tab?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, analystRequest]);
   useEffect(() => {
     onAnalystSettingsActive(active && section === "analyst");
     return () => onAnalystSettingsActive(false);
@@ -65,6 +81,8 @@ export function CodexVoiceSettingsPanel({
             key={candidate}
             ref={(node) => {
               if (node) tabRefs.current[candidate] = node;
+              if (node && active && analystRequest && candidate === "analyst" && initialFocusRef)
+                initialFocusRef.current = node;
             }}
             type="button"
             role="tab"

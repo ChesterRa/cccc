@@ -20,6 +20,7 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
+  HTMLElement.prototype.scrollIntoView = vi.fn();
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -57,4 +58,36 @@ it("switches shared settings tabs without recreating the Analyst form", () => {
   expect(onAnalystSettingsActive).toHaveBeenLastCalledWith(true);
   act(() => tabs[0].click());
   expect(onAnalystSettingsActive).toHaveBeenLastCalledWith(false);
+});
+
+it("consumes an Analyst settings destination once and focuses its tab", async () => {
+  const onAnalystSettingsActive = vi.fn();
+  const render = async (request: number, active = true) =>
+    act(async () =>
+      root.render(
+        <CodexVoiceSettingsPanel
+          active={active}
+          analystRequest={request}
+          controller={{} as never}
+          analystSettings={{} as never}
+          onAnalystSettingsActive={onAnalystSettingsActive}
+        />,
+      ),
+    );
+  await render(125, false);
+  expect(visiblePanel().id).toContain("audio");
+  await render(125);
+  await vi.waitFor(() => {
+    expect(visiblePanel().id).toContain("analyst");
+    expect(document.activeElement?.id).toBe("codex-voice-settings-analyst-tab");
+  });
+  const notifications = host.querySelector<HTMLButtonElement>(
+    "#codex-voice-settings-notifications-tab",
+  )!;
+  act(() => notifications.click());
+  await render(125, false);
+  await render(125);
+  expect(visiblePanel().id).toContain("notifications");
+  await render(126);
+  await vi.waitFor(() => expect(visiblePanel().id).toContain("analyst"));
 });

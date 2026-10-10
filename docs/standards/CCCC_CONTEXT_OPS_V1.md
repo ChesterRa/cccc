@@ -39,6 +39,24 @@ revision is reserved before payload writes so such a failure invalidates prior
 before deciding what to retry; a newer revision alone is not a success receipt.
 Dry runs and rejected batches do not reserve a revision.
 
+Task numbers are durable identities within a Group. Deleting a task, including
+its unexecuted descendants, MUST NOT make a reserved number available for a later
+task. The existing Context version record retains the allocation high-water mark
+and reserves newly allocated numbers before payload writes. This forward
+guarantee starts with the persisted allocation record; task numbers already
+deleted before that record existed cannot be reconstructed from current task
+files. A partial storage
+failure may leave gaps; it MUST NOT allow a deleted or reserved ID to identify
+different work. Dry runs and rejected batches do not consume numbers.
+
+Legacy migration MUST preserve existing references whose targets were present
+in canonical storage before migration, even when a legacy task with the same ID
+is imported under a new number. Matching the referencing task's identity does
+not prove its references are legacy. Newly imported tasks use the legacy ID
+mapping. Recovery of missing references requires a proven task identity and
+reference mapping; ambiguous recovery MUST fail before changing existing files
+or recording migration success.
+
 `context_sync` only mutates the Context v3 stores named by its operations. It
 MUST NOT implicitly write the separate durable memory store. Callers that want
 to retain a decision or outcome beyond the bounded Context projections MUST use
@@ -152,6 +170,9 @@ Permission: any actor.
 
 Rules:
 - `title` is required.
+- The daemon assigns the next unused `T<number>` ID. Clients MUST use the assigned
+  ID from authoritative task reads, rather than infer it from the current task
+  count.
 - If `parent_id` is provided, the parent task MUST exist.
 - Peer actors MUST NOT create a task assigned to another peer.
 - If `task_type` is provided, it MUST be one of the allowed task-type ids above.
@@ -223,7 +244,9 @@ Rules:
 { op: "task.delete"; task_id: string }
 ```
 
-Permission: assignee / handoff target / foreman / user.
+Permission: assignee / handoff target / foreman / user. A peer MUST be the
+assignee or handoff target of every task in the affected subtree; otherwise the
+entire batch is rejected before reserving a revision or writing any state.
 
 Rules:
 - This operation is for removing work that never entered execution, not for erasing task history.

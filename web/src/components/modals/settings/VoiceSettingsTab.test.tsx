@@ -23,7 +23,9 @@ vi.mock("../../../services/api", () => ({
   updateProfilePrivateEnv: mocks.updateProfileEnv,
 }));
 vi.mock("../../../features/codexVoice/CodexVoiceSettingsPanel", () => ({
-  CodexVoiceSettingsPanel: () => <div data-analyst-settings />,
+  CodexVoiceSettingsPanel: ({ analystRequest }: { analystRequest?: number }) => (
+    <div data-analyst-settings data-analyst-request={analystRequest} />
+  ),
 }));
 vi.mock("./LocalAsrModels", () => ({ LocalAsrModels: () => null }));
 vi.mock("../ActorSecretManager", () => ({
@@ -106,6 +108,9 @@ const state: GlobalVoiceSecretaryState = {
   settings: { profile_id: "", config: defaultSecretaryPreferences },
   environment_keys: [],
   configured: false,
+  ready: false,
+  readiness_code: "not_configured",
+  readiness_error: "Global Voice Secretary is not configured",
   profiles: [
     {
       id: "p",
@@ -197,6 +202,44 @@ describe("global voice configuration", () => {
     await render();
     expect(select("runtime").value).toBe("claude");
     expect(guard()).toBe(false);
+  });
+  it("keeps an Analyst settings destination when forwarding to the realtime editor", async () => {
+    await act(async () =>
+      root.render(
+        <VoiceSettingsTab
+          voice={voice}
+          section="realtime"
+          analystRequest={125}
+          onSectionChange={() => undefined}
+          isDark={false}
+          isActive
+          onBeforeLeaveChange={register}
+        />,
+      ),
+    );
+    expect(host.querySelector("[data-analyst-request]")?.getAttribute("data-analyst-request")).toBe(
+      "125",
+    );
+  });
+  it.each([
+    ["owner_unavailable", "ownerUnavailable"],
+    ["invalid_configuration", "invalidConfiguration"],
+  ] as const)("shows %s separately from saved configuration", async (code, title) => {
+    mocks.fetch.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        ...state,
+        settings: { ...state.settings, runtime: "codex" },
+        configured: true,
+        ready: false,
+        readiness_code: code,
+        readiness_error: "Safe fixture diagnostic",
+      },
+    });
+    await render();
+    expect(host.textContent).toContain(`voiceSettings.readiness.${title}`);
+    expect(host.textContent).toContain("Safe fixture diagnostic");
+    expect(host.textContent).not.toContain("Global Voice Secretary is not configured");
   });
   it("preserves a Profile draft across refresh and saves its scoped identity", async () => {
     let resolve!: (value: unknown) => void;

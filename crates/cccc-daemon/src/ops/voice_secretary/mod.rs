@@ -39,19 +39,34 @@ const MAX_QUEUED_TASKS: usize = 64;
 const MAX_BATCH_BYTES: usize = 24_000;
 
 pub(super) fn group_projection(home: &HomeLayout, group_id: &str) -> io::Result<Value> {
-    let view = task_store(home).group_view(group_id, 12)?;
-    let state = cccc_core::assistant_state::load(home, group_id)?;
-    let status = view.status.map_or(json!("ready"), |phase| json!(phase));
+    let view = owner_group_view(home, group_id)?;
+    let state = cccc_core::assistant_state::load_workflow(home, group_id)?;
+    let readiness = configuration::readiness(home);
+    let status = view.status.map_or_else(
+        || {
+            json!(if readiness.ready {
+                "ready"
+            } else if !readiness.configured
+                && readiness.readiness_code
+                    == Some(cccc_contracts::voice_secretary::SecretaryReadinessCode::NotConfigured)
+            {
+                "unconfigured"
+            } else {
+                "unavailable"
+            })
+        },
+        |phase| json!(phase),
+    );
     let sources = source_counts(home, group_id)?;
     let deferred = sources.deferred;
-    let readiness_error = configuration::readiness_error(home);
-    Ok(
-        json!({"owner":"global","configured":readiness_error.is_none(),"readiness_error":readiness_error,"busy":view.busy,
+    Ok(configuration::with_readiness(
+        json!({"owner":"global","busy":view.busy,
         "pending":view.pending || deferred > 0,"status":status,
         "deferred_sources":deferred,"held_sources":sources.held,"invalid_sources":sources.invalid,
         "unprocessed_document_sources":view.unprocessed_document_sources,
         "tasks":view.tasks.iter().map(|task| observed_projection(home, task, &state)).collect::<Vec<_>>()}),
-    )
+        &readiness,
+    ))
 }
 
 struct Execution {
@@ -109,6 +124,9 @@ fn owner_readiness_error(home: &HomeLayout) -> Option<String> {
         .unwrap_or_else(|e| e.into_inner())
         .get(home.root())
     {
+        Some(Owner::Running(manager)) if manager.closing.load(Ordering::Acquire) => {
+            Some("Secretary execution owner is stopping; saved inputs are retained".into())
+        }
         Some(Owner::Running(_)) => None,
         Some(Owner::Failed(diagnostic)) => Some(diagnostic.clone()),
         None => Some("Secretary execution owner is unavailable; saved inputs are retained".into()),
@@ -117,8 +135,12 @@ fn owner_readiness_error(home: &HomeLayout) -> Option<String> {
 
 // Startup can read malformed configuration or task files. Parser messages may
 // quote private values; expose the stage, error category and location instead.
-fn startup_error(stage: impl std::fmt::Display, error: io::Error) -> io::Error {
-    let detail = if let Some(yaml) = error
+fn safe_error_detail(error: &io::Error) -> String {
+    if let Some(task) = error.get_ref().and_then(|source| {
+        source.downcast_ref::<cccc_core::voice_secretary::SecretaryTaskRecordError>()
+    }) {
+        task.to_string()
+    } else if let Some(yaml) = error
         .get_ref()
         .and_then(|source| source.downcast_ref::<serde_yaml::Error>())
     {
@@ -145,7 +167,11 @@ fn startup_error(stage: impl std::fmt::Display, error: io::Error) -> io::Error {
         format!("{} (OS error {code})", error.kind())
     } else {
         error.kind().to_string()
-    };
+    }
+}
+
+fn startup_error(stage: impl std::fmt::Display, error: io::Error) -> io::Error {
+    let detail = safe_error_detail(&error);
     let diagnostic =
         format!("Secretary startup failed while {stage}: {detail}; saved inputs are retained")
             .chars()
@@ -158,6 +184,18 @@ fn task_store(home: &HomeLayout) -> SecretaryTaskStore {
     lookup(home).map_or_else(
         || SecretaryTaskStore::new(home.clone()),
         |m| m.store.clone(),
+    )
+}
+
+fn owner_group_view(
+    home: &HomeLayout,
+    group_id: &str,
+) -> io::Result<cccc_core::voice_secretary::SecretaryGroupView> {
+    // Failed startup cannot publish a partial authority index. Report its saved
+    // readiness error instead of rereading the record that blocked that startup.
+    lookup(home).map_or_else(
+        || Ok(cccc_core::voice_secretary::SecretaryGroupView::default()),
+        |manager| manager.store.group_view(group_id, 12),
     )
 }
 
@@ -719,7 +757,10 @@ impl Manager {
                     }
                     Err(error) => {
                         let _ = self.store.update(&task.task_id, |t| {
-                            t.diagnostic = error.to_string();
+                            t.diagnostic = configuration::configuration_diagnostic(
+                                "resolving saved Runtime or Profile",
+                                &error,
+                            );
                             Ok(())
                         });
                     }
@@ -1126,18 +1167,17 @@ fn tasks(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::io)?
         .load(&group_id)
         .map_err(OpError::not_found)?;
-    let view = task_store(home)
-        .group_view(&group_id, 12)
-        .map_err(OpError::io)?;
-    let state = cccc_core::assistant_state::load(home, &group_id).map_err(OpError::io)?;
+    let view = owner_group_view(home, &group_id).map_err(OpError::io)?;
+    let state = cccc_core::assistant_state::load_workflow(home, &group_id).map_err(OpError::io)?;
     let sources = source_counts(home, &group_id).map_err(OpError::io)?;
-    let readiness_error = configuration::readiness_error(home);
-    object(
+    let readiness = configuration::readiness(home);
+    object(configuration::with_readiness(
         json!({"group_id":group_id,"tasks":view.tasks.iter().map(|task| observed_projection(home, task, &state)).collect::<Vec<_>>(),
-        "configured":readiness_error.is_none(),"readiness_error":readiness_error,"global_owner":true,
+        "global_owner":true,
         "deferred_sources":sources.deferred,"held_sources":sources.held,"invalid_sources":sources.invalid,
         "unprocessed_document_sources":view.unprocessed_document_sources}),
-    )
+        &readiness,
+    ))
 }
 
 fn cancel(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

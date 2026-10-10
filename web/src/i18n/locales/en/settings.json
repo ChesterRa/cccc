@@ -1792,7 +1792,17 @@
         "unavailable": "Unavailable"
       },
       "adminOnly": "The shared Secretary terminal requires administrator access. Group tasks and results remain available here."
-    }
+    },
+    "readiness": {
+      "notConfigured": "Voice Secretary isn't set up",
+      "invalidConfiguration": "Voice Secretary configuration needs attention",
+      "ownerUnavailable": "Voice Secretary is unavailable",
+      "configureHint": "Input is saved. Configure the Secretary to process it.",
+      "configurationHint": "Input is saved. Check the diagnostic and voice settings.",
+      "ownerHint": "Input is saved. Check execution details for the cause.",
+      "askAdminToCheck": "Ask an administrator to check the service."
+    },
+    "sourcesUnavailable": "{{count}} inputs are saved, awaiting an available Secretary."
   },
   "voiceAudio": {
     "title": "Audio devices",

@@ -55,6 +55,28 @@ impl VoiceSecretarySettings {
     }
 }
 
+/// Why the daemon cannot accept new Secretary model work. Provider login and
+/// process observations belong to the separate runtime phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretaryReadinessCode {
+    NotConfigured,
+    InvalidConfiguration,
+    OwnerUnavailable,
+}
+
+/// Read-only admission state, shared by settings, tasks, health and runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretaryReadiness {
+    /// A Runtime or Profile is saved, even if it cannot currently be resolved.
+    pub configured: bool,
+    /// The host permits new model work; does not imply a running provider.
+    pub ready: bool,
+    pub readiness_code: Option<SecretaryReadinessCode>,
+    pub readiness_error: Option<String>,
+}
+
 fn global_scope() -> String {
     "global".into()
 }

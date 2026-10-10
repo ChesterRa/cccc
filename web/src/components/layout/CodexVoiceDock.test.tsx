@@ -23,6 +23,7 @@ function controller(
     playbackBlocked: false,
     outputStatus: { queued: 0, blocked: null },
     error: "",
+    refreshError: "",
     isStarting: false,
     isEngaged: false,
     externalCall: false,
@@ -51,6 +52,19 @@ function controller(
 }
 
 describe("CodexVoiceDock", () => {
+  it("shows stale status instead of advertising ready after a failed snapshot read", () => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceDock
+        controller={controller({ refreshError: "read failed" })}
+        onOpen={vi.fn()}
+        onStart={vi.fn()}
+      />,
+    );
+    expect(html).toContain("modals:codexVoiceStatusStaleLabel");
+    expect(html).not.toContain("modals:codexVoicePhase.failed");
+    expect(html).not.toContain("modals:codexVoicePhase.idle");
+  });
+
   it("does not advertise Ready when Realtime credentials are unavailable", () => {
     const state = controller();
     state.readiness = { ...state.readiness!, realtime_credentials_available: false };

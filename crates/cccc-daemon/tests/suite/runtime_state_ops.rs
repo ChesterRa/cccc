@@ -187,6 +187,205 @@ fn a_pulled_turn_withdraws_a_mail_notice_whose_mail_was_already_read() {
 }
 
 #[test]
+fn claimed_browser_mail_turn_survives_idle_heartbeat_and_late_submission_receipt() {
+    for status in ["idle", "waiting"] {
+        let (_temp, home, group_id, notice) = browser_mail_notice_fixture();
+        let accepted = call(
+            &home,
+            "runtime_wait_next_turn",
+            json!({"group_id":group_id,"actor_id":"web1","by":"web1","transport":"web_model_browser"}),
+        );
+        assert_eq!(accepted.result["status"], "work_available");
+        let turn = &accepted.result["turn"];
+        assert_eq!(turn["event_ids"], json!([notice.id]));
+        call(
+            &home,
+            "inbox_read",
+            json!({"group_id":group_id,"actor_id":"web1","by":"web1"}),
+        );
+        // A status heartbeat does not finish the browser owner's active turn.
+        call(
+            &home,
+            "headless_set_status",
+            json!({"group_id":group_id,"actor_id":"web1","by":"web1","status":status}),
+        );
+        let next = call(
+            &home,
+            "runtime_wait_next_turn",
+            json!({"group_id":group_id,"actor_id":"web1","by":"web1","transport":"web_model_browser"}),
+        );
+        let recorded = call(
+            &home,
+            "web_model_browser_delivery_record",
+            json!({"group_id":group_id,"actor_id":"web1","by":"web1",
+                "turn_id":turn["turn_id"],"event_ids":turn["event_ids"],"delivery_id":"late-submission",
+                "browser_delivery":{"state":"submitted","detail":"isolated external submit evidence"}}),
+        );
+        assert_eq!(
+            recorded.result["event"]["kind"],
+            "web_model.browser_delivery.submitted"
+        );
+        let states = notice_delivery_states(&home, &group_id, &notice.id);
+        assert_eq!(
+            next.result["status"], "turn_in_progress",
+            "{status}: {states:?}"
+        );
+        assert_eq!(next.result["active_turn_id"], turn["turn_id"]);
+        assert_eq!(
+            states,
+            vec!["claimed", "accepted"],
+            "the owned turn was never withdrawn"
+        );
+        call(
+            &home,
+            "runtime_complete_turn",
+            json!({"group_id":group_id,"actor_id":"web1","by":"web1","status":"done",
+                "turn_id":turn["turn_id"],"event_ids":turn["event_ids"]}),
+        );
+        let idle = call(
+            &home,
+            "runtime_wait_next_turn",
+            json!({"group_id":group_id,"actor_id":"web1","by":"web1","transport":"web_model_browser"}),
+        );
+        assert_eq!(
+            idle.result["status"], "idle",
+            "completion releases the heartbeat's turn"
+        );
+    }
+}
+
+#[test]
+fn stranded_browser_mail_claim_remains_uncertain_until_real_submission_evidence_arrives() {
+    let (_temp, home, group_id, notice) = browser_mail_notice_fixture();
+    let accepted = call(
+        &home,
+        "runtime_wait_next_turn",
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1","transport":"web_model_browser"}),
+    );
+    let turn = &accepted.result["turn"];
+    // A claim and its active projection are separate writes. Retain the durable
+    // claim while simulating a missing projection after that partial boundary.
+    cccc_core::integration_state::group_update(
+        &GroupStore::new(home.clone()).expect("store"),
+        &group_id,
+        "runtime_states",
+        |value| {
+            value
+                .as_object_mut()
+                .expect("runtime states")
+                .remove("web1");
+            Ok(())
+        },
+    )
+    .expect("lose only active projection");
+    call(
+        &home,
+        "inbox_read",
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1"}),
+    );
+    let next = call(
+        &home,
+        "runtime_wait_next_turn",
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1","transport":"web_model_browser"}),
+    );
+    assert_eq!(next.result["status"], "idle");
+    let before = notice_delivery_states(&home, &group_id, &notice.id);
+    assert_eq!(
+        before,
+        vec!["claimed", "ambiguous"],
+        "a durable claim cannot prove the notice was unsent"
+    );
+    call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"new work","message_mode":"send"}),
+    );
+    let new_turn = call(
+        &home,
+        "runtime_wait_next_turn",
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1","transport":"web_model_browser"}),
+    );
+    assert_eq!(new_turn.result["status"], "work_available");
+    assert_ne!(new_turn.result["turn"]["turn_id"], turn["turn_id"]);
+    call(
+        &home,
+        "web_model_browser_delivery_record",
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1",
+            "turn_id":turn["turn_id"],"event_ids":turn["event_ids"],"delivery_id":"late-submission",
+            "browser_delivery":{"state":"submitted","detail":"isolated external submit evidence"}}),
+    );
+    assert_eq!(
+        notice_delivery_states(&home, &group_id, &notice.id),
+        vec!["claimed", "ambiguous", "accepted"]
+    );
+    let active = call(
+        &home,
+        "runtime_wait_next_turn",
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1","transport":"web_model_browser"}),
+    );
+    assert_eq!(active.result["status"], "turn_in_progress");
+    assert_eq!(
+        active.result["active_turn_id"], new_turn.result["turn"]["turn_id"],
+        "late evidence never resubmits the notice or replaces newer work"
+    );
+}
+
+fn browser_mail_notice_fixture() -> (tempfile::TempDir, HomeLayout, String, cccc_contracts::Event) {
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"browser Mail ownership"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","by":"user"}),
+    );
+    let store = GroupStore::new(home.clone()).expect("store");
+    store
+        .mutate(&group_id, |group| {
+            group.running = true;
+            Ok(())
+        })
+        .expect("fixture running");
+    let mail = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"review","message_mode":"mail"}),
+    );
+    let mut notice = cccc_contracts::Event::new("system.notify", &group_id);
+    notice.by = "system".into();
+    notice.data = json!({"kind":"mail_notice","target_actor_id":"web1","message":"Mail waiting",
+        "context":{"actor_id":"web1","source_event_ids":[mail.result["event"]["id"]]}})
+    .as_object()
+    .expect("notice")
+    .clone();
+    cccc_core::ledger::append(&store.ledger_path(&group_id).expect("ledger"), &notice)
+        .expect("notice");
+    (temp, home, group_id, notice)
+}
+
+fn notice_delivery_states(home: &HomeLayout, group_id: &str, notice_id: &str) -> Vec<String> {
+    cccc_core::ledger::read_all(
+        &GroupStore::new(home.clone())
+            .expect("store")
+            .ledger_path(group_id)
+            .expect("ledger"),
+    )
+    .expect("ledger")
+    .into_iter()
+    .filter(|event| event.kind == "runtime.delivery" && event.data["source_event_id"] == notice_id)
+    .map(|event| event.data["state"].as_str().expect("state").to_owned())
+    .collect()
+}
+
+#[test]
 fn managed_terminal_actor_exposes_daemon_owned_structured_status() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

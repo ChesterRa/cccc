@@ -1084,6 +1084,7 @@ export type AssistantVoicePromptDraft = {
 
 export type AssistantVoiceAskFeedback = {
   request_id: string;
+  secretary_task_id?: string;
   status: "pending" | "working" | "done" | "needs_user" | "failed" | "handed_off" | string;
   request_text?: string;
   request_preview?: string;

@@ -35,6 +35,7 @@ vi.mock("../../../components/LazyMarkdownRenderer", () => ({
 }));
 import { secretaryTaskOutcome } from "./secretaryTaskPresentation";
 import { SecretaryTasks } from "./SecretaryTasks";
+import { useUIStore } from "../../../stores/useUIStore";
 const task: SecretaryTaskSummary = {
   task_id: "a-task",
   target: {
@@ -56,13 +57,17 @@ const task: SecretaryTaskSummary = {
   superseded_by: "",
   candidate_available: false,
 };
-const response = (tasks: SecretaryTaskSummary[]) => ({ ok: true, result: { tasks } });
+const response = (tasks: SecretaryTaskSummary[]) => ({
+  ok: true,
+  result: { tasks, configured: true, ready: true, readiness_code: null, readiness_error: null },
+});
 describe("Group-owned secretary task controls", () => {
   let host: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     vi.useFakeTimers();
+    useUIStore.setState({ canAccessGlobalSettings: true });
     for (const mock of [
       mocks.fetch,
       mocks.cancel,
@@ -96,19 +101,167 @@ describe("Group-owned secretary task controls", () => {
       "Secretary startup failed while reading Actor identities in Group g_000000000001: invalid YAML data at line 2 column 1; saved inputs are retained";
     mocks.fetch.mockResolvedValue({
       ok: true,
-      result: { tasks: [], configured: false, readiness_error: diagnostic },
+      result: {
+        tasks: [],
+        configured: true,
+        ready: false,
+        readiness_code: "owner_unavailable",
+        readiness_error: diagnostic,
+      },
     });
     await render();
     expect(host.querySelector('[role="alert"]')?.textContent).toContain(diagnostic);
     expect(host.querySelector("[data-secretary-tasks]")).not.toBeNull();
     mocks.fetch.mockResolvedValue({
       ok: true,
-      result: { tasks: [], configured: true, readiness_error: null },
+      result: {
+        tasks: [],
+        configured: true,
+        ready: true,
+        readiness_code: null,
+        readiness_error: null,
+      },
     });
     await act(async () => vi.advanceTimersByTime(2000));
     expect(host.querySelector('[role="alert"]')).toBeNull();
     expect(host.querySelector("[data-secretary-tasks]")).toBeNull();
     expect(mocks.retry).not.toHaveBeenCalled();
+  });
+  it("shows one owner diagnostic in the runtime overview and preserves independent task reads", async () => {
+    const diagnostic = "Synthetic owner startup failure";
+    const readiness = {
+      configured: true,
+      ready: false,
+      readiness_code: "owner_unavailable",
+      readiness_error: diagnostic,
+    };
+    mocks.fetch.mockResolvedValue({ ok: true, result: { ...readiness, tasks: [] } });
+    mocks.runtime.mockResolvedValue({
+      ok: true,
+      result: { ...readiness, phase: "unavailable", runtime: "codex", diagnostic },
+    });
+    await act(async () =>
+      root.render(<SecretaryTasks groupId="A" active isDark={false} workspace />),
+    );
+    expect(
+      [...host.querySelectorAll('[role="alert"]')].filter(
+        (node) => node.textContent === diagnostic,
+      ),
+    ).toHaveLength(1);
+    expect(host.querySelector("[data-secretary-runtime]")?.textContent).toContain(diagnostic);
+    mocks.fetch.mockResolvedValue({
+      ok: false,
+      error: { message: "Independent task-list read failure" },
+    });
+    await act(async () => vi.advanceTimersByTime(2000));
+    expect(host.textContent).toContain("Independent task-list read failure");
+    expect(host.querySelector("[data-secretary-runtime]")?.textContent).toContain(diagnostic);
+  });
+  it("does not hide a later failed read when the workspace banner owns readiness feedback", async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      result: {
+        tasks: [],
+        configured: true,
+        ready: false,
+        readiness_code: "owner_unavailable",
+        readiness_error: "Known readiness failure",
+      },
+    });
+    await act(async () =>
+      root.render(<SecretaryTasks groupId="A" active isDark={false} hideReadinessError />),
+    );
+    expect(host.textContent).not.toContain("Known readiness failure");
+    mocks.fetch.mockResolvedValue({ ok: false, error: { message: "Later network read failure" } });
+    await act(async () => vi.advanceTimersByTime(2000));
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Later network read failure");
+  });
+  it("keeps a failed task-list read even when its message equals the known readiness reason", async () => {
+    const diagnostic = "Same transport and readiness message";
+    const readiness = {
+      configured: true,
+      ready: false,
+      readiness_code: "owner_unavailable",
+      readiness_error: diagnostic,
+    };
+    mocks.fetch.mockResolvedValue({ ok: true, result: { ...readiness, tasks: [] } });
+    mocks.runtime.mockResolvedValue({
+      ok: true,
+      result: { ...readiness, phase: "unavailable", diagnostic },
+    });
+    await act(async () =>
+      root.render(<SecretaryTasks groupId="A" active isDark={false} workspace />),
+    );
+    mocks.fetch.mockResolvedValue({ ok: false, error: { message: diagnostic } });
+    await act(async () => vi.advanceTimersByTime(2000));
+    const taskReadAlert = host.querySelector('[data-secretary-tasks] > div [role="alert"]');
+    expect(taskReadAlert?.closest("[data-secretary-runtime]")).toBeNull();
+    expect(taskReadAlert?.textContent).toBe(diagnostic);
+  });
+  it("keeps public readiness feedback when the runtime view is restricted", async () => {
+    useUIStore.setState({ canAccessGlobalSettings: false });
+    const diagnostic = "Public owner-unavailable reason";
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      result: {
+        tasks: [],
+        configured: true,
+        ready: false,
+        readiness_code: "owner_unavailable",
+        readiness_error: diagnostic,
+      },
+    });
+    const runtimeReads = mocks.runtime.mock.calls.length;
+    await act(async () =>
+      root.render(<SecretaryTasks groupId="A" active isDark={false} workspace />),
+    );
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(diagnostic);
+    expect(host.textContent).toContain("voiceSettings.resident.adminOnly");
+    expect(mocks.runtime).toHaveBeenCalledTimes(runtimeReads);
+  });
+  it("preserves the runtime view's independent GET failure", async () => {
+    const readiness = {
+      configured: true,
+      ready: false,
+      readiness_code: "owner_unavailable",
+      readiness_error: "Known owner startup reason",
+    };
+    mocks.fetch.mockResolvedValue({ ok: true, result: { ...readiness, tasks: [] } });
+    mocks.runtime.mockResolvedValue({ ok: true, result: { ...readiness, phase: "unavailable" } });
+    await act(async () =>
+      root.render(<SecretaryTasks groupId="A" active isDark={false} workspace />),
+    );
+    mocks.runtime.mockResolvedValue({
+      ok: false,
+      error: { message: "Independent runtime GET failure" },
+    });
+    await act(async () => vi.advanceTimersByTime(2000));
+    expect(host.querySelector('[data-secretary-runtime] [role="alert"]')?.textContent).toBe(
+      "Independent runtime GET failure",
+    );
+  });
+  it("retains readiness on a selected task and always exposes failed task actions", async () => {
+    const diagnostic = "Owner startup failure with accepted task";
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      result: {
+        tasks: [task],
+        configured: true,
+        ready: false,
+        readiness_code: "owner_unavailable",
+        readiness_error: diagnostic,
+      },
+    });
+    await act(async () =>
+      root.render(
+        <SecretaryTasks groupId="A" active isDark={false} workspace initialTaskId="a-task" />,
+      ),
+    );
+    expect(host.textContent).toContain(diagnostic);
+    expect(host.querySelector("[data-secretary-runtime]")).toBeNull();
+    mocks.cancel.mockResolvedValue({ ok: false, error: { message: "Task cancellation failed" } });
+    await act(async () => button("voiceSettings.cancelTask").click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Task cancellation failed");
   });
   it("opens the native task view only in the explicit workspace and drops it on Group navigation", async () => {
     const running = {
@@ -427,11 +580,36 @@ describe("Group-owned secretary task controls", () => {
   it("shows saved input waiting for configuration even before any job exists", async () => {
     mocks.fetch.mockResolvedValue({
       ok: true,
-      result: { tasks: [], configured: false, deferred_sources: 3 },
+      result: {
+        tasks: [],
+        configured: false,
+        ready: false,
+        readiness_code: "not_configured",
+        readiness_error: "Global Voice Secretary is not configured",
+        deferred_sources: 3,
+      },
     });
     await render();
     expect(host.textContent).toContain("voiceSettings.sourcesUnconfigured");
     expect(host.querySelector("[data-secretary-tasks]")).not.toBeNull();
+    expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+  it("keeps saved input waiting for an unavailable owner distinct from missing configuration", async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      result: {
+        tasks: [],
+        configured: true,
+        ready: false,
+        readiness_code: "owner_unavailable",
+        readiness_error: "Owner is unavailable",
+        deferred_sources: 3,
+      },
+    });
+    await render();
+    expect(host.textContent).toContain("voiceSettings.sourcesUnavailable");
+    expect(host.textContent).not.toContain("voiceSettings.sourcesUnconfigured");
+    expect(mocks.retry).not.toHaveBeenCalled();
     expect(mocks.cancel).not.toHaveBeenCalled();
   });
   it("keeps document gaps and shutdown interruption visible beyond twelve records", async () => {
@@ -439,6 +617,9 @@ describe("Group-owned secretary task controls", () => {
       ok: true,
       result: {
         configured: true,
+        ready: true,
+        readiness_code: null,
+        readiness_error: null,
         unprocessed_document_sources: 1,
         tasks: Array.from({ length: 15 }, (_, index) => ({
           ...task,
@@ -519,6 +700,8 @@ describe("secretary task status line", () => {
       result: {
         tasks: [],
         configured: false,
+        ready: false,
+        readiness_code: "not_configured",
         readiness_error: "Pick a runtime",
         deferred_sources: 1,
       },
@@ -552,7 +735,15 @@ it("shows held and invalid saved sources even when no task exists", async () => 
   const root = createRoot(host);
   mocks.fetch.mockResolvedValue({
     ok: true,
-    result: { tasks: [], configured: true, held_sources: 4, invalid_sources: 1 },
+    result: {
+      tasks: [],
+      configured: true,
+      ready: true,
+      readiness_code: null,
+      readiness_error: null,
+      held_sources: 4,
+      invalid_sources: 1,
+    },
   });
   await act(async () => root.render(<SecretaryTasks groupId="A" active isDark={false} />));
   expect(host.textContent).toContain("voiceSettings.sourcesHeld");

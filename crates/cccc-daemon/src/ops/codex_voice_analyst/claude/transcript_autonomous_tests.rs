@@ -162,6 +162,33 @@ fn output_without_a_turn_or_hidden_input_still_fails_closed() {
 }
 
 #[test]
+fn autonomous_output_cannot_swallow_a_pending_controlled_prompt() {
+    let (mut state, mut events) = harness();
+    let pending = || PendingPrompt {
+        delegation_id: "controlled-delivery",
+        text: "inspect this",
+        turn_id: "controlled-turn",
+    };
+    // The control request was accepted, but its exact user echo is not yet
+    // visible. A hidden peer input starts competing work in that interval.
+    state
+        .ingest(&cross_session_message("peer-prompt"), Some(pending()))
+        .expect("hidden input alone does not establish a turn");
+    let error = state
+        .ingest(
+            &assistant(json!([{"type":"text","text":"peer answer"}])),
+            Some(pending()),
+        )
+        .expect_err("competing output must expose ambiguous control acceptance");
+    assert!(error.to_string().contains("turn ownership is ambiguous"));
+    assert!(state.active_turn_id().is_none());
+    assert!(
+        events.try_recv().is_err(),
+        "no competing result can own the delivery"
+    );
+}
+
+#[test]
 fn settled_hidden_input_does_not_excuse_later_orphan_output() {
     let (mut state, _) = harness();
     state

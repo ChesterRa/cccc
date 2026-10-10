@@ -49,6 +49,7 @@ function fixtureController(): CodexVoiceSessionController {
     playbackBlocked: false,
     outputStatus: { queued: 0, blocked: null },
     error: "",
+    refreshError: "",
     isStarting: false,
     isEngaged: true,
     externalCall: false,

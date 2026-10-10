@@ -17,13 +17,14 @@ export function CodexVoiceDock({
   const callStatus = codexVoiceCallStatus(controller);
   const attention = Boolean(
     controller.error ||
+    controller.refreshError ||
     controller.playbackBlocked ||
     controller.analyst?.warning ||
     controller.analyst?.phase === "needs_attention",
   );
   const phaseLabel = t(`modals:${callStatus.labelKey}`);
   const statusLabel =
-    callStatus.blocked || controller.checking
+    callStatus.blocked || controller.checking || controller.refreshError
       ? phaseLabel
       : attention
         ? t("layout:codexVoiceAttention")

@@ -45,6 +45,8 @@ pub(super) struct VersionState {
     #[serde(default)]
     pub tasks_rev: u64,
     #[serde(default)]
+    pub task_id_high_water: u64,
+    #[serde(default)]
     pub agents_rev: u64,
     #[serde(default)]
     pub actors_rev: u64,
@@ -63,6 +65,7 @@ impl VersionState {
                     global_rev: baseline,
                     context_rev: u64::from(has_context),
                     tasks_rev: u64::from(has_tasks),
+                    task_id_high_water: 0,
                     agents_rev: u64::from(has_agents),
                     actors_rev: 0,
                 })
@@ -116,17 +119,21 @@ fn load_with_tasks(paths: &ContextPaths, include_tasks: bool) -> io::Result<Cont
     let coordination = object_field("coordination")?;
     let meta = object_field("meta")?;
     let version = VersionState::load(paths)?;
+    let tasks = if include_tasks {
+        yaml_files::load_tasks(&paths.tasks_dir)?
+    } else {
+        Vec::new()
+    };
     Ok(ContextDoc {
         v: 3,
         revision: version.global_rev,
         tasks_revision: version.tasks_rev,
+        task_id_high_water: version
+            .task_id_high_water
+            .max(super::task_apply::maximum_task_number(&tasks)),
         updated_at: String::new(),
         coordination,
-        tasks: if include_tasks {
-            yaml_files::load_tasks(&paths.tasks_dir)?
-        } else {
-            Vec::new()
-        },
+        tasks,
         agent_states: yaml_files::load_agents(&paths.agents_file)?,
         meta,
     })
@@ -139,9 +146,16 @@ pub(super) fn persist_diff(
 ) -> io::Result<VersionState> {
     fs::create_dir_all(&paths.tasks_dir)?;
     let context_changed = before.coordination != after.coordination || before.meta != after.meta;
-    let tasks_changed = before.tasks != after.tasks;
+    let tasks_changed =
+        before.tasks != after.tasks || before.task_id_high_water != after.task_id_high_water;
     let agents_changed = before.agent_states != after.agent_states;
     let mut version = VersionState::load(paths)?;
+    version.task_id_high_water = version
+        .task_id_high_water
+        .max(before.task_id_high_water)
+        .max(after.task_id_high_water)
+        .max(super::task_apply::maximum_task_number(&before.tasks))
+        .max(super::task_apply::maximum_task_number(&after.tasks));
     // Reserve the revision before the first payload write. An I/O failure can
     // leave part of this file batch visible; no reader may accept an old CAS
     // token for that changed state. This is invalidation, not a success receipt.
@@ -206,6 +220,22 @@ mod tests {
         assert!(
             actual.revision > previous.revision,
             "partially changed state still accepts the stale version"
+        );
+        assert_eq!(actual.task_id_high_water, 1);
+        let mut next = actual.clone();
+        super::super::task_apply::create(
+            &mut next,
+            json!({"title":"after failed write"})
+                .as_object()
+                .expect("operation"),
+            "user",
+        )
+        .expect("allocate after failure");
+        assert_eq!(next.tasks[0]["id"], "T002");
+        persist_diff(&paths, &actual, &next).expect("persist next task");
+        assert_eq!(
+            load(&paths).expect("reload next task").task_id_high_water,
+            2
         );
     }
 }

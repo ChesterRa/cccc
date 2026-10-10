@@ -70,6 +70,7 @@ function controller(): CodexVoiceSessionController {
     playbackBlocked: false,
     outputStatus: { queued: 0, blocked: null },
     error: "",
+    refreshError: "",
     isStarting: false,
     isEngaged: true,
     externalCall: false,
@@ -180,10 +181,62 @@ describe("CodexVoiceAnalystModal settings navigation", () => {
       tab: "voice",
       voiceSection: "realtime",
     });
+    expect(useModalStore.getState().settingsTarget?.voiceAnalyst).toBeUndefined();
     expect(host.querySelector("[data-codex-voice-settings-panel]")).toBeNull();
     expect(voice.start).not.toHaveBeenCalled();
     expect(voice.disconnect).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     await act(async () => root.unmount());
   });
+
+  it.each(["", "codexVoiceAnalystRuntimeMissing"])(
+    "takes an Analyst setup problem directly to settings after error=%s without changing the gear",
+    async (error) => {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const root = createRoot(host);
+      const voice = {
+        ...controller(),
+        phase: error ? ("failed" as const) : ("idle" as const),
+        error,
+        isEngaged: false,
+        owned: false,
+        analyst: null,
+        readiness: {
+          analyst_runtime: "codex",
+          analyst_runtime_available: false,
+          supported_modes: ["assistant", "persona"] as ("assistant" | "persona")[],
+          realtime_credentials_available: true,
+        },
+      };
+      await act(async () =>
+        root.render(
+          <CodexVoiceAnalystModal
+            isOpen
+            isDark={false}
+            isSmallScreen={false}
+            controller={voice}
+            onClose={vi.fn()}
+          />,
+        ),
+      );
+      const settings = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent === "codexVoiceOpenSettings",
+      );
+      expect(settings).toBeDefined();
+      if (error) expect(host.textContent?.split(error)).toHaveLength(2);
+      await act(async () => settings!.click());
+      expect(useModalStore.getState().settingsTarget).toMatchObject({
+        scope: "global",
+        tab: "voice",
+        voiceSection: "realtime",
+        voiceAnalyst: true,
+      });
+      await act(async () => buttonByLabel(host, "codexVoiceSettings").click());
+      expect(useModalStore.getState().settingsTarget?.voiceAnalyst).toBeUndefined();
+      expect(voice.start).not.toHaveBeenCalled();
+      expect(voice.disconnect).not.toHaveBeenCalled();
+      await act(async () => root.unmount());
+    },
+  );
 });

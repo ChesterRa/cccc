@@ -31,14 +31,27 @@ const COMMON_FLAT_KEYS: &[&str] = &[
 /// Load assistant state as the flat view expected by the native daemon.
 /// Common fields are projected from the canonical 0.4.35 schema.
 pub fn load(home: &HomeLayout, group_id: &str) -> io::Result<Value> {
+    let canonical = load_canonical(home, group_id)?;
+    let assistant = crate::voice_secretary_settings::assistant_view(home)?;
+    Ok(canonical_to_flat(&canonical, &assistant))
+}
+
+/// Read durable workflow facts without requiring the independent instance
+/// configuration. Does not substitute defaults for unreadable preferences.
+pub fn load_workflow(home: &HomeLayout, group_id: &str) -> io::Result<Value> {
+    Ok(canonical_to_flat(
+        &load_canonical(home, group_id)?,
+        &json!({}),
+    ))
+}
+
+fn load_canonical(home: &HomeLayout, group_id: &str) -> io::Result<Value> {
     migrate_legacy_group_state(home, group_id)?;
     let store = GroupStore::new(home.clone())?;
     store.load(group_id)?;
-    let assistant = crate::voice_secretary_settings::assistant_view(home)?;
     let path = state_path(&store, group_id)?;
     with_exclusive_lock(&lock_path(&path), || {
-        let canonical = load_canonical_unlocked(&path, group_id)?;
-        Ok(canonical_to_flat(&canonical, &assistant))
+        load_canonical_unlocked(&path, group_id)
     })
 }
 

@@ -1776,7 +1776,17 @@
         "unavailable": "不可用"
       },
       "adminOnly": "共享秘书终端需要管理员权限。本组的任务和结果仍可在这里查看。"
-    }
+    },
+    "readiness": {
+      "notConfigured": "语音秘书尚未配置",
+      "invalidConfiguration": "语音秘书配置需要检查",
+      "ownerUnavailable": "语音秘书暂不可用",
+      "configureHint": "原文已保存。请配置语音秘书后处理。",
+      "configurationHint": "原文已保存。请检查诊断信息与语音设置。",
+      "ownerHint": "原文已保存。请查看执行详情中的原因。",
+      "askAdminToCheck": "请管理员检查服务状态。"
+    },
+    "sourcesUnavailable": "{{count}} 条原文已保存，等待语音秘书恢复可用后处理。"
   },
   "voiceAudio": {
     "title": "音频设备",

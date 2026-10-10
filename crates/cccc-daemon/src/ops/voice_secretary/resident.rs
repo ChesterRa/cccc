@@ -283,8 +283,12 @@ pub(super) fn revoke_session_grant(store: &SecretaryTaskStore) -> io::Result<()>
 
 pub(super) fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     configuration::require_user(request)?;
+    let readiness = configuration::readiness(home);
     let Some(owner) = lookup(home) else {
-        return object(json!({"phase":"unavailable","diagnostic":owner_readiness_error(home)}));
+        return object(configuration::with_readiness(
+            json!({"phase":"unavailable","diagnostic":readiness.readiness_error}),
+            &readiness,
+        ));
     };
     let Some(resident) = owner.resident() else {
         let starting = owner
@@ -294,10 +298,11 @@ pub(super) fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .values()
             .find(|e| !*e.cancel.borrow())
             .and_then(|e| owner.store.load(&e.task_id).ok());
-        return object(
-            json!({"phase":if starting.is_some() {"starting"} else {"not_started"},
-            "task":starting.as_ref().map(projection),"diagnostic":configuration::readiness_error(home)}),
-        );
+        return object(configuration::with_readiness(
+            json!({"phase":if owner.closing.load(Ordering::Acquire) {"stopping"} else if starting.is_some() {"starting"} else {"not_started"},
+            "task":starting.as_ref().map(projection),"diagnostic":readiness.readiness_error}),
+            &readiness,
+        ));
     };
     let execution = resident
         .last
@@ -310,7 +315,8 @@ pub(super) fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let task_busy = execution.as_ref().is_some_and(|e| !*e.cancel.borrow());
     let manual_turn = resident.busy() && !task_busy;
     let busy = task_busy || manual_turn;
-    let phase = if owner.reset_requested.load(Ordering::Acquire)
+    let phase = if owner.closing.load(Ordering::Acquire)
+        || owner.reset_requested.load(Ordering::Acquire)
         || !resident.available.load(Ordering::Acquire)
     {
         "stopping"
@@ -321,14 +327,16 @@ pub(super) fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     } else {
         "ready"
     };
-    object(
+    object(configuration::with_readiness(
         json!({"phase":phase,"generation":resident.session.generation(),"runtime":resident.session.runtime(),
         "native_terminal":resident.session.tui_ready(),"manual_turn":manual_turn,
         "task":task.as_ref().filter(|_|!manual_turn).map(projection),
         "group_title":task.as_ref().filter(|_|!manual_turn).and_then(|t| cccc_core::GroupStore::new(home.clone()).ok()?.load(&t.target.group_id).ok()).map(|g|g.title),
         "progress":execution.as_ref().filter(|_|!manual_turn).map(|e|e.progress.lock().unwrap_or_else(|e| e.into_inner()).snapshot()),
-        "activity":execution.as_ref().filter(|_|task_busy).map(|e|e.activity.lock().unwrap_or_else(|e| e.into_inner()).clone())}),
-    )
+        "activity":execution.as_ref().filter(|_|task_busy).map(|e|e.activity.lock().unwrap_or_else(|e| e.into_inner()).clone()),
+        "diagnostic":readiness.readiness_error}),
+        &readiness,
+    ))
 }
 
 pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

@@ -16,6 +16,19 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     store.load(&group_id).map_err(OpError::not_found)?;
+    let secretary =
+        crate::ops::voice_secretary::group_projection(home, &group_id).map_err(OpError::io)?;
+    if secretary["readiness_code"] == "invalid_configuration" && secretary["configured"] == false {
+        return Err(OpError::new(
+            "invalid_configuration",
+            secretary["readiness_error"]
+                .as_str()
+                .unwrap_or("Secretary settings are unreadable"),
+        ));
+    }
+    // Reconcile only after rejecting unreadable instance preferences. Its
+    // legacy document read also projects those preferences into workflow state.
+    super::document_reconcile::run(home, request)?;
     let state = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     let prompt_draft =
         match string_arg(request, "prompt_request_id").filter(|id| !id.trim().is_empty()) {
@@ -28,8 +41,6 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         };
     let document_state = voice_document_state::load(home, &group_id).map_err(OpError::io)?;
     let mut assistant = effective_assistant(&state);
-    let secretary =
-        crate::ops::voice_secretary::group_projection(home, &group_id).map_err(OpError::io)?;
     assistant["health"]
         .as_object_mut()
         .expect("assistant health")
@@ -39,8 +50,12 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "disabled"
     } else if secretary["busy"] == true {
         "working"
-    } else if secretary["configured"] != true {
-        "unconfigured"
+    } else if secretary["ready"] != true {
+        if secretary["readiness_code"] == "not_configured" {
+            "unconfigured"
+        } else {
+            "unavailable"
+        }
     } else {
         "ready"
     });

@@ -841,7 +841,6 @@
   "voiceSecretaryPanelViewAsk": "提问",
   "voiceSecretaryConfigure": "去配置",
   "voiceSecretaryAskAdminToConfigure": "请联系管理员配置语音秘书。",
-  "voiceSecretaryNotConfigured": "语音秘书尚未配置",
   "voiceSecretaryDiarizationBusy": "说话人分离正忙于另一段录音，本次转写已保存，但没有说话人标注。",
   "voiceSecretaryDiarizationUnavailable": "说话人分离不可用，本次转写已保存，但没有说话人标注。",
   "voiceSecretaryDocumentCreateFailed": "创建语音秘书工作文档失败。",
@@ -889,5 +888,9 @@
   "voiceSecretaryReplyCopied": "已复制语音秘书的回复。",
   "voiceSecretaryReplyCopyFailed": "复制语音秘书的回复失败。",
   "voiceSecretaryStopAndSaveShort": "停止并保存",
-  "voiceSecretaryOpenReply": "打开语音秘书的回复"
+  "voiceSecretaryOpenReply": "打开语音秘书的回复",
+  "voiceSecretaryHideHint": "隐藏提示",
+  "voiceSecretaryAskStatusSaved": "请求已保存",
+  "voiceSecretaryAskStatusResultPending": "正在接收结果",
+  "voiceSecretaryAskStatusReadFailed": "状态暂未更新"
 }

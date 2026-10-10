@@ -841,7 +841,6 @@
   "voiceSecretaryPanelViewAsk": "Ask",
   "voiceSecretaryConfigure": "Configure",
   "voiceSecretaryAskAdminToConfigure": "Ask an administrator to configure Voice Secretary.",
-  "voiceSecretaryNotConfigured": "Voice Secretary isn't set up",
   "voiceSecretaryDiarizationBusy": "Speaker separation is busy with another recording. This transcript was saved without speaker labels.",
   "voiceSecretaryDiarizationUnavailable": "Speaker separation is unavailable. This transcript was saved without speaker labels.",
   "voiceSecretaryDocumentCreateFailed": "Failed to create Voice Secretary working document.",
@@ -889,5 +888,9 @@
   "voiceSecretaryReplyCopied": "Voice Secretary reply copied.",
   "voiceSecretaryReplyCopyFailed": "Failed to copy Voice Secretary reply.",
   "voiceSecretaryStopAndSaveShort": "Stop & save",
-  "voiceSecretaryOpenReply": "Open Voice Secretary reply"
+  "voiceSecretaryOpenReply": "Open Voice Secretary reply",
+  "voiceSecretaryHideHint": "Hide hint",
+  "voiceSecretaryAskStatusSaved": "Request saved",
+  "voiceSecretaryAskStatusResultPending": "Receiving result",
+  "voiceSecretaryAskStatusReadFailed": "Status not updated"
 }

@@ -159,6 +159,349 @@ fn request(home: &HomeLayout, op: &str, mut args: Value) -> OpResult {
         .execute(home, &request)
 }
 
+fn assert_readiness(
+    fixture: &Fixture,
+    configured: bool,
+    ready: bool,
+    code: Option<&str>,
+    lifecycle: &str,
+) -> Value {
+    let settings =
+        request(&fixture.home, "voice_secretary_settings_get", json!({})).expect("settings read");
+    let tasks = request(
+        &fixture.home,
+        "voice_secretary_tasks",
+        json!({"group_id":fixture.group}),
+    )
+    .expect("tasks read");
+    let health = group_projection(&fixture.home, &fixture.group).expect("health read");
+    let runtime =
+        request(&fixture.home, "voice_secretary_runtime", json!({})).expect("runtime read");
+    let assistant = request(
+        &fixture.home,
+        "assistant_index",
+        json!({"group_id":fixture.group}),
+    )
+    .expect("assistant read");
+    for projection in [
+        &settings,
+        &tasks,
+        health.as_object().expect("health object"),
+        &runtime,
+        assistant["assistant"]["health"]["secretary"]
+            .as_object()
+            .expect("assistant health"),
+    ] {
+        assert_eq!(projection["configured"], configured);
+        assert_eq!(projection["ready"], ready);
+        assert_eq!(projection["readiness_code"], json!(code));
+        assert_eq!(projection["readiness_error"], settings["readiness_error"]);
+    }
+    assert_eq!(assistant["assistant"]["lifecycle"], lifecycle);
+    json!({"settings":settings,"health":health,"runtime":runtime})
+}
+
+#[test]
+fn readiness_separates_saved_configuration_from_owner_and_provider_phase() {
+    let fixture = Fixture::new();
+    let healthy = assert_readiness(&fixture, true, true, None, "ready");
+    assert_eq!(healthy["runtime"]["phase"], "not_started");
+    assert!(healthy["runtime"].get("generation").is_none());
+
+    stop(&fixture.home).expect("stop owner");
+    let unavailable = assert_readiness(
+        &fixture,
+        true,
+        false,
+        Some("owner_unavailable"),
+        "unavailable",
+    );
+    assert_eq!(unavailable["health"]["status"], "unavailable");
+    assert_eq!(unavailable["runtime"]["phase"], "unavailable");
+    assert!(
+        lookup(&fixture.home).is_none(),
+        "reads cannot start an owner"
+    );
+
+    settings::update(&fixture.home, |settings| {
+        settings.voice_secretary = Default::default();
+        Ok(())
+    })
+    .expect("clear model configuration");
+    let unconfigured = assert_readiness(
+        &fixture,
+        false,
+        false,
+        Some("not_configured"),
+        "unconfigured",
+    );
+    assert_eq!(unconfigured["health"]["status"], "unconfigured");
+    assert!(lookup(&fixture.home).is_none());
+}
+
+#[test]
+fn readiness_reports_invalid_saved_configuration_without_private_values() {
+    let fixture = Fixture::new();
+    let profile = settings::load(&fixture.home)
+        .expect("settings")
+        .voice_secretary
+        .profile_id;
+    settings::update(&fixture.home, |settings| {
+        settings.voice_secretary.profile_id = "missing-private-profile-marker".into();
+        Ok(())
+    })
+    .expect("missing linked Profile");
+    let invalid = assert_readiness(
+        &fixture,
+        true,
+        false,
+        Some("invalid_configuration"),
+        "unavailable",
+    );
+    assert_eq!(invalid["health"]["status"], "unavailable");
+    assert!(
+        !invalid["settings"]["readiness_error"]
+            .as_str()
+            .expect("diagnostic")
+            .contains("missing-private-profile-marker")
+    );
+
+    settings::update(&fixture.home, |settings| {
+        settings.voice_secretary.profile_id = profile;
+        Ok(())
+    })
+    .expect("restore linked Profile");
+    let secret_path = fixture
+        .home
+        .root()
+        .join("state/secrets/voice-secretary.json");
+    std::fs::create_dir_all(secret_path.parent().expect("secret parent"))
+        .expect("secret directory");
+    let corrupt = br#"{"PRIVATE_KEY":{"synthetic-private-parser-value":true}}"#;
+    std::fs::write(&secret_path, corrupt).expect("malformed private environment");
+    let invalid = assert_readiness(
+        &fixture,
+        true,
+        false,
+        Some("invalid_configuration"),
+        "unavailable",
+    );
+    let diagnostic = invalid["settings"]["readiness_error"]
+        .as_str()
+        .expect("diagnostic");
+    assert!(diagnostic.contains("JSON"), "{diagnostic}");
+    assert!(!diagnostic.contains("PRIVATE_KEY"), "{diagnostic}");
+    assert!(!diagnostic.contains("synthetic-private"), "{diagnostic}");
+    let update_error = request(
+        &fixture.home,
+        "voice_secretary_settings_update",
+        json!({"settings":{"runtime":"codex"},"environment":{"clear":true}}),
+    )
+    .expect_err("private parser failures stay safe on writes too");
+    assert_eq!(update_error.code, "invalid_configuration");
+    assert_eq!(update_error.message, diagnostic);
+    assert_eq!(std::fs::read(&secret_path).expect("private bytes"), corrupt);
+    assert!(lookup(&fixture.home).is_some(), "reads preserve the owner");
+}
+
+#[test]
+fn queued_configuration_failure_keeps_private_values_out_of_task_diagnostics() {
+    let fixture = Fixture::new();
+    let accepted = fixture.ask("Keep accepted work", "private-admission-source");
+    let secret_path = fixture
+        .home
+        .root()
+        .join("state/secrets/voice-secretary.json");
+    std::fs::create_dir_all(secret_path.parent().expect("secret parent"))
+        .expect("secret directory");
+    let marker = "synthetic-private-queued-configuration-value";
+    let corrupt = serde_json::to_vec(marker).expect("synthetic private fixture");
+    std::fs::write(&secret_path, &corrupt).expect("malformed private environment");
+
+    // Resume the actual owner after work was accepted. Runtime resolution must
+    // fail before any provider launch, without publishing parser-quoted values.
+    let manager = lookup(&fixture.home).expect("owner");
+    let owner = Arc::clone(&manager);
+    manager
+        .workers
+        .lock()
+        .expect("workers")
+        .push(managed_runtime().spawn(owner.run()));
+    manager.notify();
+    let stored = block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let task = manager
+                    .store
+                    .load(&accepted.task_id)
+                    .expect("accepted task");
+                if !task.diagnostic.is_empty() {
+                    break task;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("owner records the configuration failure")
+    });
+    assert!(!stored.diagnostic.contains(marker));
+    assert!(stored.diagnostic.contains("JSON"));
+    assert!(
+        stored
+            .diagnostic
+            .contains("resolving saved Runtime or Profile")
+    );
+    assert_eq!(stored.phase, SecretaryTaskPhase::Queued);
+    assert!(
+        stored.generation.is_empty(),
+        "no provider launch was admitted"
+    );
+
+    let response = request(
+        &fixture.home,
+        "voice_secretary_tasks",
+        json!({"group_id":fixture.group}),
+    )
+    .expect("retained task remains readable");
+    assert_eq!(response["ready"], false);
+    assert_eq!(response["readiness_code"], "invalid_configuration");
+    let visible = response["tasks"]
+        .as_array()
+        .expect("tasks")
+        .iter()
+        .find(|task| task["task_id"] == accepted.task_id)
+        .expect("accepted task remains visible");
+    assert!(
+        !serde_json::to_string(visible)
+            .expect("task projection")
+            .contains(marker)
+    );
+    assert!(
+        !response["readiness_error"]
+            .as_str()
+            .expect("readiness diagnostic")
+            .contains(marker)
+    );
+    assert_eq!(
+        std::fs::read(&secret_path).expect("preserved private bytes"),
+        corrupt
+    );
+}
+
+#[test]
+fn readiness_keeps_saved_settings_visible_when_the_profile_catalog_is_corrupt() {
+    let fixture = Fixture::new();
+    let path = fixture
+        .home
+        .root()
+        .join("state/actor_profiles/profiles.json");
+    let original = std::fs::read(&path).expect("Profile catalog");
+    let corrupt = br#"{"profiles":"synthetic-private-catalog-parser-value"}"#;
+    std::fs::write(&path, corrupt).expect("corrupt Profile catalog");
+    let invalid = assert_readiness(
+        &fixture,
+        true,
+        false,
+        Some("invalid_configuration"),
+        "unavailable",
+    );
+    assert!(invalid["settings"]["settings"]["profile_id"].is_string());
+    assert_eq!(invalid["settings"]["profiles"], json!([]));
+    let diagnostic = invalid["settings"]["readiness_error"]
+        .as_str()
+        .expect("diagnostic");
+    assert!(diagnostic.contains("JSON"), "{diagnostic}");
+    assert!(!diagnostic.contains("synthetic-private"), "{diagnostic}");
+    assert_eq!(std::fs::read(&path).expect("retained catalog"), corrupt);
+    std::fs::write(&path, original).expect("restore fixture");
+}
+
+#[test]
+fn unreadable_settings_fail_safely_without_returning_default_configuration() {
+    let fixture = Fixture::new();
+    let retained_task = fixture.ask("Retain accepted work", "bad-settings-retained-task");
+    let path = fixture.home.root().join("settings.yaml");
+    let original = std::fs::read(&path).expect("saved settings");
+    let corrupt = b"voice_secretary:\n  runtime: synthetic-private-settings-parser-value\n";
+    std::fs::write(&path, corrupt).expect("corrupt settings");
+    let error = request(&fixture.home, "voice_secretary_settings_get", json!({}))
+        .expect_err("no default settings may replace unreadable authority");
+    assert_eq!(error.code, "invalid_configuration");
+    assert!(error.message.contains("YAML"), "{}", error.message);
+    assert!(!error.message.contains("synthetic-private"));
+    let assistant_error = request(
+        &fixture.home,
+        "assistant_index",
+        json!({"group_id":fixture.group}),
+    )
+    .expect_err("assistant preferences cannot be invented");
+    assert_eq!(assistant_error.code, "invalid_configuration");
+    assert_eq!(assistant_error.message, error.message);
+    for args in [
+        json!({"settings":{"runtime":"codex"}}),
+        json!({"preferences":{"recognition_language":"en-US"}}),
+    ] {
+        let update_error = request(&fixture.home, "voice_secretary_settings_update", args)
+            .expect_err("unreadable settings cannot be overwritten");
+        assert_eq!(update_error.code, "invalid_configuration");
+        assert_eq!(update_error.message, error.message);
+    }
+    let health = group_projection(&fixture.home, &fixture.group).expect("health remains readable");
+    let tasks = request(
+        &fixture.home,
+        "voice_secretary_tasks",
+        json!({"group_id":fixture.group}),
+    )
+    .expect("tasks remain readable");
+    let runtime = request(&fixture.home, "voice_secretary_runtime", json!({}))
+        .expect("runtime remains readable");
+    for projection in [health.as_object().expect("health"), &tasks, &runtime] {
+        assert_eq!(projection["configured"], false);
+        assert_eq!(projection["ready"], false);
+        assert_eq!(projection["readiness_code"], "invalid_configuration");
+        assert_eq!(projection["readiness_error"], error.message);
+    }
+    assert_eq!(health["status"], "queued");
+    assert_eq!(tasks["tasks"][0]["task_id"], retained_task.task_id);
+    assert_eq!(tasks["tasks"][0]["preview"], "Retain accepted work");
+    assert_eq!(std::fs::read(&path).expect("preserved settings"), corrupt);
+    std::fs::write(&path, original).expect("restore fixture");
+}
+
+#[test]
+fn readiness_reflects_a_closing_owner_without_blocking_source_capture() {
+    let fixture = Fixture::new();
+    let owner = lookup(&fixture.home).expect("owner");
+    owner.closing.store(true, Ordering::Release);
+    let stopping = assert_readiness(
+        &fixture,
+        true,
+        false,
+        Some("owner_unavailable"),
+        "unavailable",
+    );
+    assert!(
+        stopping["settings"]["readiness_error"]
+            .as_str()
+            .expect("diagnostic")
+            .contains("stopping")
+    );
+    assert_eq!(stopping["runtime"]["phase"], "stopping");
+    let saved = request(&fixture.home, "assistant_voice_document_instruction", json!({
+        "group_id":fixture.group,"instruction":"Preserve while stopping","input_append_id":"closing-owner-source"
+    })).expect("source capture stays successful");
+    assert_eq!(saved["input_event_created"], true);
+    assert_eq!(saved["secretary_processing_deferred"], true);
+    assert!(
+        saved["secretary_processing_error"]
+            .as_str()
+            .expect("safe error")
+            .contains("stopping")
+    );
+    owner.closing.store(false, Ordering::Release);
+    assert_readiness(&fixture, true, true, None, "ready");
+}
+
 #[test]
 fn voice_workflow_does_not_create_an_actor_or_group_configuration() {
     let fixture = Fixture::new();
@@ -213,6 +556,20 @@ fn task_context_and_terminal_receipt_are_bound_to_the_original_request() {
     super::super::assistants::secretary_project_result(&fixture.home, &saved).expect("projection");
     let state = cccc_core::assistant_state::load(&fixture.home, &fixture.group).expect("state");
     assert!(state["ask_requests"].as_array().expect("asks").iter().any(|r|r["request_id"]==task.target.request_id && r["reply_text"]=="Answer for A"));
+    let feedback = state["ask_requests"]
+        .as_array()
+        .expect("asks")
+        .iter()
+        .find(|item| item["request_id"] == task.target.request_id)
+        .expect("matching feedback");
+    assert_eq!(feedback["secretary_task_id"], task.task_id);
+    let status = request(
+        &fixture.home,
+        "assistant_state",
+        json!({"group_id":fixture.group,"view":"voice_status"}),
+    )
+    .expect("read-only status");
+    assert_eq!(status["ask_requests"][0]["secretary_task_id"], task.task_id);
 }
 
 #[test]
@@ -654,6 +1011,8 @@ fn cancel_queued_work_projects_failure_and_explicit_continuation_is_distinct() {
     let saved = store.load(&task.task_id).expect("saved");
     assert_eq!(saved.phase, SecretaryTaskPhase::Cancelled);
     assert!(!saved.projected_at.is_empty());
+    let state = cccc_core::assistant_state::load(&fixture.home, &fixture.group).expect("state");
+    assert_eq!(state["ask_requests"][0]["secretary_task_id"], task.task_id);
     let next = request(
         &fixture.home,
         "voice_secretary_task_retry",
@@ -668,6 +1027,32 @@ fn cancel_queued_work_projects_failure_and_explicit_continuation_is_distinct() {
     )
     .expect("same action");
     assert_eq!(next["task"]["task_id"], again["task"]["task_id"]);
+    let state = cccc_core::assistant_state::load(&fixture.home, &fixture.group).expect("state");
+    assert_eq!(
+        state["ask_requests"][0]["secretary_task_id"], task.task_id,
+        "a queued retry must not relabel its predecessor's feedback"
+    );
+    let successor = store
+        .load(next["task"]["task_id"].as_str().expect("successor ID"))
+        .expect("successor");
+    let token = fixture.grant(&successor);
+    request(
+        &fixture.home,
+        "voice_secretary_task",
+        json!({"_cccc_secretary_token":token,"action":"report","status":"done","reply_text":"New answer"}),
+    )
+    .expect("successor receipt");
+    super::super::assistants::secretary_project_result(
+        &fixture.home,
+        &store.load(&successor.task_id).expect("completed successor"),
+    )
+    .expect("successor projection");
+    let state = cccc_core::assistant_state::load(&fixture.home, &fixture.group).expect("state");
+    assert_eq!(
+        state["ask_requests"][0]["secretary_task_id"],
+        successor.task_id
+    );
+    assert_eq!(state["ask_requests"][0]["reply_text"], "New answer");
 }
 
 #[test]
@@ -786,7 +1171,9 @@ fn startup_does_not_hide_corrupt_group_state_and_projects_unavailable_execution(
     );
     assert!(task_store(&fixture.home).list().expect("tasks").is_empty());
     let health = group_projection(&fixture.home, &fixture.group).expect("health");
-    assert_eq!(health["configured"], false);
+    assert_eq!(health["configured"], true);
+    assert_eq!(health["ready"], false);
+    assert_eq!(health["readiness_code"], "owner_unavailable");
     assert_eq!(health["readiness_error"], diagnostic);
     let view = request(
         &fixture.home,
@@ -841,6 +1228,65 @@ fn startup_reports_invalid_retiring_group_without_exposing_yaml_values() {
     std::fs::write(&path, original).expect("repair fixture");
     start_unit_owner(&fixture.home).expect("explicit startup after repair");
     assert!(configuration::readiness_error(&fixture.home).is_none());
+}
+
+#[test]
+fn unavailable_owner_exposes_safe_task_failure_without_rereading_corrupt_history() {
+    let fixture = Fixture::new();
+    let task = fixture.ask("Retain accepted work", "corrupt-history-source");
+    stop(&fixture.home).expect("stop owner");
+    let store = SecretaryTaskStore::new(fixture.home.clone());
+    let path = store
+        .directory(&task.task_id)
+        .expect("directory")
+        .join("task.json");
+    let original = std::fs::read(&path).expect("original");
+    let mut value = serde_json::to_value(&task).expect("task");
+    value["phase"] = json!("synthetic-private-phase-must-not-be-exposed");
+    std::fs::write(&path, serde_json::to_vec(&value).expect("fixture")).expect("corrupt task");
+    let before = std::fs::read(&path).expect("fixture bytes");
+
+    let diagnostic = start(&fixture.home, None)
+        .expect_err("startup fails closed")
+        .to_string();
+    let view = request(
+        &fixture.home,
+        "voice_secretary_tasks",
+        json!({"group_id":fixture.group}),
+    )
+    .expect("failure state remains readable");
+    let health = group_projection(&fixture.home, &fixture.group).expect("health remains readable");
+    let runtime =
+        request(&fixture.home, "voice_secretary_runtime", json!({})).expect("runtime read");
+    let settings =
+        request(&fixture.home, "voice_secretary_settings_get", json!({})).expect("settings read");
+    assert!(diagnostic.contains(&task.task_id), "{diagnostic}");
+    assert!(diagnostic.contains("JSON"), "{diagnostic}");
+    assert!(!diagnostic.contains("synthetic-private"), "{diagnostic}");
+    for projection in [&view, health.as_object().expect("health object"), &settings] {
+        assert_eq!(projection["configured"], true);
+        assert_eq!(projection["ready"], false);
+        assert_eq!(projection["readiness_code"], "owner_unavailable");
+        assert_eq!(projection["readiness_error"], diagnostic);
+    }
+    assert_eq!(runtime["phase"], "unavailable");
+    assert_eq!(runtime["diagnostic"], diagnostic);
+    assert_eq!(view["tasks"], json!([]));
+    assert_eq!(health["tasks"], json!([]));
+    assert!(
+        lookup(&fixture.home).is_none(),
+        "reads must not recreate an owner"
+    );
+    let saved = request(&fixture.home, "assistant_voice_document_instruction", json!({
+        "group_id":fixture.group,"instruction":"Preserve new input","input_append_id":"corrupt-history-deferred"
+    })).expect("new source remains durable");
+    assert_eq!(saved["secretary_processing_deferred"], true);
+    assert_eq!(std::fs::read(&path).expect("retained bytes"), before);
+
+    std::fs::write(&path, original).expect("explicit fixture repair");
+    start_unit_owner(&fixture.home).expect("explicit start after repair");
+    assert!(configuration::readiness_error(&fixture.home).is_none());
+    assert!(task_store(&fixture.home).load(&task.task_id).is_ok());
 }
 
 #[test]

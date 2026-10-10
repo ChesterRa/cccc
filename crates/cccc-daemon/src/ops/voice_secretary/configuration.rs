@@ -1,5 +1,7 @@
 use super::*;
-use cccc_contracts::voice_secretary::VoiceSecretarySettings;
+use cccc_contracts::voice_secretary::{
+    SecretaryReadiness, SecretaryReadinessCode, VoiceSecretarySettings,
+};
 use cccc_core::fs;
 use std::collections::BTreeMap;
 
@@ -31,45 +33,143 @@ pub(super) fn require_user(request: &DaemonRequest) -> Result<(), OpError> {
     Ok(())
 }
 
+pub(super) fn readiness(home: &HomeLayout) -> SecretaryReadiness {
+    let settings = match settings::load(home) {
+        Ok(settings) => settings.voice_secretary,
+        Err(error) => return invalid_configuration(false, "reading saved settings", &error),
+    };
+    readiness_for_settings(
+        home,
+        &settings,
+        &cccc_core::voice_secretary_settings::private_environment(home),
+    )
+}
+
+fn readiness_for_settings(
+    home: &HomeLayout,
+    settings: &VoiceSecretarySettings,
+    environment: &io::Result<BTreeMap<String, String>>,
+) -> SecretaryReadiness {
+    let configured = settings.runtime_settings().is_some();
+    if !configured {
+        return SecretaryReadiness {
+            configured,
+            ready: false,
+            readiness_code: Some(SecretaryReadinessCode::NotConfigured),
+            readiness_error: Some("Global Voice Secretary is not configured".into()),
+        };
+    }
+    let environment = match environment {
+        Ok(environment) => environment,
+        Err(error) => {
+            return invalid_configuration(configured, "reading private environment", error);
+        }
+    };
+    if let Err(error) = cccc_core::voice_secretary_settings::resolve(home, settings, environment) {
+        return invalid_configuration(configured, "resolving saved Runtime or Profile", &error);
+    }
+    let readiness_error = owner_readiness_error(home);
+    SecretaryReadiness {
+        configured,
+        ready: readiness_error.is_none(),
+        readiness_code: readiness_error
+            .as_ref()
+            .map(|_| SecretaryReadinessCode::OwnerUnavailable),
+        readiness_error,
+    }
+}
+
+fn invalid_configuration(configured: bool, stage: &str, error: &io::Error) -> SecretaryReadiness {
+    SecretaryReadiness {
+        configured,
+        ready: false,
+        readiness_code: Some(SecretaryReadinessCode::InvalidConfiguration),
+        readiness_error: Some(configuration_diagnostic(stage, error)),
+    }
+}
+
+pub(super) fn configuration_diagnostic(stage: &str, error: &io::Error) -> String {
+    format!(
+        "Secretary configuration is unavailable while {stage}: {}",
+        safe_error_detail(error)
+    )
+}
+
+fn configuration_error(stage: &str, error: io::Error) -> OpError {
+    OpError::new(
+        "invalid_configuration",
+        invalid_configuration(false, stage, &error)
+            .readiness_error
+            .expect("invalid configuration diagnostic"),
+    )
+}
+
+#[cfg(test)]
 pub(super) fn readiness_error(home: &HomeLayout) -> Option<String> {
-    resolve_runtime(home)
-        .err()
-        .map(|error| error.to_string())
-        .or_else(|| owner_readiness_error(home))
+    readiness(home).readiness_error
+}
+
+pub(super) fn with_readiness(mut value: Value, readiness: &SecretaryReadiness) -> Value {
+    value
+        .as_object_mut()
+        .expect("Secretary read response")
+        .extend(
+            serde_json::to_value(readiness)
+                .expect("Secretary readiness serializes")
+                .as_object()
+                .expect("Secretary readiness object")
+                .clone(),
+        );
+    value
 }
 
 pub(super) fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     require_user(request)?;
-    let settings = settings::load(home).map_err(OpError::io)?.voice_secretary;
-    let profiles = ProfileStore::new(home.clone())
-        .map_err(OpError::io)?
-        .list()
-        .map_err(OpError::io)?
-        .into_iter()
-        .filter(|profile| {
-            serde_json::from_value(profile["runtime"].clone()).is_ok_and(|runtime| {
-                serde_json::from_value(
-                    profile
-                        .get("runtime_mode")
-                        .cloned()
-                        .unwrap_or(json!("default")),
-                )
-                .is_ok_and(|mode| {
-                    cccc_core::codex_voice_settings::supports_structured_runtime(runtime, mode)
-                })
+    let settings = settings::load(home)
+        .map_err(|error| configuration_error("reading saved settings", error))?
+        .voice_secretary;
+    let environment = cccc_core::voice_secretary_settings::private_environment(home);
+    let readiness = readiness_for_settings(home, &settings, &environment);
+    let profiles = match ProfileStore::new(home.clone()).and_then(|store| store.list()) {
+        Ok(profiles) => profiles,
+        // Saved settings remain editable when their selected Profile is damaged.
+        // The explicit readiness failure keeps an empty option list from hiding it.
+        Err(_)
+            if readiness.readiness_code == Some(SecretaryReadinessCode::InvalidConfiguration) =>
+        {
+            Vec::new()
+        }
+        Err(error) => return Err(configuration_error("listing Runtime Profiles", error)),
+    }
+    .into_iter()
+    .filter(|profile| {
+        serde_json::from_value(profile["runtime"].clone()).is_ok_and(|runtime| {
+            serde_json::from_value(
+                profile
+                    .get("runtime_mode")
+                    .cloned()
+                    .unwrap_or(json!("default")),
+            )
+            .is_ok_and(|mode| {
+                cccc_core::codex_voice_settings::supports_structured_runtime(runtime, mode)
             })
         })
-        .collect::<Vec<_>>();
-    let readiness_error = readiness_error(home);
+    })
+    .collect::<Vec<_>>();
     let held = held_baselines(home).map_err(OpError::io)?;
     let sources = lookup(home).map_or_else(sources::SourceCounts::default, |manager| {
         manager.source_counts(None, &held)
     });
-    object(
-        json!({"settings":settings,"configured":readiness_error.is_none(),"readiness_error":readiness_error,
-        "profiles":profiles,"default_guidance":include_str!("../../../../../resources/voice-secretary-guidance.md").trim(),"environment_keys":cccc_core::voice_secretary_settings::private_environment(home).map_err(OpError::io)?.keys().collect::<Vec<_>>(),"backlog_sources":sources.deferred + sources.held,
+    let environment_keys = environment
+        .as_ref()
+        .map(|environment| environment.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    object(with_readiness(
+        json!({"settings":settings,
+        "profiles":profiles,"default_guidance":include_str!("../../../../../resources/voice-secretary-guidance.md").trim(),"environment_keys":environment_keys,"backlog_sources":sources.deferred + sources.held,
         "held_sources":sources.held,"invalid_sources":sources.invalid}),
-    )
+        &readiness,
+    ))
 }
 
 pub(super) fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -107,12 +207,23 @@ pub(super) fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 cccc_core::voice_secretary_settings::normalize(next)?.config;
             Ok(())
         })
-        .map_err(OpError::invalid)?;
+        .map_err(|error| {
+            if error
+                .get_ref()
+                .is_some_and(|source| source.is::<serde_yaml::Error>())
+            {
+                configuration_error("reading saved settings", error)
+            } else {
+                OpError::invalid(error)
+            }
+        })?;
         // Only preferences change. Do not replace credentials, source policy,
         // or a saved Runtime that may currently be unavailable.
         return get(home, request);
     }
-    let previous = settings::load(home).map_err(OpError::io)?.voice_secretary;
+    let previous = settings::load(home)
+        .map_err(|error| configuration_error("reading saved settings", error))?
+        .voice_secretary;
     let mut value = request
         .args
         .get("settings")
@@ -127,8 +238,8 @@ pub(super) fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         serde_json::from_value::<VoiceSecretarySettings>(value).map_err(OpError::invalid)?,
     )
     .map_err(OpError::invalid)?;
-    let prior_environment =
-        cccc_core::voice_secretary_settings::private_environment(home).map_err(OpError::io)?;
+    let prior_environment = cccc_core::voice_secretary_settings::private_environment(home)
+        .map_err(|error| configuration_error("reading private environment", error))?;
     let patch = request
         .args
         .get("environment")

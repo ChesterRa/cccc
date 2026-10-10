@@ -26,12 +26,21 @@ export type GlobalVoiceSecretarySettings = {
   profile_owner?: string;
   config: SecretaryPreferences;
 };
-export type GlobalVoiceSecretaryState = {
+export type SecretaryReadinessCode =
+  | "not_configured"
+  | "invalid_configuration"
+  | "owner_unavailable";
+/** Host admission readiness; provider login and process phase are separate observations. */
+export type SecretaryReadiness = {
+  configured: boolean;
+  ready: boolean;
+  readiness_code: SecretaryReadinessCode | null;
+  readiness_error: string | null;
+};
+export type GlobalVoiceSecretaryState = SecretaryReadiness & {
   settings: GlobalVoiceSecretarySettings;
   environment_keys: string[];
   default_guidance?: string;
-  configured: boolean;
-  readiness_error?: string | null;
   profiles: ActorProfile[];
   backlog_sources?: number;
   held_sources?: number;
@@ -58,17 +67,17 @@ export const saveGlobalVoiceSecretaryPreferences = (preferences: Partial<Secreta
 const taskPath = (groupId: string, taskId = "") =>
   `/api/v1/groups/${encodeURIComponent(groupId)}/assistants/voice_secretary/tasks${taskId ? `/${encodeURIComponent(taskId)}` : ""}`;
 export const fetchSecretaryTasks = (groupId: string) =>
-  apiJson<{
-    group_id: string;
-    tasks: SecretaryTaskSummary[];
-    configured: boolean;
-    global_owner: boolean;
-    readiness_error?: string | null;
-    deferred_sources?: number;
-    unprocessed_document_sources?: number;
-    held_sources?: number;
-    invalid_sources?: number;
-  }>(taskPath(groupId));
+  apiJson<
+    SecretaryReadiness & {
+      group_id: string;
+      tasks: SecretaryTaskSummary[];
+      global_owner: boolean;
+      deferred_sources?: number;
+      unprocessed_document_sources?: number;
+      held_sources?: number;
+      invalid_sources?: number;
+    }
+  >(taskPath(groupId));
 export const cancelSecretaryTask = (groupId: string, taskId: string) =>
   apiJson<{ cancel_requested?: boolean }>(`${taskPath(groupId, taskId)}/cancel`, {
     method: "POST",
@@ -296,7 +305,7 @@ export async function retryVoiceAssistantTranscriptPersistence(
   });
 }
 
-export type SecretaryRuntimeState = {
+export type SecretaryRuntimeState = SecretaryReadiness & {
   manual_turn?: boolean;
   phase:
     | "not_started"

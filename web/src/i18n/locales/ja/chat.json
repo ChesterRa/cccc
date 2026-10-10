@@ -841,7 +841,6 @@
   "voiceSecretaryPanelViewAsk": "質問",
   "voiceSecretaryConfigure": "設定する",
   "voiceSecretaryAskAdminToConfigure": "音声秘書の設定は管理者に依頼してください。",
-  "voiceSecretaryNotConfigured": "音声秘書は未設定です",
   "voiceSecretaryDiarizationBusy": "話者分離は別の録音を処理中です。この文字起こしは話者ラベルなしで保存されました。",
   "voiceSecretaryDiarizationUnavailable": "話者分離を利用できません。この文字起こしは話者ラベルなしで保存されました。",
   "voiceSecretaryDocumentCreateFailed": "音声秘書の作業ドキュメントを作成できませんでした。",
@@ -889,5 +888,9 @@
   "voiceSecretaryReplyCopied": "音声秘書の返信をコピーしました。",
   "voiceSecretaryReplyCopyFailed": "音声秘書の返信をコピーできませんでした。",
   "voiceSecretaryStopAndSaveShort": "停止して保存",
-  "voiceSecretaryOpenReply": "音声秘書の返信を開く"
+  "voiceSecretaryOpenReply": "音声秘書の返信を開く",
+  "voiceSecretaryHideHint": "ヒントを非表示",
+  "voiceSecretaryAskStatusSaved": "リクエスト保存済み",
+  "voiceSecretaryAskStatusResultPending": "結果を受信中",
+  "voiceSecretaryAskStatusReadFailed": "状態未更新"
 }

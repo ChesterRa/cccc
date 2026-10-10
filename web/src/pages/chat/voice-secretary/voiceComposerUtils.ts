@@ -145,6 +145,7 @@ export function voiceReplyDismissKey(item?: AssistantVoiceAskFeedback | null): s
   if (!item || !hasFinalAskReply(item)) return "";
   return [
     String(item.request_id || "").trim(),
+    String(item.secretary_task_id || "").trim(),
     askFeedbackStatusKey(item.status),
     String(item.reply_text || "").trim(),
   ].join("\u0001");
@@ -161,6 +162,7 @@ export function shouldAutoOpenVoiceReplyBubble(params: {
   const requestId = String(params.requestId || "").trim();
   if (!requestId || !String(params.replyText || "").trim() || !params.dismissKey) return false;
   if (params.wasDismissed) return false;
+  if (params.previousReplyKey === params.dismissKey) return false;
   if (params.isLocalRequest) return true;
   return Boolean(params.previousReplyKey && params.previousReplyKey !== params.dismissKey);
 }

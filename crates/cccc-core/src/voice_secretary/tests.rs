@@ -269,6 +269,37 @@ fn shared_index_publishes_writes_and_reloads_durable_receipts() {
 }
 
 #[test]
+fn unprojected_ask_outcomes_remain_visible_outside_recent_history() {
+    let (_temp, store, original, _file) = fixture();
+    for phase in [SecretaryTaskPhase::Done, SecretaryTaskPhase::Cancelled] {
+        let mut target = original.target.clone();
+        target.kind = SecretaryTaskKind::Ask;
+        let mut task = SecretaryTask::new(target, original.inputs.clone());
+        task.phase = phase;
+        task.cleanup_confirmed = true;
+        task.created_at = "2020-01-01T00:00:00Z".into();
+        store.create(&task).expect("unprojected outcome");
+        let view = store.group_view(&task.target.group_id, 0).expect("view");
+        assert!(view.tasks.iter().any(|item| item.task_id == task.task_id));
+        assert!(view.pending, "projection is still outstanding");
+        store
+            .update(&task.task_id, |saved| {
+                saved.projected_at = utc_now();
+                Ok(())
+            })
+            .expect("projected outcome");
+        assert!(
+            !store
+                .group_view(&task.target.group_id, 0)
+                .expect("bounded settled history")
+                .tasks
+                .iter()
+                .any(|item| item.task_id == task.task_id)
+        );
+    }
+}
+
+#[test]
 fn completed_working_copies_retire_only_after_projection_and_cleanup() {
     let (_temp, store, task, _file) = fixture();
     store
@@ -381,6 +412,7 @@ fn indexed_group_views_bound_history_and_keep_gaps_and_cleanup_visible() {
         );
         task.created_at = format!("2025-01-01T00:00:{number:02}Z");
         task.phase = SecretaryTaskPhase::Done;
+        task.projected_at = utc_now();
         task.guidance = "old instructions".repeat(1000);
         disk.create(&task).expect("history");
     }
@@ -417,6 +449,7 @@ fn indexed_group_views_bound_history_and_keep_gaps_and_cleanup_visible() {
     store
         .update(&original.task_id, |task| {
             task.cleanup_confirmed = true;
+            task.projected_at = utc_now();
             Ok(())
         })
         .expect("cleanup");
@@ -522,4 +555,29 @@ fn relocating_a_retained_working_copy_preserves_candidate_and_receipt() {
         std::fs::read_to_string(old.join("document.md")).expect("isolated fixture invariant"),
         "conflicting old copy"
     );
+}
+
+#[test]
+fn malformed_task_records_identify_the_task_without_exposing_parser_values() {
+    let (_temp, store, task, _file) = fixture();
+    let path = store
+        .directory(&task.task_id)
+        .expect("directory")
+        .join("task.json");
+    let mut value = serde_json::to_value(&task).expect("task");
+    value["phase"] = json!("synthetic-private-phase-must-not-be-exposed");
+    std::fs::write(&path, serde_json::to_vec(&value).expect("fixture")).expect("corrupt task");
+    let before = std::fs::read(&path).expect("fixture bytes");
+    for error in [
+        store.load(&task.task_id).expect_err("invalid task"),
+        SecretaryTaskStore::indexed(store.home.clone())
+            .err()
+            .expect("index fails closed"),
+    ] {
+        let diagnostic = error.to_string();
+        assert!(diagnostic.contains(&task.task_id), "{diagnostic}");
+        assert!(diagnostic.contains("JSON"), "{diagnostic}");
+        assert!(!diagnostic.contains("synthetic-private"), "{diagnostic}");
+    }
+    assert_eq!(std::fs::read(&path).expect("retained bytes"), before);
 }

@@ -51,10 +51,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         {
             Operation::new(Write, voice_session::view)
         }
-        "assistant_state" | "assistant_index" => Operation::new(Write, |home, request| {
-            document_reconcile::run(home, request)
-                .and_then(|_| voice_settings::index(home, request))
-        }),
+        "assistant_state" | "assistant_index" => Operation::new(Write, voice_settings::index),
         "assistant_voice_recording_lease" => Operation::new(GlobalWrite, recording_lease),
         "assistant_voice_transcript_append" => Operation::new(Write, voice_input::append),
         "assistant_voice_session_transcript_clear" => Operation::new(Write, |home, request| {

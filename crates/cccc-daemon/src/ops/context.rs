@@ -177,17 +177,32 @@ fn authorize(
             else {
                 return Ok(());
             };
-            let Some(task) = document
+            if !document
                 .tasks
                 .iter()
-                .find(|task| task.get("id").and_then(Value::as_str) == Some(task_id))
-            else {
+                .any(|task| task.get("id").and_then(Value::as_str) == Some(task_id))
+            {
                 return Ok(());
+            }
+            let affected_ids = if name == "task.delete" {
+                document.task_subtree_ids(task_id)
+            } else {
+                vec![task_id.to_owned()]
             };
-            let owns_task = ["assignee", "handoff_to"]
+            let owns_tasks = document
+                .tasks
                 .iter()
-                .any(|field| task.get(*field).and_then(Value::as_str) == Some(by));
-            if !owns_task {
+                .filter(|task| {
+                    task.get("id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| affected_ids.iter().any(|affected| affected == id))
+                })
+                .all(|task| {
+                    ["assignee", "handoff_to"]
+                        .iter()
+                        .any(|field| task.get(*field).and_then(Value::as_str) == Some(by))
+                });
+            if !owns_tasks {
                 return Err(OpError::new(
                     "permission_denied",
                     format!("{name} requires the assignee, handoff target, foreman, or user"),

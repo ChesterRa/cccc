@@ -5,6 +5,7 @@ import {
   trackActiveVoiceReplyRequests,
   type VoiceReplyBubbleTracker,
 } from "../../../src/pages/chat/voice-secretary/voiceReplyBubbleModel";
+import { voiceReplyDismissKey } from "../../../src/pages/chat/voice-secretary/voiceComposerUtils";
 
 function createTracker(): VoiceReplyBubbleTracker {
   return {
@@ -57,16 +58,45 @@ describe("voice reply bubble model", () => {
 
   it("does not reopen the same dismissed final reply", () => {
     const tracker = createTracker();
-    const dismissKey = "request-1\u0001done\u0001同安现在显示小雨，接下来两小时仍有雨。";
-    tracker.localRequestIds.add("request-1");
-    tracker.dismissedReplyKeys.add(dismissKey);
-
-    const requestId = resolveAutoOpenVoiceReplyBubbleRequestId(tracker, {
+    const reply = {
       request_id: "request-1",
       status: "done",
       reply_text: "同安现在显示小雨，接下来两小时仍有雨。",
-    });
+    };
+    tracker.localRequestIds.add("request-1");
+    tracker.dismissedReplyKeys.add(voiceReplyDismissKey(reply));
+
+    const requestId = resolveAutoOpenVoiceReplyBubbleRequestId(tracker, reply);
 
     expect(requestId).toBe("");
+  });
+
+  it("opens a new task's reply even when its text matches the dismissed predecessor", () => {
+    const tracker = createTracker();
+    const reply = {
+      request_id: "request-1",
+      secretary_task_id: "task-1",
+      status: "done",
+      reply_text: "Answer",
+    };
+    tracker.localRequestIds.add(reply.request_id);
+    expect(resolveAutoOpenVoiceReplyBubbleRequestId(tracker, reply)).toBe(reply.request_id);
+    tracker.dismissedReplyKeys.add(voiceReplyDismissKey(reply));
+    expect(
+      resolveAutoOpenVoiceReplyBubbleRequestId(tracker, { ...reply, secretary_task_id: "task-2" }),
+    ).toBe(reply.request_id);
+  });
+
+  it("does not reopen a local request's result after that same result has already been seen", () => {
+    const tracker = createTracker();
+    const reply = {
+      request_id: "request-1",
+      secretary_task_id: "task-1",
+      status: "done",
+      reply_text: "Answer",
+    };
+    tracker.localRequestIds.add(reply.request_id);
+    expect(resolveAutoOpenVoiceReplyBubbleRequestId(tracker, reply)).toBe(reply.request_id);
+    expect(resolveAutoOpenVoiceReplyBubbleRequestId(tracker, { ...reply })).toBe("");
   });
 });

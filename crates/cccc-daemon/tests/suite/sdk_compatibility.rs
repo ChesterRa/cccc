@@ -359,6 +359,225 @@ fn context_sync_rejects_invalid_task_state_and_preserves_execution_history() {
     assert_eq!(task.result["task"]["children"], json!([]));
 }
 
+fn context_subtree_delete_fixture() -> (tempfile::TempDir, HomeLayout, String) {
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = call(&home, "group_create", json!({"title":"subtree authority"}));
+    let group_id = group.result["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    assert!(call(&home, "group_stop", json!({"group_id":group_id})).ok);
+    for actor_id in ["lead", "peer-a", "peer-b"] {
+        assert!(
+            call(
+                &home,
+                "actor_add",
+                json!({
+                    "group_id":group_id,"actor_id":actor_id,"runtime":"custom",
+                    "command":["sh","-c","exit 0"],"by":"user"
+                })
+            )
+            .ok
+        );
+    }
+    (temp, home, group_id)
+}
+
+#[test]
+fn context_subtree_delete_rejects_other_owners_without_mutating_batch() {
+    let (_temp, home, group_id) = context_subtree_delete_fixture();
+    assert!(call(&home, "context_sync", json!({"group_id":group_id,"ops":[
+        {"op":"task.create","title":"parent","assignee":"peer-a"},
+        {"op":"task.create","title":"child","assignee":"peer-a","parent_id":"T001"},
+        {"op":"task.create","title":"other owner's grandchild","assignee":"peer-b","parent_id":"T002"}
+    ]})).ok);
+    let contexts = cccc_core::context::ContextStore::new(home.clone()).expect("contexts");
+    let before = contexts.load(&group_id).expect("before");
+    let ledger_path = cccc_core::GroupStore::new(home.clone())
+        .expect("groups")
+        .ledger_path(&group_id)
+        .expect("ledger path");
+    let ledger_before = std::fs::read(&ledger_path).expect("ledger bytes");
+    for dry_run in [false, true] {
+        let denied = call(
+            &home,
+            "context_sync",
+            json!({
+                "group_id":group_id,"by":"peer-a","dry_run":dry_run,"ops":[
+                    {"op":"agent_state.update","actor_id":"peer-a","focus":"must not persist"},
+                    {"op":"task.create","title":"must not consume an id","assignee":"peer-a"},
+                    {"op":"task.delete","task_id":"T001"}
+                ]
+            }),
+        );
+        assert_eq!(
+            denied.error.as_ref().map(|error| error.code.as_str()),
+            Some("permission_denied")
+        );
+        assert_eq!(contexts.load(&group_id).expect("after denial"), before);
+        assert_eq!(
+            std::fs::read(&ledger_path).expect("ledger after denial"),
+            ledger_before
+        );
+    }
+    assert!(
+        call(
+            &home,
+            "context_sync",
+            json!({"group_id":group_id,"by":"peer-a","ops":[
+                {"op":"task.create","title":"next owned task","assignee":"peer-a"}
+            ]})
+        )
+        .ok
+    );
+    let next = call(
+        &home,
+        "task_list",
+        json!({"group_id":group_id,"task_id":"T004"}),
+    );
+    assert_eq!(next.result["task"]["title"], "next owned task");
+}
+
+#[test]
+fn context_subtree_delete_preserves_owner_handoff_foreman_and_user_authority() {
+    for (by, descendant_assignee, handoff_to) in [
+        ("peer-a", "peer-a", ""),
+        ("peer-a", "peer-b", "peer-a"),
+        ("lead", "peer-b", ""),
+        ("user", "peer-b", ""),
+    ] {
+        let (_temp, home, group_id) = context_subtree_delete_fixture();
+        assert!(call(&home, "context_sync", json!({"group_id":group_id,"ops":[
+            {"op":"task.create","title":"parent","assignee":"peer-a"},
+            {"op":"task.create","title":"child","assignee":"peer-a","parent_id":"T001"},
+            {"op":"task.create","title":"grandchild","assignee":descendant_assignee,"handoff_to":handoff_to,"parent_id":"T002"}
+        ]})).ok);
+        let deleted = call(
+            &home,
+            "context_sync",
+            json!({"group_id":group_id,"by":by,"ops":[
+                {"op":"task.delete","task_id":"T001"}
+            ]}),
+        );
+        assert!(
+            deleted.ok,
+            "{by}/{descendant_assignee}/{handoff_to}: {:?}",
+            deleted.error
+        );
+        let tasks = call(&home, "task_list", json!({"group_id":group_id}));
+        assert_eq!(tasks.result["tasks"], json!([]));
+    }
+}
+
+#[test]
+fn deleted_task_identity_cannot_redirect_late_updates_or_existing_message_refs() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = call(
+        &home,
+        "group_create",
+        json!({"title":"task identity","by":"user"}),
+    );
+    let group_id = group.result["group_id"].as_str().expect("group id");
+    assert!(call(&home, "group_stop", json!({"group_id":group_id})).ok);
+    for actor_id in ["lead", "peer"] {
+        assert!(call(&home, "actor_add", json!({"group_id":group_id,"actor_id":actor_id,"runtime":"custom","command":["sh","-c","exit 0"],"by":"user"})).ok);
+    }
+    let sync = |ops: Value, by: &str| {
+        call(
+            &home,
+            "context_sync",
+            json!({"group_id":group_id,"ops":ops,"by":by}),
+        )
+    };
+    assert!(
+        sync(
+            json!([{"op":"task.create","title":"original","assignee":"peer"}]),
+            "user"
+        )
+        .ok
+    );
+    let referenced = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["user"],"message_mode":"send","text":"original task","refs":[{"kind":"task_ref","task_id":"T001","label":"original"}]}),
+    );
+    assert!(referenced.ok, "{:?}", referenced.error);
+    let rejected = sync(
+        json!([
+            {"op":"task.create","title":"discarded","assignee":"peer"},
+            {"op":"coordination.brief.update","objective":"not authorized"}
+        ]),
+        "peer",
+    );
+    assert_eq!(
+        rejected.error.expect("batch denied").code,
+        "permission_denied"
+    );
+    assert!(sync(json!([{"op":"task.delete","task_id":"T001"}]), "user").ok);
+    assert!(
+        sync(
+            json!([{"op":"task.create","title":"replacement","assignee":"peer"}]),
+            "user"
+        )
+        .ok
+    );
+    let before = call(&home, "context_get", json!({"group_id":group_id}));
+    let late = sync(
+        json!([{"op":"task.update","task_id":"T001","notes":"late old update"}]),
+        "peer",
+    );
+    let error = late.error.expect("old task rejected");
+    assert_eq!(error.code, "invalid_args");
+    assert!(error.message.contains("task not found: T001"));
+    let after = call(&home, "context_get", json!({"group_id":group_id}));
+    assert_eq!(before.result, after.result);
+    let missing = call(
+        &home,
+        "task_list",
+        json!({"group_id":group_id,"task_id":"T001"}),
+    );
+    assert_eq!(
+        missing.error.expect("no replacement at old id").code,
+        "task_not_found"
+    );
+    let replacement = call(
+        &home,
+        "task_list",
+        json!({"group_id":group_id,"task_id":"T002"}),
+    );
+    assert_eq!(replacement.result["task"]["title"], "replacement");
+    let source = cccc_core::ledger::find_event(
+        &cccc_core::GroupStore::new(home.clone())
+            .expect("groups")
+            .ledger_path(group_id)
+            .expect("ledger"),
+        referenced.result["event"]["id"].as_str().expect("event id"),
+    )
+    .expect("original event lookup")
+    .expect("original event");
+    assert_eq!(source.data["refs"][0]["task_id"], "T001");
+
+    let reset = call(
+        &home,
+        "group_reset",
+        json!({"group_id":group_id,"confirm":group_id,"by":"user"}),
+    );
+    assert!(reset.ok, "{:?}", reset.error);
+    let replacement_group_id = reset.result["group_id"]
+        .as_str()
+        .expect("replacement group");
+    assert_ne!(replacement_group_id, group_id);
+    assert!(call(&home, "context_sync", json!({"group_id":replacement_group_id,"by":"user","ops":[{"op":"task.create","title":"fresh group"}]})).ok);
+    let fresh = call(
+        &home,
+        "task_list",
+        json!({"group_id":replacement_group_id,"task_id":"T001"}),
+    );
+    assert_eq!(fresh.result["task"]["title"], "fresh group");
+}
+
 #[test]
 fn group_update_uses_the_standard_patch_contract_with_bounded_legacy_input() {
     let temp = tempfile::tempdir().expect("tempdir");

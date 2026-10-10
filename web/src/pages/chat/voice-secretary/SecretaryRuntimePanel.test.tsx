@@ -27,7 +27,10 @@ import { SecretaryRuntimePanel } from "./SecretaryRuntimePanel";
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 const ready = { phase: "ready", generation: "session-1", runtime: "codex", native_terminal: true };
-const response = (result: object) => ({ ok: true, result });
+const response = (result: object) => ({
+  ok: true,
+  result: { configured: true, ready: true, readiness_code: null, readiness_error: null, ...result },
+});
 const render = (active = true) =>
   act(async () => root.render(<SecretaryRuntimePanel active={active} isDark={false} />));
 const button = (key: string) =>
@@ -60,6 +63,28 @@ it("keeps an idle native terminal visible without starting or resetting any work
   await act(async () => button("voiceSettings.resident.newSession").click());
   expect(mocks.reset).toHaveBeenCalledWith("session-1");
   expect(host.querySelector("[data-terminal]")).toBeNull();
+});
+it("keeps an admitted host distinct from a provider that has not started", async () => {
+  mocks.fetch.mockResolvedValue(response({ phase: "not_started" }));
+  await render();
+  expect(host.textContent).toContain("voiceSettings.resident.phases.not_started");
+  expect(host.textContent).not.toContain("voiceSettings.readiness.notConfigured");
+  expect(mocks.reset).not.toHaveBeenCalled();
+});
+it("preserves a visible resident terminal when configuration blocks new admission", async () => {
+  mocks.fetch.mockResolvedValue(
+    response({
+      ...ready,
+      ready: false,
+      readiness_code: "invalid_configuration",
+      readiness_error: "Saved Profile cannot be resolved",
+    }),
+  );
+  await render();
+  expect(host.textContent).toContain("voiceSettings.readiness.invalidConfiguration");
+  expect(host.textContent).toContain("Saved Profile cannot be resolved");
+  expect(host.querySelector('[data-terminal="session-1"]')).not.toBeNull();
+  expect(mocks.reset).not.toHaveBeenCalled();
 });
 it("identifies the actual Group and cancels that fixed task on the ACP surface", async () => {
   mocks.fetch.mockResolvedValue(

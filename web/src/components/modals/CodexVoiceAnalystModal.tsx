@@ -60,6 +60,7 @@ export function CodexVoiceAnalystModal({
   const { t } = useTranslation("modals");
   const [analystExpanded, setAnalystExpanded] = useState(false);
   const openSettings = useModalStore((state) => state.openCodexVoiceSettings);
+  const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const [mobilePane, setMobilePane] = useState<MobilePane>("conversation");
   const { modalRef } = useModalA11y(isOpen, onClose);
   const [splitLayout, setSplitLayout] = useState(() => {
@@ -81,6 +82,13 @@ export function CodexVoiceAnalystModal({
     callBlocked &&
     (!controller.error ||
       (callProblem !== controller.error && analystProblem !== controller.error));
+  const openProblemSettings = () =>
+    openSettingsTarget({
+      scope: "global",
+      tab: "voice",
+      voiceSection: "realtime",
+      voiceAnalyst: !!analystProblem,
+    });
   const attentionCount = analyst?.permissions?.length || 0;
   const analystErrorText =
     analyst?.phase === "needs_attention" ? analyst.last_error || controller.analystWarning : "";
@@ -227,15 +235,40 @@ export function CodexVoiceAnalystModal({
       }
     >
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {controller.refreshError && !controller.owned ? (
+          <div
+            data-codex-voice-status-read
+            className="flex flex-none flex-wrap items-center justify-between gap-3 border-b border-amber-400/25 bg-amber-400/8 px-5 py-2.5 text-sm text-amber-700 dark:text-amber-300 sm:px-6"
+            role="status"
+          >
+            <span className="min-w-0 flex-1 break-words">{controller.refreshError}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={controller.checking}
+              onClick={() => void controller.refresh()}
+            >
+              {t("common:retry")}
+            </Button>
+          </div>
+        ) : null}
         {controller.error ? (
           <div
-            className="flex flex-none items-center justify-between gap-3 border-b border-rose-400/25 bg-rose-500/8 px-5 py-2.5 text-sm text-rose-500 sm:px-6"
+            className="flex flex-none flex-wrap items-center justify-between gap-3 border-b border-rose-400/25 bg-rose-500/8 px-5 py-2.5 text-sm text-rose-500 sm:px-6"
             role="alert"
           >
-            <span>{controller.error}</span>
-            <Button type="button" variant="ghost" size="sm" onClick={controller.clearError}>
-              {t("codexVoiceDismissError")}
-            </Button>
+            <span className="min-w-0 flex-1 break-words">{controller.error}</span>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {callBlocked && analystProblem && !showReadiness && (
+                <Button type="button" variant="secondary" size="sm" onClick={openProblemSettings}>
+                  {t("codexVoiceOpenSettings")}
+                </Button>
+              )}
+              <Button type="button" variant="ghost" size="sm" onClick={controller.clearError}>
+                {t("codexVoiceDismissError")}
+              </Button>
+            </div>
           </div>
         ) : null}
 
@@ -280,7 +313,7 @@ export function CodexVoiceAnalystModal({
               variant="secondary"
               size="sm"
               className="flex-none"
-              onClick={openSettings}
+              onClick={openProblemSettings}
             >
               {t("codexVoiceOpenSettings")}
             </Button>

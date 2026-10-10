@@ -31,12 +31,14 @@ export function VoiceAcpConsole({
   call,
   isDark,
   onAnalystSnapshot,
+  showReadStatus = true,
 }: {
   analyst: CodexVoiceAnalystInfo;
   visible: boolean;
   call: CodexVoiceCallInfo | null;
   isDark?: boolean;
-  onAnalystSnapshot: (analyst: CodexVoiceAnalystInfo) => void;
+  onAnalystSnapshot: (analyst: CodexVoiceAnalystInfo, confirmedControl?: boolean) => void;
+  showReadStatus?: boolean;
 }) {
   const { t } = useTranslation("actors");
   const [current, setCurrent] = useState(analyst);
@@ -44,6 +46,7 @@ export function VoiceAcpConsole({
   const [inputId, setInputId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [staleGeneration, setStaleGeneration] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
   const controlRevision = useRef(0);
@@ -78,7 +81,19 @@ export function VoiceAcpConsole({
   useEffect(() => {
     if (!pollActive) return;
     let alive = true;
+    let failedReads = 0;
+    let failureRevision = controlRevision.current;
+    setStaleGeneration(null);
     let timer: ReturnType<typeof setTimeout>;
+    const recordFailure = (revision: number) => {
+      if (!alive || revision !== controlRevision.current) return;
+      if (revision !== failureRevision) {
+        failureRevision = revision;
+        failedReads = 0;
+      }
+      failedReads += 1;
+      if (failedReads >= 2) setStaleGeneration(analyst.generation);
+    };
     const poll = async () => {
       const revision = controlRevision.current;
       try {
@@ -89,11 +104,16 @@ export function VoiceAcpConsole({
           response.ok &&
           response.result.analyst?.generation === analyst.generation
         ) {
+          failureRevision = revision;
+          failedReads = 0;
+          setStaleGeneration(null);
           setCurrent(response.result.analyst);
           onAnalystSnapshot(response.result.analyst);
-        }
+        } else if (!response.ok) recordFailure(revision);
       } catch {
-        /* Keep the last snapshot if a read fails. */
+        // Keep the last snapshot and distinguish persistent read failure from
+        // one transient event. Never replay inputs or restart the Analyst.
+        recordFailure(revision);
       }
       if (alive) timer = setTimeout(() => void poll(), 1200);
     };
@@ -115,8 +135,9 @@ export function VoiceAcpConsole({
         return;
       }
       if (response.result.analyst?.generation === analyst.generation) {
+        setStaleGeneration(null);
         setCurrent(response.result.analyst);
-        onAnalystSnapshot(response.result.analyst);
+        onAnalystSnapshot(response.result.analyst, true);
       }
       if (command.action === "input") {
         setText("");
@@ -146,6 +167,15 @@ export function VoiceAcpConsole({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div ref={outputRef} className="min-h-0 flex-1 space-y-4 overflow-auto px-5 py-4">
+        {showReadStatus && pollActive && staleGeneration === analyst.generation && (
+          <p
+            role="status"
+            data-acp-snapshot-stale
+            className="text-xs text-amber-700 dark:text-amber-300"
+          >
+            {t("acpControls.snapshotStale")}
+          </p>
+        )}
         <p className="text-xs text-[var(--color-text-muted)]">{t("acpControls.hint")}</p>
         {!!current.queued_inputs && (
           <p role="status" className="text-xs">

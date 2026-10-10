@@ -26,7 +26,12 @@ pub(super) fn create(doc: &mut ContextDoc, op: &Map<String, Value>, by: &str) ->
         .filter(|(key, _)| key.as_str() != "op")
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<Map<_, _>>();
-    task.insert("id".into(), Value::String(next_id(&doc.tasks)));
+    let number = doc
+        .task_id_high_water
+        .max(maximum_task_number(&doc.tasks))
+        .checked_add(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "task number exhausted"))?;
+    task.insert("id".into(), Value::String(format!("T{number:03}")));
     task.insert("title".into(), Value::String(title));
     task.insert("status".into(), Value::String(status.into()));
     task.insert("task_type".into(), Value::String(task_type.into()));
@@ -41,6 +46,7 @@ pub(super) fn create(doc: &mut ContextDoc, op: &Map<String, Value>, by: &str) ->
     task.insert("created_at".into(), Value::String(utc_now()));
     task.insert("updated_at".into(), Value::String(utc_now()));
     doc.tasks.push(task);
+    doc.task_id_high_water = number;
     Ok(())
 }
 
@@ -153,20 +159,7 @@ pub(super) fn restore(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resu
 pub(super) fn delete(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Result<()> {
     let id = required(op, "task_id")?;
     find(doc, id)?;
-    let mut removing = vec![id.to_owned()];
-    let mut cursor = 0;
-    while cursor < removing.len() {
-        let parent = removing[cursor].clone();
-        for task in &doc.tasks {
-            let task_id = task.get("id").and_then(Value::as_str).unwrap_or("");
-            if task.get("parent_id").and_then(Value::as_str) == Some(&parent)
-                && !removing.iter().any(|candidate| candidate == task_id)
-            {
-                removing.push(task_id.to_owned());
-            }
-        }
-        cursor += 1;
-    }
+    let removing = doc.task_subtree_ids(id);
     if let Some(task) = doc.tasks.iter().find(|task| {
         task.get("id")
             .and_then(Value::as_str)
@@ -186,15 +179,14 @@ pub(super) fn delete(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resul
     Ok(())
 }
 
-fn next_id(tasks: &[Map<String, Value>]) -> String {
-    let max = tasks
+pub(super) fn maximum_task_number(tasks: &[Map<String, Value>]) -> u64 {
+    tasks
         .iter()
         .filter_map(|task| task.get("id").and_then(Value::as_str))
         .filter_map(|id| id.strip_prefix('T'))
         .filter_map(|number| number.parse::<u64>().ok())
         .max()
-        .unwrap_or(0);
-    format!("T{:03}", max + 1)
+        .unwrap_or(0)
 }
 
 fn is_unexecuted(task: &Map<String, Value>) -> bool {

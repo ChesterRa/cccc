@@ -230,6 +230,7 @@ pub(super) fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         ));
     }
     let now = utc_now();
+    let secretary_task_id = string_arg(request, "secretary_task_id").unwrap_or_default();
     let reply_text = clean_text(
         first_non_blank_arg(request, &["reply_text", "result_text", "message"])
             .unwrap_or_default()
@@ -270,6 +271,13 @@ pub(super) fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "request not found"))?;
         let mut item = asks.remove(index);
         item["status"] = json!(status);
+        if secretary_task_id.is_empty() {
+            item.as_object_mut()
+                .expect("Ask record")
+                .remove("secretary_task_id");
+        } else {
+            item["secretary_task_id"] = json!(secretary_task_id);
+        }
         if request.args.contains_key("reply_text")
             || request.args.contains_key("result_text")
             || request.args.contains_key("message")
@@ -327,7 +335,7 @@ pub(super) fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         &status,
         &ask_request,
         &string_arg(request, "scope_key").unwrap_or_default(),
-        &string_arg(request, "secretary_task_id").unwrap_or_default(),
+        &secretary_task_id,
     )?;
     object(json!({
         "group_id":group_id,

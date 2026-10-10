@@ -1792,7 +1792,17 @@
         "unavailable": "利用不可"
       },
       "adminOnly": "共有秘書のターミナルには管理者権限が必要です。このグループのタスクと結果は引き続き確認できます。"
-    }
+    },
+    "readiness": {
+      "notConfigured": "音声秘書が未設定です",
+      "invalidConfiguration": "音声秘書の設定を確認してください",
+      "ownerUnavailable": "音声秘書を利用できません",
+      "configureHint": "入力は保存されています。秘書を設定すると処理できます。",
+      "configurationHint": "入力は保存されています。診断情報と音声設定を確認してください。",
+      "ownerHint": "入力は保存されています。実行詳細で原因を確認してください。",
+      "askAdminToCheck": "管理者にサービスの確認を依頼してください。"
+    },
+    "sourcesUnavailable": "{{count}} 件の入力は保存されています。音声秘書が利用可能になるまで待機しています。"
   },
   "voiceAudio": {
     "title": "音声デバイス",

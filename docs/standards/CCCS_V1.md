@@ -323,7 +323,7 @@ data: {
   actor_id: string
   source_event_id: string
   delivery_id: string
-  state: "claimed" | "accepted" | "failed" | "ambiguous"
+  state: "claimed" | "accepted" | "failed" | "ambiguous" | "withdrawn"
   transport: string
   reason?: string | null
 }
@@ -334,7 +334,10 @@ data: {
 - `delivery_id` MUST be deterministic for one source event, actor generation,
   and recipient actor. A retry reuses that identity.
 - The daemon MUST append `claimed` before performing external runtime I/O and
-  then append exactly one observable result state for that attempt.
+  then append one initial observable result state for that attempt. A later
+  verified receipt MAY append a reconciliation observation, such as changing an
+  ambiguous handoff to accepted, without performing another submission. This
+  does not authorize automatic retry.
 - A concurrent claimant that observes `claimed` MUST treat the delivery as in
   progress; it MUST NOT reinterpret or retry the active attempt.
 - During daemon startup, a latest `claimed` state left by the previous daemon
@@ -345,6 +348,10 @@ data: {
 - `failed` means the adapter established that handoff did not occur.
 - `ambiguous` means external side effects may have occurred but cannot be
   proven. Automatic retry MUST NOT follow `accepted` or `ambiguous`.
+- `withdrawn` means the source became obsolete before handoff, and the owner
+  established that no external submission occurred. It is terminal and MUST NOT
+  be automatically retried. A claim without its active projection is not proof
+  of non-submission; uncertain external I/O remains `ambiguous`.
 - A normal `mail` append creates no `runtime.delivery`. An explicit manual
   delivery of that existing message may create one without appending a second
   `chat.message`.

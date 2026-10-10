@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { useVoicePromptStatus } from "./useVoicePromptStatus";
+import { useVoiceRequestStatus } from "./useVoiceRequestStatus";
 
 const api = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("../../../services/api", () => ({ fetchVoiceAssistantStatus: api.fetch }));
@@ -13,7 +13,7 @@ describe("Prompt request observation", () => {
   const onStatus = vi.fn();
   const onError = vi.fn();
   function Probe({ groupId = "A", requestId = "request-a", enabled = true }) {
-    useVoicePromptStatus({ groupId, requestId, enabled, onStatus, onError });
+    useVoiceRequestStatus({ groupId, requestId, enabled, onStatus, onError });
     return null;
   }
   const render = (props = {}) => act(async () => root.render(<Probe {...props} />));

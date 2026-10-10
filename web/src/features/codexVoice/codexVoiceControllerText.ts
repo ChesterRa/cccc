@@ -5,7 +5,7 @@ import type { CodexVoiceSessionController } from "./useCodexVoiceSessionControll
 export function codexVoiceCallStatus(
   controller: Pick<
     CodexVoiceSessionController,
-    "externalCall" | "checking" | "isEngaged" | "readiness" | "phase" | "error"
+    "externalCall" | "checking" | "isEngaged" | "readiness" | "phase" | "error" | "refreshError"
   >,
 ) {
   const blocked =
@@ -23,9 +23,13 @@ export function codexVoiceCallStatus(
         ? "codexVoiceCallBlocked"
         : !controller.isEngaged && controller.error
           ? "codexVoicePhase.failed"
-          : !controller.isEngaged && !controller.readiness && controller.phase === "idle"
-            ? "codexVoiceChecking"
-            : `codexVoicePhase.${controller.phase}`;
+          : !controller.isEngaged && controller.refreshError
+            ? controller.readiness
+              ? "codexVoiceStatusStaleLabel"
+              : "codexVoiceStatusUnavailableLabel"
+            : !controller.isEngaged && !controller.readiness && controller.phase === "idle"
+              ? "codexVoiceChecking"
+              : `codexVoicePhase.${controller.phase}`;
   return { blocked, labelKey };
 }
 

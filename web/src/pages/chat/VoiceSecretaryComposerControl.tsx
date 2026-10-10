@@ -5,13 +5,22 @@ import {
   type VoiceAudioPreferences,
 } from "../../stores/useVoiceAudioStore";
 import { useVoiceAudioDevices } from "../../features/voice/useVoiceAudioDevices";
+import { secretaryReadinessIssue } from "../../features/voice/secretaryReadiness";
+import type { SecretaryReadiness } from "../../services/api/voiceSecretary";
 import { VISUAL_VIEWPORT_BOX } from "../../hooks/useViewportHeight";
 import { VoiceMobileMenu } from "./voice-secretary/VoiceMobileMenu";
 import { VoicePromptAutoRefineOption } from "./voice-secretary/VoicePromptAutoRefineOption";
 import type { VoiceSecretaryCaptureMode } from "./voice-secretary/voiceSecretaryTypes";
 import { VoiceComposerStatus } from "./voice-secretary/VoiceComposerStatus";
 import { VoicePromptDraftReview } from "./voice-secretary/VoicePromptDraftReview";
-import { useVoicePromptStatus } from "./voice-secretary/useVoicePromptStatus";
+import { useVoiceRequestStatus } from "./voice-secretary/useVoiceRequestStatus";
+import {
+  currentVoiceAskTask,
+  readVoiceAskNotice,
+  saveVoiceAskNotice,
+  voiceAskReplyIsCurrent,
+  type VoiceAskNotice,
+} from "./voice-secretary/voiceAskStatus";
 import { queueVoiceSocketError } from "./voice-secretary/voiceSocketError";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -130,6 +139,7 @@ import { shouldSettleLiveVoiceActivityStream } from "./voice-secretary/voiceActi
 import {
   assistantVoiceTimestampMs,
   askFeedbackDisplayText,
+  askFeedbackStatusKey,
   compactVoiceTranscriptSummaryText,
   displayAskFeedbackStatus,
   findVoiceDocument,
@@ -137,7 +147,6 @@ import {
   formatVoiceActivityTimeMs,
   hasFinalAskReply,
   hashComposerSnapshot,
-  isActiveAskFeedbackStatus,
   isLowValueBrowserSpeechFragment,
   mergeTranscriptChunks,
   nextUncommittedServiceTranscriptText,
@@ -237,15 +246,18 @@ export type VoiceSecretaryComposerControlProps = {
   statusPortalTarget?: HTMLElement | null;
 };
 export type { VoiceSecretaryCaptureMode } from "./voice-secretary/voiceSecretaryTypes";
+type WorkspaceRefreshOptions = {
+  quiet?: boolean;
+  passive?: boolean;
+  forceActiveDocumentContent?: boolean;
+  refreshChangedActiveDocumentContent?: boolean;
+};
+type WorkspaceRefreshRead = {
+  groupId: string;
+  dataSeq: number;
+  queued: WorkspaceRefreshOptions | null;
+};
 const ASK_THREAD_EXCLUDED_TARGETS = new Set(["document", "composer"]);
-// Must match the unconfigured error in cccc-core voice_secretary_settings::resolve.
-const SECRETARY_UNCONFIGURED_DIAGNOSTIC = "Global Voice Secretary is not configured";
-
-function secretaryReadinessDetail(error: string | null | undefined): string {
-  const detail = String(error || "").trim();
-  return detail === SECRETARY_UNCONFIGURED_DIAGNOSTIC ? "" : detail;
-}
-
 const VOICE_RECORDING_LEASE_TTL_SECONDS = 30;
 const BROWSER_DEFAULT_MIC_LABEL = "browser_default";
 const SERVICE_DEFAULT_MIC_LABEL = "service_default";
@@ -311,6 +323,11 @@ export function VoiceSecretaryComposerControl({
   const [mobileDocumentListOpen, setMobileDocumentListOpen] = useState(false);
   const panelInputRef = useRef<HTMLDivElement | null>(null);
   const refreshSeq = useRef(0);
+  const workspaceRefreshRef = useRef<WorkspaceRefreshRead | null>(null);
+  const invalidateWorkspaceRefresh = useCallback(() => {
+    refreshSeq.current++;
+    workspaceRefreshRef.current = null;
+  }, []);
   const visibleLoadSeqRef = useRef(0);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -365,6 +382,9 @@ export function VoiceSecretaryComposerControl({
   const requestDispatchGateRef = useRef(createVoiceRequestDispatchGate());
   const pendingPromptGroupIdRef = useRef("");
   const pendingAskRequestIdRef = useRef("");
+  const askObservationRevisionRef = useRef(0);
+  const askNoticeRef = useRef<VoiceAskNotice>(readVoiceAskNotice(selectedGroupId));
+  const pendingAskTaskRef = useRef<SecretaryTaskSummary | null>(null);
   const pendingPromptComposerHashRef = useRef("");
   const lastVoiceLedgerSignalRef = useRef("");
   const dismissedVoiceReplyKeysRef = useRef<Set<string>>(new Set());
@@ -512,6 +532,12 @@ export function VoiceSecretaryComposerControl({
       (state) => state.groups.find((group) => group.group_id === selectedGroupId)?.title,
     ) || selectedGroupId;
   const [pendingAskRequestId, setPendingAskRequestId] = useState("");
+  const [askNotice, setAskNotice] = useState<VoiceAskNotice>(() =>
+    readVoiceAskNotice(selectedGroupId),
+  );
+  const [pendingAskTask, setPendingAskTask] = useState<SecretaryTaskSummary | null>(null);
+  const [askStatusReadError, setAskStatusReadError] = useState("");
+  const [askObservationVersion, setAskObservationVersion] = useState(0);
   const [pendingPromptDraft, setPendingPromptDraft] = useState<AssistantVoicePromptDraft | null>(
     null,
   );
@@ -737,19 +763,11 @@ export function VoiceSecretaryComposerControl({
     "composer";
   const captureTransportMode = voiceCaptureTransportMode(captureDispatchTarget);
   const globalSecretary = assistant?.health?.secretary as
-    | {
-        configured?: boolean;
-        busy?: boolean;
-        pending?: boolean;
-        status?: string;
-        readiness_error?: string | null;
-      }
+    | (Partial<SecretaryReadiness> & { busy?: boolean; pending?: boolean; status?: string })
     | undefined;
-  const secretaryNotReadyReason =
-    globalSecretary && !globalSecretary.configured ? t("voiceSecretaryNotConfigured") : "";
-  const secretaryReadinessDiagnostic = secretaryNotReadyReason
-    ? secretaryReadinessDetail(globalSecretary?.readiness_error)
-    : "";
+  const secretaryIssue = secretaryReadinessIssue(globalSecretary);
+  const secretaryNotReadyReason = secretaryIssue ? t(`settings:${secretaryIssue.titleKey}`) : "";
+  const secretaryReadinessDiagnostic = secretaryIssue?.detail || "";
   const composerSecretaryUnavailableReason = composerNeedsSecretary ? secretaryNotReadyReason : "";
   const captureConfig =
     recording || recordingStarting || recordingStoppingRef.current
@@ -1145,14 +1163,97 @@ export function VoiceSecretaryComposerControl({
     await refreshAudioDevices();
   }, [refreshAudioDevices]);
 
+  const rememberAskRequest = useCallback(
+    (gid: string, requestId: string, task: SecretaryTaskSummary | null = null) => {
+      const notice = { requestId, hidden: false };
+      saveVoiceAskNotice(gid, notice);
+      if (!isCurrentGroup(gid)) return;
+      localVoiceReplyRequestIdsRef.current.add(requestId);
+      askNoticeRef.current = notice;
+      setAskNotice(notice);
+      pendingAskRequestIdRef.current = requestId;
+      setPendingAskRequestId(requestId);
+      pendingAskTaskRef.current = task;
+      setPendingAskTask(task);
+      setAskStatusReadError("");
+      setVoiceReplyBubbleRequestId("");
+      askObservationRevisionRef.current++;
+      setAskObservationVersion((current) => current + 1);
+    },
+    [isCurrentGroup],
+  );
+  const applyAskSnapshot = useCallback(
+    (gid: string, result: AssistantStateResult) => {
+      if (!isCurrentGroup(gid)) return;
+      const items = result.ask_requests || [];
+      setAskFeedbackItems(items);
+      const requestId = askNoticeRef.current.requestId;
+      if (!requestId) return;
+      const task = currentVoiceAskTask(
+        result.secretary_tasks,
+        gid,
+        requestId,
+        pendingAskTaskRef.current,
+      );
+      pendingAskTaskRef.current = task;
+      setPendingAskTask(task);
+      const feedback = items.find((item) => item.request_id === requestId) || null;
+      const awaitingResult = !voiceAskReplyIsCurrent(task, feedback);
+      pendingAskRequestIdRef.current = awaitingResult ? requestId : "";
+      setPendingAskRequestId(awaitingResult ? requestId : "");
+    },
+    [isCurrentGroup],
+  );
+  const receiveAskStatus = useCallback(
+    (gid: string, requestId: string, result: AssistantStateResult) => {
+      if (!isCurrentGroup(gid) || pendingAskRequestIdRef.current !== requestId) return;
+      askObservationRevisionRef.current++;
+      setAskStatusReadError("");
+      if (result.assistant) setAssistant(result.assistant);
+      applyAskSnapshot(gid, result);
+    },
+    [applyAskSnapshot, isCurrentGroup],
+  );
+  const receiveAskError = useCallback(
+    (gid: string, requestId: string, message: string) => {
+      if (isCurrentGroup(gid) && pendingAskRequestIdRef.current === requestId)
+        setAskStatusReadError(message);
+    },
+    [isCurrentGroup],
+  );
+  const acceptAskRetry = useCallback(
+    (task: SecretaryTaskSummary) => {
+      if (!isCurrentGroup(task.target.group_id) || task.target.kind !== "ask") return;
+      rememberAskRequest(task.target.group_id, task.target.request_id, task);
+    },
+    [isCurrentGroup, rememberAskRequest],
+  );
+  useVoiceRequestStatus({
+    groupId: selectedGroupId,
+    requestId: pendingAskRequestId,
+    enabled: !!pendingAskRequestId,
+    kind: "ask",
+    version: askObservationVersion,
+    onStatus: receiveAskStatus,
+    onError: receiveAskError,
+  });
+
   const refreshAssistant = useCallback(
-    async (opts?: {
-      quiet?: boolean;
-      forceActiveDocumentContent?: boolean;
-      refreshChangedActiveDocumentContent?: boolean;
-    }) => {
+    async function refresh(opts?: WorkspaceRefreshOptions): Promise<void> {
       const gid = String(selectedGroupId || "").trim();
       if (!gid) return;
+      const pending = workspaceRefreshRef.current;
+      if (opts?.passive && pending?.groupId === gid && pending.dataSeq === refreshSeq.current) {
+        // Repeated focus/ledger/poll signals must not invalidate every slow read.
+        // Keep one follow-up to observe changes that arrived after the read began.
+        pending.queued = {
+          ...opts,
+          refreshChangedActiveDocumentContent:
+            opts.refreshChangedActiveDocumentContent ||
+            pending.queued?.refreshChangedActiveDocumentContent,
+        };
+        return;
+      }
       const quiet = Boolean(opts?.quiet);
       const ownership = beginVoiceAssistantRefresh(
         { dataSeq: refreshSeq.current, visibleLoadingSeq: visibleLoadSeqRef.current },
@@ -1160,11 +1261,18 @@ export function VoiceSecretaryComposerControl({
       );
       refreshSeq.current = ownership.next.dataSeq;
       visibleLoadSeqRef.current = ownership.next.visibleLoadingSeq;
+      const read: WorkspaceRefreshRead = {
+        groupId: gid,
+        dataSeq: ownership.request.dataSeq,
+        queued: null,
+      };
+      workspaceRefreshRef.current = read;
       const currentOwnership = (): VoiceAssistantLoadingOwnership => ({
         dataSeq: refreshSeq.current,
         visibleLoadingSeq: visibleLoadSeqRef.current,
       });
       if (ownership.shouldShowLoading) setLoading(true);
+      const askRevision = askObservationRevisionRef.current;
       try {
         const promptRequestId =
           String(pendingPromptGroupIdRef.current || "").trim() === gid
@@ -1194,25 +1302,7 @@ export function VoiceSecretaryComposerControl({
           setPendingPromptDraft(promptDraft);
           setPendingPromptProblem("");
         }
-        const nextAskFeedbackItems = resp.result.ask_requests || [];
-        setAskFeedbackItems(nextAskFeedbackItems);
-        const currentAskRequestId = String(pendingAskRequestIdRef.current || "").trim();
-        if (currentAskRequestId) {
-          const currentAsk = nextAskFeedbackItems.find(
-            (item) => item.request_id === currentAskRequestId,
-          );
-          if (
-            currentAsk &&
-            !["pending", "working"].includes(
-              String(currentAsk.status || "")
-                .trim()
-                .toLowerCase(),
-            )
-          ) {
-            pendingAskRequestIdRef.current = "";
-            setPendingAskRequestId("");
-          }
-        }
+        if (askRevision === askObservationRevisionRef.current) applyAskSnapshot(gid, resp.result);
         let nextDocuments = visibleVoiceDocuments(resp.result.documents || []);
         // This response passed the refresh-ownership check. Server-visible documents
         // supersede local archive guards, including restores from another client.
@@ -1340,9 +1430,21 @@ export function VoiceSecretaryComposerControl({
         ) {
           setLoading(false);
         }
+        if (workspaceRefreshRef.current === read) {
+          workspaceRefreshRef.current = null;
+          if (read.queued && read.dataSeq === refreshSeq.current && isCurrentGroup(gid))
+            void refresh(read.queued);
+        }
       }
     },
-    [clearVoiceDocumentReferences, isCurrentGroup, loadDocumentDraft, selectedGroupId, showError],
+    [
+      applyAskSnapshot,
+      clearVoiceDocumentReferences,
+      isCurrentGroup,
+      loadDocumentDraft,
+      selectedGroupId,
+      showError,
+    ],
   );
 
   useEffect(() => {
@@ -1356,7 +1458,11 @@ export function VoiceSecretaryComposerControl({
     const poll = () => {
       if (cancelled) return;
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void refreshAssistant({ quiet: true, refreshChangedActiveDocumentContent: true });
+      void refreshAssistant({
+        quiet: true,
+        passive: true,
+        refreshChangedActiveDocumentContent: true,
+      });
       for (const sessionId of pendingDiarizationSessionsRef.current) {
         void restoreLatestVoiceMeetingSession({ replaceSession: true, sessionId }).then((ready) => {
           if (ready) pendingDiarizationSessionsRef.current.delete(sessionId);
@@ -1373,12 +1479,18 @@ export function VoiceSecretaryComposerControl({
   useEffect(() => {
     if (!latestVoiceLedgerEvent) return;
     const kind = String(latestVoiceLedgerEvent.kind || "").trim();
-    if (!open && !pendingAskRequestId && !pendingPromptRequestId) return;
+    if (
+      !open &&
+      !pendingAskRequestId &&
+      !pendingPromptRequestId &&
+      !localVoiceReplyRequestIdsRef.current.size
+    )
+      return;
     const eventId = String(latestVoiceLedgerEvent.id || "").trim();
     const eventKey = eventId || [kind, String(latestVoiceLedgerEvent.ts || "").trim()].join(":");
     if (!eventKey || eventKey === lastVoiceLedgerSignalRef.current) return;
     lastVoiceLedgerSignalRef.current = eventKey;
-    void refreshAssistant({ quiet: true });
+    void refreshAssistant({ quiet: true, passive: true });
     if (!open) return;
     const dataRecord =
       latestVoiceLedgerEvent.data && typeof latestVoiceLedgerEvent.data === "object"
@@ -1446,9 +1558,8 @@ export function VoiceSecretaryComposerControl({
       const task = result.secretary_tasks?.find(
         (item) => item.target.request_id === requestId && !item.superseded_by,
       );
-      const health = result.assistant?.health?.secretary as
-        | { configured?: boolean; readiness_error?: string | null }
-        | undefined;
+      const health = result.assistant?.health?.secretary as Partial<SecretaryReadiness> | undefined;
+      const issue = secretaryReadinessIssue(health);
       setPendingPromptTask(task || null);
       if (task) {
         setPendingPromptProblem(
@@ -1459,11 +1570,9 @@ export function VoiceSecretaryComposerControl({
                 t(`settings:voiceSettings.phases.${task.phase}`)
               : ""),
         );
-      } else if (health && !health.configured) {
+      } else if (issue) {
         setPendingPromptProblem(
-          [t("voiceSecretaryNotConfigured"), secretaryReadinessDetail(health.readiness_error)]
-            .filter(Boolean)
-            .join(" · "),
+          [t(`settings:${issue.titleKey}`), issue.detail].filter(Boolean).join(" · "),
         );
       }
       const draft = result.prompt_draft;
@@ -1481,7 +1590,7 @@ export function VoiceSecretaryComposerControl({
     )
       setPendingPromptProblem(message);
   }, []);
-  useVoicePromptStatus({
+  useVoiceRequestStatus({
     groupId: pendingPromptGroupIdRef.current,
     requestId: pendingPromptRequestId,
     enabled: !pendingPromptDraft,
@@ -1674,6 +1783,16 @@ export function VoiceSecretaryComposerControl({
     setActivityClockMs(Date.now());
     setVoiceReplyBubbleRequestId("");
     setCopiedVoiceReplyRequestId("");
+    const nextAskNotice = readVoiceAskNotice(selectedGroupId);
+    askNoticeRef.current = nextAskNotice;
+    setAskNotice(nextAskNotice);
+    pendingAskTaskRef.current = null;
+    setPendingAskTask(null);
+    setAskFeedbackItems([]);
+    setAskStatusReadError("");
+    pendingAskRequestIdRef.current = nextAskNotice.requestId;
+    setPendingAskRequestId(nextAskNotice.requestId);
+    askObservationRevisionRef.current++;
     if (!keepActiveRecording) {
       releaseVoiceRecordingGuards();
       if (transcriptFlushTimerRef.current !== null) {
@@ -1842,6 +1961,11 @@ export function VoiceSecretaryComposerControl({
           !archivedDocumentPathsRef.current.has(docPath) &&
           String(document.status || "active").trim() !== "archived"
         ) {
+          invalidateWorkspaceRefresh();
+          if (viewedDocumentPathRef.current === docPath) {
+            documentContentLoadTracker.current.reset();
+            setDocumentContentLoadingPath("");
+          }
           setDocuments((prev) => {
             const index = prev.findIndex((item) => voiceDocumentPath(item) === docPath);
             if (index < 0) return [document, ...prev];
@@ -1863,7 +1987,7 @@ export function VoiceSecretaryComposerControl({
         }
       }
     },
-    [loadDocumentDraft],
+    [invalidateWorkspaceRefresh, loadDocumentDraft],
   );
 
   const applyDocumentMutationResult = useCallback(
@@ -1872,6 +1996,12 @@ export function VoiceSecretaryComposerControl({
       if (!document) return;
       const docPath = voiceDocumentPath(document);
       if (!docPath) return;
+      // An accepted write is newer than every workspace read already in flight.
+      invalidateWorkspaceRefresh();
+      if (viewedDocumentPathRef.current === docPath) {
+        documentContentLoadTracker.current.reset();
+        setDocumentContentLoadingPath("");
+      }
       setDocuments((prev) => {
         const index = prev.findIndex((item) => voiceDocumentPath(item) === docPath);
         if (index < 0) return [document, ...prev];
@@ -1884,7 +2014,7 @@ export function VoiceSecretaryComposerControl({
         loadDocumentDraft(document);
       }
     },
-    [loadDocumentDraft],
+    [invalidateWorkspaceRefresh, loadDocumentDraft],
   );
 
   const appendTranscriptSegment = useCallback(
@@ -2098,11 +2228,9 @@ export function VoiceSecretaryComposerControl({
           if (isCurrentGroup(gid)) showError(resp.error.message);
           return false;
         }
+        const nextRequestId = String(resp.result.request_id || requestId).trim();
+        rememberAskRequest(gid, nextRequestId);
         if (isCurrentGroup(gid)) {
-          const nextRequestId = String(resp.result.request_id || requestId).trim();
-          localVoiceReplyRequestIdsRef.current.add(nextRequestId);
-          pendingAskRequestIdRef.current = nextRequestId;
-          setPendingAskRequestId(nextRequestId);
           setAskFeedbackItems((prev) =>
             [
               {
@@ -2153,6 +2281,7 @@ export function VoiceSecretaryComposerControl({
       recordingTargetDocumentPath,
       recordingTargetGroupId,
       refreshAssistant,
+      rememberAskRequest,
       showError,
       showNotice,
       t,
@@ -2688,6 +2817,7 @@ export function VoiceSecretaryComposerControl({
   const askTasks = useSecretaryTasks(
     selectedGroupId,
     open && !settingsOpen && !executionOpen && panelView === "ask",
+    acceptAskRetry,
   );
   // Keep the parent in the modal stack while its settings are open. Its trigger
   // stays mounted, so the existing stack can restore focus on the way back.
@@ -2706,7 +2836,7 @@ export function VoiceSecretaryComposerControl({
     return () => cancelAnimationFrame(frame);
   }, [settingsOpen, refreshAssistant, modalRef]);
   useEffect(() => {
-    const refresh = () => void refreshAssistant({ quiet: true });
+    const refresh = () => void refreshAssistant({ quiet: true, passive: true });
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
   }, [refreshAssistant]);
@@ -2742,6 +2872,7 @@ export function VoiceSecretaryComposerControl({
 
   useEffect(() => {
     unmountCleanupRef.current = () => {
+      invalidateWorkspaceRefresh();
       const recognition = recognitionRef.current;
       recognitionRef.current = null;
       abortBrowserSpeechRecognition(recognition);
@@ -2765,6 +2896,7 @@ export function VoiceSecretaryComposerControl({
     clearServicePartialCommitTimer,
     clearTranscriptFlushTimer,
     clearTranscriptMaxFlushTimer,
+    invalidateWorkspaceRefresh,
     releaseVoiceRecordingGuards,
   ]);
   useEffect(() => () => unmountCleanupRef.current(), []);
@@ -4035,13 +4167,20 @@ export function VoiceSecretaryComposerControl({
       }
       const nextItems = resp.result.ask_requests || [];
       setAskFeedbackItems(nextItems);
-      const currentAskRequestId = String(pendingAskRequestIdRef.current || "").trim();
+      const currentAskRequestId = askNoticeRef.current.requestId;
       if (
         currentAskRequestId &&
         !nextItems.some((item) => item.request_id === currentAskRequestId)
       ) {
         pendingAskRequestIdRef.current = "";
         setPendingAskRequestId("");
+        const notice = { requestId: "", hidden: false };
+        askNoticeRef.current = notice;
+        saveVoiceAskNotice(gid, notice);
+        setAskNotice(notice);
+        pendingAskTaskRef.current = null;
+        setPendingAskTask(null);
+        askObservationRevisionRef.current++;
       }
       const replyRequestId = String(voiceReplyBubbleRequestId || "").trim();
       if (
@@ -4292,8 +4431,6 @@ export function VoiceSecretaryComposerControl({
           const effectiveRequestId = String(resp.result.request_id || requestId).trim();
           if (effectiveRequestId) {
             localVoiceReplyRequestIdsRef.current.add(effectiveRequestId);
-            pendingAskRequestIdRef.current = effectiveRequestId;
-            setPendingAskRequestId(effectiveRequestId);
             setAskFeedbackItems((prev) =>
               [
                 {
@@ -4376,15 +4513,24 @@ export function VoiceSecretaryComposerControl({
       setPanelView("document");
       setVoiceWorkspaceView("document");
       setMobileDocumentListOpen(false);
+      viewedDocumentPathRef.current = nextPath;
       setViewedDocumentPath(nextPath);
+      invalidateWorkspaceRefresh();
+      const contentLoad = documentContentLoadTracker.current.begin();
+      const draftBeforeLoad = documentDraftRef.current;
+      setDocumentContentLoadingPath("");
       let nextDocument = document;
       if (documentNeedsContentLoad(document)) {
         const gid = String(selectedGroupId || "").trim();
-        const contentLoad = documentContentLoadTracker.current.begin();
         setDocumentContentLoadingPath(nextPath);
         try {
           const resp = gid ? await fetchVoiceAssistantDocumentContent(gid, nextPath) : null;
-          if (!isCurrentGroup(gid)) return;
+          if (
+            !isCurrentGroup(gid) ||
+            viewedDocumentPathRef.current !== nextPath ||
+            !documentContentLoadTracker.current.end(contentLoad)
+          )
+            return;
           if (resp?.ok && resp.result.document) {
             nextDocument = resp.result.document;
             setDocuments((prev) =>
@@ -4397,6 +4543,10 @@ export function VoiceSecretaryComposerControl({
           }
         }
       }
+      if (documentDraftRef.current !== draftBeforeLoad) {
+        setDocumentRemoteChanged(true);
+        return;
+      }
       loadDocumentDraft(nextDocument);
       setDocumentEditing(false);
       setCreatingDocument(false);
@@ -4406,6 +4556,7 @@ export function VoiceSecretaryComposerControl({
       activeDocumentWritePath,
       viewedDocumentPath,
       documentHasUnsavedEdits,
+      invalidateWorkspaceRefresh,
       isCurrentGroup,
       loadDocumentDraft,
       selectedGroupId,
@@ -4641,6 +4792,13 @@ export function VoiceSecretaryComposerControl({
         .toLowerCase();
       if (key === "working")
         return t("voiceSecretaryAskStatusWorking", { defaultValue: "Working" });
+      if (key === "starting") return t("settings:voiceSettings.phases.starting");
+      if (key === "submitted")
+        return t("voiceSecretaryAskStatusSaved", { defaultValue: "Request saved" });
+      if (key === "result_pending")
+        return t("voiceSecretaryAskStatusResultPending", { defaultValue: "Receiving result" });
+      if (["cancelled", "conflict", "unconfirmed"].includes(key))
+        return t(`settings:voiceSettings.phases.${key}`);
       if (key === "needs_user")
         return t("voiceSecretaryAskStatusNeedsUser", { defaultValue: "Needs input" });
       if (key === "failed") return t("voiceSecretaryAskStatusFailed", { defaultValue: "Failed" });
@@ -4698,24 +4856,50 @@ export function VoiceSecretaryComposerControl({
     !!composerText.trim() &&
     !promptOptimizePending &&
     !pendingPromptDraft;
-  const pendingAskFeedback = pendingAskRequestId
-    ? askFeedbackItems.find((item) => item.request_id === pendingAskRequestId) || null
-    : askFeedbackItems.find((item) => isActiveAskFeedbackStatus(item.status)) || null;
-  const pendingAskFeedbackStatus = pendingAskFeedback
-    ? displayAskFeedbackStatus(pendingAskFeedback)
-    : "";
+  const pendingAskFeedback = askNotice.requestId
+    ? askFeedbackItems.find((item) => item.request_id === askNotice.requestId) || null
+    : null;
+  const pendingAskFeedbackHasFinalReply = voiceAskReplyIsCurrent(
+    pendingAskTask,
+    pendingAskFeedback,
+  );
+  const pendingAskFeedbackStatus = pendingAskTask
+    ? pendingAskFeedbackHasFinalReply && secretaryTaskRunning(pendingAskTask)
+      ? askFeedbackStatusKey(pendingAskFeedback!.status)
+      : pendingAskTask.phase === "running"
+        ? "working"
+        : pendingAskTask.phase === "queued"
+          ? "pending"
+          : pendingAskTask.phase === "done" && !pendingAskFeedbackHasFinalReply
+            ? "result_pending"
+            : pendingAskTask.phase
+    : pendingAskFeedback && !hasFinalAskReply(pendingAskFeedback)
+      ? "submitted"
+      : pendingAskFeedback
+        ? askFeedbackStatusKey(pendingAskFeedback.status)
+        : "";
   const pendingAskFeedbackText = pendingAskFeedback
-    ? askFeedbackDisplayText(pendingAskFeedback)
+    ? pendingAskFeedbackHasFinalReply
+      ? askFeedbackDisplayText(pendingAskFeedback)
+      : String(
+          pendingAskTask?.preview ||
+            pendingAskFeedback.request_preview ||
+            pendingAskFeedback.request_text ||
+            "",
+        ).trim()
     : "";
-  const pendingAskFeedbackHasFinalReply = hasFinalAskReply(pendingAskFeedback);
   const pendingAskFeedbackStatusText = pendingAskFeedback
-    ? pendingAskFeedbackStatus
-      ? askFeedbackStatusLabel(pendingAskFeedbackStatus)
-      : ""
+    ? askStatusReadError
+      ? t("voiceSecretaryAskStatusReadFailed", { defaultValue: "Status not updated" })
+      : pendingAskFeedbackStatus
+        ? askFeedbackStatusLabel(pendingAskFeedbackStatus)
+        : ""
     : "";
   const pendingAskFeedbackSummaryText = pendingAskFeedback
     ? pendingAskFeedbackHasFinalReply
-      ? t("voiceSecretaryReplyReadyShort", { defaultValue: "Reply ready" })
+      ? pendingAskFeedbackStatus !== "done"
+        ? askFeedbackStatusLabel(pendingAskFeedbackStatus)
+        : t("voiceSecretaryReplyReadyShort", { defaultValue: "Reply ready" })
       : pendingAskFeedbackStatusText
         ? pendingAskFeedbackText
           ? `${pendingAskFeedbackStatusText} · ${pendingAskFeedbackText}`
@@ -4738,17 +4922,26 @@ export function VoiceSecretaryComposerControl({
     [askFeedbackItems],
   );
   const latestVoiceReplyFeedback = useMemo(
-    () => askFeedbackItems.find((item) => hasFinalAskReply(item)) || null,
-    [askFeedbackItems],
+    () =>
+      askFeedbackItems.find(
+        (item) =>
+          hasFinalAskReply(item) &&
+          (item.request_id !== askNotice.requestId || voiceAskReplyIsCurrent(pendingAskTask, item)),
+      ) || null,
+    [askFeedbackItems, askNotice.requestId, pendingAskTask],
   );
   const voiceReplyBubbleFeedback = useMemo(() => {
     const targetId = String(voiceReplyBubbleRequestId || "").trim();
     if (!targetId || !askFeedbackItems.length) return null;
     return (
-      askFeedbackItems.find((item) => item.request_id === targetId && hasFinalAskReply(item)) ||
-      null
+      askFeedbackItems.find(
+        (item) =>
+          item.request_id === targetId &&
+          hasFinalAskReply(item) &&
+          (item.request_id !== askNotice.requestId || voiceAskReplyIsCurrent(pendingAskTask, item)),
+      ) || null
     );
-  }, [askFeedbackItems, voiceReplyBubbleRequestId]);
+  }, [askFeedbackItems, voiceReplyBubbleRequestId, askNotice.requestId, pendingAskTask]);
   const voiceReplyBubbleText = String(voiceReplyBubbleFeedback?.reply_text || "").trim();
   const openVoiceReplyBubble = useCallback((item?: AssistantVoiceAskFeedback | null) => {
     const requestId = String(item?.request_id || "").trim();
@@ -4762,6 +4955,13 @@ export function VoiceSecretaryComposerControl({
     if (dismissKey) dismissedVoiceReplyKeysRef.current.add(dismissKey);
     setVoiceReplyBubbleRequestId("");
   }, [voiceReplyBubbleFeedback]);
+  const hideAskNotice = useCallback(() => {
+    const notice = { ...askNoticeRef.current, hidden: true };
+    askNoticeRef.current = notice;
+    saveVoiceAskNotice(selectedGroupId, notice);
+    setAskNotice(notice);
+    onFocusComposer?.();
+  }, [onFocusComposer, selectedGroupId]);
   const copyVoiceReplyBubble = useCallback(async () => {
     const requestId = String(voiceReplyBubbleFeedback?.request_id || "").trim();
     if (!voiceReplyBubbleText || !requestId) return;
@@ -4785,14 +4985,12 @@ export function VoiceSecretaryComposerControl({
     }
   }, [showError, showNotice, t, voiceReplyBubbleFeedback?.request_id, voiceReplyBubbleText]);
   useEffect(() => {
-    const requestId = resolveAutoOpenVoiceReplyBubbleRequestId(
-      {
-        replyKeyByRequestId: askFeedbackReplyKeyByRequestIdRef.current,
-        localRequestIds: localVoiceReplyRequestIdsRef.current,
-        dismissedReplyKeys: dismissedVoiceReplyKeysRef.current,
-      },
-      latestVoiceReplyFeedback,
-    );
+    const tracker = {
+      replyKeyByRequestId: askFeedbackReplyKeyByRequestIdRef.current,
+      localRequestIds: localVoiceReplyRequestIdsRef.current,
+      dismissedReplyKeys: dismissedVoiceReplyKeysRef.current,
+    };
+    const requestId = resolveAutoOpenVoiceReplyBubbleRequestId(tracker, latestVoiceReplyFeedback);
     if (!requestId) return;
     setVoiceReplyBubbleRequestId(requestId);
   }, [latestVoiceReplyFeedback]);
@@ -4895,7 +5093,7 @@ export function VoiceSecretaryComposerControl({
     recording: recording || recordingStarting,
     promptWaiting: !pendingPromptInOtherGroup && promptDraftWaiting,
     promptReady: !pendingPromptInOtherGroup && !!pendingPromptDraft,
-    askSummary: pendingAskFeedback ? pendingAskFeedbackSummaryText : "",
+    askSummary: pendingAskFeedback && !askNotice.hidden ? pendingAskFeedbackSummaryText : "",
     transcriptSummary: liveTranscriptSummaryText,
   });
   const composerAnnouncement =
@@ -4905,7 +5103,7 @@ export function VoiceSecretaryComposerControl({
         ? promptDraftWaitingTitle
         : composerActivity === "promptReady"
           ? promptDraftReadyTitle
-          : composerActivity === "ask"
+          : composerActivity === "ask" || (askNotice.hidden && pendingAskFeedbackHasFinalReply)
             ? pendingAskFeedbackHasFinalReply
               ? t("voiceSecretaryReplyReadyShort")
               : pendingAskFeedbackStatusText
@@ -5241,7 +5439,7 @@ export function VoiceSecretaryComposerControl({
                 {secretaryNotReadyReason ? (
                   <div
                     role="status"
-                    data-voice-unconfigured
+                    data-voice-readiness={secretaryIssue?.code}
                     className={classNames(
                       "mx-4 mt-3 flex shrink-0 flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs leading-5 sm:mx-5",
                       isDark
@@ -5253,24 +5451,38 @@ export function VoiceSecretaryComposerControl({
                       <span className="font-semibold">{secretaryNotReadyReason}</span>
                       <span className="opacity-90 max-sm:hidden">
                         {" · "}
-                        {t("settings:voiceSettings.waitingForConfiguration")}
+                        {secretaryIssue && t(`settings:${secretaryIssue.hintKey}`)}
                       </span>
-                      {secretaryReadinessDiagnostic ? (
+                      {secretaryReadinessDiagnostic && !executionOpen ? (
                         <span className="block opacity-75">{secretaryReadinessDiagnostic}</span>
                       ) : null}
                     </span>
-                    {canAccessGlobalSettings === true ? (
+                    {canAccessGlobalSettings === true &&
+                    (secretaryIssue?.action === "settings" || !executionOpen) ? (
                       <button
                         type="button"
-                        data-voice-configure
-                        onClick={openVoiceSettings}
+                        data-voice-readiness-action
+                        onClick={() => {
+                          if (secretaryIssue?.action === "execution") {
+                            setExecutionTaskId("");
+                            setExecutionOpen(true);
+                          } else openVoiceSettings();
+                        }}
                         className="min-h-9 shrink-0 rounded-lg border border-current/30 px-3 font-semibold hover:bg-black/5 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] dark:hover:bg-white/10"
                       >
-                        {t("voiceSecretaryConfigure")}
+                        {t(
+                          secretaryIssue?.action === "execution"
+                            ? "voiceSecretaryViewExecution"
+                            : "voiceSecretaryConfigure",
+                        )}
                       </button>
                     ) : canAccessGlobalSettings === false ? (
                       <span className="shrink-0 opacity-80">
-                        {t("voiceSecretaryAskAdminToConfigure")}
+                        {t(
+                          secretaryIssue?.action === "execution"
+                            ? "settings:voiceSettings.readiness.askAdminToCheck"
+                            : "voiceSecretaryAskAdminToConfigure",
+                        )}
                       </span>
                     ) : null}
                   </div>
@@ -5292,6 +5504,7 @@ export function VoiceSecretaryComposerControl({
                       workspace
                       documents={documents}
                       initialTaskId={executionTaskId || undefined}
+                      onRetryAccepted={acceptAskRetry}
                       canOpenTarget={(task) =>
                         task.target.kind !== "document" ||
                         documents.some(
@@ -6128,27 +6341,48 @@ export function VoiceSecretaryComposerControl({
                 ) : null}
               </div>
             ) : composerActivity === "ask" && pendingAskFeedback ? (
-              <button
-                type="button"
+              <div
                 data-voice-composer-activity="ask"
                 className={classNames(
-                  "inline-flex max-w-[min(34rem,calc(100vw-6rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px] transition-opacity",
+                  "inline-flex max-w-[min(34rem,calc(100vw-6rem))] items-center rounded-full pl-2.5 pr-1 text-left text-[11px]",
                   askFeedbackStatusClassName(pendingAskFeedbackStatus),
-                  pendingAskFeedbackHasFinalReply
-                    ? "cursor-pointer hover:opacity-85"
-                    : "cursor-default",
                 )}
-                onClick={() => openVoiceReplyBubble(pendingAskFeedback)}
-                disabled={!pendingAskFeedbackHasFinalReply}
-                title={pendingAskFeedbackHasFinalReply ? t("voiceSecretaryOpenReply") : undefined}
               >
-                <span
-                  className="min-w-0 whitespace-normal break-words font-semibold leading-4"
-                  style={TWO_LINE_STATUS_STYLE}
+                <button
+                  type="button"
+                  className="min-h-11 min-w-0 rounded-full py-1 text-left hover:opacity-85 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] sm:min-h-6"
+                  onClick={() =>
+                    pendingAskFeedbackHasFinalReply
+                      ? openVoiceReplyBubble(pendingAskFeedback)
+                      : pendingAskTask
+                        ? showExecution(pendingAskTask)
+                        : openPanel("ask")
+                  }
+                  title={
+                    askStatusReadError ||
+                    (pendingAskFeedbackHasFinalReply
+                      ? t("voiceSecretaryOpenReply")
+                      : t("settings:voiceSettings.viewExecution"))
+                  }
                 >
-                  {pendingAskFeedbackSummaryText}
-                </span>
-              </button>
+                  <span
+                    className="min-w-0 whitespace-normal break-words font-semibold leading-4"
+                    style={TWO_LINE_STATUS_STYLE}
+                  >
+                    {pendingAskFeedbackSummaryText}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  data-voice-ask-hide
+                  onClick={hideAskNotice}
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full hover:bg-black/5 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] dark:hover:bg-white/10 sm:h-6 sm:w-6"
+                  aria-label={t("voiceSecretaryHideHint")}
+                  title={t("voiceSecretaryHideHint")}
+                >
+                  <CloseIcon size={12} aria-hidden="true" />
+                </button>
+              </div>
             ) : composerActivity === "transcript" ? (
               <div
                 data-voice-composer-activity="transcript"

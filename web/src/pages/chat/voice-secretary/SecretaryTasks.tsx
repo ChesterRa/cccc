@@ -8,6 +8,7 @@ import { SecretaryTaskStage } from "./SecretaryTaskStage";
 import { SecretaryTaskRow } from "./SecretaryTaskRow";
 import { useSecretaryTasks } from "./useSecretaryTasks";
 import { secretaryTaskNeedsAttention, summarizeSecretaryTasks } from "./secretaryTaskLineModel";
+import { useUIStore } from "../../../stores/useUIStore";
 
 export function SecretaryTasks({
   groupId,
@@ -22,6 +23,7 @@ export function SecretaryTasks({
   onOpenTarget,
   canOpenTarget,
   documents,
+  onRetryAccepted,
 }: {
   documents?: AssistantVoiceDocument[];
   groupId: string;
@@ -36,16 +38,17 @@ export function SecretaryTasks({
   onOpenTarget?: (task: SecretaryTaskSummary) => void;
   canOpenTarget?: (task: SecretaryTaskSummary) => boolean;
   onShowExecution?: (task: SecretaryTaskSummary) => void;
+  onRetryAccepted?: (task: SecretaryTaskSummary) => void;
 }) {
   const { t, i18n } = useTranslation("settings");
-  const controller = useSecretaryTasks(groupId, active);
+  const runtimeAccessible = useUIStore((state) => state.canAccessGlobalSettings) !== false;
+  const controller = useSecretaryTasks(groupId, active, onRetryAccepted);
   const { tasks, coverage, error, loadError } = controller;
   const [selectedTask, setSelectedTask] = useState<{ groupId: string; taskId: string } | null>(() =>
     initialTaskId ? { groupId, taskId: initialTaskId } : null,
   );
   const historyTrigger = useRef<HTMLButtonElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const visibleError = error || (hideReadinessError && !coverage.configured ? "" : loadError);
   // History follows its displayed creation time; reminders keep the API's unresolved-first order.
   const groupTasks = tasks
     .filter((task) => task.target.group_id === groupId)
@@ -62,6 +65,10 @@ export function SecretaryTasks({
   const lineTasks = kinds ? tasks.filter((task) => kinds.includes(task.target.kind)) : tasks;
   const selectedId = selectedTask?.groupId === groupId ? selectedTask.taskId : "";
   const stageTask = groupTasks.find((task) => task.task_id === selectedId);
+  const readinessErrorDuplicated =
+    hideReadinessError || (workspace && !stageTask && runtimeAccessible);
+  const visibleError =
+    error || loadError || (readinessErrorDuplicated ? "" : coverage.readiness_error);
   useEffect(() => {
     setSelectedTask(initialTaskId ? { groupId, taskId: initialTaskId } : null);
   }, [groupId, initialTaskId]);
@@ -70,9 +77,11 @@ export function SecretaryTasks({
       {coverage.deferred > 0 && (
         <p role="status" className="mt-2 text-xs leading-5 text-[var(--color-text-secondary)]">
           {t(
-            coverage.configured
+            coverage.ready
               ? "voiceSettings.sourcesDeferred"
-              : "voiceSettings.sourcesUnconfigured",
+              : coverage.readiness_code === "not_configured"
+                ? "voiceSettings.sourcesUnconfigured"
+                : "voiceSettings.sourcesUnavailable",
             { count: coverage.deferred },
           )}
         </p>

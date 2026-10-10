@@ -12,6 +12,9 @@ export type SecretaryTaskCoverage = {
   invalid: number;
   unprocessed: number;
   configured: boolean;
+  ready: boolean;
+  readiness_code: api.SecretaryReadinessCode | null;
+  readiness_error: string;
 };
 
 const EMPTY_COVERAGE: SecretaryTaskCoverage = {
@@ -20,9 +23,16 @@ const EMPTY_COVERAGE: SecretaryTaskCoverage = {
   invalid: 0,
   unprocessed: 0,
   configured: true,
+  ready: true,
+  readiness_code: null,
+  readiness_error: "",
 };
 
-export function useSecretaryTasks(groupId: string, active: boolean) {
+export function useSecretaryTasks(
+  groupId: string,
+  active: boolean,
+  onRetryAccepted?: (task: SecretaryTaskSummary) => void,
+) {
   const { t } = useTranslation("settings");
   const [tasks, setTasks] = useState<SecretaryTaskSummary[]>([]);
   const [coverage, setCoverage] = useState<SecretaryTaskCoverage>(EMPTY_COVERAGE);
@@ -42,6 +52,8 @@ export function useSecretaryTasks(groupId: string, active: boolean) {
   if (actionVisit.current.groupId !== groupId || actionVisit.current.active !== active)
     actionVisit.current = { groupId, active };
   const mutationVisit = useRef<typeof actionVisit.current | null>(null);
+  const retryAccepted = useRef(onRetryAccepted);
+  retryAccepted.current = onRetryAccepted;
   const load = useCallback(
     async (afterMutation = false) => {
       if (!afterMutation && mutationVisit.current === actionVisit.current) return;
@@ -59,8 +71,11 @@ export function useSecretaryTasks(groupId: string, active: boolean) {
             invalid: response.result.invalid_sources || 0,
             unprocessed: response.result.unprocessed_document_sources || 0,
             configured: response.result.configured,
+            ready: response.result.ready,
+            readiness_code: response.result.readiness_code,
+            readiness_error: response.result.readiness_error || "",
           });
-          setLoadError(response.result.readiness_error || "");
+          setLoadError("");
         } else setLoadError(response.error.message);
       } catch {
         if (current.current === groupId && id === sequence.current)
@@ -123,20 +138,24 @@ export function useSecretaryTasks(groupId: string, active: boolean) {
         if (result.ok) setCandidate({ taskId: task.task_id, content: result.result.content });
         else setError(result.error.message);
       } else {
+        const retryResult =
+          action === "retry"
+            ? await api.retrySecretaryTask(
+                gid,
+                task.task_id,
+                followups[task.task_id] || "",
+                task.phase === "unconfirmed",
+              )
+            : null;
         const result =
-          action === "cancel"
+          retryResult ??
+          (action === "cancel"
             ? await api.cancelSecretaryTask(gid, task.task_id)
-            : action === "handoff"
-              ? await api.forwardSecretaryProposal(gid, task.task_id)
-              : await api.retrySecretaryTask(
-                  gid,
-                  task.task_id,
-                  followups[task.task_id] || "",
-                  task.phase === "unconfirmed",
-                );
+            : await api.forwardSecretaryProposal(gid, task.task_id));
         if (actionVisit.current !== visit) return;
         if (!result.ok) setError(result.error.message);
         else {
+          if (retryResult?.ok) retryAccepted.current?.(retryResult.result.task);
           setFollowups((previous) => ({ ...previous, [task.task_id]: "" }));
           await load(true);
         }

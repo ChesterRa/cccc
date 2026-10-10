@@ -319,6 +319,7 @@
     "cancel": "Cancel current and queued inputs",
     "input": "Additional instruction",
     "queued": "Queued inputs: {{count}}",
+    "snapshotStale": "Status could not be refreshed. Showing the last update; checking again automatically.",
     "hint": "ACP has no native terminal. Inputs wait for the current task to finish.",
     "error": "The action failed. Your input has been kept.",
     "stopped": "Start this Actor to use ACP controls.",

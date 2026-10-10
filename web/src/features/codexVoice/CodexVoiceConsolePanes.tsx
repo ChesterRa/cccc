@@ -281,6 +281,7 @@ export function CodexVoiceAnalystPane({
             call={controller.owned ? controller.call : null}
             isDark={isDark}
             onAnalystSnapshot={controller.updateAnalystSnapshot}
+            showReadStatus={controller.owned}
           />
         ) : analyst?.tui_ready ? (
           <VoiceAnalystTerminal analyst={analyst} isVisible={terminalVisible} runtime={runtime} />

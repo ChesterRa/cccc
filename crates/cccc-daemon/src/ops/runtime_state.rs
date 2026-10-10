@@ -277,10 +277,11 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         );
     }
     let active_state = actor_state(home, &group.group_id, &actor_id)?;
-    if active_state["status"] == "working"
-        && active_state["active_turn_id"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
+    // Status heartbeats do not relinquish a turn. Only its completion clears
+    // this identity; the browser may still be submitting its claimed payload.
+    if active_state["active_turn_id"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty())
     {
         return object(json!({
             "status":"turn_in_progress",
@@ -332,6 +333,15 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
         // A pulled turn re-checks Mail notices like a pushed delivery does.
         if crate::ops::runtime_delivery::is_stale_mail_notice(home, &group, &actor_id, &event) {
+            let outcome = if claimed.is_some() {
+                crate::ops::runtime_delivery::DeliveryOutcome::Ambiguous(
+                    "Mail notice became obsolete while its runtime handoff was claimed; external submission is unconfirmed",
+                )
+            } else {
+                crate::ops::runtime_delivery::DeliveryOutcome::Withdrawn(
+                    crate::ops::runtime_delivery::STALE_MAIL_NOTICE,
+                )
+            };
             crate::ops::runtime_delivery::append_state(
                 home,
                 &group.group_id,
@@ -339,9 +349,7 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 &actor.created_at,
                 &event.id,
                 &transport,
-                crate::ops::runtime_delivery::DeliveryOutcome::Withdrawn(
-                    crate::ops::runtime_delivery::STALE_MAIL_NOTICE,
-                ),
+                outcome,
             )?;
             continue;
         }
@@ -638,9 +646,8 @@ fn finish_completion(
     request: &DaemonRequest,
 ) -> OpResult {
     let runtime = actor_state(home, &group.group_id, actor_id)?;
-    let owns_active_projection = runtime["active_turn_id"].as_str()
-        == Some(completion.turn_id.as_str())
-        && runtime["status"].as_str() == Some("working");
+    let owns_active_projection =
+        runtime["active_turn_id"].as_str() == Some(completion.turn_id.as_str());
     if owns_active_projection {
         set_runtime_status(home, group, actor_id, "waiting", "", "", &[])?;
     }

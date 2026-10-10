@@ -151,6 +151,7 @@ function normalizeAssistantVoiceAskFeedback(value: unknown): AssistantVoiceAskFe
   if (!requestId) return undefined;
   return {
     request_id: requestId,
+    secretary_task_id: asOptionalString(record.secretary_task_id) || undefined,
     status: asOptionalString(record.status) || "pending",
     request_text: asOptionalString(record.request_text) || undefined,
     request_preview: asOptionalString(record.request_preview) || undefined,
