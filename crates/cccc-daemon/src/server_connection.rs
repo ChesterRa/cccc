@@ -101,7 +101,7 @@ async fn response(
     dispatch_locks: &DispatchLocks,
 ) -> DaemonResponse {
     let should_shutdown = request.op == "shutdown";
-    let permit = dispatch_locks.acquire(&request).await;
+    let permit = dispatch_locks.acquire_for(home, &request).await;
     let home = home.clone();
     let request_for_dispatch = request.clone();
     let response = tokio::task::spawn_blocking(move || {

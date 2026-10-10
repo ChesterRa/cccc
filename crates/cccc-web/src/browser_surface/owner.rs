@@ -55,16 +55,20 @@ impl BrowserOwner {
                         ..Viewport::default()
                     })
                     .new_headless_mode();
-                // chromiumoxide's auto-detection does not probe every
-                // conventional binary name (`google-chrome`), so reuse the
-                // crate's own candidate list before falling back to it.
-                if let Some((executable, _)) = super::system_browser::find_system_browser() {
-                    config = config.chrome_executable(executable);
-                }
                 if !proxy_args.is_empty() {
                     config = config.args(proxy_args);
                 }
-                let config = config.build().map_err(anyhow::Error::msg)?;
+                // Preserve explicit CHROME and normal detection precedence.
+                // Only try our additional binary names if that lookup fails.
+                let config = config
+                    .clone()
+                    .build()
+                    .or_else(|error| {
+                        let (executable, _) =
+                            super::system_browser::find_system_browser().ok_or(error)?;
+                        config.chrome_executable(executable).build()
+                    })
+                    .map_err(anyhow::Error::msg)?;
                 Browser::launch(config)
                     .await
                     .map(|(mut browser, handler)| {

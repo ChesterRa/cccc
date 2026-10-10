@@ -2371,12 +2371,21 @@ fn local_cross_group_reply_routes_back_to_origin_and_threads_there() {
             json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
         );
     }
+    let store = GroupStore::new(home.clone()).expect("store");
+    for group_id in [source_id, destination_id] {
+        store
+            .mutate(group_id, |group| {
+                group.state = cccc_contracts::GroupState::Paused;
+                Ok(())
+            })
+            .expect("pause fixture");
+    }
     let sent = call(
         &home,
         "send_cross_group",
         json!({
             "group_id":source_id,"dst_group_id":destination_id,"by":"sender",
-            "to":["receiver"],"text":"question","message_mode":"mail"
+            "to":["receiver"],"text":"question","message_mode":"request_reply"
         }),
     );
     let source_event_id = sent.result["source_event"]["id"].clone();
@@ -2386,26 +2395,58 @@ fn local_cross_group_reply_routes_back_to_origin_and_threads_there() {
         "reply",
         json!({
             "group_id":destination_id,"by":"receiver","reply_to":delivered_id,
-            "text":"answer","message_mode":"mail"
+            "text":"answer","message_mode":"mail","client_id":"cross-reply"
         }),
     );
     assert_eq!(reply.result["transport"], "local");
-    assert_eq!(reply.result["event"]["group_id"], source_id);
+    assert_eq!(reply.result["dst_event"]["group_id"], source_id);
     assert_eq!(
-        reply.result["event"]["by"],
+        reply.result["dst_event"]["by"],
         format!("{destination_id}::receiver")
     );
-    assert_eq!(reply.result["event"]["data"]["to"], json!(["sender"]));
-    assert_eq!(reply.result["event"]["data"]["reply_to"], source_event_id);
+    assert_eq!(reply.result["dst_event"]["data"]["to"], json!(["sender"]));
+    assert_eq!(
+        reply.result["dst_event"]["data"]["reply_to"],
+        source_event_id
+    );
 
-    let store = GroupStore::new(home.clone()).expect("store");
+    assert_eq!(reply.result["event"]["group_id"], destination_id);
+    assert_eq!(reply.result["event"]["by"], "receiver");
+    assert_eq!(reply.result["event"]["data"]["reply_to"], delivered_id);
+    assert_eq!(reply.result["message_mode"], "mail");
+    let status = call(
+        &home,
+        "ledger_statuses",
+        json!({
+            "group_id":destination_id, "event_ids":[delivered_id]
+        }),
+    );
+    assert_eq!(
+        status.result["statuses"][delivered_id.as_str().expect("delivered id")]["obligation_status"]
+            ["receiver"]["replied"],
+        true
+    );
+
     let count = |group_id| {
         ledger::read_all(&store.ledger_path(group_id).expect("path"))
             .expect("events")
             .len()
     };
     let before = (count(source_id), count(destination_id));
+    let repeated = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":destination_id, "by":"receiver", "reply_to":delivered_id,
+            "text":"answer", "message_mode":"mail", "client_id":"cross-reply"
+        }),
+    );
+    assert_eq!(repeated.result["event"], reply.result["event"]);
+    assert_eq!(repeated.result["dst_event"], reply.result["dst_event"]);
+    assert_eq!(repeated.result["duplicate"], true);
+    assert_eq!((count(source_id), count(destination_id)), before);
     for to in [
+        json!([format!("{destination_id}::receiver")]),
         json!([format!("{source_id}::sender"), "receiver"]),
         json!([format!("{source_id}::sender"), "g_other::sender"]),
     ] {
@@ -2423,4 +2464,99 @@ fn local_cross_group_reply_routes_back_to_origin_and_threads_there() {
         );
     }
     assert_eq!((count(source_id), count(destination_id)), before);
+
+    // Simulate failure after the local audit event was accepted. Retry must
+    // recover the remote parent from that event, without duplicating either copy.
+    let path = store.ledger_path(source_id).expect("ledger path");
+    let held = path.with_extension("retry-fixture");
+    std::fs::rename(&path, &held).expect("hold fixture ledger");
+    std::fs::create_dir(&path).expect("block fixture destination");
+    let pending = call_raw(
+        &home,
+        "reply",
+        json!({
+            "group_id":destination_id, "by":"receiver", "reply_to":delivered_id,
+            "text":"retry answer", "message_mode":"mail", "client_id":"partial-reply"
+        }),
+    );
+    std::fs::remove_dir(&path).expect("unblock fixture destination");
+    std::fs::rename(&held, &path).expect("restore fixture ledger");
+    assert!(!pending.ok);
+    assert_eq!(
+        (count(source_id), count(destination_id)),
+        (before.0, before.1 + 1)
+    );
+    let recovered = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":destination_id, "by":"receiver", "reply_to":delivered_id,
+            "text":"retry answer", "message_mode":"mail", "client_id":"partial-reply"
+        }),
+    );
+    assert_eq!(recovered.result["event"]["data"]["reply_to"], delivered_id);
+    assert_eq!(
+        recovered.result["dst_event"]["data"]["reply_to"],
+        source_event_id
+    );
+    assert_eq!(
+        (count(source_id), count(destination_id)),
+        (before.0 + 1, before.1 + 1)
+    );
+}
+
+#[test]
+fn scope_identity_keeps_existing_git_rewrite_attachment_addressable() {
+    use sha2::{Digest, Sha256};
+    let temp = tempfile::tempdir().expect("temporary home");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).expect("project");
+    let git_config = temp.path().join("gitconfig");
+    std::fs::write(&git_config, "").expect("isolated Git config");
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&project)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", &git_config)
+            .output()
+            .expect("valid test fixture");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("git output")
+            .trim()
+            .to_owned()
+    };
+    git(&["init", "--quiet"]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/synthetic/example.git",
+    ]);
+    git(&[
+        "config",
+        "--local",
+        "url.https://proxy.invalid/synthetic/.insteadOf",
+        "https://github.com/synthetic/",
+    ]);
+    let legacy_remote = cccc_core::scope::normalize_remote(&git(&["remote", "get-url", "origin"]));
+    let legacy_key = format!("s_{:x}", Sha256::digest(legacy_remote.as_bytes()))[..14].to_owned();
+    let mut scope = cccc_core::scope::detect(&project).expect("detect scope");
+    scope.scope_key = legacy_key.clone();
+    scope.git_remote = legacy_remote;
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("existing", "").expect("Group");
+    cccc_core::group_scope::attach(&store, &group.group_id, scope).expect("attach scope");
+    let result = call_raw(
+        &home,
+        "group_use",
+        json!({"group_id":group.group_id,"path":project,"by":"user"}),
+    );
+    assert!(
+        result.ok,
+        "The already-attached unchanged directory must remain usable: {:?}",
+        result.error
+    );
 }

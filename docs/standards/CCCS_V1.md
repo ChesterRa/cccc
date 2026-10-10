@@ -512,6 +512,13 @@ To relay a message from group A into group B:
 - UIs SHOULD provide “Open source message” (jump-to) affordances.
 - If the source is unavailable due to permissions or retention, clients MUST show a clear “source unavailable” state (not silent failure).
 
+For replies over the local cross-group transport, each copy's `reply_to` MUST
+identify the parent in that copy's Group. The source audit record retains
+`dst_reply_to` for the destination parent, so a partially delivered reply can be
+retried without changing either thread. The local reply fulfills the addressed
+Actor's existing reply obligation. The `reply` result exposes the caller's local
+event, not the destination copy.
+
 ### 9.2 Optional Send Record
 
 Implementations MAY also append an “outbound send record” in the source group (for auditability) by writing a local `chat.message` with:

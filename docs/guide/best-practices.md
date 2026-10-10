@@ -82,6 +82,7 @@ In the Web structured Help editor, these untagged sections are surfaced as `Comm
 Agents access help content through MCP tools:
 
 1. **`cccc_bootstrap`** - Returns the lean recovery packet (`session`, `recovery`, `inbox_preview`, `memory_recall_gate`, `next_calls`)
+   Coordination constraints are included as complete entries within the recovery budget. If the packet reports omitted constraints, read the full list with `cccc_context_get` before acting.
 2. **`cccc_help`** - Returns help content on demand
 
 The on-demand help payload is returned as:

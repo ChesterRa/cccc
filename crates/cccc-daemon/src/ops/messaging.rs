@@ -91,6 +91,14 @@ fn send_files(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    send_cross_group_with_reply(home, request, None)
+}
+
+fn send_cross_group_with_reply(
+    home: &HomeLayout,
+    request: &DaemonRequest,
+    source_reply_to: Option<&str>,
+) -> OpResult {
     let source = load(home, request)?;
     let destination_id = required_arg(request, "dst_group_id")?;
     let destination = store(home)?
@@ -145,7 +153,12 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             request
                 .args
                 .iter()
-                .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by" | "dst_group_id"))
+                .filter(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        "group_id" | "by" | "dst_group_id" | "dst_reply_to"
+                    )
+                })
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect()
         },
@@ -162,6 +175,9 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
         if let Some(destination_message_mode) = delivery_data.remove("dst_message_mode") {
             delivery_data.insert("message_mode".into(), destination_message_mode);
+        }
+        if let Some(destination_reply_to) = delivery_data.remove("dst_reply_to") {
+            delivery_data.insert("reply_to".into(), destination_reply_to);
         }
     }
     delivery_data.remove("transport");
@@ -195,6 +211,12 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         source_data.insert("dst_to".into(), destination_recipients);
         source_data.insert("dst_message_mode".into(), destination_message_mode);
         source_data.insert("dst_group_id".into(), json!(destination.group_id));
+        if let Some(local_parent) = source_reply_to {
+            if let Some(remote_parent) = source_data.insert("reply_to".into(), json!(local_parent))
+            {
+                source_data.insert("dst_reply_to".into(), remote_parent);
+            }
+        }
         append(home, &source.group_id, "chat.message", &by, source_data)?
     };
 
@@ -538,6 +560,27 @@ fn routed_reply_recipients(args: &Map<String, Value>) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Called under the source Group permit before upgrading to the same global
+/// ownership used by send_cross_group. The handler still validates the route.
+pub(crate) fn reply_crosses_groups(home: &HomeLayout, request: &DaemonRequest) -> bool {
+    let Some(group_id) = request.args.get("group_id").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(reply_to) = request.args.get("reply_to").and_then(Value::as_str) else {
+        return false;
+    };
+    let Ok(event) = find_event(home, group_id, reply_to) else {
+        return false;
+    };
+    if event.data.contains_key("connect_message") {
+        return false;
+    }
+    if !recipient_tokens(&request.args).is_empty() {
+        return !routed_reply_recipients(&request.args).is_empty();
+    }
+    event.data.contains_key("src_group_id")
+}
+
 fn reply_cross_group(
     home: &HomeLayout,
     forwarded: &DaemonRequest,
@@ -555,6 +598,12 @@ fn reply_cross_group(
         return Err(OpError::new(
             "invalid_recipient",
             "cross-group replies target one origin group",
+        ));
+    }
+    if target.data.get("src_group_id").and_then(Value::as_str) != Some(&destinations[0]) {
+        return Err(OpError::new(
+            "invalid_recipient",
+            "cross-group replies must address the original source group",
         ));
     }
     let recipients = routed
@@ -586,7 +635,16 @@ fn reply_cross_group(
             .args
             .insert("reply_to".into(), json!(source_event_id));
     }
-    send_cross_group(home, &request)
+    let mut result = send_cross_group_with_reply(home, &request, Some(&target.id))?;
+    // reply returns the caller's local event, as it does for local and Connect replies.
+    if let Some(event) = result.get("source_event").cloned() {
+        result.insert(
+            "message_mode".into(),
+            event["data"]["dst_message_mode"].clone(),
+        );
+        result.insert("event".into(), event);
+    }
+    Ok(result)
 }
 
 fn reject_retired_reply(home: &HomeLayout, target: &Event) -> Result<(), OpError> {

@@ -67,6 +67,9 @@ pub struct ChatMessageData {
     pub dst_to: Option<Vec<String>>,
     #[serde(default)]
     pub dst_message_mode: Option<MessageMode>,
+    /// Destination parent for a local cross-group reply's source audit record.
+    #[serde(default)]
+    pub dst_reply_to: Option<String>,
     #[serde(default)]
     pub refs: Vec<Map<String, Value>>,
     #[serde(default)]
@@ -130,6 +133,19 @@ mod tests {
             Some("reconsider the dependency boundary")
         );
         assert_eq!(message.message_mode, Some(MessageMode::Mail));
+    }
+
+    #[test]
+    fn cross_group_reply_contract_preserves_both_parent_references() {
+        let message: ChatMessageData = serde_json::from_value(serde_json::json!({
+            "text":"answer", "message_mode":"send", "reply_to":"local-parent",
+            "dst_group_id":"other-group", "dst_to":["sender"],
+            "dst_message_mode":"mail", "dst_reply_to":"remote-parent"
+        }))
+        .expect("cross-group reply contract");
+        let data = serde_json::to_value(message).expect("serialized reply");
+        assert_eq!(data["reply_to"], "local-parent");
+        assert_eq!(data["dst_reply_to"], "remote-parent");
     }
 
     #[test]

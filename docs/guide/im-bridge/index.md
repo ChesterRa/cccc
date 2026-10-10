@@ -46,7 +46,12 @@ Once authorized, these commands work across platforms:
 | `/pause` | Pause delivery for this chat or thread |
 | `/resume` | Resume delivery for this chat or thread |
 | `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
+| `/relay all\|mentions\|to_user_only` | Choose all outbound traffic, normal user-facing traffic, or only explicitly user-addressed messages |
 | `/help` | Show help |
+
+`/verbose on` selects `all`. `/verbose off` returns `all` to `mentions` and
+preserves the quieter `to_user_only` selection. The Web verbose switch controls
+the same setting. Each chat or thread keeps its own delivery preference.
 
 ::: tip Implicit Send
 On platforms that support group chats, @mentioning the bot, or sending a direct message with plain text, is automatically treated as `/send` to the **foreman**. You only need the explicit `/send` command when targeting specific agents.

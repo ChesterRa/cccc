@@ -37,6 +37,34 @@ pub enum DispatchPermit {
 }
 
 impl DispatchLocks {
+    pub(crate) async fn acquire_for(
+        &self,
+        home: &cccc_core::HomeLayout,
+        request: &DaemonRequest,
+    ) -> DispatchPermit {
+        let permit = self.acquire(request).await;
+        if request.op != "reply" || !matches!(permit, DispatchPermit::GroupWrite { .. }) {
+            return permit;
+        }
+        let owned_home = home.clone();
+        let owned_request = request.clone();
+        let crosses_groups = tokio::task::spawn_blocking(move || {
+            crate::ops::reply_crosses_groups(&owned_home, &owned_request)
+        })
+        .await
+        .unwrap_or(true);
+        if !crosses_groups {
+            return permit;
+        }
+        // Never wait for a global writer while retaining a global read permit.
+        // The append-only parent is revalidated by reply after reacquisition.
+        drop(permit);
+        DispatchPermit::GlobalWrite {
+            _remote: self.remote_access.clone().lock_owned().await,
+            _guard: self.global.clone().write_owned().await,
+        }
+    }
+
     pub async fn acquire(&self, request: &DaemonRequest) -> DispatchPermit {
         match access(request) {
             Access::ResourceOwned => DispatchPermit::ResourceOwned,
@@ -172,6 +200,78 @@ mod tests {
             op: op.into(),
             args: args.as_object().cloned().unwrap_or_else(Map::new),
         }
+    }
+
+    #[tokio::test]
+    async fn cross_group_reply_waits_for_destination_ownership() {
+        use cccc_core::{GroupStore, HomeLayout, ledger};
+        let temp = tempfile::tempdir().expect("temporary home");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let source = store.create("source", "").expect("source Group");
+        let destination = store.create("destination", "").expect("destination Group");
+        let mut parent = cccc_contracts::Event::new("chat.message", &source.group_id);
+        parent.by = format!("{}::sender", destination.group_id);
+        parent.data = json!({"src_group_id":destination.group_id,"src_event_id":"original"})
+            .as_object()
+            .expect("valid test fixture")
+            .clone();
+        ledger::append(
+            &store.ledger_path(&source.group_id).expect("ledger path"),
+            &parent,
+        )
+        .expect("append parent");
+        let cross_request = request(
+            "reply",
+            json!({"group_id":source.group_id,"reply_to":parent.id}),
+        );
+        let locks = DispatchLocks::default();
+        let blocked = locks.group_write(&destination.group_id).await;
+        let waiting = locks.acquire_for(&home, &cross_request);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiting)
+                .await
+                .is_err()
+        );
+        drop(blocked);
+        let permit = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+            .await
+            .expect("valid test fixture");
+        assert!(matches!(permit, DispatchPermit::GlobalWrite { .. }));
+        drop(permit);
+
+        let local = request(
+            "reply",
+            json!({"group_id":source.group_id,"reply_to":parent.id,"to":["local_actor"]}),
+        );
+        let blocked = locks.group_write(&destination.group_id).await;
+        assert!(matches!(
+            locks.acquire_for(&home, &local).await,
+            DispatchPermit::GroupWrite { .. }
+        ));
+        let mut remote_parent = cccc_contracts::Event::new("chat.message", &source.group_id);
+        remote_parent.data = json!({"connect_message":{},"src_group_id":destination.group_id})
+            .as_object()
+            .expect("remote parent data")
+            .clone();
+        ledger::append(
+            &store.ledger_path(&source.group_id).expect("ledger path"),
+            &remote_parent,
+        )
+        .expect("append remote parent");
+        let remote = request(
+            "reply",
+            json!({"group_id":source.group_id,"reply_to":remote_parent.id,"to":[format!("{}::sender",destination.group_id)]}),
+        );
+        let permit = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            locks.acquire_for(&home, &remote),
+        )
+        .await
+        .expect("Connect replies only write the local outbox");
+        assert!(matches!(permit, DispatchPermit::GroupWrite { .. }));
+        drop(blocked);
     }
 
     #[tokio::test]

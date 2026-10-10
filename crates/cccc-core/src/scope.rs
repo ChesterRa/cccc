@@ -10,10 +10,9 @@ pub fn detect(path: &Path) -> io::Result<Scope> {
     let root = git_output(&absolute, &["rev-parse", "--show-toplevel"])
         .map(PathBuf::from)
         .unwrap_or_else(|| absolute.clone());
-    // Read the configured URL literally: `git remote get-url` expands
-    // url.<base>.insteadOf aliases, which would key the scope on the local
-    // rewrite (e.g. a git proxy) instead of the canonical remote.
-    let remote = git_output(&root, &["config", "--get", "remote.origin.url"])
+    // Scope keys also address persisted defaults and ledger history. Preserve
+    // the established Git URL resolution when deriving their identity.
+    let remote = git_output(&root, &["remote", "get-url", "origin"])
         .map(|value| normalize_remote(&value))
         .unwrap_or_default();
     let url = root.to_string_lossy().into_owned();

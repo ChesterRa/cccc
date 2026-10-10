@@ -225,11 +225,7 @@ fn build_recovery_pack(
             ("current_focus".into(), trimmed_value(brief.and_then(|value| value.get("current_focus")), 180)),
             (
                 "constraints".into(),
-                Value::Array(full_list_with_overflow(
-                    brief.and_then(|value| value.get("constraints")),
-                    6,
-                    "constraints",
-                )),
+                Value::Array(Vec::new()),
             ),
             ("project_brief".into(), trimmed_value(brief.and_then(|value| value.get("project_brief")), 260)),
             ("project_brief_stale".into(), Value::Bool(brief.and_then(|value| value.get("project_brief_stale")).and_then(Value::as_bool).unwrap_or(false))),
@@ -242,7 +238,19 @@ fn build_recovery_pack(
         "recent_handoffs": recent_notes(coordination, "recent_handoffs"),
         "context_hygiene": hygiene,
     });
+    let constraints = brief.and_then(|value| value.get("constraints"));
+    // Reserve a small explicit omission notice while trimming the other context.
+    // Never turn a partial constraint into an apparently complete instruction.
+    set_constraints(&mut pack, full_constraints(constraints, 0));
     shrink_recovery_pack(&mut pack);
+    for count in 1..=6 {
+        let previous = pack["coordination_brief"]["constraints"].clone();
+        set_constraints(&mut pack, full_constraints(constraints, count));
+        if estimate_tokens(&pack) > RECOVERY_TOKEN_BUDGET {
+            pack["coordination_brief"]["constraints"] = previous;
+            break;
+        }
+    }
     pack
 }
 
@@ -904,7 +912,11 @@ fn trimmed_value(value: Option<&Value>, max_chars: usize) -> Value {
     ))
 }
 
-fn full_list_with_overflow(value: Option<&Value>, max_items: usize, label: &str) -> Vec<Value> {
+fn set_constraints(pack: &mut Value, items: Vec<Value>) {
+    pack["coordination_brief"]["constraints"] = Value::Array(items);
+}
+
+fn full_constraints(value: Option<&Value>, max_items: usize) -> Vec<Value> {
     let mut items = value
         .and_then(Value::as_array)
         .into_iter()
@@ -918,7 +930,7 @@ fn full_list_with_overflow(value: Option<&Value>, max_items: usize, label: &str)
         let extra = items.len() - max_items;
         items.truncate(max_items);
         items.push(Value::String(format!(
-            "(truncated: +{extra} more {label} — full list via cccc_context_get)"
+            "({extra} constraints omitted; read the full list via cccc_context_get before acting)"
         )));
     }
     items
@@ -1060,8 +1072,39 @@ mod tests {
         assert_eq!(constraints.len(), 7);
         assert_eq!(
             constraints[6].as_str().expect("overflow marker"),
-            "(truncated: +2 more constraints — full list via cccc_context_get)"
+            "(2 constraints omitted; read the full list via cccc_context_get before acting)"
         );
+    }
+
+    #[test]
+    fn long_constraints_respect_budget_without_cutting_individual_rules() {
+        for rule in ["r".repeat(1_200), "条件を守る。".repeat(400)] {
+            let mut context = fixture_context();
+            context.get_mut("coordination").expect("valid test fixture")["brief"]["constraints"] =
+                json!(vec![rule.clone(); 8]);
+            let pack = build_recovery_pack(&context, "peer1", &Map::new(), Utc::now());
+            assert!(estimate_tokens(&pack) <= RECOVERY_TOKEN_BUDGET);
+            let constraints = pack["coordination_brief"]["constraints"]
+                .as_array()
+                .expect("valid test fixture");
+            assert!(
+                constraints
+                    .last()
+                    .expect("valid test fixture")
+                    .as_str()
+                    .expect("valid test fixture")
+                    .contains("cccc_context_get")
+            );
+            for item in &constraints[..constraints.len() - 1] {
+                assert_eq!(item.as_str(), Some(rule.as_str()));
+            }
+            assert!(
+                !pack["tasks"]["assigned_active"]
+                    .as_array()
+                    .expect("valid test fixture")
+                    .is_empty()
+            );
+        }
     }
 
     #[test]

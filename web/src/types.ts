@@ -247,6 +247,7 @@ export type ChatMessageData = {
   dst_actor_titles?: Record<string, string>;
   dst_to?: string[];
   dst_message_mode?: MessageMode;
+  dst_reply_to?: string;
   dst_event_id?: string;
   remote_event_id?: string;
   activities?: StreamingActivity[];

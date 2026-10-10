@@ -4166,6 +4166,15 @@ Args:
 }
 ```
 
+Local cross-group replies route qualified recipients back to the parent message's
+source Group. Both ledger copies MUST reference their own Group's parent event:
+`reply_to` in the caller's Group and `dst_reply_to` for the destination parent on
+the source audit record. Retries reuse these persisted identities. Mixed local
+and cross-group audiences, or another destination Group, are rejected before
+writing either ledger. The returned `event` MUST be the caller's local event;
+`dst_event` identifies the delivered copy. Dispatch ownership MUST cover both
+Groups, using the existing cross-group send policy.
+
 Replies default to `message_mode="send"`. Callers MAY choose
 `message_mode="mail"` when fulfilling the original reply obligation does not
 justify immediately prompting the recipient. Both modes fulfill the original
@@ -5570,6 +5579,17 @@ canonical commit. An explicit IM unset MUST clear the canonical target files
 and consume those legacy durable fields so a later native load cannot restore
 configuration or delivery authority. Non-durable runtime diagnostics in
 `im_bridge` MAY remain.
+
+Per-target `relay` is `all`, `mentions`, or `to_user_only`. The IM `/verbose`
+command and Web verbose control MUST update the same relay state and its
+`verbose` projection atomically: on selects `all`; off changes `all` to
+`mentions` and preserves `to_user_only`. Absent relay uses the existing verbose
+setting. These choices MUST agree across authorized and subscribed records.
+Telegram diagnostics distinguish API reachability (`last_api_ok_at`,
+`last_api_error`, `last_api_error_at`) from delivery (`last_send_ok_at`,
+`last_error`, `last_error_at`). A successful reachability probe is not evidence
+that update polling or message delivery succeeded. Recovery clears only that
+operation's current error; historical diagnostics remain in bridge logs.
 
 Across IM authentication and subscriber state, `thread_id` is a platform-owned
 opaque identifier. Implementations MUST preserve it as either a legacy JSON

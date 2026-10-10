@@ -55,6 +55,7 @@ mod memory;
 mod message_idempotency;
 mod message_metadata;
 mod messaging;
+pub(crate) use messaging::reply_crosses_groups;
 mod messaging_inbox;
 mod messaging_query;
 mod messaging_query_status;

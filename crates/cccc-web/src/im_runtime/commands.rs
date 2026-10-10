@@ -454,40 +454,11 @@ fn update_items(
 fn apply_item_update(item: &mut Value, update: AuthorizedUpdate) -> bool {
     match update {
         AuthorizedUpdate::Paused(paused) => item["paused"] = json!(paused),
-        // The relay mode is the single source of truth for what reaches a
-        // chat; `/verbose` is kept as shorthand for it, and the legacy
-        // `verbose` flag always mirrors the mode, so the two commands can
-        // never disagree.
-        AuthorizedUpdate::Verbose(true) => set_relay(item, RelayMode::All),
-        AuthorizedUpdate::Verbose(false) => {
-            // Turning verbose off only steps down from `all`; a quieter
-            // mode the user chose (`to_user_only`) is left as it is.
-            let current = item
-                .get("relay")
-                .and_then(Value::as_str)
-                .and_then(RelayMode::parse);
-            let verbose = item.get("verbose").and_then(Value::as_bool) == Some(true);
-            let effective = current.unwrap_or(if verbose {
-                RelayMode::All
-            } else {
-                RelayMode::Mentions
-            });
-            let next = if effective == RelayMode::All {
-                RelayMode::Mentions
-            } else {
-                effective
-            };
-            set_relay(item, next);
-        }
-        AuthorizedUpdate::Relay(mode) => set_relay(item, mode),
+        AuthorizedUpdate::Verbose(verbose) => super::set_chat_verbose(item, verbose),
+        AuthorizedUpdate::Relay(mode) => super::state::set_relay(item, mode),
         AuthorizedUpdate::Remove => unreachable!(),
     }
     true
-}
-
-fn set_relay(item: &mut Value, mode: RelayMode) {
-    item["relay"] = json!(mode.name());
-    item["verbose"] = json!(mode == RelayMode::All);
 }
 
 fn command_name(text: &str) -> String {

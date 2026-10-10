@@ -55,6 +55,7 @@ mod worker;
 
 use commands::*;
 use outbound_message::outbound_text;
+pub(crate) use state::set_chat_verbose;
 use state::*;
 use worker::{Stopper, WorkerHandles, no_op_stopper};
 
@@ -769,13 +770,6 @@ where
                         event,
                     )
                     .await;
-                    // Queue-depth telemetry: a stalled send leaves this count
-                    // elevated instead of silently accumulating backlog.
-                    bridge_status_update(
-                        &home,
-                        &group_id,
-                        Map::from_iter([("queued_count".into(), json!(receiver.len()))]),
-                    );
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     let Some(mut replay_cursor) = delivery.cursor.clone() else {
@@ -1438,12 +1432,12 @@ mod tests {
             &home,
             &group.group_id,
             Map::from_iter([
-                ("last_poll_ok_at".into(), json!("t1")),
+                ("last_api_ok_at".into(), json!("t1")),
                 ("queued_count".into(), json!(3)),
             ]),
         );
         let state = cccc_core::im_state::load(&store, &group.group_id).expect("state");
-        assert_eq!(state["last_poll_ok_at"], json!("t1"));
+        assert_eq!(state["last_api_ok_at"], json!("t1"));
         assert_eq!(state["queued_count"], json!(3));
         assert!(state["updated_at"].as_str().is_some_and(|v| !v.is_empty()));
 

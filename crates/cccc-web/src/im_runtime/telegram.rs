@@ -16,13 +16,11 @@ use teloxide::types::{MessageEntityKind, MessageEntityRef};
 use tokio::task::JoinHandle;
 
 const PLATFORM: &str = "telegram";
-/// Hard bound on every API call: a half-open socket otherwise wedges a send
-/// forever and the outbound leg stalls with `running` still true.
+/// Bound long polling and individual API calls, with a separate total send deadline.
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(75);
-/// Periodic liveness probe: keeps `last_poll_ok_at` advancing while the API
-/// is reachable and surfaces `last_error` in `im status` when it is not.
-const POLL_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+/// API reachability only: getMe does not prove that getUpdates is succeeding.
+const API_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub(super) async fn start(
     home: HomeLayout,
@@ -34,6 +32,7 @@ pub(super) async fn start(
     let token = resolve_config_credential(config, "bot_token", "bot_token_env")?;
     let http_client = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|error| format!("Telegram HTTP client setup failed: {error}"))?;
     let bot = Bot::with_client(token, http_client);
@@ -149,7 +148,7 @@ pub(super) async fn start(
         let home = home.clone();
         let group_id = group_id.to_owned();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(POLL_PROBE_INTERVAL);
+            let mut interval = tokio::time::interval(API_PROBE_INTERVAL);
             let mut was_ok = true;
             loop {
                 interval.tick().await;
@@ -170,7 +169,10 @@ pub(super) async fn start(
                         bridge_status_update(
                             &home,
                             &group_id,
-                            Map::from_iter([("last_poll_ok_at".into(), now)]),
+                            Map::from_iter([
+                                ("last_api_ok_at".into(), now),
+                                ("last_api_error".into(), Value::Null),
+                            ]),
                         );
                     }
                     Err(error) => {
@@ -182,7 +184,7 @@ pub(super) async fn start(
                                 &group_id,
                                 PLATFORM,
                                 "WARN",
-                                "telegram api poll failed",
+                                "telegram api reachability check failed",
                                 Map::from_iter([("error".into(), Value::from(error.clone()))]),
                             );
                         }
@@ -191,8 +193,8 @@ pub(super) async fn start(
                             &home,
                             &group_id,
                             Map::from_iter([
-                                ("last_error".into(), Value::from(error)),
-                                ("last_error_at".into(), now),
+                                ("last_api_error".into(), Value::from(error)),
+                                ("last_api_error_at".into(), now),
                             ]),
                         );
                     }
@@ -259,7 +261,10 @@ pub(super) async fn start(
                             bridge_status_update(
                                 &home,
                                 &group_id,
-                                Map::from_iter([("last_send_ok_at".into(), now)]),
+                                Map::from_iter([
+                                    ("last_send_ok_at".into(), now),
+                                    ("last_error".into(), Value::Null),
+                                ]),
                             );
                             bridge_log_line(
                                 &home,

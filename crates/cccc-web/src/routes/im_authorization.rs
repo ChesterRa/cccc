@@ -93,7 +93,7 @@ pub(super) fn set_verbose(
     for key in ["authorized", "subscribers"] {
         for item in array_mut(state, key) {
             if same_target(item, chat_id, thread_id) {
-                item["verbose"] = Value::Bool(verbose);
+                crate::im_runtime::set_chat_verbose(item, verbose);
                 result.get_or_insert_with(|| item.clone());
             }
         }
@@ -176,6 +176,32 @@ fn epoch_seconds() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_verbose_updates_the_relay_used_by_im_delivery() {
+        for (current, enabled, expected) in [
+            ("all", false, "mentions"),
+            ("mentions", true, "all"),
+            ("to_user_only", false, "to_user_only"),
+        ] {
+            let mut state = json!({
+                "authorized":[{"chat_id":"chat", "relay":current, "verbose":current == "all"}],
+                "subscribers":[{"chat_id":"chat", "relay":current, "verbose":current == "all"}]
+            });
+            let result = set_verbose(
+                state.as_object_mut().expect("valid test fixture"),
+                "chat",
+                "",
+                enabled,
+            )
+            .expect("valid test fixture");
+            assert_eq!(result["relay"], expected);
+            for bucket in ["authorized", "subscribers"] {
+                assert_eq!(state[bucket][0]["relay"], expected);
+                assert_eq!(state[bucket][0]["verbose"], enabled);
+            }
+        }
+    }
 
     #[test]
     fn revoke_uses_python_compatible_chat_and_thread_identity() {

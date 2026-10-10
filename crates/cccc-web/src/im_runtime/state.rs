@@ -49,6 +49,34 @@ impl RelayMode {
     }
 }
 
+pub(super) fn relay_mode(item: &Value) -> RelayMode {
+    item.get("relay")
+        .and_then(Value::as_str)
+        .and_then(RelayMode::parse)
+        .unwrap_or(if item["verbose"].as_bool() == Some(true) {
+            RelayMode::All
+        } else {
+            RelayMode::Mentions
+        })
+}
+
+pub(super) fn set_relay(item: &mut Value, mode: RelayMode) {
+    item["relay"] = json!(mode.name());
+    item["verbose"] = json!(mode == RelayMode::All);
+}
+
+pub(crate) fn set_chat_verbose(item: &mut Value, verbose: bool) {
+    let current = relay_mode(item);
+    let next = if verbose {
+        RelayMode::All
+    } else if current == RelayMode::All {
+        RelayMode::Mentions
+    } else {
+        current
+    };
+    set_relay(item, next);
+}
+
 impl AuthorizedChat {
     pub(super) fn key(&self) -> String {
         target_key(&self.chat_id, &self.thread_id)
@@ -184,7 +212,7 @@ fn into_authorized_chats(chats: HashMap<(String, String), ChatEntry>) -> Vec<Aut
             AuthorizedChat {
                 chat_id,
                 thread_id,
-                verbose: entry.verbose,
+                verbose: relay == RelayMode::All,
                 relay,
             }
         })
