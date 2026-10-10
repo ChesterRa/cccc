@@ -28,7 +28,10 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
             &completion.actor_created_at,
             &completion.event_id,
             &completion.transport,
-            crate::ops::runtime_delivery::DeliveryOutcome::Accepted,
+            completion.withdrawn_reason.as_deref().map_or(
+                crate::ops::runtime_delivery::DeliveryOutcome::Accepted,
+                crate::ops::runtime_delivery::DeliveryOutcome::Withdrawn,
+            ),
         ) {
             Ok(_) => clear_in_flight(|item| {
                 item.0 == completion.group_id
@@ -102,6 +105,7 @@ mod tests {
             actor_created_at: actor.created_at.clone(),
             event_id: source.id.clone(),
             transport: "pty".into(),
+            withdrawn_reason: None,
         });
 
         drain_group(&home, &group.group_id);
@@ -118,5 +122,67 @@ mod tests {
                 && event.data["source_event_id"] == source.id
                 && event.data["state"] == "accepted"
         }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_withdrawal_that_cannot_be_recorded_is_retried_as_a_record_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("withdrawal retry", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save actor");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        let mut notice = Event::new("system.notify", &group.group_id);
+        notice.data = json!({"kind":"mail_notice","target_actor_id":"peer1"})
+            .as_object()
+            .cloned()
+            .expect("notice");
+        ledger::append(&ledger_path, &notice).expect("append notice");
+        assert_eq!(
+            crate::ops::runtime_delivery::claim(&home, &group, &actor, &notice.id, "pty", false)
+                .expect("claim"),
+            crate::ops::runtime_delivery::ClaimResult::Claimed
+        );
+        let job = DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: notice.clone(),
+        };
+        if let Ok(mut pending) = in_flight().lock() {
+            pending.insert((group.group_id.clone(), actor.id.clone(), notice.id.clone()));
+        }
+        let state = || {
+            crate::ops::runtime_delivery::latest_state(&home, &group.group_id, "peer1", &notice.id)
+                .expect("state")
+                .map(|(state, _)| state)
+        };
+        let in_flight_now = || {
+            in_flight().lock().expect("in flight").contains(&(
+                group.group_id.clone(),
+                actor.id.clone(),
+                notice.id.clone(),
+            ))
+        };
+
+        // The ledger rejects writes, so the withdrawal cannot be recorded yet.
+        let writable = std::fs::metadata(&ledger_path)
+            .expect("ledger")
+            .permissions();
+        std::fs::set_permissions(&ledger_path, std::fs::Permissions::from_mode(0o444))
+            .expect("read-only ledger");
+        withdraw_jobs(std::slice::from_ref(&job), "held");
+        assert_eq!(state().as_deref(), Some("claimed"));
+        assert!(in_flight_now(), "the notice keeps its slot until recorded");
+
+        // Once the ledger recovers, only the record is retried.
+        std::fs::set_permissions(&ledger_path, writable).expect("restore ledger");
+        drain_group(&home, &group.group_id);
+        assert_eq!(state().as_deref(), Some("withdrawn"));
+        assert!(!in_flight_now());
     }
 }

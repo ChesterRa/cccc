@@ -247,7 +247,7 @@ fn copied_claude_resume_stops_auto_wake_and_explicit_retry_delivers_the_original
     let f = Fixture::new("copied");
     let job = f.delivery();
     let handled = super::super::actor_delivery_worker::process_batch(
-        std::slice::from_ref(&job),
+        &mut vec![job.clone()],
         &mut String::new(),
         &AtomicBool::new(false),
     );
@@ -274,7 +274,7 @@ fn copied_claude_resume_stops_auto_wake_and_explicit_retry_delivers_the_original
     for _ in 0..4 {
         assert!(matches!(
             super::super::actor_delivery_worker::process_batch(
-                std::slice::from_ref(&job),
+                &mut vec![job.clone()],
                 &mut String::new(),
                 &AtomicBool::new(false)
             ),
@@ -303,7 +303,12 @@ fn copied_claude_resume_stops_auto_wake_and_explicit_retry_delivers_the_original
     std::fs::write(f.config.join("mode"), "healthy").expect("correct provider behavior");
     let started = f.lifecycle("actor_start");
     assert!(started.ok, "{:?}", started.error);
-    f.wait(|| f.config.join("received").exists());
+    // The fixture creates `received` before writing the line into it; wait for
+    // the delivered text rather than the file's existence.
+    f.wait(|| {
+        std::fs::read_to_string(f.config.join("received"))
+            .is_ok_and(|received| received.contains("PENDING_TASK"))
+    });
     assert_eq!(f.launches(), 2);
     assert_eq!(f.receipt()["provider_session_id"], SAVED);
     assert_eq!(f.receipt()["failure_count"], 0);
@@ -363,7 +368,7 @@ fn claude_trust_prompt_never_receives_tasks_and_stops_after_nontrust_resume_fail
     let job = f.delivery();
     assert!(matches!(
         super::super::actor_delivery_worker::process_batch(
-            std::slice::from_ref(&job),
+            &mut vec![job.clone()],
             &mut String::new(),
             &AtomicBool::new(false)
         ),
@@ -382,7 +387,7 @@ fn claude_trust_prompt_never_receives_tasks_and_stops_after_nontrust_resume_fail
         .expect("save next-launch native settings");
     assert!(matches!(
         super::super::actor_delivery_worker::process_batch(
-            std::slice::from_ref(&job),
+            &mut vec![job.clone()],
             &mut String::new(),
             &AtomicBool::new(false)
         ),
@@ -415,7 +420,7 @@ fn claude_trust_prompt_never_receives_tasks_and_stops_after_nontrust_resume_fail
     );
     assert!(matches!(
         super::super::actor_delivery_worker::process_batch(
-            std::slice::from_ref(&job),
+            &mut vec![job.clone()],
             &mut String::new(),
             &AtomicBool::new(false)
         ),

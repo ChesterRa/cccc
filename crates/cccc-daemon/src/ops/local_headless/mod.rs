@@ -5,6 +5,7 @@ mod events_migration;
 #[cfg(test)]
 mod events_migration_tests;
 mod managed_reader;
+mod notice_gate;
 mod output;
 mod provider_cli;
 mod session;
@@ -33,8 +34,8 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 pub use supervisor::{
-    detach_after_viewer_exit, ensure_viewer, kill_all_requests, running, start, status, stop,
-    stop_all, stop_group, submit_batch, supports,
+    detach_after_viewer_exit, ensure_viewer, kill_all_requests, ready_for_mail_notice, running,
+    start, status, stop, stop_all, stop_group, submit_batch, supports,
 };
 
 pub(super) fn uses_managed_session(actor: &cccc_contracts::Actor) -> bool {
@@ -68,6 +69,10 @@ pub enum BatchSubmission {
     Deferred,
     Accepted,
     Unconfirmed,
+    /// Early Mail notices the Actor is no longer ready for. Nothing was sent;
+    /// the unread tick re-issues them once the Actor is idle and the Mail is
+    /// still unread, so they are withdrawn rather than retried.
+    Withheld,
 }
 
 #[derive(Debug)]

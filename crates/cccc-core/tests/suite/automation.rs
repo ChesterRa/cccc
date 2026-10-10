@@ -140,6 +140,12 @@ fn mail_notice_waits_for_a_delivery_eligible_actor_and_is_one_shot() {
     assert_eq!(due.notifications[0].data["kind"], "mail_notice");
     assert_eq!(due.notifications[0].data["context"]["count"], 1);
     assert!(
+        due.notifications[0].data["context"]
+            .get("deliver_by")
+            .is_none(),
+        "a notice sent at the busy delay is not held"
+    );
+    assert!(
         !due.notifications[0].data["message"]
             .as_str()
             .unwrap_or_default()
@@ -150,6 +156,86 @@ fn mail_notice_waits_for_a_delivery_eligible_actor_and_is_one_shot() {
         automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
             .expect("repeated tick");
     assert!(repeated.notifications.is_empty());
+}
+
+#[test]
+fn idle_actors_get_waiting_mail_promptly_while_busy_actors_are_not_interrupted() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("mail backpressure", "").expect("group");
+    let configure = |delivery: serde_json::Value| {
+        store
+            .mutate(&group.group_id, |group| {
+                group.extra.insert("delivery".into(), delivery.clone());
+                Ok(())
+            })
+            .expect("delivery settings");
+    };
+    store
+        .mutate(&group.group_id, |group| {
+            group.state = GroupState::Active;
+            actors::add(group, Actor::new("idle"))?;
+            actors::add(group, Actor::new("busy"))?;
+            Ok(())
+        })
+        .expect("actors");
+    configure(json!({"mail_notice_after_seconds":3600}));
+    // Two minutes ago: past the default 60s idle delay, far from the hour.
+    let sent_at = (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339();
+    for recipient in ["idle", "busy"] {
+        let mut message = Event::new("chat.message", &group.group_id);
+        message.by = "user".into();
+        message.ts = sent_at.clone();
+        message.data = json!({"text":"review this","to":[recipient],"message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("message");
+        ledger::append(
+            &store.ledger_path(&group.group_id).expect("ledger"),
+            &message,
+        )
+        .expect("append Mail");
+    }
+    let eligible = HashSet::from(["idle".to_owned(), "busy".to_owned()]);
+    let idle = HashSet::from(["idle".to_owned()]);
+    let tick = |idle: &HashSet<String>| {
+        automation::tick_group_with_idle_actors(&home, &group.group_id, true, &eligible, idle)
+            .expect("tick")
+    };
+
+    // An idle-delay window not yet over keeps even an idle actor waiting.
+    configure(json!({"mail_notice_after_seconds":3600,"mail_notice_idle_after_seconds":600}));
+    assert!(tick(&idle).notifications.is_empty());
+
+    // Notices stay off entirely when the group disables them.
+    configure(json!({"mail_notice_after_seconds":0}));
+    assert!(tick(&idle).notifications.is_empty());
+
+    configure(json!({"mail_notice_after_seconds":3600}));
+    let due = tick(&idle);
+    assert_eq!(
+        due.notifications.len(),
+        1,
+        "only the idle actor is told now"
+    );
+    assert_eq!(due.notifications[0].data["kind"], "mail_notice");
+    assert_eq!(due.notifications[0].data["context"]["actor_id"], "idle");
+    // An early notice carries the time the busy delay would have sent it, so
+    // delivery can hold it for a busy Actor but never beyond that.
+    let deliver_by = chrono::DateTime::parse_from_rfc3339(
+        due.notifications[0].data["context"]["deliver_by"]
+            .as_str()
+            .expect("deliver_by"),
+    )
+    .expect("rfc3339");
+    let sent = chrono::DateTime::parse_from_rfc3339(&sent_at).expect("sent_at");
+    assert_eq!(deliver_by.timestamp(), sent.timestamp() + 3600);
+
+    // The working actor's Mail still waits for the full delay, and the idle
+    // actor's notice stays one-shot once sent.
+    assert!(tick(&idle).notifications.is_empty());
+    assert!(tick(&HashSet::new()).notifications.is_empty());
 }
 
 #[test]

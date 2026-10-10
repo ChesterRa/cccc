@@ -302,10 +302,10 @@ export function GroupSidebar({
         )}
       >
         {/* Header */}
-        <div className="px-3 py-2.5">
+        <div className="flex h-14 shrink-0 items-center border-b border-[var(--glass-border-subtle)] px-3">
           <div
             className={classNames(
-              "flex items-center gap-1.5",
+              "flex w-full items-center gap-1.5",
               isCollapsed ? "justify-center" : "justify-between",
             )}
           >
@@ -315,14 +315,14 @@ export function GroupSidebar({
               <div
                 className={classNames(
                   "flex items-center justify-center overflow-hidden rounded-xl bg-transparent",
-                  "w-10 h-10 shrink-0",
+                  "w-8 h-8 shrink-0",
                   "text-[rgb(35,36,37)] dark:text-white",
                 )}
               >
                 <img
                   src={logoSrc}
                   alt={`${branding.product_name} logo`}
-                  className={classNames("object-contain", isCollapsed ? "w-6 h-6" : "h-8 w-8")}
+                  className={classNames("object-contain", isCollapsed ? "w-6 h-6" : "h-7 w-7")}
                 />
               </div>
               {!isCollapsed && (
@@ -339,11 +339,12 @@ export function GroupSidebar({
                 type="button"
                 variant="secondary"
                 size="sm"
-                className="border-0 text-[13px] shadow-none"
+                className="gap-1.5 border border-[var(--glass-border-subtle)] text-[13px] shadow-none"
                 onClick={onCreateGroup}
                 title={t("createNewGroup")}
                 aria-label={t("createNewGroup")}
               >
+                <PlusIcon size={14} aria-hidden="true" />
                 {t("newGroup")}
               </Button>
             )}
@@ -416,7 +417,7 @@ export function GroupSidebar({
                   : undefined
               }
             >
-              <div className="shrink-0 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]">
+              <div className="shrink-0 text-xs font-semibold text-[var(--color-text-tertiary)]">
                 {t("workingGroups")}
               </div>
               {connect?.ownInstance && (

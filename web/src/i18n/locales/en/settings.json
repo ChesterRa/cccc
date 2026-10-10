@@ -892,6 +892,8 @@
     "description": "Control runtime delivery pacing and the single reminder allowed for Mail and Send + Reply.",
     "mailNotice": "Mail Notice After (sec)",
     "mailNoticeHelp": "Send one content-free inbox notice if Mail is still unread. 0 disables the notice.",
+    "mailIdleNotice": "Mail Notice When Idle (sec)",
+    "mailIdleNoticeHelp": "When the recipient Agent is idle, unread Mail is announced after this long (several Mail become one notice). While it is busy, the notice waits until it is idle, at the latest by the delay above. Applies only to managed Agents that report their working state; others are notified by the delay above. 0 turns early notices off.",
     "replyNotice": "Reply Notice After (sec)",
     "replyNoticeHelp": "Send one content-free reminder if a requested reply is still open. 0 disables the notice.",
     "saveDelivery": "Save Delivery Settings"

@@ -36,6 +36,11 @@ import { useInitialMessageScroll } from "./virtualMessageList/useInitialMessageS
 import { useMessageTailAutoFollow } from "./virtualMessageList/useMessageTailAutoFollow";
 import { cacheMessageRowHeight } from "./virtualMessageList/rowHeightCache";
 import {
+  discardDeferredScrollAdjustment,
+  getFreshVirtualOffsetForIndex,
+  shouldAdjustScrollForResizedRow,
+} from "./virtualMessageList/virtualOffset";
+import {
   getMessageAnchorOffset,
   getScrollOffsetForMessageAnchor,
 } from "./virtualMessageListAnchorRestore";
@@ -158,6 +163,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     paddingStart: 72 + topInset,
   });
 
+  // The default rule misjudges rows measured in one batch after a scroll jump
+  // (see shouldAdjustScrollForResizedRow).
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = shouldAdjustScrollForResizedRow;
+
   // Let tanstack own row measurement via its built-in observer. Layering an
   // extra per-row ResizeObserver on top of measureElement creates duplicate
   // measure -> notify cycles that can recurse during rapid scrolling.
@@ -239,9 +248,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       if (shouldVirtualize) {
         const idx = displayMessages.findIndex((m) => String(m?.id || "") === String(eventId));
         if (idx < 0) return false;
-        const offsetInfo = virtualizer.getOffsetForIndex(idx, "start");
-        if (offsetInfo) {
-          virtualizer.scrollToOffset(getScrollOffsetForMessageAnchor(offsetInfo[0], offsetPx), {
+        const rowOffset = getFreshVirtualOffsetForIndex(virtualizer, idx, contentRef.current);
+        if (rowOffset != null) {
+          virtualizer.scrollToOffset(getScrollOffsetForMessageAnchor(rowOffset, offsetPx), {
             align: "start",
             behavior: "auto",
           });
@@ -269,12 +278,28 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     [virtualizer],
   );
 
+  // scrollToIndex re-targets the row every frame as rows get measured, so it
+  // reaches a row whose estimated offset was wrong.
+  const revealMessageAnchor = useCallback(
+    (eventId: string) => {
+      if (!shouldVirtualize) return;
+      const idx = displayMessages.findIndex((m) => String(m?.id || "") === String(eventId));
+      if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "start", behavior: "auto" });
+    },
+    [displayMessages, shouldVirtualize, virtualizer],
+  );
+
+  const discardDeferredVirtualScroll = useCallback(() => {
+    if (shouldVirtualize) discardDeferredScrollAdjustment(virtualizer);
+  }, [shouldVirtualize, virtualizer]);
+
   const prependCompensation = usePrependCompensationController({
     parentRef,
     lastScrollTopRef,
     getMessageRowById,
     isVirtualized: shouldVirtualize,
     scrollToVirtualOffset,
+    onAnchorVerified: discardDeferredVirtualScroll,
   });
   const getAnchorTop = useCallback(
     (anchorId: string) => {
@@ -379,12 +404,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           (message) => String(message?.id || "") === String(anchorId),
         );
         if (idx < 0) return false;
-        const offsetInfo = virtualizer.getOffsetForIndex(idx, "start");
-        if (!offsetInfo) {
+        const rowOffset = getFreshVirtualOffsetForIndex(virtualizer, idx, contentRef.current);
+        if (rowOffset == null) {
           virtualizer.scrollToIndex(idx, { align: "start", behavior: "auto" });
           return true;
         }
-        virtualizer.scrollToOffset(getScrollOffsetForMessageAnchor(offsetInfo[0], offsetPx), {
+        virtualizer.scrollToOffset(getScrollOffsetForMessageAnchor(rowOffset, offsetPx), {
           align: "start",
           behavior: "auto",
         });
@@ -414,6 +439,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     getAnchorTop,
     getCurrentContentSize,
     scrollToMessageAnchor,
+    revealMessageAnchor,
     cancelPendingBottomScroll,
     detachFollowMode: detachFollowModeForHistoryLoad,
     markAwayFromBottom: markAwayFromBottomForHistoryLoad,
@@ -878,7 +904,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
   const effectiveHighlightEventId = replyJumpHighlightId || highlightEventId;
   const showHistoryStatus = isLoadingHistory || (!hasMoreHistory && !isLoadingHistory);
-  const nonVirtualTopMargin = getNonVirtualMessageListTopMargin({ topInset, showHistoryStatus });
+  const nonVirtualTopMargin = getNonVirtualMessageListTopMargin({ topInset });
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col">

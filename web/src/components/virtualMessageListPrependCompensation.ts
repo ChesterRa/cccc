@@ -1,6 +1,13 @@
 import { useCallback, useMemo, useRef } from "react";
 import type { MutableRefObject, RefObject } from "react";
 
+/** Upper bound on frames spent settling the anchor after a history prepend. */
+const ANCHOR_CORRECTION_MAX_FRAMES = 8;
+/** Consecutive frames without a correction that count as settled. */
+const ANCHOR_CORRECTION_STABLE_FRAMES = 2;
+/** Frames the virtualizer gets to bring a missing anchor back on its own. */
+const ANCHOR_REVEAL_AFTER_MISSING_FRAMES = 2;
+
 export type PendingPrependCompensation = {
   previousOffset: number;
   previousTotalSize: number;
@@ -89,9 +96,17 @@ export function usePrependCompensationController(input: {
   getMessageRowById: (eventId: string) => HTMLDivElement | null;
   isVirtualized: boolean;
   scrollToVirtualOffset: (offsetPx: number) => void;
+  /** Called after the anchor was checked against its real on-screen position. */
+  onAnchorVerified?: () => void;
 }) {
-  const { parentRef, lastScrollTopRef, getMessageRowById, isVirtualized, scrollToVirtualOffset } =
-    input;
+  const {
+    parentRef,
+    lastScrollTopRef,
+    getMessageRowById,
+    isVirtualized,
+    scrollToVirtualOffset,
+    onAnchorVerified,
+  } = input;
   const pendingRef = useRef<PendingPrependCompensation | null>(null);
   const isCompensatingRef = useRef(false);
   const rafRef = useRef<number | null>(null);
@@ -140,14 +155,16 @@ export function usePrependCompensationController(input: {
   );
 
   const scheduleAnchorCorrection = useCallback(
-    (anchorId: string, lockedAnchorTop: number | null) => {
+    (anchorId: string, lockedAnchorTop: number | null, revealAnchor?: () => void) => {
       cancelCorrection();
       if (!anchorId || lockedAnchorTop == null) {
         finish();
         return;
       }
 
-      let remainingChecks = 2;
+      let remainingChecks = ANCHOR_CORRECTION_MAX_FRAMES;
+      let stableFrames = 0;
+      let missingFrames = 0;
       const correctAnchor = () => {
         rafRef.current = null;
         const el = parentRef.current;
@@ -160,13 +177,29 @@ export function usePrependCompensationController(input: {
             minDeltaPx: 0.5,
           });
           if (correctedTop !== el.scrollTop) {
-            el.scrollTop = correctedTop;
+            // Through the virtualizer, so this fixed target replaces any
+            // index-based scroll it is still reconciling.
+            scrollToOffset(correctedTop);
+            stableFrames = 0;
+          } else {
+            stableFrames += 1;
           }
           lastScrollTopRef.current = el.scrollTop;
+          // The real position covers every shift measured so far; nothing that
+          // was held back before this check may be applied on top of it.
+          onAnchorVerified?.();
+        } else {
+          // Virtual rows above the anchor are measured only once they render.
+          // The virtualizer usually shifts the scroll by their real heights and
+          // brings the anchor back; when estimates were too far off it does
+          // not, so hand over once to a reveal that converges on the row.
+          missingFrames += 1;
+          if (missingFrames === ANCHOR_REVEAL_AFTER_MISSING_FRAMES) revealAnchor?.();
+          stableFrames = 0;
         }
 
         remainingChecks -= 1;
-        if (remainingChecks > 0) {
+        if (remainingChecks > 0 && stableFrames < ANCHOR_CORRECTION_STABLE_FRAMES) {
           rafRef.current = window.requestAnimationFrame(correctAnchor);
           return;
         }
@@ -175,7 +208,15 @@ export function usePrependCompensationController(input: {
 
       rafRef.current = window.requestAnimationFrame(correctAnchor);
     },
-    [cancelCorrection, finish, getMessageRowById, lastScrollTopRef, parentRef],
+    [
+      cancelCorrection,
+      finish,
+      getMessageRowById,
+      lastScrollTopRef,
+      onAnchorVerified,
+      parentRef,
+      scrollToOffset,
+    ],
   );
 
   return useMemo(
@@ -200,6 +241,8 @@ export function useTopHistoryLoadCoordinator(input: {
   getAnchorTop: (anchorId: string) => number | null;
   getCurrentContentSize: () => number;
   scrollToMessageAnchor: (eventId: string, offsetPx?: number) => boolean;
+  /** Bring a message row into the rendered range when its offset is unknown. */
+  revealMessageAnchor?: (eventId: string) => void;
   cancelPendingBottomScroll: () => void;
   detachFollowMode: () => void;
   markAwayFromBottom: () => void;
@@ -211,6 +254,7 @@ export function useTopHistoryLoadCoordinator(input: {
     getAnchorTop,
     getCurrentContentSize,
     scrollToMessageAnchor,
+    revealMessageAnchor,
     cancelPendingBottomScroll,
     detachFollowMode,
     markAwayFromBottom,
@@ -223,6 +267,20 @@ export function useTopHistoryLoadCoordinator(input: {
     compensation.clear();
   }, [compensation]);
 
+  const capturePendingCompensation = useCallback(
+    (scrollTop: number): PendingPrependCompensation => {
+      const anchor = getAnchorSnapshot(scrollTop);
+      return {
+        previousOffset: scrollTop,
+        previousTotalSize: getCurrentContentSize(),
+        anchorId: anchor?.anchorId || "",
+        anchorOffsetPx: Number(anchor?.offsetPx || 0),
+        anchorTop: anchor?.anchorId ? getAnchorTop(anchor.anchorId) : null,
+      };
+    },
+    [getAnchorSnapshot, getAnchorTop, getCurrentContentSize],
+  );
+
   const handleTopHistoryScroll = useCallback(
     (params: {
       scrollTop: number;
@@ -231,6 +289,14 @@ export function useTopHistoryLoadCoordinator(input: {
       hasMoreHistory: boolean;
       isLoadingHistory: boolean;
     }) => {
+      // The reader keeps scrolling (mobile momentum included) while the older
+      // page loads. Track where they are now, otherwise the compensation would
+      // snap back to the position captured when the load was triggered.
+      if (compensation.pendingRef.current) {
+        compensation.begin(capturePendingCompensation(params.scrollTop));
+        return false;
+      }
+
       const decision = getTopHistoryLoadDecision({
         ...params,
         topLoadArmed: topLoadArmedRef.current,
@@ -244,25 +310,16 @@ export function useTopHistoryLoadCoordinator(input: {
       markAwayFromBottom();
       cancelPendingBottomScroll();
 
-      const anchor = getAnchorSnapshot(params.scrollTop);
-      compensation.begin({
-        previousOffset: params.scrollTop,
-        previousTotalSize: getCurrentContentSize(),
-        anchorId: anchor?.anchorId || "",
-        anchorOffsetPx: Number(anchor?.offsetPx || 0),
-        anchorTop: anchor?.anchorId ? getAnchorTop(anchor.anchorId) : null,
-      });
+      compensation.begin(capturePendingCompensation(params.scrollTop));
 
       onLoadMore?.();
       return true;
     },
     [
       cancelPendingBottomScroll,
+      capturePendingCompensation,
       compensation,
       detachFollowMode,
-      getAnchorSnapshot,
-      getAnchorTop,
-      getCurrentContentSize,
       markAwayFromBottom,
       onLoadMore,
     ],
@@ -278,7 +335,11 @@ export function useTopHistoryLoadCoordinator(input: {
 
       if (pending.anchorId && scrollToMessageAnchor(pending.anchorId, pending.anchorOffsetPx)) {
         topLoadArmedRef.current = false;
-        compensation.scheduleAnchorCorrection(pending.anchorId, pending.anchorTop);
+        compensation.scheduleAnchorCorrection(
+          pending.anchorId,
+          pending.anchorTop,
+          revealMessageAnchor ? () => revealMessageAnchor(pending.anchorId) : undefined,
+        );
         return true;
       }
 
@@ -294,7 +355,7 @@ export function useTopHistoryLoadCoordinator(input: {
       compensation.scheduleAnchorCorrection(pending.anchorId, pending.anchorTop);
       return true;
     },
-    [compensation, getCurrentContentSize, scrollToMessageAnchor],
+    [compensation, getCurrentContentSize, revealMessageAnchor, scrollToMessageAnchor],
   );
 
   return useMemo(

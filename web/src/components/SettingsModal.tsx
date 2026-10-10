@@ -149,6 +149,7 @@ export function SettingsModal({
 
   // Automation + delivery settings state
   const [mailNoticeAfterSeconds, setMailNoticeAfterSeconds] = useState(1800);
+  const [mailNoticeIdleAfterSeconds, setMailNoticeIdleAfterSeconds] = useState(60);
   const [replyNoticeAfterSeconds, setReplyNoticeAfterSeconds] = useState(900);
   const [idleSeconds, setIdleSeconds] = useState(0);
   const [keepaliveSeconds, setKeepaliveSeconds] = useState(120);
@@ -326,6 +327,13 @@ export function SettingsModal({
         current,
         previous?.mail_notice_after_seconds ?? 1800,
         settings.mail_notice_after_seconds ?? 1800,
+      ),
+    );
+    setMailNoticeIdleAfterSeconds((current) =>
+      sync(
+        current,
+        previous?.mail_notice_idle_after_seconds ?? 60,
+        settings.mail_notice_idle_after_seconds ?? 60,
       ),
     );
     setReplyNoticeAfterSeconds((current) =>
@@ -775,6 +783,7 @@ export function SettingsModal({
     scope,
     scope === "group" ? groupTab : globalTab,
     mailNoticeAfterSeconds,
+    mailNoticeIdleAfterSeconds,
     replyNoticeAfterSeconds,
     idleSeconds,
     keepaliveSeconds,
@@ -821,6 +830,7 @@ export function SettingsModal({
   const handleSaveDeliverySettings = async () => {
     await saveGroupSettings({
       mail_notice_after_seconds: mailNoticeAfterSeconds,
+      mail_notice_idle_after_seconds: mailNoticeIdleAfterSeconds,
       reply_notice_after_seconds: replyNoticeAfterSeconds,
     });
   };
@@ -1725,6 +1735,8 @@ export function SettingsModal({
                     busy={busy}
                     mailNoticeAfterSeconds={mailNoticeAfterSeconds}
                     setMailNoticeAfterSeconds={setMailNoticeAfterSeconds}
+                    mailNoticeIdleAfterSeconds={mailNoticeIdleAfterSeconds}
+                    setMailNoticeIdleAfterSeconds={setMailNoticeIdleAfterSeconds}
                     replyNoticeAfterSeconds={replyNoticeAfterSeconds}
                     setReplyNoticeAfterSeconds={setReplyNoticeAfterSeconds}
                     onSave={handleSaveDeliverySettings}

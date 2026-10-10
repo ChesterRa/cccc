@@ -20,6 +20,11 @@ const SECTION_SETTING_KEYS: &[(&str, &str, &str)] = &[
         "mail_notice_after_seconds",
     ),
     (
+        "mail_notice_idle_after_seconds",
+        "delivery",
+        "mail_notice_idle_after_seconds",
+    ),
+    (
         "reply_notice_after_seconds",
         "delivery",
         "reply_notice_after_seconds",
@@ -257,6 +262,45 @@ fn append(
 mod tests {
     use super::*;
     use cccc_core::GroupStore;
+
+    #[test]
+    fn idle_mail_delay_is_stored_where_the_unread_tick_reads_it() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("settings", "").expect("group");
+        let request = DaemonRequest {
+            v: 1,
+            op: "group_settings_update".into(),
+            args: json!({
+                "group_id":group.group_id,
+                "by":"user",
+                "patch":{"mail_notice_after_seconds":3600,"mail_notice_idle_after_seconds":30}
+            })
+            .as_object()
+            .cloned()
+            .expect("request object"),
+        };
+
+        let response = group_settings(&home, &request).expect("settings update");
+        let stored = store.load(&group.group_id).expect("stored group");
+        // The unread tick reads both delays from the `delivery` section.
+        assert_eq!(
+            stored.extra["delivery"],
+            json!({"mail_notice_after_seconds":3600,"mail_notice_idle_after_seconds":30})
+        );
+        assert!(
+            stored
+                .extra
+                .get("settings")
+                .and_then(Value::as_object)
+                .is_none_or(|flat| !flat.contains_key("mail_notice_idle_after_seconds"))
+        );
+        assert_eq!(
+            response["settings"]["mail_notice_idle_after_seconds"],
+            json!(30)
+        );
+    }
 
     #[test]
     fn group_settings_promote_legacy_automation_timing_to_canonical_storage() {

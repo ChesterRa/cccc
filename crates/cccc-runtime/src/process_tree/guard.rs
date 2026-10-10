@@ -66,6 +66,9 @@ pub(super) struct ProcessRow {
     pub(super) pid: i32,
     pub(super) pgid: i32,
     pub(super) started_at: u64,
+    /// Exited, awaiting its parent: still proves the group's identity, but
+    /// cannot be signalled.
+    pub(super) zombie: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,7 +377,10 @@ pub(super) fn classify(entry: &LedgerEntry, rows: &[ProcessRow]) -> Verdict {
         .iter()
         .filter(|row| row.pgid == entry.pgid)
         .collect::<Vec<_>>();
-    if members.is_empty() {
+    // Zombies have exited and only await their parent, and macOS refuses to
+    // signal them (EPERM): a group with no live member has already ended. While
+    // one lives, a zombie leader still proves whose group it is.
+    if members.iter().all(|row| row.zombie) {
         return Verdict::Forget;
     }
     if let Some(leader) = members.iter().find(|row| row.pid == entry.pgid) {
@@ -398,7 +404,7 @@ pub(super) fn classify(entry: &LedgerEntry, rows: &[ProcessRow]) -> Verdict {
 
 fn process_rows() -> Option<Vec<ProcessRow>> {
     let output = Command::new("ps")
-        .args(["-A", "-o", "pid=,pgid=,etime="])
+        .args(["-A", "-o", "pid=,pgid=,etime=,stat="])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
@@ -406,20 +412,26 @@ fn process_rows() -> Option<Vec<ProcessRow>> {
     if !output.status.success() {
         return None;
     }
-    let now = now();
-    Some(
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| {
-                let mut fields = line.split_whitespace();
-                Some(ProcessRow {
-                    pid: fields.next()?.parse().ok()?,
-                    pgid: fields.next()?.parse().ok()?,
-                    started_at: now.saturating_sub(parse_elapsed(fields.next()?)?),
-                })
+    Some(parse_process_rows(
+        &String::from_utf8_lossy(&output.stdout),
+        now(),
+    ))
+}
+
+/// Rows of `ps -o pid=,pgid=,etime=,stat=`.
+pub(super) fn parse_process_rows(output: &str, now: u64) -> Vec<ProcessRow> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some(ProcessRow {
+                pid: fields.next()?.parse().ok()?,
+                pgid: fields.next()?.parse().ok()?,
+                started_at: now.saturating_sub(parse_elapsed(fields.next()?)?),
+                zombie: fields.next()?.starts_with('Z'),
             })
-            .collect(),
-    )
+        })
+        .collect()
 }
 
 fn terminate_groups(groups: &[LedgerEntry]) -> Vec<LedgerEntry> {

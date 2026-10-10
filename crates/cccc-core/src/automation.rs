@@ -149,7 +149,7 @@ pub fn tick_group(
     group_id: &str,
     include_unread: bool,
 ) -> io::Result<TickResult> {
-    tick_group_inner(home, group_id, include_unread, None)
+    tick_group_inner(home, group_id, include_unread, None, &HashSet::new())
 }
 
 pub fn tick_group_for_delivery_actors(
@@ -158,7 +158,32 @@ pub fn tick_group_for_delivery_actors(
     include_unread: bool,
     delivery_actor_ids: &HashSet<String>,
 ) -> io::Result<TickResult> {
-    tick_group_inner(home, group_id, include_unread, Some(delivery_actor_ids))
+    tick_group_inner(
+        home,
+        group_id,
+        include_unread,
+        Some(delivery_actor_ids),
+        &HashSet::new(),
+    )
+}
+
+/// Like [`tick_group_for_delivery_actors`], with the actors known to be idle:
+/// waiting Mail reaches them after the short idle delay instead of the
+/// interruption-avoiding delay used while they work or their state is unknown.
+pub fn tick_group_with_idle_actors(
+    home: &HomeLayout,
+    group_id: &str,
+    include_unread: bool,
+    delivery_actor_ids: &HashSet<String>,
+    idle_actor_ids: &HashSet<String>,
+) -> io::Result<TickResult> {
+    tick_group_inner(
+        home,
+        group_id,
+        include_unread,
+        Some(delivery_actor_ids),
+        idle_actor_ids,
+    )
 }
 
 fn tick_group_inner(
@@ -166,6 +191,7 @@ fn tick_group_inner(
     group_id: &str,
     include_unread: bool,
     delivery_actor_ids: Option<&HashSet<String>>,
+    idle_actor_ids: &HashSet<String>,
 ) -> io::Result<TickResult> {
     let store = GroupStore::new(home.clone())?;
     let mut result = TickResult::default();
@@ -177,7 +203,14 @@ fn tick_group_inner(
     let previous = state.clone();
     tick_rules(&store, &group, &mut state, &mut result)?;
     if include_unread && matches!(group.state, GroupState::Active | GroupState::Idle) {
-        tick_unread(home, &store, &group, delivery_actor_ids, &mut result)?;
+        tick_unread(
+            home,
+            &store,
+            &group,
+            delivery_actor_ids,
+            idle_actor_ids,
+            &mut result,
+        )?;
     }
     if state != previous {
         state::save(&store, group_id, &state)?;
@@ -316,9 +349,11 @@ fn tick_unread(
     store: &GroupStore,
     group: &GroupDoc,
     delivery_actor_ids: Option<&HashSet<String>>,
+    idle_actor_ids: &HashSet<String>,
     result: &mut TickResult,
 ) -> io::Result<()> {
     let mail_after = delivery_timing_value(group, "mail_notice_after_seconds", 1_800);
+    let mail_idle_after = delivery_timing_value(group, "mail_notice_idle_after_seconds", 60);
     let reply_after = delivery_timing_value(group, "reply_notice_after_seconds", 900);
     if mail_after <= 0 && reply_after <= 0 {
         return Ok(());
@@ -342,7 +377,11 @@ fn tick_unread(
             events,
             positions,
             &cursors,
-            mail_after,
+            MailDelays {
+                busy: mail_after,
+                idle: mail_idle_after,
+                idle_actor_ids,
+            },
             reply_after,
         )
     })?;
@@ -353,13 +392,33 @@ fn tick_unread(
     Ok(())
 }
 
+/// How long unread Mail waits before its notice. Mail exists so senders do not
+/// interrupt work: while an actor works, or its state is unknown, the notice
+/// waits `busy`; once the actor is idle it only waits `idle`, which batches a
+/// burst of Mail into one notice. `busy <= 0` turns Mail notices off.
+struct MailDelays<'a> {
+    busy: i64,
+    idle: i64,
+    idle_actor_ids: &'a HashSet<String>,
+}
+
+impl MailDelays<'_> {
+    fn for_actor(&self, actor_id: &str) -> i64 {
+        if self.busy > 0 && self.idle > 0 && self.idle_actor_ids.contains(actor_id) {
+            self.idle.min(self.busy)
+        } else {
+            self.busy
+        }
+    }
+}
+
 fn unread_notices(
     group: &GroupDoc,
     eligible: &[&cccc_contracts::Actor],
     events: &[Event],
     positions: &HashMap<String, usize>,
     cursors: &BTreeMap<String, String>,
-    mail_after: i64,
+    mail_delays: MailDelays<'_>,
     reply_after: i64,
 ) -> Vec<Event> {
     let mut notices = Vec::new();
@@ -380,7 +439,9 @@ fn unread_notices(
     let mut cancelled = HashSet::<String>::new();
     let mut deliveries = HashMap::<(String, String), (String, i64, usize)>::new();
     let mut actor_resumes = HashMap::<String, i64>::new();
-    let mut mail_claims = HashMap::<(String, String), Vec<Vec<String>>>::new();
+    // Each Mail notice, keyed by its own event id: a withdrawn notice was never
+    // sent and must not stop the next one.
+    let mut mail_claims = HashMap::<(String, String), Vec<(String, Vec<String>)>>::new();
     let mut reply_claims = HashSet::<(String, String, String)>::new();
     for (position, event) in events.iter().enumerate() {
         match event.kind.as_str() {
@@ -456,7 +517,7 @@ fn unread_notices(
                     mail_claims
                         .entry((actor_id.into(), created_at.into()))
                         .or_default()
-                        .push(source_ids);
+                        .push((event.id.clone(), source_ids));
                 } else {
                     reply_claims.extend(
                         source_ids
@@ -491,6 +552,7 @@ fn unread_notices(
     };
 
     for actor in eligible {
+        let mail_after = mail_delays.for_actor(&actor.id);
         let generation = generations.get(&actor.id).copied().unwrap_or(0);
         let cursor_position = cursors
             .get(&actor.id)
@@ -527,11 +589,11 @@ fn unread_notices(
                         .iter()
                         .any(|recipient| matches!(*recipient, "@all" | "@peers" | "@foreman"));
                 if !broadcast_like
-                    && !read
-                    && !replied
-                    && !delivery.is_some_and(|(state, _, _)| {
-                        matches!(state.as_str(), "accepted" | "ambiguous")
-                    })
+                    && crate::mail_pending::awaiting(
+                        read,
+                        replied,
+                        delivery.map(|(state, _, _)| state.as_str()),
+                    )
                 {
                     mail_pending.push(source);
                 }
@@ -570,7 +632,12 @@ fn unread_notices(
                 .into_iter()
                 .flatten()
                 .rev()
-                .any(|claimed| {
+                .filter(|(notice_id, _)| {
+                    deliveries
+                        .get(&(notice_id.clone(), actor.id.clone()))
+                        .is_none_or(|(state, _, _)| state != "withdrawn")
+                })
+                .any(|(_, claimed)| {
                     let claimed = claimed
                         .iter()
                         .filter(|source| positions.contains_key(*source))
@@ -598,7 +665,7 @@ fn unread_notices(
                 .get(&actor.id)
                 .map_or(first_at, |resume| first_at.max(*resume));
             if !active_claim && now - first_at >= mail_after {
-                let event = notice_event(
+                let mut event = notice_event(
                     group,
                     actor,
                     "mail_notice",
@@ -609,6 +676,16 @@ fn unread_notices(
                     ),
                     mail_pending.iter().map(|event| event.id.clone()).collect(),
                 );
+                if mail_after < mail_delays.busy
+                    && let Some(deadline) = DateTime::from_timestamp(first_at + mail_delays.busy, 0)
+                    && let Some(context) =
+                        event.data.get_mut("context").and_then(Value::as_object_mut)
+                {
+                    // Sent early because the Actor looked idle: delivery may hold it
+                    // while the Actor turns out busy, but no later than the notice
+                    // the busy delay would have sent anyway.
+                    context.insert("deliver_by".into(), json!(deadline.to_rfc3339()));
+                }
                 notices.push(event);
             }
         }

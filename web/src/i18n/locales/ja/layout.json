@@ -27,7 +27,7 @@
   "disconnected": "接続なし",
   "dismissError": "エラーを閉じる",
   "createNewGroup": "新しい作業グループを作成",
-  "newGroup": "+ 新規",
+  "newGroup": "新規",
   "workingGroups": "作業グループ",
   "archivedGroups": "アーカイブ",
   "groupActions": "グループ操作",

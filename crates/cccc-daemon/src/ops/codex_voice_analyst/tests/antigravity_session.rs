@@ -526,7 +526,7 @@ fn antigravity_supervisor_keeps_actual_acp_surface_after_a_pending_mode_edit() {
     assert!(
         matches!(
             crate::ops::actor_delivery_worker::process_batch(
-                std::slice::from_ref(&job),
+                &mut vec![job.clone()],
                 &mut String::new(),
                 &std::sync::atomic::AtomicBool::new(false)
             ),

@@ -19,7 +19,11 @@ import { useSwipeNavigation } from "./hooks/useSwipeNavigation";
 import { useCrossGroupRecipients } from "./hooks/useCrossGroupRecipients";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useGlobalEvents } from "./hooks/useGlobalEvents";
-import { VISUAL_VIEWPORT_BOX, useViewportHeight } from "./hooks/useViewportHeight";
+import {
+  VISUAL_VIEWPORT_BOX,
+  VISUAL_VIEWPORT_BOX_ATTRIBUTE,
+  useViewportHeight,
+} from "./hooks/useViewportHeight";
 import { useAppChrome } from "./hooks/useAppChrome";
 import { useAppGroupLifecycle } from "./hooks/useAppGroupLifecycle";
 import { useAppTabState } from "./hooks/useAppTabState";
@@ -392,6 +396,7 @@ export default function App({
     <div
       className="relative min-h-0 w-full overflow-hidden bg-[var(--color-body-bg)] text-[var(--color-text-primary)]"
       style={VISUAL_VIEWPORT_BOX}
+      {...{ [VISUAL_VIEWPORT_BOX_ATTRIBUTE]: "" }}
     >
       <AppBackground isDark={isDark} />
 

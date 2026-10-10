@@ -884,6 +884,8 @@
     "description": "控制运行时投递节奏，以及 Mail 和 Send + Reply 唯一一次提醒的等待时间。",
     "mailNotice": "Mail 提醒等待（秒）",
     "mailNoticeHelp": "Mail 仍未读时发送一次不含正文的收件箱提醒。0 表示关闭提醒。",
+    "mailIdleNotice": "空闲时 Mail 提醒等待（秒）",
+    "mailIdleNoticeHelp": "收件 Agent 空闲时，未读 Mail 等这么久就提醒（多封合并为一条）；Agent 忙时等它空闲再提醒，最晚按上方时间。仅对能上报工作状态的托管 Agent 生效，其他 Agent 按上方时间提醒。0 表示不提前提醒。",
     "replyNotice": "回复提醒等待（秒）",
     "replyNoticeHelp": "请求的回复仍未完成时发送一次不含正文的提醒。0 表示关闭提醒。",
     "saveDelivery": "保存投递设置"

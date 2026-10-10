@@ -16,6 +16,9 @@ use tracing::Instrument;
 #[path = "control_fixture.rs"]
 mod control_fixture;
 #[cfg(all(test, unix))]
+#[path = "notice_gate_tests.rs"]
+mod notice_gate_tests;
+#[cfg(all(test, unix))]
 #[path = "shutdown_tests.rs"]
 mod shutdown_tests;
 #[cfg(all(test, unix))]
@@ -413,6 +416,27 @@ pub fn submit_batch(
     if cancelled.load(std::sync::atomic::Ordering::Acquire) {
         return BatchSubmission::Deferred;
     }
+    item.admit_batch(source_events, || {
+        submit_admitted(home, group, actor, source_events, cancelled, &item)
+    })
+}
+
+/// True when this managed Actor's Runtime reports no work, so an early Mail
+/// notice is admitted. Actors without a managed session report no state and
+/// are never idle.
+pub fn ready_for_mail_notice(group_id: &str, actor_id: &str) -> bool {
+    lookup(&(group_id.to_owned(), actor_id.to_owned()))
+        .is_some_and(|item| item.running() && item.ready_for_mail_notice())
+}
+
+fn submit_admitted(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    source_events: &[Event],
+    cancelled: &AtomicBool,
+    item: &Session,
+) -> BatchSubmission {
     let Some(delivery) = super::super::actor_delivery_render::render_batch_with_mail_context(
         home,
         group,

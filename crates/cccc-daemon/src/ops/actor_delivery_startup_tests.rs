@@ -175,7 +175,7 @@ while True:
             };
             assert!(
                 matches!(
-                    process_batch(std::slice::from_ref(&job), &mut preamble, &cancelled),
+                    process_batch(&mut vec![job.clone()], &mut preamble, &cancelled),
                     super::BatchOutcome::Delivered
                 ),
                 "first task must be delivered without a Web attachment or confirmation"
@@ -199,7 +199,7 @@ while True:
                 .data
                 .insert("text".into(), "SECOND_TASK".into());
             assert!(matches!(
-                process_batch(&[second], &mut preamble, &cancelled),
+                process_batch(&mut vec![second], &mut preamble, &cancelled),
                 super::BatchOutcome::Delivered
             ));
             wait_for(|| {

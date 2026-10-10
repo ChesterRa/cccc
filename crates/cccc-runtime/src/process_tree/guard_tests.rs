@@ -230,6 +230,7 @@ fn row(pid: i32, started_at: u64) -> ProcessRow {
         pid,
         pgid: 500,
         started_at,
+        zombie: false,
     }
 }
 
@@ -289,6 +290,36 @@ fn exited_within(pid: i32, timeout: Duration) -> bool {
         std::thread::sleep(Duration::from_millis(20));
     }
     false
+}
+
+#[test]
+fn exited_processes_awaiting_their_parent_prove_identity_but_not_life() {
+    let rows = parse_process_rows(
+        "  500   500 00:07 Ss\n  501   500 00:07 Z\n  502   502 01:00 Z+\n  503   503 1-00:00:00 R+\nbogus\n",
+        T,
+    );
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.pid, row.zombie))
+            .collect::<Vec<_>>(),
+        vec![(500, false), (501, true), (502, true), (503, false)]
+    );
+    assert_eq!(rows[0].started_at, T - 7);
+
+    let recorded = entry(T - 60, T - 50);
+    let zombie_leader = ProcessRow {
+        zombie: true,
+        ..row(500, T - 60)
+    };
+    // Every process of the group exited: nothing is left to end.
+    assert_eq!(classify(&recorded, &[zombie_leader]), Verdict::Forget);
+    // A live child born after the last observation cannot prove the group on
+    // its own, but the zombie leader still does.
+    assert_eq!(
+        classify(&recorded, &[zombie_leader, row(501, T - 5)]),
+        Verdict::Terminate
+    );
+    assert_eq!(classify(&recorded, &[row(501, T - 5)]), Verdict::Retain);
 }
 
 #[test]

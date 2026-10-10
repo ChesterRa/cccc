@@ -257,12 +257,8 @@ export function GroupWorkArea({
         style={
           tiled
             ? {
-                gridTemplateColumns:
-                  pageSize === 1 || pageActors.length < 2
-                    ? "minmax(0,1fr)"
-                    : "repeat(2,minmax(0,1fr))",
-                gridTemplateRows:
-                  pageActors.length > 2 ? "repeat(2,minmax(0,1fr))" : "minmax(0,1fr)",
+                gridTemplateColumns: `repeat(${Math.max(1, pageActors.length)},minmax(0,1fr))`,
+                gridTemplateRows: "minmax(0,1fr)",
               }
             : undefined
         }

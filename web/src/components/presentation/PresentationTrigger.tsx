@@ -61,7 +61,7 @@ export function PresentationTrigger({
       data-group-presentation-trigger
       aria-expanded={isOpen}
     >
-      <BookmarkIcon size={18} className="shrink-0" aria-hidden="true" />
+      <BookmarkIcon size={17} className="shrink-0" aria-hidden="true" />
       {hasAttention ? (
         <span
           className={classNames(

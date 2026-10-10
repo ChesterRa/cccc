@@ -31,7 +31,7 @@ export function WorkspaceFilesTrigger({ active, onToggle }: Props) {
           : "text-[var(--color-text-secondary)]",
       )}
     >
-      <FolderIcon size={18} className="shrink-0" aria-hidden="true" />
+      <FolderIcon size={17} className="shrink-0" aria-hidden="true" />
     </button>
   );
 }

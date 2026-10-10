@@ -116,6 +116,77 @@ fn web_model_actor_uses_the_structured_turn_contract_without_a_terminal() {
 }
 
 #[test]
+fn a_pulled_turn_withdraws_a_mail_notice_whose_mail_was_already_read() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"stale pull"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","by":"user"}),
+    );
+    let store = GroupStore::new(home.clone()).expect("group store");
+    store
+        .mutate(group_id, |group| {
+            group.running = true;
+            Ok(())
+        })
+        .expect("enable structured runtime fixture");
+    let sent = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"review","message_mode":"mail"}),
+    );
+    let mail_id = sent.result["event"]["id"]
+        .as_str()
+        .expect("mail id")
+        .to_owned();
+    // The unread tick issued a notice for that Mail.
+    let mut notice = cccc_contracts::Event::new("system.notify", group_id);
+    notice.by = "system".into();
+    notice.data = json!({
+        "kind":"mail_notice","title":"Mail waiting","message":"You have 1 Mail item(s) waiting.",
+        "target_actor_id":"web1","context":{"actor_id":"web1","source_event_ids":[mail_id]}
+    })
+    .as_object()
+    .cloned()
+    .expect("notice");
+    cccc_core::ledger::append(&store.ledger_path(group_id).expect("ledger"), &notice)
+        .expect("notice");
+
+    // The actor reads its Mail before pulling its next turn.
+    call(
+        &home,
+        "inbox_read",
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1"}),
+    );
+    let turn = call(
+        &home,
+        "runtime_wait_next_turn",
+        json!({"group_id":group_id,"actor_id":"","by":"web1"}),
+    );
+    let pulled = turn.result["turn"]["event_ids"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !pulled.contains(&json!(notice.id)),
+        "a stale Mail waiting notice must not be handed over: {:?}",
+        turn.result
+    );
+    let ledger =
+        cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger")).expect("events");
+    assert!(ledger.iter().any(|event| {
+        event.kind == "runtime.delivery"
+            && event.data["source_event_id"] == notice.id
+            && event.data["state"] == "withdrawn"
+    }));
+}
+
+#[test]
 fn managed_terminal_actor_exposes_daemon_owned_structured_status() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

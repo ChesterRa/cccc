@@ -93,7 +93,7 @@ export function AppSettingsMenu({
             if (isMousePointer(event)) scheduleClose();
           }}
         >
-          <SettingsIcon size={18} />
+          <SettingsIcon size={17} />
         </IconButton>
       </PopoverTrigger>
       <PopoverContent

@@ -9,6 +9,9 @@
 // the app must also follow the visual viewport's top edge.
 import { useEffect } from "react";
 
+/** Marks the element placed by `VISUAL_VIEWPORT_BOX` at the visible viewport top. */
+export const VISUAL_VIEWPORT_BOX_ATTRIBUTE = "data-visual-viewport-box";
+
 export interface VisualViewportLayout {
   height: string;
   offsetTop: string;

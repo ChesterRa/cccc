@@ -44,6 +44,7 @@ pub mod ledger;
 pub mod ledger_archive;
 mod ledger_index;
 pub mod local_network;
+pub mod mail_pending;
 pub mod membership;
 pub mod memory;
 pub mod nomcp;

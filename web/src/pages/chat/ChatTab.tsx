@@ -793,9 +793,12 @@ export function ChatTab({
                   }
                 >
                   {showMessageFilters && (
-                    <div className="shrink-0 px-4 py-2" data-message-filters>
+                    <div
+                      className="shrink-0 border-b border-[var(--glass-border-subtle)] px-4"
+                      data-message-filters
+                    >
                       <div
-                        className="chat-reading-width flex items-center gap-1 overflow-x-auto scrollbar-hide"
+                        className="chat-reading-width flex h-11 items-stretch gap-5 overflow-x-auto scrollbar-hide"
                         role="group"
                         aria-label={t("chatFilters")}
                       >
@@ -806,10 +809,10 @@ export function ChatTab({
                               key={key}
                               type="button"
                               className={classNames(
-                                "shrink-0 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]",
+                                "shrink-0 px-0.5 text-[13px] whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]",
                                 active
-                                  ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]"
-                                  : "text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg)] hover:text-[var(--color-text-primary)]",
+                                  ? "font-semibold text-[var(--color-text-primary)] shadow-[inset_0_-2px_0_var(--color-text-primary)]"
+                                  : "font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]",
                               )}
                               onClick={() => setChatFilter(key)}
                               aria-pressed={active}

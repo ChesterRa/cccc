@@ -317,13 +317,36 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     };
     let mut messages = Vec::new();
     for event in crate::ops::runtime_delivery::pending_sources(home, &group, actor, limit)? {
-        if let Some((state, claimed_transport)) =
-            crate::ops::runtime_delivery::latest_state(home, &group.group_id, &actor_id, &event.id)?
-            && state == "claimed"
+        let claimed = crate::ops::runtime_delivery::latest_state(
+            home,
+            &group.group_id,
+            &actor_id,
+            &event.id,
+        )?
+        .filter(|(state, _)| state == "claimed");
+        if claimed
+            .as_ref()
+            .is_some_and(|(_, claimed_transport)| *claimed_transport != transport)
         {
-            if claimed_transport == transport {
-                messages.push(event);
-            }
+            continue;
+        }
+        // A pulled turn re-checks Mail notices like a pushed delivery does.
+        if crate::ops::runtime_delivery::is_stale_mail_notice(home, &group, &actor_id, &event) {
+            crate::ops::runtime_delivery::append_state(
+                home,
+                &group.group_id,
+                &actor_id,
+                &actor.created_at,
+                &event.id,
+                &transport,
+                crate::ops::runtime_delivery::DeliveryOutcome::Withdrawn(
+                    crate::ops::runtime_delivery::STALE_MAIL_NOTICE,
+                ),
+            )?;
+            continue;
+        }
+        if claimed.is_some() {
+            messages.push(event);
             continue;
         }
         match crate::ops::runtime_delivery::claim(

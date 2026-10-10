@@ -17,6 +17,8 @@ interface DeliveryTabProps {
   busy: boolean;
   mailNoticeAfterSeconds: number;
   setMailNoticeAfterSeconds: (v: number) => void;
+  mailNoticeIdleAfterSeconds: number;
+  setMailNoticeIdleAfterSeconds: (v: number) => void;
   replyNoticeAfterSeconds: number;
   setReplyNoticeAfterSeconds: (v: number) => void;
   onSave: () => void;
@@ -48,6 +50,15 @@ export function DeliveryTab(props: DeliveryTabProps) {
               value={props.mailNoticeAfterSeconds}
               onChange={props.setMailNoticeAfterSeconds}
               helperText={t("delivery.mailNoticeHelp")}
+            />
+          </div>
+          <div className={settingsWorkspaceFieldsClass}>
+            <NumberInputRow
+              isDark={isDark}
+              label={t("delivery.mailIdleNotice")}
+              value={props.mailNoticeIdleAfterSeconds}
+              onChange={props.setMailNoticeIdleAfterSeconds}
+              helperText={t("delivery.mailIdleNoticeHelp")}
             />
           </div>
           <div className={settingsWorkspaceFieldsClass}>

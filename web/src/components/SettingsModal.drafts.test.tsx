@@ -47,6 +47,7 @@ const settings: GroupSettings = {
   help_nudge_interval_seconds: 600,
   help_nudge_min_messages: 10,
   mail_notice_after_seconds: 1800,
+  mail_notice_idle_after_seconds: 60,
   reply_notice_after_seconds: 900,
   terminal_transcript_visibility: "foreman",
   terminal_transcript_notify_tail: false,
@@ -92,16 +93,22 @@ describe("settings draft and save continuity", () => {
   it("keeps dirty fields through refresh while accepting changes to clean fields", async () => {
     await render();
     await act(async () => tabs.messaging!.setDefaultSendTo("broadcast"));
-    await render({ ...settings, mail_notice_after_seconds: 300 });
+    await render({
+      ...settings,
+      mail_notice_after_seconds: 300,
+      mail_notice_idle_after_seconds: 45,
+    });
     expect(tabs.messaging!.defaultSendTo).toBe("broadcast");
     await act(async () =>
       useModalStore.getState().openSettingsTarget({ scope: "group", tab: "delivery" }),
     );
     await vi.waitFor(() => expect(host.textContent).toContain("Save delivery"));
     expect(tabs.delivery!.mailNoticeAfterSeconds).toBe(300);
+    expect(tabs.delivery!.mailNoticeIdleAfterSeconds).toBe(45);
     await act(async () => tabs.delivery!.onSave());
     expect(save).toHaveBeenCalledWith({
       mail_notice_after_seconds: 300,
+      mail_notice_idle_after_seconds: 45,
       reply_notice_after_seconds: 900,
     });
     await act(async () =>

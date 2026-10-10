@@ -24,6 +24,8 @@ pub enum DeliveryOutcome<'a> {
     Accepted,
     Failed(&'a str),
     Ambiguous(&'a str),
+    /// Never sent and not to be retried: a newer event supersedes it.
+    Withdrawn(&'a str),
 }
 
 impl<'a> DeliveryOutcome<'a> {
@@ -33,6 +35,7 @@ impl<'a> DeliveryOutcome<'a> {
             Self::Accepted => ("accepted", ""),
             Self::Failed(reason) => ("failed", reason),
             Self::Ambiguous(reason) => ("ambiguous", reason),
+            Self::Withdrawn(reason) => ("withdrawn", reason),
         }
     }
 }
@@ -169,7 +172,9 @@ pub fn claim_deliveries(
                 if state == "claimed" {
                     return (false, states);
                 }
-                if state == "accepted" || (state == "ambiguous" && !force_ambiguous) {
+                if matches!(state.as_str(), "accepted" | "withdrawn")
+                    || (state == "ambiguous" && !force_ambiguous)
+                {
                     return (false, states);
                 }
             }
@@ -279,6 +284,38 @@ pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usi
     .map_err(OpError::io)
 }
 
+/// Why a stale Mail notice is withdrawn instead of delivered.
+pub const STALE_MAIL_NOTICE: &str =
+    "Mail notice withdrawn: its Mail was read, answered, or delivered";
+
+/// A Mail notice none of whose Mail still awaits `actor_id`. Every transport
+/// checks this right before handing a notice over, retries included. A failed
+/// check keeps the notice: a redundant reminder is safer than a lost one.
+pub fn is_stale_mail_notice(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    event: &Event,
+) -> bool {
+    if event.kind != "system.notify"
+        || event.data.get("kind").and_then(Value::as_str) != Some("mail_notice")
+    {
+        return false;
+    }
+    let mail = event
+        .data
+        .get("context")
+        .and_then(|context| context.get("source_event_ids"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    cccc_core::mail_pending::still_awaited(home, group, actor_id, &mail)
+        .is_ok_and(|awaited| awaited.is_empty())
+}
+
 fn delivery_lock_path(ledger_path: &Path) -> PathBuf {
     ledger_path
         .parent()
@@ -363,7 +400,7 @@ pub fn pending_sources(
             if !addressed {
                 continue;
             }
-            if !matches!(state, "accepted" | "ambiguous") {
+            if !matches!(state, "accepted" | "ambiguous" | "withdrawn") {
                 pending.push(event.clone());
                 if pending.len() >= limit.max(1) {
                     break;
