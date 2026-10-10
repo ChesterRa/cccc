@@ -8,11 +8,22 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 const EVENT_CAPACITY: usize = 2048;
 const COMMAND_CAPACITY: usize = 32;
+
+/// `excludeTurns` omits turn history, but thread metadata such as `preview` can still
+/// exceed the default 16 MiB frame limit. Allow a single frame up to the existing
+/// 64 MiB message limit: enough for the observed 20 MiB and 31 MB replies, while
+/// retaining the same aggregate bound for fragmented messages.
+fn app_server_websocket_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_frame_size(Some(64 << 20))
+        .max_message_size(Some(64 << 20))
+}
 
 #[path = "protocol_turn_scope.rs"]
 mod turn_scope;
@@ -25,7 +36,13 @@ pub(super) async fn connect_with_retry(
 > {
     let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
     loop {
-        match tokio_tungstenite::connect_async(endpoint).await {
+        match tokio_tungstenite::connect_async_with_config(
+            endpoint,
+            Some(app_server_websocket_config()),
+            false,
+        )
+        .await
+        {
             Ok((socket, _)) => return Ok(socket),
             Err(error) if tokio::time::Instant::now() < deadline => {
                 tracing::debug!(%error, "waiting for Codex app-server websocket");
@@ -439,3 +456,7 @@ fn publish_event(
 #[cfg(test)]
 #[path = "protocol_disconnect_tests.rs"]
 mod disconnect_tests;
+
+#[cfg(test)]
+#[path = "protocol_ws_config_tests.rs"]
+mod ws_config_tests;
