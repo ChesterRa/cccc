@@ -163,3 +163,142 @@ done
     let _ = stop.send(());
     server.await.expect("stop scratch SSE server");
 }
+
+#[tokio::test]
+async fn over_limit_event_disconnects_without_accepting_following_idle() {
+    let temp = tempfile::tempdir().expect("isolated fixture");
+    let script = r#"i=0
+while IFS= read -r line; do
+  i=$((i+1))
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"session-owned"}}\n' "$i"
+done
+"#;
+    let (owner, stdin, stdout) = process::spawn_piped(
+        &["/bin/sh".into(), "-c".into(), script.into()],
+        temp.path(),
+        &BTreeMap::new(),
+        "sse-over-limit-fixture",
+    )
+    .expect("spawn fixture ACP");
+    let protocol = AcpClient::new(
+        stdin,
+        stdout,
+        "generation-over-limit".into(),
+        "opencode",
+        PermissionPolicy::Reject,
+        PromptCompletion::SessionEvents,
+    )
+    .expect("ACP bridge");
+    protocol
+        .request("initialize", json!({}), Duration::from_secs(5))
+        .await
+        .expect("initialize");
+    protocol
+        .request("session/new", json!({}), Duration::from_secs(5))
+        .await
+        .expect("owned session");
+    protocol
+        .register_native_input("over-limit-native-input", "fixture input")
+        .await
+        .expect("register exact input");
+    let mut events = protocol.subscribe();
+    let payloads = [
+        json!({"type":"message.updated","properties":{"info":{"id":"user-1","sessionID":"session-owned","role":"user"}}}),
+        json!({"type":"message.part.updated","properties":{"part":{"id":"user-part","sessionID":"session-owned","messageID":"user-1","type":"text","text":"fixture input"}}}),
+        json!({"type":"message.updated","properties":{"info":{"id":"assistant-1","sessionID":"session-owned","role":"assistant","parentID":"user-1"}}}),
+        json!({"type":"session.status","properties":{"sessionID":"session-owned","status":{"type":"busy"}}}),
+        // Valid JSON that exceeds the documented encoded-line limit. A reader
+        // that drops it and continues would incorrectly complete at the idle.
+        json!({"type":"message.part.updated","properties":{"part":{"id":"answer-part","sessionID":"session-owned","messageID":"assistant-1","type":"text","text":"x".repeat(16 * 1024 * 1024)}}}),
+        json!({"type":"session.status","properties":{"sessionID":"session-owned","status":{"type":"idle"}}}),
+    ];
+    let mut wire = String::new();
+    for payload in &payloads {
+        wire.push_str(&format!("data: {payload}\r\n\r\n"));
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("scratch server");
+    let endpoint = format!(
+        "http://{}",
+        listener.local_addr().expect("listener address")
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let mut server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await?;
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            request.push(socket.read_u8().await?);
+        }
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n").await?;
+        socket
+            .write_all(format!("{:x}\r\n", wire.len()).as_bytes())
+            .await?;
+        for fragment in wire.as_bytes().chunks(16 * 1024) {
+            if socket.write_all(fragment).await.is_err() {
+                return Ok::<(), std::io::Error>(());
+            }
+        }
+        // Keep the HTTP stream open so EOF cannot stand in for the cap error.
+        let _ = socket.write_all(b"\r\n").await;
+        let _ = stopped.await;
+        Ok(())
+    });
+    let observed = tokio::time::timeout(Duration::from_secs(10), async {
+        lifecycle::attach(
+            &protocol,
+            &endpoint,
+            "fixture",
+            "private",
+            "session-owned",
+            temp.path(),
+        )
+        .await?;
+        let mut receipt = false;
+        let mut completed = false;
+        loop {
+            let event = events.recv().await.map_err(std::io::Error::other)?;
+            receipt |= event.requested_delegation_id.as_deref() == Some("over-limit-native-input");
+            completed |= event.message["method"] == "turn/completed"
+                && event.message["params"]["turn"]["status"] == "completed";
+            if event.message["method"] == MANAGED_AGENT_DISCONNECTED_METHOD {
+                let reason = event.message["params"]["reason"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                return Ok::<_, std::io::Error>((receipt, completed, reason));
+            }
+        }
+    })
+    .await;
+    let ping = protocol
+        .request("fixture/ping", json!({}), Duration::from_secs(5))
+        .await;
+
+    // Clean up even if observation times out or the bridge reports a failure.
+    protocol.close().await;
+    let process_stopped = owner.stop();
+    let _ = stop.send(());
+    let server_finished = match tokio::time::timeout(Duration::from_secs(5), &mut server).await {
+        Ok(result) => result.is_ok(),
+        Err(_) => {
+            server.abort();
+            let _ = server.await;
+            false
+        }
+    };
+    process_stopped.expect("stop scratch ACP");
+    assert!(server_finished, "stop scratch SSE server");
+    let (receipt, completed, reason) = observed
+        .expect("over-limit event must disconnect promptly")
+        .expect("observe lifecycle events");
+    assert!(receipt, "exercise an admitted native turn before overflow");
+    assert!(!completed, "the following idle must not settle lost output");
+    assert!(reason.contains("exceeded the bounded buffer"), "{reason}");
+    assert!(reason.contains("16777216 bytes per line"), "{reason}");
+    assert_eq!(
+        ping.expect_err("disconnected session must reject new requests")
+            .kind(),
+        std::io::ErrorKind::BrokenPipe
+    );
+}

@@ -27,6 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- Preserve valid large OpenCode and Kilo lifecycle events, including inline image tool results, with a 16 MiB encoded-line limit. Count each line separately across fragmented or coalesced HTTP reads while retaining the existing explicit failure for malformed or oversized streams.
 - Distinguish saved Voice Secretary configuration from admission readiness, with localized guidance for missing configuration, invalid settings and an unavailable owner. Preserve saved input and keep provider process state separate from configuration.
 - Open Voice Analyst settings directly from its startup failure, and mark ACP snapshots as stale after repeated read failures while retaining existing results and controls.
 - Keep slow Codex Voice status reads useful during focus and visibility refreshes. Separate read failures from execution errors, clear recovered read warnings, and preserve confirmed investigation controls against older snapshots.

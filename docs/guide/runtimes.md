@@ -497,32 +497,32 @@ Use a mixed group when different agents are good at different roles:
 
 Each Actor can have its own Runtime, command override, and private environment. CCCC derives the interaction surface from the selected Runtime. Runtime state stays in `CCCC_HOME`, not in your repository.
 
+Native terminal output always uses bounded memory and can optionally persist a bounded per-Actor transcript. See [Terminal history](terminal-history.md) for opt-in persistence, retention, cursor, restart, and security behavior.
+
 ## Git worktrees and long-lived Actors
 
-CCCC does not create, track or remove git worktrees, and it never launches a runtime with worktree options. Actors create worktrees themselves, either with `git worktree add` or through a runtime feature such as Claude Code's `--worktree`, `EnterWorktree`, or subagent isolation. On a busy host these accumulate, because cleanup is tied to how a session ends.
+CCCC does not create worktrees automatically or manage their cleanup. Agents can create them with Git or runtime tools; a native terminal's custom launch command can also request one. Managed runtimes accept only their supported command arguments, so a flag available in a standalone CLI is not necessarily supported by CCCC.
 
-- **Claude Code** cleans up worktrees it created, in these cases:
-  - On exit from an *interactive* `--worktree` session, it checks the worktree for changed or untracked files, uncommitted work in checked-out submodules, and new commits. A clean worktree is removed automatically for an unnamed session; a [named](https://code.claude.com/docs/en/sessions) session is prompted first, and a worktree with work in it is always prompted.
-  - A subagent's worktree is removed when the subagent finishes without changes; one with changes stays until the periodic sweep can remove it safely.
-  - A periodic sweep removes worktrees Claude created for subagents and background sessions once they are older than [`cleanupPeriodDays`](https://code.claude.com/docs/en/settings-reference#cleanupperioddays), subject to the [retention sweep rules](https://code.claude.com/docs/en/claude-directory#cleaned-up-automatically).
+Stopping or restarting an Actor terminates its process; it does not guarantee the runtime's interactive worktree cleanup flow. Cleanup depends on the runtime, who created the worktree, and any remaining work. Claude Code, for example, has exit handling and a subagent/background-session sweep, but that sweep excludes worktrees created with `git worktree add` and main worktree sessions that were never backgrounded. See [Claude Code's cleanup rules](https://code.claude.com/docs/en/worktrees#clean-up-worktrees).
 
-  The sweep leaves a worktree in place when it still holds work, when a submodule's state cannot be inspected, when the worktree belongs to a `--worktree` session you have **not** backgrounded, or when **you** created it with `git worktree add`. Claude Code also keeps any worktree without the git-metadata marker it writes on the ones it creates itself.
-- **Non-interactive runs** (`claude -p --worktree`) have no exit prompt, so Claude Code does not clean up their worktrees, and leaves the lock it took on each one until a later sweep releases it.
-- **Other runtimes** do not remove worktrees they or their Agents created.
-
-A long-lived CCCC Actor is the case most likely to accumulate. The daemon stops and restarts an Actor rather than the runtime exiting interactively, so a `--worktree` session is never offered the exit prompt, and an Actor that is never backgrounded is never swept — at any age.
-
-To clean up safely:
+Before removing a candidate, confirm no Actor or other process is using it, preserve any unique commits (including a detached HEAD), and save all needed untracked and ignored files. Inspect one worktree at a time:
 
 ```bash
-git worktree list --porcelain     # every linked worktree, its branch and HEAD
-git worktree remove <path>        # refuses a worktree with uncommitted or untracked changes
-git worktree prune                # forget entries whose directory is already gone
+git worktree list --porcelain
+git -C "<path>" status --short --untracked-files=all --ignored
+git worktree remove "<path>"
 ```
 
-Before removing a worktree, check that no Actor is still working in it, and that its commits are merged or pushed. Avoid `--force`: without it, git refuses to delete uncommitted work. If git reports the worktree as locked, run `git worktree unlock <path>` first — while an Agent is running, Claude Code holds a `git worktree lock` on its worktree and releases it when the Agent finishes.
+`remove` deletes the checkout directory. Its dirty check does not cover ignored files or prove that commits are preserved; avoid `--force`. If Git reports a lock, inspect its reason and use `git worktree unlock "<path>"` only after confirming the worktree is unused and the lock is obsolete. A lock can protect an active agent or an intentionally unmounted location.
 
-Native terminal output always uses bounded memory and can optionally persist a bounded per-Actor transcript. See [Terminal history](terminal-history.md) for opt-in persistence, retention, cursor, restart, and security behavior.
+`prune` removes management records for missing directories, not existing checkout directories. Confirm the missing paths were not merely moved or unmounted, and preview before applying:
+
+```bash
+git worktree prune --dry-run --verbose
+git worktree prune
+```
+
+See the [Git worktree reference](https://git-scm.com/docs/git-worktree) for lock, remove, prune and repair behavior.
 
 ## Verification and Troubleshooting
 
