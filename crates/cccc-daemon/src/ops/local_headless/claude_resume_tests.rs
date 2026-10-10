@@ -251,7 +251,11 @@ fn copied_claude_resume_stops_auto_wake_and_explicit_retry_delivers_the_original
         &mut String::new(),
         &AtomicBool::new(false),
     );
-    assert!(handled, "blocked startup leaves the automatic retry lane");
+    assert_eq!(
+        handled,
+        crate::ops::actor_delivery_worker::BatchOutcome::Delivered,
+        "blocked startup leaves the automatic retry lane"
+    );
     assert_eq!(f.launches(), 1);
     let failed = f.receipt();
     assert_eq!(failed["status"], "resume_failed");
@@ -268,10 +272,13 @@ fn copied_claude_resume_stops_auto_wake_and_explicit_retry_delivers_the_original
         "copied job must be stopped"
     );
     for _ in 0..4 {
-        assert!(super::super::actor_delivery_worker::process_batch(
-            std::slice::from_ref(&job),
-            &mut String::new(),
-            &AtomicBool::new(false)
+        assert!(matches!(
+            super::super::actor_delivery_worker::process_batch(
+                std::slice::from_ref(&job),
+                &mut String::new(),
+                &AtomicBool::new(false)
+            ),
+            crate::ops::actor_delivery_worker::BatchOutcome::Delivered
         ));
     }
     assert_eq!(f.launches(), 1, "no repeated provider launch");
@@ -354,10 +361,13 @@ fn claude_trust_prompt_never_receives_tasks_and_stops_after_nontrust_resume_fail
     assert!(started.ok, "{:?}", started.error);
     f.wait(|| f.config.join("terminal_ready").exists());
     let job = f.delivery();
-    assert!(!super::super::actor_delivery_worker::process_batch(
-        std::slice::from_ref(&job),
-        &mut String::new(),
-        &AtomicBool::new(false)
+    assert!(matches!(
+        super::super::actor_delivery_worker::process_batch(
+            std::slice::from_ref(&job),
+            &mut String::new(),
+            &AtomicBool::new(false)
+        ),
+        crate::ops::actor_delivery_worker::BatchOutcome::Retry
     ));
     assert!(
         !f.config.join("received").exists(),
@@ -370,10 +380,13 @@ fn claude_trust_prompt_never_receives_tasks_and_stops_after_nontrust_resume_fail
     store
         .save(&pending)
         .expect("save next-launch native settings");
-    assert!(!super::super::actor_delivery_worker::process_batch(
-        std::slice::from_ref(&job),
-        &mut String::new(),
-        &AtomicBool::new(false)
+    assert!(matches!(
+        super::super::actor_delivery_worker::process_batch(
+            std::slice::from_ref(&job),
+            &mut String::new(),
+            &AtomicBool::new(false)
+        ),
+        crate::ops::actor_delivery_worker::BatchOutcome::Retry
     ));
     assert!(
         !f.config.join("received").exists(),
@@ -400,10 +413,13 @@ fn claude_trust_prompt_never_receives_tasks_and_stops_after_nontrust_resume_fail
         2,
         "watcher must stop on the non-trust failure"
     );
-    assert!(super::super::actor_delivery_worker::process_batch(
-        std::slice::from_ref(&job),
-        &mut String::new(),
-        &AtomicBool::new(false)
+    assert!(matches!(
+        super::super::actor_delivery_worker::process_batch(
+            std::slice::from_ref(&job),
+            &mut String::new(),
+            &AtomicBool::new(false)
+        ),
+        crate::ops::actor_delivery_worker::BatchOutcome::Delivered
     ));
     assert!(!f.config.join("received").exists());
 }
