@@ -6,7 +6,63 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::Arc;
 use std::time::Duration;
 
-const SSE_BUFFER_LIMIT: usize = 512 * 1024;
+// Image/tool snapshots can occupy several MiB. Bound each encoded line, not
+// an HTTP chunk containing multiple events, while preserving lifecycle data.
+const SSE_BUFFER_LIMIT: usize = 16 * 1024 * 1024;
+
+struct SseLineBuffer {
+    bytes: Vec<u8>,
+    limit: usize,
+}
+
+impl SseLineBuffer {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+        }
+    }
+
+    // The caller splits at LF, including it in each completed fragment. Count
+    // all framing bytes (including CR/LF) before retaining any fragment.
+    fn push(&mut self, fragment: &[u8]) -> io::Result<Option<Value>> {
+        let size = self.bytes.len().saturating_add(fragment.len());
+        if size > self.limit {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "OpenCode lifecycle event exceeded the bounded buffer ({size} > {} bytes per line)",
+                    self.limit
+                ),
+            ));
+        }
+        self.bytes.extend_from_slice(fragment);
+        if !fragment.ends_with(b"\n") {
+            return Ok(None);
+        }
+        let value = (|| {
+            let line = std::str::from_utf8(&self.bytes).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "OpenCode lifecycle event was not UTF-8",
+                )
+            })?;
+            let Some(data) = line.strip_prefix("data:") else {
+                return Ok(None);
+            };
+            serde_json::from_str(data.trim())
+                .map(Some)
+                .map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("invalid OpenCode lifecycle JSON: {error}"),
+                    )
+                })
+        })();
+        self.bytes.clear();
+        value
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ObservedUserMessage {
@@ -116,45 +172,18 @@ pub(super) async fn attach(
     let session_id = session_id.to_owned();
     let task = tokio::spawn(async move {
         let mut response = response;
-        let mut buffer = Vec::new();
+        let mut buffer = SseLineBuffer::new(SSE_BUFFER_LIMIT);
         let mut stream = super::stream::SessionStream::default();
         let outcome: io::Result<()> =
             async {
                 while let Some(chunk) = response.chunk().await.map_err(|error| {
                     io::Error::other(format!("read OpenCode lifecycle: {error}"))
                 })? {
-                    if buffer.len().saturating_add(chunk.len()) > SSE_BUFFER_LIMIT {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "OpenCode lifecycle event exceeded the bounded buffer",
-                        ));
-                    }
-                    buffer.extend_from_slice(&chunk);
-                    while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
-                        let mut line = buffer.drain(..=end).collect::<Vec<_>>();
-                        while line
-                            .last()
-                            .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
-                        {
-                            line.pop();
+                    for fragment in chunk.split_inclusive(|byte| *byte == b'\n') {
+                        if let Some(value) = buffer.push(fragment)? {
+                            let payload = value.get("payload").unwrap_or(&value);
+                            stream.observe(payload, &session_id, &control).await?;
                         }
-                        let Ok(line) = std::str::from_utf8(&line) else {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "OpenCode lifecycle event was not UTF-8",
-                            ));
-                        };
-                        let Some(data) = line.strip_prefix("data:") else {
-                            continue;
-                        };
-                        let value: Value = serde_json::from_str(data.trim()).map_err(|error| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                format!("invalid OpenCode lifecycle JSON: {error}"),
-                            )
-                        })?;
-                        let payload = value.get("payload").unwrap_or(&value);
-                        stream.observe(payload, &session_id, &control).await?;
                     }
                 }
                 Err(io::Error::new(
@@ -250,6 +279,94 @@ fn basic_authorization(username: &str, password: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sse_line_limit_counts_framing_and_rejects_before_appending() {
+        let line = b"data: true\n";
+        let mut buffer = SseLineBuffer::new(line.len());
+        assert_eq!(buffer.push(&line[..line.len() - 1]).expect("partial"), None);
+        assert_eq!(
+            buffer.push(b"\n").expect("exact bound"),
+            Some(Value::Bool(true))
+        );
+        assert!(buffer.bytes.is_empty());
+        let error = buffer
+            .push(b"data: true \n")
+            .expect_err("complete line over bound");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("{} bytes per line", line.len()))
+        );
+        assert!(
+            buffer.bytes.is_empty(),
+            "oversize fragment was never retained"
+        );
+        buffer
+            .push(&vec![b' '; line.len()])
+            .expect("unterminated exact bound");
+        assert_eq!(
+            buffer
+                .push(b"x")
+                .expect_err("unterminated over bound")
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(buffer.bytes.len(), line.len());
+    }
+
+    #[test]
+    fn coalesced_sse_lines_do_not_share_a_capacity_budget() {
+        let line = b"data: true\n";
+        let chunk = line.repeat(100);
+        let mut buffer = SseLineBuffer::new(line.len());
+        let mut count = 0;
+        for fragment in chunk.split_inclusive(|byte| *byte == b'\n') {
+            assert_eq!(
+                buffer.push(fragment).expect("valid line"),
+                Some(Value::Bool(true))
+            );
+            count += 1;
+        }
+        assert_eq!(count, 100);
+        assert!(buffer.bytes.is_empty());
+    }
+
+    #[test]
+    fn sse_fragments_preserve_split_utf8_crlf_and_pending_suffix() {
+        let line = "data: {\"text\":\"é\"}\r\n".as_bytes();
+        let mut buffer = SseLineBuffer::new(line.len());
+        let split = line
+            .iter()
+            .position(|byte| *byte == 0xc3)
+            .expect("UTF-8 lead")
+            + 1;
+        assert_eq!(buffer.push(&line[..split]).expect("split UTF-8"), None);
+        assert_eq!(
+            buffer
+                .push(&line[split..line.len() - 1])
+                .expect("split CRLF"),
+            None
+        );
+        assert_eq!(
+            buffer.push(b"\n").expect("complete"),
+            Some(serde_json::json!({"text":"é"}))
+        );
+        assert_eq!(buffer.push(b"data:").expect("next unfinished suffix"), None);
+        assert_eq!(buffer.bytes, b"data:");
+    }
+
+    #[test]
+    fn malformed_sse_data_remains_fail_closed() {
+        for line in [b"data: nope\n".as_slice(), b"data: \xff\n".as_slice()] {
+            let mut buffer = SseLineBuffer::new(64);
+            assert_eq!(
+                buffer.push(line).expect_err("malformed data").kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+    }
 
     #[test]
     fn basic_auth_never_contains_plaintext_credentials() {

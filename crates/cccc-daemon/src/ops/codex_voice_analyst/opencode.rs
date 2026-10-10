@@ -15,6 +15,8 @@ mod command;
 mod launch_tests;
 mod lifecycle;
 #[cfg(test)]
+mod lifecycle_tests;
+#[cfg(test)]
 mod model_sync_tests;
 mod session;
 pub(super) mod stream;
