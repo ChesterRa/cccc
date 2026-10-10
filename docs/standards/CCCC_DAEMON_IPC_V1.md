@@ -512,7 +512,13 @@ Notes:
 
 #### `attach`
 
-Attach a directory scope to a group (or auto-create/select a group for this scope).
+Attach a directory scope to the supplied group, or create a new group when
+`group_id` is omitted. The attached group becomes the active CLI group. Omitting
+`group_id` does not select an existing group by project path.
+
+The path is evaluated on the daemon host. The CLI resolves relative paths
+against its invoking terminal's working directory before sending this request;
+the daemon's working directory is not the CLI's project directory.
 
 Args:
 ```ts
@@ -1649,6 +1655,9 @@ Notes:
 #### `group_use`
 
 Set the active scope for a group using `path` (must already be attached).
+
+As with `attach`, the CLI resolves relative paths against its own working
+directory before IPC.
 
 Args:
 ```ts
@@ -4171,7 +4180,12 @@ source Group. Both ledger copies MUST reference their own Group's parent event:
 `reply_to` in the caller's Group and `dst_reply_to` for the destination parent on
 the source audit record. Retries reuse these persisted identities. Mixed local
 and cross-group audiences, or another destination Group, are rejected before
-writing either ledger. The returned `event` MUST be the caller's local event;
+writing either ledger. A retry of an accepted local cross-group reply with the
+same `client_id` but a different `reply_to` MUST fail with `idempotency_conflict`
+without writing either ledger, including after partial delivery. Local
+cross-group attachments MUST be rejected with `attachments_not_supported`
+before recording the reply or settling its reply obligation.
+The returned `event` MUST be the caller's local event;
 `dst_event` identifies the delivered copy. Dispatch ownership MUST cover both
 Groups, using the existing cross-group send policy.
 
@@ -4268,6 +4282,10 @@ Notes:
   foreman-only group administration permission does not apply to message delivery.
 - Local cross-group forwarding rejects attachments. Connect sends use their
   qualified instance/Group destination and bounded attachment contract.
+- Destination Group and recipient validation, and rejection of unsupported
+  attachments, MUST precede the source append. Reusing an accepted `client_id` with a different
+  `dst_group_id` MUST fail with `idempotency_conflict`; a partial delivery retry
+  keeps the accepted message's content, recipients and thread references.
 
 #### Agent Insight Profile marker
 
@@ -5590,6 +5608,10 @@ Telegram diagnostics distinguish API reachability (`last_api_ok_at`,
 `last_error`, `last_error_at`). A successful reachability probe is not evidence
 that update polling or message delivery succeeded. Recovery clears only that
 operation's current error; historical diagnostics remain in bridge logs.
+Only a successful Telegram message send or edit may advance `last_send_ok_at`,
+clear a delivery error, or record a delivered log entry. Skipped, throttled,
+unchanged and duplicate-suppressed events MUST leave delivery diagnostics
+unchanged. A partly failed multi-part send remains a failure.
 
 Across IM authentication and subscriber state, `thread_id` is a platform-owned
 opaque identifier. Implementations MUST preserve it as either a legacy JSON

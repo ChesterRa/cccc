@@ -72,7 +72,13 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: GroupArgs) -> R
             .await?
         }
         GroupAction::Use { group_id, path } => {
-            call(client, "group_use", group_use_request(&group_id, &path)).await?
+            let path = std::path::absolute(path)?;
+            call(
+                client,
+                "group_use",
+                group_use_request(&group_id, &path.to_string_lossy()),
+            )
+            .await?
         }
         GroupAction::Start { group_id, by } => {
             call(

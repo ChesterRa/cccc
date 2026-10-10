@@ -120,6 +120,7 @@ export default defineConfig({
             { text: 'Overview', link: '/guide/getting-started/' },
             { text: 'Web UI Quick Start', link: '/guide/getting-started/web' },
             { text: 'CLI Quick Start', link: '/guide/getting-started/cli' },
+            { text: 'CLI Quick Start (简体中文)', link: '/guide/getting-started/cli-zh' },
             { text: 'CLI Quick Start (日本語)', link: '/guide/getting-started/cli-ja' },
             { text: 'Docker Deployment', link: '/guide/getting-started/docker' }
           ]

@@ -2506,6 +2506,182 @@ fn local_cross_group_reply_routes_back_to_origin_and_threads_there() {
 }
 
 #[test]
+fn cross_group_attachments_are_rejected_without_settling_reply_obligations() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let origin = store.create("origin", "").expect("origin");
+    let receiver = store.create("receiver", "").expect("receiver");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":receiver.group_id,"actor_id":"receiver","by":"user"}),
+    );
+    store
+        .mutate(&receiver.group_id, |group| {
+            group.state = cccc_contracts::GroupState::Paused;
+            Ok(())
+        })
+        .expect("pause fixture");
+    let sent = call(
+        &home,
+        "send_cross_group",
+        json!({
+            "group_id":origin.group_id,"dst_group_id":receiver.group_id,"by":"user",
+            "to":["receiver"],"text":"question","message_mode":"request_reply"
+        }),
+    );
+    let parent = &sent.result["dst_event"]["id"];
+    let blob = cccc_core::blobs::store(&home, &receiver.group_id, b"reply attachment")
+        .expect("local blob");
+    let read = |group_id: &str| {
+        ledger::read_all(&store.ledger_path(group_id).expect("ledger path")).expect("ledger")
+    };
+    let before = (read(&origin.group_id), read(&receiver.group_id));
+    for op in ["reply", "send_cross_group"] {
+        let mut args = json!({
+            "group_id":receiver.group_id,"dst_group_id":origin.group_id,"by":"receiver",
+            "reply_to":parent,"text":"answer","message_mode":"send",
+            "attachments":[{"path":blob.path}]
+        });
+        if op == "send_cross_group" {
+            args["to"] = json!(["user"]);
+        }
+        let rejected = call_raw(&home, op, args);
+        assert!(!rejected.ok);
+        assert_eq!(
+            read(&origin.group_id),
+            before.0,
+            "destination must not change"
+        );
+        assert_eq!(read(&receiver.group_id), before.1, "source must not change");
+        assert_eq!(
+            rejected.error.as_ref().map(|error| error.code.as_str()),
+            Some("attachments_not_supported")
+        );
+    }
+    let status = call(
+        &home,
+        "ledger_statuses",
+        json!({"group_id":receiver.group_id,"event_ids":[parent]}),
+    );
+    assert_eq!(
+        status.result["statuses"][parent.as_str().expect("parent")]["obligation_status"]["receiver"]
+            ["replied"],
+        false
+    );
+}
+
+#[test]
+fn cross_group_retries_reject_conflicting_routes_even_after_partial_delivery() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let origin = store.create("origin", "").expect("origin");
+    let receiver = store.create("receiver", "").expect("receiver");
+    let other = store.create("other", "").expect("other");
+    let parent = |group_id: &str| {
+        call(
+            &home,
+            "send_cross_group",
+            json!({
+                "group_id":group_id,"dst_group_id":receiver.group_id,"by":"user",
+                "to":["user"],"text":"question","message_mode":"send"
+            }),
+        )
+    };
+    let first = parent(&origin.group_id);
+    let second = parent(&other.group_id);
+    let local = call(
+        &home,
+        "send",
+        json!({"group_id":receiver.group_id,"text":"local","to":["user"],"message_mode":"send"}),
+    );
+    let read = |group_id: &str| {
+        ledger::read_all(&store.ledger_path(group_id).expect("ledger path")).expect("ledger")
+    };
+    for partial in [false, true] {
+        let client_id = if partial { "partial" } else { "delivered" };
+        let original_args = json!({
+            "group_id":receiver.group_id,"by":"user","reply_to":first.result["dst_event"]["id"],
+            "text":"original answer","message_mode":"send","client_id":client_id
+        });
+        let path = store.ledger_path(&origin.group_id).expect("ledger path");
+        let held = path.with_extension("retry-fixture");
+        if partial {
+            std::fs::rename(&path, &held).expect("hold fixture ledger");
+            std::fs::create_dir(&path).expect("block fixture destination");
+        }
+        let accepted = call_raw(&home, "reply", original_args.clone());
+        if partial {
+            std::fs::remove_dir(&path).expect("unblock fixture destination");
+            std::fs::rename(&held, &path).expect("restore fixture ledger");
+        }
+        assert_eq!(accepted.ok, !partial);
+        let before = (
+            read(&origin.group_id),
+            read(&receiver.group_id),
+            read(&other.group_id),
+        );
+        // A changed parent must not route the accepted reply into another Group,
+        // or turn an incomplete cross-group delivery into a local duplicate.
+        for reply_to in [
+            &second.result["dst_event"]["id"],
+            &local.result["event"]["id"],
+        ] {
+            let mut retry = original_args.clone();
+            retry["reply_to"] = reply_to.clone();
+            let rejected = call_raw(&home, "reply", retry);
+            assert!(
+                !rejected.ok,
+                "a reused client_id must keep its accepted parent"
+            );
+            assert_eq!(
+                rejected.error.as_ref().map(|error| error.code.as_str()),
+                Some("idempotency_conflict")
+            );
+        }
+        let rejected = call_raw(
+            &home,
+            "send_cross_group",
+            json!({
+                "group_id":receiver.group_id,"dst_group_id":other.group_id,"by":"user",
+                "text":"changed destination","to":["user"],"message_mode":"send","client_id":client_id
+            }),
+        );
+        assert!(!rejected.ok);
+        assert_eq!(
+            rejected.error.as_ref().map(|error| error.code.as_str()),
+            Some("idempotency_conflict")
+        );
+        assert_eq!(
+            (
+                read(&origin.group_id),
+                read(&receiver.group_id),
+                read(&other.group_id)
+            ),
+            before
+        );
+        let recovered = call(&home, "reply", original_args);
+        assert_eq!(recovered.result["dst_event"]["group_id"], origin.group_id);
+        assert_eq!(
+            recovered.result["dst_event"]["data"]["text"],
+            "original answer"
+        );
+        assert_eq!(
+            recovered.result["dst_event"]["data"]["reply_to"],
+            first.result["src_event"]["id"]
+        );
+        assert_eq!(read(&other.group_id), before.2);
+        assert_eq!(read(&receiver.group_id), before.1);
+        assert_eq!(
+            read(&origin.group_id).len(),
+            before.0.len() + usize::from(partial)
+        );
+    }
+}
+
+#[test]
 fn scope_identity_keeps_existing_git_rewrite_attachment_addressable() {
     use sha2::{Digest, Sha256};
     let temp = tempfile::tempdir().expect("temporary home");

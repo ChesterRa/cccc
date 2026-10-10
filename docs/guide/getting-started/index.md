@@ -19,6 +19,8 @@ CCCC offers two ways to get started:
 
 ### [CLI Quick Start](./cli)
 
+[English](./cli) · [简体中文](./cli-zh) · [日本語](./cli-ja)
+
 **For terminal enthusiasts**
 
 - Full control via command line

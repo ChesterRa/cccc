@@ -101,9 +101,6 @@ fn send_cross_group_with_reply(
 ) -> OpResult {
     let source = load(home, request)?;
     let destination_id = required_arg(request, "dst_group_id")?;
-    let destination = store(home)?
-        .load(&destination_id)
-        .map_err(OpError::not_found)?;
     let by = string_arg(request, "by")
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
@@ -133,6 +130,17 @@ fn send_cross_group_with_reply(
         &by,
         &request.args,
     );
+    if let Some(event) = &existing_source
+        && event.data.get("dst_group_id").and_then(Value::as_str) != Some(&destination_id)
+    {
+        return Err(OpError::new(
+            "idempotency_conflict",
+            "client_id was already accepted for a different destination",
+        ));
+    }
+    let destination = store(home)?
+        .load(&destination_id)
+        .map_err(OpError::not_found)?;
     if let Some(source_event) = existing_source.as_ref()
         && let Some(event) =
             super::message_idempotency::find_relay(home, &destination.group_id, &source_event.id)
@@ -189,6 +197,17 @@ fn send_cross_group_with_reply(
     }
     delivery_data.remove("dst_group_id");
     delivery_data.remove("to_group_id");
+    if let Some(attachments) = delivery_data.get("attachments") {
+        let items = attachments
+            .as_array()
+            .ok_or_else(|| OpError::new("invalid_attachments", "attachments must be an array"))?;
+        if !items.is_empty() {
+            return Err(OpError::new(
+                "attachments_not_supported",
+                "local cross-group attachments are not supported",
+            ));
+        }
+    }
     super::messaging_recipients::apply_cross_group_recipient(&destination, &mut delivery_data)?;
     super::messaging_recipients::normalize_chat_data(
         &destination,
@@ -492,6 +511,17 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let reply_to = required_arg(request, "reply_to")?;
     let group = load(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if let Some(event) =
+        super::message_idempotency::find(home, &group.group_id, "chat.message", &by, &request.args)
+        && event.data.contains_key("dst_group_id")
+        && !event.data.contains_key("connect_message")
+        && event.data.get("reply_to").and_then(Value::as_str) != Some(&reply_to)
+    {
+        return Err(OpError::new(
+            "idempotency_conflict",
+            "client_id was already accepted for a different reply target",
+        ));
+    }
     let target = find_event(home, &group.group_id, &reply_to)?;
     if target.data.contains_key("connect_message") {
         return super::connect_outbound::reply(

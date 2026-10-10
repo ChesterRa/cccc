@@ -1,247 +1,277 @@
-# CLI Quick Start (日本語)
-
-::: info 日本語訳について
-このページは [CLI Quick Start](./cli) の日本語訳です（2026年10月3日時点 / CCCC 0.4.41）。内容が異なる場合は[英語版](./cli)が正となります。
-:::
+# CLI クイックスタート
 
 コマンドラインから CCCC を使い始めます。
 
-`--group` を受け付けるコマンドは、次の順で Group を解決します: 明示的なオプション → Actor の `CCCC_GROUP_ID` 環境変数 → `cccc use` で選択されたアクティブ Group。メッセージ送信の送信者は `--by` → `CCCC_ACTOR_ID` → `user` の順に解決されます。そのため、別のセッションがアクティブ Group を切り替えても、Actor は自分の Group を保持します。
+[English](./cli) | [简体中文](./cli-zh) | 日本語
 
-## ステップ 1: プロジェクトへ移動
+## 始める前に
+
+[インストールガイド](./#installation)に従って CCCC をインストールしてください。
+この手順では Claude Code を使います。Claude Code の CLI をインストールし、
+ログインと、必要に応じてプロジェクトの信頼確認を済ませておいてください。
+設定済みの[別の対応ランタイム](../runtimes)を使うこともできます。
+
+ターミナルで CCCC を実行できることを確認します。
+
+```bash
+cccc --version
+cccc doctor
+```
+
+`doctor` はインストール状況、検出したランタイム、daemon の状態を表示します。
+ランタイムの検出は、プロバイダーへのログイン確認ではありません。
+この時点では daemon が停止していても問題ありません。次の手順で起動します。
+
+## ステップ 1: daemon を起動
+
+```bash
+cccc daemon start
+cccc daemon status
+```
+
+互換性のある daemon が起動済みなら、`daemon start` はそれを利用します。
+`attach`、`actor`、`send` などのコマンドには、起動中の daemon が必要です。
+
+## ステップ 2: 作業グループを作成
 
 ```bash
 cd /path/to/your/project
-```
-
-## ステップ 2: Working Group を作成
-
-```bash
 cccc attach .
 ```
 
-カレントディレクトリを「スコープ」としてバインドし、Working Group を作成します。
+新しい Group を作成し、現在のディレクトリをプロジェクトの作業場所
+（「スコープ」）として関連付け、その Group をアクティブにします。
+出力には `group_id` が含まれます。既存の Group に戻るには、`cccc groups` と
+`cccc use <group_id>` を使ってください。`cccc attach .` を再実行すると、別の Group が作成されます。
 
-## ステップ 3: Runtime 連携を準備
-
-```bash
-cccc setup --runtime claude   # codex, droid, grok, kimi なども指定できます
-```
-
-指定した runtime の CCCC MCP 連携を準備または報告します。Claude Code、Codex、Grok Build、OpenCode の managed セッションは、CCCC が起動する際にスコープ付きの MCP エントリを自動的に受け取ります。その他の runtime では、永続設定またはプロンプト支援のセットアップを利用する場合があります。
-
-## ステップ 4: 最初の Agent を追加
+## ステップ 3: 最初のエージェントを追加
 
 ```bash
 cccc actor add assistant --runtime claude
 ```
 
-最初に有効化された Actor が、自動的に「foreman」（コーディネーター）になります。
+最初の有効な Actor が、自動的に「foreman」（調整役）になります。
 
-## ステップ 5: Agent を起動
+この Claude Code セッションでは、CCCC が起動時に CCCC MCP 連携を設定するため、
+別途 `cccc setup` を実行する必要はありません。他のランタイムでは設定が必要な場合があります。
+詳しくは[対応ランタイム](../runtimes)と
+[`cccc setup`](/reference/cli#cccc-setup)を参照してください。
+
+## ステップ 4: エージェントを起動
 
 ```bash
 cccc group start
 ```
 
-特定の Agent だけを起動することもできます:
+`group start` は Group 内の有効な Actor を起動します。特定の Actor だけを起動する場合は、次を使います。
 
 ```bash
 cccc actor start assistant
 ```
 
-## ステップ 6: メッセージを送信
+`cccc actor list` で状態を確認できます。起動時に対話操作が必要な場合は、
+[Web UI](#web-ui-を起動-任意)でその Actor のターミナルを開いてください。
+
+## ステップ 5: メッセージを送信
 
 ```bash
-cccc send "こんにちは。自己紹介をお願いします。"
+cccc send "こんにちは。自己紹介をお願いします。" --to assistant
 ```
 
-## ステップ 7: 応答を確認
+## ステップ 6: 応答を確認
 
-台帳をリアルタイムで監視します:
+Group に記録されたメッセージやその他のイベントを JSON で追跡します。
 
 ```bash
 cccc tail -f
 ```
 
-受信箱を確認することもできます:
+エージェントからの `chat.message` イベントを確認してください。
+ネイティブターミナルの出力は Web UI で確認できます。
+**Ctrl+C** で追跡を終了しても、エージェントは動き続けます。
 
-```bash
-cccc inbox --actor-id assistant
-```
+`cccc inbox` は、Actor の未読 Mail を読み取り、**既読として消費する**コマンドです。
+応答の確認には `tail` または Web のチャットを使ってください。
 
-## Agent を追加する
+## エージェントを追加
 
-2 体目の Agent を追加します:
+Codex のインストールとログインが済んでいれば、2 番目のエージェントを追加できます。
 
 ```bash
 cccc actor add reviewer --runtime codex
 cccc actor start reviewer
 ```
 
-特定の Agent に送信します:
+宛先を指定してメッセージを送信します。
 
 ```bash
-cccc send "この機能を実装してください" --to assistant
+cccc send "機能を実装してください" --to assistant
 cccc send "コードをレビューしてください" --to reviewer
-cccc send "次のステップを取りまとめてください" --to @foreman
-cccc send "チーム共通の制約です: CI が通るまでデプロイは一時停止" --to @all
+cccc send "次の作業を調整してください" --to "@foreman"
+cccc send "チーム全体への指示: CI が通るまでデプロイを保留してください" --to "@all"
 ```
 
-チャットのコンテキストが切り替わっても作業を継続させたいときは、担当者・完了条件・完了証拠を伴うタスクベースの委任 (tracked-send) を使います:
+会話の切り替え後も担当者・成果・検証結果を追跡したい作業には、`tracked-send` を使います。
 
 ```bash
-cccc tracked-send "機能を実装し、検証の証拠を返信してください。" \
+cccc tracked-send "機能を実装し、検証結果を添えて返信してください。" \
   --to assistant \
   --title "機能の実装" \
-  --outcome "実装が完了し、検証の証拠が報告されていること"
+  --outcome "実装が完了し、検証結果が報告されている"
 ```
+
+この複数行の例は Bash の行継続を使っています。PowerShell では 1 行で入力してください。
 
 ## メッセージに返信
 
+`<event_id>` を、`tail` に表示された返信先メッセージの `id` に置き換えます。
+
 ```bash
-# イベント ID は cccc tail で確認できます
-cccc reply evt_abc123 "ありがとうございます、問題ありません！"
-cccc reply evt_abc123 "急ぎのフォローアップではありません" --mode mail
+cccc reply <event_id> "ありがとうございます。その内容でお願いします。"
+cccc reply <event_id> "急ぎではない補足です" --to assistant --mode mail
 ```
+
+Mail はエージェント宛てに使い、受信したエージェントを即座に起動・実行させません。
+
+## Group と送信者の選択
+
+`--group` を受け付けるコマンドは、明示的なオプション → `CCCC_GROUP_ID` 環境変数 →
+`attach` または `cccc use` で選択したアクティブ Group の順に対象を決定します。
+ディレクトリを移動するだけでは Group は切り替わりません。
+送信者は `--by` → `CCCC_ACTOR_ID` → `user` の順に決定します。
+別のセッションがアクティブ Group を切り替えても、Actor は自分の Group を保持します。
 
 ## よく使うコマンド
 
-他のインスタンスを操作するときは、`cccc connect` でアクセス可能な Group を検出してから `cccc send --dst-instance ... --dst-group ...` を使います。返信には受信側のローカルイベント ID を使います。検出・送信・返信の完全なフロー（Direct 接続を含む）は [Agent collaboration](../connect.md#agent-collaboration) を参照してください。
+別のインスタンスに送信する場合は、`cccc connect` でアクセス可能な Group を調べ、
+`cccc send --dst-instance ... --dst-group ...` を使います。
+返信には、受信したメッセージのローカルイベント ID を使ってください。
+Direct 接続を含む手順は[エージェント間の連携](../connect.md#agent-collaboration)を参照してください。
 
-### Group 管理
+### Group の管理
 
 ```bash
-cccc groups              # すべての Group を一覧
-cccc use <group_id>      # Group を切り替え
-cccc active              # アクティブな Group を表示
-cccc group show <group_id> # Group のメタデータを表示
-cccc group start         # すべての Agent を起動
-cccc group stop          # すべての Agent を停止
+cccc groups                # 全 Group を表示
+cccc use <group_id>        # 対象の Group を選択
+cccc active                # アクティブ Group を表示
+cccc group show <group_id> # Group の情報を表示
+cccc group start           # この Group の有効なエージェントを起動
+cccc group stop            # この Group のエージェントを停止し、履歴は保持
 ```
 
-### Actor 管理
+### Actor の管理
 
 ```bash
-cccc actor list                    # Actor を一覧
-cccc actor add <id> --runtime <r>  # Actor を追加
-cccc actor start <id>              # Actor を起動
-cccc actor stop <id>               # Actor を停止
-cccc actor restart <id>            # Actor を再起動
-cccc actor remove <id>             # Actor を削除
+cccc actor list                  # Actor を一覧表示
+cccc actor add <id> --runtime <r> # Actor を追加
+cccc actor start <id>            # Actor を起動
+cccc actor stop <id>             # Actor を停止
+cccc actor restart <id>          # Actor を再起動
+cccc actor remove <id>           # Actor を削除
 ```
 
 ### メッセージ
 
 ```bash
-cccc send "message"                # --to なし: 既定の宛先ポリシーを適用（既定: foreman）
-cccc send "msg" --to assistant     # 特定の Actor へ
-cccc send "msg" --to @foreman      # コーディネーターに依頼
-cccc send "msg" --to @all          # 明示的な全員ブロードキャスト（既定のタスクディスパッチではありません）
-cccc tracked-send "work" --to assistant --title "タスクのタイトル" --outcome "完了の判定基準"
-cccc reply <event_id> "response"   # メッセージに返信
-cccc inbox --actor-id assistant    # 特定 Actor の未読 Mail を読む
-cccc tail -n 50                    # 最近のイベント
-cccc tail -f                       # イベントをフォロー
+cccc send "メッセージ"             # --to なし: 既定の宛先ポリシーを使用（初期値は foreman）
+cccc send "メッセージ" --to assistant # 特定の Actor に送信
+cccc send "メッセージ" --to "@foreman"  # 調整役に送信
+cccc send "メッセージ" --to "@all"      # 明示的な全員送信。通常のタスク割り当てとは別
+cccc tracked-send "作業内容" --to assistant --title "タスク名" --outcome "完了条件"
+cccc reply <event_id> "応答"       # メッセージに返信
+cccc inbox --actor-id assistant   # Actor の未読 Mail を読み取り、既読として消費
+cccc tail -n 50                   # 最近のイベントを表示
+cccc tail -f                      # 新しいイベントを追跡
 ```
 
-### Daemon 操作
+### daemon の操作
 
 ```bash
-cccc daemon status    # 状態を確認
-cccc daemon start     # Daemon を起動
-cccc daemon stop      # Daemon を停止
+cccc daemon status # 状態を確認
+cccc daemon start  # 起動
+cccc daemon stop   # daemon と、各 Group の管理対象プロセスを停止
 ```
 
-## Web UI を起動（任意）
+## Web UI を起動（任意） {#web-ui-を起動-任意}
 
-CLI を使っている最中でも、Web UI を開けます:
-
-```bash
-cccc   # Daemon + Web UI を起動
-```
-
-Daemon がすでに動いている場合は Web UI だけ:
+別のターミナルで Web UI を起動します。
 
 ```bash
 cccc web
 ```
 
-http://127.0.0.1:8848/ からアクセスできます。
+サブコマンドなしの `cccc` も同じ動作です。どちらも起動済みの daemon を利用し、
+必要なら起動します。既定の設定では http://127.0.0.1:8848/ を開いてください。
+アドレスやポートを変更している場合は、起動時に表示される URL を使います。
+別のポートを指定するには `cccc web --port 9000` を使います。
 
 ## 環境変数
 
 | 変数 | 既定値 | 説明 |
-|----------|---------|-------------|
-| `CCCC_HOME` | `~/.cccc` | ランタイムディレクトリ |
-| `CCCC_WEB_PORT` | `8848` | Web UI のポート |
-| `CCCC_WEB_READY_TIMEOUT_SECONDS` | `10` | 低速なマシン向けの Web 起動準備タイムアウト |
-| `CCCC_LOG_LEVEL` | `INFO` | ログの詳細度 |
+|------|--------|------|
+| `CCCC_HOME` | `~/.cccc` | ランタイムデータの保存先 |
+| `CCCC_WEB_PORT` | `8848` | 保存済みの設定や `--port` が優先されない場合の Web UI ポート |
 
-## 実行例
+同じ Group やランタイム状態を使うコマンドでは、同じ `CCCC_HOME` を指定してください。
+Web のアドレス・ポート設定と優先順位は[CLI リファレンス](/reference/cli#environment-variables)を参照してください。
+
+## 作業を終える
+
+**Ctrl+C** で `tail -f` を終了した後、現在の Group のエージェントを停止します。
 
 ```bash
-# セットアップ
-cd ~/projects/my-app
-cccc attach .
-cccc setup --runtime claude
-cccc actor add dev --runtime claude
-
-# 作業
-cccc group start
-cccc send "最も小さく安全な認証タスクを計画してください。" --to @foreman
-cccc tracked-send "最初の認証タスクを実装し、検証の証拠を返信してください。" \
-  --to dev \
-  --title "最初の認証スライスの実装" \
-  --outcome "実装が完了し、検証の証拠が報告されていること"
-
-# 監視
-cccc tail -f
-
-# 対話
-cccc reply evt_123 "JWT トークンを使ってください"
-cccc send "進捗はどうですか？" --to dev
-
-# 後片付け
 cccc group stop
 ```
 
+Group と記録済みの履歴は残ります。`cccc group start` で Actor を再び起動できます。
+他の Group の管理対象プロセスも含めてインスタンス全体を停止する場合は、`cccc daemon stop` を使います。
+
 ## トラブルシューティング
 
-### Daemon が起動しない
+### daemon が起動しない
 
 ```bash
 cccc daemon status
-cccc daemon stop      # 停止したままのインスタンスがあれば停止
-cccc daemon start
+cccc doctor
 ```
 
-### Agent が応答しない
+停止している場合は `cccc daemon start` を実行してください。
+応答しない場合は、表示されたエラーを確認してから停止・再起動を判断してください。
+daemon の再起動は、各 Group の管理対象プロセスを中断します。
+
+### エージェントが応答しない
 
 ```bash
-# Agent の状態を確認
+# Actor の状態を確認
 cccc actor list
 
-# Agent を再起動
-cccc actor restart <actor_id>
-
-# MCP のセットアップを確認
-cccc setup --runtime <name>
+# 記録されたエラーやメッセージを確認
+cccc tail -n 50
 ```
+
+Web UI の Actor ターミナルで、ログイン・信頼確認・承認待ちを確認してください。
+[ランタイム連携](../runtimes)も確認します。原因を解消した後、
+`cccc actor start <actor_id>` で起動するか、必要なら
+`cccc actor restart <actor_id>` で再起動してください。
 
 ### Group が見つからない
 
 ```bash
-# すべての Group を一覧
+# 全 Group を表示
 cccc groups
 
-# 必要なら再アタッチ
-cd /path/to/project
-cccc attach .
+# 既存の Group を選択
+cccc use <group_id>
+cccc active
 ```
+
+ターミナルが想定どおりの `CCCC_HOME` を使っているか確認してください。
+`attach` は、新しい Group を作る場合、または対象を明示して既存の Group にスコープを追加する場合に使います。
 
 ## 次のステップ
 
-- [Workflows](/guide/workflows) — 協調パターンを学ぶ
-- [CLI Reference](/reference/cli) — コマンドの完全なリファレンス
-- [IM Bridge](/guide/im-bridge/) — モバイル/リモート運用のセットアップ
+以下の関連ガイドは英語です。
+
+- [ワークフロー](/guide/workflows) — 連携の進め方
+- [CLI リファレンス](/reference/cli) — コマンドの詳細
+- [IM ブリッジ](/guide/im-bridge/) — モバイルからのアクセス

@@ -2,39 +2,49 @@
 
 Get started with CCCC using the command line.
 
-[日本語版はこちら](./cli-ja)
+English | [简体中文](./cli-zh) | [日本語](./cli-ja)
 
-Commands that accept `--group` resolve it in this order: the explicit option,
-the Actor's `CCCC_GROUP_ID` environment, then the active Group selected with
-`cccc use`. Messaging uses `--by`, then `CCCC_ACTOR_ID`, then `user`. An Actor
-therefore keeps its own Group when another session changes the active Group.
+## Before You Start
 
-## Step 1: Navigate to Your Project
+Install CCCC using the [installation guide](./#installation). This walkthrough
+uses Claude Code: install its CLI and complete its login and any required
+workspace trust prompts in your project first. You can use another
+[supported runtime](../runtimes) that you have already configured.
+
+Check that CCCC is available in your terminal:
 
 ```bash
-cd /path/to/your/project
+cccc --version
+cccc doctor
 ```
+
+`doctor` reports the installation, detected runtimes and daemon status. Detecting
+a runtime does not verify its provider login. The daemon can be stopped at this
+point; start it next.
+
+## Step 1: Start the Daemon
+
+```bash
+cccc daemon start
+cccc daemon status
+```
+
+`daemon start` reuses an already-running compatible daemon. Commands such as
+`attach`, `actor` and `send` need the daemon to be running.
 
 ## Step 2: Create a Working Group
 
 ```bash
+cd /path/to/your/project
 cccc attach .
 ```
 
-This binds the current directory as a "scope" and creates a working group.
+This creates a new Group, binds the current directory as its project workspace
+(a "scope"), and selects it as the active Group. The output includes its
+`group_id`. To return to an existing Group, use `cccc groups` and
+`cccc use <group_id>`; running `cccc attach .` again creates another Group.
 
-## Step 3: Prepare the Runtime Integration
-
-```bash
-cccc setup --runtime claude   # or codex, droid, grok, kimi
-```
-
-This prepares or reports the runtime's CCCC MCP integration. Direct Claude Code,
-Codex, Grok Build, and OpenCode managed sessions receive their scoped MCP entry
-automatically when CCCC starts them; other runtimes may use persistent or
-prompt-assisted setup.
-
-## Step 4: Add Your First Agent
+## Step 3: Add Your First Agent
 
 ```bash
 cccc actor add assistant --runtime claude
@@ -42,41 +52,50 @@ cccc actor add assistant --runtime claude
 
 The first enabled actor automatically becomes the "foreman" (coordinator).
 
-## Step 5: Start the Agent
+CCCC injects the CCCC MCP integration when it starts this Claude Code session;
+no separate `cccc setup` step is needed for this example. Other runtimes may
+require setup. See [Supported Runtimes](../runtimes) and
+[`cccc setup`](/reference/cli#cccc-setup) for their integration requirements.
+
+## Step 4: Start the Agent
 
 ```bash
 cccc group start
 ```
 
-Or start a specific agent:
+`group start` starts the Group's enabled actors. To start just one actor, use:
 
 ```bash
 cccc actor start assistant
 ```
 
-## Step 6: Send a Message
+Check `cccc actor list` for actor state. If startup requires an interactive
+prompt, use the actor's terminal in the [Web UI](#start-web-ui-optional).
+
+## Step 5: Send a Message
 
 ```bash
-cccc send "Hello! Please introduce yourself."
+cccc send "Hello! Please introduce yourself." --to assistant
 ```
 
-## Step 7: View Responses
+## Step 6: View Responses
 
-Watch the ledger in real-time:
+Follow the Group's recorded messages and other events as JSON:
 
 ```bash
 cccc tail -f
 ```
 
-Or check inbox:
+Look for the agent's `chat.message` events. Its native terminal output is
+available in the Web UI. Press **Ctrl+C** to stop following; this leaves the
+agents running.
 
-```bash
-cccc inbox --actor-id assistant
-```
+`cccc inbox` serves a different purpose: it reads and **consumes** an actor's
+unread Mail, marking that batch as read. Use `tail` or Web chat to view responses.
 
 ## Adding More Agents
 
-Add a second agent:
+Once Codex is installed and signed in, add a second agent:
 
 ```bash
 cccc actor add reviewer --runtime codex
@@ -88,8 +107,8 @@ Send to specific agents:
 ```bash
 cccc send "Please implement the feature" --to assistant
 cccc send "Please review the code" --to reviewer
-cccc send "Please coordinate the next step" --to @foreman
-cccc send "Team-wide constraint: pause deploys until CI is green" --to @all
+cccc send "Please coordinate the next step" --to "@foreman"
+cccc send "Team-wide constraint: pause deploys until CI is green" --to "@all"
 ```
 
 Use task-backed delegation when the work should survive chat context switches and needs an owner, outcome, or completion evidence:
@@ -101,13 +120,27 @@ cccc tracked-send "Please implement the feature and reply with validation eviden
   --outcome "Feature is implemented and validation evidence is reported"
 ```
 
+The multiline example uses Bash line continuations. In PowerShell, enter it on
+one line.
+
 ## Reply to Messages
 
+Replace `<event_id>` with the `id` of the message you want to answer from `tail`:
+
 ```bash
-# Find the event ID from cccc tail
-cccc reply evt_abc123 "Thanks, that looks good!"
-cccc reply evt_abc123 "Non-urgent follow-up" --mode mail
+cccc reply <event_id> "Thanks, that looks good!"
+cccc reply <event_id> "Non-urgent follow-up" --to assistant --mode mail
 ```
+
+Mail is for agent recipients and does not prompt them immediately.
+
+## Selecting a Group and Sender
+
+Commands that accept `--group` resolve it in this order: the explicit option,
+the `CCCC_GROUP_ID` environment variable, then the active Group selected by
+`attach` or `cccc use`. Changing directories alone does not switch Groups.
+Messaging uses `--by`, then `CCCC_ACTOR_ID`, then `user`. An Actor therefore
+keeps its own Group when another session changes the active Group.
 
 ## Common Commands
 
@@ -123,8 +156,8 @@ cccc groups              # List all groups
 cccc use <group_id>      # Switch group
 cccc active              # Show active group
 cccc group show <group_id> # Show group metadata
-cccc group start         # Start all agents
-cccc group stop          # Stop all agents
+cccc group start         # Start this Group's enabled agents
+cccc group stop          # Stop this Group's agents; keep history
 ```
 
 ### Actor Management
@@ -143,11 +176,11 @@ cccc actor remove <id>             # Remove actor
 ```bash
 cccc send "message"                # No --to: default recipient policy applies (default: foreman)
 cccc send "msg" --to assistant     # To specific actor
-cccc send "msg" --to @foreman      # Ask the coordinator
-cccc send "msg" --to @all          # Explicit broadcast, not default task dispatch
+cccc send "msg" --to "@foreman"      # Ask the coordinator
+cccc send "msg" --to "@all"          # Explicit broadcast, not default task dispatch
 cccc tracked-send "work" --to assistant --title "Task title" --outcome "Done criterion"
 cccc reply <event_id> "response"   # Reply to message
-cccc inbox --actor-id assistant    # Read unread Mail for one actor
+cccc inbox --actor-id assistant    # Read and consume an actor's unread Mail
 cccc tail -n 50                    # Recent events
 cccc tail -f                       # Follow events
 ```
@@ -157,61 +190,44 @@ cccc tail -f                       # Follow events
 ```bash
 cccc daemon status    # Check status
 cccc daemon start     # Start daemon
-cccc daemon stop      # Stop daemon
+cccc daemon stop      # Stop daemon and its managed processes across Groups
 ```
 
 ## Start Web UI (Optional)
 
-While using CLI, you can also open the Web UI:
-
-```bash
-cccc   # Starts daemon + Web UI
-```
-
-Or just the Web UI (if daemon is already running):
+In another terminal, start the Web UI:
 
 ```bash
 cccc web
 ```
 
-Access at http://127.0.0.1:8848/
+Running `cccc` with no subcommand does the same. Both reuse the daemon if it is
+already running, or start it if needed. Open http://127.0.0.1:8848/ with the
+default settings; if you configured a different binding, use the address shown
+at startup. Use `cccc web --port 9000` to choose another port.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CCCC_HOME` | `~/.cccc` | Runtime directory |
-| `CCCC_WEB_PORT` | `8848` | Web UI port |
-| `CCCC_WEB_READY_TIMEOUT_SECONDS` | `10` | Web startup readiness timeout for slower machines |
-| `CCCC_LOG_LEVEL` | `INFO` | Log verbosity |
+| `CCCC_WEB_PORT` | `8848` | Web UI port when no saved binding or `--port` takes precedence |
 
-## Example Workflow
+Use the same `CCCC_HOME` for commands that should share Groups and runtime
+state. See the [CLI reference](/reference/cli#environment-variables) for all Web
+binding options and their precedence.
+
+## Stop Working
+
+After exiting `tail -f` with **Ctrl+C**, stop the current Group's agents:
 
 ```bash
-# Setup
-cd ~/projects/my-app
-cccc attach .
-cccc setup --runtime claude
-cccc actor add dev --runtime claude
-
-# Work
-cccc group start
-cccc send "Please plan the smallest safe authentication task." --to @foreman
-cccc tracked-send "Please implement the first authentication task and reply with validation evidence." \
-  --to dev \
-  --title "Implement first authentication slice" \
-  --outcome "Implementation is complete and validation evidence is reported"
-
-# Monitor
-cccc tail -f
-
-# Interact
-cccc reply evt_123 "Use JWT tokens please"
-cccc send "What's the progress?" --to dev
-
-# Cleanup
 cccc group stop
 ```
+
+The Group and its recorded history remain available. `cccc group start` starts
+its actors again. Use `cccc daemon stop` when you want to stop the whole instance,
+including managed processes in other Groups.
 
 ## Troubleshooting
 
@@ -219,9 +235,12 @@ cccc group stop
 
 ```bash
 cccc daemon status
-cccc daemon stop      # Stop any stuck instance
-cccc daemon start
+cccc doctor
 ```
+
+If the daemon is stopped, run `cccc daemon start`. If it is unresponsive, inspect
+the reported error before deliberately stopping and restarting it; a daemon
+restart interrupts managed processes across Groups.
 
 ### Agent not responding?
 
@@ -229,12 +248,14 @@ cccc daemon start
 # Check agent status
 cccc actor list
 
-# Restart the agent
-cccc actor restart <actor_id>
-
-# Check MCP setup
-cccc setup --runtime <name>
+# Inspect recorded errors and messages
+cccc tail -n 50
 ```
+
+Inspect the actor's terminal in the Web UI for login, trust or approval prompts.
+Check its [runtime integration](../runtimes). After fixing the cause, retry with
+`cccc actor start <actor_id>` or deliberately restart it with
+`cccc actor restart <actor_id>`.
 
 ### Can't find my group?
 
@@ -242,10 +263,13 @@ cccc setup --runtime <name>
 # List all groups
 cccc groups
 
-# Re-attach if needed
-cd /path/to/project
-cccc attach .
+# Select an existing Group
+cccc use <group_id>
+cccc active
 ```
+
+Confirm that this terminal uses the expected `CCCC_HOME`. Use `attach` when you
+intend to create a new Group or explicitly attach a scope to an existing one.
 
 ## Next Steps
 

@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Added
 
-- Japanese CLI quick-start guide with a link from the English guide.
+- Chinese and Japanese CLI quick-start guides, with language links and navigation alongside English.
 - Per-chat IM relay modes for all traffic, user-facing messages, or explicitly user-addressed messages; Web and IM verbose controls use the same delivery setting.
 - Voice Secretary now uses one global runtime and a resident conversation, started by the first task and retained while idle. Tasks from all Groups run sequentially in that shared conversation, with their original destinations enforced by CCCC. Secretary supports the same structured adapters as Voice Analyst: Codex, Claude Code, Grok Build, OpenCode, Kilo, and official ACP modes for Antigravity, Copilot, Devin and Cursor. Native permissions follow each Runtime; the shared conversation does not isolate confidential Group context.
 - Instance administrators can open the Secretary's native terminal or ACP output from its existing workspace, including while idle. Supported native terminals accept keyboard and mouse input; queued tasks wait for manual turns to finish. Viewing never starts a model task, and hiding the terminal does not stop the session. Results return to the original document, question or composer; ordinary terminal conversation has no automatic Group destination.
@@ -25,12 +25,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- Align the English, Chinese and Japanese CLI quick starts with current daemon startup, Group selection and message-viewing behavior; clarify that inbox reads consume Mail and remove obsolete environment settings from the CLI reference.
+- Resolve relative project paths in `cccc attach` and `cccc group use` from the invoking terminal, so the daemon cannot bind them to its own working directory.
 - Keep managed Claude sessions connected when hidden scheduled or peer input starts an autonomous turn, while preserving session and resume checks.
 - Accept Codex resume previews within the existing 64 MiB message limit, including replies sent as one frame.
 - End automatic delivery retries for missing or invalid project scopes, preserving explicit recovery after configuration repair.
-- Route replies to locally forwarded Group messages back to their source, with correct thread references and reply status in both Groups.
+- Route replies to locally forwarded Group messages back to their source, with correct thread references and reply status in both Groups. Reject unsupported attachments before recording a reply, and prevent retries from changing its destination or parent.
 - Show realtime reconnect feedback from the actual transport and subscription retry state.
-- Bound Telegram sends, preserve native reply threading, and separate API reachability diagnostics from delivery errors.
+- Bound Telegram sends, preserve native reply threading, and separate API reachability diagnostics from delivery errors. Skipped or throttled sends no longer clear delivery failures or report recovery.
 - Preserve complete coordination constraints within the bootstrap budget, with an explicit full-context lookup when whole entries are omitted.
 - Extend headless browser discovery without overriding the configured browser.
 - Missing Group files in the registry no longer prevent the global Voice Secretary from starting. Deferred Prompt input shows its saved state and blocking reason instead of claiming active refinement; startup diagnostics remain visible even when no task was created.

@@ -1,6 +1,6 @@
 use super::processing_reactions::TelegramReactions;
 use super::telegram_inbound::{has_attachments, materialize_attachments};
-use super::telegram_outbound::TelegramOutbound;
+use super::telegram_outbound::{SendOutcome, TelegramOutbound};
 use super::worker::Stopper;
 use super::{
     InboundDecision, InboundMetadata, bridge_log_line, bridge_status_update, completes_processing,
@@ -233,52 +233,7 @@ pub(super) async fn start(
                             SEND_TIMEOUT.as_secs()
                         )),
                     };
-                    let now = Value::from(cccc_contracts::utc_now());
-                    match result {
-                        Err(error) => {
-                            tracing::warn!(%error, "failed to send Telegram IM message");
-                            bridge_status_update(
-                                &home,
-                                &group_id,
-                                Map::from_iter([
-                                    ("last_error".into(), Value::from(error.clone())),
-                                    ("last_error_at".into(), now),
-                                ]),
-                            );
-                            bridge_log_line(
-                                &home,
-                                &group_id,
-                                PLATFORM,
-                                "WARN",
-                                "outbound send failed",
-                                Map::from_iter([
-                                    ("chat_key".into(), Value::from(target.key())),
-                                    ("error".into(), Value::from(error)),
-                                ]),
-                            );
-                        }
-                        Ok(_) => {
-                            bridge_status_update(
-                                &home,
-                                &group_id,
-                                Map::from_iter([
-                                    ("last_send_ok_at".into(), now),
-                                    ("last_error".into(), Value::Null),
-                                ]),
-                            );
-                            bridge_log_line(
-                                &home,
-                                &group_id,
-                                PLATFORM,
-                                "INFO",
-                                "outbound send delivered",
-                                Map::from_iter([
-                                    ("chat_key".into(), Value::from(target.key())),
-                                    ("event_id".into(), Value::from(event.id.clone())),
-                                ]),
-                            );
-                        }
-                    }
+                    record_send_result(&home, &group_id, &target.key(), &event.id, result);
                     if completes_processing {
                         reactions.complete(&target.key(), reply_to.as_deref()).await;
                     }
@@ -287,6 +242,62 @@ pub(super) async fn start(
         },
     );
     Ok((vec![inbound, outbound, reaction_cleanup, probe], stopper))
+}
+
+pub(super) fn record_send_result(
+    home: &HomeLayout,
+    group_id: &str,
+    target_key: &str,
+    event_id: &str,
+    result: Result<SendOutcome, String>,
+) {
+    let now = Value::from(cccc_contracts::utc_now());
+    match result {
+        Err(error) => {
+            tracing::warn!(%error, "failed to send Telegram IM message");
+            bridge_status_update(
+                home,
+                group_id,
+                Map::from_iter([
+                    ("last_error".into(), Value::from(error.clone())),
+                    ("last_error_at".into(), now),
+                ]),
+            );
+            bridge_log_line(
+                home,
+                group_id,
+                PLATFORM,
+                "WARN",
+                "outbound send failed",
+                Map::from_iter([
+                    ("chat_key".into(), Value::from(target_key.to_owned())),
+                    ("error".into(), Value::from(error)),
+                ]),
+            );
+        }
+        Ok(SendOutcome::Delivered) => {
+            bridge_status_update(
+                home,
+                group_id,
+                Map::from_iter([
+                    ("last_send_ok_at".into(), now),
+                    ("last_error".into(), Value::Null),
+                ]),
+            );
+            bridge_log_line(
+                home,
+                group_id,
+                PLATFORM,
+                "INFO",
+                "outbound send delivered",
+                Map::from_iter([
+                    ("chat_key".into(), Value::from(target_key.to_owned())),
+                    ("event_id".into(), Value::from(event_id)),
+                ]),
+            );
+        }
+        Ok(SendOutcome::Skipped) => {}
+    }
 }
 
 fn accepts_inbound_message(message: &Message, bot_username: &str) -> bool {

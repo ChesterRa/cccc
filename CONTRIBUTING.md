@@ -144,6 +144,10 @@ npm run dev --prefix docs
 ```
 
 New pages need an entry in `docs/.vitepress/config.ts` to appear in navigation.
+When changing CLI quick-start commands or behavior notes, update the
+[English](docs/guide/getting-started/cli.md),
+[Chinese](docs/guide/getting-started/cli-zh.md), and
+[Japanese](docs/guide/getting-started/cli-ja.md) guides together.
 
 ## Community
 

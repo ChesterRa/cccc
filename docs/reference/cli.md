@@ -6,7 +6,7 @@ Complete command reference for the CCCC CLI.
 
 ### `cccc`
 
-Start the daemon and Web UI together.
+Start the Web UI, reusing an existing daemon or starting one if needed.
 
 ```bash
 cccc                    # Start daemon + Web UI
@@ -54,8 +54,9 @@ cccc daemon stop        # Stop daemon
 ```
 
 Notes:
+
 - `cccc daemon start` refuses to spawn a duplicate daemon if the pid-file process is still alive but IPC is not responding.
-- In that case, run `cccc daemon stop` (or clean stale runtime state) before retrying start.
+- Check `cccc daemon status` and `cccc doctor` before restarting an unresponsive daemon. `cccc daemon stop` stops its managed processes across Groups; after it completes, `cccc daemon start` starts the daemon again.
 
 ## Membership and Reach Commands
 
@@ -81,12 +82,19 @@ candidate, so Reach is unavailable there.
 
 ### `cccc attach`
 
-Create or attach to a working group.
+Create a working group with a project scope, or attach a scope to an explicitly
+selected group. The selected group becomes active for subsequent commands.
 
 ```bash
 cccc attach .           # Attach current directory as scope
 cccc attach /path/to/project
+cccc attach . --group <group_id> # Attach a scope to an existing Group
 ```
+
+Without `--group`, each invocation creates a new Group. To select an existing
+Group without attaching a scope, use `cccc groups` and `cccc use <group_id>`.
+Relative paths in `cccc attach` and `cccc group use` resolve from the invoking
+terminal's directory, independently of where the daemon was started.
 
 ### `cccc groups`
 
@@ -230,7 +238,9 @@ cccc cancel-reply <event_id>
 
 ### `cccc inbox`
 
-View inbox.
+Read and consume an actor's unread Mail, advancing its read cursor. This changes
+the actor's unread state; it is not a read-only view of the actor's responses.
+Use `cccc tail` or Web chat to view recorded messages without consuming Mail.
 
 ```bash
 cccc inbox --actor-id <id>         # Read and consume the next unread Mail batch
@@ -428,7 +438,8 @@ Notes:
 
 ### `cccc web`
 
-Start only the Web UI (daemon must be running).
+Start the Web UI, reusing an existing daemon or starting one if needed, just
+like `cccc` with no subcommand.
 
 ```bash
 cccc web                           # Start Web UI
@@ -461,5 +472,7 @@ cccc mcp                           # Start MCP server (stdio mode)
 | `CCCC_WEB_PORT` | saved setting, then `8848` | Web UI port; `--port` overrides both |
 | `CCCC_WEB_MODE` | `normal` | Set to `exhibit` for a read-only Web UI |
 | `CCCC_WEB_READONLY` | unset | Truthy value also enables read-only exhibit mode |
-| `CCCC_WEB_READY_TIMEOUT_SECONDS` | `10` | Supervised Web child readiness timeout before CCCC treats startup as failed |
-| `CCCC_LOG_LEVEL` | `INFO` | Log level |
+
+For `cccc` and `cccc web`, an existing live Web binding is reused when neither
+`--host` nor `--port` is supplied. Otherwise, each value resolves from its command
+option, saved **Web Access** setting, environment variable, then built-in default.
