@@ -1,4 +1,5 @@
 import { openEventStream, type EventStreamSource } from "../services/realtime/eventStream";
+import { readRetryDetail } from "./useSseErrorDetailText";
 // Ledger and headless subscriptions on the shared realtime connection.
 import { useEffect, useRef } from "react";
 import { useGroupStore, useUIStore, useModalStore } from "../stores";
@@ -69,6 +70,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
   const incrementChatUnread = useUIStore((s) => s.incrementChatUnread);
   const setSSEStatus = useUIStore((s) => s.setSSEStatus);
+  const setSSEError = useUIStore((s) => s.setSSEError);
   const markPresentationSlotAttention = useModalStore((s) => s.markPresentationSlotAttention);
   const clearPresentationSlotAttention = useModalStore((s) => s.clearPresentationSlotAttention);
 
@@ -882,6 +884,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (!shouldStartGroupStreams(document.hidden)) {
       needsVisibilityCatchupRef.current = true;
       setSSEStatus("disconnected");
+      setSSEError(null);
       return;
     }
 
@@ -896,6 +899,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     es.onopen = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       setSSEStatus("connected");
+      setSSEError(null);
       hasConnectedOnceRef.current = true;
       needsVisibilityCatchupRef.current = false;
       // Group scope changes may have happened before this subscription opened.
@@ -917,6 +921,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       // Keep this logical subscription alive: the shared transport reconnects
       // with its delivered cursor so Rust can replay the missed ledger events.
     };
+
+    es.addEventListener("retry", (e) => {
+      if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
+      const detail = readRetryDetail(e);
+      if (detail) setSSEError(detail);
+    });
 
     es.addEventListener("ledger", (e) => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
@@ -997,6 +1007,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (options?.resetConnected !== false) {
       hasConnectedOnceRef.current = false;
       needsVisibilityCatchupRef.current = false;
+      setSSEError(null);
     } else {
       needsVisibilityCatchupRef.current = true;
     }
