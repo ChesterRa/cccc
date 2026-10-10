@@ -38,5 +38,7 @@
   "language": "语言",
   "english": "英语",
   "chinese": "中文",
-  "japanese": "日语"
+  "japanese": "日语",
+  "chooseFile": "选择文件",
+  "noFileChosen": "未选择文件"
 }

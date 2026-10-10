@@ -1,8 +1,9 @@
+import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import type { TextScale, Theme } from "../../types";
 import { normalizeLanguageCode } from "../../i18n/languages";
 import { getTextScaleLabel, TEXT_SCALE_OPTIONS } from "../../utils/textScale";
-import { SelectMenu, type SelectMenuOption } from "../ui/select-menu";
+import { SegmentedChoice, type SegmentedOption } from "../ui/segmented-choice";
 
 export interface AppearancePreferencesProps {
   theme: Theme;
@@ -11,35 +12,32 @@ export interface AppearancePreferencesProps {
   onTextScaleChange: (scale: TextScale) => void;
 }
 
-/** A labelled row wrapping the shared dropdown, so every preference lines up the same way. */
-function AppearanceSelect<Value extends string | number>({
+/** One preference as a labelled segmented choice: every option visible, one tap applies it. */
+function AppearanceChoice<Value extends string | number>({
   name,
   label,
   value,
   options,
   onChange,
-  ariaLabel,
 }: {
   name: "theme" | "textScale" | "language";
   label: string;
   value: Value;
-  options: SelectMenuOption<Value>[];
+  options: SegmentedOption<Value>[];
   onChange: (value: Value) => void;
-  ariaLabel: string;
 }) {
+  const labelId = useId();
   return (
-    <div className="flex min-h-9 items-center justify-between gap-3 px-2 text-sm pointer-coarse:min-h-11">
-      <span className="shrink-0 text-[var(--color-text-secondary)]">{label}</span>
-      {/* Lighter than the default form dropdown: this sits inside a menu, not a form. */}
-      <SelectMenu<Value>
+    <div className="flex flex-col gap-1.5 px-2 pt-1 pb-2">
+      <span id={labelId} className="text-[13px] text-[var(--color-text-secondary)]">
+        {label}
+      </span>
+      <SegmentedChoice<Value>
+        labelledBy={labelId}
         value={value}
         options={options}
         onChange={onChange}
-        ariaLabel={ariaLabel}
-        className="min-h-8 w-28 rounded-md border-[var(--glass-border-subtle)] bg-transparent px-2.5 text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--glass-tab-bg)] pointer-coarse:min-h-10"
-        contentClassName="w-28"
-        triggerProps={{ "data-appearance-select": name }}
-        contentProps={{ "data-appearance-menu": name }}
+        data-appearance-choice={name}
       />
     </div>
   );
@@ -54,25 +52,23 @@ export function AppearancePreferences({
   const { t, i18n } = useTranslation(["layout", "common"]);
   return (
     <fieldset className="min-w-0" data-appearance-preferences>
-      <legend className="px-2 pb-1.5 text-xs font-medium text-[var(--color-text-tertiary)]">
+      <legend className="px-2 pt-1.5 pb-1 text-xs font-semibold text-[var(--color-text-tertiary)]">
         {t("appearanceSection")}
       </legend>
-      <AppearanceSelect<Theme>
+      <AppearanceChoice<Theme>
         name="theme"
         label={t("themeLabel")}
-        ariaLabel={t("themeLabel")}
         value={theme}
         onChange={onThemeChange}
         options={[
-          { value: "system", label: t("themeSystem") },
           { value: "light", label: t("themeLight") },
           { value: "dark", label: t("themeDark") },
+          { value: "system", label: t("themeSystem") },
         ]}
       />
-      <AppearanceSelect<TextScale>
+      <AppearanceChoice<TextScale>
         name="textScale"
         label={t("textSizeLabel")}
-        ariaLabel={t("textSizeLabel")}
         value={textScale}
         onChange={onTextScaleChange}
         options={TEXT_SCALE_OPTIONS.map((scale) => ({
@@ -80,15 +76,14 @@ export function AppearancePreferences({
           label: getTextScaleLabel(scale),
         }))}
       />
-      <AppearanceSelect
+      <AppearanceChoice
         name="language"
         label={t("common:language")}
-        ariaLabel={t("common:language")}
         value={normalizeLanguageCode(i18n.resolvedLanguage ?? i18n.language)}
         onChange={(language) => void i18n.changeLanguage(language)}
         options={[
-          { value: "en", label: "English" },
           { value: "zh", label: "中文" },
+          { value: "en", label: "English" },
           { value: "ja", label: "日本語" },
         ]}
       />

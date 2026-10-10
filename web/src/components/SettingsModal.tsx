@@ -1660,7 +1660,7 @@ export function SettingsModal({
           ref={contentScrollRef}
           className="min-h-0 min-w-0 flex-1 overflow-y-auto scrollbar-subtle flex flex-col [scrollbar-gutter:stable] bg-[var(--color-bg-primary)]"
         >
-          <div className="p-4 pb-6 sm:p-5 lg:p-6 sm:pb-7 space-y-6">
+          <div className="px-4 pt-5 pb-4 sm:px-8 sm:pt-7 lg:px-10 space-y-6">
             {scope === "global" && !globalSettingsEnabled && !currentBrowserSignedIn ? (
               <div
                 className={`rounded-xl border p-6 ${isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}

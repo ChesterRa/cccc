@@ -27,6 +27,8 @@
   },
   "navigation": {
     "targetScope": "対象範囲",
+    "appliesToGroup": "ワークグループ {{name}} に適用",
+    "appliesToGlobal": "CCCC インスタンス全体（デーモン + Web）に適用",
     "thisGroup": "この作業グループ",
     "global": "このインスタンス",
     "groupScopeTitle": "作業グループ範囲",
@@ -1060,6 +1062,7 @@
     "compactFrames": "繰り返しフレームを圧縮"
   },
   "guidance": {
+    "commonAndRolesTitle": "共有スコープ",
     "openFromGroup": "グループからこのタブを開きます。",
     "overridesHint": "ガイダンスファイルは接続済み project scope に保存されます。",
     "preambleTitle": "ブートストラップ (プリアンブル)",

@@ -1,16 +1,13 @@
 // DeliveryTab configures runtime delivery pacing and one-shot reminder windows.
 import { useTranslation } from "react-i18next";
 
-import { ClockIcon } from "../../Icons";
-import { NumberInputRow } from "./automationUtils";
 import {
-  primaryButtonClass,
-  settingsWorkspaceActionBarClass,
-  settingsWorkspaceBodyClass,
-  settingsWorkspaceHeaderClass,
-  settingsWorkspaceShellClass,
-  settingsWorkspaceFieldsClass,
-} from "./types";
+  SettingsCard,
+  SettingsNumberInput,
+  SettingsPage,
+  SettingsRow,
+  SettingsSaveBar,
+} from "./SettingsKit";
 
 interface DeliveryTabProps {
   isDark: boolean;
@@ -25,65 +22,50 @@ interface DeliveryTabProps {
 }
 
 export function DeliveryTab(props: DeliveryTabProps) {
-  const { isDark, busy, onSave } = props;
+  const { busy, onSave } = props;
   const { t } = useTranslation("settings");
+  const fields = [
+    {
+      id: "delivery-mail-notice",
+      label: t("delivery.mailNotice"),
+      help: t("delivery.mailNoticeHelp"),
+      value: props.mailNoticeAfterSeconds,
+      onChange: props.setMailNoticeAfterSeconds,
+    },
+    {
+      id: "delivery-mail-idle-notice",
+      label: t("delivery.mailIdleNotice"),
+      help: t("delivery.mailIdleNoticeHelp"),
+      value: props.mailNoticeIdleAfterSeconds,
+      onChange: props.setMailNoticeIdleAfterSeconds,
+    },
+    {
+      id: "delivery-reply-notice",
+      label: t("delivery.replyNotice"),
+      help: t("delivery.replyNoticeHelp"),
+      value: props.replyNoticeAfterSeconds,
+      onChange: props.setReplyNoticeAfterSeconds,
+    },
+  ];
 
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-      <div className={settingsWorkspaceShellClass(isDark)}>
-        <div className={settingsWorkspaceHeaderClass(isDark)}>
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("delivery.title")}
-            </h3>
-            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              {t("delivery.description")}
-            </p>
-          </div>
-        </div>
-
-        <div className={`${settingsWorkspaceBodyClass} grid grid-cols-1 gap-3 lg:grid-cols-2`}>
-          <div className={settingsWorkspaceFieldsClass}>
-            <NumberInputRow
-              isDark={isDark}
-              label={t("delivery.mailNotice")}
-              value={props.mailNoticeAfterSeconds}
-              onChange={props.setMailNoticeAfterSeconds}
-              helperText={t("delivery.mailNoticeHelp")}
+    <SettingsPage
+      title={t("delivery.title")}
+      description={t("delivery.description")}
+      footer={<SettingsSaveBar label={t("delivery.saveDelivery")} busy={busy} onSave={onSave} />}
+    >
+      <SettingsCard>
+        {fields.map((field) => (
+          <SettingsRow key={field.id} label={field.label} help={field.help} htmlFor={field.id}>
+            <SettingsNumberInput
+              id={field.id}
+              value={field.value}
+              onChange={field.onChange}
+              showDuration
             />
-          </div>
-          <div className={settingsWorkspaceFieldsClass}>
-            <NumberInputRow
-              isDark={isDark}
-              label={t("delivery.mailIdleNotice")}
-              value={props.mailNoticeIdleAfterSeconds}
-              onChange={props.setMailNoticeIdleAfterSeconds}
-              helperText={t("delivery.mailIdleNoticeHelp")}
-            />
-          </div>
-          <div className={settingsWorkspaceFieldsClass}>
-            <NumberInputRow
-              isDark={isDark}
-              label={t("delivery.replyNotice")}
-              value={props.replyNoticeAfterSeconds}
-              onChange={props.setReplyNoticeAfterSeconds}
-              helperText={t("delivery.replyNoticeHelp")}
-            />
-          </div>
-        </div>
-
-        <div className={settingsWorkspaceActionBarClass(isDark)}>
-          <button onClick={onSave} disabled={busy} className={primaryButtonClass(busy)}>
-            {busy ? (
-              t("common:saving")
-            ) : (
-              <span className="flex items-center gap-2">
-                <ClockIcon className="w-4 h-4" /> {t("delivery.saveDelivery")}
-              </span>
-            )}
-          </button>
-        </div>
-      </div>
-    </div>
+          </SettingsRow>
+        ))}
+      </SettingsCard>
+    </SettingsPage>
   );
 }

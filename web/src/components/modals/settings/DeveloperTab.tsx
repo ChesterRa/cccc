@@ -1,23 +1,19 @@
-import { Switch } from "../../ui/switch";
-import { useState } from "react";
+// DeveloperTab configures developer mode and its diagnostics.
+import { useId, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { copyTextToClipboard } from "../../../utils/copy";
 import { buildMismatch, type RuntimeBuildInfo } from "../../../utils/runtimeBuildInfo";
-import { Button } from "../../ui/button";
-// DeveloperTab configures developer mode.
-import { useTranslation } from "react-i18next";
-import { SelectCombobox } from "../../SelectCombobox";
-import {
-  inputClass,
-  labelClass,
-  preClass,
-  primaryButtonClass,
-  settingsWorkspaceActionBarClass,
-  settingsWorkspaceBodyClass,
-  settingsWorkspaceHeaderClass,
-  settingsWorkspaceShellClass,
-  settingsWorkspaceSectionClass,
-} from "./types";
 import type { RuntimeVisibilityMode } from "../../../utils/runtimeVisibility";
+import { SegmentedChoice } from "../../ui/segmented-choice";
+import { dangerButtonClass, secondaryButtonClass } from "./types";
+import {
+  SettingsCard,
+  SettingsNumberInput,
+  SettingsPage,
+  SettingsRow,
+  SettingsSaveBar,
+  SettingsSwitch,
+} from "./SettingsKit";
 
 interface DeveloperTabProps {
   isDark: boolean;
@@ -72,7 +68,6 @@ interface DeveloperTabProps {
 }
 
 export function DeveloperTab({
-  isDark: _isDark,
   groupId,
   runtimeVersion,
   runtimeBuildInfo,
@@ -128,449 +123,366 @@ export function DeveloperTab({
     buildMismatch(runtimeBuildInfo),
   );
 
-  return (
-    <div className="space-y-5">
-      <div className={settingsWorkspaceShellClass(_isDark)}>
-        <div className={settingsWorkspaceHeaderClass(_isDark)}>
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("developer.title")}
-            </h3>
-            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              {t("developer.description")}
-            </p>
-            <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/15 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-              <div className="font-medium">{t("developer.warningTitle")}</div>
-              <div className="mt-1">{t("developer.warningText")}</div>
-            </div>
-          </div>
-        </div>
+  const ids = {
+    developerMode: useId(),
+    logLevel: useId(),
+    peerRuntime: useId(),
+    assistantRuntime: useId(),
+    ptyBacklog: useId(),
+    webScrollback: useId(),
+    logComponent: useId(),
+    logLines: useId(),
+  };
+  const ghost = secondaryButtonClass("sm");
+  const visibilityOptions = (order: RuntimeVisibilityMode[]) =>
+    order.map((value) => ({ value, label: t(`developer.${value}`) }));
+  const output = (text: string, extraClass = "") => (
+    <pre
+      className={`m-0 min-h-[100px] overflow-auto rounded-[10px] bg-zinc-900 p-3.5 font-mono text-xs leading-6 whitespace-pre text-zinc-200 ${extraClass}`}
+    >
+      <code>{text || "—"}</code>
+    </pre>
+  );
+  const note = (text: string, tone: "muted" | "error" | "warn" = "muted") => (
+    <div
+      className={
+        tone === "error"
+          ? "text-xs text-rose-600 dark:text-rose-400"
+          : tone === "warn"
+            ? "text-xs text-amber-700 dark:text-amber-300"
+            : "text-xs text-[var(--color-text-muted)]"
+      }
+    >
+      {text}
+    </div>
+  );
 
-        <div className={settingsWorkspaceBodyClass}>
-          <div className={settingsWorkspaceSectionClass}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  {t("developer.runtimeInfoTitle")}
-                </div>
-                <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
-                  {t("developer.runtimeInfoHint")}
-                </div>
-              </div>
+  return (
+    <SettingsPage
+      title={t("developer.title")}
+      description={
+        <>
+          {t("developer.description")}{" "}
+          <span className="text-amber-700 dark:text-amber-300">
+            <strong className="font-medium">{t("developer.warningTitle")}</strong>{" "}
+            {t("developer.warningText")}
+          </span>
+        </>
+      }
+      footer={
+        <SettingsSaveBar
+          label={t("developer.saveDeveloperSettings")}
+          busy={obsBusy}
+          onSave={onSaveObservability}
+        />
+      }
+    >
+      <SettingsCard
+        title={t("developer.runtimeInfoTitle")}
+        description={t("developer.runtimeInfoHint")}
+        actions={
+          versionMismatch || runtimeBuildInfo ? (
+            <>
               {versionMismatch ? (
-                <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/15 px-2.5 text-xs font-medium text-amber-700 dark:text-amber-300">
                   {t("developer.versionMismatchBadge")}
                 </span>
               ) : null}
-            </div>
-
-            {runtimeInfoErr ? (
-              <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{runtimeInfoErr}</div>
-            ) : null}
-
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="min-w-0">
-                <div className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-                  {t("developer.ccccVersion")}
-                </div>
-                <div className="mt-1 text-sm font-semibold text-[var(--color-text-primary)]">
-                  {runtimeVersion || "—"}
-                </div>
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-                  {t("developer.daemonVersion")}
-                </div>
-                <div className="mt-1 text-sm font-semibold text-[var(--color-text-primary)]">
-                  {daemonVersion || "—"}
-                </div>
-              </div>
-            </div>
-
-            {versionMismatch ? (
-              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                {t("developer.buildMismatchHint")}
-              </div>
-            ) : null}
-            {runtimeBuildInfo && (
-              <div className="mt-4 space-y-3">
-                <dl className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
-                  {(
-                    [
-                      "webSource",
-                      "daemonSource",
-                      "webAssets",
-                      "servedEntry",
-                      "loadedEntry",
-                    ] as const
-                  ).map((key) => (
-                    <div key={key} className="min-w-0">
-                      <dt className="text-[var(--color-text-muted)]">{t(`developer.${key}`)}</dt>
-                      <dd className="mt-1 break-all font-mono text-[var(--color-text-secondary)]">
-                        {runtimeBuildInfo[key] || "—"}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={async () => {
-                      const ok = await copyTextToClipboard(
-                        JSON.stringify(
-                          {
-                            web_version: runtimeVersion,
-                            daemon_version: daemonVersion,
-                            ...runtimeBuildInfo,
-                          },
-                          null,
-                          2,
-                        ),
-                      );
-                      setCopyStatus(ok ? "copied" : "copyFailed");
-                    }}
-                  >
-                    {t("developer.copyBuildInfo")}
-                  </Button>
-                  <span role="status" className="text-xs text-[var(--color-text-secondary)]">
-                    {copyStatus ? t(`developer.${copyStatus}`) : ""}
+              {runtimeBuildInfo ? (
+                <button
+                  type="button"
+                  className={ghost}
+                  onClick={async () => {
+                    const ok = await copyTextToClipboard(
+                      JSON.stringify(
+                        {
+                          web_version: runtimeVersion,
+                          daemon_version: daemonVersion,
+                          ...runtimeBuildInfo,
+                        },
+                        null,
+                        2,
+                      ),
+                    );
+                    setCopyStatus(ok ? "copied" : "copyFailed");
+                  }}
+                >
+                  {t("developer.copyBuildInfo")}
+                </button>
+              ) : null}
+            </>
+          ) : undefined
+        }
+      >
+        <SettingsRow
+          label={`${t("developer.ccccVersion")} / ${t("developer.daemonVersion")}`}
+          help={versionMismatch ? t("developer.buildMismatchHint") : undefined}
+        >
+          <span className="inline-flex items-center font-mono text-[13px] text-[var(--color-text-secondary)]">
+            {runtimeVersion || "—"} / {daemonVersion || "—"}
+          </span>
+          <span role="status" className="text-xs text-[var(--color-text-secondary)]">
+            {copyStatus ? t(`developer.${copyStatus}`) : ""}
+          </span>
+        </SettingsRow>
+        {runtimeBuildInfo
+          ? (["webSource", "daemonSource", "webAssets", "servedEntry", "loadedEntry"] as const).map(
+              (key) => (
+                <SettingsRow key={key} label={t(`developer.${key}`)}>
+                  <span className="inline-flex items-center font-mono text-xs break-all text-[var(--color-text-secondary)]">
+                    {runtimeBuildInfo[key] || "—"}
                   </span>
-                </div>
-              </div>
-            )}
-          </div>
+                </SettingsRow>
+              ),
+            )
+          : null}
+        {runtimeInfoErr ? <div className="px-5 py-3">{note(runtimeInfoErr, "error")}</div> : null}
+      </SettingsCard>
 
-          <div className={settingsWorkspaceSectionClass}>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  {t("developer.enableDeveloperMode")}
-                </div>
-                <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
-                  {t("developer.enableHint")}
-                </div>
-              </div>
-              <Switch
-                aria-label={t("developer.enableDeveloperMode")}
-                checked={developerMode}
-                onChange={(e) => setDeveloperMode(e.target.checked)}
-              />
-            </div>
+      <SettingsCard>
+        <SettingsRow
+          label={t("developer.enableDeveloperMode")}
+          help={t("developer.enableHint")}
+          labelId={ids.developerMode}
+        >
+          <SettingsSwitch
+            checked={developerMode}
+            onChange={setDeveloperMode}
+            labelledBy={ids.developerMode}
+          />
+        </SettingsRow>
+        <SettingsRow label={t("developer.logLevel")} labelId={ids.logLevel}>
+          <SegmentedChoice
+            fill={false}
+            labelledBy={ids.logLevel}
+            value={logLevel}
+            options={[
+              { value: "INFO", label: "INFO" },
+              { value: "DEBUG", label: "DEBUG" },
+            ]}
+            onChange={setLogLevel}
+          />
+        </SettingsRow>
+      </SettingsCard>
 
-            <div className="mt-4 space-y-4">
-              <div className="min-w-0">
-                <label className={labelClass()}>{t("developer.logLevel")}</label>
-                <SelectCombobox
-                  items={[
-                    { value: "INFO", label: "INFO" },
-                    { value: "DEBUG", label: "DEBUG" },
-                  ]}
-                  value={logLevel}
-                  onChange={(value) => setLogLevel(value === "DEBUG" ? "DEBUG" : "INFO")}
-                  ariaLabel={t("developer.logLevel")}
-                  className={inputClass()}
-                />
-              </div>
+      <SettingsCard
+        title={t("developer.runtimeVisibilityTitle")}
+        description={t("developer.runtimeVisibilityHint")}
+      >
+        <SettingsRow
+          label={t("developer.peerRuntime")}
+          help={t("developer.peerRuntimeHint")}
+          labelId={ids.peerRuntime}
+        >
+          <SegmentedChoice
+            fill={false}
+            labelledBy={ids.peerRuntime}
+            value={peerRuntimeVisibility}
+            options={visibilityOptions(["visible", "hidden"])}
+            onChange={setPeerRuntimeVisibility}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label={t("developer.assistantRuntime")}
+          help={t("developer.assistantRuntimeHint")}
+          labelId={ids.assistantRuntime}
+        >
+          <SegmentedChoice
+            fill={false}
+            labelledBy={ids.assistantRuntime}
+            value={assistantRuntimeVisibility}
+            options={visibilityOptions(["hidden", "visible"])}
+            onChange={setAssistantRuntimeVisibility}
+          />
+        </SettingsRow>
+      </SettingsCard>
 
-              <div className="pt-3 border-t border-[var(--glass-border-subtle)]">
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  {t("developer.runtimeVisibilityTitle")}
-                </div>
-                <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
-                  {t("developer.runtimeVisibilityHint")}
-                </div>
+      <SettingsCard
+        title={t("developer.terminalBuffers")}
+        description={t("developer.terminalBuffersHint")}
+      >
+        <SettingsRow
+          label={t("developer.ptyBacklog")}
+          help={t("developer.ptyBacklogHint")}
+          htmlFor={ids.ptyBacklog}
+        >
+          <SettingsNumberInput
+            id={ids.ptyBacklog}
+            value={terminalBacklogMiB}
+            min={1}
+            max={50}
+            onChange={(value) => setTerminalBacklogMiB(value || 10)}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label={t("developer.webScrollback")}
+          help={t("developer.webScrollbackHint")}
+          htmlFor={ids.webScrollback}
+        >
+          <SettingsNumberInput
+            id={ids.webScrollback}
+            value={terminalScrollbackLines}
+            min={1000}
+            max={200000}
+            onChange={(value) => setTerminalScrollbackLines(value || 8000)}
+          />
+        </SettingsRow>
+      </SettingsCard>
 
-                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="min-w-0">
-                    <label className={labelClass()}>{t("developer.peerRuntime")}</label>
-                    <SelectCombobox
-                      items={[
-                        { value: "visible", label: t("developer.visible") },
-                        { value: "hidden", label: t("developer.hidden") },
-                      ]}
-                      value={peerRuntimeVisibility}
-                      onChange={(value) =>
-                        setPeerRuntimeVisibility(value === "hidden" ? "hidden" : "visible")
-                      }
-                      ariaLabel={t("developer.peerRuntime")}
-                      className={inputClass()}
-                    />
-                    <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-                      {t("developer.peerRuntimeHint")}
-                    </div>
-                  </div>
-
-                  <div className="min-w-0">
-                    <label className={labelClass()}>{t("developer.assistantRuntime")}</label>
-                    <SelectCombobox
-                      items={[
-                        { value: "hidden", label: t("developer.hidden") },
-                        { value: "visible", label: t("developer.visible") },
-                      ]}
-                      value={assistantRuntimeVisibility}
-                      onChange={(value) =>
-                        setAssistantRuntimeVisibility(value === "hidden" ? "hidden" : "visible")
-                      }
-                      ariaLabel={t("developer.assistantRuntime")}
-                      className={inputClass()}
-                    />
-                    <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-                      {t("developer.assistantRuntimeHint")}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-[var(--glass-border-subtle)]">
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  {t("developer.terminalBuffers")}
-                </div>
-                <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
-                  {t("developer.terminalBuffersHint")}
-                </div>
-
-                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="min-w-0">
-                    <label className={labelClass()}>{t("developer.ptyBacklog")}</label>
-                    <input
-                      type="number"
-                      value={terminalBacklogMiB}
-                      min={1}
-                      max={50}
-                      onChange={(e) => setTerminalBacklogMiB(Number(e.target.value || 10))}
-                      className={inputClass()}
-                    />
-                    <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-                      {t("developer.ptyBacklogHint")}
-                    </div>
-                  </div>
-                  <div className="min-w-0">
-                    <label className={labelClass()}>{t("developer.webScrollback")}</label>
-                    <input
-                      type="number"
-                      value={terminalScrollbackLines}
-                      min={1000}
-                      max={200000}
-                      onChange={(e) => setTerminalScrollbackLines(Number(e.target.value || 8000))}
-                      className={inputClass()}
-                    />
-                    <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-                      {t("developer.webScrollbackHint")}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+      <SettingsCard
+        title={t("developer.debugSnapshot")}
+        description={t("developer.debugSnapshotHint")}
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={onLoadDebugSnapshot}
+              disabled={!developerMode || !groupId || debugSnapshotBusy}
+              className={ghost}
+            >
+              {debugSnapshotBusy ? t("common:loading") : t("developer.refresh")}
+            </button>
+            <button
+              type="button"
+              onClick={onClearDebugSnapshot}
+              disabled={debugSnapshotBusy}
+              className={ghost}
+            >
+              {t("developer.clear")}
+            </button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-2 px-5 py-4">
+          {!groupId ? note(t("developer.openFromGroup")) : null}
+          {debugSnapshotErr ? note(debugSnapshotErr, "error") : null}
+          {output(debugSnapshot)}
         </div>
-        <div className={settingsWorkspaceActionBarClass(_isDark)}>
+      </SettingsCard>
+
+      <SettingsCard
+        title={t("developer.logTail")}
+        description={t("developer.logTailHint")}
+        actions={
           <button
-            onClick={onSaveObservability}
-            disabled={obsBusy}
-            className={primaryButtonClass(obsBusy)}
+            type="button"
+            onClick={onLoadLogTail}
+            disabled={!developerMode || logBusy}
+            className={ghost}
           >
-            {obsBusy ? t("common:saving") : t("developer.saveDeveloperSettings")}
+            {logBusy ? t("common:loading") : t("developer.refresh")}
           </button>
+        }
+      >
+        <SettingsRow label={t("developer.component")} labelId={ids.logComponent}>
+          <SegmentedChoice
+            fill={false}
+            labelledBy={ids.logComponent}
+            value={logComponent}
+            options={[
+              { value: "daemon", label: "daemon" },
+              { value: "web", label: "web" },
+              { value: "im", label: "im" },
+            ]}
+            onChange={setLogComponent}
+          />
+        </SettingsRow>
+        <SettingsRow label={t("developer.lines")} htmlFor={ids.logLines}>
+          <SettingsNumberInput
+            id={ids.logLines}
+            value={logLines}
+            min={50}
+            max={2000}
+            onChange={(value) => setLogLines(value || 200)}
+          />
+        </SettingsRow>
+        <div className="flex flex-col gap-2 px-5 py-4">
+          {logComponent === "im" && !groupId ? note(t("developer.imLogsRequireGroup")) : null}
+          {logErr ? note(logErr, "error") : null}
+          {output(logText, "max-h-[260px]")}
         </div>
-      </div>
+      </SettingsCard>
 
-      {/* Registry maintenance */}
-      <div className={settingsWorkspaceShellClass(_isDark)}>
-        <div className={settingsWorkspaceHeaderClass(_isDark)}>
-          <div className="flex w-full flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {t("developer.registryTitle")}
-              </div>
-              <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
-                {t("developer.registryDescription")}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={onPreviewRegistry}
-                disabled={registryBusy}
-                className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
-              >
-                {registryBusy ? t("developer.scanning") : t("developer.scan")}
-              </button>
-              <button
-                onClick={onReconcileRegistry}
-                disabled={registryBusy || missing.length === 0}
-                className={primaryButtonClass(registryBusy || missing.length === 0)}
-              >
-                {registryBusy ? t("developer.cleaning") : t("developer.cleanMissing")}
-              </button>
-            </div>
-          </div>
-        </div>
+      <SettingsCard
+        tone="danger"
+        title={t("developer.clearTruncate")}
+        actions={
+          <button
+            type="button"
+            onClick={onClearLogs}
+            disabled={!developerMode || logBusy}
+            className={dangerButtonClass("sm")}
+          >
+            {t("developer.clearTruncate")}
+          </button>
+        }
+      />
 
-        <div className={settingsWorkspaceBodyClass}>
-          {registryErr ? (
-            <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{registryErr}</div>
-          ) : null}
-
-          {registryResult ? (
-            <div className="mt-3 rounded-lg border px-3 py-2 text-xs border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]">
-              <div>
-                {t("developer.scanned")}={registryResult.scanned_groups} · {t("developer.missing")}=
-                {missing.length} · {t("developer.corrupt")}={corrupt.length}
-                {removed.length > 0 ? ` · ${t("developer.removed")}=${removed.length}` : ""}
-              </div>
-              {missing.length > 0 ? (
-                <div className="mt-2 break-all">
-                  <span className="text-amber-600 dark:text-amber-400">
-                    {t("developer.missing")}:
-                  </span>{" "}
-                  {missing.join(", ")}
+      <SettingsCard
+        tone="danger"
+        title={t("developer.registryTitle")}
+        description={t("developer.registryDescription")}
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={onPreviewRegistry}
+              disabled={registryBusy}
+              className={ghost}
+            >
+              {registryBusy ? t("developer.scanning") : t("developer.scan")}
+            </button>
+            <button
+              type="button"
+              onClick={onReconcileRegistry}
+              disabled={registryBusy || missing.length === 0}
+              className={dangerButtonClass("sm")}
+            >
+              {registryBusy ? t("developer.cleaning") : t("developer.cleanMissing")}
+            </button>
+          </>
+        }
+      >
+        {registryErr || registryResult ? (
+          <div className="flex flex-col gap-2 px-5 py-4 text-xs text-[var(--color-text-secondary)]">
+            {registryErr ? note(registryErr, "error") : null}
+            {registryResult ? (
+              <>
+                <div>
+                  {t("developer.scanned")}={registryResult.scanned_groups} ·{" "}
+                  {t("developer.missing")}={missing.length} · {t("developer.corrupt")}=
+                  {corrupt.length}
+                  {removed.length > 0 ? ` · ${t("developer.removed")}=${removed.length}` : ""}
                 </div>
-              ) : null}
-              {corrupt.length > 0 ? (
-                <div className="mt-2 break-all">
-                  <span className="text-rose-600 dark:text-rose-400">
-                    {t("developer.corrupt")}:
-                  </span>{" "}
-                  {corrupt.join(", ")}
-                </div>
-              ) : null}
-              {removed.length > 0 ? (
-                <div className="mt-2 break-all">
-                  <span className="text-emerald-600 dark:text-emerald-400">
-                    {t("developer.removed")}:
-                  </span>{" "}
-                  {removed.join(", ")}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      {/* Debug Snapshot */}
-      <div className={settingsWorkspaceShellClass(_isDark)}>
-        <div className={settingsWorkspaceHeaderClass(_isDark)}>
-          <div className="flex w-full flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {t("developer.debugSnapshot")}
-              </div>
-              <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
-                {t("developer.debugSnapshotHint")}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={onLoadDebugSnapshot}
-                disabled={!developerMode || !groupId || debugSnapshotBusy}
-                className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
-              >
-                {debugSnapshotBusy ? t("common:loading") : t("developer.refresh")}
-              </button>
-              <button
-                onClick={onClearDebugSnapshot}
-                disabled={debugSnapshotBusy}
-                className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-secondary)] disabled:opacity-50"
-              >
-                {t("developer.clear")}
-              </button>
-            </div>
+                {missing.length > 0 ? (
+                  <div className="break-all">
+                    <span className="text-amber-600 dark:text-amber-400">
+                      {t("developer.missing")}:
+                    </span>{" "}
+                    {missing.join(", ")}
+                  </div>
+                ) : null}
+                {corrupt.length > 0 ? (
+                  <div className="break-all">
+                    <span className="text-rose-600 dark:text-rose-400">
+                      {t("developer.corrupt")}:
+                    </span>{" "}
+                    {corrupt.join(", ")}
+                  </div>
+                ) : null}
+                {removed.length > 0 ? (
+                  <div className="break-all">
+                    <span className="text-emerald-600 dark:text-emerald-400">
+                      {t("developer.removed")}:
+                    </span>{" "}
+                    {removed.join(", ")}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
           </div>
-        </div>
-
-        <div className={settingsWorkspaceBodyClass}>
-          {!groupId && (
-            <div className="mt-2 text-xs text-[var(--color-text-muted)]">
-              {t("developer.openFromGroup")}
-            </div>
-          )}
-
-          {debugSnapshotErr && (
-            <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{debugSnapshotErr}</div>
-          )}
-
-          <pre className={`${preClass()} mt-0`}>
-            <code>{debugSnapshot || "—"}</code>
-          </pre>
-        </div>
-      </div>
-
-      {/* Log Tail */}
-      <div className={settingsWorkspaceShellClass(_isDark)}>
-        <div className={settingsWorkspaceHeaderClass(_isDark)}>
-          <div className="flex w-full flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {t("developer.logTail")}
-              </div>
-              <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
-                {t("developer.logTailHint")}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={onLoadLogTail}
-                disabled={!developerMode || logBusy}
-                className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
-              >
-                {logBusy ? t("common:loading") : t("developer.refresh")}
-              </button>
-              <button
-                onClick={onClearLogs}
-                disabled={!developerMode || logBusy}
-                className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-secondary)] disabled:opacity-50"
-              >
-                {t("developer.clearTruncate")}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className={settingsWorkspaceBodyClass}>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="min-w-0">
-              <label className={labelClass()}>{t("developer.component")}</label>
-              <SelectCombobox
-                items={[
-                  { value: "daemon", label: "daemon" },
-                  { value: "web", label: "web" },
-                  { value: "im", label: "im" },
-                ]}
-                value={logComponent}
-                onChange={(value) =>
-                  setLogComponent(value === "im" ? "im" : value === "web" ? "web" : "daemon")
-                }
-                ariaLabel={t("developer.component")}
-                className={inputClass()}
-              />
-            </div>
-            <div className="min-w-0">
-              <label className={labelClass()}>{t("developer.lines")}</label>
-              <input
-                type="number"
-                value={logLines}
-                min={50}
-                max={2000}
-                onChange={(e) => setLogLines(Number(e.target.value || 200))}
-                className={inputClass()}
-              />
-            </div>
-          </div>
-
-          {logComponent === "im" && !groupId && (
-            <div className="mt-2 text-xs text-[var(--color-text-muted)]">
-              {t("developer.imLogsRequireGroup")}
-            </div>
-          )}
-
-          {logErr && <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{logErr}</div>}
-
-          <pre className={`${preClass()} mt-0 max-h-[260px] overflow-y-auto`}>
-            <code>{logText || "—"}</code>
-          </pre>
-        </div>
-      </div>
-    </div>
+        ) : null}
+      </SettingsCard>
+    </SettingsPage>
   );
 }

@@ -28,10 +28,10 @@ export function WorkspaceFilesTrigger({ active, onToggle }: Props) {
         "flex h-8 w-8 pointer-coarse:h-10 pointer-coarse:w-10 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2 focus-visible:outline-offset-2",
         active
           ? "bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] ring-1 ring-inset ring-[var(--glass-tab-border-active)]"
-          : "text-[var(--color-text-secondary)]",
+          : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]",
       )}
     >
-      <FolderIcon size={17} className="shrink-0" aria-hidden="true" />
+      <FolderIcon size={18} strokeWidth={1.25} className="shrink-0" aria-hidden="true" />
     </button>
   );
 }

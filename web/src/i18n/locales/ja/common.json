@@ -38,5 +38,7 @@
   "language": "言語",
   "english": "英語",
   "chinese": "中国語",
-  "japanese": "日本語"
+  "japanese": "日本語",
+  "chooseFile": "ファイルを選択",
+  "noFileChosen": "ファイルが選択されていません"
 }

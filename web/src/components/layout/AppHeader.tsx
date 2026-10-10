@@ -134,13 +134,13 @@ export function AppHeader({
               type="button"
               variant="ghost"
               size="sm"
-              className="hidden shrink-0 text-[var(--color-text-tertiary)] @min-[480px]/group-work-header:inline-flex"
+              className="hidden shrink-0 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] @min-[480px]/group-work-header:inline-flex"
               label={t("editGroup")}
               aria-haspopup="dialog"
               data-group-title-edit
               onClick={onOpenGroupEdit}
             >
-              <EditIcon size={16} />
+              <EditIcon size={18} strokeWidth={1.25} />
             </IconButton>
           )}
           {selectedStatus && (
@@ -204,10 +204,10 @@ export function AppHeader({
                 size="sm"
                 onClick={onOpenSearch}
                 disabled={!selectedGroupId}
-                className="text-[var(--color-text-secondary)]"
+                className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
                 label={t("searchMessages")}
               >
-                <SearchIcon size={17} />
+                <SearchIcon size={18} strokeWidth={1.25} />
               </IconButton>
               <IconButton
                 type="button"
@@ -215,10 +215,10 @@ export function AppHeader({
                 size="sm"
                 onClick={onOpenContext}
                 disabled={!selectedGroupId}
-                className="text-[var(--color-text-secondary)]"
+                className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
                 label={t("context")}
               >
-                <ClipboardIcon size={17} />
+                <ClipboardIcon size={18} strokeWidth={1.25} />
               </IconButton>
             </div>
           )}

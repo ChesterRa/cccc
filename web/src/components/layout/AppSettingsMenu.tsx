@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AccountIcon, SettingsIcon } from "../Icons";
+import { AccountIcon, ChevronRightIcon, SettingsIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { AppearancePreferences, type AppearancePreferencesProps } from "./AppearancePreferences";
-import { isMousePointer, useHoverIntent } from "../../hooks/useHoverIntent";
 
 export function AppSettingsMenu({
   canAccessAccount,
@@ -24,15 +23,10 @@ export function AppSettingsMenu({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const openingDialog = useRef(false);
-  const lastPointerType = useRef<string | null>(null);
-  // A hover-opened menu must not steal keyboard focus from whatever the user was doing.
-  const openedByHover = useRef(false);
-  const { scheduleOpen, scheduleClose, cancel } = useHoverIntent((next) => {
-    if (next && !open) openedByHover.current = true;
-    setOpen(next);
-  });
   const row =
-    "flex min-h-9 w-full items-center gap-2.5 rounded-md px-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg)] disabled:opacity-45 focus-visible:outline-2 pointer-coarse:min-h-11 [&>svg]:text-[var(--color-text-secondary)]";
+    "flex min-h-10 w-full items-center gap-2.5 rounded-[10px] px-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg)] disabled:opacity-45 focus-visible:outline-2 pointer-coarse:min-h-11";
+  const divider = <div className="my-1 border-t border-[var(--glass-border-subtle)]" />;
+  const initial = accountLabel?.trim().charAt(0).toUpperCase();
 
   useEffect(() => {
     const trigger = triggerRef.current;
@@ -57,10 +51,7 @@ export function AppSettingsMenu({
     <Popover
       open={open}
       onOpenChange={(value) => {
-        // An explicit click or dismissal wins over any pending hover timer.
-        cancel();
         openingDialog.current = false;
-        if (value) openedByHover.current = false;
         setOpen(value);
       }}
     >
@@ -71,79 +62,74 @@ export function AppSettingsMenu({
           variant="ghost"
           size="sm"
           label={t("settingsAndMore")}
-          className="relative text-[var(--color-text-secondary)]"
+          className="relative text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] data-[state=open]:bg-[var(--glass-tab-bg)] data-[state=open]:text-[var(--color-text-primary)]"
           data-app-settings-trigger
-          onPointerDown={(event) => {
-            lastPointerType.current = event.pointerType;
-          }}
-          onClick={(event) => {
-            // A mouse already reaches this menu by hovering, so its click is the shortcut into
-            // Settings. Touch, pen and keyboard (detail 0) keep the menu as their only way in.
-            if (!canOpenSettings) return;
-            if (event.detail === 0 || lastPointerType.current !== "mouse") return;
-            event.preventDefault();
-            cancel();
-            setOpen(false);
-            onOpenSettings();
-          }}
-          onPointerEnter={(event) => {
-            if (isMousePointer(event)) scheduleOpen();
-          }}
-          onPointerLeave={(event) => {
-            if (isMousePointer(event)) scheduleClose();
-          }}
         >
-          <SettingsIcon size={17} />
+          <SettingsIcon size={18} strokeWidth={1.25} />
         </IconButton>
       </PopoverTrigger>
       <PopoverContent
         align="end"
         sideOffset={8}
         collisionPadding={12}
-        className="w-64 max-w-[calc(100vw-24px)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-xl p-2"
+        className="w-[300px] max-w-[calc(100vw-24px)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-[14px] p-2"
         aria-label={t("settingsAndMore")}
         data-app-settings-menu
-        onPointerEnter={cancel}
-        onPointerLeave={(event) => {
-          if (isMousePointer(event)) scheduleClose();
-        }}
-        onFocusCapture={() => {
-          openedByHover.current = false;
-        }}
-        onOpenAutoFocus={(event) => {
-          if (openedByHover.current) event.preventDefault();
-        }}
         onEscapeKeyDown={(event) => event.stopPropagation()}
         onCloseAutoFocus={(event) => {
-          if (openingDialog.current || openedByHover.current) event.preventDefault();
+          if (openingDialog.current) event.preventDefault();
         }}
       >
-        <AppearancePreferences {...appearance} />
-        <div className="my-1.5 border-t border-[var(--glass-border-subtle)]" />
         {canAccessAccount ? (
-          <button type="button" className={row} onClick={() => openDialog(onOpenAccount)}>
-            <AccountIcon size={17} />
-            <span className="min-w-0 text-left">
-              <span className="block">{t("account")}</span>
-              {accountLabel ? (
-                <span
-                  className="block max-w-56 truncate text-xs text-[var(--color-text-muted)]"
-                  title={t("linkedAccount", { account: accountLabel })}
-                >
-                  {accountLabel}
-                </span>
-              ) : null}
-            </span>
-          </button>
+          <>
+            <button
+              type="button"
+              className={`${row} py-2`}
+              onClick={() => openDialog(onOpenAccount)}
+              data-app-settings-account
+            >
+              <span
+                aria-hidden="true"
+                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--glass-tab-bg)] text-[13px] font-semibold text-[var(--color-text-secondary)]"
+              >
+                {initial || <AccountIcon size={16} />}
+              </span>
+              <span className="min-w-0 flex-1 text-left">
+                <span className="block text-[13px] font-semibold">{t("account")}</span>
+                {accountLabel ? (
+                  <span
+                    className="block truncate text-xs text-[var(--color-text-muted)]"
+                    title={t("linkedAccount", { account: accountLabel })}
+                  >
+                    {accountLabel}
+                  </span>
+                ) : null}
+              </span>
+              <ChevronRightIcon
+                size={14}
+                aria-hidden="true"
+                className="shrink-0 text-[var(--color-text-tertiary)]"
+              />
+            </button>
+            {divider}
+          </>
         ) : null}
+        <AppearancePreferences {...appearance} />
+        {divider}
         <button
           type="button"
           className={row}
           disabled={!canOpenSettings}
           onClick={() => openDialog(onOpenSettings)}
+          data-app-settings-open-all
         >
-          <SettingsIcon size={17} />
-          {t("settingsButton")}
+          <SettingsIcon size={17} className="shrink-0 text-[var(--color-text-secondary)]" />
+          <span className="flex-1">{t("allSettings")}</span>
+          <ChevronRightIcon
+            size={14}
+            aria-hidden="true"
+            className="shrink-0 text-[var(--color-text-tertiary)]"
+          />
         </button>
       </PopoverContent>
     </Popover>

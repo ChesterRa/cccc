@@ -1,19 +1,17 @@
 // TranscriptTab configures terminal transcript visibility and viewing.
+import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import { Actor } from "../../../types";
 import { SelectCombobox } from "../../SelectCombobox";
+import { dangerButtonClass, inputClass, secondaryButtonClass } from "./types";
 import {
-  dangerButtonClass,
-  inputClass,
-  preClass,
-  primaryButtonClass,
-  secondaryButtonClass,
-  settingsWorkspaceActionBarClass,
-  settingsWorkspaceBodyClass,
-  settingsWorkspaceFieldsClass,
-  settingsWorkspaceHeaderClass,
-  settingsWorkspaceShellClass,
-} from "./types";
+  SettingsCard,
+  SettingsNumberInput,
+  SettingsPage,
+  SettingsRow,
+  SettingsSaveBar,
+  SettingsSwitch,
+} from "./SettingsKit";
 
 interface TranscriptTabProps {
   isDark: boolean;
@@ -48,7 +46,6 @@ interface TranscriptTabProps {
 }
 
 export function TranscriptTab({
-  isDark: _isDark,
   busy,
   groupId,
   devActors,
@@ -77,221 +74,168 @@ export function TranscriptTab({
   onClearTail,
 }: TranscriptTabProps) {
   const { t } = useTranslation("settings");
+  const ids = { visibility: useId(), notifyTail: useId(), notifyLines: useId(), maxChars: useId() };
+  const ghost = secondaryButtonClass("sm");
 
   return (
-    <div className="space-y-5">
-      <div className={settingsWorkspaceShellClass(_isDark)}>
-        <div className={settingsWorkspaceHeaderClass(_isDark)}>
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("transcript.title")}
-            </h3>
-            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              {t("transcript.description")}
-            </p>
+    <SettingsPage
+      title={t("transcript.title")}
+      description={t("transcript.description")}
+      footer={
+        <SettingsSaveBar
+          label={t("transcript.saveTranscript")}
+          busy={busy}
+          onSave={onSaveTranscriptSettings}
+        />
+      }
+    >
+      <SettingsCard title={t("transcript.policy")}>
+        <SettingsRow
+          label={t("transcript.visibilityLabel")}
+          help={t("transcript.visibilityTip")}
+          labelId={ids.visibility}
+        >
+          <div className="w-full max-w-[360px]">
+            <SelectCombobox
+              items={[
+                { value: "off", label: t("transcript.visibilityOff") },
+                { value: "foreman", label: t("transcript.visibilityForeman") },
+                { value: "all", label: t("transcript.visibilityAll") },
+              ]}
+              value={terminalVisibility}
+              onChange={(value) => {
+                if (value === "off" || value === "foreman" || value === "all")
+                  setTerminalVisibility(value);
+              }}
+              ariaLabel={t("transcript.visibilityLabel")}
+              className={inputClass()}
+            />
           </div>
-        </div>
+        </SettingsRow>
+        <SettingsRow label={t("transcript.includeTail")} labelId={ids.notifyTail}>
+          <SettingsSwitch
+            checked={terminalNotifyTail}
+            onChange={setTerminalNotifyTail}
+            labelledBy={ids.notifyTail}
+          />
+        </SettingsRow>
+        <SettingsRow label={t("transcript.notificationLines")} htmlFor={ids.notifyLines}>
+          <SettingsNumberInput
+            id={ids.notifyLines}
+            value={terminalNotifyLines}
+            min={1}
+            max={80}
+            disabled={!terminalNotifyTail}
+            onChange={(value) => setTerminalNotifyLines(value || 20)}
+          />
+        </SettingsRow>
+      </SettingsCard>
 
-        <div className={settingsWorkspaceBodyClass}>
-          <div className={settingsWorkspaceFieldsClass}>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("transcript.policy")}
-            </div>
-
-            <div className="mt-4 space-y-4">
-              <div className={settingsWorkspaceFieldsClass}>
-                <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">
-                  {t("transcript.visibilityLabel")}
-                </label>
-                <SelectCombobox
-                  items={[
-                    { value: "off", label: t("transcript.visibilityOff") },
-                    { value: "foreman", label: t("transcript.visibilityForeman") },
-                    { value: "all", label: t("transcript.visibilityAll") },
-                  ]}
-                  value={terminalVisibility}
-                  onChange={(value) => {
-                    const v = value;
-                    if (v === "off" || v === "foreman" || v === "all") setTerminalVisibility(v);
-                  }}
-                  ariaLabel={t("transcript.visibilityLabel")}
-                  className={inputClass()}
-                />
-                <div className="mt-2 text-xs text-[var(--color-text-muted)]">
-                  {t("transcript.visibilityTip")}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-                <div className={settingsWorkspaceFieldsClass}>
-                  <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                    <input
-                      type="checkbox"
-                      checked={terminalNotifyTail}
-                      onChange={(e) => setTerminalNotifyTail(e.target.checked)}
-                      className="h-4 w-4"
-                    />
-                    {t("transcript.includeTail")}
-                  </label>
-                </div>
-
-                <div className={settingsWorkspaceFieldsClass}>
-                  <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">
-                    {t("transcript.notificationLines")}
-                  </label>
-                  <input
-                    type="number"
-                    value={terminalNotifyLines}
-                    min={1}
-                    max={80}
-                    onChange={(e) => setTerminalNotifyLines(Number(e.target.value || 20))}
-                    disabled={!terminalNotifyTail}
-                    className={`${inputClass()} disabled:opacity-60`}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className={settingsWorkspaceActionBarClass(_isDark)}>
-          <button
-            onClick={onSaveTranscriptSettings}
-            disabled={busy}
-            className={primaryButtonClass(busy)}
-          >
-            {busy ? t("common:saving") : t("transcript.saveTranscript")}
-          </button>
-        </div>
-      </div>
-
-      <div className={settingsWorkspaceShellClass(_isDark)}>
-        <div className={settingsWorkspaceHeaderClass(_isDark)}>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("transcript.tailViewer")}
-            </div>
-            <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-              {t("transcript.tailViewerHint")}
-            </div>
-          </div>
-          <div className="flex gap-2">
+      <SettingsCard
+        title={t("transcript.tailViewer")}
+        description={t("transcript.tailViewerHint")}
+        actions={
+          <>
             <button
+              type="button"
               onClick={onLoadTail}
               disabled={!groupId || !tailActorId || tailBusy}
-              className={secondaryButtonClass()}
+              className={ghost}
             >
               {tailBusy ? t("common:loading") : t("transcript.refresh")}
             </button>
             <button
+              type="button"
               onClick={() => onCopyTail(50)}
               disabled={!tailText.trim()}
-              className={secondaryButtonClass()}
+              className={ghost}
             >
               {t("transcript.copyLast50")}
             </button>
-          </div>
-        </div>
-
-        <div className={settingsWorkspaceBodyClass}>
-          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <div className="min-w-0">
-              <div className="space-y-4">
-                <div className="min-w-0">
-                  <label className="block text-xs text-[var(--color-text-tertiary)]">
-                    {t("transcript.actor")}
-                  </label>
-                  <SelectCombobox
-                    items={
-                      devActors.length
-                        ? devActors.map((a) => ({
-                            value: a.id,
-                            label: `${a.id}${a.role ? ` (${a.role})` : ""}`,
-                          }))
-                        : [{ value: "", label: t("transcript.noActors"), disabled: true }]
-                    }
-                    value={tailActorId}
-                    onChange={setTailActorId}
-                    ariaLabel={t("transcript.actor")}
-                    className={`${inputClass()} mt-2`}
-                    searchable
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
-                  <div className="min-w-0">
-                    <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">
-                      {t("transcript.maxChars")}
-                    </label>
-                    <input
-                      type="number"
-                      value={tailMaxChars}
-                      min={1000}
-                      max={200000}
-                      onChange={(e) => setTailMaxChars(Number(e.target.value || 8000))}
-                      className={inputClass()}
-                    />
-                  </div>
-
-                  <div className="flex items-end">
-                    <button
-                      onClick={onClearTail}
-                      disabled={!groupId || !tailActorId || tailBusy}
-                      className={dangerButtonClass()}
-                    >
-                      {t("transcript.clearTruncate")}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <div className="min-w-0">
-                    <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                      <input
-                        type="checkbox"
-                        checked={tailStripAnsi}
-                        onChange={(e) => setTailStripAnsi(e.target.checked)}
-                        className="h-4 w-4"
-                      />
-                      {t("transcript.stripAnsi")}
-                    </label>
-                  </div>
-                  <div className="min-w-0">
-                    <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                      <input
-                        type="checkbox"
-                        checked={tailCompact}
-                        disabled={!tailStripAnsi}
-                        onChange={(e) => setTailCompact(e.target.checked)}
-                        className="h-4 w-4"
-                      />
-                      {t("transcript.compactFrames")}
-                    </label>
-                  </div>
-                </div>
-              </div>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3 px-5 py-4">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+            <div className="flex items-center gap-2 text-[13px]">
+              <span aria-hidden="true">{t("transcript.actor")}</span>
+              <span className="w-52">
+                <SelectCombobox
+                  items={
+                    devActors.length
+                      ? devActors.map((a) => ({
+                          value: a.id,
+                          label: `${a.id}${a.role ? ` (${a.role})` : ""}`,
+                        }))
+                      : [{ value: "", label: t("transcript.noActors"), disabled: true }]
+                  }
+                  value={tailActorId}
+                  onChange={setTailActorId}
+                  ariaLabel={t("transcript.actor")}
+                  className={inputClass()}
+                  searchable
+                />
+              </span>
             </div>
-
-            <div className="min-w-0">
-              {!!tailCopyInfo && (
-                <div className="mb-3 text-xs text-emerald-600 dark:text-emerald-400">
-                  {tailCopyInfo}
-                </div>
-              )}
-              {tailErr && (
-                <div className="mb-3 text-xs text-rose-600 dark:text-rose-400">{tailErr}</div>
-              )}
-              {tailHint && !tailErr && (
-                <div className="mb-3 text-xs text-[var(--color-text-muted)]">{tailHint}</div>
-              )}
-
-              <pre className={`${preClass()} mt-0 max-h-[420px] overflow-y-auto`}>
-                <code>{tailText || "\u2014"}</code>
-              </pre>
-            </div>
+            <label className="flex items-center gap-2 text-[13px]" htmlFor={ids.maxChars}>
+              {t("transcript.maxChars")}
+              <SettingsNumberInput
+                id={ids.maxChars}
+                value={tailMaxChars}
+                min={1000}
+                max={200000}
+                onChange={(value) => setTailMaxChars(value || 8000)}
+              />
+            </label>
+            <label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-secondary)]">
+              <input
+                type="checkbox"
+                checked={tailStripAnsi}
+                onChange={(e) => setTailStripAnsi(e.target.checked)}
+                className="h-4 w-4"
+              />
+              {t("transcript.stripAnsi")}
+            </label>
+            <label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-secondary)]">
+              <input
+                type="checkbox"
+                checked={tailCompact}
+                disabled={!tailStripAnsi}
+                onChange={(e) => setTailCompact(e.target.checked)}
+                className="h-4 w-4"
+              />
+              {t("transcript.compactFrames")}
+            </label>
           </div>
+          {tailCopyInfo ? (
+            <div className="text-xs text-emerald-600 dark:text-emerald-400">{tailCopyInfo}</div>
+          ) : null}
+          {tailErr ? (
+            <div className="text-xs text-rose-600 dark:text-rose-400">{tailErr}</div>
+          ) : null}
+          {tailHint && !tailErr ? (
+            <div className="text-xs text-[var(--color-text-muted)]">{tailHint}</div>
+          ) : null}
+          <pre className="m-0 max-h-[420px] min-h-[180px] overflow-auto rounded-[10px] bg-zinc-900 p-3.5 font-mono text-xs leading-6 whitespace-pre text-zinc-200">
+            <code>{tailText || "\u2014"}</code>
+          </pre>
         </div>
-      </div>
-    </div>
+      </SettingsCard>
+
+      <SettingsCard
+        tone="danger"
+        title={t("transcript.clearTruncate")}
+        actions={
+          <button
+            type="button"
+            onClick={onClearTail}
+            disabled={!groupId || !tailActorId || tailBusy}
+            className={dangerButtonClass("sm")}
+          >
+            {t("transcript.clearTruncate")}
+          </button>
+        }
+      />
+    </SettingsPage>
   );
 }

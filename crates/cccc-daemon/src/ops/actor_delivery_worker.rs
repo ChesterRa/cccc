@@ -240,7 +240,7 @@ fn withdraw_stale_mail_notices(
     }
 }
 
-/// Record a managed submission's outcome. Returns false only for Deferred,
+/// Record a managed submission's outcome. Returns Retry only for Deferred,
 /// the one outcome that enters automatic retry.
 fn settle_managed_batch(
     jobs: &[DeliveryJob],

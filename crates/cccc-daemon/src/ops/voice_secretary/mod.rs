@@ -842,6 +842,9 @@ impl Manager {
             )
             .await;
         let cleaned = cleanup.is_ok();
+        // Settle the terminal phase and release the grant atomically with respect to
+        // admission and reset, so neither observes a finished task that still holds it.
+        let acceptance = self.acceptance.lock().unwrap_or_else(|e| e.into_inner());
         let result = self.store.update(&task.task_id, |task| {
             task.cleanup_confirmed = cleaned;
             task.phase = task.receipt.as_ref().map_or_else(
@@ -886,6 +889,7 @@ impl Manager {
                 .unwrap_or_else(|e| e.into_inner())
                 .remove(&token_hash);
         }
+        drop(acceptance);
         if let Ok(saved) = self.store.load(&task.task_id) {
             self.project(&saved).await;
             if !self.closing.load(Ordering::Acquire) {

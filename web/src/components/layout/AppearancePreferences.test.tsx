@@ -98,76 +98,39 @@ describe("appearance choices inside their real hosts", () => {
     for (const theme of ["light", "dark"] as const) {
       it.each([
         {
-          label: "themeLabel",
-          options: ["themeSystem", "themeLight", "themeDark"],
+          name: "theme",
+          options: ["themeLight", "themeDark", "themeSystem"],
           pick: "themeSystem",
           value: "system",
         },
-        {
-          label: "textSizeLabel",
-          options: ["70%", "90%", "100%", "125%"],
-          pick: "125%",
-          value: 125,
-        },
-        {
-          label: "common:language",
-          options: ["English", "中文", "日本語"],
-          pick: "日本語",
-          value: "ja",
-        },
+        { name: "textScale", options: ["70%", "90%", "100%", "125%"], pick: "125%", value: 125 },
+        { name: "language", options: ["中文", "English", "日本語"], pick: "日本語", value: "ja" },
       ])(
-        `${host}/${theme}: lists and selects $label without dismissing its host`,
-        async ({ label, options, pick, value }) => {
+        `${host}/${theme}: shows every $name option and applies one in a tap without dismissing its host`,
+        async ({ name, options, pick, value }) => {
           await renderHost(host, theme);
-          const trigger = document.querySelector<HTMLButtonElement>(
-            `[data-appearance-preferences] button[aria-label="${label}"]`,
+          const group = document.querySelector<HTMLElement>(
+            `[data-appearance-preferences] [data-appearance-choice="${name}"]`,
           )!;
-          await click(trigger);
-          const items = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
-          expect(items.map((item) => item.textContent!.replace("✓", "").trim())).toEqual(options);
-          const checked = items.filter((item) => item.getAttribute("aria-checked") === "true");
-          expect(checked).toHaveLength(1);
-          expect(checked[0].textContent).toContain(
-            label === "themeLabel"
+          expect(group.getAttribute("role")).toBe("radiogroup");
+          const radios = [...group.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+          expect(radios.map((radio) => radio.textContent)).toEqual(options);
+          const checked = radios.filter((radio) => radio.getAttribute("aria-checked") === "true");
+          expect(checked.map((radio) => radio.textContent)).toEqual([
+            name === "theme"
               ? `theme${theme === "dark" ? "Dark" : "Light"}`
-              : label === "textSizeLabel"
+              : name === "textScale"
                 ? "100%"
                 : "English",
-          );
-          expect(document.activeElement).toBe(checked[0]);
-          await click(items.find((item) => item.textContent!.includes(pick))!);
+          ]);
+          await click(radios.find((radio) => radio.textContent === pick)!);
           expect(
-            label === "themeLabel" ? onTheme : label === "textSizeLabel" ? onScale : changeLanguage,
+            name === "theme" ? onTheme : name === "textScale" ? onScale : changeLanguage,
           ).toHaveBeenCalledWith(value);
-          expect(document.querySelector('[role="menuitemradio"]')).toBeNull();
           expect(outerOpen(host)).toBe(true);
           expect(onClose).not.toHaveBeenCalled();
-          expect(document.activeElement).toBe(trigger);
         },
       );
     }
-    it(`${host}: arrows move focus and Escape closes only the inner menu`, async () => {
-      await renderHost(host, "light");
-      const trigger = document.querySelector<HTMLButtonElement>(
-        '[data-appearance-preferences] button[aria-label="themeLabel"]',
-      )!;
-      await click(trigger);
-      await act(async () => {
-        document.activeElement!.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
-        );
-      });
-      expect(document.activeElement?.textContent).toContain("themeDark");
-      await act(async () => {
-        document.activeElement!.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
-        );
-        await pause();
-      });
-      expect(document.querySelector('[role="menuitemradio"]')).toBeNull();
-      expect(outerOpen(host)).toBe(true);
-      expect(onClose).not.toHaveBeenCalled();
-      expect(document.activeElement).toBe(trigger);
-    });
   }
 });

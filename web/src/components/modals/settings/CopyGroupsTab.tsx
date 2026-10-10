@@ -1,5 +1,5 @@
 import { requestWorkspaceNavigation } from "../../../stores/workspaceNavigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import { useGroupStore } from "../../../stores/useGroupStore";
@@ -7,13 +7,8 @@ import { CheckIcon, DownloadIcon, FileIcon } from "../../Icons";
 import { CreateGroupDirectoryBrowser } from "../CreateGroupDirectoryBrowser";
 import { driveSuggestions } from "../createGroupDirectoryModel";
 import { useWorkspaceDirectoryPicker } from "./useWorkspaceDirectoryPicker";
-import {
-  labelClass,
-  primaryButtonClass,
-  secondaryButtonClass,
-  settingsWorkspaceHeaderClass,
-  settingsWorkspaceShellClass,
-} from "./types";
+import { inputClass, primaryButtonClass, secondaryButtonClass } from "./types";
+import { SettingsCard, SettingsPage, SettingsRow } from "./SettingsKit";
 
 interface CopyGroupsTabProps {
   isDark: boolean;
@@ -39,7 +34,7 @@ function downloadBlobFile(filename: string, blob: Blob) {
   URL.revokeObjectURL(url);
 }
 
-export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProps) {
+export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
   const { t } = useTranslation("settings");
   const refreshGroups = useGroupStore((state) => state.refreshGroups);
   const setSelectedGroupId = useGroupStore((state) => state.setSelectedGroupId);
@@ -187,12 +182,12 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
   };
 
   const filePickerId = "group-copy-import-file-input";
+  const workspaceRootId = useId();
+  const targetTitleId = useId();
   const previewData = copyPreview?.preview;
   const actors = Array.isArray(previewData?.actors) ? previewData?.actors || [] : [];
   const sourceRoot = String(previewData?.source_workspace_root || "").trim();
   const canReset = !!copyFile || !!copyPreview;
-  const sectionTitleClass =
-    "text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-tertiary)]";
   const previewSummaryItems = previewData
     ? [
         t("copyGroups.actors", { count: Number(previewData.actor_count || actors.length || 0) }),
@@ -209,45 +204,53 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
           : "",
       ].filter((item): item is string => Boolean(item))
     : [];
+  const resetImport = () => {
+    cleanupStagedCopy(copyPreview);
+    previewRequestSeqRef.current += 1;
+    setCopyFile(null);
+    setCopyPreview(null);
+    setWorkspaceRoot("");
+    setTargetTitle("");
+    setErr("");
+    setInfo("");
+  };
 
   return (
-    <div className={settingsWorkspaceShellClass(isDark)}>
-      <div className={settingsWorkspaceHeaderClass(isDark)}>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-            {t("copyGroups.title")}
-          </div>
-          <div className="mt-1 max-w-3xl text-xs leading-5 text-[var(--color-text-tertiary)]">
-            {t("copyGroups.description")}
-          </div>
-        </div>
-        {info ? (
-          <div className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-            <CheckIcon size={13} />
-            {info}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="divide-y divide-[var(--glass-border-subtle)]">
-        {err ? (
-          <div className="px-4 py-3 sm:px-5">
-            <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
+    <SettingsPage title={t("copyGroups.title")} description={t("copyGroups.description")}>
+      {info || err || busy ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm" data-copy-groups-status>
+          {info ? (
+            <span
+              role="status"
+              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+            >
+              <CheckIcon size={13} />
+              {info}
+            </span>
+          ) : null}
+          {busy ? (
+            <span className="text-xs text-[var(--color-text-muted)]">
+              {t("copyGroups.working")}
+            </span>
+          ) : null}
+          {err ? (
+            <div
+              role="alert"
+              className="w-full rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-rose-700 dark:text-rose-300"
+            >
               {err}
             </div>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
+      ) : null}
 
-        <section className="grid gap-4 px-4 py-4 sm:px-5 sm:py-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-          <div className="min-w-0">
-            <div className={sectionTitleClass}>{t("copyGroups.exportHeading")}</div>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-secondary)]">
-              {t("copyGroups.exportDescription")}
-            </p>
-          </div>
+      <SettingsCard
+        title={t("copyGroups.exportHeading")}
+        description={t("copyGroups.exportDescription")}
+        actions={
           <button
             type="button"
-            className={`${primaryButtonClass(busy || !groupId)} w-fit`}
+            className={primaryButtonClass(busy || !groupId)}
             onClick={handleExport}
             disabled={busy || !groupId}
             title={!groupId ? t("copyGroups.openFromGroup") : ""}
@@ -255,208 +258,175 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
             <DownloadIcon size={16} />
             {t("copyGroups.exportButton")}
           </button>
-        </section>
+        }
+      />
 
-        <section className="px-4 py-4 sm:px-5 sm:py-5">
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,0.88fr)_minmax(360px,1fr)] xl:items-start">
-            <div className="min-w-0">
-              <div className={sectionTitleClass}>{t("copyGroups.importHeading")}</div>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-secondary)]">
-                {t("copyGroups.importDescription")}
-              </p>
-            </div>
-
-            <div className="min-w-0 space-y-3">
-              <input
-                key={copyFile ? copyFile.name : "none"}
-                id={filePickerId}
-                type="file"
-                accept=".zip,application/zip"
-                className="sr-only"
+      <SettingsCard
+        title={t("copyGroups.importHeading")}
+        description={t("copyGroups.importDescription")}
+        actions={
+          <>
+            {canReset ? (
+              <button
+                type="button"
+                className={secondaryButtonClass("sm")}
                 disabled={busy}
-                onChange={(e) => {
-                  const file =
-                    e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
-                  cleanupStagedCopy(copyPreview);
-                  previewRequestSeqRef.current += 1;
-                  setCopyFile(file);
-                  setCopyPreview(null);
-                  setWorkspaceRoot("");
-                  setTargetTitle("");
-                  setErr("");
-                  setInfo("");
-                  if (file) void loadCopyPreview(file);
-                }}
-              />
+                onClick={resetImport}
+              >
+                {t("common:reset")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={primaryButtonClass(busy || !copyFile || !copyPreview)}
+              disabled={busy || !copyFile || !copyPreview}
+              onClick={handleImport}
+              title={!copyPreview ? t("copyGroups.pickFileFirst") : ""}
+            >
+              {t("copyGroups.importButton")}
+            </button>
+          </>
+        }
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-2 px-5 py-3.5">
+          <input
+            key={copyFile ? copyFile.name : "none"}
+            id={filePickerId}
+            type="file"
+            accept=".zip,application/zip"
+            className="sr-only"
+            disabled={busy}
+            onChange={(e) => {
+              const file = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+              cleanupStagedCopy(copyPreview);
+              previewRequestSeqRef.current += 1;
+              setCopyFile(file);
+              setCopyPreview(null);
+              setWorkspaceRoot("");
+              setTargetTitle("");
+              setErr("");
+              setInfo("");
+              if (file) void loadCopyPreview(file);
+            }}
+          />
+          <label
+            htmlFor={filePickerId}
+            className={`${secondaryButtonClass("sm")} ${busy ? "pointer-events-none opacity-50" : "cursor-pointer"}`}
+            aria-disabled={busy}
+          >
+            <FileIcon size={16} />
+            {t("common:chooseFile", "Choose File")}
+          </label>
+          <span
+            className={`min-w-0 flex-1 truncate text-[13px] ${copyFile ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)]"}`}
+          >
+            {copyFile?.name || t("common:noFileChosen", "No file chosen")}
+          </span>
+        </div>
 
-              <div className="grid gap-2 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
-                <label
-                  htmlFor={filePickerId}
-                  className={`${secondaryButtonClass()} ${busy ? "pointer-events-none opacity-50" : "cursor-pointer"}`}
-                  aria-disabled={busy}
-                >
-                  <FileIcon size={16} />
-                  {t("common:chooseFile", "Choose File")}
-                </label>
-                <div className="min-w-0 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2.5 text-sm">
-                  <span
-                    className={`block truncate ${copyFile ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)]"}`}
-                  >
-                    {copyFile?.name || t("common:noFileChosen", "No file chosen")}
-                  </span>
-                </div>
+        {previewData ? (
+          <>
+            <SettingsRow
+              label={t("copyGroups.workspaceRoot")}
+              help={t("copyGroups.workspaceNote")}
+              htmlFor={workspaceRootId}
+            >
+              <div className="flex w-full max-w-[520px] min-w-0 gap-2">
+                <input
+                  id={workspaceRootId}
+                  className={`${inputClass()} min-w-0 flex-1`}
+                  value={workspaceRoot}
+                  onChange={(e) => setWorkspaceRoot(e.target.value)}
+                  placeholder={sourceRoot || t("copyGroups.workspacePlaceholder")}
+                />
                 <button
                   type="button"
-                  className={primaryButtonClass(busy || !copyFile || !copyPreview)}
-                  disabled={busy || !copyFile || !copyPreview}
-                  onClick={handleImport}
-                  title={!copyPreview ? t("copyGroups.pickFileFirst") : ""}
+                  className={secondaryButtonClass("sm")}
+                  disabled={busy || workspacePickerBusy}
+                  onClick={() => void openWorkspacePicker(workspaceRoot.trim() || sourceRoot)}
                 >
-                  {t("copyGroups.importButton")}
+                  {t("copyGroups.chooseFolder")}
                 </button>
               </div>
-
-              {canReset || busy ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="text-[var(--color-text-muted)]">
-                    {busy ? t("copyGroups.working") : "\u00a0"}
+              {workspacePickerOpen ? (
+                <div className="w-full space-y-2 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-2">
+                  <CreateGroupDirectoryBrowser
+                    dirItems={workspaceDirItems}
+                    currentDir={workspaceCurrentDir}
+                    parentDir={workspaceParentDir}
+                    driveLocations={driveSuggestions(workspaceLocations)}
+                    error={workspacePickerError}
+                    creatingDirectory={workspacePickerBusy}
+                    onSelect={() => {}}
+                    onFetch={(path) => void fetchWorkspaceDirectory(path)}
+                    onCreateDirectory={createWorkspaceDirectory}
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate font-mono text-xs text-[var(--color-text-muted)]">
+                      {workspaceCurrentDir}
+                    </span>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        className={secondaryButtonClass("sm")}
+                        onClick={() => closeWorkspacePicker()}
+                      >
+                        {t("common:cancel")}
+                      </button>
+                      <button
+                        type="button"
+                        className={primaryButtonClass(!workspaceCurrentDir || workspacePickerBusy)}
+                        disabled={!workspaceCurrentDir || workspacePickerBusy}
+                        onClick={() => {
+                          setWorkspaceRoot(workspaceCurrentDir);
+                          closeWorkspacePicker();
+                        }}
+                      >
+                        {t("copyGroups.useFolder")}
+                      </button>
+                    </div>
                   </div>
-                  {canReset ? (
-                    <button
-                      type="button"
-                      className={secondaryButtonClass("sm")}
-                      disabled={busy}
-                      onClick={() => {
-                        cleanupStagedCopy(copyPreview);
-                        previewRequestSeqRef.current += 1;
-                        setCopyFile(null);
-                        setCopyPreview(null);
-                        setWorkspaceRoot("");
-                        setTargetTitle("");
-                        setErr("");
-                        setInfo("");
-                      }}
-                    >
-                      {t("common:reset")}
-                    </button>
-                  ) : null}
                 </div>
               ) : null}
-            </div>
-          </div>
+            </SettingsRow>
 
-          {previewData ? (
-            <div className="mt-4 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-3.5 sm:p-4">
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.75fr)]">
-                <div className="min-w-0 space-y-3">
-                  <div>
-                    <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                      {String(previewData.source_title || t("copyGroups.untitled"))}
-                    </div>
-                    <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
-                      {t("copyGroups.sourceId", {
-                        groupId: previewData.source_group_id || "unknown",
-                      })}
-                    </div>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <div>
-                      <label className={labelClass(isDark)}>{t("copyGroups.workspaceRoot")}</label>
-                      <div className="mt-1 flex gap-2">
-                        <input
-                          className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]"
-                          value={workspaceRoot}
-                          onChange={(e) => setWorkspaceRoot(e.target.value)}
-                          placeholder={sourceRoot || t("copyGroups.workspacePlaceholder")}
-                        />
-                        <button
-                          type="button"
-                          className={secondaryButtonClass("sm")}
-                          disabled={busy || workspacePickerBusy}
-                          onClick={() =>
-                            void openWorkspacePicker(workspaceRoot.trim() || sourceRoot)
-                          }
-                        >
-                          {t("copyGroups.chooseFolder")}
-                        </button>
-                      </div>
-                      {workspacePickerOpen ? (
-                        <div className="mt-2 space-y-2 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-2">
-                          <CreateGroupDirectoryBrowser
-                            dirItems={workspaceDirItems}
-                            currentDir={workspaceCurrentDir}
-                            parentDir={workspaceParentDir}
-                            driveLocations={driveSuggestions(workspaceLocations)}
-                            error={workspacePickerError}
-                            creatingDirectory={workspacePickerBusy}
-                            onSelect={() => {}}
-                            onFetch={(path) => void fetchWorkspaceDirectory(path)}
-                            onCreateDirectory={createWorkspaceDirectory}
-                          />
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="min-w-0 truncate font-mono text-xs text-[var(--color-text-muted)]">
-                              {workspaceCurrentDir}
-                            </span>
-                            <div className="flex shrink-0 gap-2">
-                              <button
-                                type="button"
-                                className={secondaryButtonClass("sm")}
-                                onClick={() => closeWorkspacePicker()}
-                              >
-                                {t("common:cancel")}
-                              </button>
-                              <button
-                                type="button"
-                                className={primaryButtonClass(
-                                  !workspaceCurrentDir || workspacePickerBusy,
-                                )}
-                                disabled={!workspaceCurrentDir || workspacePickerBusy}
-                                onClick={() => {
-                                  setWorkspaceRoot(workspaceCurrentDir);
-                                  closeWorkspacePicker();
-                                }}
-                              >
-                                {t("copyGroups.useFolder")}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div>
-                      <label className={labelClass(isDark)}>{t("copyGroups.groupTitle")}</label>
-                      <input
-                        className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]"
-                        value={targetTitle}
-                        onChange={(e) => setTargetTitle(e.target.value)}
-                        placeholder={String(previewData.source_title || "")}
-                      />
-                    </div>
-                  </div>
-                  <div className="text-xs leading-5 text-[var(--color-text-tertiary)]">
-                    {t("copyGroups.workspaceNote")}
-                  </div>
+            <SettingsRow label={t("copyGroups.groupTitle")} htmlFor={targetTitleId}>
+              <input
+                id={targetTitleId}
+                className={`${inputClass()} max-w-[360px]`}
+                value={targetTitle}
+                onChange={(e) => setTargetTitle(e.target.value)}
+                placeholder={String(previewData.source_title || "")}
+              />
+            </SettingsRow>
+
+            <div className="grid min-w-0 gap-3 px-5 py-3.5" data-copy-groups-preview>
+              <div className="min-w-0">
+                <div className="text-[13px] font-semibold text-[var(--color-text-primary)]">
+                  {String(previewData.source_title || t("copyGroups.untitled"))}
                 </div>
-
-                <div className="grid content-start gap-2">
-                  {previewSummaryItems.map((item) => (
-                    <div
-                      key={item}
-                      className="flex items-start gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-text-secondary)]"
-                    >
-                      <CheckIcon
-                        size={13}
-                        className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-300"
-                      />
-                      <span>{item}</span>
-                    </div>
-                  ))}
+                <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+                  {t("copyGroups.sourceId", { groupId: previewData.source_group_id || "unknown" })}
                 </div>
               </div>
+              <ul className="grid gap-1.5 @min-[900px]/settings:grid-cols-2">
+                {previewSummaryItems.map((item) => (
+                  <li
+                    key={item}
+                    className="flex items-start gap-2 text-xs leading-5 text-[var(--color-text-secondary)]"
+                  >
+                    <CheckIcon
+                      size={13}
+                      className="mt-1 shrink-0 text-emerald-600 dark:text-emerald-300"
+                    />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
-          ) : null}
-        </section>
-      </div>
-    </div>
+          </>
+        ) : null}
+      </SettingsCard>
+    </SettingsPage>
   );
 }

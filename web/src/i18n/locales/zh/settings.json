@@ -24,6 +24,8 @@
   },
   "navigation": {
     "targetScope": "目标范围",
+    "appliesToGroup": "作用于工作组 {{name}}",
+    "appliesToGlobal": "作用于整个 CCCC 实例（守护进程 + Web）",
     "thisGroup": "当前工作组",
     "global": "整个实例",
     "groupScopeTitle": "工作组范围",
@@ -1052,6 +1054,7 @@
     "compactFrames": "压缩重复帧"
   },
   "guidance": {
+    "commonAndRolesTitle": "共享范围",
     "openFromGroup": "请从工作组中打开此标签页。",
     "overridesHint": "引导文件存储在已绑定的项目作用域中。",
     "preambleTitle": "启动引导（Preamble）",

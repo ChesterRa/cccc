@@ -27,6 +27,8 @@
   },
   "navigation": {
     "targetScope": "Target Scope",
+    "appliesToGroup": "Applies to group {{name}}",
+    "appliesToGlobal": "Applies to the whole CCCC instance (daemon + Web)",
     "thisGroup": "This group",
     "global": "This instance",
     "groupScopeTitle": "Group Scope",
@@ -1060,6 +1062,7 @@
     "compactFrames": "Compact repeated frames"
   },
   "guidance": {
+    "commonAndRolesTitle": "Shared Scopes",
     "openFromGroup": "Open this tab from a group.",
     "overridesHint": "Guidance files are stored in the attached project scope.",
     "preambleTitle": "Bootstrap (Preamble)",

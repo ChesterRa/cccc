@@ -49,7 +49,7 @@ export function PresentationTrigger({
         "relative flex h-8 w-8 pointer-coarse:h-10 pointer-coarse:w-10 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2 focus-visible:outline-offset-2",
         isOpen
           ? "bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] ring-1 ring-inset ring-[var(--glass-tab-border-active)]"
-          : "text-[var(--color-text-secondary)]",
+          : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]",
         hasAttention &&
           (isDark
             ? "presentation-slot-attention presentation-slot-attention-dark"
@@ -61,7 +61,7 @@ export function PresentationTrigger({
       data-group-presentation-trigger
       aria-expanded={isOpen}
     >
-      <BookmarkIcon size={17} className="shrink-0" aria-hidden="true" />
+      <BookmarkIcon size={18} strokeWidth={1.25} className="shrink-0" aria-hidden="true" />
       {hasAttention ? (
         <span
           className={classNames(

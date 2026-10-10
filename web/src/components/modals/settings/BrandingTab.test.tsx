@@ -47,7 +47,59 @@ it("saves the product name explicitly and exposes success beside the form", asyn
   );
   expect(api.updateWebBranding).toHaveBeenCalledWith({ productName: "Studio" });
   expect(host.querySelector('[role="status"]')?.textContent).toBe("branding.saved");
-  expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+  // Saved name equals the stored one again, so the page's save bar has nothing to save.
+  expect(saveBar().disabled).toBe(true);
+});
+const saveBar = () => host.querySelector<HTMLButtonElement>("[data-settings-save-bar] button")!;
+it("enables the save bar only for a changed name and keeps it off during an icon upload", async () => {
+  expect(saveBar().disabled).toBe(true);
+  expect(saveBar().textContent).toBe("branding.saveName");
+  await changeName("Studio");
+  expect(saveBar().disabled).toBe(false);
+
+  type UploadResult = Awaited<ReturnType<typeof api.uploadWebBrandingAsset>>;
+  let finishUpload!: (value: UploadResult) => void;
+  vi.mocked(api.uploadWebBrandingAsset).mockReturnValueOnce(
+    new Promise<UploadResult>((resolve) => {
+      finishUpload = resolve;
+    }),
+  );
+  const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+  Object.defineProperty(input, "files", { value: [new File(["i"], "i.png")], configurable: true });
+  await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+  // Uploading blocks saving, but the bar does not claim to be saving.
+  expect(saveBar().disabled).toBe(true);
+  expect(saveBar().textContent).toBe("branding.saveName");
+  await act(async () =>
+    finishUpload({ ok: false, error: { code: "upload_failed", message: "x" } }),
+  );
+  expect(saveBar().disabled).toBe(false);
+
+  vi.mocked(api.updateWebBranding).mockResolvedValue({
+    ok: true,
+    result: { branding: { ...DEFAULT_WEB_BRANDING, product_name: "Studio" } },
+  });
+  await act(async () => saveBar().click());
+  expect(api.updateWebBranding).toHaveBeenCalledWith({ productName: "Studio" });
+});
+it("lays the name and both icons out as rows of one card, resets only custom icons", async () => {
+  const rows = [...host.querySelectorAll("[data-settings-card] [data-settings-row]")];
+  expect(rows.map((row) => row.querySelector("label, span")?.textContent)).toEqual([
+    "branding.productNameTitle",
+    "branding.logoTitle",
+    "branding.faviconTitle",
+  ]);
+  const reset = (label: string) =>
+    [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === label)!;
+  expect(reset("branding.useDefault").disabled).toBe(true);
+  expect(reset("branding.followLogo").disabled).toBe(true);
+  await act(async () =>
+    useBrandingStore.setState({
+      branding: { ...DEFAULT_WEB_BRANDING, has_custom_logo_icon: true },
+    }),
+  );
+  expect(reset("branding.useDefault").disabled).toBe(false);
+  expect(reset("branding.followLogo").disabled).toBe(true);
 });
 it("uploads each icon to its own endpoint without losing the unsaved name", async () => {
   await changeName("Unsaved name");

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import type { Actor } from "../../../types";
@@ -9,14 +9,15 @@ import {
   type ParsedHelpMarkdown,
 } from "../../../utils/helpMarkdown";
 import { BodyPortal } from "../../ui/BodyPortal";
+import { SegmentedChoice } from "../../ui/segmented-choice";
 import {
   cardClass,
   inputClass,
-  labelClass,
   primaryButtonClass,
   secondaryButtonClass,
   settingsDialogPanelClass,
 } from "./types";
+import { SettingsCard, SettingsPage, SettingsRow } from "./SettingsKit";
 
 type PromptKind = "preamble" | "help";
 type PromptInfo = api.GroupPromptInfo;
@@ -61,6 +62,12 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   const [helpTouchedRaw, setHelpTouchedRaw] = useState(false);
   const [helpChangedBlocks, setHelpChangedBlocks] = useState<HelpChangedBlock[]>([]);
   const [selectedHelpScope, setSelectedHelpScope] = useState<HelpScopeId>("common");
+
+  const ids = { preamble: useId(), helpMode: useId(), helpEditor: useId() };
+  // The expanded dialog renders a second copy of a card, so each copy needs its own ids
+  // for labels to reach their own control.
+  const idFor = (key: keyof typeof ids, expanded: boolean) =>
+    expanded ? `${ids[key]}expanded` : ids[key];
 
   const liveDraft = useRef({ groupId, prompts });
   liveDraft.current = { groupId, prompts };
@@ -280,105 +287,52 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   const preamble = prompts?.preamble;
   const help = prompts?.help;
   const helpSource = help?.source || "builtin";
-  const helpBadge =
-    helpSource === "home"
-      ? isDark
-        ? "bg-white/[0.07] text-white border border-white/10"
-        : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)] border border-black/10"
-      : isDark
-        ? "bg-white/[0.04] text-white/68 border border-white/8"
-        : "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]";
-
   const preambleSource = preamble?.source || "builtin";
-  const preambleBadge =
-    preambleSource === "home"
-      ? isDark
-        ? "bg-white/[0.07] text-white border border-white/10"
-        : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)] border border-black/10"
-      : isDark
-        ? "bg-white/[0.04] text-white/68 border border-white/8"
-        : "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]";
-  const settingsScrollAreaClass =
-    "overflow-y-auto scrollbar-subtle pr-2 pb-2 [scrollbar-gutter:stable]";
-  const promptShellClass = `overflow-hidden rounded-[22px] border backdrop-blur-xl ${
-    isDark
-      ? "border-white/10 bg-[linear-gradient(180deg,rgba(19,20,24,0.88),rgba(10,11,14,0.96))] shadow-[0_28px_100px_rgba(0,0,0,0.36)]"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))] shadow-[0_28px_100px_rgba(15,23,42,0.06)]"
-  }`;
-  const promptHeaderClass = `flex items-start justify-between gap-4 px-4 py-4 sm:px-5 sm:py-4 ${
-    isDark
-      ? "border-b border-white/8 bg-white/[0.025]"
-      : "border-b border-black/6 bg-[rgba(18,18,20,0.018)]"
-  }`;
-  const promptHeaderTextClass = isDark ? "text-white" : "text-[rgb(22,24,29)]";
-  const promptHintClass = "text-[var(--color-text-tertiary)]";
-  const promptBodyClass = (expanded = false) =>
-    `px-4 py-4 sm:px-5 sm:py-5 ${expanded ? "min-h-0 flex flex-1 flex-col" : "space-y-4"}`;
-  const promptPathClass = `inline-flex max-w-full items-center rounded-full border px-3 py-1 text-xs font-mono leading-5 ${
-    isDark
-      ? "border-white/8 bg-white/[0.03] text-white/64"
-      : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
-  }`;
-  const editorSurfaceSoftClass = `rounded-[18px] border px-4 py-3 sm:px-4 sm:py-4 ${
-    isDark
-      ? "border-white/8 bg-white/[0.025]"
-      : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(246,248,251,0.88))]"
-  }`;
-  const editorTextareaClass = `${inputClass(isDark)} border-0 bg-transparent px-0 py-0 shadow-none focus-visible:ring-0`;
-  const editorMetaBadgeClass = `inline-flex items-center rounded-full px-2.5 py-1 text-[0.625rem] font-medium border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`;
-  const segmentedControlClass = `inline-flex rounded-full border p-1 ${
-    isDark
-      ? "border-white/8 bg-white/[0.025]"
-      : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]"
-  }`;
-  const navigationPanelClass = `rounded-[18px] border p-3 ${
-    isDark
-      ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.86),rgba(14,15,19,0.96))]"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(246,248,251,0.92))]"
-  }`;
-  const workspacePanelClass = `rounded-[18px] border p-3.5 sm:p-4 ${
-    isDark
-      ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.9),rgba(13,14,18,0.98))]"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))]"
-  }`;
-  const navSectionTitleClass = `mb-2 text-[0.625rem] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]`;
-  const overridesHintClass = `rounded-[18px] border px-4 py-3 text-xs leading-5 ${
-    isDark
-      ? "border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] text-white/50"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(245,248,252,0.9))] text-[rgb(91,92,97)]"
-  }`;
+  const editorClass = (expanded: boolean, minHeight: string) =>
+    `${inputClass(isDark)} w-full font-mono text-xs leading-6 ${expanded ? "min-h-[60vh] resize-none" : `${minHeight} resize-y`}`;
+  const captionClass = "text-[11px] font-medium text-[var(--color-text-muted)]";
 
-  const renderSourceBadge = (kind: PromptKind) => {
-    const badgeClass = kind === "help" ? helpBadge : preambleBadge;
+  const renderSourceRow = (kind: PromptKind) => {
     const source = kind === "help" ? helpSource : preambleSource;
+    const path = kind === "help" ? help?.path : preamble?.path;
     return (
-      <div
-        className={`inline-flex items-center rounded-full px-3 py-1.5 text-xs font-medium ${badgeClass}`}
+      <SettingsRow
+        label={t("common:status")}
+        help={path ? <span className="font-mono break-all">{path}</span> : undefined}
       >
-        {source === "home" ? t("guidance.overrideBadge") : t("guidance.builtinBadge")}
-      </div>
+        <span
+          className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${
+            source === "home"
+              ? "border-[var(--color-text-primary)]/20 text-[var(--color-text-primary)]"
+              : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
+          }`}
+          data-guidance-source={source}
+        >
+          {source === "home" ? t("guidance.overrideBadge") : t("guidance.builtinBadge")}
+        </span>
+      </SettingsRow>
     );
   };
 
-  const renderPromptActions = (kind: PromptKind, expanded = false) => {
+  const renderPromptActions = (kind: PromptKind, expanded: boolean) => {
     const source = kind === "help" ? helpSource : preambleSource;
     const handleSave = kind === "help" ? () => void saveHelp() : () => void savePrompt("preamble");
     return (
-      <div
-        className={
-          expanded
-            ? "mt-4 flex shrink-0 flex-wrap items-center gap-2 border-t border-[var(--glass-border-subtle)] pt-3"
-            : `mt-0 flex flex-wrap items-center gap-2 border-t px-4 py-3 sm:px-5 ${
-                isDark ? "border-white/8 bg-white/[0.02]" : "border-black/6 bg-black/[0.015]"
-              }`
-        }
-      >
-        <button className={primaryButtonClass(busy)} onClick={handleSave} disabled={busy}>
-          {t("common:save")}
-        </button>
+      <>
+        {!expanded ? (
+          <button
+            type="button"
+            className={secondaryButtonClass("sm")}
+            onClick={() => setExpandedKind(kind)}
+            disabled={busy}
+            title={t("guidance.expandTitle")}
+          >
+            {t("guidance.expand")}
+          </button>
+        ) : null}
         <button
           type="button"
-          className={secondaryButtonClass()}
+          className={secondaryButtonClass("sm")}
           onClick={() => void resetPrompt(kind)}
           disabled={busy || source !== "home"}
           title={source === "home" ? t("guidance.resetHint") : t("guidance.noOverride")}
@@ -387,72 +341,42 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
         </button>
         <button
           type="button"
-          className={`${secondaryButtonClass()} ml-auto`}
+          className={secondaryButtonClass("sm")}
           onClick={() => void load()}
           disabled={busy}
           title={t("guidance.discardChanges")}
         >
           {t("guidance.discardChanges")}
         </button>
-      </div>
+        <button
+          type="button"
+          className={primaryButtonClass(busy)}
+          onClick={handleSave}
+          disabled={busy}
+        >
+          {t("common:save")}
+        </button>
+      </>
     );
   };
 
   const renderPreambleCard = (expanded = false) => (
-    <div className={expanded ? "flex h-full min-h-0 flex-col overflow-hidden" : promptShellClass}>
-      <div className={expanded ? "flex items-start justify-between gap-3" : promptHeaderClass}>
-        <div className="min-w-0">
-          <div className={`text-sm font-semibold ${promptHeaderTextClass}`}>
-            {t("guidance.preambleTitle")}
-          </div>
-          <div className={`text-xs ${promptHintClass}`}>{t("guidance.preambleHint")}</div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {!expanded ? (
-            <button
-              type="button"
-              className={secondaryButtonClass("sm")}
-              onClick={() => setExpandedKind("preamble")}
-              disabled={busy}
-              title={t("guidance.expandTitle")}
-            >
-              {t("guidance.expand")}
-            </button>
-          ) : null}
-          {renderSourceBadge("preamble")}
-        </div>
-      </div>
-
-      <div
-        className={
-          expanded ? "mt-3 min-h-0 flex flex-1 flex-col overflow-hidden" : promptBodyClass(expanded)
-        }
-      >
-        {preamble?.path ? (
-          <div className={promptPathClass}>
-            <span className="truncate">{preamble.path}</span>
-          </div>
-        ) : null}
-
-        <div
-          className={`${editorSurfaceSoftClass} ${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}
-        >
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <label className={labelClass(isDark)}>{t("guidance.markdown")}</label>
-            <div className={editorMetaBadgeClass}>Markdown</div>
-          </div>
-          <textarea
-            className={`${editorTextareaClass} font-mono text-xs ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
-            style={expanded ? undefined : { minHeight: 220 }}
-            value={preamble?.content || ""}
-            onChange={(e) => setPromptContent("preamble", e.target.value)}
-            spellCheck={false}
-          />
-        </div>
-      </div>
-
-      {renderPromptActions("preamble", expanded)}
-    </div>
+    <SettingsCard
+      title={t("guidance.preambleTitle")}
+      description={t("guidance.preambleHint")}
+      actions={renderPromptActions("preamble", expanded)}
+    >
+      {renderSourceRow("preamble")}
+      <SettingsRow label={t("guidance.markdown")} htmlFor={idFor("preamble", expanded)} stacked>
+        <textarea
+          id={idFor("preamble", expanded)}
+          className={editorClass(expanded, "min-h-[220px]")}
+          value={preamble?.content || ""}
+          onChange={(e) => setPromptContent("preamble", e.target.value)}
+          spellCheck={false}
+        />
+      </SettingsRow>
+    </SettingsCard>
   );
 
   const commonScope = {
@@ -557,267 +481,133 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
     updateActorNote(selectedHelpScopeItem.id.slice("actor:".length), value);
   };
 
-  const renderHelpScopeButton = (item: { id: HelpScopeId; title: string; roleLabel?: string }) => {
-    const active = item.id === selectedHelpScope;
-    return (
-      <button
-        key={item.id}
-        type="button"
-        className={`w-full text-left rounded-2xl border px-3 py-2.5 transition-colors ${
-          active
-            ? isDark
-              ? "border-white/10 bg-white/[0.08] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
-              : "border-black/10 bg-white text-[rgb(35,36,37)] shadow-[0_8px_30px_rgba(15,23,42,0.08)]"
-            : isDark
-              ? "border-white/6 bg-white/[0.018] text-white/70 hover:bg-white/[0.04]"
-              : "border-black/6 bg-black/[0.02] text-gray-800 hover:bg-black/[0.03]"
-        }`}
-        onClick={() => setSelectedHelpScope(item.id)}
-      >
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="font-medium truncate">{item.title}</span>
-          {item.roleLabel ? (
-            <span
-              className={`text-[0.625rem] px-1.5 py-0.5 rounded-full shrink-0 border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`}
-            >
-              {item.roleLabel}
-            </span>
-          ) : null}
-        </div>
-      </button>
-    );
-  };
-
-  const renderHelpCard = (expanded = false) => (
-    <div className={expanded ? "flex h-full min-h-0 flex-col overflow-hidden" : promptShellClass}>
-      <div className={expanded ? "flex items-start justify-between gap-3" : promptHeaderClass}>
-        <div className="min-w-0">
-          <div className={`text-sm font-semibold ${promptHeaderTextClass}`}>
-            {t("guidance.helpTitle")}
-          </div>
-          <div className={`text-xs ${promptHintClass}`}>{t("guidance.helpHint")}</div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {!expanded ? (
-            <button
-              type="button"
-              className={secondaryButtonClass("sm")}
-              onClick={() => setExpandedKind("help")}
-              disabled={busy}
-              title={t("guidance.expandTitle")}
-            >
-              {t("guidance.expand")}
-            </button>
-          ) : null}
-          {renderSourceBadge("help")}
-        </div>
-      </div>
-
-      <div
-        className={
-          expanded ? "mt-3 min-h-0 flex flex-1 flex-col overflow-hidden" : promptBodyClass(expanded)
-        }
-      >
-        {help?.path ? (
-          <div className={promptPathClass}>
-            <span className="truncate">{help.path}</span>
-          </div>
-        ) : null}
-
-        <div className={`${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}>
-          <div
-            className={`flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center ${expanded ? "pb-4" : "mb-4"}`}
-          >
-            <div className="min-w-0 flex-1">
-              <div className="max-w-[54ch] text-xs leading-5 text-[var(--color-text-tertiary)]">
-                {t(
-                  "guidance.helpEditorHint",
-                  "Structured mode edits common, role, and actor notes; raw mode keeps full-file control.",
-                )}
-              </div>
-            </div>
-            <div className={`${segmentedControlClass} w-full shrink-0 sm:w-auto`}>
-              <button
-                type="button"
-                className={`flex-1 whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-colors sm:flex-none ${
-                  helpViewMode === "structured"
-                    ? "bg-[var(--color-accent-primary)] text-[var(--color-text-inverse)]"
-                    : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
-                }`}
-                onClick={() => setHelpViewMode("structured")}
-              >
-                {t("guidance.structuredView", "Structured")}
-              </button>
-              <button
-                type="button"
-                className={`flex-1 whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-colors sm:flex-none ${
-                  helpViewMode === "raw"
-                    ? "bg-[var(--color-accent-primary)] text-[var(--color-text-inverse)]"
-                    : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
-                }`}
-                onClick={() => setHelpViewMode("raw")}
-              >
-                {t("guidance.rawView", "Raw Markdown")}
-              </button>
-            </div>
-          </div>
-
-          {helpViewMode === "structured" ? (
-            <div
-              className={`mt-5 grid grid-cols-1 gap-5 ${expanded ? "min-h-0 flex-1 overflow-y-auto xl:overflow-hidden xl:grid-cols-[256px_minmax(0,1fr)]" : "items-start xl:grid-cols-[228px_minmax(0,1fr)]"}`}
-            >
-              <div
-                className={`${navigationPanelClass} ${expanded ? "min-h-0 flex flex-col overflow-hidden" : "space-y-2.5"}`}
-              >
-                <div
-                  className={
-                    expanded ? `min-h-0 flex-1 space-y-4 ${settingsScrollAreaClass}` : "space-y-4"
-                  }
-                >
-                  <div className="space-y-2.5">
-                    <div className={navSectionTitleClass}>
-                      {t("guidance.commonAndRolesTitle", "Shared Scopes")}
-                    </div>
-                    {renderHelpScopeButton(commonScope)}
-                    {renderHelpScopeButton(foremanScope)}
-                    {renderHelpScopeButton(peerScope)}
-                  </div>
-
-                  <div className={`pt-3 border-t ${isDark ? "border-white/8" : "border-gray-200"}`}>
-                    <div className={navSectionTitleClass}>
-                      {t("guidance.actorNotesTitle", "Actor Notes")}
-                    </div>
-                    {actorScopes.length ? (
-                      <div
-                        className={
-                          expanded
-                            ? "space-y-2"
-                            : `space-y-2 max-h-[360px] ${settingsScrollAreaClass}`
-                        }
-                      >
-                        {actorScopes.map((item) => renderHelpScopeButton(item))}
-                      </div>
-                    ) : (
-                      <div className="rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-3 py-4 text-sm text-[var(--color-text-muted)]">
-                        {t(
-                          "guidance.noActorsForStructuredHelp",
-                          "No actors available in this group yet.",
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {orphanActorScopes.length ? (
-                    <div
-                      className={`pt-3 border-t ${isDark ? "border-white/8" : "border-gray-200"}`}
-                    >
-                      <div className={navSectionTitleClass}>
-                        {t("guidance.orphanActorNotesTitle", "Other actor notes")}
-                      </div>
-                      <div
-                        className={
-                          expanded
-                            ? "space-y-2"
-                            : `space-y-2 max-h-[220px] ${settingsScrollAreaClass}`
-                        }
-                      >
-                        {orphanActorScopes.map((item) => renderHelpScopeButton(item))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-
-              <div
-                className={`${workspacePanelClass} ${expanded ? "min-h-[360px] flex flex-col overflow-hidden xl:min-h-0" : ""}`}
-              >
-                <div className="mb-4 flex items-start gap-4">
-                  <div className="min-w-0">
-                    <div
-                      className={`text-xs font-medium uppercase tracking-[0.16em] ${isDark ? "text-white/44" : "text-gray-500"}`}
-                    >
-                      {t("guidance.editKind", { kind: selectedHelpScopeItem.title })}
-                    </div>
-                    <div
-                      className={`mt-1 text-sm font-semibold ${isDark ? "text-white" : "text-gray-900"}`}
-                    >
-                      {selectedHelpScopeItem.title}
-                    </div>
-                    <div className={`mt-1 text-xs ${isDark ? "text-white/40" : "text-gray-500"}`}>
-                      {selectedHelpScopeItem.hint}
-                    </div>
-                  </div>
-                  {selectedHelpScopeItem.roleLabel ? (
-                    <div
-                      className={`ml-auto shrink-0 rounded-full px-2.5 py-1 text-[0.625rem] ${isDark ? "bg-white/[0.05] text-white/62" : "bg-black/[0.05] text-gray-600"}`}
-                    >
-                      {selectedHelpScopeItem.roleLabel}
-                    </div>
-                  ) : null}
-                </div>
-
-                <div
-                  className={`${editorSurfaceSoftClass} ${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}
-                >
-                  <textarea
-                    className={`${editorTextareaClass} font-mono text-xs ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
-                    style={expanded ? undefined : { minHeight: 320, maxHeight: "44vh" }}
-                    value={selectedHelpScopeItem.value}
-                    onChange={(e) => updateSelectedHelpScopeValue(e.target.value)}
-                    placeholder={selectedHelpScopeItem.placeholder}
-                    spellCheck={false}
-                  />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div
-              className={`mt-5 ${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}
-            >
-              <div
-                className={`${editorSurfaceSoftClass} ${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}
-              >
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <label className={labelClass(isDark)}>{t("guidance.markdown")}</label>
-                  <div className={editorMetaBadgeClass}>Raw</div>
-                </div>
-                <textarea
-                  className={`${editorTextareaClass} font-mono text-xs ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
-                  style={expanded ? undefined : { minHeight: 320, maxHeight: "44vh" }}
-                  value={help?.content || ""}
-                  onChange={(e) => setHelpContentRaw(e.target.value)}
-                  spellCheck={false}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {renderPromptActions("help", expanded)}
+  const scopeChoice = (caption: string, items: Array<{ id: HelpScopeId; title: string }>) => (
+    <div className="flex min-w-0 flex-col items-start gap-1.5">
+      <span className={captionClass}>{caption}</span>
+      <SegmentedChoice
+        fill={false}
+        ariaLabel={caption}
+        value={selectedHelpScope}
+        options={items.map((item) => ({ value: item.id, label: item.title }))}
+        onChange={setSelectedHelpScope}
+      />
     </div>
   );
 
+  const renderHelpCard = (expanded = false) => (
+    <SettingsCard
+      title={t("guidance.helpTitle")}
+      description={t("guidance.helpHint")}
+      actions={renderPromptActions("help", expanded)}
+    >
+      {renderSourceRow("help")}
+      <SettingsRow
+        label={t("guidance.helpEditorTitle")}
+        help={t(
+          "guidance.helpEditorHint",
+          "Structured mode edits common, role, and actor notes; raw mode keeps full-file control.",
+        )}
+        labelId={idFor("helpMode", expanded)}
+      >
+        <SegmentedChoice
+          fill={false}
+          labelledBy={idFor("helpMode", expanded)}
+          value={helpViewMode}
+          options={[
+            { value: "structured", label: t("guidance.structuredView", "Structured") },
+            { value: "raw", label: t("guidance.rawView", "Raw Markdown") },
+          ]}
+          onChange={setHelpViewMode}
+        />
+      </SettingsRow>
+      {helpViewMode === "structured" ? (
+        <SettingsRow
+          label={t("guidance.editKind", { kind: selectedHelpScopeItem.title })}
+          help={
+            <>
+              {selectedHelpScopeItem.hint}
+              {selectedHelpScopeItem.roleLabel ? (
+                <span className="ml-2 inline-flex rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-1.5 text-[10px] text-[var(--color-text-secondary)]">
+                  {selectedHelpScopeItem.roleLabel}
+                </span>
+              ) : null}
+            </>
+          }
+          htmlFor={idFor("helpEditor", expanded)}
+          stacked
+        >
+          <div className="flex w-full min-w-0 flex-col gap-3">
+            {scopeChoice(t("guidance.commonAndRolesTitle", "Shared Scopes"), [
+              commonScope,
+              foremanScope,
+              peerScope,
+            ])}
+            {actorScopes.length ? (
+              scopeChoice(t("guidance.actorNotesTitle", "Actor Notes"), actorScopes)
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <span className={captionClass}>{t("guidance.actorNotesTitle", "Actor Notes")}</span>
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  {t(
+                    "guidance.noActorsForStructuredHelp",
+                    "No actors available in this group yet.",
+                  )}
+                </span>
+              </div>
+            )}
+            {orphanActorScopes.length
+              ? scopeChoice(
+                  t("guidance.orphanActorNotesTitle", "Other actor notes"),
+                  orphanActorScopes,
+                )
+              : null}
+            <textarea
+              id={idFor("helpEditor", expanded)}
+              className={editorClass(expanded, "min-h-[320px]")}
+              style={expanded ? undefined : { maxHeight: "44vh" }}
+              value={selectedHelpScopeItem.value}
+              onChange={(e) => updateSelectedHelpScopeValue(e.target.value)}
+              placeholder={selectedHelpScopeItem.placeholder}
+              spellCheck={false}
+            />
+          </div>
+        </SettingsRow>
+      ) : (
+        <SettingsRow label={t("guidance.markdown")} htmlFor={idFor("helpEditor", expanded)} stacked>
+          <textarea
+            id={idFor("helpEditor", expanded)}
+            className={editorClass(expanded, "min-h-[320px]")}
+            style={expanded ? undefined : { maxHeight: "44vh" }}
+            value={help?.content || ""}
+            onChange={(e) => setHelpContentRaw(e.target.value)}
+            spellCheck={false}
+          />
+        </SettingsRow>
+      )}
+    </SettingsCard>
+  );
+
   return (
-    <div className="space-y-3">
+    <SettingsPage
+      title={t("tabs.guidance")}
+      description={
+        <Trans
+          i18nKey="guidance.overridesHint"
+          ns="settings"
+          components={[<span key="override" className="font-mono" />]}
+        />
+      }
+    >
       {hint ? (
         <p role="status" className="text-sm text-[var(--color-accent-success)]">
           {hint}
         </p>
       ) : null}
       {err ? (
-        <div role="alert" className={`text-sm ${isDark ? "text-rose-300" : "text-red-600"}`}>
+        <div role="alert" className="text-sm text-rose-600 dark:text-rose-400">
           {err}
         </div>
       ) : null}
-
-      <div className={overridesHintClass}>
-        <Trans
-          i18nKey="guidance.overridesHint"
-          ns="settings"
-          components={[<span key="override" className="font-mono" />]}
-        />
-      </div>
 
       {renderPreambleCard()}
       {renderHelpCard()}
@@ -844,13 +634,13 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
                   {t("common:close")}
                 </button>
               </div>
-              <div className="min-h-0 flex-1 overflow-hidden p-4 sm:p-6 lg:p-7">
+              <div className="@container/settings min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 lg:p-7">
                 {expandedKind === "help" ? renderHelpCard(true) : renderPreambleCard(true)}
               </div>
             </div>
           </div>
         </BodyPortal>
       ) : null}
-    </div>
+    </SettingsPage>
   );
 }

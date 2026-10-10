@@ -102,20 +102,20 @@ describe("header settings menu", () => {
     await mount({ canAccessAccount: false, selectedGroupId: "" });
     const panel = await openMenu();
     expect(
-      panel.querySelectorAll('[data-appearance-preferences] button[aria-haspopup="menu"]'),
+      panel.querySelectorAll('[data-appearance-preferences] [role="radiogroup"]'),
     ).toHaveLength(3);
     expect(buttonByText(panel, "account")).toBeUndefined();
-    expect(buttonByText(panel, "settingsButton").disabled).toBe(true);
+    expect(buttonByText(panel, "allSettings").disabled).toBe(true);
     await act(async () => root.render(<AppHeader {...props} canAccessAccount={false} />));
     const scoped = await openMenu();
     expect(buttonByText(scoped, "account")).toBeUndefined();
-    expect(buttonByText(scoped, "settingsButton").disabled).toBe(false);
+    expect(buttonByText(scoped, "allSettings").disabled).toBe(false);
     await act(async () => root.render(<AppHeader {...props} webReadOnly />));
     expect(host.querySelector("[data-app-settings-trigger]")).toBeNull();
     expect(document.querySelector("[data-app-settings-menu]")).toBeNull();
   });
 
-  it("selects exact preference values without closing the panel", async () => {
+  it("applies each preference in one tap and keeps the panel open", async () => {
     await mount();
     function Fixture() {
       const [theme, setTheme] = useState<Theme>("system");
@@ -132,58 +132,43 @@ describe("header settings menu", () => {
     }
     await act(async () => root.render(<Fixture />));
     const panel = await openMenu();
-    for (const [label, text] of [
-      ["themeLabel", "themeDark"],
-      ["textSizeLabel", "125%"],
-      ["common:language", "日本語"],
-    ]) {
-      const trigger = panel.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
-      expect(document.querySelector("[data-appearance-menu]")).toBeNull();
-      await act(async () => trigger.click());
-      const menu = await vi.waitFor(() => {
-        const element = document.getElementById(trigger.getAttribute("aria-controls")!);
-        expect(element?.getAttribute("data-state")).toBe("open");
-        return element!;
-      });
-      await act(async () => buttonByText(menu, text).click());
-      await vi.waitFor(() => {
-        expect(document.getElementById(menu.id)).toBeNull();
-        expect(document.activeElement).toBe(trigger);
-        expect(document.querySelector("[data-app-settings-menu]")).toBe(panel);
-      });
-    }
-    expect(panel.querySelector('button[aria-label="themeLabel"]')!.textContent).toContain(
-      "themeDark",
-    );
-    expect(panel.querySelector('button[aria-label="textSizeLabel"]')!.textContent).toContain(
-      "125%",
-    );
+    const choice = (name: string) =>
+      panel.querySelector<HTMLElement>(`[data-appearance-choice="${name}"]`)!;
+    const checked = (name: string) =>
+      choice(name).querySelector('[role="radio"][aria-checked="true"]')?.textContent;
+    expect(checked("theme")).toBe("themeSystem");
+    expect(checked("textScale")).toBe("100%");
+    await act(async () => buttonByText(choice("theme"), "themeDark").click());
+    await act(async () => buttonByText(choice("textScale"), "125%").click());
+    await act(async () => buttonByText(choice("language"), "日本語").click());
+    expect(checked("theme")).toBe("themeDark");
+    expect(checked("textScale")).toBe("125%");
     expect(changeLanguage).toHaveBeenCalledWith("ja");
     expect(document.querySelector("[data-app-settings-menu]")).toBe(panel);
   });
 
-  it("does not let a closing choice steal focus from a newly opened choice", async () => {
+  it("moves a choice's selection with the arrow keys", async () => {
     await mount();
-    const panel = await openMenu();
-    vi.useFakeTimers();
-    try {
-      const theme = panel.querySelector<HTMLButtonElement>('[data-appearance-select="theme"]')!;
-      await act(async () => theme.click());
-      const themeMenu = document.getElementById(theme.getAttribute("aria-controls")!)!;
-      await act(async () => buttonByText(themeMenu, "themeDark").click());
-      const scale = panel.querySelector<HTMLButtonElement>('[data-appearance-select="textScale"]')!;
-      await act(async () => scale.click());
-      const scaleMenu = document.getElementById(scale.getAttribute("aria-controls")!)!;
-      expect(scaleMenu).not.toBeNull();
-      await act(async () => {
-        vi.runOnlyPendingTimers();
-      });
-      expect(scale.getAttribute("aria-expanded")).toBe("true");
-      expect(scaleMenu.contains(document.activeElement)).toBe(true);
-      expect(document.querySelector("[data-app-settings-menu]")).toBe(panel);
-    } finally {
-      vi.useRealTimers();
+    function Fixture() {
+      const [theme, setTheme] = useState<Theme>("light");
+      return <AppHeader {...props} theme={theme} onThemeChange={setTheme} />;
     }
+    await act(async () => root.render(<Fixture />));
+    const panel = await openMenu();
+    const theme = panel.querySelector<HTMLElement>('[data-appearance-choice="theme"]')!;
+    const radios = [...theme.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+    expect(radios.map((radio) => radio.tabIndex)).toEqual([0, -1, -1]);
+    await act(async () => {
+      radios[0].focus();
+      radios[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    expect(radios[1].getAttribute("aria-checked")).toBe("true");
+    expect(document.activeElement).toBe(radios[1]);
+    await act(async () => {
+      radios[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    });
+    expect(radios[2].getAttribute("aria-checked")).toBe("true");
+    expect(document.querySelector("[data-app-settings-menu]")).toBe(panel);
   });
 
   it("hands focus to the settings dialog and returns to the stable header trigger", async () => {
@@ -204,7 +189,7 @@ describe("header settings menu", () => {
     }
     await act(async () => root.render(<Fixture />));
     const panel = await openMenu();
-    await act(async () => buttonByText(panel, "settingsButton").click());
+    await act(async () => buttonByText(panel, "allSettings").click());
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
@@ -215,27 +200,16 @@ describe("header settings menu", () => {
     expect(document.activeElement).toBe(host.querySelector("[data-app-settings-trigger]"));
   });
 
-  it("opens settings on a mouse click and keeps the menu for every other input", async () => {
+  it("opens the menu on a mouse click instead of jumping into settings", async () => {
     const onOpenSettings = vi.fn();
     await mount({ onOpenSettings });
     const trigger = host.querySelector<HTMLButtonElement>("[data-app-settings-trigger]")!;
     await mouseClick(trigger);
-    expect(onOpenSettings).toHaveBeenCalledOnce();
-    expect(document.querySelector("[data-app-settings-menu]")).toBeNull();
-
-    // A tap has no hover to fall back on, so it must still reach the menu.
-    await act(async () => {
-      trigger.dispatchEvent(
-        new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }),
-      );
-      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-    });
-    expect(onOpenSettings).toHaveBeenCalledOnce();
+    expect(onOpenSettings).not.toHaveBeenCalled();
     const panel = document.querySelector<HTMLElement>("[data-app-settings-menu]")!;
     expect(panel).not.toBeNull();
-    // Settings stays in the menu because that is the only route a tap or keyboard has.
-    await act(async () => buttonByText(panel, "settingsButton").click());
-    expect(onOpenSettings).toHaveBeenCalledTimes(2);
+    await act(async () => buttonByText(panel, "allSettings").click());
+    expect(onOpenSettings).toHaveBeenCalledOnce();
   });
 
   it("keeps Group surfaces and their attention out of the global settings menu", async () => {
@@ -248,7 +222,7 @@ describe("header settings menu", () => {
   });
 });
 
-it("preserves text-input focus when a hover-only menu closes", async () => {
+it("does not open the menu on hover, leaving focus where it was", async () => {
   vi.useFakeTimers();
   const input = document.createElement("input");
   document.body.append(input);
@@ -260,23 +234,7 @@ it("preserves text-input focus when a hover-only menu closes", async () => {
       trigger.dispatchEvent(
         new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }),
       );
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(150);
-    });
-    expect(document.querySelector("[data-app-settings-menu]")).not.toBeNull();
-    expect(document.activeElement).toBe(input);
-    await act(async () => {
-      trigger.dispatchEvent(
-        new PointerEvent("pointerout", {
-          bubbles: true,
-          pointerType: "mouse",
-          relatedTarget: input,
-        }),
-      );
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(600);
     });
     expect(document.querySelector("[data-app-settings-menu]")).toBeNull();
     expect(document.activeElement).toBe(input);
