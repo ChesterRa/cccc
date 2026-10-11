@@ -566,6 +566,11 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     super::voice_secretary::cancel_group(home, &group.group_id).map_err(OpError::io)?;
     actor_delivery::shutdown_group(&group.group_id);
     actor_runtime::stop_group(&group)?;
+    // Stopping the sessions kills the process trees the runtime owns. A child
+    // that detached into its own session (`setsid`, a provider CLI daemonising
+    // itself) leaves that tree and survives, so sweep the group's attribution
+    // tag as well: nothing of a deleted group may keep running.
+    let reaped = actor_runtime::reap_group(&group.group_id);
     for actor in &group.actors {
         super::codex_voice_analyst::remove_claude_actor_settings(home, &group.group_id, &actor.id)
             .map_err(OpError::io)?;
@@ -578,7 +583,11 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if active::get(home).map_err(OpError::io)?.as_deref() == Some(&group.group_id) {
         active::clear(home).map_err(OpError::io)?;
     }
-    object(json!({"group_id": group.group_id, "deleted": deleted}))
+    object(json!({
+        "group_id": group.group_id,
+        "deleted": deleted,
+        "reaped_processes": reaped,
+    }))
 }
 
 fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
