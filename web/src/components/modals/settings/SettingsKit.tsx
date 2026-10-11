@@ -91,8 +91,10 @@ export function SettingsCard({
             ) : null}
           </div>
           {actions ? (
-            // Card actions are compact (32px) whatever button size the page passes in.
-            <div className="flex shrink-0 flex-wrap gap-2 [&_button]:h-8 [&_button]:min-h-8 [&_button]:px-3 [&_button]:py-0 [&_button]:text-[13px]">
+            // Card actions are compact (32px) whatever button size the page passes in. They
+            // never shrink beside the title, but max-w-full caps the group at the header's
+            // width so a group that is wider wraps its buttons instead of being clipped.
+            <div className="flex max-w-full shrink-0 flex-wrap gap-2 [&_button]:h-8 [&_button]:min-h-8 [&_button]:px-3 [&_button]:py-0 [&_button]:text-[13px]">
               {actions}
             </div>
           ) : null}
@@ -266,6 +268,40 @@ export function SettingsSaveBar({
       >
         {busy ? t("common:saving") : label}
       </button>
+    </div>
+  );
+}
+
+/** A boxed note inside a page: a migration warning, a failure, or guidance that needs to stand out. */
+export function SettingsNotice({
+  tone = "info",
+  action,
+  children,
+}: {
+  tone?: "info" | "warning" | "error";
+  /** A button that resolves the note, kept beside the text (below it when narrow). */
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role={tone === "error" ? "alert" : undefined}
+      data-settings-notice={tone}
+      className={classNames(
+        "flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 rounded-[10px] border px-3.5 py-2.5 text-[13px] leading-5",
+        tone === "error"
+          ? "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+          : tone === "warning"
+            ? "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+            : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]",
+      )}
+    >
+      <div className="min-w-0 flex-1 basis-60">{children}</div>
+      {action ? (
+        <div className="flex max-w-full shrink-0 flex-wrap gap-2 [&_button]:h-8 [&_button]:min-h-8 [&_button]:px-3 [&_button]:py-0 [&_button]:text-[13px]">
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }

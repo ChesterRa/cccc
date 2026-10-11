@@ -37,7 +37,7 @@ afterEach(async () => {
   useUIStore.setState({ sseError: null });
 });
 it.each([false, true])(
-  "uses the existing badge for connection changes (controls=%s)",
+  "names an interrupted connection in the existing badge (controls=%s)",
   async (controls) => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     host = document.createElement("div");
@@ -57,9 +57,13 @@ it.each([false, true])(
       expect(badge).toBeTruthy();
       expect(host.querySelectorAll('[role="status"]')).toHaveLength(1);
       expect(host.querySelector("h1")?.parentElement?.querySelector("p")).toBeNull();
-      expect(host.textContent).not.toContain("disconnected");
-      expect(host.textContent).not.toContain("reconnecting");
-      expect(badge.textContent).toBe("statusIdle");
+      // The visible text says what the dot says: the run state while connected,
+      // the connection while the page is cut off and its run state may be stale.
+      expect(badge.textContent).toBe(
+        { connected: "statusIdle", connecting: "reconnecting", disconnected: "disconnected" }[
+          status
+        ],
+      );
       const dot = badge.firstElementChild!;
       if (status === "connected") {
         expect(dot.classList.contains("bg-rose-500")).toBe(false);
@@ -70,7 +74,7 @@ it.each([false, true])(
           dot.classList.contains(status === "connecting" ? "animate-pulse" : "bg-rose-500"),
         ).toBe(true);
         expect(badge.getAttribute("aria-label")).toContain(
-          status === "connecting" ? "reconnecting" : "disconnected",
+          `statusIdle · ${status === "connecting" ? "reconnecting" : "disconnected"}`,
         );
         if (controls)
           expect(

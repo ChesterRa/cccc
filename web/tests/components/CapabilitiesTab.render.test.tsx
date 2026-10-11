@@ -20,9 +20,12 @@ describe("CapabilitiesTab rendering", () => {
     expect(html).not.toContain("capabilities.libraryTitle");
     expect(html).not.toContain("capabilities.safetyModeTitle");
     expect(html).not.toContain("capabilities.blockedListTitle");
+    // The subtitle is the page's only statement of purpose; no guide line repeats it.
+    expect(html.split("capabilities.subtitle")).toHaveLength(2);
+    expect(html).not.toContain("capabilities.pageGuide");
+    expect(enSettings.capabilities).not.toHaveProperty("pageGuide");
     expect(enSettings.capabilities.subtitle).toContain("Capability Center");
-    expect(enSettings.capabilities.pageGuide).toContain("Capability Center");
-    expect(enSettings.capabilities.pageGuide).not.toContain("Configure external policy");
+    expect(enSettings.capabilities.subtitle).not.toContain("Configure external policy");
   });
 
   it("uses lightweight capability overview requests for item-only surfaces", () => {

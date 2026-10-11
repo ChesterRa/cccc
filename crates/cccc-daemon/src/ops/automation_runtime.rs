@@ -91,6 +91,40 @@ fn idle_actor_ids(group_id: &str, actor_ids: &HashSet<String>) -> HashSet<String
         .collect()
 }
 
+/// Announce a Mail just written at once to its recipients that are idle, rather
+/// than on the next unread tick, up to a minute away. Recipients that work, or
+/// have no managed session, keep the tick's delays. Runs under the Group write
+/// permit of the send, which the tick also takes, so the two never both notify.
+pub fn notify_idle_mail_recipients(home: &HomeLayout, group: &GroupDoc, mail: &Event) {
+    notify_idle_mail_recipients_with(home, group, mail, |actor_id| {
+        super::local_headless::ready_for_mail_notice(&group.group_id, actor_id)
+    });
+}
+
+fn notify_idle_mail_recipients_with(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    mail: &Event,
+    idle: impl Fn(&str) -> bool,
+) {
+    let recipients = actors::visible(group)
+        .filter(|actor| {
+            actor.enabled && actor.id != mail.by && inbox::is_for_actor(group, mail, &actor.id)
+        })
+        .map(|actor| actor.id.clone())
+        .filter(|actor_id| idle(actor_id))
+        .collect::<HashSet<_>>();
+    if recipients.is_empty() {
+        return;
+    }
+    match cccc_core::automation::notify_idle_mail(home, &group.group_id, &recipients) {
+        Ok(result) => apply(home, result, &AtomicBool::new(false)),
+        Err(error) => {
+            tracing::warn!(%error, group_id = %group.group_id, "idle Mail notice failed");
+        }
+    }
+}
+
 fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
     let Ok(store) = GroupStore::new(home.clone()) else {
         return;
@@ -379,6 +413,53 @@ mod tests {
             "held",
         );
         assert!(idle_notice(&home, &group.group_id).is_none());
+    }
+
+    #[test]
+    fn written_mail_is_announced_at_once_only_to_its_idle_recipients() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("Mail now", "").expect("group");
+        store
+            .mutate(&group.group_id, |group| {
+                group.state = cccc_contracts::GroupState::Active;
+                for id in ["lead", "peer", "busy", "bystander"] {
+                    actors::add(group, Actor::new(id))?;
+                }
+                Ok(())
+            })
+            .expect("group");
+        let group = store.load(&group.group_id).expect("group");
+        let ledger = store.ledger_path(&group.group_id).expect("ledger");
+        let mail = |to: serde_json::Value| {
+            let mut mail = Event::new("chat.message", &group.group_id);
+            mail.by = "lead".into();
+            mail.data = json!({"text":"review","to":to,"message_mode":"mail"})
+                .as_object()
+                .cloned()
+                .expect("mail");
+            cccc_core::ledger::append(&ledger, &mail).expect("Mail");
+            mail
+        };
+        // The bystander has its own fresh unread Mail, still inside its idle delay.
+        mail(json!(["bystander"]));
+        let written = mail(json!(["peer", "busy"]));
+
+        // Everyone but `busy` is idle, the sender included.
+        notify_idle_mail_recipients_with(&home, &group, &written, |actor_id| actor_id != "busy");
+
+        let notices = cccc_core::ledger::read_all(&ledger)
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == "system.notify" && event.data["kind"] == "mail_notice")
+            .collect::<Vec<_>>();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert_eq!(notices[0].data["context"]["actor_id"], "peer");
+        assert_eq!(
+            notices[0].data["context"]["source_event_ids"],
+            json!([written.id])
+        );
     }
 
     #[test]

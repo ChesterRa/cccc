@@ -192,7 +192,6 @@
   "capabilities": {
     "title": "能力治理",
     "subtitle": "管理自进化 skill；完整能力注册表统一进入能力工作台。",
-    "pageGuide": "来源和完整注册表统一到能力工作台查看和管理。本页只统括管理各工作组产生的自进化 skill 记录。",
     "refresh": "刷新",
     "openCenter": "打开能力工作台",
     "revision": "版本",
@@ -887,7 +886,7 @@
     "mailNotice": "Mail 提醒等待（秒）",
     "mailNoticeHelp": "Mail 仍未读时发送一次不含正文的收件箱提醒。0 表示关闭提醒。",
     "mailIdleNotice": "空闲时 Mail 提醒等待（秒）",
-    "mailIdleNoticeHelp": "收件 Agent 空闲时，未读 Mail 等这么久就提醒（多封合并为一条）；Agent 忙时等它空闲再提醒，最晚按上方时间。仅对能上报工作状态的托管 Agent 生效，其他 Agent 按上方时间提醒。0 表示不提前提醒。",
+    "mailIdleNoticeHelp": "收件 Agent 空闲时，新 Mail 一到就提醒。它忙时收到的 Mail，等它空闲且 Mail 已等满这么久再提醒（多封合并为一条），最晚按上方时间。仅对能上报工作状态的托管 Agent 生效，其他 Agent 按上方时间提醒。0 表示不提前提醒。",
     "replyNotice": "回复提醒等待（秒）",
     "replyNoticeHelp": "请求的回复仍未完成时发送一次不含正文的提醒。0 表示关闭提醒。",
     "saveDelivery": "保存投递设置"
@@ -1516,7 +1515,8 @@
     "close": "关闭登录窗口",
     "connector": "一个 CCCC 连接器",
     "connectorHint": "在 ChatGPT 中只添加此连接器一次。各 Actor 启动时会自动连接自己的对话，无需为每个 Actor 添加连接器。",
-    "publicUrl": "ChatGPT 需要可公开访问的 HTTPS 连接器地址，请先配置 Web 访问。",
+    "publicUrlMissing": "还没有配置 Web 访问的公网地址。ChatGPT 只能通过公网 HTTPS 地址访问此连接器。",
+    "publicUrlInvalid": "当前地址 {{url}} 不是公网 HTTPS，ChatGPT 无法访问。请在 Web 访问中配置公网 HTTPS 地址。",
     "webAccess": "Web 访问设置",
     "configured": "已生成连接器凭据",
     "pairedActors": "个已配对 Actor",
@@ -1606,7 +1606,8 @@
     "rotateHint": "旧地址将对所有 Grok Actor 失效。请用新地址更新 Grok 连接器，已有 Bot 绑定会保留。",
     "revokeHint": "所有 Grok Actor 将失去工具访问权限。重新创建连接器后，需要再次保存各自的 Bot URL。",
     "upgrade": "配置 Grok 连接器，并保存每个 Actor 的 Bot URL。",
-    "publicUrl": "Grok 需要可公开访问的 HTTPS 连接器地址，请先配置 Web 访问。",
+    "publicUrlMissing": "还没有配置 Web 访问的公网地址。Grok 只能通过公网 HTTPS 地址访问此连接器。",
+    "publicUrlInvalid": "当前地址 {{url}} 不是公网 HTTPS，Grok 无法访问。请在 Web 访问中配置公网 HTTPS 地址。",
     "copyOnce": "请立即复制此私密地址并添加到 Grok Connectors。地址仅在创建或更换凭据后显示，请勿分享。",
     "notSeen": "尚未收到连接器请求，请在 Grok 中添加此连接器。"
   },

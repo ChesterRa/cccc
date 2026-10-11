@@ -4435,9 +4435,14 @@ remains visible in the Inbox but does not start an active runtime notice timer.
 
 An enabled running actor whose managed Runtime positively reports idle may receive
 one content-free `system.notify(kind="mail_notice")` after
-`min(mail_notice_idle_after_seconds, mail_notice_after_seconds)`. Working or
+`min(mail_notice_idle_after_seconds, mail_notice_after_seconds)`. When Mail is
+written while a concrete recipient's Runtime reports idle, that notice is issued
+at once by the write itself, under the same Group write permit as the unread
+tick, rather than after the idle delay or at the next tick; the write issues
+only Mail notices, and only for that Mail's recipients. Working or
 unknown Runtime states use `mail_notice_after_seconds`; native PTY output is not
-an idle detector. Zero for the idle delay disables only this early notice; zero
+an idle detector. Zero for the idle delay disables this early notice, including
+the one issued as Mail is written; zero
 for the ordinary delay disables all Mail notices. Both timers retain the batch's
 earliest eligible deadline. This creates a notice, never an automatic promotion
 or Mail cursor advance. Passive status polling does not create notices.

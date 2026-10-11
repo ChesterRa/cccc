@@ -195,7 +195,6 @@
   "capabilities": {
     "title": "能力ガバナンス",
     "subtitle": "自己進化 skill を管理し、完全な registry は Capability Center に集約します。",
-    "pageGuide": "Source と完全な registry の閲覧と管理は Capability Center を使います。このタブは各グループで生成された自己進化 skill レコードだけを横断管理します。",
     "refresh": "更新",
     "openCenter": "Capability Center を開く",
     "revision": "リビジョン",
@@ -895,7 +894,7 @@
     "mailNotice": "Mail 通知まで (秒)",
     "mailNoticeHelp": "Mail が未読のままなら本文なしの受信箱通知を一度送ります。0 で無効化。",
     "mailIdleNotice": "アイドル時の Mail 通知まで (秒)",
-    "mailIdleNoticeHelp": "受信 Agent がアイドルなら、未読 Mail をこの時間後に通知します（複数の Mail は 1 件にまとめます）。作業中はアイドルになるまで待ち、遅くとも上の時間に通知します。作業状態を報告する管理下の Agent にのみ適用され、それ以外は上の時間に通知します。0 で早期通知をオフにします。",
+    "mailIdleNoticeHelp": "受信 Agent がアイドルなら、新しい Mail は届いた時点で通知します。作業中に届いた Mail は、アイドルになり、かつこの時間待った後に通知します（複数の Mail は 1 件にまとめます）。遅くとも上の時間に通知します。作業状態を報告する管理下の Agent にのみ適用され、それ以外は上の時間に通知します。0 で早期通知をオフにします。",
     "replyNotice": "返信通知まで (秒)",
     "replyNoticeHelp": "要求した返信が未完了なら本文なしの通知を一度送ります。0 で無効化。",
     "saveDelivery": "配信設定の保存"
@@ -1524,7 +1523,8 @@
     "close": "ログインウィンドウを閉じる",
     "connector": "CCCC 共通コネクター",
     "connectorHint": "ChatGPT にこのコネクターを一度追加します。各 Actor は起動時に自分の会話へ自動接続します。Actor ごとのコネクター URL は不要です。",
-    "publicUrl": "ChatGPT から接続できる公開 HTTPS URL が必要です。先に Web アクセスを設定してください。",
+    "publicUrlMissing": "Web アクセスの公開アドレスがまだ設定されていません。ChatGPT はこのコネクターに公開 HTTPS アドレス経由でのみ接続できます。",
+    "publicUrlInvalid": "現在のアドレス {{url}} は公開 HTTPS ではないため、ChatGPT から接続できません。Web アクセスで公開 HTTPS アドレスを設定してください。",
     "webAccess": "Web アクセス設定",
     "configured": "コネクター認証情報を作成済み",
     "pairedActors": "ペアリング済み Actor",
@@ -1614,7 +1614,8 @@
     "rotateHint": "古い URL はすべての Grok Actor で無効になります。新しい URL で Grok コネクターを更新してください。既存の Bot 接続は維持されます。",
     "revokeHint": "すべての Grok Actor がツールにアクセスできなくなります。コネクターを再作成した後、各 Bot URL を再度保存してください。",
     "upgrade": "Grok コネクターを設定し、各 Actor の Bot URL を保存してください。",
-    "publicUrl": "Grok には公開 HTTPS コネクター URL が必要です。コピーする前に Web アクセスを設定してください。",
+    "publicUrlMissing": "Web アクセスの公開アドレスがまだ設定されていません。Grok はこのコネクターに公開 HTTPS アドレス経由でのみ接続できます。",
+    "publicUrlInvalid": "現在のアドレス {{url}} は公開 HTTPS ではないため、Grok から接続できません。Web アクセスで公開 HTTPS アドレスを設定してください。",
     "copyOnce": "この非公開 URL を今すぐコピーして Grok Connectors に追加してください。作成または更新時にのみ表示されます。共有しないでください。",
     "notSeen": "コネクターのリクエストはまだありません。Grok に追加して設定を完了してください。"
   },

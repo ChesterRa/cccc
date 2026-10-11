@@ -477,3 +477,47 @@ fn new_claude_session_retires_pending_trust_recovery_before_removing_the_receipt
         "reset retains provider history"
     );
 }
+
+#[test]
+fn mail_sent_to_an_idle_managed_actor_is_announced_without_waiting_for_the_unread_tick() {
+    if isolated(
+        "mail_sent_to_an_idle_managed_actor_is_announced_without_waiting_for_the_unread_tick",
+    ) {
+        return;
+    }
+    let f = Fixture::new("healthy");
+    let store = GroupStore::new(f.home.clone()).expect("store");
+    store
+        .mutate(&f.group.group_id, |group| {
+            group.state = cccc_contracts::GroupState::Active;
+            cccc_core::actors::add(group, Actor::new("lead"))
+        })
+        .expect("sender");
+    let started = f.lifecycle("actor_start");
+    assert!(started.ok, "{:?}", started.error);
+    f.wait(|| super::ready_for_mail_notice(&f.group.group_id, &f.actor.id));
+
+    // No automation scheduler runs here: only the send itself can announce it.
+    let sent = crate::handle_request(
+        &f.home,
+        &DaemonRequest {
+            v: 1,
+            op: "send".into(),
+            args: json!({"group_id":f.group.group_id,"by":"lead","to":[f.actor.id],
+                "text":"please review","message_mode":"mail"})
+            .as_object()
+            .expect("arguments")
+            .clone(),
+        },
+    );
+    assert!(sent.ok, "{:?}", sent.error);
+    let mail_id = sent.result["event"]["id"].as_str().expect("Mail id");
+    let events =
+        ledger::read_all(&store.ledger_path(&f.group.group_id).expect("ledger")).expect("ledger");
+    let notice = events
+        .iter()
+        .find(|event| event.kind == "system.notify" && event.data["kind"] == "mail_notice")
+        .expect("Mail notice issued by the send");
+    assert_eq!(notice.data["context"]["actor_id"], f.actor.id);
+    assert_eq!(notice.data["context"]["source_event_ids"], json!([mail_id]));
+}

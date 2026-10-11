@@ -883,3 +883,57 @@ async fn grok_token_routes_real_tools_and_nested_management_without_identity_met
         assert!(!ledger.contains(&token));
     }
 }
+
+#[tokio::test]
+async fn connector_list_reports_the_public_base_before_any_connector_exists() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("home");
+    let list = || async {
+        let response = cccc_web::app(home.clone())
+            .oneshot(
+                Request::get("/api/v1/web-model/connectors")
+                    .extension(axum::extract::ConnectInfo(
+                        "127.0.0.1:12345"
+                            .parse::<std::net::SocketAddr>()
+                            .expect("loopback"),
+                    ))
+                    .header(header::HOST, "localhost")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("list response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = serde_json::from_slice(
+            &response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes(),
+        )
+        .expect("json");
+        body["result"].clone()
+    };
+
+    let unconfigured = list().await;
+    assert_eq!(unconfigured["connectors"], json!([]));
+    assert_eq!(unconfigured["connector_base_url"], "");
+
+    // The Web access address, stored with its /ui suffix, is the connectors' base.
+    cccc_core::settings::update(&home, |settings| {
+        settings.remote_access.insert(
+            "web_public_url".into(),
+            json!("https://cccc.example.test/ui/"),
+        );
+        Ok(())
+    })
+    .expect("Web access address");
+    let configured = list().await;
+    assert_eq!(configured["connectors"], json!([]));
+    assert_eq!(
+        configured["connector_base_url"],
+        "https://cccc.example.test"
+    );
+}

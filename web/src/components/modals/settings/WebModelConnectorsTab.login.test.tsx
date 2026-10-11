@@ -12,7 +12,12 @@ const mocks = vi.hoisted(() => ({
   copy: vi.fn(),
 }));
 vi.mock("../../../utils/copy", () => ({ copyTextToClipboard: mocks.copy }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
+vi.mock("react-i18next", () => ({
+  // Shows the interpolated URL, so tests can tell which address a notice names.
+  useTranslation: () => ({
+    t: (k: string, o?: { url?: string }) => (o?.url ? `${k}<${o.url}>` : k),
+  }),
+}));
 vi.mock("../../../services/api", () => ({
   fetchWebModelConnectors: () => mocks.connectors(),
   sharedWebModelBrowser: (...args: unknown[]) => mocks.browser(...args),
@@ -109,6 +114,15 @@ describe("shared Web Model login and connector", () => {
     expect(host.textContent).toContain("Save failed");
     expect(host.textContent).toContain("2 webModelShared.pairedActors");
   });
+  it("keeps an open login viewer when only the connector read fails", async () => {
+    mocks.connectors.mockResolvedValueOnce({ ok: false, error: { message: "Read failed" } });
+    mocks.browser.mockResolvedValue({ ok: true, result: { browser_session: { active: true } } });
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    expect(host.textContent).toContain("Read failed");
+    expect(host.querySelector("[data-testid=viewer]")).not.toBeNull();
+    // The login state comes with a successful read; without one it is not claimed.
+    expect(host.querySelector("[data-login-state]")).toBeNull();
+  });
   it("unmounts the viewer when this settings tab is inactive", async () => {
     mocks.browser.mockResolvedValue({ ok: true, result: { browser_session: { active: true } } });
     await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
@@ -201,6 +215,158 @@ describe("shared Web Model login and connector", () => {
     });
     expect(mocks.create).toHaveBeenCalledOnce();
     await act(async () => write.resolve(created));
+  });
+  it("switches providers from a radio group, including with arrow keys", async () => {
+    const onProviderChange = vi.fn();
+    await act(async () =>
+      root.render(<WebModelConnectorsTab isDark={false} onProviderChange={onProviderChange} />),
+    );
+    const radios = Array.from(host.querySelectorAll('[role="radiogroup"] [role="radio"]'));
+    expect(radios.map((r) => [r.textContent, r.getAttribute("aria-checked")])).toEqual([
+      ["ChatGPT", "true"],
+      ["Grok Bot", "false"],
+    ]);
+    await act(async () => {
+      radios[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    expect(onProviderChange).toHaveBeenCalledExactlyOnceWith("grok_web");
+  });
+  it("boxes the migration warning, the web access prerequisite and the Actor guidance", async () => {
+    const onOpenWebAccess = vi.fn();
+    mocks.connectors.mockResolvedValue({
+      ok: true,
+      result: { connectors: [], requires_reconfiguration: true },
+    });
+    await act(async () =>
+      root.render(<WebModelConnectorsTab isDark={false} onOpenWebAccess={onOpenWebAccess} />),
+    );
+    const page = host.querySelector("div:not([hidden]) > [data-settings-page]")!;
+    const notices = (tone: string) =>
+      Array.from(page.querySelectorAll(`[data-settings-notice="${tone}"]`));
+    expect(notices("warning").map((n) => n.textContent)).toEqual([
+      "webModelShared.upgrade",
+      "webModelShared.publicUrlMissingwebModelShared.webAccess",
+    ]);
+    // Creating the connector is the card's own action, not a button stacked under the hint.
+    const connectorCard = button("create").closest("[data-settings-card]")!;
+    expect(connectorCard.querySelector("h3")?.textContent).toBe("webModelShared.connector");
+    await act(async () => button("webAccess").click());
+    expect(onOpenWebAccess).toHaveBeenCalledOnce();
+    expect(notices("info").map((n) => n.textContent)).toEqual(["webModelShared.actorHint"]);
+    expect(page.querySelector('[role="alert"]')).toBeNull();
+  });
+  it.each([
+    ["https://cccc.example.test", false],
+    ["", true],
+    ["http://cccc.example.test", true],
+    ["https://localhost:8848", true],
+  ])(
+    "asks for public HTTPS Web access from the configured address %j, before any connector exists",
+    async (base, warned) => {
+      mocks.connectors.mockResolvedValue({
+        ok: true,
+        result: { connectors: [], connector_base_url: base },
+      });
+      await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+      expect(button("create")).toBeDefined();
+      const page = host.querySelector("div:not([hidden]) > [data-settings-page]")!;
+      expect(page.textContent?.includes("webModelShared.publicUrl")).toBe(warned);
+    },
+  );
+  it.each([
+    [
+      "an older server reporting no base",
+      undefined,
+      "https://cccc.example.test/mcp/web-model/shared",
+      false,
+    ],
+    ["an emptied Web access address", "", "https://cccc.example.test/mcp/web-model/shared", true],
+    ["an older server with a relative URL", undefined, "/mcp/web-model/shared", true],
+  ])(
+    "judges an existing connector's URL only for %s",
+    async (_case, base, connectorUrl, warned) => {
+      mocks.connectors.mockResolvedValue({
+        ok: true,
+        result: {
+          connectors: [{ ...existing, connector_url: connectorUrl }],
+          ...(base === undefined ? {} : { connector_base_url: base }),
+        },
+      });
+      await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+      const page = host.querySelector("div:not([hidden]) > [data-settings-page]")!;
+      expect(page.textContent).toContain("webModelShared.configured");
+      expect(page.textContent?.includes("webModelShared.publicUrl")).toBe(warned);
+    },
+  );
+  it.each([
+    ["chatgpt_web", { connector_base_url: "" }, null, "webModelShared.publicUrlMissing"],
+    [
+      "chatgpt_web",
+      { connector_base_url: "http://cccc.example.test/" },
+      null,
+      "webModelShared.publicUrlInvalid<http://cccc.example.test>",
+    ],
+    [
+      "chatgpt_web",
+      { connector_base_url: "https://localhost:8848" },
+      null,
+      "webModelShared.publicUrlInvalid<https://localhost:8848>",
+    ],
+    // An older server reports no base: its connector URL takes the same branches.
+    [
+      "chatgpt_web",
+      {},
+      "http://cccc.example.test/mcp/web-model/shared",
+      "webModelShared.publicUrlInvalid<http://cccc.example.test>",
+    ],
+    ["chatgpt_web", {}, "/mcp/web-model/shared", "webModelShared.publicUrlMissing"],
+    // Addresses without an http(s) origin are no Web address; the connector path never shows.
+    [
+      "chatgpt_web",
+      { connector_base_url: "data:text/plain,cccc" },
+      null,
+      "webModelShared.publicUrlMissing",
+    ],
+    ["chatgpt_web", {}, "data:text/plain,/mcp/web-model/shared", "webModelShared.publicUrlMissing"],
+    [
+      "chatgpt_web",
+      {},
+      "mailto:ops@cccc.example.test/mcp/web-model/shared",
+      "webModelShared.publicUrlMissing",
+    ],
+    ["grok_web", { connector_base_url: "" }, null, "grokShared.publicUrlMissing"],
+    [
+      "grok_web",
+      { connector_base_url: "http://cccc.example.test" },
+      null,
+      "grokShared.publicUrlInvalid<http://cccc.example.test>",
+    ],
+  ] as const)(
+    "%s: %j with connector URL %j says %s",
+    async (provider, base, connectorUrl, expected) => {
+      mocks.connectors.mockResolvedValue({
+        ok: true,
+        result: {
+          connectors: connectorUrl ? [{ ...existing, provider, connector_url: connectorUrl }] : [],
+          ...base,
+        },
+      });
+      await act(async () =>
+        root.render(<WebModelConnectorsTab isDark={false} provider={provider} />),
+      );
+      const page = host.querySelector("div:not([hidden]) > [data-settings-page]")!;
+      const notices = Array.from(page.querySelectorAll('[data-settings-notice="warning"]'))
+        .map((notice) => notice.textContent)
+        .filter((text) => text?.includes("publicUrl"));
+      expect(notices).toEqual([expected]);
+    },
+  );
+  it("reports a failed load in one alert that carries its retry", async () => {
+    mocks.connectors.mockResolvedValueOnce({ ok: false, error: { message: "Read failed" } });
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    const alert = host.querySelector('div:not([hidden]) [role="alert"]')!;
+    expect(alert.getAttribute("data-settings-notice")).toBe("error");
+    expect(alert.textContent).toBe("Read failedcommon:retry");
   });
   it("scopes provider actions and keeps one-time URLs when switching providers", async () => {
     await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));

@@ -157,9 +157,10 @@ export function TranscriptTab({
       >
         <div className="flex flex-col gap-3 px-5 py-4">
           <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-            <div className="flex items-center gap-2 text-[13px]">
+            {/* 13rem when there is room; narrower when the card is (large text, phones). */}
+            <div className="flex min-w-0 max-w-full items-center gap-2 text-[13px]">
               <span aria-hidden="true">{t("transcript.actor")}</span>
-              <span className="w-52">
+              <span className="w-52 min-w-0">
                 <SelectCombobox
                   items={
                     devActors.length

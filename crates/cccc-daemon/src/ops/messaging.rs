@@ -316,9 +316,11 @@ fn send_with_audience_policy(
         }
     }
     let event = append(home, &group.group_id, kind, &by, data)?;
-    if kind != "chat.message"
-        || event.data.get("message_mode").and_then(Value::as_str) != Some("mail")
+    if kind == "chat.message"
+        && event.data.get("message_mode").and_then(Value::as_str) == Some("mail")
     {
+        super::automation_runtime::notify_idle_mail_recipients(home, &group, &event);
+    } else {
         let _ = actor_delivery::dispatch(home, &group, &event);
     }
     if kind == "chat.message" {

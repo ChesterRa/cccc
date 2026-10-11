@@ -195,7 +195,6 @@
   "capabilities": {
     "title": "Capability Governance",
     "subtitle": "Self-evolving skill governance with a dedicated Capability Center for the full registry.",
-    "pageGuide": "Use Capability Center for sources and full registry browsing. This tab only manages generated self-evolving skill records across groups.",
     "refresh": "Refresh",
     "openCenter": "Open Capability Center",
     "revision": "Revision",
@@ -895,7 +894,7 @@
     "mailNotice": "Mail Notice After (sec)",
     "mailNoticeHelp": "Send one content-free inbox notice if Mail is still unread. 0 disables the notice.",
     "mailIdleNotice": "Mail Notice When Idle (sec)",
-    "mailIdleNoticeHelp": "When the recipient Agent is idle, unread Mail is announced after this long (several Mail become one notice). While it is busy, the notice waits until it is idle, at the latest by the delay above. Applies only to managed Agents that report their working state; others are notified by the delay above. 0 turns early notices off.",
+    "mailIdleNoticeHelp": "When the recipient Agent is idle, new Mail is announced as soon as it arrives. Mail that arrives while it is busy is announced once it is idle and the Mail has waited this long (several Mail become one notice), at the latest by the delay above. Applies only to managed Agents that report their working state; others are notified by the delay above. 0 turns early notices off.",
     "replyNotice": "Reply Notice After (sec)",
     "replyNoticeHelp": "Send one content-free reminder if a requested reply is still open. 0 disables the notice.",
     "saveDelivery": "Save Delivery Settings"
@@ -1524,7 +1523,8 @@
     "close": "Close login window",
     "connector": "One CCCC connector",
     "connectorHint": "Add this connector once in ChatGPT. Each Actor connects its own conversation automatically when started; no Actor-specific connector URLs are needed.",
-    "publicUrl": "ChatGPT needs a public HTTPS URL for this connector. Configure Web access before copying it.",
+    "publicUrlMissing": "No public Web access address is configured yet. ChatGPT can reach this connector only through a public HTTPS address.",
+    "publicUrlInvalid": "The current address {{url}} is not public HTTPS, so ChatGPT cannot reach it. Set a public HTTPS address in Web access.",
     "webAccess": "Web access settings",
     "configured": "Connector credential created",
     "pairedActors": "paired Actors",
@@ -1614,7 +1614,8 @@
     "rotateHint": "The old URL will stop working for Grok Actors. Update the Grok connector with the new URL. Existing Bot bindings remain.",
     "revokeHint": "All Grok Actors will lose tool access. After creating a new connector, save their Bot URLs again.",
     "upgrade": "Configure the Grok connector and save each Actor’s Bot URL.",
-    "publicUrl": "Grok needs a public HTTPS URL for this connector. Configure Web access before copying it.",
+    "publicUrlMissing": "No public Web access address is configured yet. Grok can reach this connector only through a public HTTPS address.",
+    "publicUrlInvalid": "The current address {{url}} is not public HTTPS, so Grok cannot reach it. Set a public HTTPS address in Web access.",
     "copyOnce": "Copy this private URL now and add it to Grok Connectors. It is only shown after creation or rotation; do not share it.",
     "notSeen": "No connector request recorded yet. Add this connector in Grok to finish setup."
   },

@@ -211,9 +211,12 @@ export type WebModelPairing = {
 };
 
 export async function fetchWebModelConnectors() {
-  return apiJson<{ connectors: WebModelConnector[]; requires_reconfiguration?: boolean }>(
-    "/api/v1/web-model/connectors",
-  );
+  return apiJson<{
+    connectors: WebModelConnector[];
+    requires_reconfiguration?: boolean;
+    /** The Web access address every connector URL is built on; empty when unset. */
+    connector_base_url?: string;
+  }>("/api/v1/web-model/connectors");
 }
 
 export type WebModelProvider = "chatgpt_web" | "grok_web";

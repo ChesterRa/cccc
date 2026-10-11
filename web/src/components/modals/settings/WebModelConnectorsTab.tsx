@@ -1,17 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
+import { classNames } from "../../../utils/classNames";
 import { copyTextToClipboard } from "../../../utils/copy";
 import { ProjectedBrowserSurfacePanel } from "../../browser/ProjectedBrowserSurfacePanel";
-import {
-  primaryButtonClass,
-  secondaryButtonClass,
-  dangerButtonClass,
-  settingsWorkspaceShellClass,
-  settingsWorkspaceHeaderClass,
-  settingsWorkspaceBodyClass,
-  settingsWorkspacePanelClass,
-} from "./types";
+import { SegmentedChoice } from "../../ui/segmented-choice";
+import { SettingsCard, SettingsNotice, SettingsPage } from "./SettingsKit";
+import { primaryButtonClass, secondaryButtonClass, dangerButtonClass } from "./types";
 
 interface Props {
   provider?: api.WebModelProvider;
@@ -21,26 +16,26 @@ interface Props {
   currentGroupId?: string;
   onOpenWebAccess?: () => void;
 }
+const PROVIDERS = [
+  { value: "chatgpt_web" as const, label: "ChatGPT" },
+  { value: "grok_web" as const, label: "Grok Bot" },
+];
 export default function WebModelConnectorsTab(props: Props) {
   const [localProvider, setLocalProvider] = useState<api.WebModelProvider>("chatgpt_web");
   const provider = props.provider ?? localProvider;
   const setProvider = props.onProviderChange ?? setLocalProvider;
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2" role="group" aria-label="Web Model">
-        {(["chatgpt_web", "grok_web"] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={provider === value}
-            className={provider === value ? primaryButtonClass() : secondaryButtonClass()}
-            onClick={() => setProvider(value)}
-          >
-            {value === "chatgpt_web" ? "ChatGPT" : "Grok Bot"}
-          </button>
-        ))}
+    <div className="flex min-w-0 flex-col gap-5">
+      <div>
+        <SegmentedChoice
+          value={provider}
+          options={PROVIDERS}
+          onChange={setProvider}
+          ariaLabel="Web Model"
+          fill={false}
+        />
       </div>
-      {(["chatgpt_web", "grok_web"] as const).map((value) => (
+      {PROVIDERS.map(({ value }) => (
         <div key={value} hidden={provider !== value}>
           <ProviderSettings
             {...props}
@@ -52,6 +47,10 @@ export default function WebModelConnectorsTab(props: Props) {
     </div>
   );
 }
+/** One padded block inside a settings card. */
+function CardBlock({ children }: { children: ReactNode }) {
+  return <div className="min-w-0 space-y-3 px-5 py-3.5">{children}</div>;
+}
 function ProviderSettings({
   isDark,
   isActive = true,
@@ -59,7 +58,7 @@ function ProviderSettings({
   provider,
 }: Props & { provider: api.WebModelProvider }) {
   const { t } = useTranslation("settings");
-  const label = (key: string) =>
+  const label = (key: string, options?: Record<string, string>) =>
     t(
       provider === "grok_web" &&
         [
@@ -72,14 +71,18 @@ function ProviderSettings({
           "rotateHint",
           "revokeHint",
           "upgrade",
-          "publicUrl",
+          "publicUrlMissing",
+          "publicUrlInvalid",
           "copyOnce",
           "notSeen",
         ].includes(key)
         ? `grokShared.${key}`
         : `webModelShared.${key}`,
+      options,
     );
   const [connector, setConnector] = useState<api.WebModelConnector | null>(null);
+  // Undefined until read, or when an older Web server does not report it.
+  const [connectorBase, setConnectorBase] = useState<string | undefined>();
   const [browser, setBrowser] = useState<api.WebModelBrowserSession>({});
   const [needsSetup, setNeedsSetup] = useState(false);
   const [error, setError] = useState("");
@@ -114,6 +117,7 @@ function ProviderSettings({
               : next;
           });
           setNeedsSetup(provider === "chatgpt_web" && Boolean(c.result.requires_reconfiguration));
+          setConnectorBase(c.result.connector_base_url);
           setLoadState("ready");
         } else {
           setLoadState("error");
@@ -173,58 +177,48 @@ function ProviderSettings({
   }
   const tokenUrl = connector?.connector_url_path_token || "";
   const url = tokenUrl ? new URL(tokenUrl, window.location.href).toString() : "";
-  const publicHttps = (() => {
-    try {
-      const u = new URL(connector?.connector_url || "", window.location.href);
-      return u.protocol === "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
-    } catch {
-      return false;
-    }
-  })();
+  // An older Web server reports no base; judge its connector URL instead. An empty
+  // base (no Web access address) still warns, and the page's own address never counts.
+  const reach = connectorReach(connectorBase ?? connector?.connector_url ?? "");
+  const browserState = browser.verification_required
+    ? "verification"
+    : browser.ready
+      ? "ready"
+      : browser.active
+        ? "openState"
+        : "closed";
   return (
-    <div className={settingsWorkspaceShellClass(isDark)}>
-      <div className={settingsWorkspaceHeaderClass(isDark)}>
-        <div>
-          <h2 className="text-lg font-semibold">{label("title")}</h2>
-          <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{label("description")}</p>
-        </div>
-      </div>
-      <div className={settingsWorkspaceBodyClass}>
-        {loadState === "loading" && <p role="status">{t("common:loading")}</p>}
-        {error && (
-          <p role="alert" className="text-red-600 dark:text-red-300 break-words">
-            {error}
-          </p>
-        )}
-        {loadState === "error" && (
-          <button
-            type="button"
-            className={secondaryButtonClass()}
-            disabled={!isActive}
-            onClick={() => setLoadNonce((n) => n + 1)}
-          >
-            {t("common:retry")}
-          </button>
-        )}
-        {needsSetup && (
-          <p className="text-sm text-amber-700 dark:text-amber-300">{label("upgrade")}</p>
-        )}
-        <section className={settingsWorkspacePanelClass(isDark)}>
-          <h3 className="font-semibold">{label("login")}</h3>
-          <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{label("loginHint")}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-sm mr-auto">
-              {loadState === "ready" &&
-                label(
-                  browser.verification_required
-                    ? "verification"
-                    : browser.ready
-                      ? "ready"
-                      : browser.active
-                        ? "openState"
-                        : "closed",
-                )}
-            </span>
+    <SettingsPage title={label("title")} description={label("description")}>
+      {loadState === "loading" && (
+        <p role="status" className="text-[13px] text-[var(--color-text-muted)]">
+          {t("common:loading")}
+        </p>
+      )}
+      {(error || loadState === "error") && (
+        <SettingsNotice
+          tone="error"
+          action={
+            loadState === "error" && (
+              <button
+                type="button"
+                className={secondaryButtonClass()}
+                disabled={!isActive}
+                onClick={() => setLoadNonce((n) => n + 1)}
+              >
+                {t("common:retry")}
+              </button>
+            )
+          }
+        >
+          {error}
+        </SettingsNotice>
+      )}
+      {needsSetup && <SettingsNotice tone="warning">{label("upgrade")}</SettingsNotice>}
+      <SettingsCard
+        title={label("login")}
+        description={label("loginHint")}
+        actions={
+          <>
             <button
               type="button"
               className={primaryButtonClass()}
@@ -249,9 +243,33 @@ function ProviderSettings({
             >
               {label("close")}
             </button>
-          </div>
-          {browser.active && isActive && (
-            <div className="mt-4">
+          </>
+        }
+      >
+        {(loadState === "ready" || (browser.active && isActive)) && (
+          <CardBlock>
+            {loadState === "ready" && (
+              <span
+                className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-primary)]"
+                data-login-state={browserState}
+              >
+                <span
+                  aria-hidden
+                  className={classNames(
+                    "size-2 shrink-0 rounded-full",
+                    browserState === "ready"
+                      ? "bg-emerald-500"
+                      : browserState === "verification"
+                        ? "bg-amber-500"
+                        : browserState === "openState"
+                          ? "bg-sky-500"
+                          : "bg-[var(--color-text-muted)]",
+                  )}
+                />
+                {label(browserState)}
+              </span>
+            )}
+            {browser.active && isActive && (
               <ProjectedBrowserSurfacePanel
                 isDark={isDark}
                 key={nonce}
@@ -263,30 +281,55 @@ function ProviderSettings({
                 loadSession={loadBrowser}
                 webSocketUrl={api.sharedWebModelBrowserWebSocketUrl(provider)}
               />
-            </div>
-          )}
-        </section>
-        <section className={settingsWorkspacePanelClass(isDark)}>
-          <h3 className="font-semibold">{label("connector")}</h3>
-          <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-            {label("connectorHint")}
-          </p>
-          {loadState === "ready" && !publicHttps && (
-            <div className="mt-3 text-sm">
-              <p>{label("publicUrl")}</p>
-              {onOpenWebAccess && (
-                <button type="button" className={secondaryButtonClass()} onClick={onOpenWebAccess}>
-                  {label("webAccess")}
-                </button>
-              )}
-            </div>
-          )}
-          {connector && (
-            <div className="mt-3 space-y-1 text-sm">
-              <p>
+            )}
+          </CardBlock>
+        )}
+      </SettingsCard>
+      <SettingsCard
+        title={label("connector")}
+        description={label("connectorHint")}
+        actions={
+          !connector && (
+            <button
+              type="button"
+              className={primaryButtonClass()}
+              disabled={actionsDisabled}
+              onClick={() => void action("configure")}
+            >
+              {label("create")}
+            </button>
+          )
+        }
+      >
+        {loadState === "ready" && reach.kind !== "public" && (
+          <CardBlock>
+            <SettingsNotice
+              tone="warning"
+              action={
+                onOpenWebAccess && (
+                  <button
+                    type="button"
+                    className={secondaryButtonClass()}
+                    onClick={onOpenWebAccess}
+                  >
+                    {label("webAccess")}
+                  </button>
+                )
+              }
+            >
+              {reach.kind === "missing"
+                ? label("publicUrlMissing")
+                : label("publicUrlInvalid", { url: reach.address })}
+            </SettingsNotice>
+          </CardBlock>
+        )}
+        {connector && (
+          <CardBlock>
+            <div className="space-y-1 text-[13px]">
+              <p className="font-medium text-[var(--color-text-primary)]">
                 {label("configured")} · {connector.bound_actor_count || 0} {label("pairedActors")}
               </p>
-              <p className="text-[var(--color-text-secondary)]">
+              <p className="text-xs leading-5 text-[var(--color-text-muted)]">
                 {connector.last_activity_at
                   ? t("webModelShared.lastSeen", {
                       time: new Date(connector.last_activity_at).toLocaleString(),
@@ -294,36 +337,35 @@ function ProviderSettings({
                   : label("notSeen")}
               </p>
             </div>
-          )}
-          {url && (
-            <div className="mt-3 space-y-2">
-              <p className="text-sm">{label("copyOnce")}</p>
-              <button
-                type="button"
-                className={primaryButtonClass()}
-                disabled={actionsDisabled}
-                onClick={() =>
-                  void copyTextToClipboard(url).then((ok) =>
-                    ok ? setCopied(true) : setError(label("copyFailed")),
-                  )
-                }
-              >
-                {label(copied ? "copied" : "copy")}
-              </button>
-            </div>
-          )}
-          {!connector ? (
-            <button
-              type="button"
-              className={`${secondaryButtonClass()} mt-3`}
-              disabled={actionsDisabled}
-              onClick={() => void action("configure")}
+          </CardBlock>
+        )}
+        {url && (
+          <CardBlock>
+            <SettingsNotice
+              tone="warning"
+              action={
+                <button
+                  type="button"
+                  className={primaryButtonClass()}
+                  disabled={actionsDisabled}
+                  onClick={() =>
+                    void copyTextToClipboard(url).then((ok) =>
+                      ok ? setCopied(true) : setError(label("copyFailed")),
+                    )
+                  }
+                >
+                  {label(copied ? "copied" : "copy")}
+                </button>
+              }
             >
-              {label("create")}
-            </button>
-          ) : (
+              {label("copyOnce")}
+            </SettingsNotice>
+          </CardBlock>
+        )}
+        {connector && (
+          <CardBlock>
             <details
-              className="mt-3 text-sm"
+              className="text-[13px]"
               onToggle={(event) => {
                 if (!event.currentTarget.open) setConfirm(null);
               }}
@@ -340,47 +382,74 @@ function ProviderSettings({
                 >
                   {label("rotate")}
                 </button>
-                {connector && (
-                  <button
-                    type="button"
-                    className={dangerButtonClass()}
-                    disabled={actionsDisabled}
-                    onClick={() => setConfirm("revoke")}
-                  >
-                    {label("revoke")}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className={dangerButtonClass()}
+                  disabled={actionsDisabled}
+                  onClick={() => setConfirm("revoke")}
+                >
+                  {label("revoke")}
+                </button>
               </div>
               {confirm && (
-                <div className="mt-3 border-t border-[var(--glass-border-subtle)] pt-3">
-                  <p className="text-sm mb-2">
+                <div className="mt-3">
+                  <SettingsNotice
+                    tone="warning"
+                    action={
+                      <>
+                        <button
+                          type="button"
+                          className={dangerButtonClass()}
+                          disabled={actionsDisabled}
+                          onClick={() => void action(confirm === "rotate" ? "configure" : "revoke")}
+                        >
+                          {label("confirm")}
+                        </button>
+                        <button
+                          type="button"
+                          className={secondaryButtonClass()}
+                          disabled={actionsDisabled}
+                          onClick={() => setConfirm(null)}
+                        >
+                          {label("cancel")}
+                        </button>
+                      </>
+                    }
+                  >
                     {label(confirm === "rotate" ? "rotateHint" : "revokeHint")}
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      className={dangerButtonClass()}
-                      disabled={actionsDisabled}
-                      onClick={() => void action(confirm === "rotate" ? "configure" : "revoke")}
-                    >
-                      {label("confirm")}
-                    </button>
-                    <button
-                      type="button"
-                      className={secondaryButtonClass()}
-                      disabled={actionsDisabled}
-                      onClick={() => setConfirm(null)}
-                    >
-                      {label("cancel")}
-                    </button>
-                  </div>
+                  </SettingsNotice>
                 </div>
               )}
             </details>
-          )}
-        </section>
-        <p className="text-sm text-[var(--color-text-secondary)]">{label("actorHint")}</p>
-      </div>
-    </div>
+          </CardBlock>
+        )}
+      </SettingsCard>
+      <SettingsNotice>{label("actorHint")}</SettingsNotice>
+    </SettingsPage>
   );
+}
+
+type ConnectorReach =
+  | { kind: "public" }
+  | { kind: "missing" }
+  | { kind: "invalid"; address: string };
+
+/**
+ * Whether ChatGPT can reach connectors built on this Web access address, judged
+ * on the address itself so it holds before any connector exists. Anything but an
+ * absolute http(s) address is no Web address at all; an http(s) one that ChatGPT
+ * cannot reach is named by its origin, never by its connector path.
+ */
+function connectorReach(address: string): ConnectorReach {
+  let url: URL;
+  try {
+    url = new URL(address);
+  } catch {
+    return { kind: "missing" };
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return { kind: "missing" };
+  if (url.protocol === "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
+    return { kind: "public" };
+  }
+  return { kind: "invalid", address: url.origin };
 }

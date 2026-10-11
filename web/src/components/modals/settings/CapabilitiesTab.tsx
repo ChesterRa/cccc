@@ -964,19 +964,16 @@ export function CapabilitiesTab({
               </button>
             </div>
           </div>
-          <div className={settingsWorkspaceBodyClass}>
-            <div className="text-xs text-[var(--color-text-tertiary)]">
-              {t("capabilities.pageGuide")}
-            </div>
-            {err ? (
+          {err ? (
+            <div className={settingsWorkspaceBodyClass}>
               <div
                 className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400"
                 role="alert"
               >
                 {err}
               </div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
         </section>
       ) : err ? (
         <div

@@ -450,3 +450,104 @@ fn scheduled_action_remains_due_until_its_owner_confirms_completion() {
         "returning an action is not proof that the daemon applied it"
     );
 }
+
+#[test]
+fn mail_written_to_an_idle_actor_is_announced_at_once() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("idle Mail now", "").expect("group");
+    let configure = |delivery: serde_json::Value| {
+        store
+            .mutate(&group.group_id, |group| {
+                group.extra.insert("delivery".into(), delivery.clone());
+                Ok(())
+            })
+            .expect("delivery settings");
+    };
+    store
+        .mutate(&group.group_id, |group| {
+            group.state = GroupState::Active;
+            actors::add(group, Actor::new("idle"))?;
+            actors::add(group, Actor::new("busy"))?;
+            Ok(())
+        })
+        .expect("actors");
+    configure(json!({"mail_notice_after_seconds":3600}));
+    let mail = |recipient: &str| {
+        let mut message = Event::new("chat.message", &group.group_id);
+        message.by = "foreman".into();
+        message.data = json!({"text":"review this","to":[recipient],"message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("message");
+        ledger::append(
+            &store.ledger_path(&group.group_id).expect("ledger"),
+            &message,
+        )
+        .expect("append Mail");
+        message
+    };
+    let written = mail("idle");
+    mail("busy");
+    let idle = HashSet::from(["idle".to_owned()]);
+    let both = HashSet::from(["idle".to_owned(), "busy".to_owned()]);
+
+    // Fresh Mail: the periodic tick still waits out the idle delay.
+    let scheduled =
+        automation::tick_group_with_idle_actors(&home, &group.group_id, true, &both, &idle)
+            .expect("tick");
+    assert!(scheduled.notifications.is_empty());
+
+    // Written now to an idle recipient: announced at once, still capped by the
+    // busy delay should delivery find the recipient working.
+    let now = automation::notify_idle_mail(&home, &group.group_id, &idle).expect("Mail now");
+    assert_eq!(
+        now.notifications.len(),
+        1,
+        "only the idle recipient is told"
+    );
+    let notice = &now.notifications[0];
+    assert_eq!(notice.data["kind"], "mail_notice");
+    assert_eq!(notice.data["context"]["actor_id"], "idle");
+    assert_eq!(
+        notice.data["context"]["source_event_ids"],
+        json!([written.id])
+    );
+    let deliver_by = chrono::DateTime::parse_from_rfc3339(
+        notice.data["context"]["deliver_by"]
+            .as_str()
+            .expect("deliver_by"),
+    )
+    .expect("rfc3339");
+    let sent = chrono::DateTime::parse_from_rfc3339(&written.ts).expect("sent");
+    assert_eq!(deliver_by.timestamp(), sent.timestamp() + 3600);
+
+    // One notice per unread batch, whichever pass runs next.
+    assert!(
+        automation::notify_idle_mail(&home, &group.group_id, &idle)
+            .expect("again")
+            .notifications
+            .is_empty()
+    );
+    assert!(
+        automation::tick_group_with_idle_actors(&home, &group.group_id, true, &both, &idle)
+            .expect("tick")
+            .notifications
+            .is_empty()
+    );
+
+    // Early notices turned off keep Mail to the busy delay, even when idle.
+    let busy_now = HashSet::from(["busy".to_owned()]);
+    configure(json!({"mail_notice_after_seconds":3600,"mail_notice_idle_after_seconds":0}));
+    assert!(
+        automation::notify_idle_mail(&home, &group.group_id, &busy_now)
+            .expect("off")
+            .notifications
+            .is_empty()
+    );
+    configure(json!({"mail_notice_after_seconds":3600}));
+    let on = automation::notify_idle_mail(&home, &group.group_id, &busy_now).expect("on");
+    assert_eq!(on.notifications.len(), 1);
+    assert_eq!(on.notifications[0].data["context"]["actor_id"], "busy");
+}
