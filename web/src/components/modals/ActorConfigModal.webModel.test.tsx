@@ -129,7 +129,7 @@ describe("Web Model effective Actor configuration", () => {
     expect(host.textContent).toContain("antigravityMode.hint");
     expect(button("common:save")).toBeDefined();
   });
-  it.each(["copilot", "devin", "cursor"] as const)(
+  it.each(["copilot", "devin", "cursor", "kimi", "auggie", "kiro", "hermes", "droid"] as const)(
     "preserves %s ACP mode when saving an Actor",
     async (runtime) => {
       const p = props();
@@ -152,6 +152,26 @@ describe("Web Model effective Actor configuration", () => {
       expect(p.onSave).toHaveBeenCalledWith(expect.objectContaining({ runtimeMode: "acp" }));
     },
   );
+  it("saves Pi's default controlled surface without offering ACP or a native mode switch", async () => {
+    const p = props();
+    p.runtime = "pi";
+    p.savedRuntime = "pi";
+    p.command = "pi";
+    p.savedActor = {
+      id: "alpha",
+      runtime: "pi",
+      runtime_mode: "default",
+      command: ["pi"],
+      title: p.title,
+      capability_autoload: ["skill:fixture"],
+    };
+    await act(async () => root.render(<ActorConfigModal {...p} />));
+    expect(host.textContent).toContain("piRuntimeHint");
+    expect(host.textContent).not.toContain("acpMode.hint");
+    await act(async () => button("stage-env-draft").click());
+    await act(async () => button("common:save").click());
+    expect(p.onSave).toHaveBeenCalledWith(expect.objectContaining({ runtimeMode: "default" }));
+  });
   it("retains secret drafts when unlinking succeeds but private-env saving fails", async () => {
     const p = props();
     p.linkedProfileId = "fixture-profile";

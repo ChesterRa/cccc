@@ -10,6 +10,7 @@ pub(super) struct Options {
     pub command: Vec<String>,
     pub model: Option<String>,
     pub mode: Option<String>,
+    pub effort: Option<String>,
     pub unrestricted: bool,
 }
 
@@ -18,6 +19,11 @@ pub(crate) fn name(runtime: ActorRuntime) -> &'static str {
         ActorRuntime::Copilot => "copilot",
         ActorRuntime::Devin => "devin",
         ActorRuntime::Cursor => "cursor",
+        ActorRuntime::Kimi => "kimi",
+        ActorRuntime::Auggie => "auggie",
+        ActorRuntime::Kiro => "kiro",
+        ActorRuntime::Hermes => "hermes",
+        ActorRuntime::Droid => "droid",
         _ => unreachable!("native ACP runtime was validated at launch"),
     }
 }
@@ -37,6 +43,11 @@ pub(super) fn options(runtime: ActorRuntime, command: &[String]) -> io::Result<O
         ActorRuntime::Copilot => stem == Some("copilot"),
         ActorRuntime::Devin => stem == Some("devin"),
         ActorRuntime::Cursor => matches!(stem, Some("agent" | "cursor-agent")),
+        ActorRuntime::Kimi => stem == Some("kimi"),
+        ActorRuntime::Auggie => stem == Some("auggie"),
+        ActorRuntime::Kiro => stem == Some("kiro-cli"),
+        ActorRuntime::Hermes => stem == Some("hermes"),
+        ActorRuntime::Droid => stem == Some("droid"),
         _ => false,
     };
     if !valid {
@@ -48,15 +59,29 @@ pub(super) fn options(runtime: ActorRuntime, command: &[String]) -> io::Result<O
         command: vec![program.clone()],
         model: None,
         mode: None,
+        effort: None,
         unrestricted: false,
     };
-    let mut args = command.iter().skip(1);
+    let mut args = command.iter().skip(1).peekable();
+    if matches!(
+        (runtime, args.peek().map(|arg| arg.as_str())),
+        (ActorRuntime::Kiro, Some("chat")) | (ActorRuntime::Droid, Some("exec"))
+    ) {
+        args.next();
+    }
     while let Some(argument) = args.next() {
         let (flag, inline) = argument
             .split_once('=')
             .map_or((argument.as_str(), None), |(k, v)| (k, Some(v)));
         match (runtime, flag) {
-            (_, "--model") => {
+            (_, "--model")
+            | (
+                ActorRuntime::Kimi
+                | ActorRuntime::Auggie
+                | ActorRuntime::Hermes
+                | ActorRuntime::Droid,
+                "-m",
+            ) => {
                 let value = value(inline, &mut args)?;
                 result.model = Some(value.clone());
                 // Devin/Cursor root CLI model flags do not select ACP models.
@@ -64,6 +89,56 @@ pub(super) fn options(runtime: ActorRuntime, command: &[String]) -> io::Result<O
                 if runtime == ActorRuntime::Copilot {
                     result.command.extend([flag.into(), value]);
                 }
+            }
+            (ActorRuntime::Hermes, "--tui") if inline.is_none() => {}
+            (ActorRuntime::Kiro, "--trust-all-tools" | "-a")
+            | (ActorRuntime::Hermes, "--yolo" | "-y")
+                if inline.is_none() =>
+            {
+                // V3/Hermes ACP do not accept these native launch flags. The
+                // caller's explicit policy is applied by the host, once per
+                // requested tool, without changing the user's global consent.
+                result.unrestricted = true;
+            }
+            (ActorRuntime::Kiro, "--agent") => {
+                result.mode = Some(value(inline, &mut args)?);
+            }
+            (ActorRuntime::Kiro, "--effort") | (ActorRuntime::Droid, "--reasoning-effort") => {
+                result.effort = Some(value(inline, &mut args)?);
+            }
+            (ActorRuntime::Droid, "--auto") => {
+                result.mode = Some(
+                    match value(inline, &mut args)?.as_str() {
+                        "low" => "auto-low",
+                        "medium" => "auto-medium",
+                        "high" => "auto-high",
+                        _ => return Err(invalid("Unsupported Droid ACP autonomy level")),
+                    }
+                    .into(),
+                );
+                // Droid owns the selected autonomy mode; this is not a host
+                // permission bypass for any additional ACP requests.
+            }
+            (ActorRuntime::Droid, "--skip-permissions-unsafe") if inline.is_none() => {
+                result.unrestricted = true;
+                result.command.push(flag.into());
+            }
+            (ActorRuntime::Kimi, "--yolo" | "-y") if inline.is_none() => {
+                // Kimi's native --yolo is Ask When Needed, while ACP's yolo
+                // is Never Ask. Preserve intent instead of escalating by name.
+                result.mode = Some("auto".into());
+                result.unrestricted = false;
+            }
+            (ActorRuntime::Kimi, "--auto") if inline.is_none() => {
+                result.mode = Some("yolo".into());
+                result.unrestricted = true;
+            }
+            (ActorRuntime::Kimi, "--plan") if inline.is_none() => {
+                result.mode = Some("plan".into());
+                result.unrestricted = false;
+            }
+            (ActorRuntime::Auggie, "--ask" | "-a") if inline.is_none() => {
+                result.mode = Some("ask".into());
             }
             (ActorRuntime::Devin, "--permission-mode") => {
                 let value = value(inline, &mut args)?;
@@ -124,7 +199,20 @@ pub(super) fn options(runtime: ActorRuntime, command: &[String]) -> io::Result<O
                 | "--context",
             )
             | (ActorRuntime::Cursor, "--sandbox" | "--add-dir")
-            | (ActorRuntime::Devin, "--config") => result
+            | (ActorRuntime::Devin, "--config")
+            | (
+                ActorRuntime::Droid,
+                "--only-tools" | "--add-tools" | "--remove-tools" | "--settings",
+            )
+            | (
+                ActorRuntime::Auggie,
+                "--reasoning-effort"
+                | "--permission"
+                | "--remove-tool"
+                | "--rules"
+                | "--augment-cache-dir"
+                | "--retry-timeout",
+            ) => result
                 .command
                 .extend([flag.into(), value(inline, &mut args)?]),
             _ => {
@@ -141,7 +229,24 @@ pub(super) fn options(runtime: ActorRuntime, command: &[String]) -> io::Result<O
                 result.command.push("--no-auto-update".into());
             }
         }
-        ActorRuntime::Devin | ActorRuntime::Cursor => result.command.push("acp".into()),
+        ActorRuntime::Devin | ActorRuntime::Cursor | ActorRuntime::Kimi => {
+            result.command.push("acp".into());
+        }
+        ActorRuntime::Auggie => result.command.push("--acp".into()),
+        ActorRuntime::Kiro => result.command.extend([
+            "acp".into(),
+            "--agent-engine=v3".into(),
+            // Kiro CLI owns login; CCCC does not serve its token callbacks.
+            "--auth-method".into(),
+            "cli".into(),
+        ]),
+        ActorRuntime::Hermes => result.command.push("acp".into()),
+        ActorRuntime::Droid => {
+            result.command.insert(1, "exec".into());
+            result
+                .command
+                .extend(["--output-format".into(), "acp".into()]);
+        }
         _ => unreachable!(),
     }
     Ok(result)
@@ -170,6 +275,11 @@ pub(super) async fn initialize(
     options: &Options,
 ) -> io::Result<(String, bool)> {
     let capabilities = protocol.request("initialize", json!({"protocolVersion":1,"clientInfo":{"name":"cccc","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false}}), HANDSHAKE_TIMEOUT).await?;
+    if capabilities["protocolVersion"].as_u64() != Some(1) {
+        return Err(io::Error::other(
+            "Official ACP server did not negotiate supported protocol version 1",
+        ));
+    }
     if resume.is_some()
         && capabilities
             .pointer("/agentCapabilities/loadSession")
@@ -189,6 +299,11 @@ pub(super) async fn initialize(
             )
             .await?;
     }
+    if runtime == ActorRuntime::Hermes
+        && let Some(id) = resume
+    {
+        verify_hermes_session(protocol, &capabilities, cwd, id, HANDSHAKE_TIMEOUT).await?;
+    }
     let mut params = json!({"cwd":cwd.to_string_lossy(),"mcpServers":if runtime == ActorRuntime::Copilot { vec![] } else { vec![mcp] }});
     let method = if let Some(id) = resume {
         params["sessionId"] = json!(id);
@@ -197,6 +312,26 @@ pub(super) async fn initialize(
         "session/new"
     };
     let result = protocol.request(method, params, HANDSHAKE_TIMEOUT).await?;
+    if !result.is_object() {
+        return Err(io::Error::other(
+            "Official ACP server returned an invalid session response",
+        ));
+    }
+    if let Some(expected) = resume {
+        for returned in [
+            result.get("sessionId"),
+            result.pointer("/_meta/hermes/sessionProvenance/acpSessionId"),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if returned.as_str() != Some(expected) {
+                return Err(io::Error::other(
+                    "Official ACP server changed the attempted session identity; use New Session explicitly",
+                ));
+            }
+        }
+    }
     let id = resume
         .or_else(|| result["sessionId"].as_str())
         .filter(|id| valid_id(id))
@@ -206,7 +341,10 @@ pub(super) async fn initialize(
         let model = advertised_model(runtime, &result, model)?;
         // Reapply explicit intent on both new and load; CLI flags alone do not
         // override the model stored by a resumed ACP session.
-        if runtime == ActorRuntime::Devin {
+        if matches!(
+            runtime,
+            ActorRuntime::Devin | ActorRuntime::Kimi | ActorRuntime::Kiro | ActorRuntime::Droid
+        ) {
             protocol
                 .request(
                     "session/set_config_option",
@@ -214,8 +352,17 @@ pub(super) async fn initialize(
                     HANDSHAKE_TIMEOUT,
                 )
                 .await
-                .map_err(|error| io::Error::other(format!("Devin ACP model selection failed: {error}. Use an exact model ID or advertised name from `devin models`; terminal fuzzy aliases are not ACP model IDs")))?;
-        } else if runtime == ActorRuntime::Cursor {
+                .map_err(|error| {
+                    if runtime == ActorRuntime::Devin {
+                        io::Error::other(format!("Devin ACP model selection failed: {error}. Use an exact model ID or advertised name from `devin models`; terminal fuzzy aliases are not ACP model IDs"))
+                    } else {
+                        io::Error::other(format!("{} ACP model selection failed: {error}. Use an exact configured model ID or advertised name", name(runtime)))
+                    }
+                })?;
+        } else if matches!(
+            runtime,
+            ActorRuntime::Cursor | ActorRuntime::Auggie | ActorRuntime::Hermes
+        ) {
             protocol
                 .request(
                     "session/set_model",
@@ -225,9 +372,35 @@ pub(super) async fn initialize(
                 .await?;
         }
     }
+    if let Some(effort) = &options.effort {
+        let config_id = match runtime {
+            ActorRuntime::Kiro => "effortLevel",
+            ActorRuntime::Droid => "reasoning_effort",
+            _ => unreachable!("effort intent is supported only by these native ACP adapters"),
+        };
+        protocol
+            .request(
+                "session/set_config_option",
+                json!({"sessionId":id,"configId":config_id,"value":effort}),
+                HANDSHAKE_TIMEOUT,
+            )
+            .await?;
+    }
     if let Some(mode) = &options.mode {
         let mode = if runtime == ActorRuntime::Copilot {
             format!("https://agentclientprotocol.com/protocol/session-modes#{mode}")
+        } else if matches!(
+            runtime,
+            ActorRuntime::Kiro | ActorRuntime::Hermes | ActorRuntime::Droid
+        ) {
+            let choices = result
+                .pointer("/modes/availableModes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|choice| Some((choice["id"].as_str()?, choice["name"].as_str()?)))
+                .collect();
+            advertised_choice(choices, mode)?.to_owned()
         } else {
             mode.clone()
         };
@@ -246,30 +419,123 @@ pub(super) async fn initialize(
     Ok((id, resume.is_some()))
 }
 
+async fn verify_hermes_session(
+    protocol: &AcpClient,
+    capabilities: &Value,
+    cwd: &Path,
+    id: &str,
+    timeout: Duration,
+) -> io::Result<()> {
+    tokio::time::timeout(
+        timeout,
+        verify_hermes_session_pages(protocol, capabilities, cwd, id),
+    )
+    .await
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Hermes ACP session discovery timed out; the attempted session was not resumed",
+        )
+    })?
+}
+
+async fn verify_hermes_session_pages(
+    protocol: &AcpClient,
+    capabilities: &Value,
+    cwd: &Path,
+    id: &str,
+) -> io::Result<()> {
+    // Hermes currently returns {} for an unknown load, indistinguishable from
+    // ACP's valid empty load response. Its official list surface establishes
+    // the attempted identity before load; never use resume's fresh fallback.
+    if !capabilities
+        .pointer("/agentCapabilities/sessionCapabilities/list")
+        .is_some_and(Value::is_object)
+    {
+        return Err(io::Error::other(
+            "Hermes ACP cannot verify this attempted session; use New Session explicitly",
+        ));
+    }
+    let mut cursor = None::<String>;
+    let mut seen = std::collections::BTreeSet::new();
+    loop {
+        let mut params = json!({"cwd":cwd.to_string_lossy()});
+        if let Some(cursor) = &cursor {
+            params["cursor"] = json!(cursor);
+        }
+        let page = protocol
+            .request("session/list", params, HANDSHAKE_TIMEOUT)
+            .await?;
+        let sessions = page["sessions"]
+            .as_array()
+            .ok_or_else(|| io::Error::other("Hermes ACP returned an invalid session list"))?;
+        if let Some(session) = sessions
+            .iter()
+            .find(|session| session["sessionId"].as_str() == Some(id))
+        {
+            if session["cwd"]
+                .as_str()
+                .is_some_and(|path| Path::new(path) == cwd)
+            {
+                return Ok(());
+            }
+            return Err(io::Error::other(
+                "Hermes ACP attempted session belongs to a different workspace; use New Session explicitly",
+            ));
+        }
+        let Some(next) = page.get("nextCursor").filter(|value| !value.is_null()) else {
+            return Err(io::Error::other(
+                "Hermes ACP attempted session is unavailable; use New Session explicitly",
+            ));
+        };
+        let next = next
+            .as_str()
+            .filter(|cursor| !cursor.is_empty())
+            .ok_or_else(|| {
+                io::Error::other("Hermes ACP returned an invalid session-list cursor")
+            })?;
+        if !seen.insert(next.to_owned()) {
+            return Err(io::Error::other(
+                "Hermes ACP session-list pagination did not advance",
+            ));
+        }
+        cursor = Some(next.to_owned());
+    }
+}
+
 fn advertised_model<'a>(
     runtime: ActorRuntime,
     result: &'a Value,
     requested: &'a str,
 ) -> io::Result<&'a str> {
     let choices: Vec<(&str, &str)> = match runtime {
-        ActorRuntime::Cursor => result
+        ActorRuntime::Cursor | ActorRuntime::Auggie | ActorRuntime::Hermes => result
             .pointer("/models/availableModels")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
             .filter_map(|choice| Some((choice["modelId"].as_str()?, choice["name"].as_str()?)))
             .collect(),
-        ActorRuntime::Devin => result["configOptions"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|option| option["id"] == "model")
-            .filter_map(|option| option["options"].as_array())
-            .flatten()
-            .filter_map(|choice| Some((choice["value"].as_str()?, choice["name"].as_str()?)))
-            .collect(),
+        ActorRuntime::Devin | ActorRuntime::Kimi | ActorRuntime::Kiro | ActorRuntime::Droid => {
+            result["configOptions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|option| option["id"] == "model")
+                .filter_map(|option| option["options"].as_array())
+                .flatten()
+                .filter_map(|choice| Some((choice["value"].as_str()?, choice["name"].as_str()?)))
+                .collect()
+        }
         _ => return Ok(requested),
     };
+    advertised_choice(choices, requested)
+}
+
+fn advertised_choice<'a>(
+    choices: Vec<(&'a str, &'a str)>,
+    requested: &'a str,
+) -> io::Result<&'a str> {
     if choices.iter().any(|(id, _)| *id == requested) {
         return Ok(requested);
     }
@@ -279,7 +545,7 @@ fn advertised_model<'a>(
     if let Some((id, _)) = named.next() {
         if named.any(|(other, _)| other != id) {
             return Err(invalid(
-                "ACP model name is ambiguous; use an exact model ID",
+                "ACP selection name is ambiguous; use an exact advertised ID",
             ));
         }
         return Ok(id);
@@ -382,3 +648,11 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "native_acp/candidate_tests.rs"]
+mod candidate_tests;
+
+#[cfg(all(test, unix))]
+#[path = "native_acp/v3_tests.rs"]
+mod v3_tests;

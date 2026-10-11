@@ -8,12 +8,18 @@ import {
 
 describe("AgentTab stopped terminal tail model", () => {
   it("offers explicit new-session control for every managed resume runtime", () => {
-    for (const runtime of ["claude", "codex", "grok"]) {
+    for (const runtime of ["claude", "codex", "grok", "pi", "opencode", "kilo"]) {
       expect(actorSupportsNewSession(runtime)).toBe(true);
     }
     expect(actorSupportsNewSession("cline")).toBe(false);
-    expect(actorSupportsNewSession("opencode")).toBe(false);
   });
+  it.each(["kimi", "auggie", "kiro", "hermes", "droid"])(
+    "only offers managed reset for %s in ACP mode",
+    (runtime) => {
+      expect(actorSupportsNewSession(runtime, "acp")).toBe(true);
+      expect(actorSupportsNewSession(runtime, "default")).toBe(false);
+    },
+  );
 
   it("detects persisted runtime resume failures from actor state", () => {
     expect(actorHasRuntimeResumeFailure({ runtime_session_status: "resume_failed" })).toBe(true);

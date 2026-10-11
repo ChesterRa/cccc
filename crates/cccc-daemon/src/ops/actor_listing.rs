@@ -50,6 +50,7 @@ pub(super) fn list(
                 let retained_pty = cccc_runtime::status(&group.group_id, &actor.id)
                     .is_ok_and(|status| status.running);
                 if let Some(actual) = actual {
+                    object.insert("runtime_state_source".into(), json!("managed_session"));
                     object.insert("runner_effective".into(), actual["runner"].clone());
                     object.insert(
                         "effective_runtime_mode".into(),
@@ -57,6 +58,7 @@ pub(super) fn list(
                     );
                     object.insert("effective_runtime".into(), actual["runtime"].clone());
                 } else if retained_pty {
+                    object.insert("runtime_state_source".into(), json!("terminal"));
                     object.insert("runner_effective".into(), json!("pty"));
                     object.insert("effective_runtime_mode".into(), json!("default"));
                 }
@@ -157,4 +159,84 @@ fn bool_arg(request: &DaemonRequest, name: &str) -> bool {
         Value::String(value) => matches!(value.to_lowercase().as_str(), "1" | "true" | "yes"),
         _ => false,
     })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use cccc_contracts::{ActorRuntime, RuntimeMode};
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn saved_native_mode_keeps_the_running_managed_state_authority() {
+        for runtime in [ActorRuntime::Kimi, ActorRuntime::Auggie] {
+            let temp = tempfile::tempdir().expect("fixture directory");
+            let home = HomeLayout::from_path(temp.path().join("cccc")).expect("fixture home");
+            home.initialize().expect("initialize fixture home");
+            let workspace = temp.path().join("workspace");
+            std::fs::create_dir(&workspace).expect("fixture workspace");
+            let store = GroupStore::new(home.clone()).expect("fixture store");
+            let group = store.create("Actual surface", "").expect("fixture group");
+            let scope = cccc_core::scope::detect(&workspace).expect("fixture scope");
+            let mut group = cccc_core::group_scope::attach(&store, &group.group_id, scope)
+                .expect("attach fixture scope");
+            let program = temp.path().join(if runtime == ActorRuntime::Kimi {
+                "kimi"
+            } else {
+                "auggie"
+            });
+            std::fs::write(
+                &program,
+                include_str!("codex_voice_analyst/native_acp/candidate_fixture.py"),
+            )
+            .expect("write provider fixture");
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700))
+                .expect("executable provider fixture");
+            let mut actor = Actor::new("controlled");
+            actor.runtime = runtime;
+            actor.runtime_mode = RuntimeMode::Acp;
+            actor.command = vec![program.to_string_lossy().into_owned()];
+            actor.env = BTreeMap::from([
+                (
+                    "HOME".into(),
+                    temp.path().join("provider").to_string_lossy().into_owned(),
+                ),
+                (
+                    "KIMI_CODE_HOME".into(),
+                    temp.path()
+                        .join("provider/kimi")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                ("ACP_FIXTURE_CLI".into(), "/bin/true".into()),
+            ]);
+            group.actors.push(actor.clone());
+            store.save(&group).expect("save controlled actor");
+            super::super::local_headless::start(&home, &group, &actor)
+                .expect("start controlled actor");
+            struct Stop(String);
+            impl Drop for Stop {
+                fn drop(&mut self) {
+                    let _ = super::super::local_headless::stop(&self.0, "controlled");
+                }
+            }
+            let _stop = Stop(group.group_id.clone());
+            group.actors[0].runtime_mode = RuntimeMode::Default;
+            store
+                .save(&group)
+                .expect("save native mode without restarting");
+            let request = DaemonRequest {
+                v: 1,
+                op: "actor_list".into(),
+                args: Map::new(),
+            };
+            let values = list(&home, &group, &request).expect("list actual actor surface");
+            assert_eq!(values[0]["runtime_mode"], Value::Null);
+            assert_eq!(values[0]["runner"], "pty");
+            assert_eq!(values[0]["runner_effective"], "headless");
+            assert_eq!(values[0]["effective_runtime_mode"], "acp");
+            assert_eq!(values[0]["runtime_state_source"], "managed_session");
+            assert_eq!(values[0]["running"], true);
+        }
+    }
 }

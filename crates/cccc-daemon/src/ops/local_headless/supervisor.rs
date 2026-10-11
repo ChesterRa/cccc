@@ -5,7 +5,7 @@ use super::{
 };
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
-use serde_json::Map;
+use serde_json::{Map, json};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -76,6 +76,7 @@ pub(super) fn uses_managed_session(actor: &Actor) -> bool {
             | ActorRuntime::Grok
             | ActorRuntime::Opencode
             | ActorRuntime::Kilo
+            | ActorRuntime::Pi
     ) || actor.runtime.is_headless_acp(actor.runtime_mode)
 }
 
@@ -479,7 +480,37 @@ fn submit_admitted(
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => false,
                 Err(error) => {
-                    tracing::warn!(%error,group_id=%group.group_id,actor_id=%actor.id,"ACP delivery outcome is unconfirmed; quarantining the batch");
+                    let diagnostic = item.managed.safe_diagnostic(&error);
+                    tracing::warn!(
+                        message = %diagnostic,
+                        group_id = %group.group_id,
+                        actor_id = %actor.id,
+                        "ACP delivery outcome is unconfirmed; quarantining the batch"
+                    );
+                    if error.kind() != io::ErrorKind::Interrupted {
+                        super::output::emit(
+                            item,
+                            "headless.control.failed",
+                            Map::from_iter([
+                                ("control_kind".into(), json!("input")),
+                                ("status".into(), json!("unconfirmed")),
+                                (
+                                    "event_id".into(),
+                                    json!(source_events.first().map(|event| event.id.as_str())),
+                                ),
+                                (
+                                    "source_event_ids".into(),
+                                    json!(
+                                        source_events
+                                            .iter()
+                                            .map(|event| &event.id)
+                                            .collect::<Vec<_>>()
+                                    ),
+                                ),
+                                ("error".into(), json!({"message":diagnostic})),
+                            ]),
+                        );
+                    }
                     outcome = BatchSubmission::Unconfirmed;
                     false
                 }

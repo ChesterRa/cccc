@@ -72,6 +72,24 @@ const type = async (textarea: HTMLTextAreaElement, value: string) =>
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
   });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+const groupPrompts = (group: string) => ({
+  ok: true,
+  result: {
+    preamble: prompt("preamble", `${group} preamble`, "home"),
+    help: prompt("help", `${group} help`, "home"),
+  },
+});
+const renderGroup = (groupId: string) =>
+  act(async () => root.render(<GuidanceTab isDark={false} groupId={groupId} />));
+
 it("gives each prompt card its own actions and resets only a saved override", async () => {
   await mount();
   const [preambleCard, helpCard] = cards();
@@ -146,3 +164,55 @@ it("gives the expanded editor its own ids so its labels reach the dialog's contr
     await act(async () => button("common:close", dialog).click());
   }
 });
+
+it("does not let a late Group A read replace Group B guidance or become its saved content", async () => {
+  const oldRead = deferred<ReturnType<typeof groupPrompts>>();
+  api.fetchGroupPrompts.mockImplementation((group: string) =>
+    group === "A" ? oldRead.promise : Promise.resolve(groupPrompts(group)),
+  );
+  await renderGroup("A");
+  await renderGroup("B");
+  expect(host.querySelectorAll("textarea")[0].value).toBe("B preamble");
+  await act(async () => oldRead.resolve(groupPrompts("A")));
+  expect(host.querySelectorAll("textarea")[0].value).toBe("B preamble");
+  await act(async () => button("common:save", cards()[0]).click());
+  expect(api.updateGroupPrompt).toHaveBeenCalledWith("B", "preamble", "B preamble");
+});
+
+it("clears previous Group guidance while the next Group read is pending", async () => {
+  const nextRead = deferred<ReturnType<typeof groupPrompts>>();
+  api.fetchGroupPrompts.mockImplementation((group: string) =>
+    group === "B" ? nextRead.promise : Promise.resolve(groupPrompts(group)),
+  );
+  await renderGroup("A");
+  await type(host.querySelectorAll("textarea")[0], "Unsaved A draft");
+  await renderGroup("B");
+  expect(host.querySelectorAll("textarea")[0].value).toBe("");
+  expect(button("common:save", cards()[0]).disabled).toBe(true);
+  await act(async () => nextRead.resolve(groupPrompts("B")));
+  expect(host.querySelectorAll("textarea")[0].value).toBe("B preamble");
+});
+
+it.each(["read", "save"] as const)(
+  "ignores a departed Group's %s failure and busy cleanup while the current Group loads",
+  async (operation) => {
+    const oldOperation = deferred<
+      ReturnType<typeof groupPrompts> | { ok: false; error: { message: string } }
+    >();
+    const nextRead = deferred<ReturnType<typeof groupPrompts>>();
+    api.fetchGroupPrompts.mockImplementation((group: string) => {
+      if (group === "B") return nextRead.promise;
+      return operation === "read" ? oldOperation.promise : Promise.resolve(groupPrompts("A"));
+    });
+    api.updateGroupPrompt.mockImplementation(() => oldOperation.promise);
+    await renderGroup("A");
+    if (operation === "save") await act(async () => button("common:save", cards()[0]).click());
+    await renderGroup("B");
+    await act(async () => oldOperation.resolve({ ok: false, error: { message: "Old A failure" } }));
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(button("common:save", cards()[0]).disabled).toBe(true);
+    await act(async () => nextRead.resolve(groupPrompts("B")));
+    expect(host.querySelectorAll("textarea")[0].value).toBe("B preamble");
+    expect(button("common:save", cards()[0]).disabled).toBe(false);
+  },
+);

@@ -22,6 +22,55 @@ mod socket_fixture;
 const FAKE_SESSION_ID: &str = "01a0623c-19b3-7ec3-b777-95e24279ec67";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejected_actor_grok_resume_never_creates_a_replacement_session() {
+    let temp = socket_fixture::tempdir();
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let executable = temp.path().join("grok");
+    std::fs::write(&executable, r#"#!/usr/bin/env python3
+import json, signal, sys
+from pathlib import Path
+if 'leader' in sys.argv:
+    while True: signal.pause()
+for line in sys.stdin:
+    r=json.loads(line)
+    with open(Path.cwd()/'requests.jsonl','a') as f: f.write(json.dumps(r)+'\n')
+    if r['method']=='session/load':
+        reply={'error':{'code':-32602,'message':'saved session unavailable'}}
+    else:
+        reply={'result':{'protocolVersion':1,'agentCapabilities':{'loadSession':True},'sessionId':'unwanted-new-session'}}
+    print(json.dumps({'jsonrpc':'2.0','id':r['id'],**reply}),flush=True)
+"#).expect("fixture");
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).expect("mode");
+    let prepared = grok::prepare(
+        &home,
+        &[executable.to_string_lossy().into_owned()],
+        &BTreeMap::new(),
+        "resume-rejected",
+    )
+    .expect("prepare");
+    let result = grok::launch(
+        prepared,
+        temp.path(),
+        &BTreeMap::new(),
+        "resume-rejected",
+        SessionPurpose::Actor,
+        Some(FAKE_SESSION_ID),
+    )
+    .await;
+    assert!(result.is_err());
+    let requests: Vec<Value> = std::fs::read_to_string(temp.path().join("requests.jsonl"))
+        .expect("requests")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("JSON"))
+        .collect();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["method"], "initialize");
+    assert_eq!(requests[1]["method"], "session/load");
+    assert_eq!(requests[1]["params"]["sessionId"], FAKE_SESSION_ID);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grok_launch_applies_explicit_model_and_effort_after_new_and_resume() {
     let temp = socket_fixture::tempdir();
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -288,7 +337,7 @@ async fn external_tui_activity_blocks_delivery_until_it_is_idle() {
     let mut events = analyst.subscribe();
     let lifecycle = match &analyst.protocol {
         ManagedProtocol::Acp(protocol) => protocol.lifecycle_control(),
-        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) => {
+        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) | ManagedProtocol::Pi(_) => {
             panic!("expected ACP protocol")
         }
     };
@@ -361,7 +410,7 @@ async fn busy_runtime_accepts_voice_input_for_its_native_steer_or_queue_policy()
     let mut events = lifecycle.subscribe();
     let control = match &session.protocol {
         ManagedProtocol::Acp(protocol) => protocol.lifecycle_control(),
-        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) => {
+        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) | ManagedProtocol::Pi(_) => {
             panic!("expected ACP protocol")
         }
     };
@@ -495,7 +544,7 @@ async fn voice_admission_falls_back_to_the_native_runtime_after_a_busy_race() {
     let mut events = lifecycle.subscribe();
     let control = match &session.protocol {
         ManagedProtocol::Acp(protocol) => protocol.lifecycle_control(),
-        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) => {
+        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) | ManagedProtocol::Pi(_) => {
             panic!("expected ACP protocol")
         }
     };

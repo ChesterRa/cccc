@@ -1932,6 +1932,9 @@ fn profiles_match_analyst_structured_runtimes_and_exclude_native_tui() {
         ActorRuntime::Copilot,
         ActorRuntime::Devin,
         ActorRuntime::Cursor,
+        ActorRuntime::Auggie,
+        ActorRuntime::Kimi,
+        ActorRuntime::Pi,
     ] {
         let mode = if runtime.supports_acp_mode() {
             RuntimeMode::Acp

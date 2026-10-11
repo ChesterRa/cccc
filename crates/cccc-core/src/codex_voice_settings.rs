@@ -30,6 +30,12 @@ impl ResolvedAgentRuntime {
 
     #[must_use]
     pub fn identity_fingerprint(&self) -> String {
+        if self.runtime == ActorRuntime::Pi {
+            let encoded =
+                serde_json::to_vec(&(self, identity_fingerprint(self.runtime, &self.environment)))
+                    .expect("Pi identity serializes");
+            return format!("{:x}", Sha256::digest(encoded));
+        }
         if self.runtime.supports_acp_mode() {
             let encoded = serde_json::to_vec(&(
                 self.runtime,
@@ -72,6 +78,7 @@ pub fn supports_structured_runtime(
     matches!(
         runtime,
         ActorRuntime::Antigravity
+            | ActorRuntime::Auggie
             | ActorRuntime::Copilot
             | ActorRuntime::Devin
             | ActorRuntime::Cursor
@@ -80,6 +87,11 @@ pub fn supports_structured_runtime(
             | ActorRuntime::Grok
             | ActorRuntime::Opencode
             | ActorRuntime::Kilo
+            | ActorRuntime::Kimi
+            | ActorRuntime::Kiro
+            | ActorRuntime::Hermes
+            | ActorRuntime::Droid
+            | ActorRuntime::Pi
     ) && mode.validate(runtime).is_ok()
         && (!runtime.supports_acp_mode() || mode == cccc_contracts::RuntimeMode::Acp)
 }
@@ -247,6 +259,7 @@ fn identity_fingerprint(runtime: ActorRuntime, environment: &BTreeMap<String, St
     let provider_keys: &[&str] = match runtime {
         ActorRuntime::Claude => unreachable!("Claude fingerprints the full resolved launch"),
         ActorRuntime::Grok => &["GROK_HOME", "HOME", "USERPROFILE"],
+        ActorRuntime::Pi => &["PI_CODING_AGENT_DIR", "HOME", "USERPROFILE"],
         ActorRuntime::Kilo => &[
             "HOME",
             "USERPROFILE",

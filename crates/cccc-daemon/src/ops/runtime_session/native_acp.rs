@@ -112,6 +112,11 @@ pub(crate) fn retire_all(home: &HomeLayout, group: &str, actor: &str) -> std::io
         ActorRuntime::Copilot,
         ActorRuntime::Devin,
         ActorRuntime::Cursor,
+        ActorRuntime::Kimi,
+        ActorRuntime::Auggie,
+        ActorRuntime::Kiro,
+        ActorRuntime::Hermes,
+        ActorRuntime::Droid,
     ] {
         match std::fs::remove_file(receipt_path(home, group, actor, runtime)?) {
             Ok(()) => {}

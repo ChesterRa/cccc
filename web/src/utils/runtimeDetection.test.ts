@@ -30,6 +30,14 @@ describe("host Runtime detection", () => {
     ).toBe("unknown");
     expect(runtimeDetectionKey("antigravity", info, "error", "acp")).toBe("failed");
   });
+  it.each(["kimi", "auggie", "kiro", "hermes", "droid"])(
+    "uses the selected %s ACP availability",
+    (runtime) => {
+      const candidate = { ...info, name: runtime };
+      expect(runtimeDetectionKey(runtime, candidate, "ready", "acp")).toBe("detected");
+      expect(runtimeDetectionKey(runtime, candidate, "ready", "default")).toBe("missing");
+    },
+  );
   it("separates Web and custom configuration from local installation", () => {
     for (const runtime of ["web_model", "grok_web_model"])
       expect(runtimeDetectionKey(runtime, undefined, "ready")).toBe("web");

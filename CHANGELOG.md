@@ -8,16 +8,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Added
 
+- Runtime Profile summaries distinguish native TUI, ACP and Pi RPC. OpenCode and Kilo expose their existing New session action in the Actor pane.
+- Pi official RPC support across Actors, Runtime Profiles, Voice Analyst and Voice Secretary, with session-local MCP, verified resume, precise cancellation and explicit extension interactions. Pi requires 1.1.0 or newer and has a structured workspace rather than a native terminal attachment.
+- Optional official ACP modes for Kimi Code, Auggie, Kiro V3, Hermes and Droid, sharing the existing managed lifecycle and Voice adapters while retaining native TUI defaults. Model and permission settings apply on new and resumed sessions; saved settings do not change a running surface before restart. Hermes cancellation retires its process while retaining the conversation, preventing interrupted input from being replayed into a subsequent task.
 - Chinese and Japanese CLI quick-start guides, with language links and navigation alongside English.
 - Per-chat IM relay modes for all traffic, user-facing messages, or explicitly user-addressed messages; Web and IM verbose controls use the same delivery setting.
-- Voice Secretary now uses one global runtime and a resident conversation, started by the first task and retained while idle. Tasks from all Groups run sequentially in that shared conversation, with their original destinations enforced by CCCC. Secretary supports the same structured adapters as Voice Analyst: Codex, Claude Code, Grok Build, OpenCode, Kilo, and official ACP modes for Antigravity, Copilot, Devin and Cursor. Native permissions follow each Runtime; the shared conversation does not isolate confidential Group context.
+- Voice Secretary now uses one global runtime and a resident conversation, started by the first task and retained while idle. Tasks from all Groups run sequentially in that shared conversation, with their original destinations enforced by CCCC. Secretary supports the same structured adapters as Voice Analyst: Codex, Claude Code, Grok Build, OpenCode, Kilo, and Pi RPC, and official ACP modes for Antigravity, Auggie, Copilot, Devin, Cursor, Kimi Code, Kiro, Hermes and Droid. Native permissions follow each Runtime; the shared conversation does not isolate confidential Group context.
 - Instance administrators can open the Secretary's native terminal or ACP output from its existing workspace, including while idle. Supported native terminals accept keyboard and mouse input; queued tasks wait for manual turns to finish. Viewing never starts a model task, and hiding the terminal does not stop the session. Results return to the original document, question or composer; ordinary terminal conversation has no automatic Group destination.
 - Secretary tasks retain explicit results, cancellation and unconfirmed outcomes. Document edits use a working copy and a version-checked atomic commit; conflicts retain the candidate for review. Peer messages are proposals until the user confirms forwarding.
 - Shared Voice settings bring Secretary configuration, Realtime preferences and Analyst settings, ASR credentials and local models together. Recognition and processing defaults are global; document/request workspaces stay local; Secretary and Analyst keep independent configuration, context and results.
 
 ### Changed
 
-- Notify managed Actors of pending Mail sooner when their Runtime confirms idle, while retaining the ordinary delay for busy or unknown states and leaving Mail consumption explicit.
+- Share labelled controls, compact page layouts and save actions across settings pages. The settings menu groups appearance and presentation controls and provides an explicit All settings entry.
+- Notify idle managed Actors immediately when concrete Mail is written, preserving the configured disable switches and ordinary delay for busy or unknown states. Broadcast Mail does not accelerate other pending Mail, and Mail consumption remains explicit.
 - Simplify the Group header and sidebar, and give terminal panels full-height columns with fewer simultaneous panels on narrow screens.
 - Share browser microphone/speaker preferences across Voice Secretary and Codex Voice through one device editor. Capture mode, recognition language and automatic polishing are remembered separately for each Group in that browser; active recordings and calls retain their starting settings.
 - Merge Dictation into Prompt, the default and first capture mode. Prompt defaults to dictation only; the compact **Polish after recording** checkbox enables optional model refinement. Manual polishing remains available for typed or dictated text. Selecting Prompt, Doc or Ask closes the menu; the checkbox changes only the Prompt preference.
@@ -27,6 +31,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- Correct Hermes native MCP setup argument order and confirmations, and verify the saved entry is enabled before reporting success. ACP startup and prompt errors identify the failed request and retain bounded, redacted Hermes diagnostic details.
+- Keep Kiro V3 ACP authentication with its native CLI login. Surface unconfirmed ACP prompt submission errors in the Actor execution record with safe diagnostics and RPC codes, preserving ambiguous delivery and preventing automatic replay.
+- Keep Guidance reads and mutations tied to their original Group, and constrain expanded-editor keyboard focus to its own dialog. Connector setup checks the configured Web address before creation, warns for known local HTTPS addresses and does not claim verified connectivity.
+- Codex, Grok, OpenCode and Kilo retain a saved Actor conversation after failed resume, show a safe diagnostic and stop automatic startup retries. Explicit Start/Restart retries the same conversation; New session starts fresh without deleting provider history.
+- Keep Start idempotent for healthy ACP and native Actors even when an old native conversation has a failed resume receipt. Explicit recovery only retries the selected Runtime; Pi session identities include inherited provider-home settings and respect explicit overrides, preserving provider history.
 - Preserve valid large OpenCode and Kilo lifecycle events, including inline image tool results, with a 16 MiB encoded-line limit. Count each line separately across fragmented or coalesced HTTP reads while retaining the existing explicit failure for malformed or oversized streams.
 - Distinguish saved Voice Secretary configuration from admission readiness, with localized guidance for missing configuration, invalid settings and an unavailable owner. Preserve saved input and keep provider process state separate from configuration.
 - Open Voice Analyst settings directly from its startup failure, and mark ACP snapshots as stale after repeated read failures while retaining existing results and controls.

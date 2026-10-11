@@ -2,6 +2,7 @@ import { supportsAcpMode } from "../../types";
 import { formatRuntimeCommand } from "../../components/modals/runtimeProfileControlsModel";
 import type { CodexVoiceAnalystSettings } from "../../services/api";
 import type { ActorProfile } from "../../types";
+import { structuredVoiceRuntimes } from "../voice/voiceRuntimeOptions";
 
 export type VoiceAnalystDraftSettings = {
   runtime: string;
@@ -20,17 +21,7 @@ export const emptyVoiceAnalystSettings: VoiceAnalystDraftSettings = {
   profile_owner: "",
 };
 
-export const managedAnalystRuntimes = new Set([
-  "codex",
-  "claude",
-  "grok",
-  "opencode",
-  "kilo",
-  "antigravity",
-  "copilot",
-  "devin",
-  "cursor",
-]);
+export const managedAnalystRuntimes = new Set<string>(structuredVoiceRuntimes);
 export const analystIdentityEnvironmentKeys = new Set([
   "CODEX_HOME",
   "CLAUDE_CONFIG_DIR",
@@ -46,6 +37,7 @@ export const analystIdentityEnvironmentKeys = new Set([
   "KILO_CONFIG",
   "KILO_CONFIG_DIR",
   "KILO_DB",
+  "PI_CODING_AGENT_DIR",
 ]);
 
 export function defaultAnalystRuntimeCommand(runtime: string): string {
@@ -57,6 +49,12 @@ export function defaultAnalystRuntimeCommand(runtime: string): string {
   if (runtime === "grok") return "grok";
   if (runtime === "opencode") return "opencode";
   if (runtime === "kilo") return "kilo";
+  if (runtime === "pi") return "pi";
+  if (runtime === "kimi") return "kimi --yolo";
+  if (runtime === "auggie") return "auggie";
+  if (runtime === "kiro") return "kiro-cli chat --trust-all-tools";
+  if (runtime === "hermes") return "hermes --tui --yolo";
+  if (runtime === "droid") return "droid --auto high";
   return "codex";
 }
 
@@ -106,7 +104,9 @@ export function voiceAnalystIdentityChanged(
   }
   if (mode !== "custom") return false;
   if (
-    (current.runtime === "claude" || supportsAcpMode(current.runtime)) &&
+    (current.runtime === "claude" ||
+      current.runtime === "pi" ||
+      supportsAcpMode(current.runtime)) &&
     (current.command.trim() !== loaded.command.trim() || hasEnvironmentChanges)
   ) {
     return true;

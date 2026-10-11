@@ -527,7 +527,7 @@
   "codexVoiceOutputSelectionUnavailable": "This browser uses the system speaker.",
   "codexVoiceAnalystRuntime": "Analyst runtime",
   "codexVoiceAnalystRuntimeHint": "Use a supported Runtime Profile or configure one directly. Analyst credentials are independent from the Realtime Voice login.",
-  "codexVoiceAnalystSupportedRuntimesHint": "Choose from the runtimes above. Options marked ACP use the runtime's official ACP mode and have no native terminal.",
+  "codexVoiceAnalystSupportedRuntimesHint": "Choose from the runtimes above. ACP and RPC options use the runtime's controlled session and have no native terminal.",
   "codexVoiceAnalystCommandHint": "Uses the same launch-command syntax as the matching Group Actor. CCCC owns the managed session, YOLO policy, MCP, workspace, and attach flags.",
   "codexVoiceAnalystCompatibleProfilesEmpty": "No compatible Runtime Profiles are available. Create one in Settings > Runtime Profiles or use Custom.",
   "codexVoiceAnalystProfileHostNote": "Uses this profile's runtime command and private environment. Runner and submit settings remain Actor-specific; CCCC hosts the Analyst through the runtime's managed session in YOLO mode.",

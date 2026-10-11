@@ -551,3 +551,67 @@ fn mail_written_to_an_idle_actor_is_announced_at_once() {
     assert_eq!(on.notifications.len(), 1);
     assert_eq!(on.notifications[0].data["context"]["actor_id"], "busy");
 }
+
+#[test]
+fn disabled_idle_mail_notice_does_not_announce_overdue_mail_on_write() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store
+        .create("disabled idle Mail notice", "")
+        .expect("group");
+    store
+        .mutate(&group.group_id, |group| {
+            group.state = GroupState::Active;
+            actors::add(group, Actor::new("idle"))?;
+            group.extra.insert(
+                "delivery".into(),
+                json!({"mail_notice_after_seconds":1,"mail_notice_idle_after_seconds":0}),
+            );
+            Ok(())
+        })
+        .expect("delivery settings");
+    let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+    let mut overdue = Event::new("chat.message", &group.group_id);
+    overdue.by = "user".into();
+    overdue.ts = (chrono::Utc::now() - chrono::Duration::seconds(60)).to_rfc3339();
+    overdue.data = json!({"text":"old Mail","to":["idle"],"message_mode":"mail"})
+        .as_object()
+        .cloned()
+        .expect("Mail");
+    ledger::append(&ledger_path, &overdue).expect("overdue Mail");
+    let mut written = overdue.clone();
+    written.id = Event::new("chat.message", &group.group_id).id;
+    written.ts = cccc_contracts::utc_now();
+    ledger::append(&ledger_path, &written).expect("new Mail");
+    let idle = HashSet::from(["idle".to_owned()]);
+
+    let immediate = automation::notify_idle_mail(&home, &group.group_id, &idle)
+        .expect("Mail write notification");
+    assert!(
+        immediate.notifications.is_empty(),
+        "disabled early notices must not run the ordinary timer from a Mail write"
+    );
+
+    let scheduled =
+        automation::tick_group_with_idle_actors(&home, &group.group_id, true, &idle, &idle)
+            .expect("ordinary timer");
+    assert_eq!(scheduled.notifications.len(), 1);
+    assert_eq!(scheduled.notifications[0].data["kind"], "mail_notice");
+    assert_eq!(
+        scheduled.notifications[0].data["context"]["source_event_ids"],
+        json!([overdue.id, written.id]),
+        "the periodic timer still announces the entire pending batch"
+    );
+    assert!(
+        cccc_core::inbox::cursors(&home, &group.group_id)
+            .expect("cursors")
+            .is_empty()
+    );
+    assert!(
+        ledger::read_all(&ledger_path)
+            .expect("events")
+            .iter()
+            .all(|event| event.kind != "mail.read")
+    );
+}

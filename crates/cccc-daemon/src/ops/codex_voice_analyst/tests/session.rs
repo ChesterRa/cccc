@@ -7,6 +7,65 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 #[tokio::test]
+async fn actor_resume_rejection_never_starts_a_replacement_codex_thread() {
+    use futures_util::{SinkExt, StreamExt};
+    use serde_json::json;
+    use tokio_tungstenite::tungstenite::Message;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let endpoint = format!("ws://{}", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut socket = tokio_tungstenite::accept_async(stream)
+            .await
+            .expect("websocket");
+        for method in ["initialize", "thread/resume"] {
+            let Message::Text(text) = socket.next().await.expect("frame").expect("text") else {
+                panic!("request");
+            };
+            let request: Value = serde_json::from_str(&text).expect("JSON");
+            assert_eq!(request["method"], method);
+            let response = if method == "thread/resume" {
+                assert_eq!(request["params"]["threadId"], "retained-conversation");
+                json!({"id":request["id"],"error":{"code":-32600,"message":"saved thread unavailable"}})
+            } else {
+                json!({"id":request["id"],"result":{}})
+            };
+            socket
+                .send(Message::Text(response.to_string().into()))
+                .await
+                .expect("reply");
+        }
+        if let Ok(Some(Ok(Message::Text(text)))) =
+            tokio::time::timeout(Duration::from_secs(1), socket.next()).await
+        {
+            let request: Value = serde_json::from_str(&text).expect("JSON");
+            panic!(
+                "failed resume issued unexpected provider work: {}",
+                request["method"]
+            );
+        }
+    });
+    let result = AnalystSession::connect(ConnectConfig {
+        binding: WorkspaceBinding {
+            root: std::env::current_dir().expect("cwd"),
+        },
+        generation: "rejected-resume".into(),
+        endpoint,
+        remote_tui_prefix: vec!["codex".into()],
+        environment: Default::default(),
+        resume_thread_id: Some("retained-conversation".into()),
+        process: None,
+        delegations: HashMap::new(),
+        purpose: SessionPurpose::Actor,
+    })
+    .await;
+    assert!(result.is_err(), "a failed resume must remain explicit");
+    server.await.expect("no fallback thread/start");
+}
+
+#[tokio::test]
 async fn new_codex_sessions_fail_before_attach_if_durable_history_is_unavailable() {
     use futures_util::{SinkExt, StreamExt};
     use serde_json::json;

@@ -1,6 +1,70 @@
 use super::super::*;
 use super::super::{launch, launch_command, process};
 
+#[cfg(unix)]
+#[test]
+fn resume_failure_keeps_unresolved_cleanup_owner_and_removes_private_startup_details() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("cccc")).expect("home");
+    home.initialize().expect("initialize");
+    let command = vec!["codex".into()];
+    let receipt = crate::ops::runtime_session::CodexAppThread {
+        id: "retained-thread",
+        resumed: true,
+    };
+    crate::ops::runtime_session::record_codex_app_thread(
+        &home,
+        "g_cleanup",
+        "peer",
+        temp.path(),
+        &command,
+        &BTreeMap::new(),
+        receipt,
+    )
+    .expect("receipt");
+    let attempt = crate::ops::runtime_session::prepare_codex_app_thread(
+        &home,
+        "g_cleanup",
+        "peer",
+        temp.path(),
+        &command,
+        &BTreeMap::new(),
+        "",
+    )
+    .expect("lookup")
+    .expect("attempt");
+    let owner = Arc::new(
+        process::spawn_background(
+            &["/bin/sh".into(), "-c".into(), "sleep 300".into()],
+            temp.path(),
+            &BTreeMap::new(),
+            "cleanup-fixture",
+        )
+        .expect("owned process"),
+    );
+    let error = io::Error::other(StartupCleanupFailure {
+        owner: PendingManagedStartup(Arc::clone(&owner)),
+        startup: io::Error::other("synthetic-private-startup-value"),
+        cleanup: io::Error::other("fixture stop has not completed"),
+    });
+    let result: io::Result<()> = crate::ops::runtime_session::resume_failure::finish_launch(
+        &home,
+        Some(("g_cleanup", "peer")),
+        Some(&attempt),
+        Err(error),
+    );
+    let error = result.expect_err("startup failed");
+    assert!(
+        !error
+            .to_string()
+            .contains("synthetic-private-startup-value")
+    );
+    assert!(error.to_string().contains("cleanup is unresolved"));
+    let retained = PendingManagedStartup::from_error(&error).expect("process ownership preserved");
+    assert!(Arc::ptr_eq(&retained.0, &owner));
+    retained.stop().expect("complete cleanup");
+}
+
 #[test]
 fn workspace_binding_requires_an_existing_directory() {
     let temp = tempfile::tempdir().expect("tempdir");

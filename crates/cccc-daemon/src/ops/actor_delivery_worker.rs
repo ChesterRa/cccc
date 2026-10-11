@@ -199,7 +199,10 @@ fn process_managed_batch(
                 if let Some(reason) = terminal_reason(&error) {
                     return BatchOutcome::Terminal(reason);
                 }
-                if error.code == actor_runtime::CLAUDE_RESUME_FAILED {
+                if matches!(
+                    error.code.as_str(),
+                    actor_runtime::CLAUDE_RESUME_FAILED | actor_runtime::RUNTIME_RESUME_FAILED
+                ) {
                     // Release this worker's claims but leave inbox/ledger messages pending.
                     // Explicit recovery redispatches them; automatic startup must stop.
                     super::actor_delivery::fail_jobs(jobs, &error.message);

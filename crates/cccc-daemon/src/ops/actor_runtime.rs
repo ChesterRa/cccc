@@ -19,6 +19,7 @@ pub use reconcile::{reap_exited, reconcile_exited};
 /// Claude Code refused the Actor's workspace; only the operator can accept its trust prompt.
 pub(crate) const CLAUDE_WORKSPACE_UNTRUSTED: &str = "claude_workspace_untrusted";
 pub(crate) const CLAUDE_RESUME_FAILED: &str = "claude_resume_failed";
+pub(crate) const RUNTIME_RESUME_FAILED: &str = "runtime_resume_failed";
 
 pub fn apply(
     home: &HomeLayout,
@@ -109,6 +110,9 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
 }
 
 fn launch_error(error: std::io::Error) -> OpError {
+    if super::runtime_session::resume_failure::is_blocked(&error) {
+        return OpError::new(RUNTIME_RESUME_FAILED, error.to_string());
+    }
     if super::runtime_session::is_claude_resume_blocked(&error) {
         return OpError::new(CLAUDE_RESUME_FAILED, error.to_string());
     }

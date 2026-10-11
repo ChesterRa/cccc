@@ -48,14 +48,14 @@ fn daemon_stop_waits_for_the_combined_web_process_to_exit() {
     std::fs::copy(env!("CARGO_BIN_EXE_cccc"), &installed).expect("copy cccc");
     let home = temp.path().join("home");
     let mut web = Command::new(&installed)
-        .args(["--port", "0"])
+        .args(["--host", "127.0.0.1", "--port", "0"])
         .env("CCCC_HOME", &home)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start combined CCCC");
 
-    wait_for_daemon_start(&installed, &home, &mut web);
+    wait_for_combined_web_start(&home, &mut web);
     let stop = run(&installed, &home, &["daemon", "stop"]);
     if !stop.status.success() {
         // Recover the combined process output so CI failures show which
@@ -176,19 +176,32 @@ fn wait_for_daemon_exit(home: &Path) {
     );
 }
 
-fn wait_for_daemon_start(executable: &Path, home: &Path, web: &mut std::process::Child) {
+fn wait_for_combined_web_start(home: &Path, web: &mut std::process::Child) {
+    let runtime_path = home.join("daemon").join("web_runtime.json");
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let status = run(executable, home, &["daemon", "status"]);
-        if status.status.success() {
-            return;
-        }
         if let Some(web_status) = web.try_wait().expect("combined CCCC status") {
-            panic!("combined CCCC exited before daemon startup: {web_status}");
+            panic!("combined CCCC exited before Web startup: {web_status}");
+        }
+        // Daemon IPC becomes available before its combined Web owner has
+        // finished startup. Test shutdown of a listening Web, not that race.
+        if let Ok(bytes) = std::fs::read(&runtime_path)
+            && let Ok(runtime) = serde_json::from_slice::<serde_json::Value>(&bytes)
+            && runtime["pid"].as_u64() == Some(u64::from(web.id()))
+            && let Some(port) = runtime["port"]
+                .as_u64()
+                .and_then(|port| u16::try_from(port).ok())
+            && std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+                Duration::from_millis(100),
+            )
+            .is_ok()
+        {
+            return;
         }
         assert!(
             Instant::now() < deadline,
-            "combined CCCC daemon did not start within 30 seconds"
+            "combined CCCC Web did not start within 30 seconds"
         );
         std::thread::sleep(Duration::from_millis(100));
     }

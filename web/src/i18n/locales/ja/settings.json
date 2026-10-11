@@ -1524,7 +1524,7 @@
     "connector": "CCCC 共通コネクター",
     "connectorHint": "ChatGPT にこのコネクターを一度追加します。各 Actor は起動時に自分の会話へ自動接続します。Actor ごとのコネクター URL は不要です。",
     "publicUrlMissing": "Web アクセスの公開アドレスがまだ設定されていません。ChatGPT はこのコネクターに公開 HTTPS アドレス経由でのみ接続できます。",
-    "publicUrlInvalid": "現在のアドレス {{url}} は公開 HTTPS ではないため、ChatGPT から接続できません。Web アクセスで公開 HTTPS アドレスを設定してください。",
+    "publicUrlInvalid": "設定されたアドレス {{url}} は公開 HTTPS の要件を満たしません。Web アクセスで外部サービスから接続できる HTTPS アドレスを設定してください。",
     "webAccess": "Web アクセス設定",
     "configured": "コネクター認証情報を作成済み",
     "pairedActors": "ペアリング済み Actor",
@@ -1615,7 +1615,7 @@
     "revokeHint": "すべての Grok Actor がツールにアクセスできなくなります。コネクターを再作成した後、各 Bot URL を再度保存してください。",
     "upgrade": "Grok コネクターを設定し、各 Actor の Bot URL を保存してください。",
     "publicUrlMissing": "Web アクセスの公開アドレスがまだ設定されていません。Grok はこのコネクターに公開 HTTPS アドレス経由でのみ接続できます。",
-    "publicUrlInvalid": "現在のアドレス {{url}} は公開 HTTPS ではないため、Grok から接続できません。Web アクセスで公開 HTTPS アドレスを設定してください。",
+    "publicUrlInvalid": "設定されたアドレス {{url}} は公開 HTTPS の要件を満たしません。Web アクセスで外部サービスから接続できる HTTPS アドレスを設定してください。",
     "copyOnce": "この非公開 URL を今すぐコピーして Grok Connectors に追加してください。作成または更新時にのみ表示されます。共有しないでください。",
     "notSeen": "コネクターのリクエストはまだありません。Grok に追加して設定を完了してください。"
   },
@@ -1785,7 +1785,7 @@
       "terminalHint": "秘書の端末を直接操作できます。文書更新と推敲結果は元のタスクの対象に反映されます。",
       "manualTurn": "端末からの入力を処理中です。終了後に待機中のタスクを続行します。",
       "notStartedHint": "最初のタスクで秘書が起動し、タスクの間も待機します。",
-      "outputHint": "実行内容をここに表示します。ACP ランタイムにはネイティブ端末がありません。",
+      "outputHint": "実行内容をここに表示します。この管理セッションにはネイティブ端末がありません。",
       "phases": {
         "not_started": "未起動",
         "starting": "起動中",

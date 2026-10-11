@@ -29,3 +29,14 @@ export function hasManagedRuntimeOutput(actor: RunnerSource): boolean {
     .toLowerCase();
   return isHeadlessActorRunner(actor) || source === "managed_session" || source === "app_server";
 }
+
+export function hasManagedRuntimeControls(actor: RunnerSource): boolean {
+  return (
+    isHeadlessActorRunner(actor) &&
+    ["managed_session", "app_server"].includes(
+      String(actor?.runtime_state_source || "")
+        .trim()
+        .toLowerCase(),
+    )
+  );
+}

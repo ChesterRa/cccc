@@ -39,7 +39,7 @@ impl AnalystSession {
         add_voice_mcp_origin(&mut mcp_server, &env, purpose);
         let session_command = command.clone();
         let prepared = opencode::prepare(&command, &env, runtime)?;
-        let resume_session_id = if let Some((group_id, actor_id)) = actor {
+        let resume_attempt = if let Some((group_id, actor_id)) = actor {
             super::super::runtime_session::prepare_opencode_managed_session(
                 runtime,
                 home,
@@ -50,8 +50,12 @@ impl AnalystSession {
                 &env,
             )?
         } else {
-            requested_session_id
+            None
         };
+        let resume_session_id = resume_attempt
+            .as_ref()
+            .map(|attempt| attempt.session_id.clone())
+            .or(requested_session_id);
         let launched = opencode::launch(
             prepared,
             &binding.root,
@@ -61,7 +65,13 @@ impl AnalystSession {
             resume_session_id.as_deref(),
             mcp_server,
         )
-        .await?;
+        .await;
+        let launched = super::super::runtime_session::resume_failure::finish_launch(
+            home,
+            actor,
+            resume_attempt.as_ref(),
+            launched,
+        )?;
         if let Some((group_id, actor_id)) = actor
             && let Err(error) = super::super::runtime_session::record_opencode_managed_session(
                 runtime,

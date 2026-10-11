@@ -54,6 +54,54 @@ fn normalizes_the_shared_runtime_command() {
 }
 
 #[test]
+fn pi_launch_identity_includes_command_and_private_provider_root() {
+    let baseline = ResolvedAgentRuntime {
+        runtime: ActorRuntime::Pi,
+        runtime_mode: cccc_contracts::RuntimeMode::Default,
+        command: vec!["pi".into()],
+        environment: BTreeMap::from([("PI_CODING_AGENT_DIR".into(), "/tmp/pi-a".into())]),
+    };
+    let mut changed = baseline.clone();
+    changed.command.extend(["--model".into(), "other".into()]);
+    assert!(runtime_identity_changed(&baseline, &changed));
+    changed = baseline.clone();
+    changed
+        .environment
+        .insert("PI_CODING_AGENT_DIR".into(), "/tmp/pi-b".into());
+    assert!(runtime_identity_changed(&baseline, &changed));
+    assert!(
+        validate_private_environment(&BTreeMap::from([(
+            "PI_CODING_AGENT_DIR".into(),
+            "relative/pi".into()
+        )]))
+        .is_err()
+    );
+}
+
+#[test]
+fn new_precise_runtimes_share_voice_admission_without_changing_native_defaults() {
+    use cccc_contracts::RuntimeMode;
+    assert!(supports_structured_runtime(
+        ActorRuntime::Pi,
+        RuntimeMode::Default
+    ));
+    assert!(!supports_structured_runtime(
+        ActorRuntime::Pi,
+        RuntimeMode::Acp
+    ));
+    for runtime in [
+        ActorRuntime::Auggie,
+        ActorRuntime::Kimi,
+        ActorRuntime::Kiro,
+        ActorRuntime::Hermes,
+        ActorRuntime::Droid,
+    ] {
+        assert!(supports_structured_runtime(runtime, RuntimeMode::Acp));
+        assert!(!supports_structured_runtime(runtime, RuntimeMode::Default));
+    }
+}
+
+#[test]
 fn runtime_identity_tracks_provider_storage_roots_and_runtime_but_not_model_credentials() {
     let baseline = ResolvedAgentRuntime {
         runtime: ActorRuntime::Codex,

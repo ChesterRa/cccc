@@ -33,7 +33,7 @@ pub fn prepare_managed(
     cwd: &Path,
     base_command: &[String],
     environment: &BTreeMap<String, String>,
-) -> std::io::Result<Option<String>> {
+) -> std::io::Result<Option<super::resume_failure::ResumeAttempt>> {
     if !resume_enabled() {
         return Ok(None);
     }
@@ -44,11 +44,6 @@ pub fn prepare_managed(
         || string(&document, "kind") != "runtime_session"
         || string(&document, "transport") != transport(runtime)
         || string(&document, "runtime") != runtime_name(runtime)
-        || string(&document, "status") != "usable"
-        || !document
-            .get("resume_eligible")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
         || string(&document, "workspace_path") != workspace_path(cwd)
         || string(&document, "command_fingerprint") != command_fingerprint(base_command)
         || string(&document, "model") != model_from_command(base_command)
@@ -62,10 +57,9 @@ pub fn prepare_managed(
     if !valid_opencode_session_id(&session_id) {
         return Ok(None);
     }
-    document.insert("last_resume_attempt_at".into(), json!(utc_now()));
-    document.insert("updated_at".into(), json!(utc_now()));
+    let attempt = super::resume_failure::begin(&mut document, session_id)?;
     write(home, group_id, actor_id, &document)?;
-    Ok(Some(session_id))
+    Ok(attempt)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -195,7 +189,8 @@ mod tests {
                 &environment,
             )
             .expect("prepare OpenCode resume")
-            .as_deref(),
+            .as_ref()
+            .map(|attempt| attempt.session_id.as_str()),
             Some(SESSION_ID)
         );
     }
@@ -236,7 +231,9 @@ mod tests {
             .expect("prepare Kilo receipt")
         };
         assert_eq!(
-            resume(ActorRuntime::Kilo, &environment).as_deref(),
+            resume(ActorRuntime::Kilo, &environment)
+                .as_ref()
+                .map(|attempt| attempt.session_id.as_str()),
             Some(SESSION_ID)
         );
         assert!(resume(ActorRuntime::Opencode, &environment).is_none());

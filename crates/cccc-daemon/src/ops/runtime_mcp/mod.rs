@@ -39,6 +39,7 @@ pub(super) fn prepare(
             | ActorRuntime::Grok
             | ActorRuntime::Opencode
             | ActorRuntime::Kilo
+            | ActorRuntime::Pi
     ) {
         return Ok(());
     }
@@ -62,6 +63,7 @@ pub(super) fn prepare(
         | ActorRuntime::Codex
         | ActorRuntime::Grok
         | ActorRuntime::Kilo
+        | ActorRuntime::Pi
         | ActorRuntime::Opencode => {
             unreachable!("managed runtime returned early")
         }

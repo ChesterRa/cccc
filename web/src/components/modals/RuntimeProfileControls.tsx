@@ -1,13 +1,17 @@
 import { isWebModelRuntime } from "../../types";
 import { AlertTriangle } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { RUNTIME_INFO, type ActorProfile } from "../../types";
+import type { ActorProfile } from "../../types";
 import { actorProfileIdentityKey } from "../../utils/actorProfiles";
 import { SelectCombobox } from "../SelectCombobox";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Surface } from "../ui/surface";
-import { formatRuntimeCommand, runtimeProfileScopeLabel } from "./runtimeProfileControlsModel";
+import {
+  formatRuntimeCommand,
+  runtimeProfileScopeLabel,
+  runtimeProfileRuntimeLabel,
+} from "./runtimeProfileControlsModel";
 
 export type RuntimeConfigurationMode = "custom" | "profile";
 
@@ -116,7 +120,7 @@ export function RuntimeProfilePicker({
             { value: "", label: busy ? t("loadingProfiles") : t("selectActorProfile") },
             ...profiles.map((profile) => ({
               value: actorProfileIdentityKey(profile),
-              label: `${profile.name || profile.id} · ${runtimeProfileScopeLabel(profile, t)}`,
+              label: `${profile.name || profile.id} · ${runtimeProfileScopeLabel(profile, t)} · ${runtimeProfileRuntimeLabel(profile)}`,
             })),
           ]}
           searchable
@@ -145,7 +149,7 @@ export function RuntimeProfilePicker({
               <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-text-muted)]">
                 <span>{runtimeProfileScopeLabel(selected, t)}</span>
                 <span aria-hidden="true">·</span>
-                <span>{RUNTIME_INFO[String(selected.runtime)]?.label || selected.runtime}</span>
+                <span>{runtimeProfileRuntimeLabel(selected)}</span>
               </div>
             </div>
           </div>
@@ -173,7 +177,7 @@ export function RuntimeProfilePicker({
           <div className="font-medium">{selected.name || selected.id}</div>
           <div className="mt-1">{runtimeProfileScopeLabel(selected, t)}</div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <span>{RUNTIME_INFO[String(selected.runtime)]?.label || selected.runtime}</span>
+            <span>{runtimeProfileRuntimeLabel(selected)}</span>
           </div>
           {selectedCommand ? (
             <div className="mt-1 break-all font-mono">{selectedCommand}</div>

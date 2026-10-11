@@ -25,7 +25,7 @@ export function RuntimeSelector({
   allowUndetected?: boolean;
   ariaLabel?: string;
   className?: string;
-  allowedRuntimes?: string[];
+  allowedRuntimes?: readonly string[];
 }) {
   const { t } = useTranslation("actors");
   const runtimes = useGroupStore((s) => s.runtimes);
@@ -38,7 +38,13 @@ export function RuntimeSelector({
   const selectedKey = runtimeDetectionKey(value, selectedInfo, status, runtimeMode);
   const captionKey = status === "error" ? "failed" : selectedKey;
   const checking = status === "idle" || status === "loading";
-  const modeLabel = supportsAcpMode(value) ? (runtimeMode === "acp" ? "ACP" : "TUI") : "";
+  const modeLabel = supportsAcpMode(value)
+    ? runtimeMode === "acp"
+      ? "ACP"
+      : "TUI"
+    : value === "pi"
+      ? "RPC"
+      : "";
 
   return (
     <div className="space-y-1">
@@ -63,7 +69,10 @@ export function RuntimeSelector({
               : t(`runtimeDetection.${key}`);
           return {
             value: runtime,
-            label: RUNTIME_INFO[runtime]?.label || runtime,
+            label:
+              runtime === "pi"
+                ? `${RUNTIME_INFO[runtime].label} (RPC)`
+                : RUNTIME_INFO[runtime]?.label || runtime,
             description,
             disabled: !allowUndetected && runtime !== "antigravity" && key === "missing",
           };
@@ -100,6 +109,7 @@ export function RuntimeSelector({
       </div>
       <p className="text-[11px] leading-4 text-[var(--color-text-muted)]">
         {t("runtimeDetection.scope")}
+        {value === "pi" ? ` ${t("piRuntimeHint")}` : ""}
       </p>
     </div>
   );

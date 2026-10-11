@@ -17,9 +17,13 @@ impl AnalystSession {
                 .cancel_input(&self.thread_id, Some(delegation_id))
                 .await
                 .map(|_| ()),
+            ManagedProtocol::Pi(protocol) => protocol
+                .cancel_input(&self.thread_id, Some(delegation_id))
+                .await
+                .map(|_| ()),
             _ => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "Runtime does not support pending ACP cancellation",
+                "Runtime does not support pending managed input cancellation",
             )),
         }
     }
@@ -27,6 +31,7 @@ impl AnalystSession {
     pub(crate) fn permissions(&self) -> Vec<Value> {
         match &self.protocol {
             ManagedProtocol::Acp(protocol) if self.structured_only() => protocol.permissions(),
+            ManagedProtocol::Pi(protocol) => protocol.permissions(),
             _ => Vec::new(),
         }
     }
@@ -42,6 +47,7 @@ impl AnalystSession {
             ManagedProtocol::Acp(protocol) if self.structured_only() => {
                 protocol.respond_permission(request_id, allow).await
             }
+            ManagedProtocol::Pi(protocol) => protocol.respond_permission(request_id, allow).await,
             _ => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "This Runtime handles permissions in its native terminal",
@@ -59,9 +65,10 @@ impl AnalystSession {
             ManagedProtocol::Acp(protocol) if self.structured_only() => {
                 protocol.respond_interaction(request_id, reply).await
             }
+            ManagedProtocol::Pi(protocol) => protocol.respond_interaction(request_id, reply).await,
             _ => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "Runtime does not expose ACP interactions",
+                "Runtime does not expose managed interactions",
             )),
         }
     }
@@ -116,7 +123,7 @@ impl AnalystSession {
                 io::ErrorKind::Unsupported,
                 "this managed Runtime does not support safe in-turn steering",
             )),
-            ManagedProtocol::Claude(_) => Err(io::Error::new(
+            ManagedProtocol::Claude(_) | ManagedProtocol::Pi(_) => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "this managed Runtime does not support safe in-turn steering",
             )),
@@ -141,6 +148,7 @@ impl AnalystSession {
                 .map(|_| ()),
             ManagedProtocol::Acp(protocol) => protocol.cancel(&self.thread_id).await,
             ManagedProtocol::Claude(protocol) => protocol.cancel(turn_id).await,
+            ManagedProtocol::Pi(protocol) => protocol.cancel(&self.thread_id, turn_id).await,
         }
     }
 
@@ -197,7 +205,14 @@ impl AnalystSession {
             process.stop()?;
         }
         for path in &self.cleanup_paths {
-            match std::fs::remove_file(path) {
+            let removed = if path.is_dir() {
+                // Owned launch directories follow their individual files in
+                // this list. Unexpected contents remain an explicit failure.
+                std::fs::remove_dir(path)
+            } else {
+                std::fs::remove_file(path)
+            };
+            match removed {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error),

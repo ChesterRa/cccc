@@ -90,6 +90,42 @@ async function renderSettings(sessionController = controller()) {
 }
 
 describe("CodexVoiceAnalystSettings", () => {
+  it.each([
+    ["pi", undefined, "pi"],
+    ["kimi", "acp", "kimi --yolo"],
+    ["auggie", "acp", "auggie"],
+    ["kiro", "acp", "kiro-cli chat --trust-all-tools"],
+    ["hermes", "acp", "hermes --tui --yolo"],
+    ["droid", "acp", "droid --auto high"],
+  ] as const)(
+    "preserves %s's admitted surface while saving a custom launch command",
+    async (runtime, runtimeMode, defaultCommand) => {
+      const settings = {
+        ...customSettings,
+        runtime,
+        ...(runtimeMode ? { runtime_mode: runtimeMode } : {}),
+      };
+      api.fetchSettings.mockResolvedValue({ ok: true, result: { settings, environment_keys: [] } });
+      api.listProfiles.mockResolvedValue({ ok: true, result: { profiles: [] } });
+      api.updateSettings.mockResolvedValue({
+        ok: true,
+        result: { analyst: null, restarted: false, started_new_session: false },
+      });
+      const { host, root } = await renderSettings();
+      expect(host.textContent).toContain(defaultCommand);
+      const toggle = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+      await act(async () => toggle.click());
+      await act(async () => buttonWithText(host, "codexVoiceAnalystSettingsSave").click());
+      expect(api.updateSettings).toHaveBeenCalledWith({
+        settings: { ...settings, command: defaultCommand },
+        environmentSet: {},
+        environmentUnset: [],
+        environmentClear: false,
+        discardCurrentWork: false,
+      });
+      await act(async () => root.unmount());
+    },
+  );
   it.each([{ command: [] }, { command: ["agy"] }])(
     "shows the Antigravity YOLO default without rewriting the saved command %j",
     async ({ command }) => {
@@ -551,6 +587,54 @@ describe("CodexVoiceAnalystSettings", () => {
     expect(host.textContent).toContain("OPENAI_API_KEY");
     await act(async () => root.unmount());
   });
+});
+
+it("offers Pi Profiles and only the controlled modes of optional ACP runtimes to Voice Analyst", async () => {
+  api.fetchSettings.mockResolvedValue({
+    ok: true,
+    result: { settings: customSettings, environment_keys: [] },
+  });
+  api.listProfiles.mockResolvedValue({
+    ok: true,
+    result: {
+      profiles: [
+        { id: "pi", runtime: "pi", runtime_mode: "default" },
+        { id: "kimi-native", runtime: "kimi", runtime_mode: "default" },
+        { id: "kimi-acp", runtime: "kimi", runtime_mode: "acp" },
+        { id: "auggie-native", runtime: "auggie", runtime_mode: "default" },
+        { id: "auggie-acp", runtime: "auggie", runtime_mode: "acp" },
+        { id: "kiro-native", runtime: "kiro", runtime_mode: "default" },
+        { id: "kiro-acp", runtime: "kiro", runtime_mode: "acp" },
+        { id: "hermes-native", runtime: "hermes", runtime_mode: "default" },
+        { id: "hermes-acp", runtime: "hermes", runtime_mode: "acp" },
+        { id: "droid-native", runtime: "droid", runtime_mode: "default" },
+        { id: "droid-acp", runtime: "droid", runtime_mode: "acp" },
+      ],
+    },
+  });
+  let form!: ReturnType<typeof useCodexVoiceAnalystSettings>;
+  const sessionController = controller();
+  function Harness() {
+    form = useCodexVoiceAnalystSettings(true, sessionController);
+    return null;
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Harness />));
+    expect(form.compatibleProfiles.map((profile) => profile.id)).toEqual([
+      "pi",
+      "kimi-acp",
+      "auggie-acp",
+      "kiro-acp",
+      "hermes-acp",
+      "droid-acp",
+    ]);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
 });
 
 it("keeps a Custom credential draft when choosing a Profile and returning before saving", async () => {

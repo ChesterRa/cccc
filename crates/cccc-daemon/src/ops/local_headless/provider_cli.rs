@@ -20,6 +20,7 @@ pub(super) fn is_provider_binary(actor: &Actor, command: &[String]) -> bool {
         ActorRuntime::Grok => "grok",
         ActorRuntime::Opencode => "opencode",
         ActorRuntime::Kilo => "kilo",
+        ActorRuntime::Pi => "pi",
         _ => return false,
     };
     command.first().is_some_and(|program| {

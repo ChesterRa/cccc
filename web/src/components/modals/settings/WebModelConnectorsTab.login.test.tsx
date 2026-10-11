@@ -274,6 +274,27 @@ describe("shared Web Model login and connector", () => {
     },
   );
   it.each([
+    "https://192.168.1.20",
+    "https://10.0.0.1",
+    "https://172.20.0.4",
+    "https://127.0.0.2",
+    "https://169.254.1.2",
+    "https://0.0.0.0",
+    "https://host.docker.internal",
+    "https://demo.local",
+  ])("keeps the external-address warning for local HTTPS address %s", async (base) => {
+    mocks.connectors.mockResolvedValue({
+      ok: true,
+      result: { connectors: [], connector_base_url: `${base}/private-connector-path` },
+    });
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    const page = host.querySelector("div:not([hidden]) > [data-settings-page]")!;
+    expect(page.textContent).toContain(`webModelShared.publicUrlInvalid<${base}>`);
+    expect(page.textContent).not.toContain("private-connector-path");
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.browser).toHaveBeenCalledExactlyOnceWith("status", false, "chatgpt_web");
+  });
+  it.each([
     [
       "an older server reporting no base",
       undefined,

@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
+import { useModalA11y } from "../../../hooks/useModalA11y";
 import type { Actor } from "../../../types";
 import {
   buildHelpMarkdown,
@@ -62,6 +63,11 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   const [helpTouchedRaw, setHelpTouchedRaw] = useState(false);
   const [helpChangedBlocks, setHelpChangedBlocks] = useState<HelpChangedBlock[]>([]);
   const [selectedHelpScope, setSelectedHelpScope] = useState<HelpScopeId>("common");
+  const { modalRef: expandedModalRef } = useModalA11y(expandedKind !== null, () =>
+    setExpandedKind(null),
+  );
+  const groupVisit = useRef({ groupId, request: 0 });
+  if (groupVisit.current.groupId !== groupId) groupVisit.current = { groupId, request: 0 };
 
   const ids = { preamble: useId(), helpMode: useId(), helpEditor: useId() };
   // The expanded dialog renders a second copy of a card, so each copy needs its own ids
@@ -89,16 +95,24 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
     setHelpStructured(parseHelpMarkdown(content));
   };
 
-  const load = async () => {
-    if (!groupId) return;
+  const beginOperation = () => {
+    const visit = groupVisit.current;
+    const request = ++visit.request;
     setBusy(true);
     setErr("");
     setHint("");
+    return () => groupVisit.current === visit && visit.request === request;
+  };
+
+  const load = async () => {
+    if (!groupId) return;
+    const isCurrent = beginOperation();
     try {
       const [promptsResp, actorsResp] = await Promise.all([
         api.fetchGroupPrompts(groupId),
         api.fetchActors(groupId, false),
       ]);
+      if (!isCurrent()) return;
       if (!promptsResp.ok) {
         setErr(promptsResp.error?.message || t("guidance.failedToLoad"));
         setPrompts(null);
@@ -122,16 +136,31 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
       setHelpViewMode("structured");
       setSelectedHelpScope("common");
     } catch {
+      if (!isCurrent()) return;
       setErr(t("guidance.failedToLoad"));
       setPrompts(null);
       setActors([]);
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
   useEffect(() => {
+    const visit = groupVisit.current;
+    setPrompts(null);
+    setActors([]);
+    setHelpStructured(EMPTY_HELP);
+    setHelpTouchedRaw(false);
+    setHelpChangedBlocks([]);
+    setSelectedHelpScope("common");
+    setExpandedKind(null);
+    setErr("");
+    setHint("");
+    setBusy(false);
     if (groupId) void load();
+    return () => {
+      visit.request += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when group changes.
   }, [groupId]);
 
@@ -209,28 +238,25 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
 
   const savePrompt = async (kind: PromptKind) => {
     if (!groupId || !prompts) return;
-    setBusy(true);
-    setErr("");
-    setHint("");
+    const isCurrent = beginOperation();
     try {
       const resp = await api.updateGroupPrompt(groupId, kind, prompts[kind].content || "");
+      if (!isCurrent()) return;
       if (!resp.ok) {
         setErr(resp.error?.message || t("guidance.failedToSave", { kind }));
         return;
       }
       acceptSavedPrompt(kind, resp.result, prompts[kind].content || "");
     } catch {
-      setErr(t("guidance.failedToSave", { kind }));
+      if (isCurrent()) setErr(t("guidance.failedToSave", { kind }));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
   const saveHelp = async () => {
     if (!groupId || !prompts) return;
-    setBusy(true);
-    setErr("");
-    setHint("");
+    const isCurrent = beginOperation();
     try {
       const resp = await api.updateGroupPrompt(
         groupId,
@@ -240,15 +266,16 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
           ? { editorMode: "raw" }
           : { editorMode: "structured", changedBlocks: helpChangedBlocks },
       );
+      if (!isCurrent()) return;
       if (!resp.ok) {
         setErr(resp.error?.message || t("guidance.failedToSave", { kind: "help" }));
         return;
       }
       acceptSavedPrompt("help", resp.result, prompts.help.content || "");
     } catch {
-      setErr(t("guidance.failedToSave", { kind: "help" }));
+      if (isCurrent()) setErr(t("guidance.failedToSave", { kind: "help" }));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
@@ -257,20 +284,19 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
     const filename = prompts[kind]?.filename || kind;
     const ok = window.confirm(t("automation.resetGuidanceConfirm", { kind, filename }));
     if (!ok) return;
-    setBusy(true);
-    setErr("");
-    setHint("");
+    const isCurrent = beginOperation();
     try {
       const resp = await api.resetGroupPrompt(groupId, kind);
+      if (!isCurrent()) return;
       if (!resp.ok) {
         setErr(resp.error?.message || t("guidance.failedToReset", { kind }));
         return;
       }
       acceptSavedPrompt(kind, resp.result, prompts[kind].content || "");
     } catch {
-      setErr(t("guidance.failedToReset", { kind }));
+      if (isCurrent()) setErr(t("guidance.failedToReset", { kind }));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
@@ -615,10 +641,14 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
       {expandedKind ? (
         <BodyPortal>
           <div
+            ref={expandedModalRef}
             key={expandedKind}
             className="fixed inset-0 z-[1000] animate-fade-in"
             role="dialog"
             aria-modal="true"
+            aria-label={t(
+              expandedKind === "help" ? "guidance.helpTitle" : "guidance.preambleTitle",
+            )}
             onPointerDown={(e) => {
               if (e.target === e.currentTarget) setExpandedKind(null);
             }}

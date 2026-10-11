@@ -46,11 +46,30 @@ impl AnalystSession {
                 )
                 .await
             }
-            ActorRuntime::Copilot | ActorRuntime::Devin | ActorRuntime::Cursor => {
+            ActorRuntime::Copilot
+            | ActorRuntime::Devin
+            | ActorRuntime::Cursor
+            | ActorRuntime::Auggie
+            | ActorRuntime::Kimi
+            | ActorRuntime::Kiro
+            | ActorRuntime::Hermes
+            | ActorRuntime::Droid => {
                 Self::launch_native_acp(
                     home,
                     binding,
                     config.runtime,
+                    config.command,
+                    config.environment,
+                    config.resume_thread_id,
+                    SessionPurpose::VoiceAnalyst,
+                    None,
+                )
+                .await
+            }
+            ActorRuntime::Pi => {
+                Self::launch_pi(
+                    home,
+                    binding,
                     config.command,
                     config.environment,
                     config.resume_thread_id,
@@ -169,6 +188,18 @@ impl AnalystSession {
             )
             .await;
         }
+        if config.runtime == ActorRuntime::Pi {
+            return Self::launch_pi(
+                home,
+                binding,
+                config.command,
+                config.environment,
+                None,
+                SessionPurpose::Actor,
+                Some((&config.group_id, &config.actor_id)),
+            )
+            .await;
+        }
         if config.runtime == cccc_contracts::ActorRuntime::Claude {
             return Self::launch_claude(
                 home,
@@ -222,7 +253,7 @@ impl AnalystSession {
         let prepared = super::launch_command::prepare(&config.command, &env)?;
         let session_command = prepared.app_server.clone();
         let identity_environment = env.clone();
-        let resume_thread_id = lifecycle_timing::run_sync("codex.resume_lookup", || {
+        let resume_attempt = lifecycle_timing::run_sync("codex.resume_lookup", || {
             super::super::runtime_session::prepare_codex_app_thread(
                 home,
                 &config.group_id,
@@ -251,10 +282,18 @@ impl AnalystSession {
             prepared.remote_tui_prefix,
             command,
             env,
-            resume_thread_id,
+            resume_attempt
+                .as_ref()
+                .map(|attempt| attempt.session_id.clone()),
             SessionPurpose::Actor,
         )
-        .await?;
+        .await;
+        let session = super::super::runtime_session::resume_failure::finish_launch(
+            home,
+            Some((&config.group_id, &config.actor_id)),
+            resume_attempt.as_ref(),
+            session,
+        )?;
         if let Err(error) = lifecycle_timing::run_sync("codex.resume_record", || {
             super::super::runtime_session::record_codex_app_thread(
                 home,
@@ -335,17 +374,32 @@ impl AnalystSession {
         self.environment.clone()
     }
 
+    pub(crate) fn safe_diagnostic(&self, error: &io::Error) -> String {
+        let mut message = error.to_string();
+        let mut values = self
+            .environment
+            .values()
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        values.sort_unstable_by_key(|value| std::cmp::Reverse(value.len()));
+        for value in values {
+            message = message.replace(value, "[redacted]");
+        }
+        message.chars().take(1600).collect()
+    }
+
     pub(crate) fn tui_ready(&self) -> bool {
         !self.structured_only()
     }
 
     pub(crate) fn structured_only(&self) -> bool {
-        self.runtime.supports_acp_mode()
+        self.runtime.supports_acp_mode() || self.runtime == ActorRuntime::Pi
     }
 
     pub(crate) fn resumable(&self) -> bool {
         match &self.protocol {
             ManagedProtocol::Acp(protocol) => protocol.resumable(),
+            ManagedProtocol::Pi(protocol) => protocol.resumable(),
             _ => true,
         }
     }
@@ -355,7 +409,7 @@ impl AnalystSession {
     }
 
     pub(crate) fn runtime_mode(&self) -> RuntimeMode {
-        if self.structured_only() {
+        if self.runtime.supports_acp_mode() {
             RuntimeMode::Acp
         } else {
             RuntimeMode::Default

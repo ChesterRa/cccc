@@ -26,11 +26,13 @@ mod launch_command;
 mod launch_grok;
 mod launch_native_acp;
 mod launch_opencode;
+mod launch_pi;
 mod launch_secretary;
 pub(crate) use launch_antigravity::login_antigravity;
 pub(crate) mod lifecycle_timing;
 mod native_input;
 mod opencode;
+mod pi_rpc;
 mod process;
 mod protocol;
 #[cfg(test)]
@@ -72,6 +74,7 @@ pub(crate) fn remove_claude_actor_settings(
 
 use acp::AcpClient;
 use claude::ClaudeClient;
+use pi_rpc::PiRpcClient;
 use process::ChildOwner;
 use protocol::ProtocolClient;
 
@@ -194,6 +197,18 @@ impl PendingManagedStartup {
     pub(crate) fn stop(&self) -> io::Result<()> {
         self.0.stop()
     }
+    pub(crate) fn with_startup_diagnostic(
+        mut error: io::Error,
+        diagnostic: io::Error,
+    ) -> io::Error {
+        if let Some(failure) = error
+            .get_mut()
+            .and_then(|inner| inner.downcast_mut::<StartupCleanupFailure>())
+        {
+            failure.startup = diagnostic;
+        }
+        error
+    }
 }
 
 struct StartupCleanupFailure {
@@ -221,6 +236,7 @@ enum ManagedProtocol {
     Codex(ProtocolClient),
     Acp(AcpClient),
     Claude(ClaudeClient),
+    Pi(PiRpcClient),
 }
 
 /// Select the task authority surface without putting grants in MCP descriptors.
@@ -282,6 +298,7 @@ impl ManagedProtocol {
             Self::Codex(protocol) => protocol.subscribe(),
             Self::Acp(protocol) => protocol.subscribe(),
             Self::Claude(protocol) => protocol.subscribe(),
+            Self::Pi(protocol) => protocol.subscribe(),
         }
     }
 
@@ -289,9 +306,9 @@ impl ManagedProtocol {
         match self {
             Self::Codex(protocol) => protocol.respond(id, result).await,
             Self::Acp(protocol) => protocol.respond(id, result).await,
-            Self::Claude(_) => Err(io::Error::new(
+            Self::Claude(_) | Self::Pi(_) => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "Claude Agent View does not expose generic JSON-RPC responses",
+                "This managed Runtime does not expose generic JSON-RPC responses",
             )),
         }
     }
@@ -300,9 +317,9 @@ impl ManagedProtocol {
         match self {
             Self::Codex(protocol) => protocol.respond_error(id, error).await,
             Self::Acp(protocol) => protocol.respond_error(id, error).await,
-            Self::Claude(_) => Err(io::Error::new(
+            Self::Claude(_) | Self::Pi(_) => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "Claude Agent View does not expose generic JSON-RPC responses",
+                "This managed Runtime does not expose generic JSON-RPC responses",
             )),
         }
     }
@@ -318,6 +335,10 @@ impl ManagedProtocol {
                 Ok(())
             }
             Self::Claude(protocol) => protocol.close().await,
+            Self::Pi(protocol) => {
+                protocol.close().await;
+                Ok(())
+            }
         }
     }
 
@@ -325,7 +346,7 @@ impl ManagedProtocol {
     /// Codex and ACP providers are child processes and die with this process.
     async fn kill_request(&self) -> io::Result<()> {
         match self {
-            Self::Codex(_) | Self::Acp(_) => Ok(()),
+            Self::Codex(_) | Self::Acp(_) | Self::Pi(_) => Ok(()),
             Self::Claude(protocol) => protocol.kill_request().await,
         }
     }
@@ -338,6 +359,10 @@ impl ManagedProtocol {
             Self::Codex(_) => Ok(()),
             Self::Acp(protocol) => protocol.register_native_input(delegation_id, text).await,
             Self::Claude(protocol) => protocol.register_native_input(delegation_id, text).await,
+            Self::Pi(_) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Pi RPC has no native terminal attachment",
+            )),
         }
     }
 
@@ -346,12 +371,14 @@ impl ManagedProtocol {
             Self::Codex(_) => Ok(()),
             Self::Acp(protocol) => protocol.forget_native_input(delegation_id).await,
             Self::Claude(protocol) => protocol.forget_native_input(delegation_id).await,
+            Self::Pi(_) => Ok(()),
         }
     }
 
     fn running(&self) -> bool {
         match self {
             Self::Claude(protocol) => protocol.running(),
+            Self::Pi(protocol) => protocol.running(),
             Self::Codex(_) | Self::Acp(_) => true,
         }
     }
@@ -368,6 +395,7 @@ impl ManagedProtocol {
             Self::Claude(protocol) => {
                 let _ = protocol.events.send(event);
             }
+            Self::Pi(protocol) => protocol.publish_for_test(event),
         }
     }
 }

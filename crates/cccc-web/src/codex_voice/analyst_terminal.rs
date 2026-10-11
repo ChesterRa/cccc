@@ -81,7 +81,7 @@ impl AnalystRuntime {
     async fn ensure_terminal(&self, initial_size: Option<(u16, u16)>) -> Result<()> {
         if self.analyst.structured_only() {
             anyhow::bail!(
-                "Antigravity ACP uses the structured session view, not a native terminal"
+                "This managed Runtime has no native terminal; use its structured session view"
             );
         }
         let _gate = self.terminal_gate.lock().await;

@@ -122,4 +122,90 @@ describe("ACP user decisions", () => {
     expect([...host.querySelectorAll("button")].every((button) => button.disabled)).toBe(true);
     expect(onRespond).not.toHaveBeenCalled();
   });
+  it("submits Pi's selected option value and cancels only the current request", async () => {
+    await render([
+      {
+        request_id: "pi-choice",
+        kind: "pi_select",
+        title: "Choose scope",
+        options: ["Current Group", "All Groups"],
+      } as AcpPermission,
+    ]);
+    const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    expect(submit?.disabled).toBe(true);
+    await act(async () =>
+      host.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1].click(),
+    );
+    await act(async () => submit.click());
+    expect(onInteract).toHaveBeenCalledWith("pi-choice", { value: "All Groups" });
+    await act(async () =>
+      [...host.querySelectorAll("button")]
+        .find((item) => item.textContent === "acpControls.cancelInteraction")!
+        .click(),
+    );
+    expect(onInteract).toHaveBeenLastCalledWith("pi-choice", { cancelled: true });
+    expect(onRespond).not.toHaveBeenCalled();
+  });
+  it.each(["pi_input", "pi_editor"])(
+    "preserves %s's prefill and submits edited text",
+    async (kind) => {
+      await render([
+        {
+          request_id: "pi-text",
+          kind,
+          title: "Additional instruction",
+          message: "Provide details",
+          placeholder: "Enter reply",
+          prefill: "Initial text",
+        } as AcpPermission,
+      ]);
+      const input = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+        'input[type="text"], textarea',
+      )!;
+      expect(input?.value).toBe("Initial text");
+      expect(input.placeholder).toBe("Enter reply");
+      expect(host.textContent).toContain("Provide details");
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          kind === "pi_editor" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+          "value",
+        )!.set!.call(input, "Updated text");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () =>
+        host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(),
+      );
+      expect(onInteract).toHaveBeenCalledWith("pi-text", { value: "Updated text" });
+      await render([
+        {
+          request_id: "pi-new-text",
+          kind,
+          title: "New task",
+          prefill: "New prefill",
+        } as AcpPermission,
+      ]);
+      expect(
+        host.querySelector<HTMLInputElement | HTMLTextAreaElement>('input[type="text"], textarea')!
+          .value,
+      ).toBe("New prefill");
+    },
+  );
+  it("uses explicit confirm/decline for Pi and disables pending interactions", async () => {
+    const confirmation = {
+      request_id: "pi-confirm",
+      kind: "pi_confirm",
+      title: "Proceed?",
+      message: "This runs the selected task",
+    } as AcpPermission;
+    await render([confirmation]);
+    await act(async () =>
+      [...host.querySelectorAll("button")]
+        .find((item) => item.textContent === "acpControls.confirm")!
+        .click(),
+    );
+    expect(onRespond).toHaveBeenCalledWith("pi-confirm", true);
+    expect(onInteract).not.toHaveBeenCalled();
+    await render([confirmation], "one", true);
+    expect([...host.querySelectorAll("button")].every((item) => item.disabled)).toBe(true);
+  });
 });

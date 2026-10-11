@@ -394,6 +394,9 @@ fn tick_unread(
 ) -> io::Result<()> {
     let mail_after = delivery_timing_value(group, "mail_notice_after_seconds", 1_800);
     let mail_idle_after = delivery_timing_value(group, "mail_notice_idle_after_seconds", 60);
+    if pass == UnreadPass::IdleMailNow && mail_idle_after <= 0 {
+        return Ok(());
+    }
     // Reply notices stay with the periodic tick.
     let reply_after = match pass {
         UnreadPass::Scheduled => delivery_timing_value(group, "reply_notice_after_seconds", 900),

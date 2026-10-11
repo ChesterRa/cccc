@@ -32,7 +32,7 @@ pub(super) async fn launch_analyst(home: &HomeLayout) -> Result<AnalystRuntime> 
         .await
         {
             Ok(analyst) => return Ok(analyst),
-            Err(error) if runtime.runtime.is_headless_acp(runtime.runtime_mode) => return Err(error.context("resume attempted ACP Voice Analyst session; reset explicitly instead of replacing it")),
+            Err(error) if runtime.runtime.is_headless_acp(runtime.runtime_mode) || runtime.runtime == cccc_contracts::ActorRuntime::Pi => return Err(error.context("resume attempted controlled Voice Analyst session; reset explicitly instead of replacing it")),
             Err(error) => {
                 tracing::warn!(%error, "Voice Analyst resume failed; starting fresh");
                 return launch_exact(

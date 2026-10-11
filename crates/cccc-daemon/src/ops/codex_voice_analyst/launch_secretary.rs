@@ -111,11 +111,30 @@ impl AnalystSession {
                     )
                     .await
                 }
-                ActorRuntime::Copilot | ActorRuntime::Devin | ActorRuntime::Cursor => {
+                ActorRuntime::Copilot
+                | ActorRuntime::Devin
+                | ActorRuntime::Cursor
+                | ActorRuntime::Auggie
+                | ActorRuntime::Kimi
+                | ActorRuntime::Kiro
+                | ActorRuntime::Hermes
+                | ActorRuntime::Droid => {
                     Self::launch_native_acp(
                         home,
                         binding,
                         config.runtime,
+                        config.command,
+                        config.environment,
+                        None,
+                        SessionPurpose::VoiceSecretary,
+                        None,
+                    )
+                    .await
+                }
+                ActorRuntime::Pi => {
+                    Self::launch_pi(
+                        home,
+                        binding,
                         config.command,
                         config.environment,
                         None,

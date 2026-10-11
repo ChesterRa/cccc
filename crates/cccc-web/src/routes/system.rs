@@ -1,6 +1,7 @@
 use axum::extract::{Extension, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
+use cccc_contracts::ActorRuntime;
 use serde_json::{Value, json};
 
 use crate::AppState;
@@ -133,7 +134,9 @@ fn runtime_catalog_value(runtimes: Vec<Value>, acp_installed: bool) -> Value {
             if value["name"] == "antigravity" {
                 value["mode_availability"] =
                     json!({"default":value["available"],"acp":acp_installed});
-            } else if matches!(value["name"].as_str(), Some("copilot" | "devin" | "cursor")) {
+            } else if serde_json::from_value::<ActorRuntime>(value["name"].clone())
+                .is_ok_and(ActorRuntime::supports_acp_mode)
+            {
                 value["mode_availability"] =
                     json!({"default":value["available"],"acp":value["available"]});
             }

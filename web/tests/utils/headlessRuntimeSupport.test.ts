@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getEffectiveActorRunner,
   hasManagedRuntimeOutput,
+  hasManagedRuntimeControls,
   isHeadlessActorRunner,
   normalizeActorRunner,
 } from "../../src/utils/headlessRuntimeSupport";
@@ -38,5 +39,28 @@ describe("getEffectiveActorRunner", () => {
   it("lets callers check headless mode from partial actor objects", () => {
     expect(isHeadlessActorRunner({ runner: "headless" })).toBe(true);
     expect(isHeadlessActorRunner({ runner: "pty", runner_effective: "pty" })).toBe(false);
+  });
+});
+
+describe("hasManagedRuntimeControls", () => {
+  it("uses the active surface rather than a saved ACP or Pi configuration", () => {
+    expect(
+      hasManagedRuntimeControls({
+        runner: "pty",
+        runner_effective: "headless",
+        runtime_state_source: "managed_session",
+      }),
+    ).toBe(true);
+    expect(
+      hasManagedRuntimeControls({
+        runner: "headless",
+        runner_effective: "pty",
+        runtime_state_source: "terminal",
+      }),
+    ).toBe(false);
+    expect(
+      hasManagedRuntimeControls({ runner: "pty", runtime_state_source: "managed_session" }),
+    ).toBe(false);
+    expect(hasManagedRuntimeControls({ runner: "headless" })).toBe(false);
   });
 });

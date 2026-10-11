@@ -308,6 +308,7 @@ pub fn default_command(runtime: ActorRuntime) -> Vec<String> {
         ActorRuntime::Hermes => "hermes --tui --yolo",
         ActorRuntime::Kimi => "kimi --yolo",
         ActorRuntime::Opencode => "opencode --auto",
+        ActorRuntime::Pi => "pi",
         ActorRuntime::WebModel | ActorRuntime::GrokWebModel | ActorRuntime::Custom => "",
     };
     command.split_whitespace().map(str::to_owned).collect()
@@ -333,6 +334,7 @@ pub fn detect_runtimes() -> Vec<RuntimeProbe> {
         "hermes",
         "kimi",
         "opencode",
+        "pi",
         "web_model",
         "grok_web_model",
         "custom"
@@ -405,6 +407,7 @@ const fn runtime_name(runtime: ActorRuntime) -> &'static str {
         ActorRuntime::Hermes => "hermes",
         ActorRuntime::Kimi => "kimi",
         ActorRuntime::Opencode => "opencode",
+        ActorRuntime::Pi => "pi",
         ActorRuntime::WebModel => "web_model",
         ActorRuntime::GrokWebModel => "grok_web_model",
         ActorRuntime::Custom => "custom",
@@ -430,6 +433,7 @@ const fn display_name(runtime: ActorRuntime) -> &'static str {
         ActorRuntime::Hermes => "Hermes",
         ActorRuntime::Kimi => "Kimi Code",
         ActorRuntime::Opencode => "OpenCode",
+        ActorRuntime::Pi => "Pi",
         ActorRuntime::WebModel => "ChatGPT Web Model",
         ActorRuntime::GrokWebModel => "Grok Bot Web Model",
         ActorRuntime::Custom => "Custom",

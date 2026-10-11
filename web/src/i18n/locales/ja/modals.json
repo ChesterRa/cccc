@@ -527,7 +527,7 @@
   "codexVoiceOutputSelectionUnavailable": "このブラウザーはシステムのスピーカーを使用します。",
   "codexVoiceAnalystRuntime": "Analyst ランタイム",
   "codexVoiceAnalystRuntimeHint": "対応する Runtime Profile を使うか、直接設定します。Analyst の認証情報は Realtime Voice のログインとは独立しています。",
-  "codexVoiceAnalystSupportedRuntimesHint": "利用できる Runtime は上の一覧をご確認ください。ACP 表記の選択肢は、その Runtime の公式 ACP モードを使い、ネイティブ端末はありません。",
+  "codexVoiceAnalystSupportedRuntimesHint": "利用できる Runtime は上の一覧をご確認ください。ACP または RPC 表記の選択肢は、その Runtime の管理セッションを使い、ネイティブ端末はありません。",
   "codexVoiceAnalystCommandHint": "対応する Group Actor と同じ起動コマンド構文を使います。managed session、YOLO、MCP、ワークスペース、attach 引数は CCCC が管理します。",
   "codexVoiceAnalystCompatibleProfilesEmpty": "互換性のある Runtime Profile がありません。Settings > Runtime Profiles で作成するか、Custom を使ってください。",
   "codexVoiceAnalystProfileHostNote": "この Profile の起動コマンドと非公開環境変数を使います。Runner と送信方式は Actor 専用で、Analyst は CCCC がランタイムの managed session を YOLO モードでホストします。",

@@ -20,6 +20,7 @@ export const RUNTIME_LOGO_FILE_BY_RUNTIME: Partial<Record<RuntimeLogoRuntime, st
   hermes: "logos/hermes.svg",
   kimi: "logos/kimi.png",
   opencode: "logos/opencode.svg",
+  pi: "logos/pi.svg",
   web_model: "logos/codex.png",
   grok_web_model: "logos/grok.svg",
 };

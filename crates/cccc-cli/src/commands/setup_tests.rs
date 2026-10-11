@@ -114,3 +114,8 @@ fn claude_setup_reports_session_owned_mcp_without_global_config_mutation() {
 fn opencode_setup_reports_session_owned_mcp_without_global_config_mutation() {
     assert_managed_setup("opencode", ActorRuntime::Opencode);
 }
+
+#[test]
+fn pi_setup_reports_session_owned_mcp_without_global_config_mutation() {
+    assert_managed_setup("pi", ActorRuntime::Pi);
+}

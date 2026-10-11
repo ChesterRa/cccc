@@ -104,6 +104,9 @@ impl AnalystSession {
             ManagedProtocol::Claude(protocol) => {
                 protocol.start_prompt(delegation_id, text).await
             }
+            ManagedProtocol::Pi(protocol) => protocol
+                .start_prompt(&self.thread_id, delegation_id, text)
+                .await,
         };
         let turn_id = match turn_result {
             Ok(turn_id) => turn_id,

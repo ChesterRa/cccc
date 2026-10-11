@@ -5,18 +5,48 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { ActorProfilesTab } from "./ActorProfilesTab";
 import type { ActorProfile } from "../../../types";
 
-const fixture = vi.hoisted(() => ({ keys: vi.fn(), save: vi.fn(), env: vi.fn() }));
+const fixture = vi.hoisted(() => ({
+  keys: vi.fn(),
+  save: vi.fn(),
+  env: vi.fn(),
+  profiles: vi.fn(),
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("../../../services/api", () => ({
   fetchProfilePrivateEnvKeys: fixture.keys,
   saveProfile: fixture.save,
   updateProfilePrivateEnv: fixture.env,
   fetchWebAccessSession: vi.fn(async () => ({ ok: true, result: {} })),
-  listProfiles: vi.fn(async () => ({ ok: true, result: { profiles: [] } })),
+  listProfiles: fixture.profiles,
 }));
 vi.mock("../../CapabilityPicker", () => ({ CapabilityPicker: () => null }));
 vi.mock("../../SelectCombobox", () => ({ SelectCombobox: () => null }));
-vi.mock("../RuntimeSelector", () => ({ RuntimeSelector: () => null }));
+vi.mock("../RuntimeSelector", () => ({
+  RuntimeSelector: ({
+    value,
+    allowedRuntimes,
+    runtimeMode,
+    onChange,
+  }: {
+    value: string;
+    allowedRuntimes?: readonly string[];
+    runtimeMode: string;
+    onChange(value: string): void;
+  }) => (
+    <select
+      aria-label="profile-runtime"
+      value={value}
+      data-runtime-mode={runtimeMode}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {(allowedRuntimes || ["codex", "kimi", "auggie", "pi"]).map((runtime) => (
+        <option key={runtime} value={runtime}>
+          {runtime}
+        </option>
+      ))}
+    </select>
+  ),
+}));
 vi.mock("../AcpRuntimeMode", () => ({ AcpRuntimeMode: () => null }));
 function profile(id: string): ActorProfile {
   return {
@@ -46,6 +76,7 @@ beforeEach(() => {
   fixture.keys.mockReset().mockResolvedValue(metadata("CURRENT_KEY"));
   fixture.save.mockReset().mockResolvedValue({ ok: true, result: { profile: profile("B") } });
   fixture.env.mockReset().mockResolvedValue({ ok: true, result: {} });
+  fixture.profiles.mockReset().mockResolvedValue({ ok: true, result: { profiles: [] } });
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -67,6 +98,63 @@ const render = (id: string | null, nonce: number) =>
     ),
   );
 const dialog = () => document.querySelector('[role="dialog"]')!;
+it("distinguishes native, ACP and RPC Profiles in the management list", async () => {
+  fixture.profiles.mockResolvedValue({
+    ok: true,
+    result: {
+      profiles: [
+        { ...profile("native"), runtime: "kimi", runtime_mode: "default", name: "Shared name" },
+        { ...profile("controlled"), runtime: "kimi", runtime_mode: "acp", name: "Shared name" },
+        { ...profile("rpc"), runtime: "pi", runtime_mode: "default", name: "Shared name" },
+      ],
+    },
+  });
+  await act(async () => root.render(<ActorProfilesTab isDark={false} isActive scope="global" />));
+  expect(host.textContent).toContain("Kimi Code · TUI");
+  expect(host.textContent).toContain("Kimi Code · ACP");
+  expect(host.textContent).toContain("Pi · RPC");
+});
+it.each([
+  ["pi", undefined, "default"],
+  ["kimi", "acp", "acp"],
+  ["auggie", "acp", "acp"],
+  ["kiro", "acp", "acp"],
+  ["hermes", "acp", "acp"],
+  ["droid", "acp", "acp"],
+] as const)(
+  "saves %s from the shared Voice Profile editor with its controlled surface",
+  async (runtime, savedMode, shownMode) => {
+    await act(async () =>
+      root.render(
+        <ActorProfilesTab
+          isDark={false}
+          isActive
+          scope="global"
+          editorOnly
+          structuredOnly
+          editorRequest={{ nonce: 1, profile: profile("A") }}
+        />,
+      ),
+    );
+    const selector = dialog().querySelector<HTMLSelectElement>(
+      'select[aria-label="profile-runtime"]',
+    )!;
+    expect([...selector.options].map((option) => option.value)).toContain(runtime);
+    await act(async () => {
+      selector.value = runtime;
+      selector.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(selector.dataset.runtimeMode).toBe(shownMode);
+    await act(async () =>
+      [...dialog().querySelectorAll("button")]
+        .find((button) => button.textContent === "common:save")!
+        .click(),
+    );
+    expect(fixture.save.mock.calls[0][0].runtime).toBe(runtime);
+    expect(fixture.save.mock.calls[0][0].runtime_mode).toBe(savedMode);
+    expect(fixture.save.mock.calls[0][0].id).toBe("A");
+  },
+);
 const input = (value: string) =>
   act(async () => {
     const field = dialog().querySelector(

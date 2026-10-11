@@ -107,6 +107,21 @@ fn notify_idle_mail_recipients_with(
     mail: &Event,
     idle: impl Fn(&str) -> bool,
 ) {
+    let targets = mail
+        .data
+        .get("to")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    if targets.is_empty()
+        || targets
+            .iter()
+            .any(|target| matches!(*target, "@all" | "@peers" | "@foreman"))
+    {
+        return;
+    }
     let recipients = actors::visible(group)
         .filter(|actor| {
             actor.enabled && actor.id != mail.by && inbox::is_for_actor(group, mail, &actor.id)
@@ -460,6 +475,89 @@ mod tests {
             notices[0].data["context"]["source_event_ids"],
             json!([written.id])
         );
+    }
+
+    #[test]
+    fn broadcast_mail_does_not_announce_existing_concrete_mail_on_write() {
+        for audience in [
+            json!(["@all"]),
+            json!(["@peers"]),
+            json!(["@foreman"]),
+            json!(["@all", "peer"]),
+            json!([]),
+        ] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+            let store = GroupStore::new(home.clone()).expect("store");
+            let group = store.create("broadcast Mail write", "").expect("group");
+            store
+                .mutate(&group.group_id, |group| {
+                    group.state = cccc_contracts::GroupState::Active;
+                    actors::add(group, Actor::new("lead"))?;
+                    actors::add(group, Actor::new("peer"))?;
+                    Ok(())
+                })
+                .expect("actors");
+            let group = store.load(&group.group_id).expect("group");
+            let ledger = store.ledger_path(&group.group_id).expect("ledger");
+            let mail = |to: serde_json::Value| {
+                let mut mail = Event::new("chat.message", &group.group_id);
+                mail.by = "user".into();
+                mail.data = json!({"text":"review","to":to,"message_mode":"mail"})
+                    .as_object()
+                    .cloned()
+                    .expect("Mail");
+                cccc_core::ledger::append(&ledger, &mail).expect("append Mail");
+                mail
+            };
+            mail(json!(["lead"]));
+            let old_peer_mail = mail(json!(["peer"]));
+            let broadcast = mail(audience.clone());
+
+            notify_idle_mail_recipients_with(&home, &group, &broadcast, |_| true);
+            let notices = || {
+                cccc_core::ledger::read_all(&ledger)
+                    .expect("events")
+                    .into_iter()
+                    .filter(|event| {
+                        event.kind == "system.notify" && event.data["kind"] == "mail_notice"
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert!(
+                notices().is_empty(),
+                "broadcast audience {audience} must not trigger an old concrete batch"
+            );
+
+            // A later concrete write may announce the peer's whole pending batch,
+            // without treating the broadcast as an active-notice source.
+            let concrete = mail(json!(["peer"]));
+            notify_idle_mail_recipients_with(&home, &group, &concrete, |_| true);
+            let notices = notices();
+            assert_eq!(notices.len(), 1, "{audience}: {notices:?}");
+            assert_eq!(notices[0].data["context"]["actor_id"], "peer");
+            assert_eq!(
+                notices[0].data["context"]["source_event_ids"],
+                json!([old_peer_mail.id, concrete.id])
+            );
+            assert!(
+                inbox::cursors(&home, &group.group_id)
+                    .expect("cursors")
+                    .is_empty()
+            );
+            let broadcast_recipient = if audience == json!(["@foreman"]) {
+                "lead"
+            } else {
+                "peer"
+            };
+            assert!(
+                inbox::list_unread(&home, &group, broadcast_recipient, 10)
+                    .expect("unread Mail")
+                    .iter()
+                    .any(|event| event.id == broadcast.id),
+                "broadcast Mail remains visible in the Inbox"
+            );
+        }
     }
 
     #[test]

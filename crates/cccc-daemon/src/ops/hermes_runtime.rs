@@ -15,6 +15,9 @@ use crate::dispatch::{OpError, OpResult, bool_arg, object, string_arg};
 mod config;
 mod process;
 
+#[cfg(all(test, unix))]
+mod tests;
+
 use config::{
     cccc_command, find_executable, hermes_home, inspect_mcp, load_config, normalize_placeholders,
 };
@@ -26,6 +29,40 @@ pub(super) const PLACEHOLDERS: [(&str, &str); 3] = [
     ("CCCC_GROUP_ID", "${CCCC_GROUP_ID}"),
     ("CCCC_ACTOR_ID", "${CCCC_ACTOR_ID}"),
 ];
+
+// Hermes asks whether to overwrite an existing entry, then enable its tools.
+// A failed discovery can instead save a disabled entry, so always verify it.
+const MCP_ADD_CONFIRMATIONS: &str = "Y\nY\n";
+
+fn mcp_add_argv(home: &HomeLayout, command: &[String], group: &str, actor: &str) -> Vec<String> {
+    let mut argv = vec![
+        "mcp".into(),
+        "add".into(),
+        SERVER.into(),
+        "--command".into(),
+        command[0].clone(),
+        "--env".into(),
+        format!("CCCC_HOME={}", home.root().display()),
+        format!("CCCC_GROUP_ID={group}"),
+        format!("CCCC_ACTOR_ID={actor}"),
+    ];
+    // The official --args option consumes all remaining arguments.
+    if command.len() > 1 {
+        argv.push("--args".into());
+        argv.extend(command[1..].iter().cloned());
+    }
+    argv
+}
+
+fn verify_mcp(config_path: &Path, command: &[String]) -> Result<(), OpError> {
+    if inspect_mcp(&load_config(config_path), command)["status"] != "ready" {
+        return Err(OpError::new(
+            "runtime_mcp_verification_failed",
+            "Hermes MCP setup completed but the CCCC entry is not ready",
+        ));
+    }
+    Ok(())
+}
 
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
@@ -58,23 +95,7 @@ pub(super) fn ensure_for_actor(
                 "Hermes CLI is not installed or not in PATH",
             )
         })?;
-    let mut argv = vec![
-        "mcp".into(),
-        "add".into(),
-        SERVER.into(),
-        "--command".into(),
-        command[0].clone(),
-    ];
-    if command.len() > 1 {
-        argv.push("--args".into());
-        argv.extend(command[1..].iter().cloned());
-    }
-    argv.push("--env".into());
-    argv.extend([
-        format!("CCCC_HOME={}", home.root().display()),
-        "CCCC_GROUP_ID=${CCCC_GROUP_ID}".into(),
-        "CCCC_ACTOR_ID=${CCCC_ACTOR_ID}".into(),
-    ]);
+    let argv = mcp_add_argv(home, &command, "${CCCC_GROUP_ID}", "${CCCC_ACTOR_ID}");
     let values = env
         .iter()
         .map(|(key, value)| (key.as_str(), value.clone()))
@@ -83,7 +104,7 @@ pub(super) fn ensure_for_actor(
         &hermes,
         &argv,
         Some(cwd),
-        Some("Y\n"),
+        Some(MCP_ADD_CONFIRMATIONS),
         &values,
         Duration::from_secs(120),
     )
@@ -97,13 +118,7 @@ pub(super) fn ensure_for_actor(
         ));
     }
     normalize_placeholders(&config_path).map_err(OpError::io)?;
-    if inspect_mcp(&load_config(&config_path), &command)["status"] != "ready" {
-        return Err(OpError::new(
-            "runtime_mcp_verification_failed",
-            "Hermes MCP setup completed but the CCCC entry is still stale",
-        ));
-    }
-    Ok(())
+    verify_mcp(&config_path, &command)
 }
 
 fn find_executable_in_env(
@@ -198,30 +213,14 @@ fn prepare(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         )
     })?;
     let command = cccc_command();
-    let mut argv = vec![
-        "mcp".into(),
-        "add".into(),
-        SERVER.into(),
-        "--command".into(),
-        command[0].clone(),
-    ];
-    if command.len() > 1 {
-        argv.push("--args".into());
-        argv.extend(command[1..].iter().cloned());
-    }
-    argv.push("--env".into());
-    argv.extend([
-        format!("CCCC_HOME={}", home.root().display()),
-        "CCCC_GROUP_ID=g_probe".into(),
-        "CCCC_ACTOR_ID=hermes-probe".into(),
-    ]);
+    let argv = mcp_add_argv(home, &command, "g_probe", "hermes-probe");
     let cwd = string_arg(request, "cwd").map(PathBuf::from);
     let result = with_exclusive_lock(&home.daemon_dir().join("hermes-runtime-setup.lock"), || {
         run(
             &hermes,
             &argv,
             cwd.as_deref(),
-            Some("Y\n"),
+            Some(MCP_ADD_CONFIRMATIONS),
             &[],
             Duration::from_secs(120),
         )
@@ -235,7 +234,9 @@ fn prepare(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .unwrap_or("Hermes MCP setup failed"),
         ));
     }
-    normalize_placeholders(&hermes_home().join("config.yaml")).map_err(OpError::io)?;
+    let config_path = hermes_home().join("config.yaml");
+    normalize_placeholders(&config_path).map_err(OpError::io)?;
+    verify_mcp(&config_path, &command)?;
     object(
         json!({"ok":true,"commands_run":[{"name":"mcp_add","argv":argv,"result":result}],"status":status(home)?}),
     )

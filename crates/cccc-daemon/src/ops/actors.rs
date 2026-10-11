@@ -717,29 +717,45 @@ fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult
         .cloned()
         .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
     let runtime_was_running = actor_process_running(&group, &original_actor);
-    let retry_claude = matches!(kind, "actor.start" | "actor.restart")
+    let retry_runtime = if matches!(kind, "actor.start" | "actor.restart") {
+        Some(actor_profile_runtime::resolve(home, &original_actor)?.runtime)
+    } else {
+        None
+    };
+    let retry_claude_trust = retry_runtime == Some(cccc_contracts::ActorRuntime::Claude)
         && !super::local_headless::running(&group_id, &actor_id)
-        && actor_profile_runtime::resolve(home, &original_actor)?.runtime
-            == cccc_contracts::ActorRuntime::Claude;
+        && super::local_headless::waiting_for_workspace_trust(&group_id, &actor_id)
+            .map_err(OpError::io)?;
     let runtime_session_snapshot = if kind == "actor.new_session" {
         Some(runtime_session::snapshot(home, &group_id, &actor_id).map_err(OpError::io)?)
     } else {
         None
     };
-    if kind != "actor.start" || !runtime_was_running || retry_claude {
+    if kind != "actor.start" || !runtime_was_running || retry_claude_trust {
         super::codex_voice_analyst::lifecycle_timing::run_sync("actor.delivery_shutdown", || {
             actor_delivery::shutdown_actor(&group_id, &actor_id);
             Ok(())
         })
         .map_err(OpError::io)?;
     }
-    let retry_resume = retry_claude
-        && runtime_session::retry_failed_claude_resume(home, &group_id, &actor_id)
-            .map_err(OpError::io)?;
+    let retried_claude_resume = if let Some(runtime) = retry_runtime
+        .filter(|_| kind == "actor.restart" || !runtime_was_running || retry_claude_trust)
+    {
+        if runtime == cccc_contracts::ActorRuntime::Claude {
+            runtime_session::retry_failed_claude_resume(home, &group_id, &actor_id)
+                .map_err(OpError::io)?
+        } else {
+            runtime_session::resume_failure::retry(home, &group_id, &actor_id, runtime)
+                .map_err(OpError::io)?;
+            false
+        }
+    } else {
+        false
+    };
     let enabled = kind != "actor.stop";
     // An old trust terminal is not a resumed managed session. An explicit retry
     // must retire that attachment before retrying the same durable conversation.
-    let apply_kind = if retry_resume && kind == "actor.start" {
+    let apply_kind = if retry_claude_trust && retried_claude_resume && kind == "actor.start" {
         "actor.restart"
     } else {
         kind

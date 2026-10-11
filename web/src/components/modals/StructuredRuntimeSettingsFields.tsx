@@ -9,7 +9,11 @@ import {
 } from "./RuntimeProfileControls";
 import { SelectCombobox } from "../SelectCombobox";
 import { inputClass, labelClass } from "./settings/types";
-import { RUNTIME_INFO, type ActorProfile } from "../../types";
+import type { ActorProfile } from "../../types";
+import {
+  structuredVoiceRuntimes,
+  structuredVoiceRuntimeLabel,
+} from "../../features/voice/voiceRuntimeOptions";
 
 export type StructuredRuntimeForm = {
   mode: "custom" | "profile";
@@ -81,13 +85,10 @@ export function StructuredRuntimeSettingsFields({
                   onChange={form.setRuntime}
                   items={[
                     ...(allowUnconfigured ? [{ value: "", label: tActors("selectRuntime") }] : []),
-                    ...(["codex", "claude", "grok", "opencode", "kilo"] as const).map(
-                      (runtime) => ({ value: runtime, label: RUNTIME_INFO[runtime].label }),
-                    ),
-                    { value: "antigravity", label: "Antigravity (ACP)" },
-                    { value: "copilot", label: "GitHub Copilot (ACP)" },
-                    { value: "devin", label: "Devin CLI (ACP)" },
-                    { value: "cursor", label: "Cursor (ACP)" },
+                    ...structuredVoiceRuntimes.map((runtime) => ({
+                      value: runtime,
+                      label: structuredVoiceRuntimeLabel(runtime),
+                    })),
                   ]}
                 />
                 <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">

@@ -36,7 +36,7 @@ impl AnalystSession {
         let session_command = command.clone();
         let prepared = grok::prepare(home, &command, &env, &generation)?;
         cccc_core::runtime_mcp::ensure_grok(&binding.root, &env, &cccc, &prepared.executable)?;
-        let resume_session_id = if let Some((group_id, actor_id)) = actor {
+        let resume_attempt = if let Some((group_id, actor_id)) = actor {
             super::super::runtime_session::prepare_grok_managed_session(
                 home,
                 group_id,
@@ -46,8 +46,12 @@ impl AnalystSession {
                 &env,
             )?
         } else {
-            requested_session_id
+            None
         };
+        let resume_session_id = resume_attempt
+            .as_ref()
+            .map(|attempt| attempt.session_id.clone())
+            .or(requested_session_id);
         let launched = grok::launch(
             prepared,
             &binding.root,
@@ -56,7 +60,13 @@ impl AnalystSession {
             purpose,
             resume_session_id.as_deref(),
         )
-        .await?;
+        .await;
+        let launched = super::super::runtime_session::resume_failure::finish_launch(
+            home,
+            actor,
+            resume_attempt.as_ref(),
+            launched,
+        )?;
         if let Some((group_id, actor_id)) = actor
             && let Err(error) = super::super::runtime_session::record_grok_managed_session(
                 home,

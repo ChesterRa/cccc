@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import { classNames } from "../../../utils/classNames";
 import { copyTextToClipboard } from "../../../utils/copy";
+import { isLocalWebHostname } from "../../../utils/webAddress";
 import { ProjectedBrowserSurfacePanel } from "../../browser/ProjectedBrowserSurfacePanel";
 import { SegmentedChoice } from "../../ui/segmented-choice";
 import { SettingsCard, SettingsNotice, SettingsPage } from "./SettingsKit";
@@ -179,7 +180,7 @@ function ProviderSettings({
   const url = tokenUrl ? new URL(tokenUrl, window.location.href).toString() : "";
   // An older Web server reports no base; judge its connector URL instead. An empty
   // base (no Web access address) still warns, and the page's own address never counts.
-  const reach = connectorReach(connectorBase ?? connector?.connector_url ?? "");
+  const address = connectorAddress(connectorBase ?? connector?.connector_url ?? "");
   const browserState = browser.verification_required
     ? "verification"
     : browser.ready
@@ -301,7 +302,7 @@ function ProviderSettings({
           )
         }
       >
-        {loadState === "ready" && reach.kind !== "public" && (
+        {loadState === "ready" && address.kind !== "https" && (
           <CardBlock>
             <SettingsNotice
               tone="warning"
@@ -317,9 +318,9 @@ function ProviderSettings({
                 )
               }
             >
-              {reach.kind === "missing"
+              {address.kind === "missing"
                 ? label("publicUrlMissing")
-                : label("publicUrlInvalid", { url: reach.address })}
+                : label("publicUrlInvalid", { url: address.origin })}
             </SettingsNotice>
           </CardBlock>
         )}
@@ -429,18 +430,18 @@ function ProviderSettings({
   );
 }
 
-type ConnectorReach =
-  | { kind: "public" }
+type ConnectorAddress =
+  | { kind: "https" }
   | { kind: "missing" }
-  | { kind: "invalid"; address: string };
+  | { kind: "invalid"; origin: string };
 
 /**
- * Whether ChatGPT can reach connectors built on this Web access address, judged
- * on the address itself so it holds before any connector exists. Anything but an
- * absolute http(s) address is no Web address at all; an http(s) one that ChatGPT
- * cannot reach is named by its origin, never by its connector path.
+ * Check the configured address before a connector exists. HTTPS on a known
+ * local host cannot be used by an external service. Other HTTPS addresses are
+ * only configuration candidates; this does not test DNS, TLS or connectivity.
+ * Notices show the origin, never the private connector path.
  */
-function connectorReach(address: string): ConnectorReach {
+function connectorAddress(address: string): ConnectorAddress {
   let url: URL;
   try {
     url = new URL(address);
@@ -448,8 +449,8 @@ function connectorReach(address: string): ConnectorReach {
     return { kind: "missing" };
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return { kind: "missing" };
-  if (url.protocol === "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
-    return { kind: "public" };
+  if (url.protocol === "https:" && !isLocalWebHostname(url.hostname)) {
+    return { kind: "https" };
   }
-  return { kind: "invalid", address: url.origin };
+  return { kind: "invalid", origin: url.origin };
 }

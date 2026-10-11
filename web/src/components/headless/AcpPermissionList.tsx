@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AcpPermission, AcpInteractionResponse } from "../../services/api/codexVoice";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 
 export function AcpPermissionList({
   permissions,
@@ -18,7 +20,15 @@ export function AcpPermissionList({
   return (
     <div className="space-y-3">
       {permissions.map((request) =>
-        request.kind === "question" || request.kind === "plan" ? (
+        ["pi_select", "pi_confirm", "pi_input", "pi_editor"].includes(request.kind) ? (
+          <PiInteraction
+            key={request.request_id}
+            request={request}
+            disabled={disabled}
+            onInteract={onInteract}
+            onConfirm={onRespond}
+          />
+        ) : request.kind === "question" || request.kind === "plan" ? (
           <UserInteraction
             key={request.request_id}
             request={request}
@@ -58,6 +68,111 @@ export function AcpPermissionList({
             </div>
           </div>
         ),
+      )}
+    </div>
+  );
+}
+
+function PiInteraction({
+  request,
+  disabled,
+  onInteract,
+  onConfirm,
+}: {
+  request: AcpPermission;
+  disabled?: boolean;
+  onInteract(requestId: string, response: AcpInteractionResponse): void;
+  onConfirm(requestId: string, allow: boolean): void;
+}) {
+  const { t } = useTranslation("actors");
+  const [value, setValue] = useState(request.kind === "pi_select" ? "" : request.prefill || "");
+  const [selected, setSelected] = useState(false);
+  return (
+    <div className="rounded-lg border border-amber-500/25 p-3 text-sm">
+      <p className="break-words font-medium">{request.title}</p>
+      {request.message && <p className="mt-2 whitespace-pre-wrap break-words">{request.message}</p>}
+      {request.kind === "pi_confirm" ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" disabled={disabled} onClick={() => onConfirm(request.request_id, true)}>
+            {t("acpControls.confirm")}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={disabled}
+            onClick={() => onConfirm(request.request_id, false)}
+          >
+            {t("acpControls.decline")}
+          </Button>
+        </div>
+      ) : (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!disabled && (request.kind !== "pi_select" || selected))
+              onInteract(request.request_id, { value });
+          }}
+        >
+          {request.kind === "pi_select" ? (
+            <fieldset className="mt-3 space-y-2" disabled={disabled}>
+              <legend className="sr-only">{request.title}</legend>
+              {(request.options || []).map((option) => (
+                <label key={option} className="flex min-h-9 cursor-pointer items-start gap-2 py-1">
+                  <input
+                    className="mt-1 shrink-0"
+                    type="radio"
+                    name={request.request_id}
+                    checked={selected && value === option}
+                    onChange={() => {
+                      setValue(option);
+                      setSelected(true);
+                    }}
+                  />
+                  <span className="min-w-0 break-words">{option}</span>
+                </label>
+              ))}
+            </fieldset>
+          ) : request.kind === "pi_editor" ? (
+            <Textarea
+              className="mt-3 min-h-28"
+              aria-label={request.title}
+              placeholder={request.placeholder}
+              value={value}
+              maxLength={65536}
+              disabled={disabled}
+              onChange={(event) => setValue(event.target.value)}
+            />
+          ) : (
+            <Input
+              className="mt-3"
+              type="text"
+              aria-label={request.title}
+              placeholder={request.placeholder}
+              value={value}
+              maxLength={65536}
+              disabled={disabled}
+              onChange={(event) => setValue(event.target.value)}
+            />
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              type="submit"
+              disabled={disabled || (request.kind === "pi_select" && !selected)}
+            >
+              {t("acpControls.reply")}
+            </Button>
+            <Button
+              size="sm"
+              type="button"
+              variant="secondary"
+              disabled={disabled}
+              onClick={() => onInteract(request.request_id, { cancelled: true })}
+            >
+              {t("acpControls.cancelInteraction")}
+            </Button>
+          </div>
+        </form>
       )}
     </div>
   );

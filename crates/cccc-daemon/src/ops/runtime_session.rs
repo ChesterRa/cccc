@@ -11,6 +11,8 @@ mod grok;
 mod grok_tests;
 pub(crate) mod native_acp;
 mod opencode;
+pub(crate) mod pi;
+pub(crate) mod resume_failure;
 pub use claude::{
     ResumeBlocked as ClaudeResumeBlocked, is_resume_blocked as is_claude_resume_blocked,
     prepare_managed as prepare_claude_managed_session,
@@ -38,7 +40,7 @@ pub fn prepare_codex_app_thread(
     command: &[String],
     environment: &std::collections::BTreeMap<String, String>,
     model: &str,
-) -> std::io::Result<Option<String>> {
+) -> std::io::Result<Option<resume_failure::ResumeAttempt>> {
     if !resume_enabled() {
         return Ok(None);
     }
@@ -49,11 +51,6 @@ pub fn prepare_codex_app_thread(
         || string(&document, "kind") != "runtime_session"
         || string(&document, "transport") != CODEX_MANAGED_TRANSPORT
         || string(&document, "runtime") != "codex"
-        || string(&document, "status") != "usable"
-        || !document
-            .get("resume_eligible")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
         || string(&document, "workspace_path") != workspace_path(cwd)
         || string(&document, "command_fingerprint") != app_thread_command_fingerprint(command)
         || string(&document, "model") != model.trim()
@@ -67,11 +64,9 @@ pub fn prepare_codex_app_thread(
     if thread_id.is_empty() {
         return Ok(None);
     }
-    let now = utc_now();
-    document.insert("last_resume_attempt_at".into(), json!(now));
-    document.insert("updated_at".into(), json!(utc_now()));
+    let attempt = resume_failure::begin(&mut document, thread_id)?;
     write(home, group_id, actor_id, &document)?;
-    Ok(Some(thread_id))
+    Ok(attempt)
 }
 
 pub struct CodexAppThread<'a> {
@@ -391,6 +386,8 @@ mod tests {
     fn receipt_selection_uses_current_linked_profile_and_preserves_other_surface() {
         for runtime in [
             cccc_contracts::ActorRuntime::Antigravity,
+            cccc_contracts::ActorRuntime::Auggie,
+            cccc_contracts::ActorRuntime::Kimi,
             cccc_contracts::ActorRuntime::Copilot,
             cccc_contracts::ActorRuntime::Devin,
             cccc_contracts::ActorRuntime::Cursor,
@@ -551,7 +548,10 @@ mod tests {
             prepare_codex_app_thread(&home, &group_id, "peer1", &cwd, &command, &environment, "")
                 .expect("prepare app thread");
 
-        assert_eq!(prepared.as_deref(), Some("thread-1"));
+        assert_eq!(
+            prepared.as_ref().map(|attempt| attempt.session_id.as_str()),
+            Some("thread-1")
+        );
         let stored = read(&home, &group_id, "peer1").expect("stored metadata");
         assert!(
             stored["last_resume_attempt_at"]

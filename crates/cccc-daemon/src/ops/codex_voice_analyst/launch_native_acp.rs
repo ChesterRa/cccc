@@ -14,6 +14,17 @@ impl AnalystSession {
         actor: Option<(&str, &str)>,
     ) -> io::Result<Self> {
         let options = native_acp::options(runtime, &command)?;
+        let private_values = env
+            .values()
+            .filter(|value| !value.is_empty())
+            .cloned()
+            .collect();
+        if runtime == ActorRuntime::Auggie {
+            env.insert("AUGMENT_DISABLE_AUTO_UPDATE".into(), "1".into());
+        }
+        if runtime == ActorRuntime::Hermes {
+            env.insert("HERMES_ACP_SKIP_CONFIGURED_MCP".into(), "1".into());
+        }
         let identity_command = if command.is_empty() {
             cccc_runtime::default_command(runtime)
         } else {
@@ -106,7 +117,7 @@ impl AnalystSession {
         let launch_command = cccc_runtime::resolve_command_executable(&launch_command, &env);
         let (process, stdin, stdout) =
             process::spawn_piped_quiet(&launch_command, &binding.root, &env)?;
-        let protocol = AcpClient::new(
+        let protocol = AcpClient::new_with_private_values(
             stdin,
             stdout,
             generation.clone(),
@@ -117,6 +128,7 @@ impl AnalystSession {
                 acp::PermissionPolicy::Interactive
             },
             acp::PromptCompletion::ResponseWithActivityReceipt,
+            private_values,
         )?;
         let initialized = native_acp::initialize(
             &protocol,

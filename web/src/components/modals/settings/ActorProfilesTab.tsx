@@ -4,7 +4,7 @@ import { AcpRuntimeMode } from "../AcpRuntimeMode";
 import { isWebModelRuntime } from "../../../types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ActorProfile, ActorProfileUsage, RUNTIME_INFO } from "../../../types";
+import { ActorProfile, ActorProfileUsage } from "../../../types";
 import * as api from "../../../services/api";
 import { parsePrivateEnvSetText, parsePrivateEnvUnsetText } from "../../../utils/privateEnvInput";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../../utils/capabilityAutoload";
@@ -28,6 +28,8 @@ import { SelectCombobox } from "../../SelectCombobox";
 import { BodyPortal } from "../../ui/BodyPortal";
 import { formatRuntimeCommand } from "../runtimeProfileControlsModel";
 import { RuntimeSelector } from "../RuntimeSelector";
+import { structuredVoiceRuntimes } from "../../../features/voice/voiceRuntimeOptions";
+import { runtimeProfileRuntimeLabel } from "../runtimeProfileControlsModel";
 
 interface ActorProfilesTabProps {
   isDark: boolean;
@@ -69,8 +71,10 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   antigravity: "agy --dangerously-skip-permissions",
   droid: "droid --auto high",
   grok: "grok --always-approve",
+  hermes: "hermes --tui --yolo",
   kimi: "kimi --yolo",
   opencode: "opencode --auto",
+  pi: "pi",
   web_model: "",
   grok_web_model: "",
   custom: "",
@@ -278,21 +282,7 @@ export function ActorProfilesTab({
               <label className={labelClass()}>{t("actorProfiles.runtime")}</label>
               <RuntimeSelector
                 value={editor.runtime}
-                allowedRuntimes={
-                  structuredOnly
-                    ? [
-                        "codex",
-                        "claude",
-                        "grok",
-                        "opencode",
-                        "kilo",
-                        "antigravity",
-                        "copilot",
-                        "devin",
-                        "cursor",
-                      ]
-                    : undefined
-                }
+                allowedRuntimes={structuredOnly ? structuredVoiceRuntimes : undefined}
                 runtimeMode={editor.runtimeMode}
                 allowUndetected
                 disabled={editorBusy}
@@ -1002,7 +992,7 @@ export function ActorProfilesTab({
                             : "border-black/8 bg-black/[0.03] text-[var(--color-text-secondary)]"
                         }`}
                       >
-                        {RUNTIME_INFO[String(profile.runtime)]?.label || profile.runtime}
+                        {runtimeProfileRuntimeLabel(profile)}
                       </span>
                     </div>
                     <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">

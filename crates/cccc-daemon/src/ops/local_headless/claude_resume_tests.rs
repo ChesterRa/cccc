@@ -430,6 +430,90 @@ fn claude_trust_prompt_never_receives_tasks_and_stops_after_nontrust_resume_fail
 }
 
 #[test]
+fn explicit_start_retries_only_the_registered_claude_trust_owner() {
+    if isolated("explicit_start_retries_only_the_registered_claude_trust_owner") {
+        return;
+    }
+    let f = Fixture::new("untrusted");
+    let started = f.lifecycle("actor_start");
+    assert!(started.ok, "{:?}", started.error);
+    f.wait(|| f.config.join("terminal_ready").exists());
+    assert!(
+        super::waiting_for_workspace_trust(&f.group.group_id, &f.actor.id)
+            .expect("registered trust owner")
+    );
+    let trust_pid = cccc_runtime::status(&f.group.group_id, &f.actor.id)
+        .expect("trust terminal")
+        .pid;
+    let receipt = f
+        .home
+        .groups_dir()
+        .join(&f.group.group_id)
+        .join("state/runtime_sessions/claude-1.json");
+    let mut failed = f.receipt();
+    failed["status"] = json!("resume_failed");
+    failed["resume_eligible"] = json!(false);
+    cccc_core::fs::write_json(&receipt, &failed).expect("retained failure gate");
+    let retained = std::fs::read(&receipt).expect("retained conversation receipt");
+    let history = f
+        .config
+        .join("projects/workspace")
+        .join(format!("{SAVED}.jsonl"));
+    let history_bytes = std::fs::read(&history).expect("original history");
+    let store = GroupStore::new(f.home.clone()).expect("store");
+    let mut pending = f.group.clone();
+    pending.actors[0].runtime = ActorRuntime::Kiro;
+    pending.actors[0].runtime_mode = cccc_contracts::RuntimeMode::Acp;
+    pending.actors[0].normalize_runtime_constraints();
+    store.save(&pending).expect("save next-launch ACP settings");
+
+    let preserved = f.lifecycle("actor_start");
+    assert!(preserved.ok, "{:?}", preserved.error);
+    assert_eq!(
+        cccc_runtime::status(&f.group.group_id, &f.actor.id)
+            .expect("same pending trust terminal")
+            .pid,
+        trust_pid,
+        "Start with saved ACP settings must not replace the pending trust owner"
+    );
+    assert_eq!(
+        std::fs::read(&receipt).expect("old receipt retained"),
+        retained
+    );
+    assert_eq!(f.launches(), 1);
+    assert!(!f.config.join("received").exists());
+
+    store
+        .save(&f.group)
+        .expect("restore matching Claude configuration");
+    std::fs::write(f.config.join("mode"), "healthy").expect("allow explicit provider retry");
+    let retried = f.lifecycle("actor_start");
+    assert!(retried.ok, "{:?}", retried.error);
+    assert!(super::running(&f.group.group_id, &f.actor.id));
+    f.wait(|| {
+        !super::waiting_for_workspace_trust(&f.group.group_id, &f.actor.id)
+            .expect("trust owner retirement")
+    });
+    assert!(
+        !super::waiting_for_workspace_trust(&f.group.group_id, &f.actor.id)
+            .expect("trust owner retired")
+    );
+    assert_ne!(
+        cccc_runtime::status(&f.group.group_id, &f.actor.id)
+            .expect("managed native attachment")
+            .pid,
+        trust_pid
+    );
+    assert_eq!(f.launches(), 2);
+    assert_eq!(f.receipt()["provider_session_id"], SAVED);
+    assert_eq!(f.receipt()["status"], "usable");
+    assert_eq!(
+        std::fs::read(&history).expect("history retained"),
+        history_bytes
+    );
+}
+
+#[test]
 fn new_claude_session_retires_pending_trust_recovery_before_removing_the_receipt() {
     if isolated("new_claude_session_retires_pending_trust_recovery_before_removing_the_receipt") {
         return;

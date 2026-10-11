@@ -53,7 +53,9 @@ impl RuntimeMode {
 
     pub fn validate(self, runtime: ActorRuntime) -> Result<(), &'static str> {
         if self == Self::Acp && !runtime.supports_acp_mode() {
-            return Err("runtime_mode=acp requires Antigravity, Copilot, Devin or Cursor");
+            return Err(
+                "runtime_mode=acp requires Antigravity, Auggie, Copilot, Devin, Cursor, Kimi Code, Kiro, Hermes or Droid",
+            );
         }
         Ok(())
     }
@@ -80,6 +82,7 @@ pub enum ActorRuntime {
     Hermes,
     Kimi,
     Opencode,
+    Pi,
     WebModel,
     GrokWebModel,
     Custom,
@@ -90,7 +93,15 @@ impl ActorRuntime {
     pub const fn supports_acp_mode(self) -> bool {
         matches!(
             self,
-            Self::Antigravity | Self::Copilot | Self::Devin | Self::Cursor
+            Self::Antigravity
+                | Self::Auggie
+                | Self::Copilot
+                | Self::Devin
+                | Self::Cursor
+                | Self::Kimi
+                | Self::Kiro
+                | Self::Hermes
+                | Self::Droid
         )
     }
 
@@ -132,13 +143,12 @@ impl ActorRuntime {
     }
 
     /// The runner is an implementation detail derived from the Runtime, not a
-    /// user-selectable execution mode. CLI runtimes always expose their native
-    /// terminal; runtimes with their own non-terminal surface keep the
-    /// structured runner internally.
+    /// user-selectable runner. Pi uses official RPC without a native attach;
+    /// optional ACP providers derive their headless surface in `runner_for`.
     #[must_use]
     pub const fn runner(self) -> RunnerKind {
         match self {
-            Self::Deepseek | Self::WebModel | Self::GrokWebModel => RunnerKind::Headless,
+            Self::Deepseek | Self::Pi | Self::WebModel | Self::GrokWebModel => RunnerKind::Headless,
             _ => RunnerKind::Pty,
         }
     }
@@ -148,7 +158,7 @@ impl ActorRuntime {
     #[must_use]
     pub const fn state_source(self) -> RuntimeStateSource {
         match self {
-            Self::Claude | Self::Codex | Self::Grok | Self::Opencode | Self::Kilo => {
+            Self::Claude | Self::Codex | Self::Grok | Self::Opencode | Self::Kilo | Self::Pi => {
                 RuntimeStateSource::ManagedSession
             }
             _ => RuntimeStateSource::Terminal,
@@ -357,6 +367,11 @@ mod tests {
     #[test]
     fn official_native_acp_is_optional_and_keeps_tui_as_default() {
         for runtime in [
+            ActorRuntime::Auggie,
+            ActorRuntime::Kimi,
+            ActorRuntime::Kiro,
+            ActorRuntime::Hermes,
+            ActorRuntime::Droid,
             ActorRuntime::Copilot,
             ActorRuntime::Devin,
             ActorRuntime::Cursor,
@@ -377,6 +392,7 @@ mod tests {
             ActorRuntime::Codex,
             ActorRuntime::Claude,
             ActorRuntime::Opencode,
+            ActorRuntime::Pi,
             ActorRuntime::Custom,
         ] {
             assert!(
@@ -384,5 +400,21 @@ mod tests {
                 "existing native managed surfaces keep their own lifecycle"
             );
         }
+    }
+
+    #[test]
+    fn pi_uses_official_rpc_without_an_acp_mode_or_native_terminal() {
+        assert_eq!(ActorRuntime::Pi.runner(), RunnerKind::Headless);
+        assert_eq!(
+            ActorRuntime::Pi.state_source(),
+            RuntimeStateSource::ManagedSession
+        );
+        assert!(!ActorRuntime::Pi.supports_acp_mode());
+        assert!(RuntimeMode::Acp.validate(ActorRuntime::Pi).is_err());
+        let actor: Actor = serde_json::from_value(serde_json::json!({
+            "id":"pi-1", "runtime":"pi"
+        }))
+        .expect("deserialize Pi Actor");
+        assert_eq!(actor.runtime, ActorRuntime::Pi);
     }
 }

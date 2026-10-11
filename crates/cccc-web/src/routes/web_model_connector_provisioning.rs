@@ -15,8 +15,8 @@ pub(super) async fn list(State(state): State<AppState>) -> ApiResult {
     Ok(success(json!({
         "requires_reconfiguration":cccc_core::web_model_connectors::requires_reconfiguration(&state.home).map_err(store::io_error)?,
         "connectors": connectors.iter().map(|item| public(item, &base_url)).collect::<Vec<_>>(),
-        // What every connector URL is built on, so the page can tell whether
-        // ChatGPT will reach one before any connector exists.
+        // The configured address used to build connector URLs. This metadata
+        // does not verify connectivity from an external service.
         "connector_base_url": base_url
     })))
 }

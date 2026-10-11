@@ -222,11 +222,14 @@ export type AcpQuestion = {
   options: { id: string; label: string }[];
   allowMultiple?: boolean;
 };
-export type AcpInteractionResponse = {
-  outcome:
-    | { outcome: "answered"; answers: { questionId: string; selectedOptionIds: string[] }[] }
-    | { outcome: "accepted" | "rejected" | "skipped" | "cancelled" };
-};
+export type AcpInteractionResponse =
+  | {
+      outcome:
+        | { outcome: "answered"; answers: { questionId: string; selectedOptionIds: string[] }[] }
+        | { outcome: "accepted" | "rejected" | "skipped" | "cancelled" };
+    }
+  | { value: string }
+  | { cancelled: true };
 export type AcpPermission = {
   // Opaque token for this pending interaction; not the provider's RPC id.
   request_id: string;
@@ -236,6 +239,10 @@ export type AcpPermission = {
   questions?: AcpQuestion[];
   plan?: string;
   overview?: string;
+  message?: string;
+  options?: string[];
+  placeholder?: string;
+  prefill?: string;
 };
 export function controlCodexVoiceAnalyst(
   generation: string,

@@ -1,4 +1,5 @@
 import type { GroupPresentation, PresentationSlot } from "../types";
+import { isLocalWebHostname } from "./webAddress";
 
 function buildEmptySlot(index: number): PresentationSlot {
   return { slot_id: `slot-${index}`, index, card: null };
@@ -35,23 +36,6 @@ export function findPresentationSlot(
   return (
     ensurePresentation(presentation).slots.find((slot) => slot.slot_id === normalizedSlotId) || null
   );
-}
-
-function isPrivateIpv4Hostname(hostname: string): boolean {
-  const parts = hostname.split(".").map((part) => Number(part));
-  if (
-    parts.length !== 4 ||
-    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
-  ) {
-    return false;
-  }
-  if (parts[0] === 10) return true;
-  if (parts[0] === 127) return true;
-  if (parts[0] === 192 && parts[1] === 168) return true;
-  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-  if (parts[0] === 169 && parts[1] === 254) return true;
-  if (parts[0] === 0) return true;
-  return false;
 }
 
 function isIpv4Hostname(hostname: string): boolean {
@@ -153,17 +137,7 @@ export function shouldPreferPresentationLiveBrowser(url: string): boolean {
       .trim()
       .toLowerCase();
     if (!hostname) return false;
-    if (
-      hostname === "localhost" ||
-      hostname === "::1" ||
-      hostname === "[::1]" ||
-      hostname === "host.docker.internal"
-    ) {
-      return true;
-    }
-    if (isPrivateIpv4Hostname(hostname)) return true;
-    if (hostname.endsWith(".local")) return true;
-    return false;
+    return isLocalWebHostname(hostname);
   } catch {
     return false;
   }

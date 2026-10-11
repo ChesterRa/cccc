@@ -1,4 +1,4 @@
-use cccc_contracts::Actor;
+use cccc_contracts::{Actor, RunnerKind};
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
@@ -14,10 +14,11 @@ pub fn runtime_actor_fields(
         actual["runner"].as_str().unwrap_or("pty")
     } else if retained_pty {
         "pty"
-    } else if super::actor_runtime::is_structured(actor) {
-        "headless"
     } else {
-        "pty"
+        match actor.runtime.runner_for(actor.runtime_mode) {
+            RunnerKind::Headless => "headless",
+            RunnerKind::Pty => "pty",
+        }
     };
     fields(home, actor, group_id, running, runner_effective)
 }

@@ -42,6 +42,10 @@ pub(super) fn uses_managed_session(actor: &cccc_contracts::Actor) -> bool {
     supervisor::uses_managed_session(actor)
 }
 
+pub(crate) fn waiting_for_workspace_trust(group_id: &str, actor_id: &str) -> std::io::Result<bool> {
+    workspace_trust_recovery::registered(&(group_id.to_owned(), actor_id.to_owned()))
+}
+
 /// Delivery follows the current owner; saved settings apply on the next launch.
 /// A temporary Claude trust terminal belongs to recovery, not native task input.
 pub(super) fn uses_managed_delivery(group_id: &str, actor: &cccc_contracts::Actor) -> bool {

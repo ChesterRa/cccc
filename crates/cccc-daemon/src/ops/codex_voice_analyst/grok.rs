@@ -133,15 +133,9 @@ pub(super) async fn launch(
             }
         };
     let result = async {
-        let (session_id, resumed) = session::initialize(
-            &protocol,
-            cwd,
-            purpose,
-            &prepared.rules,
-            resume_session_id,
-            purpose == SessionPurpose::Actor,
-        )
-        .await?;
+        let (session_id, resumed) =
+            session::initialize(&protocol, cwd, purpose, &prepared.rules, resume_session_id)
+                .await?;
         session::apply_preferences(
             &protocol,
             &session_id,

@@ -1516,7 +1516,7 @@
     "connector": "一个 CCCC 连接器",
     "connectorHint": "在 ChatGPT 中只添加此连接器一次。各 Actor 启动时会自动连接自己的对话，无需为每个 Actor 添加连接器。",
     "publicUrlMissing": "还没有配置 Web 访问的公网地址。ChatGPT 只能通过公网 HTTPS 地址访问此连接器。",
-    "publicUrlInvalid": "当前地址 {{url}} 不是公网 HTTPS，ChatGPT 无法访问。请在 Web 访问中配置公网 HTTPS 地址。",
+    "publicUrlInvalid": "当前配置地址 {{url}} 不满足公网 HTTPS 要求。请在 Web 访问中设置外部服务可访问的 HTTPS 地址。",
     "webAccess": "Web 访问设置",
     "configured": "已生成连接器凭据",
     "pairedActors": "个已配对 Actor",
@@ -1607,7 +1607,7 @@
     "revokeHint": "所有 Grok Actor 将失去工具访问权限。重新创建连接器后，需要再次保存各自的 Bot URL。",
     "upgrade": "配置 Grok 连接器，并保存每个 Actor 的 Bot URL。",
     "publicUrlMissing": "还没有配置 Web 访问的公网地址。Grok 只能通过公网 HTTPS 地址访问此连接器。",
-    "publicUrlInvalid": "当前地址 {{url}} 不是公网 HTTPS，Grok 无法访问。请在 Web 访问中配置公网 HTTPS 地址。",
+    "publicUrlInvalid": "当前配置地址 {{url}} 不满足公网 HTTPS 要求。请在 Web 访问中设置外部服务可访问的 HTTPS 地址。",
     "copyOnce": "请立即复制此私密地址并添加到 Grok Connectors。地址仅在创建或更换凭据后显示，请勿分享。",
     "notSeen": "尚未收到连接器请求，请在 Grok 中添加此连接器。"
   },
@@ -1769,7 +1769,7 @@
       "terminalHint": "可直接操作秘书终端。文档更新和润色草稿仍按原任务目标处理。",
       "manualTurn": "正在处理终端输入，结束后继续排队任务。",
       "notStartedHint": "秘书在首个任务到来时启动，任务之间保持就绪。",
-      "outputHint": "执行输出显示在这里。ACP 运行时没有原生终端。",
+      "outputHint": "执行输出显示在这里。当前受控会话没有原生终端。",
       "phases": {
         "not_started": "尚未启动",
         "starting": "正在启动",

@@ -38,4 +38,24 @@ async fn runtime_endpoint_returns_frontend_availability_contract() {
             && runtime["display_name"] == "Cline CLI"
             && runtime["recommended_command"] == "cline --tui --auto-approve true"
     }));
+    assert!(runtimes.iter().any(|runtime| {
+        runtime["name"] == "pi"
+            && runtime["display_name"] == "Pi"
+            && runtime["recommended_command"] == "pi"
+    }));
+    for name in [
+        "auggie", "copilot", "devin", "cursor", "kimi", "kiro", "hermes", "droid",
+    ] {
+        let runtime = runtimes
+            .iter()
+            .find(|runtime| runtime["name"] == name)
+            .expect("controlled runtime is present in the actual catalog");
+        assert!(runtime["mode_availability"]["default"].is_boolean());
+        assert!(runtime["mode_availability"]["acp"].is_boolean());
+        assert_eq!(
+            runtime["mode_availability"]["default"],
+            runtime["available"]
+        );
+        assert_eq!(runtime["mode_availability"]["acp"], runtime["available"]);
+    }
 }

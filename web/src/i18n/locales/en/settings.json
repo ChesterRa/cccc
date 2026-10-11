@@ -1524,7 +1524,7 @@
     "connector": "One CCCC connector",
     "connectorHint": "Add this connector once in ChatGPT. Each Actor connects its own conversation automatically when started; no Actor-specific connector URLs are needed.",
     "publicUrlMissing": "No public Web access address is configured yet. ChatGPT can reach this connector only through a public HTTPS address.",
-    "publicUrlInvalid": "The current address {{url}} is not public HTTPS, so ChatGPT cannot reach it. Set a public HTTPS address in Web access.",
+    "publicUrlInvalid": "The configured address {{url}} does not meet the public HTTPS requirement. Set an externally accessible HTTPS address in Web access.",
     "webAccess": "Web access settings",
     "configured": "Connector credential created",
     "pairedActors": "paired Actors",
@@ -1615,7 +1615,7 @@
     "revokeHint": "All Grok Actors will lose tool access. After creating a new connector, save their Bot URLs again.",
     "upgrade": "Configure the Grok connector and save each Actor’s Bot URL.",
     "publicUrlMissing": "No public Web access address is configured yet. Grok can reach this connector only through a public HTTPS address.",
-    "publicUrlInvalid": "The current address {{url}} is not public HTTPS, so Grok cannot reach it. Set a public HTTPS address in Web access.",
+    "publicUrlInvalid": "The configured address {{url}} does not meet the public HTTPS requirement. Set an externally accessible HTTPS address in Web access.",
     "copyOnce": "Copy this private URL now and add it to Grok Connectors. It is only shown after creation or rotation; do not share it.",
     "notSeen": "No connector request recorded yet. Add this connector in Grok to finish setup."
   },
@@ -1785,7 +1785,7 @@
       "terminalHint": "Interact directly with the Secretary. Document updates and prompt drafts use their original task targets.",
       "manualTurn": "Working on terminal input. Queued tasks will follow when it finishes.",
       "notStartedHint": "The Secretary starts with the first task and stays available between tasks.",
-      "outputHint": "Execution output appears here. ACP runtimes do not provide a native terminal.",
+      "outputHint": "Execution output appears here. This controlled session has no native terminal.",
       "phases": {
         "not_started": "Not started",
         "starting": "Starting",

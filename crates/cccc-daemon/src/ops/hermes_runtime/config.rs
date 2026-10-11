@@ -39,7 +39,11 @@ pub(super) fn inspect_mcp(config: &Mapping, expected: &[String]) -> Value {
         .first()
         .is_some_and(|value| Path::new(value) == Path::new(&command));
     let args_ok = args == expected.get(1..).unwrap_or_default();
-    json!({"status":if command_ok&&args_ok&&env_ok{"ready"}else{"stale"},"configured":true,"server_name":SERVER,"command":command,"args":args,"expected_command":expected,"command_matches":command_ok,"args_match":args_ok,"env_placeholders_match":env_ok})
+    let enabled = entry
+        .get(YamlValue::String("enabled".into()))
+        .and_then(YamlValue::as_bool)
+        != Some(false);
+    json!({"status":if command_ok&&args_ok&&env_ok&&enabled{"ready"}else{"stale"},"configured":true,"server_name":SERVER,"command":command,"args":args,"expected_command":expected,"command_matches":command_ok,"args_match":args_ok,"env_placeholders_match":env_ok})
 }
 
 pub(super) fn normalize_placeholders(path: &Path) -> io::Result<()> {
@@ -118,5 +122,25 @@ mcp_servers:
         let state = inspect_mcp(&config, &["/tmp/cccc".into(), "mcp".into()]);
         assert_eq!(state["status"], "ready");
         assert_eq!(state["env_placeholders_match"], true);
+    }
+
+    #[test]
+    fn explicitly_disabled_hermes_mcp_entry_is_not_ready() {
+        let config: Mapping = serde_yaml::from_str(
+            r#"
+mcp_servers:
+  cccc:
+    command: /tmp/cccc
+    args: [mcp]
+    enabled: false
+    env:
+      CCCC_HOME: ${CCCC_HOME}
+      CCCC_GROUP_ID: ${CCCC_GROUP_ID}
+      CCCC_ACTOR_ID: ${CCCC_ACTOR_ID}
+"#,
+        )
+        .expect("disabled fixture config");
+        let state = inspect_mcp(&config, &["/tmp/cccc".into(), "mcp".into()]);
+        assert_eq!(state["status"], "stale");
     }
 }

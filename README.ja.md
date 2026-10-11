@@ -243,7 +243,7 @@ graph TB
 
 ## サポートランタイム
 
-CCCC は 19 種の組み込み Runtime 連携と、その他の CLI エージェント向けの `custom` に対応します。同じ Group の Actor が異なる Runtime を使えます。操作方法と設定要件は Runtime ごとに異なります：
+CCCC は 20 種の組み込み Runtime 連携と、その他の CLI エージェント向けの `custom` に対応します。同じ Group の Actor が異なる Runtime を使えます。操作方法と設定要件は Runtime ごとに異なります：
 
 | ランタイム | 連携方式 | 入口 / サーフェス |
 |-----------|----------|-------------------|
@@ -254,18 +254,19 @@ CCCC は 19 種の組み込み Runtime 連携と、その他の CLI エージェ
 | GitHub Copilot CLI | MCP 自動設定 | `copilot` |
 | Cursor CLI | プロンプト支援 MCP 設定 | `cursor-agent` |
 | Devin CLI | MCP 自動設定 | `devin` |
-| Kiro CLI | MCP 自動設定 | `kiro-cli` |
+| Kiro CLI | 純正 TUI または公式 ACP、ACP はセッション単位 MCP | `kiro-cli` |
 | Kilo Code CLI | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `kilo` |
 | Antigravity CLI | MCP 自動設定 | `agy` |
 | ChatGPT Web | Remote MCP + ブラウザ配信 | `chatgpt.com` の会話 |
 | Grok Bot Web Model | Remote MCP + ブラウザ配信、Actor ごとの認証情報でルーティング | 必須の `grok.com/bot/<UUID>` URL |
 | Grok Build | 管理 ACP セッション + 純正 TUI、自動 MCP 設定 | `grok` |
-| Hermes Agent | MCP 自動設定 | `hermes` |
-| Droid | MCP 自動設定 | `droid` |
+| Hermes Agent | 純正 TUI または公式 ACP、ACP はセッション単位 MCP | `hermes` |
+| Droid | 純正 TUI または公式 ACP、ACP はセッション単位 MCP | `droid` |
 | Amp | MCP 自動設定 | `amp` |
-| Auggie | MCP 自動設定 | `auggie` |
-| Kimi Code | MCP 自動設定 | `kimi` |
+| Auggie | 純正 TUI または公式 ACP、ACP はセッション単位 MCP | `auggie` |
+| Kimi Code | 純正 TUI または公式 ACP、ACP はセッション単位 MCP | `kimi` |
 | OpenCode | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `opencode` |
+| Pi | 公式 RPC、セッション単位 MCP、純正ターミナル接続なし | `pi` |
 | Custom | 手動設定 | 任意のコマンド |
 
 ここでは安定したランタイムの入口または利用サーフェスのみを示します。CCCC はランタイムごとの起動デフォルトを自動適用し、actor/profile のコマンドは設定で確認・変更できます。[サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) には、`agy --dangerously-skip-permissions`、`grok --always-approve`、`opencode --auto` など、承認を省略する既定の autonomy flags も記載しています。
@@ -282,11 +283,11 @@ cccc doctor                       # 環境とランタイムの可用性を検�
 
 Antigravity の設定時には、自動配信された端末入力を評価アンケートが消費しないよう、ユーザー設定でアンケートを無効にします。他の設定は保持されます。同じユーザーが単独で起動する AGY にも適用されます。
 
-GitHub Copilot、Devin CLI、Cursor も Actor と Voice Analyst 向けの任意の**公式 headless ACP**に対応し、純正 TUI が既定のままです。ローカル CLI のログインを使い、Actor ごとに独立した CCCC 識別情報を注入します。入力キュー、キャンセル、今回のみの権限確認を表示し、Cursor の質問と計画は YOLO でもユーザーの明示的な判断を必要とします。[ランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes#copilot-devin-and-cursor-tui-or-official-acp)をご覧ください。
+GitHub Copilot、Devin CLI、Cursor、Kimi Code、Auggie、Kiro V3、Hermes、Droid も Actor、Voice Analyst、Voice Secretary 向けの任意の**公式 headless ACP**に対応し、純正 TUI が既定のままです。ローカル CLI のログインを使い、Actor ごとに独立した CCCC 識別情報を注入します。入力キュー、キャンセル、今回のみの権限確認を表示し、Cursor の質問と計画は YOLO でもユーザーの明示的な判断を必要とします。[ランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes#native-tui-or-official-acp)をご覧ください。
 
 Antigravity は Actor と Voice Analyst 向けの任意の**公式 ACP モード**にも対応し、端末の代わりに構造化ワークスペースを使います。Actor／Profile 設定で ACP を選び、`cccc setup --runtime antigravity --runtime-mode acp --login` を一度実行して CCCC 専用ログインを完了してください。待機中の入力と今回のみの権限確認を画面で確認できます。[ランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp)をご覧ください。
 
-Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Claude Code、Codex CLI、Grok Build、OpenCode、Kilo は、同じ provider session で純正の書き込み可能なターミナルと構造化プロトコルを併用します。メッセージはそのターミナルへ渡され、steer と queue は受信 Runtime が判断します。DeepSeek Harness は純正ターミナルなしの ACP、ChatGPT Web と Grok Bot Web Model はブラウザ配信と Remote MCP を使用します。
+Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Claude Code、Codex CLI、Grok Build、OpenCode、Kilo は、同じ provider session で純正の書き込み可能なターミナルと構造化プロトコルを併用します。メッセージはそのターミナルへ渡され、steer と queue は受信 Runtime が判断します。Pi は公式 RPC を使い、純正ターミナルへの接続はありません。Pi 1.1.0 以降（`@earendil-works/pi-coding-agent`）が必要です。DeepSeek Harness は純正ターミナルなしの ACP、ChatGPT Web と Grok Bot Web Model はブラウザ配信と Remote MCP を使用します。
 
 各サポート Runtime の setup コマンド、操作方式、トラブルシュートは [サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) を参照してください。
 

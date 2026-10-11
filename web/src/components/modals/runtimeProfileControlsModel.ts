@@ -1,4 +1,24 @@
-import type { ActorProfile } from "../../types";
+import { RUNTIME_INFO, supportsAcpMode, type ActorProfile } from "../../types";
+
+export function runtimeProfileRuntimeLabel(
+  profile: Pick<ActorProfile, "runtime" | "runtime_mode">,
+): string {
+  const runtime = String(profile.runtime || "")
+    .trim()
+    .toLowerCase();
+  const label = RUNTIME_INFO[runtime]?.label || String(profile.runtime || "").trim();
+  const mode =
+    runtime === "pi"
+      ? "RPC"
+      : runtime === "deepseek"
+        ? "ACP"
+        : supportsAcpMode(runtime)
+          ? profile.runtime_mode === "acp"
+            ? "ACP"
+            : "TUI"
+          : "";
+  return mode ? `${label} · ${mode}` : label;
+}
 
 export function runtimeProfileScopeLabel(
   profile: Pick<ActorProfile, "scope" | "owner_id">,

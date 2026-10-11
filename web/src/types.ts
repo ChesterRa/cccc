@@ -1585,6 +1585,7 @@ export const SUPPORTED_RUNTIMES = [
   "hermes",
   "kimi",
   "opencode",
+  "pi",
   "web_model",
   "grok_web_model",
   "custom",
@@ -1623,6 +1624,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   hermes: { label: "Hermes Agent", desc: "Uses your Hermes profile with CCCC MCP" },
   kimi: { label: "Kimi Code", desc: "" },
   opencode: { label: "OpenCode", desc: "Managed delivery in the same native OpenCode TUI" },
+  pi: { label: "Pi", desc: "" },
   web_model: {
     label: "ChatGPT Web Model",
     desc: "ChatGPT browser delivery + remote MCP connector",
@@ -1652,6 +1654,16 @@ export const RUNTIME_COLORS: Record<
     dotLight: string;
   }
 > = {
+  pi: {
+    bg: "bg-slate-900/40",
+    text: "text-slate-200",
+    border: "border-slate-500/60",
+    dot: "bg-slate-300",
+    bgLight: "bg-slate-100",
+    textLight: "text-slate-800",
+    borderLight: "border-slate-300",
+    dotLight: "bg-slate-600",
+  },
   amp: {
     bg: "bg-rose-900/30",
     text: "text-rose-300",
@@ -1939,5 +1951,15 @@ export function getActorAccentColor(actorId?: string, isDark: boolean = true) {
 }
 
 export function supportsAcpMode(runtime?: string | null): boolean {
-  return ["antigravity", "copilot", "devin", "cursor"].includes(runtime || "");
+  return [
+    "antigravity",
+    "copilot",
+    "devin",
+    "cursor",
+    "kimi",
+    "auggie",
+    "kiro",
+    "hermes",
+    "droid",
+  ].includes(runtime || "");
 }

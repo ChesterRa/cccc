@@ -248,7 +248,7 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC supports 19 built-in runtime integrations, plus `custom` for other command-line agents. Each actor in a Group can use a different runtime. Integration surfaces and setup requirements vary:
+CCCC supports 20 built-in runtime integrations, plus `custom` for other command-line agents. Each actor in a Group can use a different runtime. Integration surfaces and setup requirements vary:
 
 | Runtime | Integration | Entrypoint / Surface |
 |---------|-------------|----------------------|
@@ -259,18 +259,19 @@ CCCC supports 19 built-in runtime integrations, plus `custom` for other command-
 | GitHub Copilot CLI | Auto MCP setup | `copilot` |
 | Cursor CLI | Prompt-assisted MCP setup | `cursor-agent` |
 | Devin CLI | Auto MCP setup | `devin` |
-| Kiro CLI | Auto MCP setup | `kiro-cli` |
+| Kiro CLI | Native TUI or official ACP; session MCP | `kiro-cli` |
 | Kilo Code CLI | Managed ACP session + native TUI; per-session MCP | `kilo` |
 | Antigravity CLI | Auto MCP setup | `agy` |
 | ChatGPT Web | Remote MCP + Browser Delivery | `chatgpt.com` conversation |
 | Grok Bot Web Model | Remote MCP + Browser Delivery; per-Actor routing credential | Required `grok.com/bot/<UUID>` URL |
 | Grok Build | Managed ACP session + native TUI; automatic native MCP setup | `grok` |
-| Hermes Agent | Auto MCP setup | `hermes` |
-| Droid | Auto MCP setup | `droid` |
+| Hermes Agent | Native TUI or official ACP; session MCP | `hermes` |
+| Droid | Native TUI or official ACP; session MCP | `droid` |
 | Amp | Auto MCP setup | `amp` |
-| Auggie | Auto MCP setup | `auggie` |
-| Kimi Code | Auto MCP setup | `kimi` |
+| Auggie | Native TUI or official ACP; session MCP | `auggie` |
+| Kimi Code | Native TUI or official ACP; session MCP | `kimi` |
 | OpenCode | Managed ACP session + native TUI; per-session MCP | `opencode` |
+| Pi | Official RPC; per-session MCP; no native attachment | `pi` |
 | Custom | Manual | Any command |
 
 These are stable runtime entrypoints or surfaces. CCCC applies runtime-specific launch defaults automatically; actor/profile commands can be reviewed and customized in settings. The [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes) lists the default autonomy flags, including approval-bypass modes such as `agy --dangerously-skip-permissions`, `grok --always-approve`, and `opencode --auto`.
@@ -287,11 +288,11 @@ cccc doctor                       # verify environment and runtime availability
 
 Antigravity setup also disables native feedback surveys in its user settings, because the rating prompt can consume automated terminal input. Other preferences are preserved; this also applies to standalone AGY sessions under the same user.
 
-GitHub Copilot, Devin CLI and Cursor also support optional **official headless ACP** for Actors and Voice Analyst, while native TUI remains their default. ACP reuses native CLI login, injects an independent CCCC identity per Actor, and exposes serialized input, cancellation and one-time approvals. Cursor questions and plans require explicit user decisions even with YOLO. See the [Runtime guide](https://chesterra.github.io/cccc/guide/runtimes#copilot-devin-and-cursor-tui-or-official-acp).
+GitHub Copilot, Devin CLI, Cursor, Kimi Code, Auggie, Kiro V3, Hermes and Droid also support optional **official headless ACP** for Actors, Voice Analyst and Voice Secretary, while native TUI remains their default. ACP reuses native CLI login, injects an independent CCCC identity per Actor, and exposes serialized input, cancellation and one-time approvals. Cursor questions and plans require explicit user decisions even with YOLO. See the [Runtime guide](https://chesterra.github.io/cccc/guide/runtimes#native-tui-or-official-acp).
 
 Antigravity also supports an optional **official ACP mode** for Actors and Voice Analyst, with a structured workspace instead of a terminal. Select ACP in Actor/Profile settings and run `cccc setup --runtime antigravity --runtime-mode acp --login` once for its separate CCCC login. Busy inputs and one-time permission requests are visible in the workspace. See the [runtime guide](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp).
 
-Choose a Runtime; CCCC derives its interaction surface automatically. Claude Code, Codex CLI, Grok Build, OpenCode and Kilo pair a native writable terminal with a structured background protocol on the same provider session. Messages enter that terminal, leaving queue-versus-steer behavior to the receiving Runtime. DeepSeek Harness uses structured ACP without a native terminal; ChatGPT Web and Grok Bot Web Model use browser delivery and remote MCP.
+Choose a Runtime; CCCC derives its interaction surface automatically. Claude Code, Codex CLI, Grok Build, OpenCode and Kilo pair a native writable terminal with a structured background protocol on the same provider session. Messages enter that terminal, leaving queue-versus-steer behavior to the receiving Runtime. Pi uses official RPC without a native terminal attachment and requires Pi 1.1.0 or newer (`@earendil-works/pi-coding-agent`). DeepSeek Harness uses structured ACP without a native terminal; ChatGPT Web and Grok Bot Web Model use browser delivery and remote MCP.
 
 For setup commands, interaction details, and troubleshooting for every supported Runtime, see the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes).
 

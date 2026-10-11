@@ -204,7 +204,6 @@ pub(super) async fn launch(
             cwd,
             resume_session_id,
             mcp_server,
-            purpose == SessionPurpose::Actor,
             prepared.model.as_deref(),
             desired_agent,
         )

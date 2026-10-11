@@ -223,20 +223,6 @@ impl AnalystSession {
                 .await
             {
                 Ok(started) => (started, true),
-                Err(error) if purpose == SessionPurpose::Actor => {
-                    tracing::warn!(
-                        %error,
-                        thread_id,
-                        "Codex Actor thread resume failed; starting one fresh thread"
-                    );
-                    params["historyMode"] = json!("legacy");
-                    (
-                        protocol
-                            .request("thread/start", params, Duration::from_secs(20))
-                            .await?,
-                        false,
-                    )
-                }
                 Err(error) => return Err(error),
             }
         } else {

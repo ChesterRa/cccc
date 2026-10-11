@@ -7,6 +7,7 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+mod diagnostic;
 mod events;
 mod framing;
 mod interactions;
@@ -209,6 +210,27 @@ impl AcpClient {
         permission_policy: PermissionPolicy,
         prompt_completion: PromptCompletion,
     ) -> io::Result<Self> {
+        Self::new_with_private_values(
+            stdin,
+            stdout,
+            generation,
+            runtime,
+            permission_policy,
+            prompt_completion,
+            Vec::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn new_with_private_values(
+        stdin: ChildStdin,
+        stdout: ChildStdout,
+        generation: String,
+        runtime: &'static str,
+        permission_policy: PermissionPolicy,
+        prompt_completion: PromptCompletion,
+        private_values: Vec<String>,
+    ) -> io::Result<Self> {
         let (commands, receiver) = mpsc::channel(COMMAND_CAPACITY);
         let (frames, frame_receiver) = mpsc::channel(FRAME_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
@@ -224,6 +246,7 @@ impl AcpClient {
             permission_policy,
             prompt_completion,
             std::sync::Arc::clone(&permissions),
+            private_values,
         ));
         Ok(Self {
             commands,

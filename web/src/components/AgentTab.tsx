@@ -48,7 +48,10 @@ import { ActorQuickControls } from "./agentTerminal/ActorQuickControls";
 import { TerminalHistoryPanel } from "./agentTerminal/TerminalHistoryPanel";
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
-import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
+import {
+  getEffectiveActorRunner,
+  hasManagedRuntimeControls,
+} from "../utils/headlessRuntimeSupport";
 import { copyTextToClipboard } from "../utils/copy";
 import { getStoppedTerminalOutputText } from "../utils/stoppedTerminalOutput";
 import { fetchTerminalTail } from "../services/api/diagnostics";
@@ -933,7 +936,7 @@ export function AgentTab({
                   readOnly={readOnly}
                 />
               ) : null}
-              {(actor.effective_runtime_mode || actor.runtime_mode) === "acp" && (
+              {hasManagedRuntimeControls(actor) && (
                 <ActorAcpControls
                   groupId={groupId}
                   actorId={actor.id}

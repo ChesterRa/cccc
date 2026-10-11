@@ -36,7 +36,6 @@ pub(super) async fn initialize(
     purpose: SessionPurpose,
     configured_rules: &str,
     resume_session_id: Option<&str>,
-    allow_fresh_after_resume_failure: bool,
 ) -> io::Result<(String, bool)> {
     let rules = match purpose {
         SessionPurpose::VoiceAnalyst if configured_rules.trim().is_empty() => {
@@ -79,9 +78,6 @@ pub(super) async fn initialize(
             .await
         {
             Ok(_) => return Ok((session_id.to_owned(), true)),
-            Err(error) if allow_fresh_after_resume_failure => {
-                tracing::warn!(%error, session_id, "Grok managed session resume failed; starting fresh");
-            }
             Err(error) => return Err(error),
         }
     }

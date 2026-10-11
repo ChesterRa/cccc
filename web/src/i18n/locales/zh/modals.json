@@ -527,7 +527,7 @@
   "codexVoiceOutputSelectionUnavailable": "当前浏览器使用系统默认扬声器。",
   "codexVoiceAnalystRuntime": "分析运行环境",
   "codexVoiceAnalystRuntimeHint": "使用受支持的 Runtime Profile，也可直接配置；Analyst 凭据与 Realtime Voice 登录彼此独立。",
-  "codexVoiceAnalystSupportedRuntimesHint": "可选 Runtime 以上方列表为准。标注 ACP 的选项使用该 Runtime 的官方 ACP 模式，没有原生终端。",
+  "codexVoiceAnalystSupportedRuntimesHint": "可选 Runtime 以上方列表为准。标注 ACP 或 RPC 的选项使用该 Runtime 的受控会话，没有原生终端。",
   "codexVoiceAnalystCommandHint": "启动命令语法与对应的 Group Actor 一致；managed session、YOLO、MCP、工作目录和 attach 参数由 CCCC 管理。",
   "codexVoiceAnalystCompatibleProfilesEmpty": "没有可用的兼容 Runtime Profile。请在“设置 > Runtime Profiles”中创建，或使用“自定义”。",
   "codexVoiceAnalystProfileHostNote": "使用该 Profile 的运行命令和私密环境变量。Runner 与提交方式仍属于 Actor 设置；CCCC 以 YOLO 模式通过该 Runtime 的 managed session 托管 Analyst。",
