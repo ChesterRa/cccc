@@ -51,7 +51,14 @@ fn reconcile_one(store: &GroupStore, status: SessionStatus) -> Result<(), OpErro
     }
     // Preserve desired lifecycle after a provider exit. A later user-directed
     // message follows the same wake path whether the process exited or was stopped.
-    append_exit_event(store, &status.group_id, &status.actor_id, status.exit_code)
+    append_exit_event(
+        store,
+        &status.group_id,
+        &status.actor_id,
+        status.exit_code,
+        status.exit_detail.as_deref(),
+        "runtime",
+    )
 }
 
 pub(crate) fn record_process_exit(
@@ -67,7 +74,16 @@ pub(crate) fn record_process_exit(
     if !group.actors.iter().any(|actor| actor.id == actor_id) {
         return Ok(());
     }
-    append_exit_event(&store, group_id, actor_id, exit_code)
+    // Only the managed reader records exits this way; name it so a reader
+    // teardown is not mistaken for an unexplained process exit.
+    append_exit_event(
+        &store,
+        group_id,
+        actor_id,
+        exit_code,
+        None,
+        "managed_reader",
+    )
 }
 
 fn append_exit_event(
@@ -75,17 +91,24 @@ fn append_exit_event(
     group_id: &str,
     actor_id: &str,
     exit_code: Option<u32>,
+    exit_detail: Option<&str>,
+    source: &str,
 ) -> Result<(), OpError> {
     let mut event = Event::new("actor.stop", group_id);
     event.by = "system".into();
-    event.data = serde_json::json!({
+    let mut data = serde_json::json!({
         "actor_id": actor_id,
         "reason": "process_exit",
         "exit_code": exit_code,
+        "source": source,
     })
     .as_object()
     .cloned()
     .unwrap_or_default();
+    if let Some(detail) = exit_detail {
+        data.insert("exit_detail".into(), detail.into());
+    }
+    event.data = data;
     ledger::append(&store.ledger_path(group_id).map_err(OpError::io)?, &event).map_err(OpError::io)
 }
 
@@ -124,6 +147,7 @@ mod tests {
                 pid: Some(42),
                 started_at: "2026-07-27T00:00:00Z".into(),
                 exit_code: Some(7),
+                exit_detail: Some("Terminated by Killed".into()),
             }],
         );
         assert!(result.is_ok());
@@ -136,6 +160,10 @@ mod tests {
         assert_eq!(event.kind, "actor.stop");
         assert_eq!(event.data["actor_id"], "peer1");
         assert_eq!(event.data["exit_code"], 7);
+        // A signal death also reports exit code 1-style codes; the detail and
+        // the source are what make the exit attributable afterwards.
+        assert_eq!(event.data["exit_detail"], "Terminated by Killed");
+        assert_eq!(event.data["source"], "runtime");
     }
 
     #[test]
@@ -162,6 +190,7 @@ mod tests {
                 pid: Some(42),
                 started_at: "2026-08-25T00:00:00Z".into(),
                 exit_code: Some(1),
+                exit_detail: None,
             }],
         )
         .expect("reconcile terminal exit");
@@ -212,6 +241,7 @@ mod tests {
                 pid: Some(41),
                 started_at: "older-session".into(),
                 exit_code: Some(1),
+                exit_detail: None,
             }],
         )
         .expect("reconcile stale exit");

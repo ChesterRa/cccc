@@ -36,6 +36,11 @@ pub struct SessionStatus {
     pub pid: Option<u32>,
     pub started_at: String,
     pub exit_code: Option<u32>,
+    /// How the process ended, as `portable_pty::ExitStatus` renders it
+    /// ("Exited with code 1", "Terminated by Killed"). A signal death also
+    /// reports `exit_code` 1, so this is what tells the two apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_detail: Option<String>,
 }
 
 pub struct Session {
@@ -128,6 +133,7 @@ impl Session {
                 pid,
                 started_at: utc_now(),
                 exit_code: None,
+                exit_detail: None,
             },
             master: Some(pair.master),
             child,
@@ -146,6 +152,7 @@ impl Session {
         {
             self.status.running = false;
             self.status.exit_code = Some(exit.exit_code());
+            self.status.exit_detail = Some(exit.to_string());
             let _ = self.process_tree.terminate();
         }
         self.status.clone()
@@ -163,6 +170,7 @@ impl Session {
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             self.status.running = false;
             self.status.exit_code = Some(exit.exit_code());
+            self.status.exit_detail = Some(exit.to_string());
         }
         self.finish_output()?;
         Ok(self.status.clone())
