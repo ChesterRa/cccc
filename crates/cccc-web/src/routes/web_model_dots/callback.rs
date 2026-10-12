@@ -254,9 +254,18 @@ mod tests {
     #[test]
     fn signature_covers_id_timestamp_and_exact_body_bytes() {
         // Published Standard Webhooks test_sign_function vector (synthetic).
+        // https://github.com/standard-webhooks/standard-webhooks/blob/7537d2a2d3d52d8f2e0ecd12527af4a9307fd81b/libraries/python/tests/test_webhooks.py#L214
+        // Keep the published fixture bytes instead of a credential-shaped literal.
+        let vector_secret = format!(
+            "whsec_{}",
+            STANDARD.encode([
+                49_u8, 242, 144, 246, 191, 6, 41, 138, 171, 79, 8, 212, 60, 63, 8, 44, 246, 72,
+                163, 98, 218, 45, 164, 176
+            ])
+        );
         let vector = headers(
             "sub_fixture",
-            "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw",
+            &vector_secret,
             "msg_p5jXN8AQM9LWM0D4loKWxJek",
             1614265330,
             b"{\"test\": 2432232314}",

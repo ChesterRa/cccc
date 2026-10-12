@@ -146,7 +146,7 @@ mod tests {
                 running: false,
                 pid: Some(42),
                 started_at: "2026-07-27T00:00:00Z".into(),
-                exit_code: Some(7),
+                exit_code: Some(1),
                 exit_detail: Some("Terminated by Killed".into()),
             }],
         );
@@ -159,7 +159,7 @@ mod tests {
         let event = events.last().expect("exit event");
         assert_eq!(event.kind, "actor.stop");
         assert_eq!(event.data["actor_id"], "peer1");
-        assert_eq!(event.data["exit_code"], 7);
+        assert_eq!(event.data["exit_code"], 1);
         // A signal death also reports exit code 1-style codes; the detail and
         // the source are what make the exit attributable afterwards.
         assert_eq!(event.data["exit_detail"], "Terminated by Killed");

@@ -78,27 +78,12 @@ fn reach_uses_the_identity_verified_live_web_port() {
     assert_eq!(live_web_port(&home).expect("live port"), port);
 }
 
-/// Holds the recorded port for the whole test and closes every connection without a
-/// proof: the port exists, but it cannot prove the runtime identity. Do not go back
-/// to binding a port and dropping the listener: the port returns to the ephemeral
-/// pool, where a sibling test's fixture can bind it and answer this probe with a
-/// valid proof - which both passes a gate that must fail and steals the `accept()`
-/// of the fixture the other test is waiting on.
-fn silent_web_server() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind Web fixture");
-    let port = listener.local_addr().expect("fixture address").port();
-    thread::spawn(move || {
-        while let Ok((mut stream, _)) = listener.accept() {
-            let mut request = [0_u8; 2048];
-            let _ = stream.read(&mut request);
-        }
-    });
-    port
-}
-
 #[test]
 fn reach_rejects_a_recorded_web_port_that_cannot_prove_identity() {
-    let port = silent_web_server();
+    // Keep the port leased until the probe finishes so another fixture cannot
+    // answer it. No HTTP response is served, so the bounded probe fails closed.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind Web fixture");
+    let port = listener.local_addr().expect("fixture address").port();
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("home");
@@ -110,6 +95,7 @@ fn reach_rejects_a_recorded_web_port_that_cannot_prove_identity() {
     let error = live_web_port(&home).expect_err("a port without a proof must fail");
     assert_eq!(error.code, "membership_gate");
     assert!(error.message.contains("did not prove its runtime identity"));
+    drop(listener);
 }
 
 #[test]
