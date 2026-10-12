@@ -1648,10 +1648,24 @@ Args:
 
 Result:
 ```ts
-{ group_id: string }
+{
+  group_id: string
+  deleted: boolean
+  reaped_processes: ReapedProcess[]
+}
+
+type ReapedProcess = {
+  pid: number
+  start_time: number      // /proc/<pid>/stat field 22; with pid, the process identity
+  actor_id: string        // CCCC_ACTOR_ID of the process ("" when absent)
+  signaled_term: boolean  // SIGTERM was delivered (not that it took effect)
+  signaled_kill: boolean  // SIGKILL was delivered after the TERM grace
+  outcome: "exited" | "running" | "identity_changed"
+}
 ```
 
 Notes:
+- After the Group's sessions are stopped and the Group is deleted, the daemon stops processes that escaped the stopped process trees (for example a child that called `setsid`) and are still attributed to the Group: same user, `CCCC_GROUP_ID` equal to the Group ID, and canonical `CCCC_HOME` equal to the daemon's home. A process of another home with the same Group ID is never signalled. Each process is identified by `pid` and `start_time` and revalidated before SIGTERM and again before SIGKILL; one that no longer matches is not signalled and reports `identity_changed`. `exited` is confirmed termination; `running` means the process was still running after the final wait or could not be signalled. The cleanup is a bounded one-shot (about 2.5 s at most). On platforms other than Linux `reaped_processes` is always empty. `group_reset` runs the same cleanup for the old Group once it is deleted and reports it as `old_reaped_processes` (empty when the old Group could not be deleted).
 - Successful deletion MUST retire all Direct records and disposable catalogs owned by the deleted Group, preserve retired IDs, and release their relation quota. Reset uses the same deletion cleanup; it MUST NOT transfer those grants to the replacement Group.
 - Successful deletion MUST retire every Web Model conversation binding and pending pairing belonging to the deleted Group, without revoking the shared connector or other Groups’ authority. A failure that leaves the group registered and available MUST preserve its pre-delete connector authority.
 - Successful deletion MUST retire every local external-space binding, queued job, and referenced job payload owned by the deleted group. It MUST NOT delete the user's remote notebook or other provider space. A failure that leaves the group registered and available MUST restore the pre-delete local binding and queue state.

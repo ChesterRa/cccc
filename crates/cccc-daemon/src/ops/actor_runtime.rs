@@ -6,12 +6,14 @@ use std::path::PathBuf;
 use crate::dispatch::OpError;
 use crate::ops::actor_profile_runtime;
 
+mod attributed_reap;
 mod environment;
 mod persistence;
 mod reconcile;
 pub(crate) mod terminal_history;
 #[cfg(test)]
 mod untrusted_workspace_tests;
+pub(crate) use attributed_reap::reap_group;
 pub use persistence::persist_lifecycle;
 pub(crate) use reconcile::record_process_exit;
 pub use reconcile::{reap_exited, reconcile_exited};

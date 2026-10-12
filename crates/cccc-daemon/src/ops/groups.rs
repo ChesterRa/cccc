@@ -571,6 +571,10 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .map_err(OpError::io)?;
     }
     let deleted = store(home)?.delete(&group.group_id).map_err(OpError::io)?;
+    // The sessions are stopped and the Group is retired; anything still
+    // attributed to it in this home escaped the process tree (see
+    // `actor_runtime::reap_group`).
+    let reaped = actor_runtime::reap_group(home, &group.group_id);
     if deleted {
         super::actor_secrets::remove_group(home, &group.group_id)?;
         super::voice_secretary::purge_deleted_group(home, &group.group_id).map_err(OpError::io)?;
@@ -578,7 +582,11 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if active::get(home).map_err(OpError::io)?.as_deref() == Some(&group.group_id) {
         active::clear(home).map_err(OpError::io)?;
     }
-    object(json!({"group_id": group.group_id, "deleted": deleted}))
+    object(json!({
+        "group_id": group.group_id,
+        "deleted": deleted,
+        "reaped_processes": reaped,
+    }))
 }
 
 fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
