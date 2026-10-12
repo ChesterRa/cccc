@@ -54,10 +54,23 @@ impl Session {
     }
 
     pub(super) fn set_status(&self, status: &str, task_id: Option<String>) {
+        self.set_status_with_reason(status, task_id, None);
+    }
+
+    /// Set the session status and, for a non-nominal status, the provider's
+    /// reported cause. A later status change clears any stale reason so a
+    /// recovered turn does not keep displaying the previous failure.
+    pub(super) fn set_status_with_reason(
+        &self,
+        status: &str,
+        task_id: Option<String>,
+        reason: Option<String>,
+    ) {
         if let Ok(mut state) = self.status.lock() {
             state.status = status.to_owned();
             state.task_id = task_id;
             state.updated_at = utc_now();
+            state.reason = reason;
             if status == "stopped" {
                 state.pid = None;
             }

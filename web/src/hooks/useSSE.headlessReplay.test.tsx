@@ -467,3 +467,65 @@ it("shows an ACP provider failure without a pending chat event and deduplicates 
     host.remove();
   }
 });
+
+// A cancelled turn is a deliberate stop, not a failure. It must close the turn
+// and clear the transient stream exactly like a completed one, and must never
+// render as an error activity or set the failed working reason.
+it("closes a cancelled turn as idle and never as an error", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const original = useGroupStore.getState();
+  const sources = stubEventSources();
+  const actor: Actor = {
+    id: "acp",
+    runtime: "antigravity",
+    runtime_mode: "acp",
+    runner: "headless",
+    runtime_state_source: "managed_session",
+    running: true,
+  };
+  useGroupStore.setState({
+    selectedGroupId: "g",
+    actors: [actor],
+    chatByGroup: {},
+    refreshActors: vi.fn().mockResolvedValue(undefined),
+  });
+  let connection: ReturnType<typeof useSSE>;
+  function Probe() {
+    connection = useSSE({
+      activeTabRef: { current: "chat" },
+      chatAtBottomRef: { current: true },
+      actorsRef: { current: [actor] },
+    });
+    return null;
+  }
+  const host = document.createElement("div"),
+    root = createRoot(host);
+  const cancelled: HeadlessStreamEvent = {
+    id: "cancelled",
+    group_id: "g",
+    actor_id: "acp",
+    type: "headless.turn.cancelled",
+    ts: "2026-10-03T00:00:00Z",
+    data: { turn_id: "acp-turn", stream_id: "generation:acp-turn", status: "cancelled" },
+  };
+  try {
+    await act(async () => root.render(<Probe />));
+    await act(async () => connection!.connectStream("g"));
+    const stream = sources.find((source) => source.url.includes("/headless/stream"))!;
+    await act(async () => stream.emit("headless", cancelled));
+    const bucket = () => useGroupStore.getState().chatByGroup.g!;
+    expect(bucket().streamingActivitiesByStreamId["generation:acp-turn"] ?? []).toEqual([]);
+    // No turn.started was emitted, so there is no streaming event left open.
+    expect(bucket().streamingEvents).toHaveLength(0);
+    expect(useGroupStore.getState().actors[0]!.effective_working_state).toBe("idle");
+    expect(useGroupStore.getState().actors[0]!.effective_working_reason).toBe("headless_turn_idle");
+  } finally {
+    await act(async () => {
+      connection!.cleanup();
+      root.unmount();
+    });
+    vi.unstubAllGlobals();
+    useGroupStore.setState(original);
+    host.remove();
+  }
+});

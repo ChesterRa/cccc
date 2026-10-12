@@ -45,11 +45,13 @@ pub(super) fn fields(
     } else if let Some(local_state) = local_state {
         (
             local_state.status,
-            if runner_effective == "pty" {
-                "managed_agent_session".to_owned()
-            } else {
-                "provider_headless_session".to_owned()
-            },
+            local_state.reason.unwrap_or_else(|| {
+                if runner_effective == "pty" {
+                    "managed_agent_session".to_owned()
+                } else {
+                    "provider_headless_session".to_owned()
+                }
+            }),
             Some(local_state.updated_at),
             local_state.task_id,
         )

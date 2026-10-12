@@ -103,6 +103,7 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
             task_id: None,
             updated_at: String::new(),
             pid: attached.pid,
+            reason: None,
         }),
         stopped: AtomicBool::new(false),
         stop_lock: Mutex::new(()),

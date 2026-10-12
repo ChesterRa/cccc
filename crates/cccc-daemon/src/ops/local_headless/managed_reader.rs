@@ -102,6 +102,7 @@ pub(crate) async fn verify_claude_reader_release(
             task_id: None,
             updated_at: String::new(),
             pid: None,
+            reason: None,
         }),
         stopped: AtomicBool::new(false),
         stop_lock: Mutex::new(()),
