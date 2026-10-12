@@ -1,6 +1,14 @@
 use super::*;
 use serde_json::json;
 
+struct OwnedCommands(HomeLayout);
+
+impl Drop for OwnedCommands {
+    fn drop(&mut self) {
+        shutdown(&self.0).expect("clean up owned authority command fixtures");
+    }
+}
+
 struct Fixture {
     temp: tempfile::TempDir,
     home: HomeLayout,
@@ -39,6 +47,121 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         shutdown(&self.home).expect("cleanup");
     }
+}
+
+#[tokio::test]
+async fn dots_command_sessions_cannot_be_reused_by_another_task() {
+    let fixture = crate::local_tools::authority_tests::Fixture::new();
+    let _owned = OwnedCommands(fixture.home.clone());
+    let binding = fixture.binding.clone();
+    let started = start(
+        &fixture.home,
+        &fixture.root,
+        &fixture.args(json!({"command":["sh","-c","read value; printf 'old=%s' \"$value\"; read keepalive"],"yield_time_ms":0})),
+    )
+    .await
+    .expect("start command with current persistent Dots authority");
+    let id = started["session_id"].as_str().expect("session");
+    for field in ["dots_epoch", "dots_wake_id", "dots_turn_id"] {
+        let mut replacement = binding.clone();
+        replacement[field] = json!("replacement");
+        let mut args = fixture.args(json!({"session_id":id,"yield_time_ms":0}));
+        args.insert("_cccc_web_binding".into(), replacement);
+        let result = write(&fixture.home, &args).await;
+        assert!(
+            result.is_err(),
+            "another Dots task must not access this command's input or output"
+        );
+    }
+    let mut same_task = binding;
+    same_task["last_activity_at"] = json!("later");
+    let mut args = fixture.args(json!({"session_id":id,"chars":"ok\n"}));
+    args.insert("_cccc_web_binding".into(), same_task.clone());
+    let response = write(&fixture.home, &args)
+        .await
+        .expect("same task retains command input authority");
+    // PTY input echo can arrive before the shell's output. Write once, then
+    // collect the original owner's output without treating echo as completion.
+    let mut output = response["output"].as_str().unwrap_or_default().to_owned();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !output.contains("old=ok") {
+            let mut args = fixture.args(json!({"session_id":id,"yield_time_ms":100}));
+            args.insert("_cccc_web_binding".into(), same_task.clone());
+            let response = write(&fixture.home, &args)
+                .await
+                .expect("same task retains command output authority");
+            output.push_str(response["output"].as_str().unwrap_or_default());
+        }
+    })
+    .await
+    .expect("original Dots task did not receive its command output");
+}
+
+#[tokio::test]
+async fn dots_command_start_rejects_authority_revoked_before_process_creation() {
+    let fixture = crate::local_tools::authority_tests::Fixture::new();
+    let _owned = OwnedCommands(fixture.home.clone());
+    let args = fixture.args(
+        json!({"command":["sh","-c","printf started > revoked-start-marker"],"yield_time_ms":0}),
+    );
+    fixture.stop();
+    let result = start(&fixture.home, &fixture.root, &args).await;
+    assert!(
+        result.is_err(),
+        "a stopped Dots task must not create a local command process"
+    );
+    assert!(
+        sessions()
+            .lock()
+            .expect("command registry")
+            .values()
+            .all(|session| session.home != fixture.home.root()),
+        "rejected authority must not leave a command registration"
+    );
+    assert!(!fixture.root.join("revoked-start-marker").exists());
+}
+
+#[tokio::test]
+async fn dots_stdin_waiting_for_io_rechecks_authority_after_actor_stop() {
+    use std::future::Future;
+    use std::task::{Context, Waker};
+
+    let fixture = crate::local_tools::authority_tests::Fixture::new();
+    let _owned = OwnedCommands(fixture.home.clone());
+    let started = start(
+        &fixture.home,
+        &fixture.root,
+        &fixture.args(json!({"command":["sh","-c","read value; printf '%s' \"$value\" > stdin-marker"],"yield_time_ms":0})),
+    )
+    .await
+    .expect("start command under valid authority");
+    let id = started["session_id"].as_str().expect("owned session ID");
+    let args = fixture.args(json!({"session_id":id,"chars":"forbidden\n","yield_time_ms":0}));
+    let (_, session) = session(&fixture.home, &args).expect("owned command session");
+    let held = session.io.lock().await;
+    let mut pending = Box::pin(write(&fixture.home, &args));
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(
+        pending.as_mut().poll(&mut context).is_pending(),
+        "stdin request must be parked behind the held IO lock"
+    );
+    fixture.stop();
+    drop(held);
+    assert!(
+        pending.await.is_err(),
+        "a request parked before Stop must not write or return old-task output"
+    );
+    // Finish the owned fixture through its direct test handle. The marker must
+    // contain only this control input, proving the rejected request wrote no bytes.
+    session
+        .command
+        .write(b"cleanup-control\n")
+        .expect("finish owned command fixture");
+    wait_for_command_exit(&session.command).await;
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.join("stdin-marker")).expect("fixture input marker"),
+        "cleanup-control"
+    );
 }
 
 async fn wait_for_command_exit(command: &CommandSession) -> cccc_runtime::SessionStatus {
@@ -453,28 +576,34 @@ async fn timeout_breaks_backpressured_input_and_stops_descendants() {
 
 #[tokio::test]
 async fn session_output_and_stdin_remain_owned_by_the_original_actor_and_binding() {
-    let f = Fixture::new();
-    let started = f
-        .start(
-            "read value; printf '%s' \"$value\"",
-            json!({"yield_time_ms":0,"by":"alpha","_cccc_web_binding":{"revision":"r1"}}),
-        )
-        .await;
+    let f = crate::local_tools::authority_tests::Fixture::new();
+    let _owned = OwnedCommands(f.home.clone());
+    let started = start(
+        &f.home,
+        &f.root,
+        &f.args(
+            json!({"command":["sh","-c","read value; printf '%s' \"$value\""],"yield_time_ms":0}),
+        ),
+    )
+    .await
+    .expect("start with persistent Actor binding");
     let id = started["session_id"].as_str().expect("session");
-    for (actor, revision) in [("beta", "r1"), ("alpha", "r2")] {
-        let args = json!({"group_id":f.group,"session_id":id,"by":actor,"_cccc_web_binding":{"revision":revision},"chars":"stolen\n"});
+    for replace_actor in [true, false] {
+        let mut args = f.args(json!({"session_id":id,"chars":"stolen\n"}));
+        if replace_actor {
+            args.insert("by".into(), json!("another-actor"));
+        } else {
+            args.get_mut("_cccc_web_binding")
+                .expect("captured authority")["revision"] = json!("another-revision");
+        }
         assert!(
-            write(&f.home, args.as_object().expect("valid test fixture"))
-                .await
-                .is_err()
+            write(&f.home, &args).await.is_err(),
+            "another Actor or binding must not access this command"
         );
     }
-    let output = f
-        .poll(
-            id,
-            json!({"by":"alpha","_cccc_web_binding":{"revision":"r1"},"chars":"owned\n"}),
-        )
-        .await;
+    let output = write(&f.home, &f.args(json!({"session_id":id,"chars":"owned\n"})))
+        .await
+        .expect("original Actor and binding retain command authority");
     assert!(
         output["output"]
             .as_str()

@@ -76,6 +76,7 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   opencode: "opencode --auto",
   pi: "pi",
   web_model: "",
+  chatgpt_dots: "",
   grok_web_model: "",
   custom: "",
 };
@@ -560,8 +561,8 @@ export function ActorProfilesTab({
     );
   };
 
-  const loadProfileSecrets = async (profileId: string, visit: number) => {
-    if (!profileId) {
+  const loadProfileSecrets = async (profileId: string, visit: number, runtime: string) => {
+    if (!profileId || isWebModelRuntime(runtime)) {
       setSecretKeys([]);
       setSecretMasks({});
       return;
@@ -619,7 +620,7 @@ export function ActorProfilesTab({
     setDuplicateSourceProfileId("");
     setEditorErr("");
     setEditorOpen(true);
-    await loadProfileSecrets(String(profile.id || ""), visit);
+    await loadProfileSecrets(String(profile.id || ""), visit, String(profile.runtime || ""));
   };
 
   const openDuplicate = async (profile: ActorProfile) => {
@@ -639,7 +640,7 @@ export function ActorProfilesTab({
     setDuplicateSourceProfileId(sourceId);
     setEditorErr("");
     setEditorOpen(true);
-    await loadProfileSecrets(sourceId, visit);
+    await loadProfileSecrets(sourceId, visit, String(profile.runtime || ""));
   };
 
   const handleDelete = async (profile: ActorProfile) => {

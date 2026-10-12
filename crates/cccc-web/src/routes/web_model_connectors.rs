@@ -99,23 +99,34 @@ async fn mcp_with_header(
 ) -> Result<Response, ApiError> {
     let secret = connector_secret(&headers, &query)?;
     let connector = store::find_authorized(&state, &connector_id, Some(secret))?;
-    run_connector_mcp(&state, &connector, body).await
+    run_connector_mcp(&state, &connector, body, &headers).await
 }
 
 async fn mcp_with_path_token(
     State(state): State<AppState>,
     Path((connector_id, secret)): Path<(String, String)>,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
     let connector = store::find_authorized(&state, &connector_id, Some(&secret))?;
-    run_connector_mcp(&state, &connector, body).await
+    run_connector_mcp(&state, &connector, body, &headers).await
 }
 
 async fn run_connector_mcp(
     state: &AppState,
     connector: &Value,
     mut request: Value,
+    headers: &HeaderMap,
 ) -> Result<Response, ApiError> {
+    let modern = super::web_model_dots::protocol::is_modern(&request, headers);
+    if modern && let Err(error) = super::web_model_dots::protocol::validate(&request, headers) {
+        let status = if error["error"]["code"] == -32601 {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        return Ok((status, Json(error)).into_response());
+    }
     let method = request
         .get("method")
         .and_then(Value::as_str)
@@ -141,19 +152,28 @@ async fn run_connector_mcp(
         return Ok(StatusCode::ACCEPTED.into_response());
     }
     let mut bound_route = None;
-    let mut response = if let Some(response) = session::handle(state, connector, &request).await {
+    let mut response = if let Some(response) =
+        super::web_model_dots::handle(state, connector, &request).await
+    {
+        response
+    } else if let Some(response) = session::handle(state, connector, &request).await {
         response
     } else if method == "tools/call" {
         match store::resolve(state, connector, &request) {
             Ok(binding) => {
-                if connector["provider"] == "grok_web" {
+                if connector["provider"] == "grok_web" || binding["transport"] == "mcp_events" {
                     request["params"]["arguments"]
                         .as_object_mut()
                         .expect("validated credential arguments")
                         .remove("actor_token");
                 }
-                let response =
-                    cccc_mcp::handle_request_for_binding(&state.home, &request, &binding).await;
+                let response = if binding["transport"] == "mcp_events"
+                    && tool_name == "cccc_runtime_wait_next_turn"
+                {
+                    super::web_model_dots::claim(state, &request, &binding).await
+                } else {
+                    cccc_mcp::handle_request_for_binding(&state.home, &request, &binding).await
+                };
                 bound_route = Some(binding);
                 response
             }
@@ -174,6 +194,7 @@ async fn run_connector_mcp(
             session::extend_grok_catalog(&mut response);
         } else {
             session::extend_catalog(&mut response);
+            super::web_model_dots::extend_catalog(&mut response);
         }
     }
     let call_status = if response.get("error").is_some()
@@ -197,7 +218,19 @@ async fn run_connector_mcp(
             error: &error,
         },
     )?;
-    Ok(Json(response).into_response())
+    if modern {
+        response = super::web_model_dots::protocol::complete(response);
+    }
+    let status = if modern && response["error"].is_object() {
+        if response["error"]["code"] == -32601 {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::BAD_REQUEST
+        }
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(response)).into_response())
 }
 
 async fn mcp_options() -> StatusCode {

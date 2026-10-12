@@ -51,8 +51,8 @@ pub(crate) fn system_browser_path() -> Option<PathBuf> {
 // window and its manual-close marker without changing the Actor's task identity.
 pub(crate) fn actor_identity(actor: &cccc_contracts::Actor) -> String {
     format!(
-        "{}:{}",
-        actor.runtime.web_model_provider().unwrap_or(""),
+        "{:?}:{}",
+        actor.runtime,
         cccc_core::actors::generation_identity(actor)
     )
 }

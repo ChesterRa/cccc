@@ -717,6 +717,7 @@ dependencies = [
  "flate2",
  "fs2",
  "futures-util",
+ "hmac",
  "hound",
  "http-body-util",
  "lark-channel",

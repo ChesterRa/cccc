@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import { useUIStore } from "../stores";
+import { useGroupStore, useUIStore } from "../stores";
+import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
 import { groupMessagesVisible } from "../stores/useUIStore";
 import type { Actor } from "../types";
 
@@ -22,6 +23,8 @@ type UseAppTabStateOptions = {
   setChatUnreadCount: (groupId: string, value: number) => void;
 };
 
+export type CreatedDotsNavigation = { groupId: string; actorId: string; activeTab: string };
+
 type UseAppTabStateResult = {
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
@@ -32,6 +35,7 @@ type UseAppTabStateResult = {
   actorsRef: React.MutableRefObject<Actor[]>;
   allTabs: string[];
   handleTabChange: (newTab: string) => void;
+  onDotsActorCreated: (visit: CreatedDotsNavigation) => void;
 };
 
 export function useAppTabState({
@@ -52,6 +56,47 @@ export function useAppTabState({
   const actorsRef = useRef<Actor[]>([]);
 
   const messagesVisible = useUIStore((state) => groupMessagesVisible(selectedGroupId, state));
+
+  // Creation modals unmount before delayed Actor hydration; this app-level owner remains.
+  const pending = useRef<CreatedDotsNavigation | null>(null);
+  const openCreatedDots = React.useCallback(() => {
+    const visit = pending.current;
+    if (!visit) return;
+    const group = useGroupStore.getState();
+    if (
+      group.selectedGroupId !== visit.groupId ||
+      useUIStore.getState().activeTab !== visit.activeTab
+    ) {
+      pending.current = null;
+      return;
+    }
+    if (
+      !group.actors.some((actor) => actor.id === visit.actorId && actor.runtime === "chatgpt_dots")
+    )
+      return;
+    pending.current = null;
+    requestWorkspaceNavigation(() => {
+      if (
+        useGroupStore.getState().selectedGroupId !== visit.groupId ||
+        useUIStore.getState().activeTab !== visit.activeTab
+      )
+        return;
+      useUIStore.getState().setActiveTab(visit.actorId);
+      useUIStore.getState().setChatMobileSurface(visit.groupId, "messages");
+    });
+  }, []);
+
+  useEffect(() => {
+    openCreatedDots();
+  }, [runtimeActors, selectedGroupId, activeTab, openCreatedDots]);
+
+  const onDotsActorCreated = React.useCallback(
+    (visit: CreatedDotsNavigation) => {
+      pending.current = visit;
+      openCreatedDots();
+    },
+    [openCreatedDots],
+  );
 
   const allTabs = useMemo(() => ["chat"], []);
 
@@ -95,5 +140,6 @@ export function useAppTabState({
     actorsRef,
     allTabs,
     handleTabChange,
+    onDotsActorCreated,
   };
 }

@@ -376,6 +376,7 @@ Recommended options:
 | opencode | `opencode` | OpenCode |
 | grok_web_model | Grok Bot conversation | Shared Grok login and connector, per-Actor Bot URL and per-call routing credential; no pairing handshake |
 | web_model | ChatGPT Web conversation | ChatGPT Web conversation with CCCC MCP access; optional experimental GPT Pro delivery attaches a tiny blank PNG but does not select the model or guarantee connector availability |
+| chatgpt_dots | ChatGPT Dots | One Dot bound to one Actor/Group; asynchronous MCP Events delivery and task-scoped remote MCP, using the shared ChatGPT connector |
 | custom | Any command | Any command |
 
 These entries show stable runtime entrypoints or surfaces, not every runtime-specific launch flag. CCCC applies launch defaults automatically and actor/profile commands can be reviewed or customized in settings.

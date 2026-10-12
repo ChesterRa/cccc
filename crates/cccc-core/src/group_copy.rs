@@ -398,7 +398,9 @@ fn preview_package(
         source_title: group.title.clone(),
         actor_count: actors.len(),
         requires_reconnect: RequiresReconnect {
-            chatgpt_web_model: actors.iter().any(|actor| actor.runtime == "web_model"),
+            chatgpt_web_model: actors
+                .iter()
+                .any(|actor| matches!(actor.runtime.as_str(), "web_model" | "chatgpt_dots")),
             grok_web_model: actors.iter().any(|actor| actor.runtime == "grok_web_model"),
             notebooklm_group_space: serde_json::to_string(group)
                 .unwrap_or_default()
@@ -847,6 +849,63 @@ mod tests {
                 .expect("connectors")
                 .is_empty(),
             "import does not copy conversation authority"
+        );
+    }
+
+    #[test]
+    fn dots_copy_keeps_runtime_but_requires_fresh_authorization() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut source = store.create("Dots source", "").expect("group");
+        let mut actor = cccc_contracts::Actor::new("dots");
+        actor.runtime = cccc_contracts::ActorRuntime::ChatgptDots;
+        crate::actors::add(&mut source, actor).expect("actor");
+        store.save(&source).expect("save");
+        let configured = crate::web_model_connectors::configure(&home).expect("connector");
+        let id = configured["connector"]["connector_id"]
+            .as_str()
+            .expect("id");
+        let binding = crate::web_model_connectors::bind_dots(
+            &home,
+            id,
+            &source.group_id,
+            "dots",
+            &source.actors[0].generation,
+        )
+        .expect("bind");
+        let (bytes, _, _) = export(&store, &source.group_id).expect("export");
+        let inspected = preview(&store, &bytes).expect("preview");
+        assert!(inspected.requires_reconnect.chatgpt_web_model);
+        assert!(!inspected.requires_reconnect.grok_web_model);
+        let imported = import(&store, &bytes, "", "").expect("import");
+        let imported_group = store.load(&imported.group_id).expect("imported");
+        assert!(!imported_group.running);
+        assert_eq!(imported_group.state, GroupState::Idle);
+        assert_ne!(imported_group.generation, source.generation);
+        let actor = &imported_group.actors[0];
+        assert_eq!(actor.runtime, cccc_contracts::ActorRuntime::ChatgptDots);
+        assert_eq!(actor.enabled, source.actors[0].enabled);
+        let connector = crate::web_model_connectors::load(&home)
+            .expect("connector")
+            .remove(0);
+        assert!(
+            crate::web_model_connectors::binding_for_actor(
+                &connector,
+                &imported.group_id,
+                "dots",
+                &actor.generation
+            )
+            .is_none()
+        );
+        assert_eq!(
+            crate::web_model_connectors::binding_for_actor(
+                &connector,
+                &source.group_id,
+                "dots",
+                &source.actors[0].generation
+            ),
+            Some(binding)
         );
     }
 

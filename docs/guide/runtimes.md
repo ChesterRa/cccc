@@ -27,6 +27,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | OpenCode | `opencode` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
 | Pi | `pi` | Official RPC (headless; no native terminal attachment) | Injected per managed session |
 | ChatGPT Web Model | `web_model` | Bound ChatGPT Web conversation | Browser delivery + remote MCP connector |
+| ChatGPT Dots | `chatgpt_dots` | One explicitly bound Dot | MCP Events + task-scoped remote MCP; no browser message delivery |
 | Grok Bot Web Model | `grok_web_model` | Dedicated Grok Bot URL | Browser delivery + credential-routed remote MCP connector |
 
 `custom` is also supported as a manual fallback for any command-line agent that can be launched by CCCC.
@@ -56,6 +57,7 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | `auggie` | `auggie` | Use Auggie permissions or settings for per-tool approval policy; CCCC does not inject a broad wildcard permission rule. |
 | `kilo` | `kilo` | Same request-scoped ACP approval policy as OpenCode; no persistent provider approval is written. |
 | `web_model` | N/A | Browser-delivered runtime; local CLI launch flags do not apply. |
+| `chatgpt_dots` | N/A | Event-triggered cloud runtime; CCCC Actor permissions apply to each accepted task. |
 | `custom` | User command | CCCC preserves the user-provided command exactly. |
 
 CCCC disables Codex startup update checks by default so an interactive upgrade
@@ -532,6 +534,92 @@ working when ChatGPT changes.
 
 For details, see [ChatGPT Web Model Runtime](/guide/web-model-runtime).
 
+## ChatGPT Dots
+
+`chatgpt_dots` receives work through
+[MCP Events](https://developers.openai.com/plugins/build/mcp-events) and the CCCC
+MCP plugin connected to the ChatGPT account that owns the Dot. It does not type
+messages into a browser or require CCCC's hosted browser login window to remain
+open. The public HTTPS MCP endpoint must remain reachable.
+
+In the Web UI, Dots connection setup and connection status require instance
+administrator access. Existing Group permissions still govern messaging and
+Actor controls.
+
+1. Save an Actor with runtime **ChatGPT Dots** and open its main pane. Adding or
+   enabling the Actor does not create the task in ChatGPT.
+2. If needed, open **Shared ChatGPT setup**, configure a publicly reachable HTTPS
+   Web address and create the shared connector. Add its private MCP URL as the
+   CCCC plugin in the account you use for Dots, and ensure that plugin is installed,
+   connected and enabled. Approve the plugin permissions ChatGPT requests for task
+   claims, replies and completion. Reuse an existing CCCC plugin; after upgrading
+   CCCC, select **Refresh tools** in its ChatGPT settings to refresh the tool and
+   event catalogs. Do not create another connector or replace its credential just
+   to refresh the tools. Dots does not require signing in through CCCC's hosted
+   browser.
+3. Click **Connect Dots**, then **Copy setup instructions**. For an existing
+   binding, use **Get setup instructions** to retrieve the same setup again.
+   Neither requires pausing the Actor, but an accepted unfinished turn must be
+   completed or explicitly resolved first. The copied instructions contain a
+   private credential; use them only in the intended Dots setup.
+4. Click **Open Dots**, paste the instructions into your Dot and ask it to save
+   the native event-triggered task. Confirm that the task was actually saved;
+   a promise to create it, an ordinary chat reply or a timed schedule is not a
+   completed setup. Required plugin permissions must also be granted.
+5. Return to CCCC. Connection is ready when CCCC observes the native event
+   subscription, rather than when ChatGPT says it is connected. In a running
+   Group, an enabled Actor can then receive queued work automatically. If its
+   access is paused, use **Resume CCCC access**. Send work to this Actor through
+   the Group; its replies return to that same Group.
+
+One Dot is bound to one explicitly selected Actor and Group per connector.
+Dots has shared memory; separate CCCC Actors do not create independent Dot
+conversations. Its fixed home page is a viewer, not an identity proof. Runtime
+Profiles may select Dots, but cannot copy its binding or task credentials.
+
+Delivery is asynchronous. Events only wake the Dot; its saved setup credential
+permits subscribing and claiming one current task for the connected Actor.
+Claiming returns that task's materials and a separate execution credential.
+Only the execution credential can call business tools and complete the exact
+task. A successful webhook response means the event was received; CCCC marks
+work complete only after the Dot submits the exact task receipt. Waiting does
+not trigger a browser fallback.
+
+Stopping the Actor blocks claims and retires existing execution credentials;
+it cannot recall actions already performed in the cloud. Starting it again
+restores permission to claim new queued work, including from a late cloud
+invocation. It does not return an unfinished task's materials again. Unconfirmed
+work remains visible for explicit recovery rather than being replayed
+automatically. Disconnecting or rebinding revokes the old setup credential.
+
+- **Not connected or no valid subscription:** finish the setup above. Waiting
+  does not create a cloud task automatically. Check that the CCCC plugin is
+  connected and enabled in the Dot's account, refresh its tools after an upgrade,
+  and save or restore the native event task. A connector address or recent request
+  alone is not proof that this Actor has a working subscription.
+- **Subscription expired or removed:** retrieve the setup instructions and
+  restore the original native task's subscription. Expiry prevents new claims;
+  it does not cancel work already accepted. Replacing the native task or its
+  callback retires the old execution authority, so finish or resolve accepted
+  work before replacing it.
+- **Event accepted, waiting for ChatGPT:** delivery is asynchronous; this is not
+  a completed task. Check the Dot's native task if it needs attention. CCCC does
+  not send the work again through a browser.
+- **Notification failed before acceptance:** check the shared connector and
+  native task, then pause and resume the Actor to notify unclaimed work again.
+  This does not replay an accepted task.
+- **Unfinished delivery:** review the messages and the Dot's work, then choose
+  **Resolve unfinished delivery** for that exact turn. This reconciles its
+  existing receipt or closes the turn without rerunning it; it does not stop
+  ChatGPT's cloud work.
+- **Disconnect or move the binding:** pause the connected Actor and finish or
+  resolve its accepted turn before disconnecting it. Then connect the intended
+  Actor. Disconnecting revokes the CCCC setup credential, but the native task
+  and ChatGPT history remain; disable the old native task in ChatGPT as well.
+
+CCCC does not provide a local terminal or independent conversation reset for
+Dots.
+
 ## Choosing a Runtime
 
 Use a mixed group when different agents are good at different roles:
@@ -549,7 +637,7 @@ Native terminal output always uses bounded memory and can optionally persist a b
 
 CCCC does not create worktrees automatically or manage their cleanup. Agents can create them with Git or runtime tools; a native terminal's custom launch command can also request one. Managed runtimes accept only their supported command arguments, so a flag available in a standalone CLI is not necessarily supported by CCCC.
 
-Stopping or restarting an Actor terminates its process; it does not guarantee the runtime's interactive worktree cleanup flow. Cleanup depends on the runtime, who created the worktree, and any remaining work. Claude Code, for example, has exit handling and a subagent/background-session sweep, but that sweep excludes worktrees created with `git worktree add` and main worktree sessions that were never backgrounded. See [Claude Code's cleanup rules](https://code.claude.com/docs/en/worktrees#clean-up-worktrees).
+Stopping or restarting a local CLI Actor terminates its process; it does not guarantee the runtime's interactive worktree cleanup flow. Cleanup depends on the runtime, who created the worktree, and any remaining work. Claude Code, for example, has exit handling and a subagent/background-session sweep, but that sweep excludes worktrees created with `git worktree add` and main worktree sessions that were never backgrounded. See [Claude Code's cleanup rules](https://code.claude.com/docs/en/worktrees#clean-up-worktrees).
 
 Before removing a candidate, confirm no Actor or other process is using it, preserve any unique commits (including a detached HEAD), and save all needed untracked and ignored files. Inspect one worktree at a time:
 

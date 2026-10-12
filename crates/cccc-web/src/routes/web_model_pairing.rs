@@ -63,7 +63,7 @@ async fn change(State(state): State<AppState>, Json(body): Json<Value>) -> ApiRe
     let provider = group_doc
         .actors
         .iter()
-        .find(|a| a.id == actor)
+        .find(|a| a.id == actor && a.runtime.is_browser_web_model())
         .and_then(|a| a.runtime.web_model_provider())
         .ok_or_else(|| ApiError::bad("Web Model Actor not found"))?;
     if provider != "chatgpt_web" && action != "remove" {
@@ -122,7 +122,7 @@ async fn start_connection(
     let config = doc
         .actors
         .iter()
-        .find(|a| a.id == actor)
+        .find(|a| a.id == actor && a.runtime.is_browser_web_model())
         .ok_or_else(|| ApiError::bad("Actor not found"))?;
     let automatic = config.enabled;
     if first_attempt

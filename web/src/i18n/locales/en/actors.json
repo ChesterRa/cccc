@@ -301,7 +301,7 @@
   "terminalReadOnlyNotice": "This terminal is read-only. Take control to type here.",
   "webModelActorBoundConnectorTitle": "ChatGPT Web Model",
   "webModelActorBoundConnectorHint": "Global Web Model settings manage shared login and one connector. Save this Actor and start it normally; its conversation connects automatically before task delivery.",
-  "webModelProfileHint": "Web Model profiles reuse runtime and capability settings. Each Actor configures its own conversation.",
+  "webModelProfileHint": "Web Model profiles share runtime and capability settings. Each Actor configures its own connection.",
   "saveAndApply": "Save & apply",
   "applyWebModelTargetConfirm": "Apply the new conversation for \"{{label}}\"? CCCC will stop only this Actor, save its settings, then restart it after the new connection is saved. If applying fails, it stays stopped and your draft remains here.",
   "antigravityMode": {
@@ -358,5 +358,9 @@
     "label": "{{runtime}} mode",
     "hint": "ACP uses the native CLI login and its own managed session. There is no terminal; inputs queue until the current task finishes."
   },
-  "selectRuntime": "Not configured"
+  "selectRuntime": "Not configured",
+  "dotsPause": "Pause CCCC access",
+  "dotsPauseHint": "Pauses CCCC delivery and tool access. A task already running in ChatGPT may continue.",
+  "dotsEnable": "Enable CCCC access",
+  "dotsResume": "Resume CCCC access"
 }

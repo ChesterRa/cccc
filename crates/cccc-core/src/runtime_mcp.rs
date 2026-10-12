@@ -54,6 +54,7 @@ pub const fn name(runtime: ActorRuntime) -> &'static str {
         ActorRuntime::Opencode => "opencode",
         ActorRuntime::Pi => "pi",
         ActorRuntime::WebModel => "web_model",
+        ActorRuntime::ChatgptDots => "chatgpt_dots",
         ActorRuntime::GrokWebModel => "grok_web_model",
         ActorRuntime::Custom => "custom",
     }

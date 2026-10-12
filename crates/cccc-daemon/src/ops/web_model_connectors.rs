@@ -69,6 +69,12 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "Pairing requires a Web Model Actor",
         ));
     }
+    if actor.runtime == cccc_contracts::ActorRuntime::ChatgptDots {
+        return Err(OpError::new(
+            "dots_requires_events",
+            "Dots connects through MCP Events, not conversation pairing",
+        ));
+    }
     let connector = store::load(home)
         .map_err(OpError::io)?
         .into_iter()

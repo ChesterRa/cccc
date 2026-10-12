@@ -2,7 +2,7 @@ use super::operation::{
     Operation,
     Policy::{Read, Write},
 };
-use cccc_contracts::{Actor, DaemonRequest, Event};
+use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, Event};
 use cccc_core::actors;
 use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
@@ -354,25 +354,29 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             effect = ActorUpdateEffect::Started;
         }
     }
-    let retired_routes =
-        if original_actor.runtime.web_model_provider() != actor.runtime.web_model_provider() {
-            match web_model_connectors::retire_actor(home, &group_id, &actor_id) {
-                Ok(routes) => routes,
-                Err(error) => {
-                    return Err(rollback_actor_update(
-                        home,
-                        &group,
-                        &original_actor,
-                        original_secrets.as_ref(),
-                        Some(&updated_group),
-                        effect,
-                        OpError::io(error),
-                    ));
-                }
+    let retired_routes = if original_actor.runtime.web_model_provider()
+        != actor.runtime.web_model_provider()
+        || (original_actor.runtime != actor.runtime
+            && (original_actor.runtime == ActorRuntime::ChatgptDots
+                || actor.runtime == ActorRuntime::ChatgptDots))
+    {
+        match web_model_connectors::retire_actor(home, &group_id, &actor_id) {
+            Ok(routes) => routes,
+            Err(error) => {
+                return Err(rollback_actor_update(
+                    home,
+                    &group,
+                    &original_actor,
+                    original_secrets.as_ref(),
+                    Some(&updated_group),
+                    effect,
+                    OpError::io(error),
+                ));
             }
-        } else {
-            Vec::new()
-        };
+        }
+    } else {
+        Vec::new()
+    };
     let event = match append_event(
         home,
         &group_id,

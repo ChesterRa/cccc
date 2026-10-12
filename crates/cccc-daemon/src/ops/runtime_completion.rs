@@ -69,6 +69,48 @@ pub(super) fn append(
     Ok(event)
 }
 
+/// Recover only the exact durable completion, never an unfinished work body.
+/// User resolution may arrive after a receipt committed but its projections did
+/// not; it must retain that receipt's outcome rather than invent cancellation.
+pub(super) fn committed(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    turn_id: &str,
+    event_ids: &[String],
+) -> Result<Option<Completion>, OpError> {
+    let path = GroupStore::new(home.clone())
+        .map_err(OpError::io)?
+        .ledger_path(group_id)
+        .map_err(OpError::io)?;
+    let Some(event) =
+        ledger::find_event(&path, &event_id(group_id, actor_id, turn_id)).map_err(OpError::io)?
+    else {
+        return Ok(None);
+    };
+    let completion = Completion {
+        turn_id: turn_id.to_owned(),
+        event_ids: event_ids.to_vec(),
+        status: string(&event.data, "status").unwrap_or_default().to_owned(),
+        delivery_id: string(&event.data, "delivery_id")
+            .unwrap_or_default()
+            .to_owned(),
+    };
+    if !matches(&event, actor_id, &completion)
+        || !matches!(
+            completion.status.as_str(),
+            "done" | "partial" | "failed" | "cancelled"
+        )
+        || completion.delivery_id.is_empty()
+    {
+        return Err(OpError::new(
+            "completion_conflict",
+            "The committed completion does not match this unfinished turn",
+        ));
+    }
+    Ok(Some(completion))
+}
+
 fn matches(event: &Event, actor_id: &str, completion: &Completion) -> bool {
     event.kind == kind(completion)
         && event.by == actor_id

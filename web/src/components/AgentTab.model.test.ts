@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { shouldReconcileStoppedActorStatus } from "./AgentTab.model";
+import { actorSupportsNewSession, shouldReconcileStoppedActorStatus } from "./AgentTab.model";
 
 describe("shouldReconcileStoppedActorStatus", () => {
+  it("does not offer a new native or browser session for the resident Dots runtime", () => {
+    expect(actorSupportsNewSession("chatgpt_dots")).toBe(false);
+  });
   const recoverableStoppedActor = {
     activated: true,
     isVisible: true,

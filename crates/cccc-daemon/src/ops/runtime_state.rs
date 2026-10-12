@@ -213,6 +213,12 @@ fn headless_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn headless_set_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let actor = actor(&group, &actor_id)?;
+    if actor.runtime == cccc_contracts::ActorRuntime::ChatgptDots {
+        return Err(OpError::new(
+            "provider_managed_headless",
+            "Dots task status is owned by the daemon",
+        ));
+    }
     if super::local_headless::supports(actor) {
         return Err(OpError::new(
             "provider_managed_headless",
@@ -243,7 +249,7 @@ fn headless_set_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"state":state}))
 }
 
-fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| actor_id.clone());
     if by != actor_id {
@@ -253,6 +259,13 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         ));
     }
     let actor = actor(&group, &actor_id)?;
+    if actor.runtime == cccc_contracts::ActorRuntime::ChatgptDots && request.op != "dots_work_claim"
+    {
+        return Err(OpError::new(
+            "dots_event_required",
+            "Dots work requires its fixed Actor claim grant through the connector",
+        ));
+    }
     if super::local_headless::supports(actor) {
         return Err(OpError::new(
             "provider_managed_headless",
@@ -415,6 +428,12 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn recover_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let actor = require_web_model_actor(&group, &actor_id)?;
+    if actor.runtime == cccc_contracts::ActorRuntime::ChatgptDots {
+        return Err(OpError::new(
+            "dots_explicit_resolution_required",
+            "Dots unfinished work requires explicit user resolution; it is not replayed",
+        ));
+    }
     let raw_event_ids = request
         .args
         .get("event_ids")
@@ -637,7 +656,7 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     finish_completion(home, &group, &actor_id, &completion, receipt, request)
 }
 
-fn finish_completion(
+pub(super) fn finish_completion(
     home: &HomeLayout,
     group: &GroupDoc,
     actor_id: &str,
@@ -645,6 +664,20 @@ fn finish_completion(
     receipt: Event,
     request: &DaemonRequest,
 ) -> OpResult {
+    if group
+        .actors
+        .iter()
+        .any(|a| a.id == actor_id && a.runtime == cccc_contracts::ActorRuntime::ChatgptDots)
+    {
+        super::dots_events::record_completed(
+            home,
+            group,
+            actor_id,
+            completion,
+            request.op == "dots_work_control"
+                && string_arg(request, "by").as_deref() == Some("user"),
+        )?;
+    }
     let runtime = actor_state(home, &group.group_id, actor_id)?;
     let owns_active_projection =
         runtime["active_turn_id"].as_str() == Some(completion.turn_id.as_str());
@@ -665,6 +698,12 @@ fn finish_completion(
 fn record_browser_delivery(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let actor = require_web_model_actor(&group, &actor_id)?;
+    if actor.runtime == cccc_contracts::ActorRuntime::ChatgptDots {
+        return Err(OpError::new(
+            "dots_requires_events",
+            "Dots has no browser delivery",
+        ));
+    }
     let by = string_arg(request, "by").unwrap_or_else(|| actor_id.clone());
     if by != actor_id {
         return Err(OpError::new(

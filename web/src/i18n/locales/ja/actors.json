@@ -301,7 +301,7 @@
   "terminalReadOnlyNotice": "この端末は読み取り専用です。入力するには操作権を取得してください。",
   "webModelActorBoundConnectorTitle": "ChatGPT Web Model",
   "webModelActorBoundConnectorHint": "共通 Web モデル設定で共有ログインとコネクターを管理します。この Actor を保存して通常どおり起動すると、会話に自動接続してからタスクを配信します。",
-  "webModelProfileHint": "Web モデルのプロファイルは実行環境と機能設定を共有します。各 Actor は自分の会話を個別に設定します。",
+  "webModelProfileHint": "Web モデルのプロファイルは実行環境と機能設定を共有します。各 Actor は接続を個別に設定します。",
   "saveAndApply": "保存して適用",
   "applyWebModelTargetConfirm": "「{{label}}」に新しい会話を適用しますか？この Actor のみ停止して設定を保存し、新しい接続の保存に成功してから再起動します。失敗した場合は停止したまま、入力内容を保持します。",
   "antigravityMode": {
@@ -358,5 +358,9 @@
     "label": "{{runtime}} モード",
     "hint": "ACP はローカル CLI のログインと独立した管理セッションを使います。ターミナルはなく、入力は現在のタスク終了後に実行されます。"
   },
-  "selectRuntime": "未設定"
+  "selectRuntime": "未設定",
+  "dotsPause": "CCCC アクセスを一時停止",
+  "dotsPauseHint": "CCCC の配信とツールアクセスを一時停止します。ChatGPT で実行中のタスクは継続する可能性があります。",
+  "dotsEnable": "CCCC のアクセスを有効化",
+  "dotsResume": "CCCC のアクセスを再開"
 }

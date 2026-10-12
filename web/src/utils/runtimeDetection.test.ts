@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { runtimeDetectionKey } from "./runtimeDetection";
-import type { RuntimeInfo } from "../types";
+import { isBrowserWebModelRuntime, isWebModelRuntime, type RuntimeInfo } from "../types";
 
 describe("host Runtime detection", () => {
   const info: RuntimeInfo = {
@@ -39,8 +39,14 @@ describe("host Runtime detection", () => {
     },
   );
   it("separates Web and custom configuration from local installation", () => {
-    for (const runtime of ["web_model", "grok_web_model"])
+    for (const runtime of ["web_model", "grok_web_model", "chatgpt_dots"])
       expect(runtimeDetectionKey(runtime, undefined, "ready")).toBe("web");
     expect(runtimeDetectionKey("custom", undefined, "ready")).toBe("custom");
+  });
+  it("treats Dots as a Web runtime without enabling browser delivery", () => {
+    expect(isWebModelRuntime("chatgpt_dots")).toBe(true);
+    expect(isBrowserWebModelRuntime("chatgpt_dots")).toBe(false);
+    expect(isBrowserWebModelRuntime("web_model")).toBe(true);
+    expect(isBrowserWebModelRuntime("grok_web_model")).toBe(true);
   });
 });

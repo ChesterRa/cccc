@@ -845,7 +845,7 @@ fn validate_actor(state: &AppState, group_id: &str, actor_id: &str) -> Result<()
         .iter()
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| ApiError::not_found(format!("actor not found: {actor_id}")))?;
-    if !actor.runtime.is_web_model() {
+    if !actor.runtime.is_browser_web_model() {
         return Err(ApiError::bad("Browser sessions require a Web Model Actor"));
     }
     Ok(())

@@ -20,6 +20,13 @@ vi.mock("../webModel/WebModelActorSetup", () => ({
     </div>
   ),
 }));
+vi.mock("../webModel/DotsActorPanel", () => ({
+  DotsActorPanel: ({ onOpenSharedSettings }: { onOpenSharedSettings?: () => void }) => (
+    <div>
+      dots-event-setup<button onClick={onOpenSharedSettings}>dots-shared-settings</button>
+    </div>
+  ),
+}));
 vi.mock("./ModalFrame", () => ({
   ModalFrame: ({
     children,
@@ -264,6 +271,25 @@ describe("Web Model effective Actor configuration", () => {
         clear: false,
       }),
     );
+  });
+  it("uses Dots event setup and the same ChatGPT settings without browser pairing or secrets", async () => {
+    const p = props();
+    p.runtime = "chatgpt_dots";
+    p.savedRuntime = "chatgpt_dots";
+    p.command = "";
+    await act(async () => root.render(<ActorConfigModal {...p} />));
+    expect(mocks.env).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("dots-event-setup");
+    expect(host.textContent).not.toContain("conversation-setup");
+    expect(host.textContent).not.toContain("stage-env-draft");
+    expect(host.querySelector('input[placeholder="enterCommand"]')).toBeNull();
+    await act(async () => button("dots-shared-settings").click());
+    expect(useModalStore.getState().settingsTarget).toMatchObject({
+      scope: "global",
+      tab: "webModels",
+      webModelProvider: "chatgpt_web",
+    });
+    expect(p.onCancel).not.toHaveBeenCalled();
   });
   it("opening shared settings suspends the Actor dialog without discarding its draft", async () => {
     const p = props();
