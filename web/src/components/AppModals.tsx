@@ -88,6 +88,7 @@ interface AppModalsProps {
   fetchContext: ContextModalFetch;
   canManageGroups: boolean;
   accountLabel?: string | null;
+  onDotsActorCreated?: (visit: import("../hooks/useAppTabState").CreatedDotsNavigation) => void;
 }
 
 function sortPresentationSlotIds(slotIds: string[]): string[] {
@@ -123,6 +124,7 @@ export function AppModals({
   onThemeChange,
   onTextScaleChange,
   onDeleteGroup,
+  onDotsActorCreated,
   fetchContext,
   canManageGroups,
   accountLabel,
@@ -1292,6 +1294,8 @@ export function AppModals({
     runtimeMode?: "default" | "acp",
   ): Promise<boolean> => {
     if (!selectedGroupId) return false;
+    const creationGroupId = selectedGroupId;
+    const creationActiveTab = useUIStore.getState().activeTab;
     const actorId = resolveNewActorId(newActorId, suggestedActorId);
     const secretsText = String(newActorSecretsSetText || "");
     const actorNotes = String(newActorNotes || "").trim();
@@ -1381,9 +1385,20 @@ export function AppModals({
         }
       }
 
+      if (
+        (resp.result as { actor?: { runtime?: string } })?.actor?.runtime === "chatgpt_dots" &&
+        useGroupStore.getState().selectedGroupId === creationGroupId &&
+        useUIStore.getState().activeTab === creationActiveTab
+      ) {
+        onDotsActorCreated?.({
+          groupId: creationGroupId,
+          actorId: createdActorId,
+          activeTab: creationActiveTab,
+        });
+      }
       closeModal("addActor");
       resetAddActorForm();
-      await refreshActors();
+      await refreshActors(creationGroupId);
       if (postCreateErrors.length > 0) {
         showError(
           t("actorCreatedSetupFailed", {
@@ -1476,9 +1491,11 @@ export function AppModals({
     const prefix = newActorUseProfile
       ? profileRuntime || "actor"
       : isWebModelRuntime(newActorRuntime)
-        ? newActorRuntime === "grok_web_model"
-          ? "grok-web"
-          : "chatgpt-web"
+        ? newActorRuntime === "chatgpt_dots"
+          ? "chatgpt-dots"
+          : newActorRuntime === "grok_web_model"
+            ? "grok-web"
+            : "chatgpt-web"
         : newActorRuntime;
     const existing = new Set(actors.map((a) => String(a.id || "")));
     for (let i = 1; i <= 999; i++) {

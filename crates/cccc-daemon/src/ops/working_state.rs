@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, RunnerKind};
+use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
@@ -24,7 +24,7 @@ pub fn runtime_actor_fields(
 }
 
 pub(super) fn fields(
-    _home: &HomeLayout,
+    home: &HomeLayout,
     actor: &Actor,
     group_id: &str,
     running: bool,
@@ -60,6 +60,32 @@ pub(super) fn fields(
             None,
             None,
         )
+    } else if actor.runtime == ActorRuntime::ChatgptDots {
+        match super::runtime_state::actor_state(home, group_id, &actor.id) {
+            Ok(runtime) => (
+                if runtime["active_turn_id"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty())
+                {
+                    "working"
+                } else {
+                    "waiting"
+                }
+                .to_owned(),
+                "dots_event_turn".to_owned(),
+                runtime["updated_at"].as_str().map(str::to_owned),
+                runtime["active_turn_id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned),
+            ),
+            Err(_) => (
+                "waiting".to_owned(),
+                "dots_state_unavailable".to_owned(),
+                None,
+                None,
+            ),
+        }
     } else if runner_effective == "headless" {
         ("idle".to_owned(), "headless_running".to_owned(), None, None)
     } else {

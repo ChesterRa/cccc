@@ -237,5 +237,8 @@ mod tests {
         assert_eq!(stopped[0].by, "system");
         assert_eq!(stopped[0].data["actor_id"], "opencode-1");
         assert_eq!(stopped[0].data["reason"], "process_exit");
+        assert_eq!(stopped[0].data["source"], "managed_reader");
+        assert!(stopped[0].data["exit_code"].is_null());
+        assert!(!stopped[0].data.contains_key("exit_detail"));
     }
 }

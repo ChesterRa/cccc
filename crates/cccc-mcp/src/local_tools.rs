@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use crate::ToolCallError;
 use crate::router::{daemon, tool_result};
 
+#[cfg(test)]
+pub(crate) mod authority_tests;
+
 pub async fn call(
     home: &HomeLayout,
     client: &DaemonClient,
@@ -50,11 +53,17 @@ pub async fn call(
         _ => None,
     };
     let root = scope(client, &args).await?;
+    // The daemon may have prepared the scope before Stop, while its reply was
+    // still in flight. Keep using the captured identity, never a newer grant.
+    revalidate(home, &args)?;
+    let binding = args.get("_cccc_web_binding").cloned();
     let payload = match name {
         "cccc_repo" | "cccc_repo_edit" => {
             let operation = action(&args).to_owned();
             let tool = name.to_owned();
+            let home = home.clone();
             tokio::task::spawn_blocking(move || {
+                revalidate(&home, &args)?;
                 crate::repo::call_tool(&root, &tool, &operation, &args)
             })
             .await
@@ -68,22 +77,51 @@ pub async fn call(
         "cccc_code_wait" => crate::code_mode::wait(home, client, &args).await?,
         "cccc_apply_patch" => apply_patch(&root, &args).await?,
         "cccc_file" | "cccc_file_send" => {
-            return file(
+            let result = file(
                 home,
                 client,
                 &root,
                 &args,
                 file_action.expect("file action"),
             )
-            .await;
+            .await?;
+            revalidate_binding(home, binding.as_ref())?;
+            return Ok(result);
         }
         _ => return Err(format!("unsupported local tool: {name}").into()),
     };
+    revalidate_binding(home, binding.as_ref())?;
     Ok(if matches!(name, "cccc_code_exec" | "cccc_code_wait") {
         crate::code_mode::tool_result(payload)
     } else {
         tool_result(payload)
     })
+}
+
+pub(crate) fn revalidate(home: &HomeLayout, args: &Map<String, Value>) -> Result<(), String> {
+    let binding = args.get("_cccc_web_binding");
+    if let Some(binding) = binding
+        && (args.get("group_id") != binding.get("group_id")
+            || args.get("by") != binding.get("actor_id"))
+    {
+        return Err(retired_authority());
+    }
+    revalidate_binding(home, binding)
+}
+
+pub(crate) fn revalidate_binding(home: &HomeLayout, binding: Option<&Value>) -> Result<(), String> {
+    let Some(binding) = binding else {
+        return Ok(());
+    };
+    if binding["transport"] == "mcp_events" && binding["dots_stage"] != "execution" {
+        return Err(retired_authority());
+    }
+    cccc_core::web_model_connectors::validate_binding(home, binding)
+        .map_err(|_| retired_authority())
+}
+
+fn retired_authority() -> String {
+    "permission_denied: The captured Web Model authority is no longer valid".into()
 }
 
 async fn scope(client: &DaemonClient, args: &Map<String, Value>) -> Result<PathBuf, ToolCallError> {
@@ -93,6 +131,11 @@ async fn scope(client: &DaemonClient, args: &Map<String, Value>) -> Result<PathB
         .ok_or("group_id is required")?;
     let mut request = Map::new();
     request.insert("group_id".into(), group_id);
+    for key in ["by", "_cccc_web_binding"] {
+        if let Some(value) = args.get(key) {
+            request.insert(key.into(), value.clone());
+        }
+    }
     let result = daemon(client, "group_show", request).await?;
     let group: GroupDoc = serde_json::from_value(result.get("group").cloned().unwrap_or_default())
         .map_err(|error| error.to_string())?;
@@ -334,10 +377,14 @@ async fn file(
         ));
     }
     let args = args.clone();
-    tokio::task::spawn_blocking(move || crate::file_read::read(&path, &args))
-        .await
-        .map_err(|error| format!("file read task failed: {error}"))?
-        .map_err(Into::into)
+    let home = home.clone();
+    tokio::task::spawn_blocking(move || {
+        revalidate(&home, &args)?;
+        crate::file_read::read(&path, &args)
+    })
+    .await
+    .map_err(|error| format!("file read task failed: {error}"))?
+    .map_err(Into::into)
 }
 
 pub(super) fn command(args: &Map<String, Value>) -> Result<Vec<String>, String> {

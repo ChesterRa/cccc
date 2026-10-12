@@ -565,17 +565,16 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     authorize(&group, request)?;
     super::voice_secretary::cancel_group(home, &group.group_id).map_err(OpError::io)?;
     actor_delivery::shutdown_group(&group.group_id);
-    actor_runtime::stop_group(&group)?;
-    // Stopping the sessions kills the process trees the runtime owns. A child
-    // that detached into its own session (`setsid`, a provider CLI daemonising
-    // itself) leaves that tree and survives, so sweep the group's attribution
-    // tag as well: nothing of a deleted group may keep running.
-    let reaped = actor_runtime::reap_group(&group.group_id);
+    actor_runtime::stop_group(home, &group)?;
     for actor in &group.actors {
         super::codex_voice_analyst::remove_claude_actor_settings(home, &group.group_id, &actor.id)
             .map_err(OpError::io)?;
     }
     let deleted = store(home)?.delete(&group.group_id).map_err(OpError::io)?;
+    // The sessions are stopped and the Group is retired; anything still
+    // attributed to it in this home escaped the process tree (see
+    // `actor_runtime::reap_group`).
+    let reaped = actor_runtime::reap_group(home, &group.group_id);
     if deleted {
         super::actor_secrets::remove_group(home, &group.group_id)?;
         super::voice_secretary::purge_deleted_group(home, &group.group_id).map_err(OpError::io)?;
@@ -603,6 +602,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .map_err(OpError::io)?;
     }
     if matches!(state, GroupState::Paused | GroupState::Stopped) {
+        super::dots_events::invalidate_group(home, &group)?;
         if group.actors.iter().any(|a| a.runtime.is_web_model()) {
             cccc_core::web_model_connectors::interrupt_automatic_pairings(
                 home,
@@ -653,7 +653,7 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
             .map_err(OpError::io)?;
         }
         actor_delivery::shutdown_group(&group.group_id);
-        actor_runtime::stop_group(&group)?
+        actor_runtime::stop_group(home, &group)?
     };
     let updated = store(home)?
         .mutate(&group.group_id, |doc| {

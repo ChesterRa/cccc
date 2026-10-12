@@ -36,7 +36,11 @@ pub fn apply(
         .ok_or_else(|| OpError::new("not_found", format!("actor not found: {actor_id}")))?;
     // Configuration may already name a different backend. Lifecycle ownership
     // comes from the registries, not from the next launch configuration.
+    if matches!(kind, "actor.stop" | "actor.restart" | "actor.new_session") {
+        super::dots_events::invalidate(home, group, actor_id)?;
+    }
     if stored_actor.runtime.is_web_model()
+        && stored_actor.runtime != ActorRuntime::ChatgptDots
         && matches!(kind, "actor.stop" | "actor.restart" | "actor.new_session")
     {
         cccc_core::web_model_connectors::interrupt_automatic_pairings(
@@ -250,7 +254,8 @@ pub(crate) fn stop_all() -> Result<Vec<SessionStatus>, cccc_runtime::RuntimeErro
     cccc_runtime::stop_all()
 }
 
-pub fn stop_group(group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {
+pub fn stop_group(home: &HomeLayout, group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {
+    super::dots_events::invalidate_group(home, group)?;
     super::local_headless::stop_group(&group.group_id).map_err(OpError::io)?;
     super::deepseek_runtime::stop_group(&group.group_id);
     let mut stopped = Vec::new();

@@ -8,7 +8,12 @@ vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => k
 
 import { ActorQuickControls } from "./ActorQuickControls";
 
-async function render(running: boolean, onRemove: () => void) {
+async function render(
+  running: boolean,
+  onRemove: () => void,
+  pauseCcccAccess = false,
+  onStop = vi.fn(),
+) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -19,7 +24,8 @@ async function render(running: boolean, onRemove: () => void) {
         running={running}
         busy={false}
         readOnly={false}
-        hasTerminal
+        hasTerminal={!pauseCcccAccess}
+        pauseCcccAccess={pauseCcccAccess}
         writable
         connected
         connectionFailed={false}
@@ -32,7 +38,7 @@ async function render(running: boolean, onRemove: () => void) {
         onHistory={vi.fn()}
         onNewSession={vi.fn()}
         onRestart={vi.fn()}
-        onStop={vi.fn()}
+        onStop={onStop}
         onEdit={vi.fn()}
         onInbox={vi.fn()}
         onRemove={onRemove}
@@ -66,6 +72,29 @@ describe("ActorQuickControls", () => {
       removeButton.click();
     });
     expect(onRemove).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+    host.remove();
+  });
+  it("offers only local access pause for Dots without terminal, restart or new-session controls", async () => {
+    const onStop = vi.fn();
+    const { root, host } = await render(true, vi.fn(), true, onStop);
+    const buttons = [...document.querySelectorAll("button")];
+    expect(buttons.some((button) => button.textContent === "relaunch")).toBe(false);
+    expect(buttons.some((button) => button.textContent === "newSession")).toBe(false);
+    expect(buttons.some((button) => button.textContent === "terminalHistory")).toBe(false);
+    const pause = buttons.find((button) => button.textContent === "dotsPause")!;
+    expect(pause.title).toBe("dotsPauseHint");
+    await act(async () => pause.click());
+    expect(onStop).toHaveBeenCalledOnce();
+    await act(async () => root.unmount());
+    host.remove();
+  });
+  it("describes starting a paused Dot as resuming CCCC access in both compact entries", async () => {
+    const { root, host } = await render(false, vi.fn(), true);
+    expect(host.querySelector('button[aria-label="dotsResume"]')).not.toBeNull();
+    const labels = [...document.querySelectorAll("button")].map((button) => button.textContent);
+    expect(labels).toContain("dotsResume");
+    expect(labels).not.toContain("launchAgentLabel");
     await act(async () => root.unmount());
     host.remove();
   });

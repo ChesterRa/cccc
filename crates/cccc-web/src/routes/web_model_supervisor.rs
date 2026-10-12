@@ -138,7 +138,7 @@ fn running_browser_actors(
 }
 
 fn group_actor_ready_to_start(state: &AppState, group: &GroupDoc, actor: &Actor) -> bool {
-    if !actor.runtime.is_web_model()
+    if !actor.runtime.is_browser_web_model()
         || actor.runner != RunnerKind::Headless
         || !actor.enabled
         || !group_state_allows_delivery(group.running, group.state)

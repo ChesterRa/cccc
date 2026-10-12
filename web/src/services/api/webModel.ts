@@ -34,6 +34,62 @@ export type WebModelConnectorCreateResult = {
   replaced_connector_ids?: string[];
 };
 
+export type DotsPhase =
+  | "unconfigured"
+  | "waiting_subscription"
+  | "ready"
+  | "pending"
+  | "delivering"
+  | "delivered"
+  | "working"
+  | "interrupted"
+  | "failed"
+  | "stopped";
+
+export type DotsActorState = {
+  group_id: string;
+  actor_id: string;
+  enabled: boolean;
+  connected: boolean;
+  subscribed: boolean;
+  phase: DotsPhase;
+  pending_count: number;
+  active_turn_id?: string | null;
+  active_event_ids?: string[];
+  last_execution?: {
+    turn_id: string;
+    event_ids: string[];
+    status: "done" | "partial" | "failed" | "cancelled";
+    completed_at: string;
+  } | null;
+  error_code?: string | null;
+  subscription_expires_at?: number | null;
+};
+
+export type DotsActorActionResult = { connected?: boolean; url?: string; instructions?: string };
+
+export function fetchDotsActorState(groupId: string, actorId: string) {
+  const params = new URLSearchParams({ group_id: groupId, actor_id: actorId });
+  return apiJson<DotsActorState>(`/api/v1/web-model/dots?${params.toString()}`);
+}
+
+export function updateDotsActorConnection(
+  groupId: string,
+  actorId: string,
+  action: "connect" | "disconnect" | "resolve",
+  turnId?: string,
+) {
+  return apiJson<DotsActorActionResult>("/api/v1/web-model/dots", {
+    method: "POST",
+    body: JSON.stringify({
+      group_id: groupId,
+      actor_id: actorId,
+      action,
+      ...(turnId ? { turn_id: turnId } : {}),
+    }),
+  });
+}
+
 export type NomcpSession = {
   sid: string;
   schema?: string;

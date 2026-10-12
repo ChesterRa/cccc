@@ -33,7 +33,8 @@ import {
   type ActorSecretSaveChanges,
 } from "./actorSecretManagerModel";
 import { WebModelActorSetup } from "../webModel/WebModelActorSetup";
-import { useModalStore } from "../../stores";
+import { DotsActorPanel } from "../webModel/DotsActorPanel";
+import { useModalStore, useUIStore } from "../../stores";
 import { isGrokBotUrl } from "../../utils/webModelTargetDraft";
 import { ModalFrame } from "./ModalFrame";
 
@@ -595,17 +596,21 @@ function CreateActorConfigModal({
                         <div className="font-medium">
                           {runtime === "grok_web_model"
                             ? "Grok Bot Web Model"
-                            : t("webModelActorBoundConnectorTitle", {
-                                defaultValue: "ChatGPT Web Model",
-                              })}
+                            : runtime === "chatgpt_dots"
+                              ? "ChatGPT Dots"
+                              : t("webModelActorBoundConnectorTitle", {
+                                  defaultValue: "ChatGPT Web Model",
+                                })}
                         </div>
                         <div className="mt-1">
                           {runtime === "grok_web_model"
                             ? t("settings:grokActor.hint")
-                            : t("webModelActorBoundConnectorHint", {
-                                defaultValue:
-                                  "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
-                              })}
+                            : runtime === "chatgpt_dots"
+                              ? t("settings:dotsActor.createHint")
+                              : t("webModelActorBoundConnectorHint", {
+                                  defaultValue:
+                                    "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
+                                })}
                         </div>
                       </div>
                     ) : null}
@@ -789,8 +794,10 @@ function EditActorConfigModal({
 }: EditActorConfigProps) {
   const { t } = useTranslation("actors");
   const conversationRef = useRef<HTMLDivElement>(null);
+  const sharedSettingsTriggerRef = useRef<HTMLElement | null>(null);
   const settingsOpen = useModalStore((state) => state.modals.settings);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
+  const canAccessGlobalSettings = useUIStore((state) => state.canAccessGlobalSettings !== false);
   const [sharedSettingsRequested, setSharedSettingsRequested] = useState(false);
   const suspended = sharedSettingsRequested && settingsOpen;
   const focusConversation = initialSection === "chatgpt" && isWebModelRuntime(savedRuntime);
@@ -800,7 +807,37 @@ function EditActorConfigModal({
   useEffect(() => {
     setSharedSettingsRequested(false);
   }, [groupId, actorId, isOpen]);
+  useEffect(() => {
+    if (!isOpen || suspended || !sharedSettingsRequested) return;
+    const modal = modalRef.current;
+    const overlay = modal?.parentElement;
+    let restored = false;
+    let focusFrame = 0;
+    const restoreFocus = () => {
+      const trigger = sharedSettingsTriggerRef.current;
+      if (restored || !modal || !trigger || !modal.contains(trigger)) return;
+      // The overlay can remain hidden throughout its visibility transition.
+      if (getComputedStyle(modal).visibility !== "visible") return;
+      restored = true;
+      overlay?.removeEventListener("transitionend", onTransitionEnd);
+      trigger.focus();
+    };
+    const onTransitionEnd = (event: Event) => {
+      if (event.target !== overlay) return;
+      cancelAnimationFrame(focusFrame);
+      focusFrame = requestAnimationFrame(restoreFocus);
+    };
+    overlay?.addEventListener("transitionend", onTransitionEnd);
+    focusFrame = requestAnimationFrame(restoreFocus);
+    return () => {
+      cancelAnimationFrame(focusFrame);
+      overlay?.removeEventListener("transitionend", onTransitionEnd);
+    };
+  }, [actorId, groupId, isOpen, modalRef, sharedSettingsRequested, suspended]);
   const openSharedSettings = () => {
+    const trigger = document.activeElement;
+    sharedSettingsTriggerRef.current =
+      trigger instanceof HTMLElement && modalRef.current?.contains(trigger) ? trigger : null;
     setSharedSettingsRequested(true);
     openSettingsTarget({
       scope: "global",
@@ -1578,17 +1615,21 @@ function EditActorConfigModal({
                         <div className="font-medium">
                           {runtime === "grok_web_model"
                             ? "Grok Bot Web Model"
-                            : t("webModelActorBoundConnectorTitle", {
-                                defaultValue: "ChatGPT Web Model",
-                              })}
+                            : runtime === "chatgpt_dots"
+                              ? "ChatGPT Dots"
+                              : t("webModelActorBoundConnectorTitle", {
+                                  defaultValue: "ChatGPT Web Model",
+                                })}
                         </div>
                         <div className="mt-1">
                           {runtime === "grok_web_model"
                             ? t("settings:grokActor.hint")
-                            : t("webModelActorBoundConnectorHint", {
-                                defaultValue:
-                                  "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
-                              })}
+                            : runtime === "chatgpt_dots"
+                              ? t("settings:dotsActor.createHint")
+                              : t("webModelActorBoundConnectorHint", {
+                                  defaultValue:
+                                    "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
+                                })}
                         </div>
                       </div>
                     ) : null}
@@ -1659,10 +1700,25 @@ function EditActorConfigModal({
               aria-label={t(
                 conversationRuntime === "grok_web_model"
                   ? "settings:grokActor.title"
-                  : "settings:webModelActor.title",
+                  : conversationRuntime === "chatgpt_dots"
+                    ? "settings:dotsActor.title"
+                    : "settings:webModelActor.title",
               )}
             >
-              {conversationRuntime === "grok_web_model" ? (
+              {conversationRuntime === "chatgpt_dots" ? (
+                <DotsActorPanel
+                  key={`${groupId}/${actorId}/dots`}
+                  groupId={groupId}
+                  actorId={actorId}
+                  isVisible={!suspended}
+                  isRunning={isRunning}
+                  canAccessConnection={canAccessGlobalSettings}
+                  setup
+                  onOpenSharedSettings={openSharedSettings}
+                  onBusyChange={setConnectionBusy}
+                  saving={secretsBusy || busy === "actor-update"}
+                />
+              ) : conversationRuntime === "grok_web_model" ? (
                 <GrokActorSetup
                   key={`${groupId}/${actorId}/grok`}
                   groupId={groupId}

@@ -108,6 +108,7 @@ pub async fn start(
 
     prune_cells().await;
     let nested_tools = nested_tools(home, client, &owner).await;
+    crate::local_tools::revalidate(home, args)?;
     let (cell_id, cell) = spawn_cell(root, owner, source, nested_tools, yield_time_ms).await?;
     cells().lock().await.insert(cell_id.clone(), cell.clone());
     schedule_expiration(cell_id.clone());
@@ -138,6 +139,7 @@ pub async fn wait(
         .to_owned();
     let cell = {
         let active = cells().lock().await;
+        crate::local_tools::revalidate(home, args)?;
         let Some(cell) = active.get(&cell_id).cloned() else {
             return Ok(missing_response(&cell_id));
         };
@@ -162,8 +164,13 @@ pub async fn wait(
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        cells().lock().await.remove(&cell_id);
+        {
+            let mut active = cells().lock().await;
+            crate::local_tools::revalidate(home, args)?;
+            active.remove(&cell_id);
+        }
         terminate_cell(&cell).await;
+        crate::local_tools::revalidate(home, args)?;
         return Ok(format_response(
             "terminated",
             &cell_id,
@@ -203,6 +210,28 @@ fn ensure_enabled() -> Result<(), String> {
 
 pub(crate) fn enabled() -> bool {
     ensure_enabled().is_ok()
+}
+
+pub(crate) fn binding_identity(binding: &Value) -> Value {
+    let mut identity = json!({
+        "connector_id": binding["connector_id"],
+        "group_id": binding["group_id"],
+        "actor_id": binding["actor_id"],
+        "generation": binding["generation"],
+        "revision": binding["revision"]
+    });
+    if binding["transport"] == "mcp_events" {
+        for field in [
+            "transport",
+            "dots_epoch",
+            "dots_wake_id",
+            "dots_stage",
+            "dots_turn_id",
+        ] {
+            identity[field] = binding[field].clone();
+        }
+    }
+    identity
 }
 
 fn resolve_owner(home: &HomeLayout, args: &Map<String, Value>) -> Result<Owner, String> {
@@ -245,12 +274,7 @@ fn resolve_owner(home: &HomeLayout, args: &Map<String, Value>) -> Result<Owner, 
         generation: cccc_core::actors::generation_identity(actor),
         // Activity timestamps are diagnostics, not execution ownership. A normal
         // tool call between exec and wait must not invalidate the same cell.
-        binding: args.get("_cccc_web_binding").map(|b| {
-            json!({
-                "connector_id":b["connector_id"],"group_id":b["group_id"],
-                "actor_id":b["actor_id"],"generation":b["generation"],"revision":b["revision"]
-            })
-        }),
+        binding: args.get("_cccc_web_binding").map(binding_identity),
     })
 }
 
@@ -510,12 +534,13 @@ fn drain<'a>(
             .last_used_at
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
-        let mut cell_io = match tokio::time::timeout(
+        let io = tokio::time::timeout(
             deadline.saturating_duration_since(Instant::now()),
             cell.io.lock(),
         )
-        .await
-        {
+        .await;
+        crate::local_tools::revalidate_binding(home, cell.owner.binding.as_ref())?;
+        let mut cell_io = match io {
             Ok(io) => io,
             Err(_) => {
                 return Ok(format_response(
@@ -530,6 +555,7 @@ fn drain<'a>(
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
+                crate::local_tools::revalidate_binding(home, cell.owner.binding.as_ref())?;
                 return Ok(format_response(
                     "running",
                     cell_id,
@@ -541,7 +567,9 @@ fn drain<'a>(
             if let Some(pending) = cell_io.pending.as_mut() {
                 // Poll deadlines must not cancel or replay nested writes. The cell
                 // retains the task until completion, termination, or expiry.
-                let result = match tokio::time::timeout(remaining, &mut pending.task).await {
+                let result = tokio::time::timeout(remaining, &mut pending.task).await;
+                crate::local_tools::revalidate_binding(home, cell.owner.binding.as_ref())?;
+                let result = match result {
                     Err(_) => {
                         return Ok(format_response(
                             "running",
@@ -571,10 +599,13 @@ fn drain<'a>(
                 send_command(&mut cell_io.stdin, &payload).await?;
                 continue;
             }
-            let event = match tokio::time::timeout(remaining, cell_io.events.recv()).await {
+            let event = tokio::time::timeout(remaining, cell_io.events.recv()).await;
+            crate::local_tools::revalidate_binding(home, cell.owner.binding.as_ref())?;
+            let event = match event {
                 Ok(Some(event)) => event,
                 Ok(None) => {
                     cells().lock().await.remove(cell_id);
+                    crate::local_tools::revalidate_binding(home, cell.owner.binding.as_ref())?;
                     return Ok(failed_response(
                         cell_id,
                         output,
@@ -649,6 +680,7 @@ fn drain<'a>(
                 }
                 "result" => {
                     cells().lock().await.remove(cell_id);
+                    crate::local_tools::revalidate_binding(home, cell.owner.binding.as_ref())?;
                     update_stored_values(&cell.owner, event.get("stored_values"))?;
                     let error_text = event
                         .get("error_text")
@@ -677,6 +709,7 @@ fn drain<'a>(
                 "output_truncated" => output.mark_truncated(),
                 "runtime_eof" => {
                     cells().lock().await.remove(cell_id);
+                    crate::local_tools::revalidate_binding(home, cell.owner.binding.as_ref())?;
                     return Ok(failed_response(
                         cell_id,
                         output,

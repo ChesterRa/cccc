@@ -55,6 +55,28 @@ pub(super) async fn handle(state: &AppState, connector: &Value, request: &Value)
     if !matches!(name, "cccc_connector_status" | "cccc_pair") {
         return None;
     }
+    if connector["provider"] == "chatgpt_web"
+        && name == "cccc_connector_status"
+        && request["params"]["arguments"].get("actor_token").is_some()
+    {
+        let args = &request["params"]["arguments"];
+        if !args
+            .as_object()
+            .is_some_and(|a| a.keys().all(|k| k == "actor_token"))
+        {
+            return Some(result(request, json!({"error":"invalid_arguments"}), true));
+        }
+        return Some(
+            match super::web_model_connector_store::resolve(state, connector, request) {
+                Ok(binding) if store::validate_binding(&state.home, &binding).is_ok() => result(
+                    request,
+                    json!({"connected":true,"routing_mode":"mcp_events","state":"ready","group_id":binding["group_id"],"actor_id":binding["actor_id"]}),
+                    false,
+                ),
+                _ => result(request, json!({"error":"dots_token_invalid"}), true),
+            },
+        );
+    }
     if connector["provider"] == "grok_web" {
         if name != "cccc_connector_status" {
             return None;

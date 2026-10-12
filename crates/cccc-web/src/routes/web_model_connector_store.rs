@@ -70,6 +70,20 @@ pub(super) fn resolve(
         web_model_connectors::binding_for_token(connector, token).ok_or_else(|| {
             ApiError::forbidden("actor_token_invalid: use the Actor credential from this Bot's current CCCC task message")
         })?
+    } else if request["params"]["arguments"].get("actor_token").is_some() {
+        let token = request["params"]["arguments"]["actor_token"]
+            .as_str()
+            .unwrap_or_default();
+        web_model_connectors::dots_binding_for_token(
+            connector,
+            token,
+            request["params"]["name"].as_str().unwrap_or_default(),
+        )
+        .ok_or_else(|| {
+            ApiError::forbidden(
+                "dots_token_invalid: use the saved binding credential for cccc_runtime_wait_next_turn; other tools require the execution credential returned by that claim",
+            )
+        })?
     } else {
         let session = web_model_connectors::session_key(connector, &request["params"]["_meta"])
             .map_err(io_error)?;

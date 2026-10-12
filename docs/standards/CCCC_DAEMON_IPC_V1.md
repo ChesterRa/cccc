@@ -1648,10 +1648,24 @@ Args:
 
 Result:
 ```ts
-{ group_id: string }
+{
+  group_id: string
+  deleted: boolean
+  reaped_processes: ReapedProcess[]
+}
+
+type ReapedProcess = {
+  pid: number
+  start_time: number      // /proc/<pid>/stat field 22; with pid, the process identity
+  actor_id: string        // CCCC_ACTOR_ID of the process ("" when absent)
+  signaled_term: boolean  // SIGTERM was delivered (not that it took effect)
+  signaled_kill: boolean  // SIGKILL was delivered after the TERM grace
+  outcome: "exited" | "running" | "identity_changed"
+}
 ```
 
 Notes:
+- After the Group's sessions are stopped and the Group is deleted, the daemon stops processes that escaped the stopped process trees (for example a child that called `setsid`) and are still attributed to the Group: same user, `CCCC_GROUP_ID` equal to the Group ID, and canonical `CCCC_HOME` equal to the daemon's home. A process of another home with the same Group ID is never signalled. Each process is identified by `pid` and `start_time` and revalidated before SIGTERM and again before SIGKILL; one that no longer matches is not signalled and reports `identity_changed`. `exited` is confirmed termination; `running` means the process was still running after the final wait or could not be signalled. The cleanup is a bounded one-shot (about 2.5 s at most). On platforms other than Linux `reaped_processes` is always empty. `group_reset` runs the same cleanup for the old Group once it is deleted and reports it as `old_reaped_processes` (empty when the old Group could not be deleted).
 - Successful deletion MUST retire all Direct records and disposable catalogs owned by the deleted Group, preserve retired IDs, and release their relation quota. Reset uses the same deletion cleanup; it MUST NOT transfer those grants to the replacement Group.
 - Successful deletion MUST retire every Web Model conversation binding and pending pairing belonging to the deleted Group, without revoking the shared connector or other Groups’ authority. A failure that leaves the group registered and available MUST preserve its pre-delete connector authority.
 - Successful deletion MUST retire every local external-space binding, queued job, and referenced job payload owned by the deleted group. It MUST NOT delete the user's remote notebook or other provider space. A failure that leaves the group registered and available MUST restore the pre-delete local binding and queue state.
@@ -3370,6 +3384,7 @@ Notes:
 - The appended `actor.add` event starts that actor id's current generation. The daemon MUST initialize the new generation's read boundary at that append position, so events from before the add are not delivered as unread. Removing and later re-adding the same actor id starts a new generation at the later `actor.add` position.
 - Actor records also expose an opaque `generation` UUID for delayed remote recipient binding. Add assigns a fresh value, including when a supplied record came from an earlier Actor; update cannot overwrite it. Restart and ordinary edits preserve it. Existing records without this field use their original `created_at` identity (`legacy:<created_at>`) until they are recreated; browser ownership, pairing and tool routing MUST use that same identity and pairing MUST NOT assign a new generation after the browser opens. This does not replace the ledger-based inbox boundary above.
 - Multiple ChatGPT (`web_model`) and Grok Bot (`grok_web_model`) Actors MAY coexist, including linked Profiles and Group imports/resets. Runtime configuration does not grant connector authority. Conversation bindings MUST identify the exact Group, Actor and generation; copied/imported Actors MUST be unpaired.
+- `chatgpt_dots` is a headless event-driven Runtime sharing the `chatgpt_web` connector. One Dot binding per connector MAY authorize exactly one Group/Actor/generation. Profiles, copies and imports carry Runtime configuration, never that binding or cloud-task authority. It MUST NOT use browser message delivery or ChatGPT conversation pairing.
 - A new actor generation MUST NOT inherit Web Model delivery preferences or persisted runner/turn status left by an earlier generation with the same actor id.
 - For a Web Model actor, successful add MUST establish the current generation's missing browser target as canonical empty state. A legacy actor-scoped browser shadow MUST NOT populate the new generation merely because it uses the same actor id.
 - Adding an enabled actor to an `active` or `idle` group MAY start it immediately and transition the group's runtime to running. Adding one to a `paused` or `stopped` group MUST only persist the actor and MUST NOT change the group lifecycle state.
@@ -3537,6 +3552,7 @@ Notes:
 - Actor start, restart, new-session, and daemon restoration MUST NOT submit a model turn solely to initialize an Actor or materialize a provider session. They create or resume the daemon-owned control session and attach its native terminal while the model remains idle. Only real input—a pending CCCC delivery or human terminal input—may start model work. The CCCC startup prompt MUST be deferred to and combined with the first successfully accepted CCCC delivery, MUST NOT be sent as a standalone turn, and MUST remain pending if that delivery is not accepted. Recovery of an actual pending Send is a valid work trigger; lifecycle operations alone are not.
 - A newly created Codex thread MUST be durably resumable before CCCC records a usable receipt or attaches its native TUI. `thread/start` returning an ID and planned rollout path is insufficient. CCCC MUST materialize the empty thread through native metadata operations and verify full-history readability for that exact thread, without submitting a model turn or adding synthetic conversation items. Resumed conversations MUST retain their existing names and history.
 - A provider process exit MUST record `actor.stop` with `by="system"` and `data.reason="process_exit"`, but MUST NOT disable the actor or stop the Group. A user-authored Send or Request Reply explicitly targeting an actor ID, or a Send targeting `@foreman`, is also a wake action: it MUST enable that actor, move a paused or stopped Group to `active`, and start delivery through the normal runtime path whether the prior stop was automatic or user initiated. Broadcast selectors (`@all`, `@peers`, including the materialized default) MUST NOT enable disabled actors; they MAY resume the Group and wake already-enabled recipients. An actor explicitly named alongside a broadcast retains its explicit wake behavior. A broadcast with no enabled recipients MUST NOT resume the Group. This wake policy MUST NOT narrow the message's logical audience or remove it from history. Mail and Actor-authored messages MUST NOT enable disabled actors; Mail and previously queued work MUST NOT independently wake a runtime while a Group remains `paused`.
+- Process-exit events include `data.exit_code` (nullable) and `data.source`: `"runtime"` for a runtime session's observed child exit, or `"managed_reader"` for managed-reader teardown. Runtime status and its exit event MAY include `exit_detail`, the platform runtime's diagnostic description of the exit. This optional text is not a stable classifier or a portable signal identity; consumers MUST NOT infer a cause from `exit_code=1` alone. Managed-reader teardown without a child status MUST retain a null exit code and omit the diagnostic rather than claiming a confirmed provider exit.
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 - Daemon also applies role defaults and the actor's `capability_autoload` before launch. These are durable desired capability bindings, so they remain applied when the subsequent runtime launch fails.
 - A daemon-launched runtime process MUST resolve an explicit existing attached scope from the actor default or group active scope. It MUST return `missing_project_root`, `scope_not_attached`, or `invalid_project_root` as applicable and MUST NOT fall back to the daemon working directory. An explicitly external structured executor may omit a local process only when its product capability and documentation say so.
@@ -7533,3 +7549,92 @@ Grok Bot URL saving is routing configuration authorized in the private CCCC UI. 
 The Web MCP boundary removes `actor_token` before dispatch. Nested code-mode calls inherit and revalidate the captured binding, preserving explicit management targets. Browser delivery reconstructs a stable credential using the private provider signing key and binding identity; it adds the credential only to the rendered task prompt. Canonical ledger events, runtime turns, public settings, binding snapshots, tool output and activity diagnostics MUST NOT expose it. Stop/start and unchanged URL saves retain the binding; unbind, URL replacement, provider/runtime changes and Actor/Group removal retire affected authority. Copy/import/reset MUST NOT copy it.
 
 Grok delivery uses `standard` mode only. `image_compat` is ChatGPT-specific and MUST be rejected for Grok. An enabled Submit control alone is not evidence that Grok is idle: Bot working indicators fence later delivery. Only a batch marker inside a Grok user-message element can settle an uncertain handoff; assistant echoes do not count. Host tool approval or safety rejection is reported rather than bypassed or retried blindly.
+
+### ChatGPT Dots event execution
+
+`chatgpt_dots` uses the existing authenticated `chatgpt_web` connector with MCP
+Events. Its binding has `transport="mcp_events"` and the fixed viewer URL
+`https://chatgpt.com/dots/home`. This URL and model-supplied Actor/Group names
+grant no authority. A connector MUST have at most one Dots binding; ordinary
+ChatGPT conversation bindings MAY coexist. Browser pairing and browser delivery
+MUST NOT be used for Dots, including as a fallback after an event delay.
+
+Subscriptions need not contain OpenAI conversation metadata. The CCCC-issued
+binding credential grants native event subscription and only
+`cccc_runtime_wait_next_turn` for the explicitly configured Actor. This is
+continuous permission to read that Actor's queued task materials and accept one
+current turn; it MUST NOT authorize business tools. An event is only a wake
+notification and MUST NOT contain an execution credential or task body.
+
+The claim captures the current binding, Actor generation, execution epoch and
+wake identity before waiting for the daemon's operation permit. The daemon MUST
+revalidate that exact snapshot under the permit. An idle claim MUST NOT create a
+wake or borrow one created after its snapshot. The first successful claim
+persists the accepted execution and returns its `actor_token`; duplicate or
+competing claims return no task body or execution credential. The execution
+credential is bound to the connector, Actor generation, binding revision, epoch
+and wake ID, and authorizes only that persisted turn. Tool arguments cannot
+select another Group, Actor or turn. Nested capability/code calls and command IO
+retain and revalidate the captured task identity.
+
+Local-power consumers MUST revalidate that captured authority after awaited
+scope or execution preparation, and before starting local reads, writes,
+processes or command input. Queued blocking workers and command IO waits MUST
+recheck when they resume; retained cells and commands MUST recheck before
+returning further output. These are admission and output fences, not atomic
+revocation of an entire I/O operation. Already admitted OS side effects cannot
+be undone, and stopping CCCC access does not guarantee cancellation of cloud
+work.
+
+Webhook acceptance is transport handoff, not task completion. Completion uses
+the existing exact turn ID/event-ID receipt and never advances the Mail cursor.
+After completion, the execution credential authorizes only an idempotent retry of
+that same completion; it cannot claim more work or keep using business tools.
+Stop, restart, reset and explicit unbinding MUST retire old execution authority
+even when the Actor generation and pending turn IDs remain unchanged. Uncertain
+wake/execution facts are retained; lifecycle transitions do not prove that
+cloud work stopped and MUST NOT silently replay it. These fences cannot undo
+actions already performed in the cloud.
+
+Start resumes the same binding's continuous permission to claim new queued
+work; a late cloud invocation may therefore claim a new current turn. It MUST
+NOT recover an accepted unfinished turn's body or execution credential through
+the binding grant. Explicit unbinding, rebinding or Actor generation replacement
+revokes the old binding grant as well as its execution authority.
+
+The existing secret connector YAML owns the private Dots subscription, callback,
+signing secret, wake and execution state. Public binding/status results, Group
+state, ledgers and Group copies MUST NOT contain private credentials or callback
+payloads. Required private rollback snapshots remain internal to the existing
+in-memory saga and MUST NOT be returned through a public port.
+
+The private Web port uses the following daemon operations. Connection and
+subscription changes use the global write permit; claims and unfinished-turn
+resolution use the bound Group write permit. These operations are not Actor
+MCP tools. Only the authenticated work claim is forwarded with Actor authority;
+connection, network receipt and resolution operations require `by="user"`.
+
+| Operation | Inputs and result |
+| --- | --- |
+| `dots_events_status` | `group_id`, `actor_id`; safe subscription, delivery and canonical turn projection. Read-only; never subscribes, sends or claims work. |
+| `dots_events_connect` | User-authorized Actor with no unfinished turn and no previous local runtime still running; creates or reuses the one binding and returns its private subscription/claim credential for explicit task setup. The Actor may be enabled; retrieving the same binding preserves its epoch, subscription and wake. |
+| `dots_events_disconnect` | Stopped Actor with no unfinished turn; retires that binding and its private subscription authority. |
+| `dots_events_subscribe` | Exact binding revision/epoch and subscription credential, verified callback URL/signing secret, subscription ID and optional `ttl_ms`; persists the subscription after the Web port's signed challenge. Null TTL remains valid until revoked; the Web protocol defaults an omitted TTL to one hour and returns the granted `refreshBefore`. |
+| `dots_events_unsubscribe` | Exact subscription identity and callback; retires that subscription's task authority. An older callback cannot unsubscribe a replacement. |
+| `dots_events_next_delivery` | Claims a bounded sending lease for pending inbox work; returns private callback data and one persisted event identity. It never accepts a business turn. |
+| `dots_events_delivery_record` | Exact connector, epoch, event and attempt; records HTTP handoff or a safe error. Bounded retries reuse the same event; HTTP 410/413 are not retried. |
+| `dots_work_claim` | Captured binding, epoch and current wake identity; accepts at most one existing canonical turn and returns its private execution `actor_token` only after persistence. Idle, duplicate or competing claims expose no business body or execution credential and do not recover another execution. |
+| `dots_work_control` | User `action="resolve"` with exact canonical `turn_id` and `event_ids`; reconciles an existing terminal receipt, or cancels unfinished work without replay. It does not terminate ChatGPT cloud work. |
+
+After a notification fails before any turn is accepted, explicit Actor stop/start
+invalidates the old event and permits a fresh notification of still-pending
+inputs. After admission, stop/start preserves the unfinished turn and requires
+explicit resolution; it does not automatically replay its body. An expired or
+HTTP-410 subscription needs explicit reconnection. Initial connection and
+retrieving the same setup instructions do not require pausing the Actor. They
+do not restart it or replace pending event authority. Disconnecting still
+requires a stopped Actor and no unfinished turn. Expiry blocks new claims but
+does not revoke an already admitted execution; that turn may finish with its
+existing execution credential. Replacing or unsubscribing the native
+subscription retires its epoch and requires explicit resolution of any
+unfinished turn; refreshing the same subscription does not.

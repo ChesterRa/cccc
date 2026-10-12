@@ -36,6 +36,11 @@ pub struct SessionStatus {
     pub pid: Option<u32>,
     pub started_at: String,
     pub exit_code: Option<u32>,
+    /// How the process ended, as `portable_pty::ExitStatus` renders it
+    /// ("Exited with code 1", "Terminated by Killed"). On Unix, a signal death
+    /// also reports `exit_code` 1. The diagnostic is platform dependent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_detail: Option<String>,
 }
 
 pub struct Session {
@@ -128,6 +133,7 @@ impl Session {
                 pid,
                 started_at: utc_now(),
                 exit_code: None,
+                exit_detail: None,
             },
             master: Some(pair.master),
             child,
@@ -146,6 +152,7 @@ impl Session {
         {
             self.status.running = false;
             self.status.exit_code = Some(exit.exit_code());
+            self.status.exit_detail = Some(exit.to_string());
             let _ = self.process_tree.terminate();
         }
         self.status.clone()
@@ -163,6 +170,7 @@ impl Session {
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             self.status.running = false;
             self.status.exit_code = Some(exit.exit_code());
+            self.status.exit_detail = Some(exit.to_string());
         }
         self.finish_output()?;
         Ok(self.status.clone())
@@ -312,5 +320,77 @@ fn runner_name(runner: RunnerKind) -> &'static str {
     match runner {
         RunnerKind::Pty => "pty",
         RunnerKind::Headless => "headless",
+    }
+}
+
+#[cfg(all(test, unix))]
+mod exit_tests {
+    use super::{LaunchSpec, Session, SessionStatus};
+    use cccc_contracts::RunnerKind;
+    use std::collections::BTreeMap;
+    use std::time::{Duration, Instant};
+
+    fn observed_exit(temp: &tempfile::TempDir, script: &str) -> SessionStatus {
+        let provider = temp.path().join("provider");
+        std::fs::create_dir_all(&provider).expect("isolated shell home");
+        let mut session = Session::start_with_history(
+            LaunchSpec {
+                group_id: "exit-detail-fixture".into(),
+                actor_id: "shell".into(),
+                runner: RunnerKind::Pty,
+                command: vec!["/bin/sh".into(), "-c".into(), script.into()],
+                cwd: temp.path().to_path_buf(),
+                env: BTreeMap::from([
+                    ("HOME".into(), provider.to_string_lossy().into_owned()),
+                    (
+                        "CCCC_HOME".into(),
+                        temp.path().join("cccc").to_string_lossy().into_owned(),
+                    ),
+                    (
+                        "CODEX_HOME".into(),
+                        provider.join("codex").to_string_lossy().into_owned(),
+                    ),
+                ]),
+                cols: 80,
+                rows: 24,
+            },
+            None,
+            0,
+        )
+        .expect("owned PTY shell");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = session.status();
+            if !status.running {
+                session.finish_output().expect("drain owned shell output");
+                return status;
+            }
+            assert!(Instant::now() < deadline, "owned shell must exit");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn process_exit_detail_distinguishes_normal_failure_from_signal() {
+        let temp = tempfile::tempdir().expect("isolated exit fixture");
+        let normal = observed_exit(&temp, "exit 1");
+        let signal = observed_exit(&temp, "kill -KILL $$");
+        assert_eq!(normal.exit_code, Some(1));
+        assert_eq!(signal.exit_code, Some(1));
+        assert!(!normal.running && !signal.running);
+        assert!(
+            normal
+                .exit_detail
+                .as_ref()
+                .is_some_and(|detail| !detail.is_empty())
+        );
+        assert!(
+            signal
+                .exit_detail
+                .as_ref()
+                .is_some_and(|detail| !detail.is_empty())
+        );
+        // Keep the provider's diagnostic text; it is not a stable classification.
+        assert_ne!(normal.exit_detail, signal.exit_detail);
     }
 }

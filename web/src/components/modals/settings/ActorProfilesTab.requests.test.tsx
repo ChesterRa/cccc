@@ -39,7 +39,7 @@ vi.mock("../RuntimeSelector", () => ({
       data-runtime-mode={runtimeMode}
       onChange={(event) => onChange(event.target.value)}
     >
-      {(allowedRuntimes || ["codex", "kimi", "auggie", "pi"]).map((runtime) => (
+      {(allowedRuntimes || ["codex", "kimi", "auggie", "pi", "chatgpt_dots"]).map((runtime) => (
         <option key={runtime} value={runtime}>
           {runtime}
         </option>
@@ -98,6 +98,33 @@ const render = (id: string | null, nonce: number) =>
     ),
   );
 const dialog = () => document.querySelector('[role="dialog"]')!;
+it("edits and saves a Dots Profile without loading, copying or writing private credentials", async () => {
+  const dotsProfile = { ...profile("dots-profile"), runtime: "chatgpt_dots", command: "" };
+  await act(async () =>
+    root.render(
+      <ActorProfilesTab
+        isDark={false}
+        isActive
+        scope="global"
+        editorOnly
+        editorRequest={{ nonce: 1, profile: dotsProfile }}
+      />,
+    ),
+  );
+  expect(fixture.keys).not.toHaveBeenCalled();
+  expect(dialog().textContent).not.toContain("actorProfiles.secrets");
+  await act(async () =>
+    [...dialog().querySelectorAll("button")]
+      .find((button) => button.textContent === "common:save")!
+      .click(),
+  );
+  expect(fixture.save).toHaveBeenCalledWith(
+    expect.objectContaining({ runtime: "chatgpt_dots", command: "", env: {} }),
+    1,
+  );
+  expect(fixture.env).not.toHaveBeenCalled();
+  expect(JSON.stringify(fixture.save.mock.calls)).not.toContain("actor_token");
+});
 it("distinguishes native, ACP and RPC Profiles in the management list", async () => {
   fixture.profiles.mockResolvedValue({
     ok: true,

@@ -1,6 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { OpenCodeManagedModelHint, RuntimeProfilePicker } from "./RuntimeProfileControls";
+import {
+  OpenCodeManagedModelHint,
+  RuntimeCommandControl,
+  RuntimeProfilePicker,
+} from "./RuntimeProfileControls";
 import type { ActorProfile } from "../../types";
 import { actorProfileIdentityKey } from "../../utils/actorProfiles";
 
@@ -35,6 +39,37 @@ describe("OpenCode model selection hint", () => {
 });
 
 describe("Runtime Profile surface summaries", () => {
+  it("keeps Dots Profiles free of launch commands and independent Actor connection credentials", () => {
+    const profile = {
+      id: "dots",
+      runtime: "chatgpt_dots",
+      name: "Dot",
+      command: "",
+    } as ActorProfile;
+    const html = renderToStaticMarkup(
+      <RuntimeProfilePicker
+        value={actorProfileIdentityKey(profile)}
+        profiles={[profile]}
+        busy={false}
+        onChange={() => {}}
+      />,
+    );
+    expect(html).toContain("ChatGPT Dots");
+    expect(html).toContain("webModelProfileHint");
+    expect(html).not.toContain(" · TUI");
+    expect(
+      renderToStaticMarkup(
+        <RuntimeCommandControl
+          runtime="chatgpt_dots"
+          command=""
+          defaultCommand=""
+          useDefaultCommand
+          onCommandChange={() => {}}
+          onUseDefaultCommandChange={() => {}}
+        />,
+      ),
+    ).toBe("");
+  });
   it.each([
     ["kimi", "default", "Kimi Code · TUI"],
     ["kimi", "acp", "Kimi Code · ACP"],

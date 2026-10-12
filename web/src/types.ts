@@ -1587,6 +1587,7 @@ export const SUPPORTED_RUNTIMES = [
   "opencode",
   "pi",
   "web_model",
+  "chatgpt_dots",
   "grok_web_model",
   "custom",
 ] as const;
@@ -1594,6 +1595,10 @@ export const SUPPORTED_RUNTIMES = [
 export type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
 
 export function isWebModelRuntime(runtime: string | undefined): boolean {
+  return runtime === "chatgpt_dots" || isBrowserWebModelRuntime(runtime);
+}
+
+export function isBrowserWebModelRuntime(runtime: string | undefined): boolean {
   return runtime === "web_model" || runtime === "grok_web_model";
 }
 
@@ -1628,6 +1633,10 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   web_model: {
     label: "ChatGPT Web Model",
     desc: "ChatGPT browser delivery + remote MCP connector",
+  },
+  chatgpt_dots: {
+    label: "ChatGPT Dots",
+    desc: "ChatGPT event tasks + shared remote MCP connector",
   },
   grok_web_model: {
     label: "Grok Bot Web Model",
@@ -1825,6 +1834,16 @@ export const RUNTIME_COLORS: Record<
     dotLight: "bg-stone-600",
   },
   web_model: {
+    bg: "bg-indigo-900/30",
+    text: "text-indigo-300",
+    border: "border-indigo-600/50",
+    dot: "bg-indigo-400",
+    bgLight: "bg-indigo-50",
+    textLight: "text-indigo-700",
+    borderLight: "border-indigo-300",
+    dotLight: "bg-indigo-500",
+  },
+  chatgpt_dots: {
     bg: "bg-indigo-900/30",
     text: "text-indigo-300",
     border: "border-indigo-600/50",

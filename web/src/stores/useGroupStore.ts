@@ -1,4 +1,4 @@
-import { isWebModelRuntime } from "../types";
+import { isBrowserWebModelRuntime } from "../types";
 // Group state store (groups, actors, events, context, settings).
 import { create } from "zustand";
 import type { GroupMeta, GroupDoc, GroupRuntimeStatus, HeadlessStreamEvent } from "../types";
@@ -572,7 +572,11 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         const workingState = String(actor.effective_working_state || "")
           .trim()
           .toLowerCase();
-        if (!targets.has(actorId) || !isWebModelRuntime(runtime) || workingState !== "working") {
+        if (
+          !targets.has(actorId) ||
+          !isBrowserWebModelRuntime(runtime) ||
+          workingState !== "working"
+        ) {
           return actor;
         }
         changed = true;
@@ -642,7 +646,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
                 ? { runtime_session_last_resume_error: u.runtime_session_last_resume_error ?? null }
                 : {}),
               web_model_queued_count:
-                isWebModelRuntime(a.runtime) &&
+                isBrowserWebModelRuntime(a.runtime) &&
                 String(u.effective_working_state || "")
                   .trim()
                   .toLowerCase() !== "working"

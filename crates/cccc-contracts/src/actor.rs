@@ -84,6 +84,7 @@ pub enum ActorRuntime {
     Opencode,
     Pi,
     WebModel,
+    ChatgptDots,
     GrokWebModel,
     Custom,
 }
@@ -131,7 +132,7 @@ impl ActorRuntime {
     #[must_use]
     pub const fn web_model_provider(self) -> Option<&'static str> {
         match self {
-            Self::WebModel => Some("chatgpt_web"),
+            Self::WebModel | Self::ChatgptDots => Some("chatgpt_web"),
             Self::GrokWebModel => Some("grok_web"),
             _ => None,
         }
@@ -142,13 +143,20 @@ impl ActorRuntime {
         self.web_model_provider().is_some()
     }
 
+    #[must_use]
+    pub const fn is_browser_web_model(self) -> bool {
+        matches!(self, Self::WebModel | Self::GrokWebModel)
+    }
+
     /// The runner is an implementation detail derived from the Runtime, not a
     /// user-selectable runner. Pi uses official RPC without a native attach;
     /// optional ACP providers derive their headless surface in `runner_for`.
     #[must_use]
     pub const fn runner(self) -> RunnerKind {
         match self {
-            Self::Deepseek | Self::Pi | Self::WebModel | Self::GrokWebModel => RunnerKind::Headless,
+            Self::Deepseek | Self::Pi | Self::WebModel | Self::ChatgptDots | Self::GrokWebModel => {
+                RunnerKind::Headless
+            }
             _ => RunnerKind::Pty,
         }
     }
@@ -282,6 +290,29 @@ fn global_scope() -> String {
 #[cfg(test)]
 mod tests {
     use super::{Actor, ActorRuntime, RunnerKind, RuntimeMode, RuntimeStateSource};
+
+    #[test]
+    fn dots_is_an_event_runtime_with_shared_chatgpt_provider() {
+        let runtime: ActorRuntime = serde_json::from_str(r#""chatgpt_dots""#).expect("runtime");
+        assert_eq!(runtime, ActorRuntime::ChatgptDots);
+        assert_eq!(
+            serde_json::to_string(&runtime).expect("serialize"),
+            r#""chatgpt_dots""#
+        );
+        assert_eq!(runtime.web_model_provider(), Some("chatgpt_web"));
+        assert!(runtime.is_web_model());
+        assert!(!runtime.is_browser_web_model());
+        assert_eq!(runtime.runner(), RunnerKind::Headless);
+        assert!(RuntimeMode::Acp.validate(runtime).is_err());
+        let mut actor = Actor::new("dots");
+        actor.runtime = runtime;
+        actor.command = vec!["must-not-launch".into()];
+        actor.normalize_runtime_constraints();
+        assert_eq!(actor.runner, RunnerKind::Headless);
+        assert!(actor.command.is_empty());
+        assert!(ActorRuntime::WebModel.is_browser_web_model());
+        assert!(ActorRuntime::GrokWebModel.is_browser_web_model());
+    }
 
     #[test]
     fn cline_runtime_round_trips_through_the_shared_contract() {

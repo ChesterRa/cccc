@@ -301,7 +301,7 @@
   "terminalReadOnlyNotice": "此终端当前只读，接管后可以输入。",
   "webModelActorBoundConnectorTitle": "ChatGPT Web Model",
   "webModelActorBoundConnectorHint": "全局 Web Model 设置管理共享登录和一个连接器。保存后正常启动此 Actor，CCCC 会先自动连接对话，再投递任务。",
-  "webModelProfileHint": "Web 模型配置共享运行时与能力设置，每个 Actor 独立配置自己的对话。",
+  "webModelProfileHint": "Web 模型配置共享运行时与能力设置，每个 Actor 独立配置自己的连接。",
   "saveAndApply": "保存并应用",
   "applyWebModelTargetConfirm": "要为“{{label}}”应用新对话吗？CCCC 将只停止此 Actor，保存设置，待新连接保存成功后再启动。应用失败时会保持停止，并保留这里的草稿。",
   "antigravityMode": {
@@ -358,5 +358,9 @@
     "label": "{{runtime}} 模式",
     "hint": "ACP 使用本机 CLI 登录和独立的受管会话。没有原生终端；输入在当前任务结束后执行。"
   },
-  "selectRuntime": "未配置"
+  "selectRuntime": "未配置",
+  "dotsPause": "暂停 CCCC 访问",
+  "dotsPauseHint": "暂停 CCCC 投递及工具访问，已经在 ChatGPT 中执行的任务可能继续运行。",
+  "dotsEnable": "启用 CCCC 访问",
+  "dotsResume": "恢复 CCCC 访问"
 }

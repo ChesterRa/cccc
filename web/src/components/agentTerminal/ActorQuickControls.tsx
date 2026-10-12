@@ -13,6 +13,8 @@ export function ActorQuickControls({
   connected,
   connectionFailed,
   canStartNewSession,
+  pauseCcccAccess = false,
+  dotsConnected = true,
   unreadCount,
   onInterrupt,
   onLaunch,
@@ -36,6 +38,8 @@ export function ActorQuickControls({
   connected: boolean;
   connectionFailed: boolean;
   canStartNewSession: boolean;
+  pauseCcccAccess?: boolean;
+  dotsConnected?: boolean;
   unreadCount: number;
   onInterrupt: () => void;
   onLaunch: () => void;
@@ -51,6 +55,11 @@ export function ActorQuickControls({
   onExpand?: () => void;
 }) {
   const { t } = useTranslation("actors");
+  const startLabel = pauseCcccAccess
+    ? dotsConnected
+      ? "dotsResume"
+      : "dotsEnable"
+    : "launchAgentLabel";
   const [open, setOpen] = useState(false);
   const openingDialog = useRef(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -75,8 +84,8 @@ export function ActorQuickControls({
           className={button}
           disabled={busy}
           onClick={onLaunch}
-          title={t("launchAgentLabel")}
-          aria-label={t("launchAgentLabel")}
+          title={t(startLabel)}
+          aria-label={t(startLabel)}
         >
           <Play size={14} />
         </button>
@@ -171,7 +180,7 @@ export function ActorQuickControls({
                 ) : null}
                 {!running ? (
                   <button className={item} disabled={busy} onClick={() => run(onLaunch)}>
-                    {t("launchAgentLabel")}
+                    {t(startLabel)}
                   </button>
                 ) : null}
                 {canStartNewSession ? (
@@ -179,7 +188,7 @@ export function ActorQuickControls({
                     {t("newSession")}
                   </button>
                 ) : null}
-                {running ? (
+                {running && !pauseCcccAccess ? (
                   <button className={item} disabled={busy} onClick={() => run(onRestart)}>
                     {t("relaunch")}
                   </button>
@@ -193,8 +202,13 @@ export function ActorQuickControls({
                 </button>
                 <div className="my-1 border-t border-[var(--glass-border-subtle)]" />
                 {running ? (
-                  <button className={item} disabled={busy} onClick={() => run(onStop)}>
-                    {t("quitAgent")}
+                  <button
+                    className={item}
+                    disabled={busy}
+                    title={pauseCcccAccess ? t("dotsPauseHint") : undefined}
+                    onClick={() => run(onStop)}
+                  >
+                    {t(pauseCcccAccess ? "dotsPause" : "quitAgent")}
                   </button>
                 ) : null}
                 <button

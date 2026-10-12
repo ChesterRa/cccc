@@ -68,25 +68,7 @@ fn token_mac(connector: &Value, binding: &Value) -> io::Result<Hmac<Sha256>> {
     {
         return Err(error("binding_unavailable"));
     }
-    let key = connector["routing_key"]
-        .as_str()
-        .filter(|k| !k.is_empty())
-        .ok_or_else(|| error("connector_unavailable"))?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes())
-        .map_err(|_| error("connector_unavailable"))?;
-    mac.update(
-        json!([
-            "cccc-grok-binding-v1",
-            connector["connector_id"],
-            binding["group_id"],
-            binding["actor_id"],
-            binding["generation"],
-            binding["revision"]
-        ])
-        .to_string()
-        .as_bytes(),
-    );
-    Ok(mac)
+    binding_mac(connector, binding, "cccc-grok-binding-v1", &[])
 }
 
 /// Reconstruct only for browser delivery. Never persist this in turns or ledgers.

@@ -15,7 +15,7 @@ struct LocalSession {
     home: PathBuf,
     group_id: String,
     actor_id: String,
-    binding_revision: Value,
+    binding_identity: Value,
     command: CommandSession,
     io: tokio::sync::Mutex<()>,
     cursor: Mutex<u64>,
@@ -58,6 +58,7 @@ pub async fn start(
                     .into(),
             );
         }
+        super::local_tools::revalidate(home, args)?;
         // Registration and expiration are installed before the first await, so
         // cancelling a start request cannot leave an unowned, unbounded child.
         let session = Arc::new(LocalSession {
@@ -69,10 +70,7 @@ pub async fn start(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned(),
-            binding_revision: args
-                .get("_cccc_web_binding")
-                .map(|b| b["revision"].clone())
-                .unwrap_or(Value::Null),
+            binding_identity: binding_identity(args),
             command: CommandSession::start(spec).map_err(|e| e.to_string())?,
             io: tokio::sync::Mutex::new(()),
             cursor: Mutex::new(0),
@@ -84,7 +82,7 @@ pub async fn start(
         schedule_expiration(session_id.clone(), &session, timeout);
         session
     };
-    poll(&session_id, session, wait, limit, None, false).await
+    poll(&session_id, session, wait, limit, None, false, (home, args)).await
 }
 
 pub async fn write(home: &HomeLayout, args: &Map<String, Value>) -> Result<Value, String> {
@@ -100,7 +98,7 @@ pub async fn write(home: &HomeLayout, args: &Map<String, Value>) -> Result<Value
         .get("terminate")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    poll(&id, session, wait, limit, chars, terminate).await
+    poll(&id, session, wait, limit, chars, terminate, (home, args)).await
 }
 
 async fn poll(
@@ -110,21 +108,31 @@ async fn poll(
     limit: usize,
     chars: Option<String>,
     terminate: bool,
+    authority: (&HomeLayout, &Map<String, Value>),
 ) -> Result<Value, String> {
+    let (home, args) = authority;
     // Stop must not queue behind a long poll or blocked stdin write.
     if terminate {
         let command = session.command.clone();
-        blocking(move || command.stop().map_err(|e| e.to_string())).await?;
+        let home = home.clone();
+        let args = args.clone();
+        blocking(move || {
+            super::local_tools::revalidate(&home, &args)?;
+            command.stop().map_err(|e| e.to_string())
+        })
+        .await?;
         *session
             .cleanup_error
             .lock()
             .map_err(|_| "session lock poisoned")? = None;
     }
     let _io = session.io.lock().await;
+    super::local_tools::revalidate(home, args)?;
     if session.closed.load(Ordering::Acquire) {
         if terminate {
             let command = session.command.clone();
             let status = blocking(move || command.status().map_err(|e| e.to_string())).await?;
+            super::local_tools::revalidate(home, args)?;
             return Ok(
                 json!({"session_id":id,"status":status,"output":"","closed":true,
                 "cursor":*session.cursor.lock().map_err(|_| "session lock poisoned")?,
@@ -135,7 +143,13 @@ async fn poll(
     }
     if !terminate && let Some(chars) = chars {
         let command = session.command.clone();
-        blocking(move || command.write(chars.as_bytes()).map_err(|e| e.to_string())).await?;
+        let home = home.clone();
+        let args = args.clone();
+        blocking(move || {
+            super::local_tools::revalidate(&home, &args)?;
+            command.write(chars.as_bytes()).map_err(|e| e.to_string())
+        })
+        .await?;
     }
     let deadline = Instant::now() + wait;
     loop {
@@ -158,6 +172,7 @@ async fn poll(
         })
         .await?;
         if !page.data.is_empty() || !status.running || Instant::now() >= deadline {
+            super::local_tools::revalidate(home, args)?;
             *session.cursor.lock().map_err(|_| "session lock poisoned")? = page.end_cursor;
             let closed = !status.running && !page.has_more;
             if closed {
@@ -248,14 +263,22 @@ fn session(
         .or_else(|| args.get("actor_id"))
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let revision = args
-        .get("_cccc_web_binding")
-        .map(|b| b["revision"].clone())
-        .unwrap_or(Value::Null);
-    if owner.actor_id != actor || owner.binding_revision != revision {
+    if owner.actor_id != actor || owner.binding_identity != binding_identity(args) {
         return Err("session does not belong to this Actor conversation".into());
     }
     Ok((id, owner))
+}
+
+fn binding_identity(args: &Map<String, Value>) -> Value {
+    args.get("_cccc_web_binding")
+        .map(|binding| {
+            if binding["transport"] == "mcp_events" {
+                crate::code_mode::binding_identity(binding)
+            } else {
+                binding["revision"].clone()
+            }
+        })
+        .unwrap_or(Value::Null)
 }
 
 fn sessions() -> &'static Mutex<Sessions> {

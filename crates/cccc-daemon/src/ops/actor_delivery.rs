@@ -480,6 +480,8 @@ pub(super) fn delivery_transport(
 ) -> &'static str {
     if actor.runtime == ActorRuntime::Deepseek {
         "deepseek"
+    } else if actor.runtime == ActorRuntime::ChatgptDots {
+        "web_model_pull"
     } else if actor.runtime.is_web_model() {
         web_model_delivery_transport(home, group, actor)
     } else if crate::ops::local_headless::uses_managed_delivery(&group.group_id, actor) {

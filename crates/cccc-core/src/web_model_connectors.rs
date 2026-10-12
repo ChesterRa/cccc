@@ -3,6 +3,7 @@
 use std::io;
 use std::path::PathBuf;
 
+use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -13,6 +14,11 @@ const VERSION: u64 = 3;
 
 mod grok;
 pub use grok::{bind_grok, binding_for_token, grok_bot_url, grok_token};
+mod dots;
+pub use dots::{
+    DOTS_URL, bind_dots, dots_binding_for_token, dots_invalidate, dots_subscription_binding,
+    dots_subscription_token, dots_update, dots_wake_token,
+};
 const PAIRING_TTL_MS: i64 = 10 * 60 * 1000;
 
 fn store_path(home: &HomeLayout) -> PathBuf {
@@ -30,6 +36,34 @@ fn route_key(group: &str, actor: &str) -> String {
 fn error(message: &str) -> io::Error {
     io::Error::other(message)
 }
+
+fn binding_mac(
+    connector: &Value,
+    binding: &Value,
+    domain: &str,
+    extra: &[Value],
+) -> io::Result<Hmac<Sha256>> {
+    if connector["revoked"] == true || binding["state"] != "bound" {
+        return Err(error("binding_unavailable"));
+    }
+    let key = connector["routing_key"]
+        .as_str()
+        .filter(|key| !key.is_empty())
+        .ok_or_else(|| error("connector_unavailable"))?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes())
+        .map_err(|_| error("connector_unavailable"))?;
+    let mut identity = vec![
+        json!(domain),
+        connector["connector_id"].clone(),
+        binding["group_id"].clone(),
+        binding["actor_id"].clone(),
+        binding["generation"].clone(),
+        binding["revision"].clone(),
+    ];
+    identity.extend_from_slice(extra);
+    mac.update(Value::Array(identity).to_string().as_bytes());
+    Ok(mac)
+}
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -39,7 +73,9 @@ fn read(home: &HomeLayout) -> io::Result<Value> {
     if !path.exists() {
         return Ok(json!({"version":VERSION,"connectors":{}}));
     }
-    let raw = fs::read_yaml::<Value>(&path)?;
+    let raw = fs::read_yaml::<Value>(&path).map_err(|source| {
+        io::Error::new(source.kind(), "web-model connector store could not be read")
+    })?;
     match raw["version"].as_u64() {
         Some(VERSION) if raw["connectors"].is_object() => Ok(raw),
         Some(2) => {
@@ -153,6 +189,7 @@ pub fn revoke(home: &HomeLayout, id: &str) -> io::Result<bool> {
         connector["revoked"] = json!(true);
         connector["updated_at"] = json!(cccc_contracts::utc_now());
         connector["pairings"] = json!({});
+        connector.as_object_mut().expect("connector").remove("dots");
         Ok(true)
     })
 }
@@ -246,6 +283,14 @@ pub fn validate_binding(home: &HomeLayout, expected: &Value) -> io::Result<()> {
     if current["revision"] != expected["revision"] {
         return Err(error("conversation_pairing_changed"));
     }
+    if current["transport"] == "mcp_events" {
+        if actor.runtime != cccc_contracts::ActorRuntime::ChatgptDots {
+            return Err(error("dots_actor_unavailable"));
+        }
+        dots::validate_context(&connector, expected, &group)?;
+    } else if actor.runtime == cccc_contracts::ActorRuntime::ChatgptDots {
+        return Err(error("dots_binding_required"));
+    }
     Ok(())
 }
 
@@ -263,6 +308,9 @@ pub fn begin_pairing(
     update(home, |root| {
         let c = current(root, id)?;
         require_chatgpt(c)?;
+        if c["bindings"][route_key(group, actor)]["transport"] == "mcp_events" {
+            return Err(error("dots_requires_event_binding"));
+        }
         let code = format!(
             "wm_pair_{}{}",
             Uuid::new_v4().simple(),
@@ -430,6 +478,9 @@ pub fn confirm_pairing(
         let c = current(root, id)?;
         require_chatgpt(c)?;
         let key = route_key(group, actor);
+        if c["bindings"][&key]["transport"] == "mcp_events" {
+            return Err(error("dots_requires_event_binding"));
+        }
         let pair = pairing_for_actor(c, group, actor).ok_or_else(|| error("pairing_expired"))?;
         if pair["expires_at_ms"].as_i64().is_none_or(|t| t <= now_ms()) {
             return Err(error("pairing_expired"));
@@ -527,6 +578,13 @@ fn retire(home: &HomeLayout, group: &str, actor: Option<&str>) -> io::Result<Vec
                     retired.push(json!({"kind":"web_model_route_snapshot","connector_id":c["connector_id"],"collection":collection,"key":key,"value":value}));
                 }
             }
+            if c["dots"]["group_id"] == group
+                && actor.is_none_or(|a| c["dots"]["actor_id"] == a)
+                && let Some(value) = c.as_object_mut().expect("connector").remove("dots")
+            {
+                // Private in-memory saga state, never a public binding response.
+                retired.push(json!({"kind":"web_model_dots_snapshot","connector_id":c["connector_id"],"value":value}));
+            }
         }
         Ok(retired)
     })
@@ -545,6 +603,19 @@ pub fn restore(home: &HomeLayout, entries: &[Value]) -> io::Result<()> {
     update(home, |root| {
         for entry in entries {
             let c = current(root, entry["connector_id"].as_str().unwrap_or_default())?;
+            if entry["kind"] == "web_model_dots_snapshot" {
+                if c["provider"] != "chatgpt_web"
+                    || !entry["value"].is_object()
+                    || (!c["dots"].is_null() && c["dots"] != entry["value"])
+                {
+                    return Err(error("Dots route changed during rollback"));
+                }
+                c["dots"] = entry["value"].clone();
+                if dots::state(c).is_none() {
+                    return Err(error("Dots binding changed during rollback"));
+                }
+                continue;
+            }
             if entry["kind"] != "web_model_route_snapshot"
                 || entry["connector_id"] != c["connector_id"]
                 || c["revoked"] == true

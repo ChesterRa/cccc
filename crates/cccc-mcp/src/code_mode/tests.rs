@@ -537,3 +537,112 @@ async fn deferred_nested_calls_reject_replaced_binding_and_actor_generation() {
         .expect_err("old Actor");
     assert!(error.to_string().contains("Actor changed"));
 }
+
+#[tokio::test]
+async fn dots_nested_owner_keeps_task_identity_and_rejects_late_work() {
+    use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, GroupState};
+    use cccc_core::{GroupStore, web_model_connectors as bindings};
+    use serde_json::json;
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("Dots nested", "").expect("group");
+    let mut actor = Actor::new("dots");
+    actor.runtime = ActorRuntime::ChatgptDots;
+    actor.enabled = true;
+    cccc_core::actors::add(&mut group, actor).expect("actor");
+    store.save(&group).expect("save");
+    let configured = bindings::configure(&home).expect("configure");
+    let id = configured["connector"]["connector_id"]
+        .as_str()
+        .expect("id");
+    let bound = bindings::bind_dots(
+        &home,
+        id,
+        &group.group_id,
+        "dots",
+        &group.actors[0].generation,
+    )
+    .expect("bind");
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = DaemonClient::new(home.clone());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while client
+            .call(&DaemonRequest {
+                v: 1,
+                op: "ping".into(),
+                args: Default::default(),
+            })
+            .await
+            .is_err()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("daemon ready");
+    store
+        .mutate(&group.group_id, |group| {
+            group.running = true;
+            group.state = GroupState::Active;
+            group.extra.insert(
+                "runtime_states".into(),
+                json!({"dots":{"active_turn_id":"turn-one","active_event_ids":["source-one"]}}),
+            );
+            Ok(())
+        })
+        .expect("active turn");
+    bindings::dots_update(&home,id,|connector| {
+        connector["dots"]["wake"] = json!({"event_id":"wake-one","state":"claimed"});
+        connector["dots"]["execution"] = json!({"epoch":connector["dots"]["epoch"],"event_id":"wake-one",
+            "turn_id":"turn-one","event_ids":["source-one"],"state":"active"});
+        Ok(())
+    }).expect("execution");
+    let connector = bindings::load(&home).expect("load").remove(0);
+    let token = bindings::dots_wake_token(&connector, &bound, "wake-one").expect("token");
+    let binding =
+        bindings::dots_binding_for_token(&connector, &token, "cccc_code_exec").expect("task route");
+    let mut args = json!({"group_id":group.group_id,"by":"dots","_cccc_web_binding":binding});
+    let owner = super::resolve_owner(&home, args.as_object().expect("args")).expect("owner");
+    args["_cccc_web_binding"]["last_activity_at"] = json!("later");
+    assert_eq!(
+        owner,
+        super::resolve_owner(&home, args.as_object().expect("args")).expect("same task")
+    );
+    args["_cccc_web_binding"]["dots_wake_id"] = json!("wake-two");
+    let changed =
+        super::resolve_owner(&home, args.as_object().expect("args")).expect("new task owner");
+    let initial = super::call_nested(
+        &home,
+        &client,
+        &owner,
+        "cccc_context_get",
+        Some(&json!({"detail":"summary"})),
+    )
+    .await;
+    bindings::dots_invalidate(&home, &group.group_id, "dots").expect("retire old cloud work");
+    let late = super::call_nested(&home, &client, &owner, "cccc_context_get", None).await;
+    client
+        .call(&DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: Default::default(),
+        })
+        .await
+        .expect("owned shutdown");
+    tokio::time::timeout(Duration::from_secs(5), daemon)
+        .await
+        .expect("shutdown")
+        .expect("join")
+        .expect("daemon");
+    initial.expect("nested call must retain the complete current Dots authority");
+    assert_ne!(
+        owner, changed,
+        "code_wait ownership must distinguish tasks of the same Actor"
+    );
+    assert!(
+        late.is_err(),
+        "old nested work must not borrow a newer execution epoch"
+    );
+}

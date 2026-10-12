@@ -55,6 +55,7 @@ tar.workspace = true
 takecell.workspace = true
 tempfile.workspace = true
 hound.workspace = true
+hmac.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 tower-http = { workspace = true, features = ["compression-br", "compression-gzip"] }
