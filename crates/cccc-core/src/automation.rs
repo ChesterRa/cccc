@@ -37,6 +37,11 @@ pub enum ScheduledAction {
 pub struct TickResult {
     pub notifications: Vec<Event>,
     pub actions: Vec<ScheduledAction>,
+    /// A Mail or reply notice that could not be written. Notices the same pass
+    /// wrote before it are in the ledger and in `notifications`, and must still
+    /// be delivered: the ledger already counts them as issued. The failed one
+    /// and those after it were never written, so a later pass issues them.
+    pub unread_failure: Option<io::Error>,
 }
 
 pub fn tick(home: &HomeLayout) -> io::Result<TickResult> {
@@ -53,6 +58,9 @@ pub fn tick_scheduled(home: &HomeLayout, include_unread: bool) -> io::Result<Tic
         };
         result.notifications.extend(group_result.notifications);
         result.actions.extend(group_result.actions);
+        if result.unread_failure.is_none() {
+            result.unread_failure = group_result.unread_failure;
+        }
     }
     Ok(result)
 }
@@ -233,6 +241,11 @@ fn tick_group_inner(
     let mut state = state::load(&store, group_id)?;
     let previous = state.clone();
     tick_rules(&store, &group, &mut state, &mut result)?;
+    // Save before issuing unread notices: a notice written to the ledger counts
+    // as issued, so no error may follow it and drop the result carrying it.
+    if state != previous {
+        state::save(&store, group_id, &state)?;
+    }
     if include_unread && matches!(group.state, GroupState::Active | GroupState::Idle) {
         tick_unread(
             home,
@@ -243,9 +256,6 @@ fn tick_group_inner(
             UnreadPass::Scheduled,
             &mut result,
         )?;
-    }
-    if state != previous {
-        state::save(&store, group_id, &state)?;
     }
     Ok(result)
 }
@@ -377,7 +387,7 @@ fn scheduled_at(
 }
 
 /// The periodic unread tick, or the pass that runs as Mail is written.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UnreadPass {
     Scheduled,
     IdleMailNow,
@@ -392,10 +402,28 @@ fn tick_unread(
     pass: UnreadPass,
     result: &mut TickResult,
 ) -> io::Result<()> {
+    if let Some((ledger_path, notices)) =
+        due_unread_notices(home, store, group, delivery_actor_ids, idle_actor_ids, pass)?
+    {
+        issue_notices(&ledger_path, notices, result, &mut ledger::append);
+    }
+    Ok(())
+}
+
+/// The Mail and reply notices this pass should issue, and the ledger they go
+/// to; `None` when the pass has nothing to look at.
+fn due_unread_notices(
+    home: &HomeLayout,
+    store: &GroupStore,
+    group: &GroupDoc,
+    delivery_actor_ids: Option<&HashSet<String>>,
+    idle_actor_ids: &HashSet<String>,
+    pass: UnreadPass,
+) -> io::Result<Option<(std::path::PathBuf, Vec<Event>)>> {
     let mail_after = delivery_timing_value(group, "mail_notice_after_seconds", 1_800);
     let mail_idle_after = delivery_timing_value(group, "mail_notice_idle_after_seconds", 60);
     if pass == UnreadPass::IdleMailNow && mail_idle_after <= 0 {
-        return Ok(());
+        return Ok(None);
     }
     // Reply notices stay with the periodic tick.
     let reply_after = match pass {
@@ -403,7 +431,7 @@ fn tick_unread(
         UnreadPass::IdleMailNow => 0,
     };
     if mail_after <= 0 && reply_after <= 0 {
-        return Ok(());
+        return Ok(None);
     }
     let eligible = actors::visible(group)
         .filter(|actor| {
@@ -411,7 +439,7 @@ fn tick_unread(
         })
         .collect::<Vec<_>>();
     if eligible.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let ledger_path = store.ledger_path(&group.group_id)?;
     let cursors = inbox::cursors(home, &group.group_id)?;
@@ -433,11 +461,25 @@ fn tick_unread(
             reply_after,
         )
     })?;
+    Ok(Some((ledger_path, notices)))
+}
+
+/// Write each notice and hand it to delivery. A written notice is issued for
+/// good, so it goes to delivery even when a later one fails; returning the
+/// error instead would strand it. The rest stay unwritten for a later pass.
+fn issue_notices(
+    ledger_path: &std::path::Path,
+    notices: Vec<Event>,
+    result: &mut TickResult,
+    append: &mut impl FnMut(&std::path::Path, &Event) -> io::Result<()>,
+) {
     for event in notices {
-        ledger::append(&ledger_path, &event)?;
+        if let Err(error) = append(ledger_path, &event) {
+            result.unread_failure = Some(error);
+            break;
+        }
         result.notifications.push(event);
     }
-    Ok(())
 }
 
 /// How long unread Mail waits before its notice. Mail exists so senders do not
@@ -813,6 +855,165 @@ fn notice_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each recipient of one Mail; notices are issued in this order.
+    const RECIPIENTS: [&str; 2] = ["first", "second"];
+
+    fn mail_for_both(home: &HomeLayout) -> (GroupStore, GroupDoc) {
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("notice handover", "").expect("group");
+        store
+            .mutate(&group.group_id, |group| {
+                group.state = GroupState::Active;
+                for id in RECIPIENTS {
+                    actors::add(group, cccc_contracts::Actor::new(id))?;
+                }
+                group
+                    .extra
+                    .insert("delivery".into(), json!({"mail_notice_after_seconds":60}));
+                Ok(())
+            })
+            .expect("group");
+        let mut mail = Event::new("chat.message", &group.group_id);
+        mail.by = "user".into();
+        // Past every notice delay, so whichever pass runs announces it now.
+        mail.ts = (Utc::now() - chrono::Duration::seconds(120)).to_rfc3339();
+        mail.data = json!({"text":"review","to":RECIPIENTS,"message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("mail");
+        ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &mail).expect("Mail");
+        let group = store.load(&group.group_id).expect("group");
+        (store, group)
+    }
+
+    fn told(result: &TickResult) -> Vec<String> {
+        result
+            .notifications
+            .iter()
+            .filter(|event| event.data.get("kind") == Some(&json!("mail_notice")))
+            .map(|event| {
+                event.data["context"]["actor_id"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_failed_notice_write_still_hands_over_the_notices_written_before_it() {
+        for pass in [UnreadPass::Scheduled, UnreadPass::IdleMailNow] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let home = HomeLayout::from_path(temp.path()).expect("home");
+            let (store, group) = mail_for_both(&home);
+            let recipients = RECIPIENTS
+                .map(str::to_owned)
+                .into_iter()
+                .collect::<HashSet<_>>();
+            let pass_result = || {
+                let mut result = TickResult::default();
+                tick_unread(
+                    &home,
+                    &store,
+                    &group,
+                    Some(&recipients),
+                    &recipients,
+                    pass,
+                    &mut result,
+                )
+                .expect("unread pass");
+                result
+            };
+
+            // The second notice cannot be written: the first is already in the
+            // ledger, so it must reach delivery from this pass.
+            let (ledger_path, notices) =
+                due_unread_notices(&home, &store, &group, Some(&recipients), &recipients, pass)
+                    .expect("due notices")
+                    .expect("notices to issue");
+            let mut interrupted = TickResult::default();
+            let mut writes = 0;
+            issue_notices(
+                &ledger_path,
+                notices,
+                &mut interrupted,
+                &mut |path, event| {
+                    writes += 1;
+                    if writes == 2 {
+                        Err(io::Error::other("disk full"))
+                    } else {
+                        ledger::append(path, event)
+                    }
+                },
+            );
+            assert!(interrupted.unread_failure.is_some(), "{pass:?}");
+            assert_eq!(told(&interrupted), ["first"], "{pass:?}");
+
+            // The next pass issues only the notice that was never written, and
+            // after that nobody is told again.
+            let next = pass_result();
+            assert!(next.unread_failure.is_none(), "{pass:?}");
+            assert_eq!(told(&next), ["second"], "{pass:?}");
+            assert!(told(&pass_result()).is_empty(), "{pass:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_rule_state_save_issues_no_notice_it_cannot_hand_over() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let (store, group) = mail_for_both(&home);
+        // A rule seen for the first time changes the saved rule state.
+        store
+            .mutate(&group.group_id, |group| {
+                group.automation = json!({"version":1,"rules":[{
+                    "id":"reminder","enabled":true,"to":["@all"],
+                    "trigger":{"kind":"interval","every_seconds":3600},
+                    "action":{"kind":"notify","message":"check in"}
+                }]})
+                .as_object()
+                .cloned()
+                .expect("rules");
+                Ok(())
+            })
+            .expect("rules");
+        let recipients = RECIPIENTS
+            .map(str::to_owned)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let tick =
+            || tick_group_with_idle_actors(&home, &group.group_id, true, &recipients, &recipients);
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        let written_notices = || {
+            ledger::inspect(&ledger_path, |events, _| {
+                events
+                    .iter()
+                    .filter(|event| event.data.get("kind") == Some(&json!("mail_notice")))
+                    .count()
+            })
+            .expect("ledger")
+        };
+        // The ledger lives under the state directory and stays writable; only
+        // the rule state file next to it cannot be created.
+        let state_dir = store.state_dir(&group.group_id).expect("state dir");
+        let set_mode = |mode| {
+            std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(mode))
+                .expect("permissions");
+        };
+
+        set_mode(0o555);
+        let failed = tick();
+        set_mode(0o755);
+        assert!(failed.is_err());
+        assert_eq!(written_notices(), 0, "a notice nobody receives was issued");
+
+        let retried = tick().expect("retry");
+        assert_eq!(told(&retried), RECIPIENTS);
+    }
 
     #[test]
     fn unread_tick_without_eligible_recipients_does_not_load_history() {

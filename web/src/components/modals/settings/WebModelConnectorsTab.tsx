@@ -3,15 +3,17 @@ import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import { classNames } from "../../../utils/classNames";
 import { copyTextToClipboard } from "../../../utils/copy";
-import { isLocalWebHostname } from "../../../utils/webAddress";
 import { ProjectedBrowserSurfacePanel } from "../../browser/ProjectedBrowserSurfacePanel";
 import { SegmentedChoice } from "../../ui/segmented-choice";
+import { connectorAddress } from "./connectorAddress";
+import { ChatGPTPluginSetup } from "./ChatGPTPluginSetup";
+import DotsSettingsTab from "./DotsSettingsTab";
 import { SettingsCard, SettingsNotice, SettingsPage } from "./SettingsKit";
 import { primaryButtonClass, secondaryButtonClass, dangerButtonClass } from "./types";
 
 interface Props {
-  provider?: api.WebModelProvider;
-  onProviderChange?: (provider: api.WebModelProvider) => void;
+  provider?: api.WebModelView;
+  onProviderChange?: (provider: api.WebModelView) => void;
   isDark: boolean;
   isActive?: boolean;
   currentGroupId?: string;
@@ -21,8 +23,12 @@ const PROVIDERS = [
   { value: "chatgpt_web" as const, label: "ChatGPT" },
   { value: "grok_web" as const, label: "Grok Bot" },
 ];
+const VIEWS: Array<{ value: api.WebModelView; label: string }> = [
+  ...PROVIDERS,
+  { value: "dots", label: "Dots" },
+];
 export default function WebModelConnectorsTab(props: Props) {
-  const [localProvider, setLocalProvider] = useState<api.WebModelProvider>("chatgpt_web");
+  const [localProvider, setLocalProvider] = useState<api.WebModelView>("chatgpt_web");
   const provider = props.provider ?? localProvider;
   const setProvider = props.onProviderChange ?? setLocalProvider;
   return (
@@ -30,7 +36,7 @@ export default function WebModelConnectorsTab(props: Props) {
       <div>
         <SegmentedChoice
           value={provider}
-          options={PROVIDERS}
+          options={VIEWS}
           onChange={setProvider}
           ariaLabel="Web Model"
           fill={false}
@@ -45,6 +51,13 @@ export default function WebModelConnectorsTab(props: Props) {
           />
         </div>
       ))}
+      <div hidden={provider !== "dots"}>
+        <DotsSettingsTab
+          isActive={props.isActive !== false && provider === "dots"}
+          onOpenChatGPT={() => setProvider("chatgpt_web")}
+          onOpenWebAccess={props.onOpenWebAccess}
+        />
+      </div>
     </div>
   );
 }
@@ -57,7 +70,7 @@ function ProviderSettings({
   isActive = true,
   onOpenWebAccess,
   provider,
-}: Props & { provider: api.WebModelProvider }) {
+}: Omit<Props, "provider"> & { provider: api.WebModelProvider }) {
   const { t } = useTranslation("settings");
   const label = (key: string, options?: Record<string, string>) =>
     t(
@@ -180,6 +193,10 @@ function ProviderSettings({
   const url = tokenUrl ? new URL(tokenUrl, window.location.href).toString() : "";
   // An older Web server reports no base; judge its connector URL instead. An empty
   // base (no Web access address) still warns, and the page's own address never counts.
+  const copyUrl = () =>
+    void copyTextToClipboard(url).then((ok) =>
+      ok ? setCopied(true) : setError(label("copyFailed")),
+    );
   const address = connectorAddress(connectorBase ?? connector?.connector_url ?? "");
   const browserState = browser.verification_required
     ? "verification"
@@ -340,7 +357,18 @@ function ProviderSettings({
             </div>
           </CardBlock>
         )}
-        {url && (
+        {url && provider === "chatgpt_web" && (
+          <CardBlock>
+            <SettingsNotice tone="warning">{label("copyOnce")}</SettingsNotice>
+            <ChatGPTPluginSetup
+              disabled={actionsDisabled}
+              urlCopied={copied}
+              onCopyUrl={copyUrl}
+              onCopyFailed={() => setError(label("copyFailed"))}
+            />
+          </CardBlock>
+        )}
+        {url && provider !== "chatgpt_web" && (
           <CardBlock>
             <SettingsNotice
               tone="warning"
@@ -349,11 +377,7 @@ function ProviderSettings({
                   type="button"
                   className={primaryButtonClass()}
                   disabled={actionsDisabled}
-                  onClick={() =>
-                    void copyTextToClipboard(url).then((ok) =>
-                      ok ? setCopied(true) : setError(label("copyFailed")),
-                    )
-                  }
+                  onClick={copyUrl}
                 >
                   {label(copied ? "copied" : "copy")}
                 </button>
@@ -428,29 +452,4 @@ function ProviderSettings({
       <SettingsNotice>{label("actorHint")}</SettingsNotice>
     </SettingsPage>
   );
-}
-
-type ConnectorAddress =
-  | { kind: "https" }
-  | { kind: "missing" }
-  | { kind: "invalid"; origin: string };
-
-/**
- * Check the configured address before a connector exists. HTTPS on a known
- * local host cannot be used by an external service. Other HTTPS addresses are
- * only configuration candidates; this does not test DNS, TLS or connectivity.
- * Notices show the origin, never the private connector path.
- */
-function connectorAddress(address: string): ConnectorAddress {
-  let url: URL;
-  try {
-    url = new URL(address);
-  } catch {
-    return { kind: "missing" };
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return { kind: "missing" };
-  if (url.protocol === "https:" && !isLocalWebHostname(url.hostname)) {
-    return { kind: "https" };
-  }
-  return { kind: "invalid", origin: url.origin };
 }

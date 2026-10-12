@@ -22,6 +22,10 @@ export type WebModelConnector = {
   last_wait_status?: string;
   last_turn_id?: string;
   last_error?: string;
+  /** Recent event subscription calls: outcome and a fixed reason code only. */
+  events_log?: DotsEventCall[];
+  /** The Actor this connector's Dot is bound to, if any. */
+  dots_actor?: { group_id: string; actor_id: string } | null;
   connector_url?: string;
   connector_url_with_token?: string;
   connector_url_path_token?: string;
@@ -45,6 +49,8 @@ export type DotsPhase =
   | "interrupted"
   | "failed"
   | "stopped";
+
+export type DotsEventCall = { at: string; method: string; ok: boolean; reason: string | null };
 
 export type DotsActorState = {
   group_id: string;
@@ -276,6 +282,8 @@ export async function fetchWebModelConnectors() {
 }
 
 export type WebModelProvider = "chatgpt_web" | "grok_web";
+/** A Web Models settings view: a provider, or Dots on the shared ChatGPT connector. */
+export type WebModelView = WebModelProvider | "dots";
 
 export async function createWebModelConnector(provider: WebModelProvider = "chatgpt_web") {
   return apiJson<WebModelConnectorCreateResult>("/api/v1/web-model/connectors", {

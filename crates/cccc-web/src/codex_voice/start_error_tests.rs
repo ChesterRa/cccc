@@ -74,19 +74,22 @@ fn analyst_timeout_credentials_and_recording_conflicts_stay_distinct() {
     );
 }
 
+fn no_proxy_client(timeout: std::time::Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .timeout(timeout)
+        .build()
+        .expect("client")
+}
+
 #[tokio::test]
-async fn request_timeout_and_connection_failure_do_not_become_login_errors() {
+async fn request_timeout_does_not_become_a_login_error() {
+    // TCP can connect but no HTTP answer is sent; no provider traffic.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener");
     let address = listener.local_addr().expect("address");
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(std::time::Duration::from_millis(100))
-        .build()
-        .expect("client");
-    // TCP can connect but no HTTP answer is sent; no provider traffic.
-    let error = client
+    let error = no_proxy_client(std::time::Duration::from_millis(100))
         .get(format!("http://{address}/?private-token=secret"))
         .send()
         .await
@@ -95,18 +98,23 @@ async fn request_timeout_and_connection_failure_do_not_become_login_errors() {
     let diagnostic = StartDiagnostic::from_error(&error, 100);
     assert_eq!(diagnostic.code, "codex_voice_realtime_timeout");
     assert!(!diagnostic.details().to_string().contains("secret"));
-    drop(listener);
-    let error = client
-        .get(format!("http://{address}/"))
+}
+
+#[tokio::test]
+async fn connection_failure_does_not_become_a_login_error() {
+    // Nothing can listen on port 0, so connecting fails at once (refused on
+    // Linux, address not available on macOS). A freed port could be taken by
+    // a parallel test, and a bound socket that never listens hangs on macOS.
+    // The wide timeout keeps a loaded run from reporting a timeout instead.
+    let error = no_proxy_client(std::time::Duration::from_secs(10))
+        .get("http://127.0.0.1:0/")
         .send()
         .await
-        .expect_err("closed port");
+        .expect_err("connection failure");
     let error = Error::new(error).context(StartStage::Realtime);
-    assert_eq!(
-        StartDiagnostic::from_error(&error, 2).details()["request_kind"],
-        "connect"
-    );
-    assert!(StartDiagnostic::from_error(&error, 2).details()["os_error"].is_number());
+    let details = StartDiagnostic::from_error(&error, 2).details();
+    assert_eq!(details["request_kind"], "connect");
+    assert!(details["os_error"].is_number());
     assert_eq!(
         StartDiagnostic::from_error(&error, 2).code,
         "codex_voice_realtime_connection_failed"

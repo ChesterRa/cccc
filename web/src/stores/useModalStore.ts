@@ -53,7 +53,7 @@ interface ModalState {
   settingsTarget: {
     scope?: "group" | "global";
     tab?: string;
-    webModelProvider?: "chatgpt_web" | "grok_web";
+    webModelProvider?: "chatgpt_web" | "grok_web" | "dots";
     voiceSection?: "secretary" | "realtime";
     voiceAudio?: boolean;
     voiceAnalyst?: boolean;
@@ -66,7 +66,7 @@ interface ModalState {
   openSettingsTarget: (target: {
     scope?: "group" | "global";
     tab?: string;
-    webModelProvider?: "chatgpt_web" | "grok_web";
+    webModelProvider?: "chatgpt_web" | "grok_web" | "dots";
     voiceSection?: "secretary" | "realtime";
     voiceAudio?: boolean;
     voiceAnalyst?: boolean;

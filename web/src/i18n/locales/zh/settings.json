@@ -1502,7 +1502,7 @@
   },
   "webModelShared": {
     "title": "ChatGPT 共享设置",
-    "description": "ChatGPT Web Model 使用浏览器对话，Dots 使用原生事件任务。同一 ChatGPT 账号复用现有 CCCC 插件；Dots 无需打开 CCCC 浏览器登录窗口。",
+    "description": "ChatGPT Web Model Actor 在 CCCC 专用浏览器中对话。登录一次，每个 Actor 保持独立窗口和对话。",
     "upgrade": "此版本需要重新配置共享连接器并配对对话，原有对话和历史记录会保留。",
     "login": "共享 ChatGPT 登录",
     "loginHint": "所有 Actor 窗口共享此登录。退出登录会影响全部 ChatGPT Actor；关闭登录窗口不影响 Actor 窗口和已保存的登录。",
@@ -1514,7 +1514,7 @@
     "check": "检查登录",
     "close": "关闭登录窗口",
     "connector": "一个 CCCC 连接器",
-    "connectorHint": "在 ChatGPT 中添加一次此连接器。Web Model 对话在启动时自动连接；Dots 通过该 Actor 配置的原生事件任务连接。",
+    "connectorHint": "在 ChatGPT 中添加一次此连接器。Web Model 对话在启动时自动连接。Dots 也使用这个连接器，详见 Dots 页。",
     "publicUrlMissing": "还没有配置 Web 访问的公网地址。ChatGPT 只能通过公网 HTTPS 地址访问此连接器。",
     "publicUrlInvalid": "当前配置地址 {{url}} 不满足公网 HTTPS 要求。请在 Web 访问中设置外部服务可访问的 HTTPS 地址。",
     "webAccess": "Web 访问设置",
@@ -1531,10 +1531,20 @@
     "revokeHint": "所有 ChatGPT Actor 将失去工具访问权限。重新创建连接器后需要重新配对各对话。",
     "confirm": "确认",
     "cancel": "取消",
-    "actorHint": "浏览器对话请选择 ChatGPT Web Model，原生事件请选择 ChatGPT Dots。在 Dots Actor 主面板中连接、复制设置说明，并在 Dots 中确认保存原生任务。",
+    "actorHint": "创建 ChatGPT Web Model Actor，在它的对话中启用 CCCC 连接器，然后正常启动 Actor 即可。",
     "maintenance": "管理连接器凭据",
     "notSeen": "尚未收到连接器请求，请在 ChatGPT 中添加此连接器以完成设置。",
-    "lastSeen": "最近连接器请求：{{time}}"
+    "lastSeen": "最近连接器请求：{{time}}",
+    "pluginSetup": {
+      "title": "在 ChatGPT 中添加 CCCC 插件（每个账号一次）",
+      "path": "在 ChatGPT 中打开 Plugins，选择 ＋ → Add custom MCP server，按下面三项填写。Dot 无法自己添加。",
+      "openPlugins": "打开 ChatGPT 插件设置 ↗",
+      "name": "名称",
+      "url": "URL",
+      "auth": "认证方式",
+      "urlHidden": "私密 URL，已隐藏，请直接复制",
+      "copyName": "复制名称"
+    }
   },
   "webModelActor": {
     "title": "ChatGPT 对话",
@@ -1875,6 +1885,67 @@
     "subscriptionExpired": "事件订阅已过期：{{time}}",
     "notifyAgain": "暂停 CCCC 访问后再恢复，即可重新通知 ChatGPT 尚未领取的消息。如果订阅已失效，请重新获取设置说明，并在 Dots 中更新原生任务。",
     "pending_one": "{{count}} 条待办消息",
-    "pending_other": "{{count}} 条待办消息"
+    "pending_other": "{{count}} 条待办消息",
+    "status": {
+      "subscription": "事件订阅",
+      "permanent": "永久有效",
+      "notSubscribed": "未订阅",
+      "pending": "待办消息",
+      "lastTask": "上次任务",
+      "noTask": "暂无任务"
+    },
+    "delivery": {
+      "title": "最近一次投递",
+      "hint": "每条发给此 Actor 的消息都按这四步走完，卡在哪一步就停在哪一步。",
+      "empty": "还没有投递。有新消息时会自动唤醒 Dot。"
+    },
+    "steps": {
+      "queued": "已排队",
+      "queuedHint": "消息进入此 Actor 的队列",
+      "woken": "已唤醒",
+      "wokenHint": "CCCC 推送事件，ChatGPT 已接收",
+      "claimed": "已领取",
+      "claimedHint": "Dot 取走本轮任务并开始执行",
+      "completed": "已完成",
+      "completedHint": "回复写回工作组，回执已确认"
+    },
+    "settings": {
+      "instructions": "设置说明",
+      "instructionsHint": "在 Dots 中恢复或重建原生任务时使用。",
+      "shared": "共享 ChatGPT 连接器",
+      "sharedHint": "Dots 与 ChatGPT Web Model Actor 共用同一个 CCCC 插件。",
+      "disconnectHint": "先暂停 CCCC 访问并结清未完成的任务；Dots 中的原生任务需另外停用。"
+    },
+    "setup": {
+      "pluginTitle": "连接 CCCC 插件",
+      "pluginDone": "已完成：此 Actor 之前已通过插件连接到 CCCC。如果 Dot 说找不到 CCCC 工具，在插件设置里选 Refresh tools 即可。",
+      "copyTitle": "复制设置说明，粘贴给你的 Dot",
+      "waitTitle": "等待 CCCC 检测到订阅",
+      "tipsTitle": "Dot 说保存失败？",
+      "tipRefresh": "在 ChatGPT 插件设置里对 CCCC 选择 Refresh tools，再让 Dot 重试。",
+      "tipPermissions": "确认已允许 CCCC 插件领取、回复和完成任务。",
+      "tipRetry": "Dot 只回复“已设置”不算完成；CCCC 检测到订阅后，这里才会变成可接收任务。"
+    }
+  },
+  "dotsSettings": {
+    "title": "ChatGPT Dots",
+    "description": "Dots 通过 ChatGPT 原生事件接收任务，回复返回所在工作组；不需要 CCCC 浏览器登录窗口。",
+    "prereq": "前置条件",
+    "prereqHint": "Dots 与 ChatGPT 共用同一个 CCCC 连接器。这里只显示状态，请到 ChatGPT 页管理，避免建出第二个。",
+    "addressReady": "已配置公网 HTTPS Web 访问地址。",
+    "configureWebAccess": "Web 访问设置",
+    "connectorReady": "共享 CCCC 连接器已就绪。",
+    "connectorMissing": "请先在 ChatGPT 页创建共享 CCCC 连接器。",
+    "manageConnector": "到 ChatGPT 管理连接器",
+    "boundActor": "已绑定的 Dots Actor",
+    "boundHint": "一个 Dot 只连接一个 Actor。在该 Actor 的主面板中完成设置、查看投递进度。",
+    "actorReadFailed": "暂时无法读取此 Actor 的状态。下面显示的是最后一次确认的状态，会自动重试。",
+    "noActor": "还没有绑定 Dots Actor。创建运行时为 ChatGPT Dots 的 Actor，并在它的主面板中连接。",
+    "actorGroup": "工作组 {{group}}",
+    "diagnostics": "订阅诊断",
+    "diagnosticsHint": "最近 10 次订阅 / 取消订阅的结果，最新的在前。只记录原因代码，不记录凭据和回调地址。",
+    "noCalls": "还没有订阅记录。",
+    "callOk": "成功",
+    "callFailed": "失败 · {{reason}}"
   }
 }

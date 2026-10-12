@@ -77,9 +77,17 @@ fn public(item: &Value, base_url: &str) -> Value {
         "last_tool_name",
         "last_call_status",
         "last_error",
+        "events_log",
     ] {
         result[field] = item[field].clone();
     }
+    // Which Actor the Dot is bound to; its credentials and callback stay private.
+    let dots = &item["dots"];
+    result["dots_actor"] = if dots["actor_id"].is_string() {
+        json!({"group_id":dots["group_id"],"actor_id":dots["actor_id"]})
+    } else {
+        Value::Null
+    };
     result
 }
 

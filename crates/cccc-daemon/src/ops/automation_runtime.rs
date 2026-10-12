@@ -141,6 +141,10 @@ fn notify_idle_mail_recipients_with(
 }
 
 fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
+    if let Some(error) = &result.unread_failure {
+        // The notices written before it are still delivered below.
+        tracing::warn!(%error, "unread notice could not be written; a later tick retries it");
+    }
     let Ok(store) = GroupStore::new(home.clone()) else {
         return;
     };

@@ -542,6 +542,15 @@ MCP plugin connected to the ChatGPT account that owns the Dot. It does not type
 messages into a browser or require CCCC's hosted browser login window to remain
 open. The public HTTPS MCP endpoint must remain reachable.
 
+CCCC also calls ChatGPT back: it verifies each event subscription and wakes
+the Dot by sending signed HTTPS callbacks. Where direct HTTPS to ChatGPT is
+blocked or slow, start CCCC with `HTTPS_PROXY` (or `ALL_PROXY`) set; callbacks
+then go through that proxy unless `NO_PROXY` covers the host. Through a proxy,
+callbacks may reach only `openai.com` and `chatgpt.com` hosts. Without a proxy
+they connect directly and must resolve to public addresses. Settings → Web
+Models → Dots lists recent subscription attempts with their failure reason,
+such as `callback_dns_timeout` or `callback_proxy_failed`.
+
 In the Web UI, Dots connection setup and connection status require instance
 administrator access. Existing Group permissions still govern messaging and
 Actor controls.

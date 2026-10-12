@@ -1510,7 +1510,7 @@
   },
   "webModelShared": {
     "title": "ChatGPT 共通設定",
-    "description": "ChatGPT Web Model はブラウザーの会話、Dots はネイティブイベントタスクを使用します。同じ ChatGPT アカウントの CCCC プラグインを共用し、Dots に CCCC のブラウザーログイン画面は不要です。",
+    "description": "ChatGPT Web Model Actor は CCCC 専用ブラウザーで会話します。一度ログインすれば、各 Actor が独立したウィンドウと会話を保ちます。",
     "upgrade": "このバージョンでは共通コネクターの再設定と会話のペアリングが必要です。既存の会話と履歴は保持されます。",
     "login": "ChatGPT 共通ログイン",
     "loginHint": "すべての Actor ウィンドウがこのログインを共有します。ログアウトは全 ChatGPT Actor に影響します。ログインウィンドウを閉じても、Actor ウィンドウと保存済みのログインは維持されます。",
@@ -1522,7 +1522,7 @@
     "check": "ログインを確認",
     "close": "ログインウィンドウを閉じる",
     "connector": "CCCC 共通コネクター",
-    "connectorHint": "ChatGPT にこのコネクターを一度追加します。Web Model の会話は起動時に自動接続され、Dots は Actor に設定したネイティブイベントタスクで接続されます。",
+    "connectorHint": "ChatGPT にこのコネクターを一度追加します。Web Model の会話は起動時に自動接続されます。Dots も同じコネクターを使います。Dots ビューを参照してください。",
     "publicUrlMissing": "Web アクセスの公開アドレスがまだ設定されていません。ChatGPT はこのコネクターに公開 HTTPS アドレス経由でのみ接続できます。",
     "publicUrlInvalid": "設定されたアドレス {{url}} は公開 HTTPS の要件を満たしません。Web アクセスで外部サービスから接続できる HTTPS アドレスを設定してください。",
     "webAccess": "Web アクセス設定",
@@ -1539,10 +1539,20 @@
     "revokeHint": "全 ChatGPT Actor がツールにアクセスできなくなります。コネクターを再作成した場合は会話の再ペアリングが必要です。",
     "confirm": "確認",
     "cancel": "キャンセル",
-    "actorHint": "ブラウザーの会話には ChatGPT Web Model、ネイティブイベントには ChatGPT Dots を選択します。Dots Actor のパネルで接続し、設定手順をコピーして、Dots でネイティブタスクの保存を確認してください。",
+    "actorHint": "ChatGPT Web Model Actor を作成し、その会話で CCCC コネクターを有効にしてから、通常どおり Actor を起動してください。",
     "maintenance": "コネクター認証情報の管理",
     "notSeen": "コネクターのリクエストはまだ記録されていません。ChatGPT にこのコネクターを追加してください。",
-    "lastSeen": "最後のコネクターリクエスト：{{time}}"
+    "lastSeen": "最後のコネクターリクエスト：{{time}}",
+    "pluginSetup": {
+      "title": "ChatGPT に CCCC プラグインを追加（アカウントごとに 1 回）",
+      "path": "ChatGPT で Plugins を開き、＋ → Add custom MCP server を選んで次の 3 項目を入力します。Dot は自分で追加できません。",
+      "openPlugins": "ChatGPT のプラグイン設定を開く ↗",
+      "name": "名前",
+      "url": "URL",
+      "auth": "認証",
+      "urlHidden": "非公開 URL（非表示）。コピーしてください",
+      "copyName": "名前をコピー"
+    }
   },
   "webModelActor": {
     "title": "ChatGPT の会話",
@@ -1891,6 +1901,67 @@
     "subscriptionExpired": "イベントのサブスクリプションは期限切れです：{{time}}",
     "notifyAgain": "CCCC のアクセスを一時停止して再開すると、ChatGPT がまだ受け取っていないメッセージを再通知できます。サブスクリプションが無効な場合は設定手順を再取得し、Dots のネイティブタスクを更新してください。",
     "pending_one": "未処理メッセージ {{count}} 件",
-    "pending_other": "未処理メッセージ {{count}} 件"
+    "pending_other": "未処理メッセージ {{count}} 件",
+    "status": {
+      "subscription": "イベント購読",
+      "permanent": "無期限",
+      "notSubscribed": "未購読",
+      "pending": "未処理メッセージ",
+      "lastTask": "前回のタスク",
+      "noTask": "タスクはまだありません"
+    },
+    "delivery": {
+      "title": "直近の配信",
+      "hint": "この Actor へのメッセージはこの 4 ステップで進み、失敗したステップで止まります。",
+      "empty": "まだ配信はありません。新しいメッセージが届くと Dot を自動で起動します。"
+    },
+    "steps": {
+      "queued": "キュー済み",
+      "queuedHint": "メッセージがこの Actor のキューに入りました",
+      "woken": "起動済み",
+      "wokenHint": "CCCC がイベントを送り、ChatGPT が受け付けました",
+      "claimed": "受け取り済み",
+      "claimedHint": "Dot がこのターンを受け取り、実行中です",
+      "completed": "完了",
+      "completedHint": "返信がグループに戻り、受領が確認されました"
+    },
+    "settings": {
+      "instructions": "設定手順",
+      "instructionsHint": "Dots でネイティブタスクを復元・再作成するときに使います。",
+      "shared": "共有 ChatGPT コネクタ",
+      "sharedHint": "Dots と ChatGPT Web Model Actor は同じ CCCC プラグインを共有します。",
+      "disconnectHint": "先に CCCC アクセスを一時停止し、未完了の作業を解決してください。Dots 側のネイティブタスクも別途無効にしてください。"
+    },
+    "setup": {
+      "pluginTitle": "CCCC プラグインを接続",
+      "pluginDone": "完了：この Actor は以前プラグイン経由で CCCC に接続しています。Dot が CCCC のツールを見つけられない場合は、プラグイン設定で Refresh tools を選んでください。",
+      "copyTitle": "設定手順をコピーして Dot に貼り付け",
+      "waitTitle": "CCCC が購読を検出するのを待つ",
+      "tipsTitle": "Dot が保存に失敗したと言う場合",
+      "tipRefresh": "ChatGPT のプラグイン設定で CCCC の Refresh tools を選び、Dot に再試行させてください。",
+      "tipPermissions": "CCCC プラグインにタスクの受け取り・返信・完了を許可しているか確認してください。",
+      "tipRetry": "Dot が「設定済み」と返すだけでは完了ではありません。CCCC が購読を検出すると受付可能になります。"
+    }
+  },
+  "dotsSettings": {
+    "title": "ChatGPT Dots",
+    "description": "Dots は ChatGPT のネイティブイベントでタスクを受け取り、所属グループに返信します。CCCC のブラウザーログイン画面は不要です。",
+    "prereq": "前提条件",
+    "prereqHint": "Dots は ChatGPT の CCCC コネクターを共用します。ここでは状態のみ表示し、重複を防ぐため管理は ChatGPT ビューで行います。",
+    "addressReady": "公開 HTTPS の Web アドレスが設定されています。",
+    "configureWebAccess": "Web アクセス設定",
+    "connectorReady": "共有 CCCC コネクターは準備完了です。",
+    "connectorMissing": "先に ChatGPT ビューで共有 CCCC コネクターを作成してください。",
+    "manageConnector": "ChatGPT で管理",
+    "boundActor": "接続済みの Dots Actor",
+    "boundHint": "1 つの Dot は 1 つの Actor にのみ接続します。設定と配信状況はその Actor のメインパネルで確認します。",
+    "actorReadFailed": "この Actor の状態を今は読み取れませんでした。最後に確認できた状態を表示し、自動で再試行します。",
+    "noActor": "Dots Actor はまだ接続されていません。ランタイム ChatGPT Dots の Actor を作成し、そのメインパネルから接続してください。",
+    "actorGroup": "グループ {{group}}",
+    "diagnostics": "購読の診断",
+    "diagnosticsHint": "直近 10 回の購読・購読解除の結果（新しい順）。理由コードのみを記録し、資格情報やコールバック先は記録しません。",
+    "noCalls": "購読の記録はまだありません。",
+    "callOk": "成功",
+    "callFailed": "失敗 · {{reason}}"
   }
 }

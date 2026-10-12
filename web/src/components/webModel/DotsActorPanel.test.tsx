@@ -385,3 +385,48 @@ it("retires private instructions and rejects a pending action across an administ
   expect(host.textContent).not.toContain("synthetic retired private setup");
   expect(button("dotsActor.connect").disabled).toBe(false);
 });
+
+it("shows a permanent subscription and the latest delivery steps once subscribed", async () => {
+  mocks.load.mockResolvedValue(
+    state({ connected: true, subscribed: true, phase: "delivered", subscription_expires_at: null }),
+  );
+  await render();
+  expect(host.textContent).toContain("dotsActor.status.permanent");
+  const steps = [...host.querySelectorAll("li[data-step]")].map(
+    (step) => `${step.getAttribute("data-step")}:${step.getAttribute("data-state")}`,
+  );
+  // Accepted by ChatGPT is not claimed and not completed.
+  expect(steps).toEqual(["queued:done", "woken:done", "claimed:current", "completed:todo"]);
+  expect(host.textContent).not.toContain("dotsActor.setup.copyTitle");
+  expect(button("dotsActor.getInstructions")).toBeTruthy();
+});
+
+it("guides an unsubscribed Actor through the numbered setup instead of delivery steps", async () => {
+  mocks.load.mockResolvedValue(
+    state({ connected: false, subscribed: false, phase: "unconfigured" }),
+  );
+  await render({ onOpenSharedSettings: vi.fn() });
+  expect(host.textContent).toContain("dotsActor.status.notSubscribed");
+  expect(host.querySelector("li[data-step]")).toBeNull();
+  for (const key of ["pluginTitle", "copyTitle", "waitTitle", "tipsTitle"])
+    expect(host.textContent).toContain(`dotsActor.setup.${key}`);
+  expect(button("dotsActor.sharedSettings")).toBeTruthy();
+});
+
+it("skips the plugin step for an Actor connected before, such as after its subscription expired", async () => {
+  mocks.load.mockResolvedValue(
+    state({
+      connected: true,
+      subscribed: false,
+      phase: "waiting_subscription",
+      subscription_expires_at: 1,
+    }),
+  );
+  await render({ onOpenSharedSettings: vi.fn() });
+  const plugin = host.querySelector('li[data-setup-step="1"]')!;
+  expect(plugin.hasAttribute("data-done")).toBe(true);
+  expect(plugin.textContent).toContain("dotsActor.setup.pluginDone");
+  expect(plugin.querySelector("button")).toBeNull();
+  // Getting the instructions again is the one thing left to do.
+  expect(button("dotsActor.getInstructions")).toBeTruthy();
+});

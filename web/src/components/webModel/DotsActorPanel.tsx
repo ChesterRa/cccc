@@ -4,6 +4,15 @@ import * as api from "../../services/api";
 import type { DotsActorState } from "../../services/api";
 import { Button } from "../ui/button";
 import { formatMessageTimestamp } from "../../utils/time";
+import {
+  DotsDeliverySteps,
+  DotsSettingRow,
+  DotsSetupStep,
+  DotsSetupTips,
+  DotsStatusSummary,
+  dotsCard,
+} from "./DotsActorSections";
+import { phaseTone } from "./dotsActorStatus";
 
 type DotsActorPanelProps = {
   groupId: string;
@@ -45,7 +54,6 @@ function ActorPanel({
   isRunning = false,
   readOnly = false,
   canAccessConnection = true,
-  setup = false,
   saving = false,
   onOpenSharedSettings,
   onStateChange,
@@ -177,7 +185,7 @@ function ActorPanel({
       href="https://chatgpt.com/dots/home"
       target="_blank"
       rel="noopener noreferrer"
-      className="shrink-0 rounded-md px-2 py-1.5 text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2"
+      className="inline-flex h-9 shrink-0 items-center rounded-lg border border-[var(--glass-border-subtle)] px-3 text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2"
     >
       {t("dotsActor.openDots")}
     </a>
@@ -200,137 +208,128 @@ function ActorPanel({
       </section>
     );
 
+  const subscription = state?.subscription_expires_at
+    ? t(
+        state.subscription_expires_at <= Date.now()
+          ? "dotsActor.subscriptionExpired"
+          : "dotsActor.subscriptionExpires",
+        { time: new Date(state.subscription_expires_at).toLocaleString(i18n.language) },
+      )
+    : t(state?.subscribed ? "dotsActor.status.permanent" : "dotsActor.status.notSubscribed");
+  const lastTask = state?.last_execution
+    ? `${t(`dotsActor.lastExecution.${state.last_execution.status}`)}${
+        state.last_execution.completed_at
+          ? ` · ${formatMessageTimestamp(state.last_execution.completed_at)}`
+          : ""
+      }`
+    : t("dotsActor.status.noTask");
+  const connectButton = (
+    <Button
+      type="button"
+      variant={state?.subscribed ? "outline" : "default"}
+      disabled={locked || unresolved}
+      onClick={() => void update("connect")}
+    >
+      {t(state?.connected ? "dotsActor.getInstructions" : "dotsActor.connect")}
+    </Button>
+  );
+  const sharedButton = onOpenSharedSettings ? (
+    <Button
+      type="button"
+      variant="outline"
+      disabled={Boolean(action)}
+      onClick={onOpenSharedSettings}
+    >
+      {t("dotsActor.sharedSettings")}
+    </Button>
+  ) : null;
+  const disconnectRow =
+    !readOnly && state?.connected ? (
+      <DotsSettingRow
+        label={t("dotsActor.disconnect")}
+        hint={t(enabled ? "dotsActor.pauseBeforeChanging" : "dotsActor.settings.disconnectHint")}
+        danger
+      >
+        <Button
+          type="button"
+          variant="outline"
+          disabled={locked || Boolean(enabled) || unresolved}
+          onClick={() => void update("disconnect")}
+        >
+          {t("dotsActor.disconnect")}
+        </Button>
+      </DotsSettingRow>
+    ) : null;
+  const instructionsBox = instructions ? (
+    <>
+      <label className="text-xs font-medium" htmlFor={`dots-instructions-${actorId}`}>
+        {t("dotsActor.instructions")}
+      </label>
+      <textarea
+        id={`dots-instructions-${actorId}`}
+        readOnly
+        value={instructions}
+        rows={5}
+        className="min-h-32 w-full flex-1 resize-y rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-3 font-mono text-xs leading-relaxed"
+      />
+      <div>
+        <Button type="button" onClick={() => void copyInstructions()}>
+          {t(copied ? "dotsActor.copied" : "dotsActor.copyInstructions")}
+        </Button>
+      </div>
+    </>
+  ) : null;
+
   return (
-    <section className="min-h-0 overflow-y-auto text-sm" aria-label={t("dotsActor.title")}>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--glass-border-subtle)] pb-3">
+    <section
+      className="@container/dots flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto text-sm"
+      aria-label={t("dotsActor.title")}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="font-semibold">{t("dotsActor.title")}</div>
-          <p className="mt-1 text-[var(--color-text-secondary)]" role="status">
-            {state
-              ? t(`dotsActor.phases.${state.phase}`)
-              : t(readError ? "dotsActor.unavailable" : "common:loading")}
-            {state && state.pending_count > 0
-              ? ` · ${t("dotsActor.pending", { count: state.pending_count })}`
-              : ""}
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold">{t("dotsActor.title")}</h2>
+            <p
+              className={`inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold ${
+                state ? phaseTone(state.phase) : phaseTone("unconfigured")
+              }`}
+              role="status"
+            >
+              {state
+                ? t(`dotsActor.phases.${state.phase}`)
+                : t(readError ? "dotsActor.unavailable" : "common:loading")}
+              {state && state.pending_count > 0
+                ? ` · ${t("dotsActor.pending", { count: state.pending_count })}`
+                : ""}
+            </p>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
+            {t("dotsActor.hint")}
           </p>
         </div>
         {dotsLink}
       </div>
-      <p className="mt-3 text-xs leading-relaxed text-[var(--color-text-muted)]">
-        {t("dotsActor.hint")}
-      </p>
-      {state?.last_execution ? (
-        <p className="mt-3 text-xs text-[var(--color-text-secondary)]">
-          {t(`dotsActor.lastExecution.${state.last_execution.status}`)}
-          {state.last_execution.completed_at
-            ? ` · ${formatMessageTimestamp(state.last_execution.completed_at)}`
-            : ""}
-        </p>
-      ) : null}
-      {state?.subscription_expires_at ? (
-        <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-          {t(
-            state.subscription_expires_at <= Date.now()
-              ? "dotsActor.subscriptionExpired"
-              : "dotsActor.subscriptionExpires",
-            { time: new Date(state.subscription_expires_at).toLocaleString(i18n.language) },
-          )}
-        </p>
-      ) : null}
       {state?.error_code ? (
-        <p className="mt-3 text-xs text-rose-600 dark:text-rose-400">
+        <p className="text-xs text-rose-600 dark:text-rose-400">
           {t(deliveryErrorKeys[state.error_code] || "dotsActor.executionError")}
         </p>
       ) : null}
       {state?.phase === "failed" && !unresolved ? (
-        <p className="mt-3 text-xs text-[var(--color-text-muted)]">{t("dotsActor.notifyAgain")}</p>
+        <p className="text-xs text-[var(--color-text-muted)]">{t("dotsActor.notifyAgain")}</p>
       ) : null}
       {readError ? (
-        <p className="mt-3 text-xs text-amber-700 dark:text-amber-300" role="status">
+        <p className="text-xs text-amber-700 dark:text-amber-300" role="status">
           {readError}
         </p>
       ) : null}
       {actionError ? (
-        <p className="mt-3 text-xs text-rose-600 dark:text-rose-400" role="alert">
+        <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
           {actionError}
         </p>
       ) : null}
-      {instructions ? (
-        <div className="mt-4 space-y-2">
-          <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-[var(--color-text-secondary)]">
-            <li>{t("dotsActor.nativeStepCopy")}</li>
-            <li>{t("dotsActor.nativeStepPasteConfirm")}</li>
-            <li>{t("dotsActor.nativeStepObserve")}</li>
-          </ol>
-          <label className="block text-xs font-medium" htmlFor={`dots-instructions-${actorId}`}>
-            {t("dotsActor.instructions")}
-          </label>
-          <textarea
-            id={`dots-instructions-${actorId}`}
-            readOnly
-            value={instructions}
-            rows={5}
-            className="w-full resize-y rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-3 text-xs leading-relaxed"
-          />
-          <Button type="button" variant="outline" onClick={() => void copyInstructions()}>
-            {t(copied ? "dotsActor.copied" : "dotsActor.copyInstructions")}
-          </Button>
-        </div>
-      ) : null}
-      {readOnly ? (
-        !state?.subscribed ? (
-          <p className="mt-4 text-xs text-[var(--color-text-secondary)]">
-            {t("dotsActor.adminSetup")}
-          </p>
-        ) : null
-      ) : (
-        <div className="mt-4 space-y-3">
-          {!state?.subscribed && !instructions ? (
-            <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-              {t("dotsActor.connectHint")}
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant={state?.subscribed ? "outline" : "default"}
-              disabled={locked || unresolved}
-              onClick={() => void update("connect")}
-            >
-              {t(state?.connected ? "dotsActor.getInstructions" : "dotsActor.connect")}
-            </Button>
-            {onOpenSharedSettings ? (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={Boolean(action)}
-                onClick={onOpenSharedSettings}
-              >
-                {t("dotsActor.sharedSettings")}
-              </Button>
-            ) : null}
-          </div>
-          {state?.connected ? (
-            <details open={setup || undefined} className="text-xs text-[var(--color-text-muted)]">
-              <summary className="cursor-pointer py-1.5">
-                {t("dotsActor.connectionSettings")}
-              </summary>
-              {enabled ? <p className="my-2">{t("dotsActor.pauseBeforeChanging")}</p> : null}
-              <Button
-                className="mt-2"
-                type="button"
-                variant="outline"
-                disabled={locked || Boolean(enabled) || unresolved}
-                onClick={() => void update("disconnect")}
-              >
-                {t("dotsActor.disconnect")}
-              </Button>
-            </details>
-          ) : null}
-        </div>
-      )}
+      <DotsStatusSummary state={state} t={t} subscription={subscription} lastTask={lastTask} />
       {canResolve && !readOnly ? (
-        <div className="mt-4 space-y-2">
+        <div className={`${dotsCard} flex flex-wrap items-center justify-between gap-3 px-4 py-3`}>
           <p className="text-xs text-[var(--color-text-muted)]">
             {t("dotsActor.reviewUnfinished")}
           </p>
@@ -344,6 +343,83 @@ function ActorPanel({
           </Button>
         </div>
       ) : null}
+      {readOnly && !state?.subscribed ? (
+        <p className="text-xs text-[var(--color-text-secondary)]">{t("dotsActor.adminSetup")}</p>
+      ) : state?.subscribed || readOnly ? (
+        <div className="grid flex-1 gap-4 @3xl/dots:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          {state ? <DotsDeliverySteps state={state} t={t} /> : null}
+          {readOnly ? null : (
+            <section
+              className={`${dotsCard} flex flex-col`}
+              aria-label={t("dotsActor.connectionSettings")}
+            >
+              <h3 className="px-4 py-3 font-semibold">{t("dotsActor.connectionSettings")}</h3>
+              {instructions ? (
+                <div className="flex flex-col gap-2 border-t border-[var(--glass-border-subtle)] px-4 py-3">
+                  {instructionsBox}
+                </div>
+              ) : null}
+              <DotsSettingRow
+                label={t("dotsActor.settings.instructions")}
+                hint={t("dotsActor.settings.instructionsHint")}
+              >
+                {connectButton}
+              </DotsSettingRow>
+              {sharedButton ? (
+                <DotsSettingRow
+                  label={t("dotsActor.settings.shared")}
+                  hint={t("dotsActor.settings.sharedHint")}
+                >
+                  {sharedButton}
+                </DotsSettingRow>
+              ) : null}
+              <div className="flex-1" />
+              {disconnectRow}
+            </section>
+          )}
+        </div>
+      ) : (
+        <div className="grid flex-1 gap-4 @3xl/dots:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <ol className={`${dotsCard} flex flex-col overflow-hidden`}>
+            {/* A bound Actor reached CCCC through the plugin before: nothing to redo. */}
+            <DotsSetupStep
+              number={1}
+              title={t("dotsActor.setup.pluginTitle")}
+              hint={t(state?.connected ? "dotsActor.setup.pluginDone" : "dotsActor.connectHint")}
+              done={Boolean(state?.connected)}
+            >
+              {sharedButton ? <div>{sharedButton}</div> : null}
+            </DotsSetupStep>
+            <DotsSetupStep
+              number={2}
+              title={t("dotsActor.setup.copyTitle")}
+              hint={t("dotsActor.nativeStepCopy")}
+              active
+            >
+              {instructionsBox}
+              {instructions ? (
+                <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+                  {t("dotsActor.nativeStepPasteConfirm")}
+                </p>
+              ) : (
+                <div>{connectButton}</div>
+              )}
+            </DotsSetupStep>
+            <DotsSetupStep
+              number={3}
+              title={t("dotsActor.setup.waitTitle")}
+              hint={t("dotsActor.nativeStepObserve")}
+            />
+          </ol>
+          <DotsSetupTips t={t}>
+            {disconnectRow ? (
+              <div className={`${dotsCard} overflow-hidden [&>div]:border-t-0`}>
+                {disconnectRow}
+              </div>
+            ) : null}
+          </DotsSetupTips>
+        </div>
+      )}
     </section>
   );
 }

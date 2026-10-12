@@ -1510,7 +1510,7 @@
   },
   "webModelShared": {
     "title": "ChatGPT shared setup",
-    "description": "ChatGPT Web Model uses browser conversations; Dots uses native event tasks. Both reuse the CCCC plugin in the same ChatGPT account. Dots does not need a CCCC browser login window.",
+    "description": "ChatGPT Web Model Actors chat in CCCC's browser. Sign in once; each Actor keeps its own window and conversation.",
     "upgrade": "This version requires a new shared connector and conversation pairing. Old chats and history are preserved.",
     "login": "Shared ChatGPT login",
     "loginHint": "All Actor windows share this login. Signing out affects every ChatGPT Actor. Closing the login window leaves Actor windows and the saved login intact.",
@@ -1522,7 +1522,7 @@
     "check": "Check login",
     "close": "Close login window",
     "connector": "One CCCC connector",
-    "connectorHint": "Add this connector once in ChatGPT. Web Model conversations connect automatically on start. Dots connects through the native event task set up for its Actor.",
+    "connectorHint": "Add this connector once in ChatGPT. Web Model conversations connect automatically on start. Dots uses this same connector; see the Dots view.",
     "publicUrlMissing": "No public Web access address is configured yet. ChatGPT can reach this connector only through a public HTTPS address.",
     "publicUrlInvalid": "The configured address {{url}} does not meet the public HTTPS requirement. Set an externally accessible HTTPS address in Web access.",
     "webAccess": "Web access settings",
@@ -1539,10 +1539,20 @@
     "revokeHint": "All ChatGPT Actors will lose tool access. Creating a connector again will require pairing their conversations again.",
     "confirm": "Confirm",
     "cancel": "Cancel",
-    "actorHint": "Choose ChatGPT Web Model for a browser conversation, or ChatGPT Dots for native events. In the Dots Actor pane, connect, copy setup instructions, and confirm saving the native task in Dots.",
+    "actorHint": "Create a ChatGPT Web Model Actor, enable the CCCC connector in its conversation, then start the Actor as usual.",
     "maintenance": "Manage connector credential",
     "notSeen": "No connector request recorded yet. Add this connector in ChatGPT to finish setup.",
-    "lastSeen": "Last connector request: {{time}}"
+    "lastSeen": "Last connector request: {{time}}",
+    "pluginSetup": {
+      "title": "Add CCCC as a plugin in ChatGPT (once per account)",
+      "path": "In ChatGPT, open Plugins, choose + and Add custom MCP server, then enter these values. A Dot cannot add it by itself.",
+      "openPlugins": "Open ChatGPT plugins ↗",
+      "name": "Name",
+      "url": "URL",
+      "auth": "Authentication",
+      "urlHidden": "Private URL, hidden; copy it",
+      "copyName": "Copy name"
+    }
   },
   "webModelActor": {
     "title": "ChatGPT conversation",
@@ -1891,6 +1901,67 @@
     "subscriptionExpires": "Event subscription expires: {{time}}",
     "subscriptionExpired": "Event subscription expired: {{time}}",
     "notifyAgain": "Pause CCCC access, then resume it to notify messages that ChatGPT has not claimed. If the subscription is no longer valid, get setup instructions again and update the native task in Dots.",
-    "pending": "{{count}} pending messages"
+    "pending": "{{count}} pending messages",
+    "status": {
+      "subscription": "Event subscription",
+      "permanent": "Permanent",
+      "notSubscribed": "Not subscribed",
+      "pending": "Pending messages",
+      "lastTask": "Last task",
+      "noTask": "No task yet"
+    },
+    "delivery": {
+      "title": "Latest delivery",
+      "hint": "Every message to this Actor goes through these four steps; it stops at the step that fails.",
+      "empty": "Nothing delivered yet. New messages wake the Dot automatically."
+    },
+    "steps": {
+      "queued": "Queued",
+      "queuedHint": "The message is waiting for this Actor",
+      "woken": "Woken",
+      "wokenHint": "CCCC sent the event and ChatGPT accepted it",
+      "claimed": "Claimed",
+      "claimedHint": "The Dot took this turn and is working on it",
+      "completed": "Completed",
+      "completedHint": "The reply is back in the group and the receipt is confirmed"
+    },
+    "settings": {
+      "instructions": "Setup instructions",
+      "instructionsHint": "Use them to restore or rebuild the native task in Dots.",
+      "shared": "Shared ChatGPT connector",
+      "sharedHint": "Dots and ChatGPT Web Model Actors share one CCCC plugin.",
+      "disconnectHint": "Pause CCCC access and resolve unfinished work first. Also disable the native task in Dots."
+    },
+    "setup": {
+      "pluginTitle": "Connect the CCCC plugin",
+      "pluginDone": "Already connected: this Actor reached CCCC through the plugin before. If the Dot says CCCC tools are missing, choose Refresh tools in its plugin settings.",
+      "copyTitle": "Copy the setup instructions to your Dot",
+      "waitTitle": "Wait for CCCC to detect the subscription",
+      "tipsTitle": "Did the Dot say saving failed?",
+      "tipRefresh": "In ChatGPT's plugin settings, choose Refresh tools for CCCC, then ask the Dot to retry.",
+      "tipPermissions": "Make sure the CCCC plugin may claim, reply to and complete tasks.",
+      "tipRetry": "A Dot replying \"done\" is not enough; this page turns ready only when CCCC sees the subscription."
+    }
+  },
+  "dotsSettings": {
+    "title": "ChatGPT Dots",
+    "description": "Dots receive work through ChatGPT native events and reply to their Group. They do not need CCCC's browser login window.",
+    "prereq": "Prerequisites",
+    "prereqHint": "Dots share the ChatGPT CCCC connector. Its status shows here; manage it in the ChatGPT view so only one exists.",
+    "addressReady": "Public HTTPS Web address is configured.",
+    "configureWebAccess": "Web access settings",
+    "connectorReady": "Shared CCCC connector is ready.",
+    "connectorMissing": "Create the shared CCCC connector in the ChatGPT view first.",
+    "manageConnector": "Manage in ChatGPT",
+    "boundActor": "Bound Dots Actor",
+    "boundHint": "One Dot serves one Actor. Set it up and follow deliveries in that Actor's main pane.",
+    "actorReadFailed": "Couldn't read this Actor's status just now. Showing the last known status; it retries automatically.",
+    "noActor": "No Dots Actor is bound yet. Create an Actor with runtime ChatGPT Dots and connect it from its main pane.",
+    "actorGroup": "Group {{group}}",
+    "diagnostics": "Subscription diagnostics",
+    "diagnosticsHint": "The last 10 event subscribe and unsubscribe calls, newest first. Only reason codes are kept, never credentials or callback addresses.",
+    "noCalls": "No subscription calls yet.",
+    "callOk": "Succeeded",
+    "callFailed": "Failed · {{reason}}"
   }
 }

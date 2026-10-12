@@ -1,0 +1,98 @@
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { copyTextToClipboard } from "../../../utils/copy";
+import { primaryButtonClass, secondaryButtonClass } from "./types";
+
+const CHATGPT_PLUGINS_URL = "https://chatgpt.com/settings/plugins-settings";
+const PLUGIN_NAME = "CCCC";
+
+interface Props {
+  disabled: boolean;
+  urlCopied: boolean;
+  onCopyUrl: () => void;
+  onCopyFailed: () => void;
+}
+
+/**
+ * The one manual step a Dot cannot do itself: adding CCCC as a custom MCP
+ * plugin in the ChatGPT account. Every value to enter is one click away.
+ */
+export function ChatGPTPluginSetup({ disabled, urlCopied, onCopyUrl, onCopyFailed }: Props) {
+  const { t } = useTranslation("settings");
+  const [nameCopied, setNameCopied] = useState(false);
+  const fields = [
+    {
+      key: "name",
+      value: <code className="font-mono">{PLUGIN_NAME}</code>,
+      action: (
+        <button
+          type="button"
+          className={secondaryButtonClass("sm")}
+          disabled={disabled}
+          onClick={() =>
+            void copyTextToClipboard(PLUGIN_NAME).then((ok) =>
+              ok ? setNameCopied(true) : onCopyFailed(),
+            )
+          }
+        >
+          {t(nameCopied ? "webModelShared.copied" : "webModelShared.pluginSetup.copyName")}
+        </button>
+      ),
+    },
+    {
+      key: "url",
+      // The secret stays off screen; copying is the only way it leaves.
+      value: (
+        <span className="text-[var(--color-text-muted)]">
+          {t("webModelShared.pluginSetup.urlHidden")}
+        </span>
+      ),
+      action: (
+        <button
+          type="button"
+          className={primaryButtonClass()}
+          disabled={disabled}
+          onClick={onCopyUrl}
+        >
+          {t(urlCopied ? "webModelShared.copied" : "webModelShared.copy")}
+        </button>
+      ),
+    },
+    { key: "auth", value: <code className="font-mono">No authentication</code>, action: null },
+  ];
+  return (
+    <div className="space-y-3" data-chatgpt-plugin-setup>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[13px] font-medium text-[var(--color-text-primary)]">
+          {t("webModelShared.pluginSetup.title")}
+        </p>
+        <a
+          href={CHATGPT_PLUGINS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={secondaryButtonClass("sm")}
+        >
+          {t("webModelShared.pluginSetup.openPlugins")}
+        </a>
+      </div>
+      <p className="text-xs leading-5 text-[var(--color-text-muted)]">
+        {t("webModelShared.pluginSetup.path")}
+      </p>
+      <dl className="divide-y divide-[var(--glass-border-subtle)] rounded-[10px] border border-[var(--glass-border-subtle)]">
+        {fields.map((field) => (
+          <div
+            key={field.key}
+            data-plugin-field={field.key}
+            className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3.5 py-2.5 text-[13px]"
+          >
+            <dt className="w-24 shrink-0 text-[var(--color-text-secondary)]">
+              {t(`webModelShared.pluginSetup.${field.key}`)}
+            </dt>
+            <dd className="min-w-0 flex-1">{field.value}</dd>
+            {field.action}
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}

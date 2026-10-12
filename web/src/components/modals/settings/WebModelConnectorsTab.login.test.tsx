@@ -225,6 +225,7 @@ describe("shared Web Model login and connector", () => {
     expect(radios.map((r) => [r.textContent, r.getAttribute("aria-checked")])).toEqual([
       ["ChatGPT", "true"],
       ["Grok Bot", "false"],
+      ["Dots", "false"],
     ]);
     await act(async () => {
       radios[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
@@ -404,6 +405,27 @@ describe("shared Web Model login and connector", () => {
     expect(mocks.create).toHaveBeenLastCalledWith("grok_web");
     await act(async () => select("ChatGPT").click());
     expect(button("copy")).toBeDefined();
+    await act(async () => button("copy").click());
+    expect(mocks.copy).toHaveBeenLastCalledWith("https://fixture.test/token/test-only");
+  });
+  it("lays out the one manual ChatGPT plugin step with every value one click away", async () => {
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    await act(async () => button("create").click());
+    const card = host.querySelector("[data-chatgpt-plugin-setup]")!;
+    const fields = Array.from(card.querySelectorAll("[data-plugin-field]")).map((field) =>
+      field.getAttribute("data-plugin-field"),
+    );
+    expect(fields).toEqual(["name", "url", "auth"]);
+    expect(card.querySelector('[data-plugin-field="auth"]')!.textContent).toContain(
+      "No authentication",
+    );
+    expect(card.querySelector("a")!.getAttribute("href")).toBe(
+      "https://chatgpt.com/settings/plugins-settings",
+    );
+    // The private URL is only ever copied, never rendered.
+    expect(host.textContent).not.toContain("test-only");
+    await act(async () => button("pluginSetup.copyName").click());
+    expect(mocks.copy).toHaveBeenLastCalledWith("CCCC");
     await act(async () => button("copy").click());
     expect(mocks.copy).toHaveBeenLastCalledWith("https://fixture.test/token/test-only");
   });

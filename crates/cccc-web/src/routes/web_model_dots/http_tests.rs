@@ -862,7 +862,7 @@ async fn subscription_refresh_and_unsubscribe_use_modern_wire_contract_and_fixed
             saved["dots"]["subscription"]["verified_at_ms"], verified,
             "refresh does not slide the verification cache expiry"
         );
-        if ttl == Some(Value::Null) {
+        if ttl != Some(json!(30_000)) {
             assert_eq!(response["result"]["refreshBefore"], Value::Null);
             assert_eq!(saved["dots"]["subscription"]["expires_at_ms"], Value::Null);
         } else {
@@ -874,7 +874,7 @@ async fn subscription_refresh_and_unsubscribe_use_modern_wire_contract_and_fixed
             .expect("ISO expiry")
             .timestamp_millis();
             assert_eq!(saved["dots"]["subscription"]["expires_at_ms"], expires);
-            let max = if ttl.is_none() { 3_600_000 } else { 30_000 };
+            let max = 30_000;
             let remaining = expires - chrono::Utc::now().timestamp_millis();
             assert!((max - 5000..=max).contains(&remaining));
         }
@@ -893,5 +893,45 @@ async fn subscription_refresh_and_unsubscribe_use_modern_wire_contract_and_fixed
         fixture.connector()["dots"]["subscription"]["enabled"],
         false
     );
+    // A later call does not hide why an earlier subscription was refused, and
+    // the log names no credential or callback address.
+    let log = fixture.connector()["events_log"].clone();
+    let calls = log.as_array().expect("event call log");
+    assert_eq!(calls.len(), 5);
+    assert_eq!(
+        calls[3],
+        json!({"at":calls[3]["at"],"method":"events/subscribe","ok":false,"reason":"non_public_callback"})
+    );
+    assert_eq!(
+        calls[4],
+        json!({"at":calls[4]["at"],"method":"events/unsubscribe","ok":true,"reason":null})
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|call| call["ok"] == (call["reason"] == Value::Null))
+    );
+    let text = log.to_string();
+    assert!(!text.contains(&token) && !text.contains(&secret) && !text.contains(callback));
+    // The settings page reads the same log and the bound Actor from the list,
+    // and the list carries no subscription credential or callback.
+    let (status, listed) = fixture
+        .send(
+            Request::builder()
+                .uri("/api/v1/web-model/connectors")
+                .header(header::AUTHORIZATION, format!("Bearer {}", fixture.admin))
+                .body(Body::empty())
+                .expect("list request"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let listed = &listed["result"]["connectors"][0];
+    assert_eq!(listed["events_log"], log);
+    assert_eq!(
+        listed["dots_actor"],
+        json!({"group_id":fixture.group_id,"actor_id":"dots"})
+    );
+    let listed = listed.to_string();
+    assert!(!listed.contains(&token) && !listed.contains(&secret) && !listed.contains(callback));
     fixture.close().await;
 }

@@ -93,11 +93,11 @@ fn setup_instruction(token: &str) -> String {
             "The event is only a wake notification. If work_available is returned, use the actor_token returned in that tool result for this turn's CCCC calls, including cccc_code_exec. ",
             "Process only the returned turn according to its system_prompt and instructions. ",
             "Reply through CCCC, then call cccc_runtime_complete_turn with the exact turn_id and event_ids and that execution actor_token. ",
-            "Save the binding credential only in this native task's configuration. Never use it for business calls or put either credential in CCCC messages, files, commands, JavaScript source or replies. ",
+            "The subscription arguments are this native task's configuration: keep the binding credential only there. Never use it for business calls or put either credential in CCCC messages, files, commands, JavaScript source or replies. ",
             "If idle, stopped, or turn_in_progress is returned, exit without recovering or completing another task. Do not repeatedly poll. ",
             "Pausing CCCC access rejects claims and revokes old execution credentials; it does not necessarily stop ChatGPT's cloud work. ",
             "When the user starts this same Actor again, its persistent binding may claim new queued work. ",
-            "Request ttlMs=null for this explicitly persistent subscription. Keep this native event task until I explicitly disable it. ",
+            "Request ttlMs=null for a persistent subscription, or omit ttlMs if the task interface does not offer it; both are persistent. Keep this native event task until I explicitly disable it. ",
             "Confirm only after the event-triggered task has actually been saved."
         ),
         event = EVENT_NAME,
@@ -156,10 +156,42 @@ pub(super) async fn handle(state: &AppState, connector: &Value, request: &Value)
             json!({"jsonrpc":"2.0","id":request["id"],"result":{"events":[definition()]}}),
         );
     }
-    Some(match subscription(state, connector, request).await {
+    let outcome = subscription(state, connector, request).await;
+    note_event_call(state, connector, method, outcome.as_ref().err());
+    Some(match outcome {
         Ok(result) => json!({"jsonrpc":"2.0","id":request["id"],"result":result}),
         Err(error) => error.response(request),
     })
+}
+
+/// How many event subscription calls the connector keeps for diagnosis.
+const EVENT_LOG_LEN: usize = 10;
+
+/// Keep the outcome of recent event subscription calls on the connector, since
+/// later calls overwrite its last activity and callback errors are not logged.
+/// Only fixed reason codes are kept: never a credential or callback address.
+fn note_event_call(
+    state: &AppState,
+    connector: &Value,
+    method: &str,
+    error: Option<&SubscriptionError>,
+) {
+    let Some(id) = connector["connector_id"].as_str() else {
+        return;
+    };
+    let entry = json!({"at":cccc_contracts::utc_now(),"method":method,"ok":error.is_none(),
+        "reason":error.map(SubscriptionError::reason)});
+    // Diagnosis must never fail the call it describes.
+    let _ = super::web_model_connector_store::update_connector(state, id, |connector| {
+        let mut log = connector["events_log"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        log.push(entry);
+        let excess = log.len().saturating_sub(EVENT_LOG_LEN);
+        log.drain(..excess);
+        connector["events_log"] = Value::Array(log);
+    });
 }
 
 #[derive(Debug)]
@@ -175,6 +207,13 @@ impl From<&'static str> for SubscriptionError {
 }
 
 impl SubscriptionError {
+    fn reason(&self) -> &'static str {
+        match self {
+            Self::Invalid(message) => message,
+            Self::Callback(reason) => reason,
+        }
+    }
+
     fn response(self, request: &Value) -> Value {
         match self {
             Self::Invalid(message) => protocol::failure(request, -32602, message),
@@ -249,7 +288,9 @@ async fn subscription(
         .as_str()
         .ok_or("Callback signing secret is required")?;
     callback::key(secret).map_err(|_| "Invalid callback signing secret")?;
-    let ttl = params.get("ttlMs").cloned().unwrap_or(json!(3_600_000));
+    // An omitted TTL is persistent: a Dot task interface may not offer ttlMs,
+    // and the event task is meant to stay until it is explicitly disabled.
+    let ttl = params.get("ttlMs").cloned().unwrap_or(Value::Null);
     let now = chrono::Utc::now().timestamp_millis();
     if !ttl.is_null()
         && !ttl.as_u64().is_some_and(|v| {
@@ -461,6 +502,9 @@ mod tests {
         assert!(setup.contains("actor_token returned in that tool result"));
         assert!(setup.contains("not ordinary business tools"));
         assert!(setup.contains("turn_in_progress"));
+        // A Dot's task interface may lack ttlMs or a credential field: neither blocks setup.
+        assert!(setup.contains("omit ttlMs if the task interface does not offer it"));
+        assert!(setup.contains("subscription arguments are this native task's configuration"));
         let event = definition();
         assert_eq!(event["name"], EVENT_NAME);
         assert_eq!(event["inputSchema"]["required"], json!(["actor_token"]));

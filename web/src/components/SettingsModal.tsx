@@ -144,7 +144,7 @@ export function SettingsModal({
   const [focusReachOnOpen, setFocusReachOnOpen] = useState(false);
   const [canAccessGlobalSettings, setCanAccessGlobalSettings] = useState<boolean | null>(null);
   const [webAccessSession, setWebAccessSession] = useState<WebAccessSession | null>(null);
-  const [webModelProvider, setWebModelProvider] = useState<api.WebModelProvider>("chatgpt_web");
+  const [webModelProvider, setWebModelProvider] = useState<api.WebModelView>("chatgpt_web");
   const settingsTarget = useModalStore((state) => state.settingsTarget);
   const clearSettingsTarget = useModalStore((state) => state.clearSettingsTarget);
 
