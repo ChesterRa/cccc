@@ -1874,8 +1874,8 @@
       "waiting_subscription": "ネイティブイベントタスクの接続待ち",
       "ready": "タスクを受付可能",
       "delivering": "イベントを送信中",
-      "delivered": "イベントを受信済み · ChatGPT 待ち",
-      "working": "ChatGPT が実行中",
+      "delivered": "Dot のタスク受け取り待ち",
+      "working": "Dot がタスクを処理中",
       "interrupted": "配信未確認 · 要確認",
       "failed": "配信失敗 · 要確認",
       "stopped": "CCCC アクセスを一時停止中",
@@ -1911,19 +1911,22 @@
       "noTask": "タスクはまだありません"
     },
     "delivery": {
-      "title": "直近の配信",
-      "hint": "この Actor へのメッセージはこの 4 ステップで進み、失敗したステップで止まります。",
-      "empty": "まだ配信はありません。新しいメッセージが届くと Dot を自動で起動します。"
+      "title": "タスク配信",
+      "lastCompleted": "直近の完了タスク",
+      "hint": "イベントの受信後も、Dot がタスクを受け取るまで待つ場合があります。",
+      "empty": "現在配信中のタスクはありません。"
     },
     "steps": {
-      "queued": "キュー済み",
-      "queuedHint": "メッセージがこの Actor のキューに入りました",
-      "woken": "起動済み",
-      "wokenHint": "CCCC がイベントを送り、ChatGPT が受け付けました",
-      "claimed": "受け取り済み",
-      "claimedHint": "Dot がこのターンを受け取り、実行中です",
+      "notify": "キュー／通知",
+      "notifyHint": "メッセージは保存済みで、CCCC から Dot への通知を待っています。",
+      "notifySending": "通知を送信中",
+      "notifySendingHint": "CCCC が ChatGPT にイベントを送信しています。",
+      "waiting": "Dot の受け取り待ち",
+      "waitingHint": "ChatGPT はイベントを受信しました。Dot のタスク受け取りを待っています。",
+      "working": "処理中",
+      "workingHint": "Dot はこのタスクを受け取りました。処理結果を待っています。",
       "completed": "完了",
-      "completedHint": "返信がグループに戻り、受領が確認されました"
+      "completedHint": "CCCC がこのタスクの完了記録を確認しました。"
     },
     "settings": {
       "instructions": "設定手順",
@@ -1934,7 +1937,6 @@
     },
     "setup": {
       "pluginTitle": "CCCC プラグインを接続",
-      "pluginDone": "完了：この Actor は以前プラグイン経由で CCCC に接続しています。Dot が CCCC のツールを見つけられない場合は、プラグイン設定で Refresh tools を選んでください。",
       "copyTitle": "設定手順をコピーして Dot に貼り付け",
       "waitTitle": "CCCC が購読を検出するのを待つ",
       "tipsTitle": "Dot が保存に失敗したと言う場合",

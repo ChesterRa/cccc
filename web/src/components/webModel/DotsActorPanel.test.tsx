@@ -395,8 +395,14 @@ it("shows a permanent subscription and the latest delivery steps once subscribed
   const steps = [...host.querySelectorAll("li[data-step]")].map(
     (step) => `${step.getAttribute("data-step")}:${step.getAttribute("data-state")}`,
   );
-  // Accepted by ChatGPT is not claimed and not completed.
-  expect(steps).toEqual(["queued:done", "woken:done", "claimed:current", "completed:todo"]);
+  // Accepted by ChatGPT means waiting for the Dot, not working or completed.
+  expect(steps).toEqual(["notify:done", "waiting:current", "working:todo", "completed:todo"]);
+  const current = host.querySelector('li[aria-current="step"]')!;
+  expect(current.getAttribute("data-step")).toBe("waiting");
+  expect(current.querySelector("svg")?.getAttribute("class")).toContain("clock");
+  expect(current.querySelector(".animate-spin")).toBeNull();
+  expect(host.textContent).not.toContain("dotsActor.steps.workingHint");
+  expect(host.textContent).not.toContain("dotsActor.steps.completedHint");
   expect(host.textContent).not.toContain("dotsActor.setup.copyTitle");
   expect(button("dotsActor.getInstructions")).toBeTruthy();
 });
@@ -413,20 +419,192 @@ it("guides an unsubscribed Actor through the numbered setup instead of delivery 
   expect(button("dotsActor.sharedSettings")).toBeTruthy();
 });
 
-it("skips the plugin step for an Actor connected before, such as after its subscription expired", async () => {
+it("keeps shared plugin setup reachable after a local Connect without a subscription", async () => {
+  const onOpenSharedSettings = vi.fn();
+  await render({ onOpenSharedSettings });
+  mocks.load.mockResolvedValue(
+    state({ connected: true, subscribed: false, phase: "waiting_subscription" }),
+  );
+  await act(async () => button("dotsActor.connect").click());
+  const plugin = host.querySelector('li[data-setup-step="1"]')!;
+  expect(plugin.hasAttribute("data-done")).toBe(false);
+  expect(plugin.textContent).not.toContain("dotsActor.setup.pluginDone");
+  expect(button("dotsActor.sharedSettings")).toBeDefined();
+  await act(async () => button("dotsActor.sharedSettings").click());
+  expect(onOpenSharedSettings).toHaveBeenCalledOnce();
+  expect(mocks.update).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["working", false],
+  ["interrupted", false],
+  ["working", true],
+] as const)(
+  "keeps an accepted %s turn visible after subscription expiry (readOnly=%s)",
+  async (phase, readOnly) => {
+    mocks.load.mockResolvedValue(
+      state({
+        enabled: true,
+        connected: true,
+        subscribed: false,
+        phase,
+        active_turn_id: "accepted-turn",
+        subscription_expires_at: 1,
+      }),
+    );
+    await render({ readOnly });
+    expect(host.querySelector('li[data-step="working"]')).not.toBeNull();
+    expect(host.querySelector("li[data-setup-step]")).toBeNull();
+    expect(host.textContent).toContain(`dotsActor.phases.${phase}`);
+    expect(host.textContent).toContain("dotsActor.subscriptionExpired");
+    expect(host.textContent).not.toContain("dotsActor.adminSetup");
+    if (phase === "interrupted") expect(button("dotsActor.resolve").disabled).toBe(false);
+    if (!readOnly) expect(button("dotsActor.getInstructions").disabled).toBe(true);
+    expect(mocks.update).not.toHaveBeenCalled();
+  },
+);
+
+it("shows the actual current stage and spins only while sending or working", async () => {
+  const cases = [
+    ["pending", "notify", false],
+    ["delivering", "notify", true],
+    ["delivered", "waiting", false],
+    ["working", "working", true],
+    ["interrupted", "working", false],
+    ["failed", "notify", false],
+  ] as const;
+  for (const [index, [phase, stage, spinning]] of cases.entries()) {
+    mocks.load.mockResolvedValue(
+      state({ enabled: true, connected: true, subscribed: true, phase }),
+    );
+    if (index === 0) await render();
+    else await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    const current = host.querySelector('li[aria-current="step"]')!;
+    expect(current.getAttribute("data-step")).toBe(stage);
+    expect(Boolean(current.querySelector(".animate-spin"))).toBe(spinning);
+    if (spinning)
+      expect(current.querySelector(".animate-spin")?.getAttribute("class")).toContain(
+        "motion-reduce:animate-none",
+      );
+    else if (phase !== "interrupted" && phase !== "failed")
+      expect(current.querySelector("svg")?.getAttribute("class")).toContain("clock");
+    if (phase === "delivering")
+      expect(current.textContent).toContain("dotsActor.steps.notifySending");
+    if (phase === "failed") {
+      expect(current.textContent).toContain("dotsActor.phases.failed");
+      expect(current.textContent).not.toContain("dotsActor.steps.notifyHint");
+    }
+    if (phase === "interrupted") {
+      expect(current.textContent).toContain("dotsActor.phases.interrupted");
+      expect(current.textContent).not.toContain("dotsActor.steps.workingHint");
+    }
+    expect(host.textContent).not.toContain("dotsActor.steps.completedHint");
+  }
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it.each(["partial", "cancelled", "failed"] as const)(
+  "keeps a previous %s receipt in the summary rather than showing an active failure",
+  async (status) => {
+    mocks.load.mockResolvedValue(
+      state({
+        connected: true,
+        subscribed: true,
+        phase: "stopped",
+        last_execution: {
+          turn_id: "historical-turn",
+          event_ids: ["historical-source"],
+          status,
+          completed_at: "2026-10-12T00:00:00Z",
+        },
+      }),
+    );
+    await render();
+    expect(host.textContent).toContain(`dotsActor.lastExecution.${status}`);
+    expect(host.querySelector("li[data-step]")).toBeNull();
+    expect(host.querySelector('[aria-current="step"]')).toBeNull();
+    expect(host.querySelector(".animate-spin")).toBeNull();
+    expect(host.textContent).toContain("dotsActor.delivery.empty");
+    expect(mocks.update).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["ready", "stopped"] as const)(
+  "labels a previous completed turn as history while the Actor is %s",
+  async (phase) => {
+    const now = new Date(2026, 9, 13, 12, 34, 56);
+    vi.setSystemTime(now);
+    mocks.load.mockResolvedValue(
+      state({
+        connected: true,
+        subscribed: true,
+        phase,
+        last_execution: {
+          turn_id: "historical-turn",
+          event_ids: ["historical-source"],
+          status: "done",
+          completed_at: new Date(now.getTime() - 1_000).toISOString(),
+        },
+      }),
+    );
+    await render();
+    const delivery = host.querySelector('section[aria-label="dotsActor.delivery.lastCompleted"]')!;
+    expect(delivery.textContent).toContain("12:34");
+    expect(delivery.querySelectorAll('li[data-state="done"]')).toHaveLength(4);
+    expect(delivery.querySelectorAll('li[data-state="done"] svg')).toHaveLength(4);
+    expect(delivery.querySelector('[aria-current="step"]')).toBeNull();
+    expect(delivery.querySelector(".animate-spin")).toBeNull();
+    expect(delivery.textContent).toContain("dotsActor.steps.completedHint");
+    expect(delivery.textContent).not.toContain("dotsActor.steps.workingHint");
+    expect(host.textContent).toContain(`dotsActor.phases.${phase}`);
+    expect(mocks.update).not.toHaveBeenCalled();
+  },
+);
+
+it("shows unknown summary facts on initial read failure, then retains the last accepted snapshot", async () => {
+  mocks.load.mockResolvedValue({ ok: false, error: { message: "status unavailable" } });
+  await render();
+  const summary = () => [...host.querySelectorAll("dl dd")].map((cell) => cell.textContent);
+  expect(summary()).toEqual(Array(3).fill("dotsActor.unavailable"));
+  expect(button("dotsActor.connect").disabled).toBe(true);
+
   mocks.load.mockResolvedValue(
     state({
       connected: true,
-      subscribed: false,
-      phase: "waiting_subscription",
-      subscription_expires_at: 1,
+      subscribed: true,
+      phase: "ready",
+      pending_count: 3,
+      last_execution: {
+        turn_id: "completed-turn",
+        event_ids: ["completed-source"],
+        status: "done",
+        completed_at: "2026-10-12T00:00:00Z",
+      },
     }),
   );
-  await render({ onOpenSharedSettings: vi.fn() });
-  const plugin = host.querySelector('li[data-setup-step="1"]')!;
-  expect(plugin.hasAttribute("data-done")).toBe(true);
-  expect(plugin.textContent).toContain("dotsActor.setup.pluginDone");
-  expect(plugin.querySelector("button")).toBeNull();
-  // Getting the instructions again is the one thing left to do.
-  expect(button("dotsActor.getInstructions")).toBeTruthy();
+  await act(async () => vi.advanceTimersByTimeAsync(2_000));
+  const accepted = summary();
+  expect(accepted[0]).toBe("dotsActor.status.permanent");
+  expect(accepted[2]).toContain("dotsActor.lastExecution.done");
+
+  mocks.load.mockResolvedValue({ ok: false, error: { message: "later read failed" } });
+  await act(async () => vi.advanceTimersByTimeAsync(2_000));
+  expect(summary()).toEqual(accepted);
+  expect(host.textContent).toContain("later read failed");
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("does not ask an administrator to connect a read-only Actor whose first status read failed", async () => {
+  mocks.load.mockResolvedValue({ ok: false, error: { message: "status unavailable" } });
+  await render({ readOnly: true });
+  expect([...host.querySelectorAll("dl dd")].map((cell) => cell.textContent)).toEqual(
+    Array(3).fill("dotsActor.unavailable"),
+  );
+  expect(host.textContent).not.toContain("dotsActor.adminSetup");
+  expect(host.querySelectorAll("button")).toHaveLength(0);
+
+  mocks.load.mockResolvedValue(state());
+  await act(async () => vi.advanceTimersByTimeAsync(2_000));
+  expect(host.textContent).toContain("dotsActor.adminSetup");
+  expect(mocks.update).not.toHaveBeenCalled();
 });

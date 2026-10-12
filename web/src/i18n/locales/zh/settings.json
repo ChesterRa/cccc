@@ -1858,8 +1858,8 @@
       "waiting_subscription": "等待原生事件任务连接",
       "ready": "可接收任务",
       "delivering": "正在发送事件",
-      "delivered": "事件已接收 · 等待 ChatGPT",
-      "working": "ChatGPT 正在执行",
+      "delivered": "等待 Dot 领取任务",
+      "working": "Dot 正在处理任务",
       "interrupted": "投递未确认 · 请检查",
       "failed": "投递失败 · 请检查",
       "stopped": "CCCC 访问已暂停",
@@ -1895,19 +1895,22 @@
       "noTask": "暂无任务"
     },
     "delivery": {
-      "title": "最近一次投递",
-      "hint": "每条发给此 Actor 的消息都按这四步走完，卡在哪一步就停在哪一步。",
-      "empty": "还没有投递。有新消息时会自动唤醒 Dot。"
+      "title": "任务投递",
+      "lastCompleted": "最近完成的任务",
+      "hint": "事件已被接收后，仍可能需要等待 Dot 领取任务。",
+      "empty": "当前没有正在投递的任务。"
     },
     "steps": {
-      "queued": "已排队",
-      "queuedHint": "消息进入此 Actor 的队列",
-      "woken": "已唤醒",
-      "wokenHint": "CCCC 推送事件，ChatGPT 已接收",
-      "claimed": "已领取",
-      "claimedHint": "Dot 取走本轮任务并开始执行",
+      "notify": "排队／发送通知",
+      "notifyHint": "消息已保存，等待 CCCC 通知 Dot。",
+      "notifySending": "正在发送通知",
+      "notifySendingHint": "CCCC 正在向 ChatGPT 发送事件。",
+      "waiting": "等待 Dot 领取",
+      "waitingHint": "ChatGPT 已接收事件，等待 Dot 领取本轮任务。",
+      "working": "处理中",
+      "workingHint": "Dot 已领取本轮任务，正在等待处理结果。",
       "completed": "已完成",
-      "completedHint": "回复写回工作组，回执已确认"
+      "completedHint": "CCCC 已确认本轮任务的完成回执。"
     },
     "settings": {
       "instructions": "设置说明",
@@ -1918,7 +1921,6 @@
     },
     "setup": {
       "pluginTitle": "连接 CCCC 插件",
-      "pluginDone": "已完成：此 Actor 之前已通过插件连接到 CCCC。如果 Dot 说找不到 CCCC 工具，在插件设置里选 Refresh tools 即可。",
       "copyTitle": "复制设置说明，粘贴给你的 Dot",
       "waitTitle": "等待 CCCC 检测到订阅",
       "tipsTitle": "Dot 说保存失败？",

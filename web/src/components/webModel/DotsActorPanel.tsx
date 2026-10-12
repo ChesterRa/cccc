@@ -179,6 +179,7 @@ function ActorPanel({
   const enabled = isRunning || state?.enabled;
   const locked = readOnly || saving || Boolean(action) || !state;
   const unresolved = Boolean(state?.active_turn_id);
+  const hasDelivery = Boolean(state?.subscribed || unresolved);
   const canResolve = unresolved && (state?.phase === "failed" || state?.phase === "interrupted");
   const dotsLink = (
     <a
@@ -208,21 +209,25 @@ function ActorPanel({
       </section>
     );
 
-  const subscription = state?.subscription_expires_at
-    ? t(
-        state.subscription_expires_at <= Date.now()
-          ? "dotsActor.subscriptionExpired"
-          : "dotsActor.subscriptionExpires",
-        { time: new Date(state.subscription_expires_at).toLocaleString(i18n.language) },
-      )
-    : t(state?.subscribed ? "dotsActor.status.permanent" : "dotsActor.status.notSubscribed");
-  const lastTask = state?.last_execution
-    ? `${t(`dotsActor.lastExecution.${state.last_execution.status}`)}${
-        state.last_execution.completed_at
-          ? ` · ${formatMessageTimestamp(state.last_execution.completed_at)}`
-          : ""
-      }`
-    : t("dotsActor.status.noTask");
+  const subscription = !state
+    ? t("dotsActor.unavailable")
+    : state.subscription_expires_at
+      ? t(
+          state.subscription_expires_at <= Date.now()
+            ? "dotsActor.subscriptionExpired"
+            : "dotsActor.subscriptionExpires",
+          { time: new Date(state.subscription_expires_at).toLocaleString(i18n.language) },
+        )
+      : t(state.subscribed ? "dotsActor.status.permanent" : "dotsActor.status.notSubscribed");
+  const lastTask = !state
+    ? t("dotsActor.unavailable")
+    : state.last_execution
+      ? `${t(`dotsActor.lastExecution.${state.last_execution.status}`)}${
+          state.last_execution.completed_at
+            ? ` · ${formatMessageTimestamp(state.last_execution.completed_at)}`
+            : ""
+        }`
+      : t("dotsActor.status.noTask");
   const connectButton = (
     <Button
       type="button"
@@ -343,9 +348,9 @@ function ActorPanel({
           </Button>
         </div>
       ) : null}
-      {readOnly && !state?.subscribed ? (
+      {readOnly && state && !hasDelivery ? (
         <p className="text-xs text-[var(--color-text-secondary)]">{t("dotsActor.adminSetup")}</p>
-      ) : state?.subscribed || readOnly ? (
+      ) : hasDelivery || readOnly ? (
         <div className="grid flex-1 gap-4 @3xl/dots:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
           {state ? <DotsDeliverySteps state={state} t={t} /> : null}
           {readOnly ? null : (
@@ -381,12 +386,10 @@ function ActorPanel({
       ) : (
         <div className="grid flex-1 gap-4 @3xl/dots:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <ol className={`${dotsCard} flex flex-col overflow-hidden`}>
-            {/* A bound Actor reached CCCC through the plugin before: nothing to redo. */}
             <DotsSetupStep
               number={1}
               title={t("dotsActor.setup.pluginTitle")}
-              hint={t(state?.connected ? "dotsActor.setup.pluginDone" : "dotsActor.connectHint")}
-              done={Boolean(state?.connected)}
+              hint={t("dotsActor.connectHint")}
             >
               {sharedButton ? <div>{sharedButton}</div> : null}
             </DotsSetupStep>

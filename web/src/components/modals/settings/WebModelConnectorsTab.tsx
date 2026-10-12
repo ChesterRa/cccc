@@ -29,11 +29,17 @@ const VIEWS: Array<{ value: api.WebModelView; label: string }> = [
 ];
 export default function WebModelConnectorsTab(props: Props) {
   const [localProvider, setLocalProvider] = useState<api.WebModelView>("chatgpt_web");
+  const providerTabs = useRef<HTMLDivElement>(null);
   const provider = props.provider ?? localProvider;
   const setProvider = props.onProviderChange ?? setLocalProvider;
+  const openChatGPT = () => {
+    setProvider("chatgpt_web");
+    // The management action becomes hidden; the first, persistent segment is ChatGPT.
+    providerTabs.current?.querySelector<HTMLButtonElement>('[role="radio"]')?.focus();
+  };
   return (
     <div className="flex min-w-0 flex-col gap-5">
-      <div>
+      <div ref={providerTabs}>
         <SegmentedChoice
           value={provider}
           options={VIEWS}
@@ -54,7 +60,7 @@ export default function WebModelConnectorsTab(props: Props) {
       <div hidden={provider !== "dots"}>
         <DotsSettingsTab
           isActive={props.isActive !== false && provider === "dots"}
-          onOpenChatGPT={() => setProvider("chatgpt_web")}
+          onOpenChatGPT={openChatGPT}
           onOpenWebAccess={props.onOpenWebAccess}
         />
       </div>

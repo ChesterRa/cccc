@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import type { DotsActorState } from "../../services/api";
+import { formatMessageTimestamp } from "../../utils/time";
+import { AlertIcon, CheckIcon, ClockIcon, RefreshIcon } from "../Icons";
 import { DELIVERY_STEPS, deliveryProgress, type StepState } from "./dotsActorStatus";
 
 type T = (key: string, options?: Record<string, unknown>) => string;
@@ -21,11 +23,14 @@ export function DotsStatusSummary({
 }) {
   const cells: Array<[string, string]> = [
     [t("dotsActor.status.subscription"), subscription],
-    [t("dotsActor.status.pending"), t("dotsActor.pending", { count: state?.pending_count ?? 0 })],
+    [
+      t("dotsActor.status.pending"),
+      state ? t("dotsActor.pending", { count: state.pending_count }) : t("dotsActor.unavailable"),
+    ],
     [t("dotsActor.status.lastTask"), lastTask],
   ];
   return (
-    <dl className={`${dotsCard} grid grid-cols-1 overflow-hidden @xl/dots:grid-cols-3`}>
+    <dl className={`${dotsCard} grid shrink-0 grid-cols-1 overflow-hidden @xl/dots:grid-cols-3`}>
       {cells.map(([label, value], index) => (
         <div
           key={label}
@@ -48,13 +53,20 @@ const stepDot: Record<StepState, string> = {
 
 export function DotsDeliverySteps({ state, t }: { state: DotsActorState; t: T }) {
   const progress = deliveryProgress(state);
+  const historical = progress?.finished === DELIVERY_STEPS.length;
+  const title = t(historical ? "dotsActor.delivery.lastCompleted" : "dotsActor.delivery.title");
+  const description = historical
+    ? state.last_execution?.completed_at
+      ? formatMessageTimestamp(state.last_execution.completed_at)
+      : ""
+    : t("dotsActor.delivery.hint");
   return (
-    <section className={`${dotsCard} flex flex-col`} aria-label={t("dotsActor.delivery.title")}>
+    <section className={`${dotsCard} flex flex-col`} aria-label={title}>
       <div className="border-b border-[var(--glass-border-subtle)] px-4 py-3">
-        <h3 className="font-semibold">{t("dotsActor.delivery.title")}</h3>
-        <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
-          {t("dotsActor.delivery.hint")}
-        </p>
+        <h3 className="font-semibold">{title}</h3>
+        {description ? (
+          <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{description}</p>
+        ) : null}
       </div>
       {progress ? (
         <ol className="flex-1 px-4">
@@ -65,24 +77,56 @@ export function DotsDeliverySteps({ state, t }: { state: DotsActorState; t: T })
                 : index === progress.finished
                   ? progress.next
                   : "todo";
+            const sending = stepState === "current" && state.phase === "delivering";
+            const spinning = stepState === "current" && (sending || state.phase === "working");
+            const label = t(
+              stepState === "error"
+                ? `dotsActor.phases.${state.phase}`
+                : sending
+                  ? "dotsActor.steps.notifySending"
+                  : `dotsActor.steps.${step}`,
+            );
+            const hint =
+              stepState === "current"
+                ? t(sending ? "dotsActor.steps.notifySendingHint" : `dotsActor.steps.${step}Hint`)
+                : historical && step === "completed"
+                  ? t("dotsActor.steps.completedHint")
+                  : "";
             return (
               <li
                 key={step}
                 data-step={step}
                 data-state={stepState}
+                aria-current={stepState === "current" || stepState === "error" ? "step" : undefined}
                 className="flex items-start gap-3 border-b border-[var(--glass-border-subtle)] py-3 last:border-b-0"
               >
                 <span
                   className={`inline-flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${stepDot[stepState]}`}
                   aria-hidden="true"
                 >
-                  {index + 1}
+                  {stepState === "done" ? (
+                    <CheckIcon className="size-3.5" />
+                  ) : stepState === "error" ? (
+                    <AlertIcon className="size-3.5" />
+                  ) : spinning ? (
+                    <RefreshIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
+                  ) : stepState === "current" ? (
+                    <ClockIcon className="size-3.5" />
+                  ) : (
+                    index + 1
+                  )}
                 </span>
                 <div className="min-w-0">
-                  <div className="font-medium">{t(`dotsActor.steps.${step}`)}</div>
-                  <div className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
-                    {t(`dotsActor.steps.${step}Hint`)}
+                  <div
+                    className={`font-medium ${stepState === "todo" ? "text-[var(--color-text-muted)]" : ""}`}
+                  >
+                    {label}
                   </div>
+                  {hint ? (
+                    <div className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
+                      {hint}
+                    </div>
+                  ) : null}
                 </div>
               </li>
             );
@@ -127,63 +171,42 @@ export function DotsSettingRow({
 }
 
 /**
- * A numbered setup step. The active one is highlighted and fills spare height;
- * a done one shows a check and drops its controls, since nothing is left to do.
+ * A numbered setup step. The active one is highlighted and fills spare height.
  */
 export function DotsSetupStep({
   number,
   title,
   hint,
   active = false,
-  done = false,
   children,
 }: {
   number: number;
   title: string;
   hint: string;
   active?: boolean;
-  done?: boolean;
   children?: ReactNode;
 }) {
   return (
     <li
       data-setup-step={number}
-      data-done={done || undefined}
       className={`flex gap-3 border-t border-[var(--glass-border-subtle)] px-4 py-4 first:border-t-0 ${active ? "flex-1 bg-[var(--glass-tab-bg)]/40" : ""}`}
     >
       <span
         className={`inline-flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
-          done
-            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-            : active
-              ? "bg-[var(--color-text-primary)] text-[var(--color-bg-primary)]"
-              : "border border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]"
+          active
+            ? "bg-[var(--color-text-primary)] text-[var(--color-bg-primary)]"
+            : "border border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]"
         }`}
         aria-hidden="true"
       >
-        {done ? (
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="m5 12 5 5 9-10" />
-          </svg>
-        ) : (
-          number
-        )}
+        {number}
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div>
           <div className="font-semibold">{title}</div>
           <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">{hint}</p>
         </div>
-        {done ? null : children}
+        {children}
       </div>
     </li>
   );

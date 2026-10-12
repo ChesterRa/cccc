@@ -1875,8 +1875,8 @@
       "waiting_subscription": "Waiting for the native event task",
       "ready": "Ready for tasks",
       "delivering": "Sending event",
-      "delivered": "Event accepted · waiting for ChatGPT",
-      "working": "ChatGPT is working",
+      "delivered": "Waiting for the Dot to claim the task",
+      "working": "Dot is processing the task",
       "interrupted": "Unfinished delivery · review required",
       "failed": "Delivery failed · review required",
       "stopped": "CCCC access paused",
@@ -1911,19 +1911,22 @@
       "noTask": "No task yet"
     },
     "delivery": {
-      "title": "Latest delivery",
-      "hint": "Every message to this Actor goes through these four steps; it stops at the step that fails.",
-      "empty": "Nothing delivered yet. New messages wake the Dot automatically."
+      "title": "Task delivery",
+      "lastCompleted": "Last completed task",
+      "hint": "An accepted event may wait before the Dot claims the task.",
+      "empty": "No active delivery."
     },
     "steps": {
-      "queued": "Queued",
-      "queuedHint": "The message is waiting for this Actor",
-      "woken": "Woken",
-      "wokenHint": "CCCC sent the event and ChatGPT accepted it",
-      "claimed": "Claimed",
-      "claimedHint": "The Dot took this turn and is working on it",
+      "notify": "Queued / Sending",
+      "notifyHint": "The message is saved and waiting for CCCC to notify the Dot.",
+      "notifySending": "Sending notification",
+      "notifySendingHint": "CCCC is sending the event to ChatGPT.",
+      "waiting": "Waiting for Dot",
+      "waitingHint": "ChatGPT accepted the event. Waiting for the Dot to claim this task.",
+      "working": "Working",
+      "workingHint": "The Dot has claimed this task. Waiting for its result.",
       "completed": "Completed",
-      "completedHint": "The reply is back in the group and the receipt is confirmed"
+      "completedHint": "CCCC has confirmed this task’s completion receipt."
     },
     "settings": {
       "instructions": "Setup instructions",
@@ -1934,7 +1937,6 @@
     },
     "setup": {
       "pluginTitle": "Connect the CCCC plugin",
-      "pluginDone": "Already connected: this Actor reached CCCC through the plugin before. If the Dot says CCCC tools are missing, choose Refresh tools in its plugin settings.",
       "copyTitle": "Copy the setup instructions to your Dot",
       "waitTitle": "Wait for CCCC to detect the subscription",
       "tipsTitle": "Did the Dot say saving failed?",

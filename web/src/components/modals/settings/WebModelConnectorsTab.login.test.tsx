@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { WebModelConnector } from "../../../services/api";
+import type { WebModelConnector, WebModelView } from "../../../services/api";
 const mocks = vi.hoisted(() => ({
   browser: vi.fn(),
   connectors: vi.fn(),
@@ -232,6 +232,37 @@ describe("shared Web Model login and connector", () => {
     });
     expect(onProviderChange).toHaveBeenCalledExactlyOnceWith("grok_web");
   });
+  it.each([false, true])(
+    "moves focus from the hidden Dots management action to ChatGPT (controlled=%s)",
+    async (controlled) => {
+      function SettingsFixture() {
+        const [provider, setProvider] = useState<WebModelView>("chatgpt_web");
+        return (
+          <WebModelConnectorsTab
+            isDark={false}
+            {...(controlled ? { provider, onProviderChange: setProvider } : {})}
+          />
+        );
+      }
+      await act(async () => root.render(<SettingsFixture />));
+      const radios = Array.from(
+        host.querySelectorAll<HTMLButtonElement>('[role="radiogroup"] [role="radio"]'),
+      );
+      await act(async () => radios[2].click());
+      const manage = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+        (element) =>
+          !element.closest("[hidden]") && element.textContent === "dotsSettings.manageConnector",
+      )!;
+      manage.focus();
+      expect(document.activeElement).toBe(manage);
+      await act(async () => manage.click());
+      expect(radios[0].getAttribute("aria-checked")).toBe("true");
+      expect(manage.closest("[hidden]")).not.toBeNull();
+      expect(document.activeElement).toBe(radios[0]);
+      expect(mocks.browser.mock.calls.every((call) => call[0] === "status")).toBe(true);
+      expect(mocks.create).not.toHaveBeenCalled();
+    },
+  );
   it("boxes the migration warning, the web access prerequisite and the Actor guidance", async () => {
     const onOpenWebAccess = vi.fn();
     mocks.connectors.mockResolvedValue({

@@ -547,7 +547,9 @@ the Dot by sending signed HTTPS callbacks. Where direct HTTPS to ChatGPT is
 blocked or slow, start CCCC with `HTTPS_PROXY` (or `ALL_PROXY`) set; callbacks
 then go through that proxy unless `NO_PROXY` covers the host. Through a proxy,
 callbacks may reach only `openai.com` and `chatgpt.com` hosts. Without a proxy
-they connect directly and must resolve to public addresses. Settings → Web
+they connect directly and must resolve to public addresses. The proxy path
+trusts the configured proxy to resolve those hosts; CCCC still verifies the
+original hostname with TLS and rejects redirects. Settings → Web
 Models → Dots lists recent subscription attempts with their failure reason,
 such as `callback_dns_timeout` or `callback_proxy_failed`.
 

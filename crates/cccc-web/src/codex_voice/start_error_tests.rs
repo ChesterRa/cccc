@@ -102,19 +102,36 @@ async fn request_timeout_does_not_become_a_login_error() {
 
 #[tokio::test]
 async fn connection_failure_does_not_become_a_login_error() {
-    // Nothing can listen on port 0, so connecting fails at once (refused on
-    // Linux, address not available on macOS). A freed port could be taken by
-    // a parallel test, and a bound socket that never listens hangs on macOS.
-    // The wide timeout keeps a loaded run from reporting a timeout instead.
-    let error = no_proxy_client(std::time::Duration::from_secs(10))
-        .get("http://127.0.0.1:0/")
+    const SYNTHETIC_OS_ERROR: i32 = 111;
+    struct FailedDns;
+    impl reqwest::dns::Resolve for FailedDns {
+        fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            assert_eq!(name.as_str(), "connection-fixture.invalid");
+            // Synthetic resolver error: test connector classification and
+            // raw OS metadata without depending on the host's TCP behavior.
+            Box::pin(async move {
+                Err(Box::new(io::Error::from_raw_os_error(SYNTHETIC_OS_ERROR))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            })
+        }
+    }
+    // Fail inside the real connector without DNS/TCP traffic or a freed port.
+    let error = reqwest::Client::builder()
+        .no_proxy()
+        .dns_resolver(std::sync::Arc::new(FailedDns))
+        .build()
+        .expect("client")
+        .get("http://connection-fixture.invalid/")
         .send()
         .await
         .expect_err("connection failure");
     let error = Error::new(error).context(StartStage::Realtime);
     let details = StartDiagnostic::from_error(&error, 2).details();
-    assert_eq!(details["request_kind"], "connect");
-    assert!(details["os_error"].is_number());
+    assert_eq!(
+        details["request_kind"], "connect",
+        "safe diagnostic: {details}"
+    );
+    assert_eq!(details["os_error"], SYNTHETIC_OS_ERROR);
     assert_eq!(
         StartDiagnostic::from_error(&error, 2).code,
         "codex_voice_realtime_connection_failed"

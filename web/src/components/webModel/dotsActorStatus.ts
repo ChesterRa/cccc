@@ -11,11 +11,11 @@ export function phaseTone(phase: DotsActorState["phase"]) {
 }
 
 export type StepState = "done" | "current" | "error" | "todo";
-export const DELIVERY_STEPS = ["queued", "woken", "claimed", "completed"] as const;
+export const DELIVERY_STEPS = ["notify", "waiting", "working", "completed"] as const;
 
 /**
- * Where the latest delivery stands: how many steps finished and whether the next
- * one is underway or failed. Callback acceptance (delivered) is never completion.
+ * The current delivery stage, not the next unfulfilled milestone. A completion
+ * receipt may describe the last task while the Actor is idle or paused.
  */
 export function deliveryProgress(
   state: DotsActorState,
@@ -23,19 +23,16 @@ export function deliveryProgress(
   switch (state.phase) {
     case "pending":
     case "delivering":
-      return { finished: 1, next: "current" };
+      return { finished: 0, next: "current" };
     case "delivered":
-      return { finished: 2, next: "current" };
+      return { finished: 1, next: "current" };
     case "working":
-      return { finished: 3, next: "current" };
+      return { finished: 2, next: "current" };
     case "failed":
-      return { finished: 1, next: "error" };
+      return { finished: 0, next: "error" };
     case "interrupted":
-      return { finished: 3, next: "error" };
+      return { finished: 2, next: "error" };
     default:
-      if (!state.last_execution) return null;
-      return state.last_execution.status === "done"
-        ? { finished: 4, next: "current" }
-        : { finished: 3, next: "error" };
+      return state.last_execution?.status === "done" ? { finished: 4, next: "current" } : null;
   }
 }

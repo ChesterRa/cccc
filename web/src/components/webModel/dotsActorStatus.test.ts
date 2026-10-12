@@ -20,16 +20,16 @@ const execution = (status: "done" | "failed") => ({
 });
 
 it("places each delivery phase on its step and never counts callback acceptance as done", () => {
-  expect(deliveryProgress(state({ phase: "pending" }))).toEqual({ finished: 1, next: "current" });
+  expect(deliveryProgress(state({ phase: "pending" }))).toEqual({ finished: 0, next: "current" });
   expect(deliveryProgress(state({ phase: "delivering" }))).toEqual({
-    finished: 1,
+    finished: 0,
     next: "current",
   });
-  // ChatGPT accepted the event: woken, but nobody has claimed the turn yet.
-  expect(deliveryProgress(state({ phase: "delivered" }))).toEqual({ finished: 2, next: "current" });
-  expect(deliveryProgress(state({ phase: "working" }))).toEqual({ finished: 3, next: "current" });
-  expect(deliveryProgress(state({ phase: "failed" }))).toEqual({ finished: 1, next: "error" });
-  expect(deliveryProgress(state({ phase: "interrupted" }))).toEqual({ finished: 3, next: "error" });
+  // HTTP acceptance only starts the wait for the Dot to take the turn.
+  expect(deliveryProgress(state({ phase: "delivered" }))).toEqual({ finished: 1, next: "current" });
+  expect(deliveryProgress(state({ phase: "working" }))).toEqual({ finished: 2, next: "current" });
+  expect(deliveryProgress(state({ phase: "failed" }))).toEqual({ finished: 0, next: "error" });
+  expect(deliveryProgress(state({ phase: "interrupted" }))).toEqual({ finished: 2, next: "error" });
 });
 
 it("summarizes an idle Actor from its last execution only", () => {
@@ -40,5 +40,5 @@ it("summarizes an idle Actor from its last execution only", () => {
   });
   expect(
     deliveryProgress(state({ phase: "stopped", last_execution: execution("failed") })),
-  ).toEqual({ finished: 3, next: "error" });
+  ).toBeNull();
 });

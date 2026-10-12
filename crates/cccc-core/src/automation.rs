@@ -37,10 +37,9 @@ pub enum ScheduledAction {
 pub struct TickResult {
     pub notifications: Vec<Event>,
     pub actions: Vec<ScheduledAction>,
-    /// A Mail or reply notice that could not be written. Notices the same pass
-    /// wrote before it are in the ledger and in `notifications`, and must still
-    /// be delivered: the ledger already counts them as issued. The failed one
-    /// and those after it were never written, so a later pass issues them.
+    /// Failure while discovering or appending Mail/reply notices. Retained
+    /// alongside committed notifications and prepared rule actions so callers
+    /// can still apply those results. Unwritten notices remain due for a later pass.
     pub unread_failure: Option<io::Error>,
 }
 
@@ -402,9 +401,18 @@ fn tick_unread(
     pass: UnreadPass,
     result: &mut TickResult,
 ) -> io::Result<()> {
-    if let Some((ledger_path, notices)) =
-        due_unread_notices(home, store, group, delivery_actor_ids, idle_actor_ids, pass)?
+    let due = match due_unread_notices(home, store, group, delivery_actor_ids, idle_actor_ids, pass)
     {
+        Ok(due) => due,
+        Err(error) if result.notifications.is_empty() && result.actions.is_empty() => {
+            return Err(error);
+        }
+        Err(error) => {
+            result.unread_failure = Some(error);
+            return Ok(());
+        }
+    };
+    if let Some((ledger_path, notices)) = due {
         issue_notices(&ledger_path, notices, result, &mut ledger::append);
     }
     Ok(())
@@ -957,6 +965,75 @@ mod tests {
             assert_eq!(told(&next), ["second"], "{pass:?}");
             assert!(told(&pass_result()).is_empty(), "{pass:?}");
         }
+    }
+
+    #[test]
+    fn a_failed_unread_discovery_preserves_an_already_issued_rule_notice() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let (store, group) = mail_for_both(&home);
+        let recipients = RECIPIENTS
+            .map(str::to_owned)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let tick =
+            || tick_group_with_idle_actors(&home, &group.group_id, true, &recipients, &recipients);
+        let cursor_path = store
+            .state_dir(&group.group_id)
+            .expect("state directory")
+            .join("read_cursors.json");
+        std::fs::write(&cursor_path, b"invalid cursor JSON").expect("damaged cursor fixture");
+        // Discovery failure before any rule result retains the normal Err path.
+        assert!(tick().is_err());
+        store
+            .mutate(&group.group_id, |group| {
+                group.automation = json!({"version":1,"rules":[{
+                    "id":"one-shot","enabled":true,"to":[RECIPIENTS[0]],
+                    "trigger":{"kind":"at","at":"2020-01-01T00:00:00Z"},
+                    "action":{"kind":"notify","message":"scheduled reminder"}
+                }]})
+                .as_object()
+                .cloned()
+                .expect("rule");
+                Ok(())
+            })
+            .expect("one-shot rule");
+
+        let partial = tick().expect("issued rule must still reach delivery");
+        assert!(partial.unread_failure.is_some());
+        assert_eq!(partial.notifications.len(), 1);
+        let issued = &partial.notifications[0];
+        assert_eq!(issued.data["kind"], "automation");
+        assert_eq!(issued.data["context"]["rule_id"], "one-shot");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        let events = ledger::read_all(&ledger_path).expect("events");
+        assert!(events.iter().any(|event| event.id == issued.id));
+        assert!(
+            state::load(&store, &group.group_id)
+                .expect("saved rule state")
+                .last_rule
+                .contains_key("one-shot")
+        );
+
+        crate::fs::write_json(&cursor_path, &json!({"schema":1,"cursors":{}}))
+            .expect("repaired cursor fixture");
+        let next = tick().expect("next pass");
+        assert!(next.unread_failure.is_none());
+        assert_eq!(told(&next), RECIPIENTS);
+        assert!(
+            next.notifications
+                .iter()
+                .all(|event| event.data["kind"] != "automation")
+        );
+        let events = ledger::read_all(&ledger_path).expect("events after repair");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.data.get("kind") == Some(&json!("automation")))
+                .count(),
+            1
+        );
+        assert!(tick().expect("settled pass").notifications.is_empty());
     }
 
     #[cfg(unix)]

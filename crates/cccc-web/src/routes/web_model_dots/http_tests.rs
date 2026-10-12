@@ -881,7 +881,7 @@ async fn subscription_refresh_and_unsubscribe_use_modern_wire_contract_and_fixed
     }
     let mut invalid = base.clone();
     invalid["delivery"]["url"] = json!("https://127.0.0.1/");
-    let (status, response) = fixture.mcp("events/subscribe", invalid, true).await;
+    let (status, response) = fixture.mcp("events/subscribe", invalid.clone(), true).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(response["error"]["code"], -32015);
     assert_eq!(response["error"]["data"]["reason"], "non_public_callback");
@@ -933,5 +933,31 @@ async fn subscription_refresh_and_unsubscribe_use_modern_wire_contract_and_fixed
     );
     let listed = listed.to_string();
     assert!(!listed.contains(&token) && !listed.contains(&secret) && !listed.contains(callback));
+    // Exercise the bound through HTTP failures rejected before any network I/O.
+    // Thirteen calls retain the last ten: the three oldest successful refreshes
+    // leave the log, while the earlier failure and unsubscribe remain visible.
+    for _ in 0..8 {
+        let (status, response) = fixture.mcp("events/subscribe", invalid.clone(), true).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response["error"]["data"]["reason"], "non_public_callback");
+    }
+    let bounded_log = fixture.connector()["events_log"].clone();
+    let retained = bounded_log.as_array().expect("bounded event call log");
+    assert_eq!(retained.len(), 10);
+    assert!(retained[0] == calls[3], "keep the oldest retained failure");
+    assert!(retained[1] == calls[4], "keep the retained unsubscribe");
+    assert!(retained[2..].iter().all(|call| {
+        call["method"] == "events/subscribe"
+            && call["ok"] == false
+            && call["reason"] == "non_public_callback"
+    }));
+    let bounded_text = bounded_log.to_string();
+    assert!(
+        !bounded_text.contains(&token)
+            && !bounded_text.contains(&secret)
+            && !bounded_text.contains(callback)
+            && !bounded_text.contains("127.0.0.1"),
+        "retained diagnostics must not contain credentials or callback addresses"
+    );
     fixture.close().await;
 }
