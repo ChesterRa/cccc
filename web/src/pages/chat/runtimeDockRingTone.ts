@@ -1,4 +1,5 @@
 import type { RuntimeDockItem } from "./runtimeDockItems";
+import { hasManagedRuntimeOutput } from "../../utils/headlessRuntimeSupport";
 
 export type RuntimeRingTone = "stopped" | "idle" | "active" | "attention";
 
@@ -10,26 +11,19 @@ export function getRuntimeRingTone(
   const actorState = String(workingState || "")
     .trim()
     .toLowerCase();
-  const stateSource = String(item.actor?.runtime_state_source || "")
-    .trim()
-    .toLowerCase();
-  if (item.liveWorkCard?.phase === "failed") return "attention";
-  if (!isRunning) return "stopped";
+  if (!isRunning) return item.liveWorkCard?.phase === "failed" ? "attention" : "stopped";
 
   // Headless runtimes already expose their real daemon-derived working state.
   // Live-work transcript state can lag during reconnect/catch-up, so don't let
   // stale pending/streaming cards light the ring after the actor is idle.
-  if (item.runner === "headless") {
-    if (actorState === "stuck") return "attention";
+  if (hasManagedRuntimeOutput(item.actor)) {
+    if (actorState === "stuck" || actorState === "error") return "attention";
     if (actorState === "working") return "active";
+    if (item.liveWorkCard?.phase === "failed") return "attention";
     return "idle";
   }
 
-  if (stateSource === "managed_session" || stateSource === "app_server") {
-    if (actorState === "stuck") return "attention";
-    if (actorState === "working") return "active";
-    return "idle";
-  }
+  if (actorState === "error" || item.liveWorkCard?.phase === "failed") return "attention";
 
   if (actorState === "working") return "active";
 

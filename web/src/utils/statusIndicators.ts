@@ -1,4 +1,4 @@
-export type RuntimeIndicatorTone = "stop" | "run" | "working";
+export type RuntimeIndicatorTone = "stop" | "run" | "working" | "error";
 
 export type RuntimeIndicatorState = {
   tone: RuntimeIndicatorTone;
@@ -45,6 +45,16 @@ export function getRuntimeIndicatorState(input: {
       labelClass: "text-emerald-700 dark:text-emerald-300",
       pulse: true,
       strongPulse: true,
+    };
+  }
+
+  if (workingState === "error") {
+    return {
+      tone: "error",
+      dotClass: "bg-rose-500/80 dark:bg-rose-400/80",
+      labelClass: "text-rose-700 dark:text-rose-300",
+      pulse: false,
+      strongPulse: false,
     };
   }
 

@@ -19,9 +19,9 @@
 //! A process is identified by its PID together with its kernel start time
 //! (`/proc/<pid>/stat` field 22), and the identity plus attribution is read
 //! again before SIGTERM and again before SIGKILL; anything that no longer
-//! matches is left alone. The workspace forbids `unsafe`, so there is no
-//! pidfd here: what remains is the gap between that re-read and `kill(2)`,
-//! and a reused PID would also have to carry the same Group, home and user.
+//! matches is left alone. Signals still use numeric PIDs, so a process that
+//! exits after revalidation can have its PID reused before `kill(2)`. These
+//! checks narrow that window; they do not give a pidfd's identity guarantee.
 //!
 //! This is a one-shot sweep at retirement, not a background reaper.
 
@@ -30,6 +30,7 @@ use cccc_core::HomeLayout;
 /// What became of one attributed process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub enum ReapOutcome {
     /// Confirmed gone: the PID no longer exists, is a zombie awaiting its
     /// parent, or names a process with a different start time.
@@ -429,9 +430,9 @@ mod linux {
     pub(crate) mod fixture {
         //! Attributed child processes for tests, killed and waited on drop.
 
+        use std::io::{BufRead, BufReader};
         use std::path::Path;
         use std::process::{Child, Command, Stdio};
-        use std::time::{Duration, Instant};
 
         pub(crate) struct Fixture {
             child: Child,
@@ -440,7 +441,8 @@ mod linux {
         impl Fixture {
             /// Runs `program args...` with the given attribution. Stdin is a
             /// pipe held open by the fixture, so `read` blocks without
-            /// spawning helpers.
+            /// spawning helpers. The shell reports ready after its signal
+            /// handling is installed and any `setsid` exec has completed.
             pub(crate) fn spawn(
                 program: &Path,
                 args: &[&str],
@@ -454,12 +456,12 @@ mod linux {
                     .env("CCCC_GROUP_ID", group_id)
                     .env("CCCC_ACTOR_ID", actor_id)
                     .stdin(Stdio::piped())
-                    .stdout(Stdio::null())
+                    .stdout(Stdio::piped())
                     .stderr(Stdio::null())
                     .spawn()
                     .expect("spawn fixture child");
-                let fixture = Self { child };
-                fixture.wait_attributed(group_id);
+                let mut fixture = Self { child };
+                fixture.wait_ready();
                 fixture
             }
 
@@ -496,26 +498,21 @@ mod linux {
                 super::read_stat(self.pid()).is_some_and(|stat| !stat.terminated())
             }
 
-            fn wait_attributed(&self, group_id: &str) {
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while Instant::now() < deadline {
-                    let environ = std::fs::read(format!("/proc/{}/environ", self.pid()));
-                    if environ.is_ok_and(|environ| {
-                        super::env_value(&environ, b"CCCC_GROUP_ID") == Some(group_id.as_bytes())
-                    }) {
-                        return;
-                    }
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                panic!("fixture {} never carried {group_id}", self.pid());
+            fn wait_ready(&mut self) {
+                let stdout = self.child.stdout.take().expect("fixture stdout pipe");
+                let mut ready = String::new();
+                BufReader::new(stdout)
+                    .read_line(&mut ready)
+                    .expect("read fixture ready handshake");
+                assert_eq!(ready, "cccc-reap-ready\n", "shell fixture became ready");
             }
         }
 
-        fn script(trap_term: bool) -> &'static str {
+        pub(super) fn script(trap_term: bool) -> &'static str {
             if trap_term {
-                "trap '' TERM; read -r _"
+                "trap '' TERM; printf 'cccc-reap-ready\\n'; read -r _"
             } else {
-                "read -r _"
+                "printf 'cccc-reap-ready\\n'; read -r _"
             }
         }
 
@@ -591,6 +588,33 @@ mod linux {
         }
 
         #[test]
+        fn fixture_ready_confirms_signal_handling_and_detached_session() {
+            let home = home();
+            let group_id = unique_group();
+            let resistant = Fixture::shell(home.path(), &group_id, true);
+            let status = std::fs::read_to_string(format!("/proc/{}/status", resistant.pid()))
+                .expect("fixture status");
+            let ignored = status
+                .lines()
+                .find_map(|line| line.strip_prefix("SigIgn:"))
+                .expect("ignored signal mask");
+            let ignored = u64::from_str_radix(ignored.trim(), 16).expect("parse signal mask");
+            assert_ne!(ignored & (1 << (Signal::SIGTERM as u32 - 1)), 0);
+
+            let detached = Fixture::detached(home.path(), &group_id);
+            let stat = std::fs::read_to_string(format!("/proc/{}/stat", detached.pid()))
+                .expect("detached fixture stat");
+            let rest = stat.rsplit_once(')').expect("stat command delimiter").1;
+            let session = rest
+                .split_ascii_whitespace()
+                .nth(3)
+                .expect("session ID")
+                .parse::<u32>()
+                .expect("parse session ID");
+            assert_eq!(session, detached.pid());
+        }
+
+        #[test]
         fn reaps_a_detached_process_of_this_home_and_group() {
             let home = home();
             let group_id = unique_group();
@@ -663,7 +687,7 @@ mod linux {
             std::os::unix::fs::symlink("/bin/sh", &program).expect("symlink");
             let child = Fixture::spawn(
                 &program,
-                &["-c", "trap '' TERM; read -r _"],
+                &["-c", fixture::script(true)],
                 home.path(),
                 &group_id,
                 "z-named",

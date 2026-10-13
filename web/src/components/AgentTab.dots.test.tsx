@@ -54,6 +54,7 @@ vi.mock("./agentTerminal/useAgentTerminalConnection", () => ({
   }),
 }));
 vi.mock("./webModel/WebModelRuntimePanel", () => ({ WebModelRuntimePanel: mocks.browser }));
+vi.mock("./headless/ActorAcpControls", () => ({ ActorAcpControls: () => null }));
 vi.mock("../services/api", () => ({
   fetchDotsActorState: (...args: unknown[]) => mocks.load(...args),
   updateDotsActorConnection: (...args: unknown[]) => mocks.update(...args),
@@ -124,6 +125,43 @@ async function render(compact: boolean, currentActor = actor, groupId = "g_dot")
     ),
   );
 }
+
+it.each([false, true])(
+  "shows a GET-projected managed turn error without offering Start (compact=%s)",
+  async (compact) => {
+    const managedActor: Actor = {
+      id: "managed",
+      runtime: "pi",
+      enabled: true,
+      running: true,
+      runner_effective: "headless",
+      runtime_state_source: "managed_session",
+      effective_working_state: "error",
+      effective_working_reason: "Synthetic model rejection",
+    };
+    await render(compact, managedActor, "g_managed");
+    expect(host.textContent).toContain("common:error");
+    expect(host.querySelector('button[aria-label="launchAgentLabel"]')).toBeNull();
+    if (compact) {
+      expect(host.querySelector('[role="img"][aria-label="common:error"]')).not.toBeNull();
+    } else {
+      const pause = host.querySelector<HTMLButtonElement>('button[aria-label="quitAgent"]')!;
+      expect(pause).not.toBeNull();
+      await act(async () => pause.click());
+      expect(mocks.pause).toHaveBeenCalledOnce();
+    }
+    await render(
+      compact,
+      {
+        ...managedActor,
+        effective_working_state: "working",
+        effective_working_reason: "headless_turn_active",
+      },
+      "g_managed",
+    );
+    expect(host.textContent).not.toContain("common:error");
+  },
+);
 it("keeps access pause reachable for an enabled Dots Actor in a stopped Group without changing actual status", async () => {
   await render(false);
   expect(host.textContent).toContain("dotsActor.phases.unconfigured");

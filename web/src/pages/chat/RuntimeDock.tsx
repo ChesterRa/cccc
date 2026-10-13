@@ -7,6 +7,7 @@ import { PlusIcon } from "../../components/Icons";
 import { useActorDisplayState } from "../../hooks/useActorDisplayState";
 import type { Actor, HeadlessStreamEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
+import { hasManagedRuntimeOutput } from "../../utils/headlessRuntimeSupport";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { RuntimeDockTicker } from "./RuntimeDockTicker";
 import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
@@ -28,6 +29,7 @@ function getRuntimeStatusLabel(
   if (workingState === "working") return t("working", { defaultValue: "Working" });
   if (workingState === "waiting") return t("waiting", { defaultValue: "Waiting" });
   if (workingState === "stuck") return t("stuck", { defaultValue: "Stuck" });
+  if (workingState === "error") return t("error", { defaultValue: "Error" });
   return t("running", { defaultValue: "Running" });
 }
 
@@ -105,7 +107,7 @@ function RuntimeDockActorButtonView({
   actorStatusProvisional: boolean;
   onOpenInspector: (actorId: string) => void;
 }) {
-  const { t } = useTranslation(["chat", "actors"]);
+  const { t } = useTranslation(["chat", "actors", "common"]);
   const activityGradientId = useId();
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
@@ -114,9 +116,14 @@ function RuntimeDockActorButtonView({
   });
   const ringTone = getRuntimeRingTone(item, isRunning, workingState);
   const ringPresentation = getRuntimeRingPresentation(ringTone, isDark);
-  const statusLabel = item.liveWorkCard
-    ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
-    : getRuntimeStatusLabel(isRunning, workingState, (key, options) => t(`actors:${key}`, options));
+  const useRuntimeStatus =
+    workingState === "error" || (workingState === "working" && hasManagedRuntimeOutput(item.actor));
+  const statusLabel =
+    item.liveWorkCard && !useRuntimeStatus
+      ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
+      : getRuntimeStatusLabel(isRunning, workingState, (key, options) =>
+          t(key === "error" ? "common:error" : `actors:${key}`, options),
+        );
   const queuedCount = Math.max(0, Number(item.webModelQueuedCount || 0));
   const queuedLabel =
     queuedCount > 0

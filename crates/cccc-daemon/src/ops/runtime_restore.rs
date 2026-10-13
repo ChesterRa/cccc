@@ -84,9 +84,12 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
             );
             continue;
         }
+        let was_running = actor_runtime::actor_is_running(&group, actor);
         match actor_runtime::apply(home, &group, &actor.id, "actor.restore") {
             Ok(_) => {
-                record_respawn_event(home, &group, &actor.id);
+                if !was_running && actor_runtime::actor_is_running(&group, actor) {
+                    record_respawn_event(store, &group, &actor.id);
+                }
                 actor_delivery::dispatch_unread(home, &group, &actor.id);
             }
             Err(error) => {
@@ -107,16 +110,8 @@ fn should_restore_actor(state: GroupState, actor: &Actor) -> bool {
         && !(state == GroupState::Paused && actor.runner == cccc_contracts::RunnerKind::Headless)
 }
 
-/// Record an actor.start ledger event when the daemon respawns an actor at startup.
-/// Without this, daemon respawns are invisible in the ledger — 31 actors restarted
-/// silently with no actor.start record, and reads showed "stopped" for running actors.
-fn record_respawn_event(home: &HomeLayout, group: &cccc_core::GroupDoc, actor_id: &str) {
-    let Ok(store) = GroupStore::new(home.clone()) else {
-        return;
-    };
-    let Ok(path) = store.ledger_path(&group.group_id) else {
-        return;
-    };
+/// Record a newly running daemon-owned Actor after startup restoration.
+fn record_respawn_event(store: &GroupStore, group: &cccc_core::GroupDoc, actor_id: &str) {
     let mut event = Event::new("actor.start", &group.group_id);
     event.by = "system".into();
     event.data = serde_json::json!({
@@ -126,7 +121,10 @@ fn record_respawn_event(home: &HomeLayout, group: &cccc_core::GroupDoc, actor_id
     .as_object()
     .cloned()
     .unwrap_or_default();
-    if let Err(error) = ledger::append(&path, &event) {
+    if let Err(error) = store
+        .ledger_path(&group.group_id)
+        .and_then(|path| ledger::append(&path, &event))
+    {
         tracing::warn!(
             group_id = %group.group_id,
             actor_id = %actor_id,
@@ -143,11 +141,10 @@ fn deepseek_restore_blocked(home: &HomeLayout, group: &cccc_core::GroupDoc, acto
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        deepseek_restore_blocked, record_respawn_event, restore_group, should_restore_actor,
-    };
-    use cccc_contracts::{Actor, ActorRuntime, GroupState};
-    use cccc_core::{GroupStore, HomeLayout, ledger};
+    use super::{deepseek_restore_blocked, restore_group, should_restore_actor};
+    use crate::ops::actor_runtime;
+    use cccc_contracts::{Actor, ActorRuntime, GroupState, RunnerKind};
+    use cccc_core::{GroupDoc, GroupStore, HomeLayout, Scope, ledger};
 
     #[test]
     fn paused_groups_restore_terminal_runtimes_but_not_non_terminal_runtimes() {
@@ -203,58 +200,113 @@ mod tests {
         assert!(!deepseek_restore_blocked(&home, &group, &actor));
     }
 
-    #[test]
-    fn respawn_records_actor_start_ledger_event() {
+    fn restore_fixture(
+        runtime: ActorRuntime,
+    ) -> (tempfile::TempDir, HomeLayout, GroupStore, GroupDoc) {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
-        let mut group = store.create("respawn test", "").expect("group");
+        let workspace = temp.path().join("workspace");
+        let provider_home = temp.path().join("provider-home");
+        std::fs::create_dir(&workspace).expect("workspace");
+        std::fs::create_dir(&provider_home).expect("provider home");
+        let mut group = store.create("restore test", "").expect("group");
+        group.scopes.push(Scope {
+            scope_key: "s_restore".into(),
+            url: workspace.to_string_lossy().into_owned(),
+            label: "restore".into(),
+            git_remote: String::new(),
+        });
+        group.active_scope_key = "s_restore".into();
         let mut actor = Actor::new("peer1");
+        actor.runtime = runtime;
+        actor.runner = if runtime == ActorRuntime::Custom {
+            RunnerKind::Pty
+        } else {
+            RunnerKind::Headless
+        };
+        actor.default_scope_key = "s_restore".into();
         actor.enabled = true;
-        group.actors.push(actor.clone());
+        if runtime == ActorRuntime::Custom {
+            actor.command = vec![
+                "sh".into(),
+                "-c".into(),
+                "while read line; do :; done".into(),
+            ];
+        }
+        for key in ["HOME", "USERPROFILE"] {
+            actor
+                .env
+                .insert(key.into(), provider_home.to_string_lossy().into_owned());
+        }
+        group.actors.push(actor);
         group.running = true;
+        group.state = GroupState::Active;
         store.save(&group).expect("save");
-
-        record_respawn_event(&home, &group, &actor.id);
-
-        let events = ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger path"))
-            .expect("read ledger");
-        let respawn = events
-            .iter()
-            .find(|e| e.kind == "actor.start" && e.data["reason"] == "daemon_respawn")
-            .expect("daemon respawn actor.start event not found");
-        assert_eq!(respawn.data["actor_id"], "peer1");
-        assert_eq!(respawn.by, "system");
+        (temp, home, store, group)
     }
 
-    /// Path-level regression: drive `restore_running` with a real actor and
-    /// assert the ledger holds the daemon-respawn event. The helper-level test
-    /// above calls `record_respawn_event` directly, so deleting the call site
-    /// in `restore_group` leaves the whole lib suite green — this test pins it.
+    fn respawn_events(store: &GroupStore, group: &GroupDoc) -> Vec<cccc_contracts::Event> {
+        ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger path"))
+            .expect("read ledger")
+            .into_iter()
+            .filter(|event| event.kind == "actor.start" && event.data["reason"] == "daemon_respawn")
+            .collect()
+    }
+
     #[test]
-    fn restore_path_journals_actor_start_on_daemon_respawn() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let store = GroupStore::new(home.clone()).expect("store");
-        let mut group = store.create("restore path test", "").expect("group");
-        let mut actor = Actor::new("peer1");
-        actor.enabled = true;
-        actor.runtime = cccc_contracts::ActorRuntime::WebModel;
-        actor.runner = cccc_contracts::RunnerKind::Headless;
-        actor.default_scope_key = "global_scope".into();
-        group.actors.push(actor.clone());
-        group.running = true;
-        store.save(&group).expect("save");
+    fn structured_restore_without_a_local_owner_does_not_record_a_respawn() {
+        for runtime in [ActorRuntime::WebModel, ActorRuntime::ChatgptDots] {
+            let (_temp, home, store, group) = restore_fixture(runtime);
+            assert!(!actor_runtime::actor_is_running(&group, &group.actors[0]));
+            restore_group(&home, &store, &group.group_id).expect("restore group");
+            assert!(!actor_runtime::actor_is_running(&group, &group.actors[0]));
+            assert!(respawn_events(&store, &group).is_empty());
+        }
+    }
 
-        restore_group(&home, &store, &group.group_id).expect("restore group");
+    #[cfg(unix)]
+    struct OwnedRuntime(String);
 
-        let events = ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger path"))
-            .expect("read ledger");
-        let respawn = events
-            .iter()
-            .find(|e| e.kind == "actor.start" && e.data["reason"] == "daemon_respawn")
-            .expect("restore path journaled no actor.start reason=daemon_respawn");
-        assert_eq!(respawn.data["actor_id"], "peer1");
-        assert_eq!(respawn.by, "system");
+    #[cfg(unix)]
+    impl Drop for OwnedRuntime {
+        fn drop(&mut self) {
+            let _ = cccc_runtime::stop(&self.0, "peer1");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restored_owner_records_one_respawn_and_healthy_restore_is_idempotent() {
+        let (_temp, home, store, group) = restore_fixture(ActorRuntime::Custom);
+        let _cleanup = OwnedRuntime(group.group_id.clone());
+        restore_group(&home, &store, &group.group_id).expect("first restore");
+        let first = actor_runtime::status(&group.group_id, "peer1").expect("owned runtime");
+        assert!(first.running && first.pid.is_some());
+        let events = respawn_events(&store, &group);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data["actor_id"], "peer1");
+        assert_eq!(events[0].by, "system");
+
+        restore_group(&home, &store, &group.group_id).expect("idempotent restore");
+        let next = actor_runtime::status(&group.group_id, "peer1").expect("same owned runtime");
+        assert!(next.running);
+        assert_eq!(next.pid, first.pid);
+        assert_eq!(next.started_at, first.started_at);
+        assert_eq!(respawn_events(&store, &group).len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_restore_does_not_record_a_respawn() {
+        let (_temp, home, store, mut group) = restore_fixture(ActorRuntime::Custom);
+        let _cleanup = OwnedRuntime(group.group_id.clone());
+        group.active_scope_key.clear();
+        group.actors[0].default_scope_key.clear();
+        group.scopes.clear();
+        store.save(&group).expect("save missing scope");
+        restore_group(&home, &store, &group.group_id).expect("failed actor restore is nonfatal");
+        assert!(!actor_runtime::actor_is_running(&group, &group.actors[0]));
+        assert!(respawn_events(&store, &group).is_empty());
     }
 }

@@ -415,6 +415,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       appendHeadlessEvent({ ...ev, _receivedAt: live ? Date.now() : undefined }, groupId);
 
       function updateHeadlessActorRuntime(update: ActorActivityUpdate) {
+        // Journal replay restores history, not current runtime authority.
+        // Native successful turns may update daemon status without a journal event.
+        if (!live) return;
         const storeState = useGroupStore.getState();
         const actorsSnapshot = storeState.actors;
         updateActorActivity([update], groupId);
@@ -540,11 +543,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         return;
       }
 
-      // A cancelled turn closes like a completed one: it is a deliberate stop,
-      // not a failure, so it must not render as an error. It is included here
-      // defensively — the raw projection can label a cancelled turn completed
-      // before the settle event arrives, and this branch must handle either
-      // label so the flush and clear below always run.
+      // A terminal turn retires its live output without claiming that the
+      // provider process stopped. Cancellation is a deliberate interruption;
+      // only a failed turn leaves the owned session in an error state.
       if (
         eventType === "headless.turn.completed" ||
         eventType === "headless.turn.failed" ||
@@ -562,8 +563,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           id: actorId,
           running: true,
           idle_seconds: null,
-          effective_working_state: "idle",
-          effective_working_reason: failed ? "headless_turn_failed" : "headless_turn_idle",
+          effective_working_state: failed ? "error" : "idle",
+          effective_working_reason: failed
+            ? errorMessage || "headless_turn_failed"
+            : "headless_turn_idle",
           effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
           effective_active_task_id: null,
         });

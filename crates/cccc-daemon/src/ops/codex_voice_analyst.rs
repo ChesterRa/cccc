@@ -423,3 +423,23 @@ fn required_value<'a>(value: &'a str, name: &str) -> io::Result<&'a str> {
         Ok(value)
     }
 }
+
+#[cfg(all(test, unix))]
+impl AnalystSession {
+    /// Exercise Actor output using the existing inert shutdown transport. The
+    /// selected runtime only chooses the actual structured projection branch.
+    pub(crate) fn for_output_test(
+        config: &std::path::Path,
+        structured: bool,
+        private: &str,
+    ) -> Self {
+        let mut session = Self::claude_for_shutdown_test(config, "abcdef01", Vec::new(), true);
+        if structured {
+            session.runtime = ActorRuntime::Antigravity;
+        }
+        session
+            .environment
+            .insert("OUTPUT_FIXTURE_PRIVATE".into(), private.into());
+        session
+    }
+}

@@ -134,7 +134,9 @@ export function GroupWorkArea({
   const otherAttention = actors.filter(
     (actor) =>
       !pageIds.has(actor.id) &&
-      (actor.effective_working_state === "waiting" || actor.effective_working_state === "stuck"),
+      (actor.effective_working_state === "waiting" ||
+        actor.effective_working_state === "stuck" ||
+        actor.effective_working_state === "error"),
   );
   const buttonClass =
     "inline-flex h-8 shrink-0 items-center justify-center rounded-md px-2 hover:bg-[var(--glass-tab-bg)] disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]";

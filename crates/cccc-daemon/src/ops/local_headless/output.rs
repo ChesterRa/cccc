@@ -8,9 +8,6 @@ pub(super) fn handle_message(session: &Session, message: Value) {
         }
         return;
     }
-    if session.managed.structured_only() {
-        project_structured_event(session, &message);
-    }
     handle_announced_message(session, message);
 }
 
@@ -29,16 +26,6 @@ fn project_structured_event(session: &Session, message: &Value) {
     ]);
     let kind = match message["method"].as_str().unwrap_or_default() {
         "turn/started" => "headless.turn.started",
-        "turn/completed" => {
-            emit(session, "headless.message.completed", data.clone());
-            data.insert("status".into(), params["turn"]["status"].clone());
-            if params["turn"]["status"] == "failed" {
-                data.insert("error".into(), params["turn"]["error"].clone());
-                "headless.turn.failed"
-            } else {
-                "headless.turn.completed"
-            }
-        }
         "item/agentMessage/delta" => {
             data.insert("delta".into(), params["delta"].clone());
             "headless.message.delta"
@@ -78,13 +65,21 @@ fn handle_announced_message(session: &Session, message: Value) {
         return;
     }
     if message.get("method").and_then(Value::as_str) == Some("turn/started") {
-        handle_managed_turn_started(session, &message);
+        if handle_managed_turn_started(session, &message) && session.managed.structured_only() {
+            project_structured_event(session, &message);
+        }
         return;
     }
     let completed = message.get("method").and_then(Value::as_str) == Some("turn/completed");
     if completed {
         complete_turn(session, &message);
         return;
+    }
+    if is_foreign_turn(session, &message) {
+        return;
+    }
+    if session.managed.structured_only() {
+        project_structured_event(session, &message);
     }
     if message.get("method").and_then(Value::as_str) == Some("thread/status/changed") {
         let flags = message
@@ -128,6 +123,23 @@ fn is_foreign_thread(session_thread_id: &str, message: &Value) -> bool {
             .is_some_and(|thread_id| !thread_id.is_empty() && thread_id != session_thread_id)
 }
 
+fn is_foreign_turn(session: &Session, message: &Value) -> bool {
+    let Some(turn_id) = message
+        .pointer("/params/turnId")
+        .or_else(|| message.pointer("/params/turn/id"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+    else {
+        return false;
+    };
+    let Ok(active) = session.active_turn.lock() else {
+        return true;
+    };
+    active
+        .as_ref()
+        .is_none_or(|turn| !turn.turn_id.is_empty() && turn.turn_id != turn_id)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StartedTurnDisposition {
     Adopted,
@@ -135,18 +147,21 @@ enum StartedTurnDisposition {
     Conflict,
 }
 
-fn handle_managed_turn_started(session: &Session, message: &Value) {
+fn handle_managed_turn_started(session: &Session, message: &Value) -> bool {
     let turn_id = message
         .pointer("/params/turn/id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let Some(turn_id) = turn_id else { return };
+    let Some(turn_id) = turn_id else {
+        return false;
+    };
     match observe_started_turn(&session.active_turn, turn_id) {
         StartedTurnDisposition::Adopted => {
             session.set_status("working", Some(turn_id.to_owned()));
+            true
         }
-        StartedTurnDisposition::Matched => {}
+        StartedTurnDisposition::Matched => true,
         StartedTurnDisposition::Conflict => {
             tracing::warn!(
                 group_id = %session.group_id,
@@ -155,6 +170,7 @@ fn handle_managed_turn_started(session: &Session, message: &Value) {
                 "managed Actor reported an overlapping terminal turn; stopping the inconsistent session"
             );
             let _ = session.stop();
+            false
         }
     }
 }
@@ -200,31 +216,39 @@ fn complete_turn(session: &Session, message: &Value) {
     // interrupt, a cccc cancel_turn, or the owner's Esc, and marking a
     // deliberate stop as an error would train every reader to ignore the
     // error state. It stays visible in history without claiming breakage.
-    match settled.outcome {
+    let mut data = Map::from_iter([
+        ("turn_id".into(), json!(turn_id)),
+        (
+            "stream_id".into(),
+            json!(format!("{}:{turn_id}", session.managed.generation())),
+        ),
+    ]);
+    if session.managed.structured_only() {
+        emit(session, "headless.message.completed", data.clone());
+    }
+    data.insert("status".into(), json!(settled.status));
+    let kind = match settled.outcome {
         TurnSettle::Failed(reason) => {
-            emit(
-                session,
-                "headless.turn.failed",
-                Map::from_iter([
-                    ("turn_id".into(), json!(turn_id)),
-                    ("status".into(), json!(settled.status)),
-                    ("error".into(), json!(reason)),
-                ]),
-            );
+            let reason = session
+                .managed
+                .safe_diagnostic(&std::io::Error::other(reason));
+            data.insert("error".into(), json!(reason));
             session.set_status_with_reason("error", None, Some(reason));
+            "headless.turn.failed"
         }
         TurnSettle::Cancelled => {
-            emit(
-                session,
-                "headless.turn.cancelled",
-                Map::from_iter([
-                    ("turn_id".into(), json!(turn_id)),
-                    ("status".into(), json!(settled.status)),
-                ]),
-            );
             session.set_status("idle", None);
+            "headless.turn.cancelled"
         }
-        TurnSettle::Completed => session.set_status("idle", None),
+        TurnSettle::Completed => {
+            session.set_status("idle", None);
+            "headless.turn.completed"
+        }
+    };
+    // Native successful completion keeps its existing status-only handling.
+    // Structured providers and non-success outcomes close this stream once.
+    if session.managed.structured_only() || kind != "headless.turn.completed" {
+        emit(session, kind, data);
     }
 }
 
@@ -257,9 +281,10 @@ fn settle_decision(active_turn_id: &str, message: &Value) -> Option<TurnOutcome>
 ///
 /// Claude (`claude/transcript.rs`) and the ACP adapters
 /// (`acp/events.rs::settle_turn`) both publish `params.turn.status` plus
-/// `params.turn.error`. Codex republishes the provider frame unchanged, so a
-/// missing status means the provider reported no outcome rather than success.
-/// `error` may be a string or an object; normalise both to text.
+/// `params.turn.error`. Codex republishes the provider frame unchanged. Missing
+/// status keeps the legacy completed handling unless an error is present;
+/// unknown explicit statuses fail without claiming business success.
+/// `error` may be a string or an object; select only diagnostic text.
 fn turn_outcome(message: &Value) -> TurnOutcome {
     let status = message
         .pointer("/params/turn/status")
@@ -273,7 +298,15 @@ fn turn_outcome(message: &Value) -> TurnOutcome {
         .filter(|error| !error.is_null())
         .map(error_text);
     let outcome = settle_outcome(&status, error);
-    TurnOutcome { status, outcome }
+    let status = match &outcome {
+        TurnSettle::Completed => "completed",
+        TurnSettle::Cancelled => "cancelled",
+        TurnSettle::Failed(_) => "failed",
+    };
+    TurnOutcome {
+        status: status.to_owned(),
+        outcome,
+    }
 }
 
 fn error_text(error: &Value) -> String {
@@ -290,10 +323,14 @@ fn error_text(error: &Value) -> String {
                     .filter(|value| !value.is_empty())
                     .map(str::to_owned)
             })
-            .unwrap_or_else(|| error.to_string()),
-        other => other.to_string(),
+            .unwrap_or_else(|| "turn failed without a reported reason".to_owned()),
+        _ => "turn failed without a reported reason".to_owned(),
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "output_tests.rs"]
+mod delivery_tests;
 
 struct TurnOutcome {
     status: String,
@@ -312,7 +349,7 @@ fn settle_outcome(status: &str, error: Option<String>) -> TurnSettle {
     }
     TurnSettle::Failed(error.unwrap_or_else(|| match status {
         "failed" => "provider reported the turn failed without a reason".to_owned(),
-        other => format!("turn ended with status {other}"),
+        _ => "provider reported an unsupported terminal status".to_owned(),
     }))
 }
 
@@ -388,74 +425,9 @@ mod tests {
             StartedTurnDisposition::Conflict
         );
     }
-    /// Exercise the status/reason round trip on a live `Session`, not just the
-    /// classifier. A failed turn must leave status error with the provider's
-    /// reason, and the next successful turn must clear both status and reason
-    /// back to idle. The fake control socket is Unix-only.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_failed_turn_clears_on_the_next_success_through_a_real_session() {
-        use super::super::HeadlessStatus;
-        use crate::ops::codex_voice_analyst::AnalystSession;
-        use cccc_core::HomeLayout;
-        use std::sync::{Arc, Mutex, atomic::AtomicBool};
-
-        let temp = tempfile::tempdir().expect("tempdir");
-        let config = temp.path().canonicalize().expect("config");
-        let (_listener, _directory) =
-            crate::ops::local_headless::supervisor::control_fixture::bind(&config);
-        let home = HomeLayout::from_path(config.join("home")).expect("home");
-        let status = Mutex::new(HeadlessStatus {
-            status: "working".into(),
-            task_id: None,
-            updated_at: String::new(),
-            pid: None,
-            reason: None,
-        });
-        let session = Session {
-            home,
-            group_id: "g-session-roundtrip".into(),
-            actor_id: "claude-1".into(),
-            managed: Arc::new(AnalystSession::claude_for_shutdown_test(
-                &config,
-                "abcdef01",
-                Vec::new(),
-                true,
-            )),
-            has_terminal: AtomicBool::new(false),
-            viewer: Mutex::new(None),
-            status,
-            stopped: AtomicBool::new(false),
-            stop_lock: Mutex::new(()),
-            startup_prompt: Mutex::new(None),
-            active_turn: Mutex::new(None),
-        };
-
-        // A rejected turn: status error carrying the provider's own text.
-        session.set_status_with_reason(
-            "error",
-            None,
-            Some("APIError 400 reasoning encrypted_content".into()),
-        );
-        assert_eq!(session.status.lock().expect("status").status, "error");
-        assert_eq!(
-            session.status.lock().expect("status").reason.as_deref(),
-            Some("APIError 400 reasoning encrypted_content")
-        );
-
-        // The next successful turn must clear the stale failure entirely.
-        session.set_status("idle", None);
-        let state = session.status.lock().expect("status");
-        assert_eq!(state.status, "idle");
-        assert_eq!(
-            state.reason, None,
-            "a recovered turn must not keep displaying the previous failure"
-        );
-    }
-
     /// Classify a completion the way `complete_turn` does, including the
     /// turn-id guard. `None` means the turn was ignored; otherwise the settle
-    /// decision, with the reported status for context.
+    /// decision, with its normalized terminal status.
     fn classify(active_turn_id: &str, message: Value) -> Option<(TurnSettle, String)> {
         let outcome = settle_decision(active_turn_id, &message)?;
         Some((outcome.outcome, outcome.status))

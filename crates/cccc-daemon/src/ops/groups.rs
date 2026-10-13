@@ -566,15 +566,14 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     super::voice_secretary::cancel_group(home, &group.group_id).map_err(OpError::io)?;
     actor_delivery::shutdown_group(&group.group_id);
     actor_runtime::stop_group(home, &group)?;
+    // Complete the authorized stop before fallible settings/directory cleanup.
+    // Escaped children must not survive a later filesystem error.
+    let reaped = actor_runtime::reap_group(home, &group.group_id);
     for actor in &group.actors {
         super::codex_voice_analyst::remove_claude_actor_settings(home, &group.group_id, &actor.id)
             .map_err(OpError::io)?;
     }
     let deleted = store(home)?.delete(&group.group_id).map_err(OpError::io)?;
-    // The sessions are stopped and the Group is retired; anything still
-    // attributed to it in this home escaped the process tree (see
-    // `actor_runtime::reap_group`).
-    let reaped = actor_runtime::reap_group(home, &group.group_id);
     if deleted {
         super::actor_secrets::remove_group(home, &group.group_id)?;
         super::voice_secretary::purge_deleted_group(home, &group.group_id).map_err(OpError::io)?;

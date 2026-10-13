@@ -421,6 +421,7 @@ export function AgentTab({
               : "common:loading",
       );
     if (!isRunning) return t("stopped");
+    if (workingState === "error") return t("common:error");
     if (workingState === "working" || workingState === "waiting" || workingState === "stuck")
       return t(workingState);
     return t("running");
@@ -722,7 +723,7 @@ export function AgentTab({
       ? runtimeStatusText
       : !isHeadless && connectionStatus !== "connected"
         ? t(connectionStatus === "disconnected" ? "connectionLost" : "chat:workView.connecting")
-        : workingState === "waiting" || workingState === "stuck"
+        : workingState === "waiting" || workingState === "stuck" || workingState === "error"
           ? runtimeStatusText
           : !isHeadless && terminalReady && !terminalWritable
             ? t("readOnlyConnection")

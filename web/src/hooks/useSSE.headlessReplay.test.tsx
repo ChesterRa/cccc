@@ -440,6 +440,23 @@ it("shows an ACP provider failure without a pending chat event and deduplicates 
     await act(async () => root.render(<Probe />));
     await act(async () => connection!.connectStream("g"));
     const stream = sources.find((source) => source.url.includes("/headless/stream"))!;
+    const started: HeadlessStreamEvent = {
+      ...failure,
+      id: "started",
+      type: "headless.turn.started",
+      data: { turn_id: "acp-turn", stream_id: "generation:acp-turn" },
+    };
+    const delta: HeadlessStreamEvent = {
+      ...started,
+      id: "delta",
+      type: "headless.message.delta",
+      data: { ...started.data, delta: "Partial answer" },
+    };
+    await act(async () => {
+      stream.emit("headless", started);
+      stream.emit("headless", delta);
+    });
+    expect(useGroupStore.getState().actors[0]!.effective_working_state).toBe("working");
     await act(async () => stream.emit("headless", failure));
     const bucket = () => useGroupStore.getState().chatByGroup.g!;
     expect(bucket().streamingActivitiesByStreamId["generation:acp-turn"]).toEqual([
@@ -451,12 +468,48 @@ it("shows an ACP provider failure without a pending chat event and deduplicates 
     ]);
     expect(bucket().streamingEvents).toHaveLength(1);
     expect(bucket().streamingEvents[0]!._streaming).toBe(false);
-    expect(useGroupStore.getState().actors[0]!.effective_working_reason).toBe(
-      "headless_turn_failed",
-    );
+    // The live projection agrees with the daemon Actor GET without claiming
+    // that a rejected turn stopped the still-owned provider process.
+    expect(useGroupStore.getState().actors[0]).toMatchObject({
+      running: true,
+      effective_working_state: "error",
+      effective_working_reason: "Synthetic provider failure",
+      effective_active_task_id: null,
+    });
     await act(async () => stream.emit("headless", failure));
     expect(bucket().streamingEvents).toHaveLength(1);
     expect(bucket().streamingActivitiesByStreamId["generation:acp-turn"]).toHaveLength(1);
+    await act(async () => stream.emit("headless.snapshot", { events: [started, delta, failure] }));
+    expect(bucket().streamingActivitiesByStreamId["generation:acp-turn"]).toHaveLength(1);
+    const nextStarted: HeadlessStreamEvent = {
+      ...started,
+      id: "next-started",
+      data: { turn_id: "next-turn", stream_id: "generation:next-turn" },
+    };
+    await act(async () => stream.emit("headless", nextStarted));
+    const recovered = useGroupStore.getState().actors[0]!;
+    expect(recovered).toMatchObject({
+      running: true,
+      effective_working_state: "working",
+      effective_working_reason: "headless_turn_active",
+      effective_active_task_id: "next-turn",
+    });
+    await act(async () => stream.emit("headless", failure));
+    expect(useGroupStore.getState().actors[0]).toBe(recovered);
+    await act(async () =>
+      stream.emit("headless", {
+        ...nextStarted,
+        id: "next-completed",
+        type: "headless.turn.completed",
+        data: { ...nextStarted.data, status: "completed" },
+      }),
+    );
+    expect(useGroupStore.getState().actors[0]).toMatchObject({
+      running: true,
+      effective_working_state: "idle",
+      effective_working_reason: "headless_turn_idle",
+      effective_active_task_id: null,
+    });
   } finally {
     await act(async () => {
       connection!.cleanup();
@@ -471,61 +524,204 @@ it("shows an ACP provider failure without a pending chat event and deduplicates 
 // A cancelled turn is a deliberate stop, not a failure. It must close the turn
 // and clear the transient stream exactly like a completed one, and must never
 // render as an error activity or set the failed working reason.
-it("closes a cancelled turn as idle and never as an error", async () => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  const original = useGroupStore.getState();
-  const sources = stubEventSources();
-  const actor: Actor = {
-    id: "acp",
-    runtime: "antigravity",
-    runtime_mode: "acp",
-    runner: "headless",
-    runtime_state_source: "managed_session",
-    running: true,
-  };
-  useGroupStore.setState({
-    selectedGroupId: "g",
-    actors: [actor],
-    chatByGroup: {},
-    refreshActors: vi.fn().mockResolvedValue(undefined),
-  });
-  let connection: ReturnType<typeof useSSE>;
-  function Probe() {
-    connection = useSSE({
-      activeTabRef: { current: "chat" },
-      chatAtBottomRef: { current: true },
-      actorsRef: { current: [actor] },
+it.each(["cancelled", "completed"] as const)(
+  "closes a %s active turn as idle without a failure",
+  async (outcome) => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const original = useGroupStore.getState();
+    const sources = stubEventSources();
+    const actor: Actor = {
+      id: "acp",
+      runtime: "antigravity",
+      runtime_mode: "acp",
+      runner: "headless",
+      runtime_state_source: "managed_session",
+      running: true,
+    };
+    useGroupStore.setState({
+      selectedGroupId: "g",
+      actors: [actor],
+      chatByGroup: {},
+      refreshActors: vi.fn().mockResolvedValue(undefined),
     });
-    return null;
-  }
-  const host = document.createElement("div"),
-    root = createRoot(host);
-  const cancelled: HeadlessStreamEvent = {
-    id: "cancelled",
-    group_id: "g",
-    actor_id: "acp",
-    type: "headless.turn.cancelled",
-    ts: "2026-10-03T00:00:00Z",
-    data: { turn_id: "acp-turn", stream_id: "generation:acp-turn", status: "cancelled" },
-  };
-  try {
-    await act(async () => root.render(<Probe />));
-    await act(async () => connection!.connectStream("g"));
-    const stream = sources.find((source) => source.url.includes("/headless/stream"))!;
-    await act(async () => stream.emit("headless", cancelled));
-    const bucket = () => useGroupStore.getState().chatByGroup.g!;
-    expect(bucket().streamingActivitiesByStreamId["generation:acp-turn"] ?? []).toEqual([]);
-    // No turn.started was emitted, so there is no streaming event left open.
-    expect(bucket().streamingEvents).toHaveLength(0);
-    expect(useGroupStore.getState().actors[0]!.effective_working_state).toBe("idle");
-    expect(useGroupStore.getState().actors[0]!.effective_working_reason).toBe("headless_turn_idle");
-  } finally {
-    await act(async () => {
-      connection!.cleanup();
-      root.unmount();
+    let connection: ReturnType<typeof useSSE>;
+    function Probe() {
+      connection = useSSE({
+        activeTabRef: { current: "chat" },
+        chatAtBottomRef: { current: true },
+        actorsRef: { current: [actor] },
+      });
+      return null;
+    }
+    const host = document.createElement("div"),
+      root = createRoot(host);
+    const cancelled: HeadlessStreamEvent = {
+      id: "cancelled",
+      group_id: "g",
+      actor_id: "acp",
+      type: `headless.turn.${outcome}`,
+      ts: "2026-10-03T00:00:00Z",
+      data: { turn_id: "acp-turn", stream_id: "generation:acp-turn", status: outcome },
+    };
+    try {
+      await act(async () => root.render(<Probe />));
+      await act(async () => connection!.connectStream("g"));
+      const stream = sources.find((source) => source.url.includes("/headless/stream"))!;
+      await act(async () => {
+        stream.emit("headless", { ...cancelled, id: "start", type: "headless.turn.started" });
+        stream.emit("headless", {
+          ...cancelled,
+          id: "partial",
+          type: "headless.message.delta",
+          data: { ...cancelled.data, phase: "commentary", delta: "Temporary progress" },
+        });
+      });
+      expect(useGroupStore.getState().actors[0]!.effective_working_state).toBe("working");
+      await act(async () => stream.emit("headless", cancelled));
+      const bucket = () => useGroupStore.getState().chatByGroup.g!;
+      expect(bucket().streamingActivitiesByStreamId["generation:acp-turn"] ?? []).toEqual([]);
+      // Buffered progress was flushed, and transient output was retired.
+      expect(bucket().streamingEvents).toHaveLength(0);
+      expect(useGroupStore.getState().actors[0]!.running).toBe(true);
+      expect(useGroupStore.getState().actors[0]!.effective_working_state).toBe("idle");
+      expect(useGroupStore.getState().actors[0]!.effective_working_reason).toBe(
+        "headless_turn_idle",
+      );
+    } finally {
+      await act(async () => {
+        connection!.cleanup();
+        root.unmount();
+      });
+      vi.unstubAllGlobals();
+      useGroupStore.setState(original);
+      host.remove();
+    }
+  },
+);
+
+it.each(
+  (["claude", "codex"] as const).flatMap((runtime) =>
+    (["idle", "working", "stopped", "error"] as const).map((state) => ({ runtime, state })),
+  ),
+)(
+  "preserves the current $runtime $state state while replaying an old failure",
+  async ({ runtime, state }) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const original = useGroupStore.getState();
+    const sources = stubEventSources();
+    const actor: Actor = {
+      id: "native",
+      runtime,
+      runner: "pty",
+      runtime_state_source: "managed_session",
+      running: state !== "stopped",
+      idle_seconds: state === "idle" ? 5 : null,
+      effective_working_state: state,
+      effective_working_reason:
+        state === "error" ? "A newer provider failure" : "Current daemon state",
+      effective_working_updated_at: "2026-10-13T01:00:00Z",
+      effective_active_task_id: state === "working" ? "current-turn" : null,
+    };
+    const group = {
+      group_id: "g",
+      runtime_status: {
+        lifecycle_state: state === "working" ? "active" : state === "stopped" ? "stopped" : "idle",
+        runtime_running: actor.running!,
+        running_actor_count: actor.running ? 1 : 0,
+        has_running_foreman: false,
+      },
+    };
+    useGroupStore.setState({
+      selectedGroupId: "g",
+      actors: [actor],
+      groups: [group],
+      groupDoc: null,
+      chatByGroup: {},
+      refreshActors: vi.fn().mockResolvedValue(undefined),
     });
-    vi.unstubAllGlobals();
-    useGroupStore.setState(original);
-    host.remove();
-  }
-});
+    let connection: ReturnType<typeof useSSE>;
+    function Probe() {
+      connection = useSSE({
+        activeTabRef: { current: "chat" },
+        chatAtBottomRef: { current: true },
+        actorsRef: { current: [actor] },
+      });
+      return null;
+    }
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const failure: HeadlessStreamEvent = {
+      id: "old-failure",
+      group_id: "g",
+      actor_id: actor.id,
+      type: "headless.turn.failed",
+      ts: "2026-10-12T01:00:00Z",
+      data: {
+        turn_id: "old-turn",
+        stream_id: "generation:old-turn",
+        status: "failed",
+        error: "Historical provider failure",
+      },
+    };
+    const frames = [
+      {
+        ...failure,
+        id: "old-thread",
+        type: "headless.thread.started",
+        data: { thread_id: "thread" },
+      },
+      { ...failure, id: "old-start", type: "headless.turn.started" },
+      failure,
+    ];
+    try {
+      await act(async () => root.render(<Probe />));
+      await act(async () => connection!.connectStream("g"));
+      const stream = sources.find((source) => source.url.includes("/headless/stream"))!;
+      // A successful native turn updates daemon status without adding a success
+      // journal entry. The retained failure therefore is not its current state.
+      await act(async () => stream.emit("headless.snapshot", { events: frames }));
+      expect(useGroupStore.getState().actors[0]).toBe(actor);
+      expect(useGroupStore.getState().groups[0]).toBe(group);
+      const bucket = () => useGroupStore.getState().chatByGroup.g!;
+      expect(bucket().rawHeadlessEventsByActorId.native).toHaveLength(3);
+      expect(bucket().streamingActivitiesByStreamId["generation:old-turn"]).toEqual([
+        expect.objectContaining({ kind: "error", detail: "Historical provider failure" }),
+      ]);
+      await act(async () => stream.emit("headless.snapshot", { events: frames }));
+      expect(useGroupStore.getState().actors[0]).toBe(actor);
+      expect(bucket().rawHeadlessEventsByActorId.native).toHaveLength(3);
+
+      // Fresh live events still update the current runtime and Group projection.
+      const fresh = {
+        ...failure,
+        ts: "2026-10-13T01:00:01Z",
+        data: { ...failure.data, turn_id: "fresh-turn", stream_id: "generation:fresh-turn" },
+      };
+      await act(async () =>
+        stream.emit("headless", { ...fresh, id: "fresh-start", type: "headless.turn.started" }),
+      );
+      expect(useGroupStore.getState().actors[0]!.effective_working_state).toBe("working");
+      expect(useGroupStore.getState().groups[0]!.runtime_status!.lifecycle_state).toBe("active");
+      await act(async () =>
+        stream.emit("headless", {
+          ...fresh,
+          id: "fresh-failure",
+          data: { ...fresh.data, error: "Fresh provider failure" },
+        }),
+      );
+      expect(useGroupStore.getState().actors[0]).toMatchObject({
+        running: true,
+        effective_working_state: "error",
+        effective_working_reason: "Fresh provider failure",
+      });
+    } finally {
+      await act(async () => {
+        connection!.cleanup();
+        root.unmount();
+      });
+      vi.unstubAllGlobals();
+      useGroupStore.setState(original);
+      host.remove();
+    }
+  },
+);
