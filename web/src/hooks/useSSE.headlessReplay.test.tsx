@@ -725,3 +725,327 @@ it.each(
     }
   },
 );
+
+it.each([
+  { outcome: "session.stopped", state: "stopped", buffered: false },
+  { outcome: "session.stopped", state: "stopped", buffered: true },
+  { outcome: "turn.cancelled", state: "stopped", buffered: true },
+  { outcome: "turn.cancelled", state: "idle", buffered: false },
+  { outcome: "turn.completed", state: "idle", buffered: true },
+  { outcome: "turn.failed", state: "error", buffered: false },
+  { outcome: "turn.cancelled", state: "working", buffered: false },
+  { outcome: "turn.completed", state: "working", buffered: true },
+  { outcome: "turn.failed", state: "working", buffered: true },
+  { outcome: "session.stopped", state: "working", buffered: true },
+])(
+  "settles $outcome output after its $state snapshot (buffered=$buffered)",
+  async ({ outcome, state, buffered }) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const original = useGroupStore.getState();
+    const originalUI = useUIStore.getState();
+    const sources = stubEventSources();
+    const frames = new Map<number, FrameRequestCallback>();
+    let frameId = 0;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.set(++frameId, callback);
+      return frameId;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => frames.delete(id));
+    const flushFrames = () => {
+      const callbacks = [...frames.values()];
+      frames.clear();
+      for (const callback of callbacks) callback(performance.now());
+    };
+    const actor: Actor = {
+      id: "acp",
+      runtime: "kimi",
+      runtime_mode: "acp",
+      runner: "headless",
+      runtime_state_source: "managed_session",
+      running: true,
+      effective_working_state: "working",
+      effective_working_updated_at: "2026-10-13T01:00:00Z",
+      effective_active_task_id: "turn",
+    };
+    useGroupStore.setState({
+      selectedGroupId: "g",
+      actors: [actor],
+      groups: [{ group_id: "g", running: true }],
+      chatByGroup: {},
+      refreshActors: vi.fn().mockResolvedValue(undefined),
+    });
+    let connection: ReturnType<typeof useSSE>;
+    function Probe() {
+      connection = useSSE({
+        activeTabRef: { current: "chat" },
+        chatAtBottomRef: { current: true },
+        actorsRef: { current: [actor] },
+      });
+      return null;
+    }
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const delta: HeadlessStreamEvent = {
+      id: "delta",
+      group_id: "g",
+      actor_id: actor.id,
+      type: "headless.message.delta",
+      ts: "2026-10-13T01:00:00.100Z",
+      data: { turn_id: "turn", stream_id: "generation:turn", delta: "Partial answer" },
+    };
+    const terminal: HeadlessStreamEvent = {
+      ...delta,
+      id: "terminal",
+      type: `headless.${outcome}`,
+      ts: "2026-10-13T01:00:00.200Z",
+      data: outcome === "session.stopped" ? {} : { ...delta.data, error: "Synthetic failure" },
+    };
+    const bucket = () => useGroupStore.getState().chatByGroup.g!;
+    try {
+      await act(async () => root.render(<Probe />));
+      await act(async () => connection!.connectStream("g"));
+      const stream = sources.find((source) => source.url.includes("/headless/stream"))!;
+      await act(async () => {
+        stream.emit("headless", delta);
+        if (!buffered) flushFrames();
+      });
+      if (!buffered) expect(bucket().streamingEvents[0]!._streaming).toBe(true);
+      if (state === "working") {
+        // An older turn may still have visible output when the next one starts.
+        // Its late terminal must not complete, remove, or flush the new stream.
+        await act(async () => {
+          useGroupStore
+            .getState()
+            .reconcileStreamingMessage({
+              actorId: actor.id,
+              streamId: "generation:next-turn",
+              pendingEventId: "next-request",
+              ts: "2026-10-13T01:00:00.300Z",
+              fullText: "Next answer",
+              eventText: "Next answer",
+              activities: [],
+              completed: false,
+              transientStream: false,
+              groupId: "g",
+            });
+          stream.emit("headless", {
+            ...delta,
+            id: "next-delta",
+            ts: "2026-10-13T01:00:00.300Z",
+            data: {
+              turn_id: "next-turn",
+              stream_id: "generation:next-turn",
+              event_id: "next-request",
+              delta: " still streaming",
+            },
+          });
+        });
+      }
+      // Actor GET can win the race with the independently delivered terminal.
+      // Stopped GET snapshots have no working-state timestamp.
+      const snapshot: Actor = {
+        ...actor,
+        running: state !== "stopped",
+        effective_working_state: state,
+        effective_working_reason: "Authoritative daemon state",
+        effective_working_updated_at: state === "stopped" ? null : "2026-10-13T01:00:00.300Z",
+        effective_active_task_id: state === "working" ? "next-turn" : null,
+      };
+      await act(async () => useGroupStore.getState().setActors([snapshot]));
+      const groupBefore = useGroupStore.getState().groups;
+      await act(async () => {
+        stream.emit("headless", terminal);
+        flushFrames();
+      });
+      expect(useGroupStore.getState().actors[0]).toBe(snapshot);
+      expect(useGroupStore.getState().groups).toBe(groupBefore);
+      const ignoredOldStop = outcome === "session.stopped" && state === "working";
+      expect(
+        bucket()
+          .streamingEvents.filter(
+            (event) => (event.data as { stream_id?: unknown })?.stream_id === "generation:turn",
+          )
+          .some((event) => event._streaming),
+      ).toBe(ignoredOldStop);
+      if (state === "working") {
+        expect(bucket().streamingTextByStreamId["generation:next-turn"]).toBe(
+          "Next answer still streaming",
+        );
+        expect(bucket().streamingEvents).toContainEqual(
+          expect.objectContaining({
+            _streaming: true,
+            data: expect.objectContaining({ stream_id: "generation:next-turn" }),
+          }),
+        );
+        expect(bucket().replySessionsByPendingEventId["next-request"].phase).toBe("streaming");
+      }
+      if (outcome === "session.stopped" && !ignoredOldStop) {
+        expect(bucket().streamingEvents).toHaveLength(0);
+        expect(bucket().streamingTextByStreamId["generation:turn"]).toBeUndefined();
+      } else if (outcome === "turn.failed") {
+        expect(bucket().streamingActivitiesByStreamId["generation:turn"]).toEqual([
+          expect.objectContaining({ kind: "error", detail: "Synthetic failure" }),
+        ]);
+      } else {
+        expect(bucket().streamingTextByStreamId["generation:turn"]).toBe("Partial answer");
+      }
+      const settled = bucket();
+      await act(async () => {
+        stream.emit("headless", terminal);
+        stream.emit("headless.snapshot", { events: [delta, terminal] });
+        flushFrames();
+      });
+      expect(bucket()).toBe(settled);
+      expect(bucket().rawHeadlessEventsByActorId.acp).toHaveLength(state === "working" ? 3 : 2);
+      expect(frames.size).toBe(0);
+    } finally {
+      await act(async () => {
+        connection!.cleanup();
+        root.unmount();
+      });
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+      useGroupStore.setState(original);
+      useUIStore.setState(originalUI);
+      host.remove();
+    }
+  },
+);
+
+it.each(
+  (["claude", "codex"] as const).flatMap((runtime) =>
+    (["idle", "working", "stopped", "stopped_without_timestamp", "error"] as const).map(
+      (state) => ({ runtime, state }),
+    ),
+  ),
+)(
+  "delayed live failure preserves newer $runtime $state state and output",
+  async ({ runtime, state }) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const original = useGroupStore.getState();
+    const sources = stubEventSources();
+    const actor: Actor = {
+      id: "native",
+      runtime,
+      runner: "pty",
+      runtime_state_source: "managed_session",
+      running: true,
+      effective_working_state: "working",
+      effective_working_updated_at: "2026-10-13T01:00:00.000Z",
+      effective_active_task_id: "failed-turn",
+    };
+    useGroupStore.setState({
+      selectedGroupId: "g",
+      groups: [{ group_id: "g", title: "g", running: true }],
+      actors: [actor],
+      chatByGroup: {},
+      refreshActors: vi.fn().mockResolvedValue(undefined),
+    });
+    let connection: ReturnType<typeof useSSE>;
+    function Probe() {
+      connection = useSSE({
+        activeTabRef: { current: "chat" },
+        chatAtBottomRef: { current: true },
+        actorsRef: { current: [actor] },
+      });
+      return null;
+    }
+    const host = document.createElement("div"),
+      root = createRoot(host);
+    try {
+      await act(async () => root.render(<Probe />));
+      await act(async () => connection!.connectStream("g"));
+      const ledger = sources.find((source) => source.url.includes("/ledger/stream"))!;
+      const stream = sources.find((source) => source.url.includes("/headless/stream"))!;
+      await act(async () => stream.emit("headless.snapshot", { events: [] }));
+      const recovered = {
+        id: "native",
+        running: !state.startsWith("stopped"),
+        idle_seconds: null,
+        effective_working_state: state.startsWith("stopped") ? "stopped" : state,
+        effective_working_reason: "newer daemon state",
+        effective_working_updated_at:
+          state === "stopped_without_timestamp" ? null : "2026-10-13T01:00:00.150Z",
+        effective_active_task_id: state === "working" ? "next-turn" : null,
+      };
+      await act(async () =>
+        ledger.emit("ledger", {
+          id: "recovery",
+          group_id: "g",
+          kind: "actor.activity",
+          ts: "2026-10-13T01:00:00.200Z",
+          data: { actors: [recovered] },
+        }),
+      );
+      expect(useGroupStore.getState().actors[0]).toMatchObject(recovered);
+      if (state === "working") {
+        // A subsequent turn's placeholder must survive the previous turn's late terminal.
+        useGroupStore
+          .getState()
+          .reconcileStreamingMessage({
+            actorId: "native",
+            streamId: "generation:next-turn",
+            ts: recovered.effective_working_updated_at || "2026-10-13T01:00:00.150Z",
+            fullText: "New turn output",
+            eventText: "New turn output",
+            activities: [],
+            completed: false,
+            transientStream: false,
+            groupId: "g",
+          });
+      }
+      const outputBefore = useGroupStore.getState().chatByGroup.g?.streamingEvents || [];
+      const runtimeBefore = useGroupStore.getState().groups;
+      await act(async () =>
+        stream.emit("headless", {
+          id: "unseen-live-failure",
+          group_id: "g",
+          actor_id: "native",
+          type: "headless.turn.failed",
+          ts: state === "working" ? "2026-10-13T01:00:00.175Z" : "2026-10-13T01:00:00.100Z",
+          data: {
+            turn_id: "failed-turn",
+            stream_id: "generation:failed-turn",
+            status: "failed",
+            error: "Synthetic old failure",
+          },
+        }),
+      );
+      expect(useGroupStore.getState().actors[0]).toMatchObject(recovered);
+      expect(useGroupStore.getState().chatByGroup.g?.streamingEvents || []).toEqual(outputBefore);
+      expect(useGroupStore.getState().groups).toEqual(runtimeBefore);
+      expect(
+        useGroupStore.getState().chatByGroup.g.rawHeadlessEventsByActorId.native,
+      ).toContainEqual(expect.objectContaining({ id: "unseen-live-failure" }));
+      if (state === "working") {
+        // A valid output delta can predate the latest activity tick.
+        await act(async () => {
+          stream.emit("headless", {
+            id: "delayed-output",
+            group_id: "g",
+            actor_id: "native",
+            type: "headless.message.delta",
+            ts: "2026-10-13T01:00:00.140Z",
+            data: {
+              turn_id: "next-turn",
+              stream_id: "generation:next-turn",
+              delta: " still arrives",
+            },
+          });
+          await new Promise((resolve) => setTimeout(resolve, 35));
+        });
+        expect(
+          useGroupStore.getState().chatByGroup.g.streamingTextByStreamId["generation:next-turn"],
+        ).toBe("New turn output still arrives");
+      }
+    } finally {
+      await act(async () => {
+        connection!.cleanup();
+        root.unmount();
+      });
+      vi.unstubAllGlobals();
+      useGroupStore.setState(original);
+      host.remove();
+    }
+  },
+);

@@ -475,39 +475,39 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (!patch) return state;
       return buildChatBucketPatch(state, gid, patch) ?? state;
     }),
-  completeStreamingEventsForActor: (actorId, groupId) =>
+  completeStreamingEventsForActor: (actorId, groupId, streamId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const patch = completeStreamingEventsForActorPatch(bucket, actorId);
+      const patch = completeStreamingEventsForActorPatch(bucket, actorId, streamId);
       if (!patch) return state;
       return buildChatBucketPatch(state, gid, patch) ?? state;
     }),
-  clearStreamingEventsForActor: (actorId, groupId) =>
+  clearStreamingEventsForActor: (actorId, groupId, streamId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const patch = clearStreamingEventsForActorPatch(bucket, actorId);
+      const patch = clearStreamingEventsForActorPatch(bucket, actorId, streamId);
       if (!patch) return state;
       return buildChatBucketPatch(state, gid, patch) ?? state;
     }),
-  clearEmptyStreamingEventsForActor: (actorId, groupId) =>
+  clearEmptyStreamingEventsForActor: (actorId, groupId, streamId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const patch = clearEmptyStreamingEventsForActorPatch(bucket, actorId);
+      const patch = clearEmptyStreamingEventsForActorPatch(bucket, actorId, streamId);
       if (!patch) return state;
       return buildChatBucketPatch(state, gid, patch) ?? state;
     }),
-  clearTransientStreamingEventsForActor: (actorId, groupId) =>
+  clearTransientStreamingEventsForActor: (actorId, groupId, streamId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const patch = clearTransientStreamingEventsForActorPatch(bucket, actorId);
+      const patch = clearTransientStreamingEventsForActorPatch(bucket, actorId, streamId);
       if (!patch) return state;
       return buildChatBucketPatch(state, gid, patch) ?? state;
     }),

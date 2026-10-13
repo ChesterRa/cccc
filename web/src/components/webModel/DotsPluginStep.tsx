@@ -33,14 +33,22 @@ export function DotsPluginStep({ isVisible, disabled, sharedSettings, onBusyChan
   const [copied, setCopied] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [readFailed, setReadFailed] = useState(false);
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
     if (!isVisible) return;
     let cancelled = false;
+    setShared(null);
+    setReadFailed(false);
     void api
       .fetchWebModelConnectors()
       .then((listed) => {
-        if (cancelled || !listed.ok) return;
+        if (cancelled) return;
+        if (!listed.ok) {
+          setReadFailed(true);
+          return;
+        }
         setShared({
           exists: listed.result.connectors.some(
             (item) => !item.revoked && (item.provider || "chatgpt_web") === "chatgpt_web",
@@ -48,11 +56,13 @@ export function DotsPluginStep({ isVisible, disabled, sharedSettings, onBusyChan
           base: listed.result.connector_base_url,
         });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setReadFailed(true);
+      });
     return () => {
       cancelled = true;
     };
-  }, [isVisible]);
+  }, [isVisible, refresh]);
 
   const create = async () => {
     if (creating || disabled) return;
@@ -107,6 +117,21 @@ export function DotsPluginStep({ isVisible, disabled, sharedSettings, onBusyChan
               : t("webModelShared.publicUrlInvalid", { url: address.origin })}
           </p>
         )
+      ) : null}
+      {readFailed ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
+            {t("dotsActor.setup.connectorReadFailed")}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={creating}
+            onClick={() => setRefresh((value) => value + 1)}
+          >
+            {t("common:retry")}
+          </Button>
+        </div>
       ) : null}
       {error ? (
         <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">

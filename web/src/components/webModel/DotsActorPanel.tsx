@@ -65,6 +65,7 @@ function ActorPanel({
   const [readError, setReadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [action, setAction] = useState("");
+  const [pluginCreating, setPluginCreating] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [copied, setCopied] = useState(false);
   const [refresh, setRefresh] = useState(0);
@@ -134,7 +135,7 @@ function ActorPanel({
   );
 
   const update = async (nextAction: "connect" | "disconnect" | "resolve") => {
-    if (readOnly || !canAccessConnection || saving || action || !state) return;
+    if (readOnly || !canAccessConnection || saving || action || pluginCreating || !state) return;
     if (nextAction === "disconnect" && (state.enabled || isRunning)) return;
     const turnId = nextAction === "resolve" ? state.active_turn_id || undefined : undefined;
     if (nextAction !== "resolve" && state.active_turn_id) return;
@@ -178,7 +179,7 @@ function ActorPanel({
     }
   };
   const enabled = isRunning || state?.enabled;
-  const locked = readOnly || saving || Boolean(action) || !state;
+  const locked = readOnly || saving || Boolean(action) || pluginCreating || !state;
   const unresolved = Boolean(state?.active_turn_id);
   const hasDelivery = Boolean(state?.subscribed || unresolved);
   const canResolve = unresolved && (state?.phase === "failed" || state?.phase === "interrupted");
@@ -243,7 +244,7 @@ function ActorPanel({
     <Button
       type="button"
       variant="outline"
-      disabled={Boolean(action)}
+      disabled={Boolean(action) || pluginCreating}
       onClick={onOpenSharedSettings}
     >
       {t("dotsActor.sharedSettings")}
@@ -396,7 +397,10 @@ function ActorPanel({
                 isVisible={visible}
                 disabled={locked}
                 sharedSettings={sharedButton}
-                onBusyChange={(busy) => current.current.onBusyChange?.(busy)}
+                onBusyChange={(busy) => {
+                  setPluginCreating(busy);
+                  current.current.onBusyChange?.(busy);
+                }}
               />
             </DotsSetupStep>
             <DotsSetupStep

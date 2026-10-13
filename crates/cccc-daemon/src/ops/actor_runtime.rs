@@ -53,22 +53,29 @@ pub fn apply(
     if kind == "actor.stop" {
         return stop_registered(group, actor_id);
     }
-    if actor_id == "voice-secretary"
-        || stored_actor.internal_kind.as_deref() == Some("voice_secretary")
-    {
+    let actor = actor_profile_runtime::resolve(home, stored_actor)?;
+    apply_resolved(home, group, &actor, kind)
+}
+
+/// Restore policy and startup must use the same effective Profile snapshot.
+pub(super) fn apply_resolved(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    kind: &str,
+) -> Result<Option<SessionStatus>, OpError> {
+    let actor_id = &actor.id;
+    if actor_id == "voice-secretary" || actor.internal_kind.as_deref() == Some("voice_secretary") {
         return Err(OpError::new(
             "global_secretary_owner",
             "This Group's secretary is managed by the global Voice Secretary; it is not an Actor runtime",
         ));
     }
-    let actor = actor_profile_runtime::resolve(home, stored_actor)?;
-    if !matches!(kind, "actor.restart" | "actor.new_session")
-        && actor_is_running(group, stored_actor)
-    {
+    if !matches!(kind, "actor.restart" | "actor.new_session") && actor_is_running(group, actor) {
         // Saving config does not restart an existing session. Explicit restart
         // applies it; start remains idempotent across backend changes too.
         super::local_headless::ensure_viewer(&group.group_id, actor_id).map_err(OpError::io)?;
-        super::capabilities::apply_actor_startup_baseline(home, group, &actor);
+        super::capabilities::apply_actor_startup_baseline(home, group, actor);
         return Ok(
             if super::local_headless::running(&group.group_id, actor_id)
                 || super::deepseek_runtime::running(&group.group_id, actor_id)
@@ -87,19 +94,19 @@ pub fn apply(
         // receipt, so a late old launch cannot undo the explicit reset.
         super::runtime_session::remove(home, &group.group_id, actor_id).map_err(OpError::io)?;
     }
-    super::capabilities::apply_actor_startup_baseline(home, group, &actor);
+    super::capabilities::apply_actor_startup_baseline(home, group, actor);
     if actor.runtime == ActorRuntime::Deepseek {
-        super::deepseek_runtime::apply(home, group, &actor, "actor.start")?;
+        super::deepseek_runtime::apply(home, group, actor, "actor.start")?;
         return Ok(None);
     }
-    if super::local_headless::supports(&actor) {
-        start_local_headless(home, group, &actor)?;
+    if super::local_headless::supports(actor) {
+        start_local_headless(home, group, actor)?;
         return Ok(None);
     }
-    if is_structured(&actor) {
+    if is_structured(actor) {
         return Ok(None);
     }
-    start(home, group, &actor).map(Some)
+    start(home, group, actor).map(Some)
 }
 
 fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {

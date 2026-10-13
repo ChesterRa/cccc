@@ -1936,6 +1936,7 @@
       "disconnectHint": "先に CCCC アクセスを一時停止し、未完了の作業を解決してください。Dots 側のネイティブタスクも別途無効にしてください。"
     },
     "setup": {
+      "connectorReadFailed": "共有コネクタを読み取れませんでした。再試行するか、共有設定を開いてください。",
       "noConnector": "共有 CCCC コネクタはまだありません。ここで作成し、表示される値で ChatGPT に CCCC プラグインを追加してください。",
       "connectorExists": "共有コネクタはすでに存在するため、何も変更していません。ChatGPT に CCCC プラグインがまだない場合は、共有設定を開いてください。",
       "createConnector": "コネクタを作成してプラグイン URL を取得",

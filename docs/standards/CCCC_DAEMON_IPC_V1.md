@@ -3552,6 +3552,7 @@ Notes:
 - Context delivery is separate from Runtime input admission and Provider speech scheduling. The browser MUST deliver checked context in order without waiting for user or assistant speech to finish; the Provider owns speaking and yielding to interruptions. Adjacent unsent fragments with the same context/delegation envelope MAY be joined without truncation, subject to the final append-size limit below. Missing speech transitions or context receipts MUST NOT block later context, trigger blind replay, or discard positively unsent results. A completed speech turn does not prove that all source facts were spoken. This delivery policy MUST NOT delay Analyst inputs or intercept provider delegations.
 - The browser Voice control socket MAY report `provider_error` with an `error` object containing bounded provider `code`, `type`, `event_id`, and `param` identifiers. This is transport diagnostics only: it MUST NOT start, cancel, or replay Analyst work. The Web port MUST validate these identifiers and correlate its diagnostic with the active call generation; it MUST NOT log arbitrary browser payloads, provider error messages, or credentials. The browser MUST distinguish a provider error from an Analyst failure and retain the provider code in its visible error when available. Error reporting alone MUST NOT change provider recovery policy.
 - Actor start, restart, new-session, and daemon restoration MUST NOT submit a model turn solely to initialize an Actor or materialize a provider session. They create or resume the daemon-owned control session and attach its native terminal while the model remains idle. Only real input—a pending CCCC delivery or human terminal input—may start model work. The CCCC startup prompt MUST be deferred to and combined with the first successfully accepted CCCC delivery, MUST NOT be sent as a standalone turn, and MUST remain pending if that delivery is not accepted. Recovery of an actual pending Send is a valid work trigger; lifecycle operations alone are not.
+- Automatic restoration policy MUST use the effective linked Runtime Profile for both eligibility and launch. A paused Group MUST NOT start a headless runtime merely because its stored Actor snapshot still describes a native terminal. An invalid Profile MUST NOT prevent other eligible Actors from restoring.
 - Automatic daemon restoration MUST record `actor.start` with `by="system"` and `data.reason="daemon_respawn"` only when that restoration changes the registered daemon-owned runtime from not running to running. An already healthy owner, a failed launch, or an external structured executor with no local runtime MUST NOT create a respawn fact. A ledger-write failure MUST be logged without stopping the restored owner or suppressing the existing unread-delivery path. This event records runtime startup, not model admission or task completion.
 - A newly created Codex thread MUST be durably resumable before CCCC records a usable receipt or attaches its native TUI. `thread/start` returning an ID and planned rollout path is insufficient. CCCC MUST materialize the empty thread through native metadata operations and verify full-history readability for that exact thread, without submitting a model turn or adding synthetic conversation items. Resumed conversations MUST retain their existing names and history.
 - A provider process exit MUST record `actor.stop` with `by="system"` and `data.reason="process_exit"`, but MUST NOT disable the actor or stop the Group. A user-authored Send or Request Reply explicitly targeting an actor ID, or a Send targeting `@foreman`, is also a wake action: it MUST enable that actor, move a paused or stopped Group to `active`, and start delivery through the normal runtime path whether the prior stop was automatic or user initiated. Broadcast selectors (`@all`, `@peers`, including the materialized default) MUST NOT enable disabled actors; they MAY resume the Group and wake already-enabled recipients. An actor explicitly named alongside a broadcast retains its explicit wake behavior. A broadcast with no enabled recipients MUST NOT resume the Group. This wake policy MUST NOT narrow the message's logical audience or remove it from history. Mail and Actor-authored messages MUST NOT enable disabled actors; Mail and previously queued work MUST NOT independently wake a runtime while a Group remains `paused`.
@@ -5093,8 +5094,16 @@ outcome: `headless.turn.completed`, `headless.turn.failed`, or
 successful-turn projection; published failures or cancellations MUST NOT create
 duplicate turn terminals.
 Headless journal snapshots restore historical output only; replay MUST NOT
-overwrite current Actor or Group runtime state. Native successful turns may
+overwrite current Actor or Group runtime state. Independent live streams can
+also deliver an older journal event after newer daemon-owned status; clients
+MUST retain that event as history without overwriting newer state or retiring
+another active turn's output. Native successful turns may
 update daemon-owned status without appending a corresponding journal event.
+Output settlement is independent of status freshness: a matching turn terminal
+MUST close its own stream even if a newer status snapshot arrived first. A
+session-stop event MUST clean up that Actor's live output when the daemon already
+reports it stopped, without replacing the authoritative stopped snapshot or
+reviving the Actor. Late terminals MUST NOT close another turn's output.
 Cancelled or interrupted turns settle to `idle`, while provider failures settle
 to `error` with a nullable `reason`; Actor listing exposes the same reason through
 `effective_working_reason`. That reason MUST be bounded and private-value-redacted
@@ -7530,7 +7539,7 @@ These IPC operations use the daemon global write permit and require `by=user`; n
 
 | Operation | Required input / effect |
 |---|---|
-| `web_model_connector_configure` | Optional `provider` (`chatgpt_web`, default, or `grok_web`); create or rotate only that provider’s instance credential and return its secret once. Rotation retains bindings and routing keys. |
+| `web_model_connector_configure` | Optional `provider` (`chatgpt_web`, default, or `grok_web`); optional boolean `create_only` (default `false`). Create or rotate only that provider’s instance credential and return its secret once. `create_only=true` atomically rejects an active existing connector with `connector_exists`, preserving its credential, bindings and routing keys; a revoked connector permits fresh creation. A non-boolean flag is `invalid_argument` and MUST NOT fall back to rotation. Rotation retains bindings and routing keys. |
 | `web_model_connector_revoke` | `connector_id`; disable all tool routes and pending pairings. |
 | `web_model_pairing_begin` | `connector_id`, `group_id`, `actor_id`; optional `automatic=true` requires an enabled, unbound Web Model Actor in a running, non-paused Group; otherwise requires a stopped Actor. Issue one 10-minute code, persisting only its hash and automatic intent. |
 | `web_model_pairing_accept` | `connector_id`, `code`, `session_key`; private Web port forwards the authenticated host session hash. Return a unique, idempotent receipt for this candidate/session; receipt alone grants no business authority. |
@@ -7606,6 +7615,11 @@ returning further output. These are admission and output fences, not atomic
 revocation of an entire I/O operation. Already admitted OS side effects cannot
 be undone, and stopping CCCC access does not guarantee cancellation of cloud
 work.
+
+Transient callback delivery failures retry the same event identity with bounded
+exponential backoff (up to three attempts, waiting 2s then 4s). A confirmed
+handoff or exhausted attempt schedules no retry; HTTP 410 and 413 are permanent
+failures. Retrying transport MUST NOT replay an accepted business turn.
 
 Webhook acceptance is transport handoff, not task completion. Completion uses
 the existing exact turn ID/event-ID receipt and never advances the Mail cursor.

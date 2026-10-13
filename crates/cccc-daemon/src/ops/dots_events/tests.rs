@@ -660,6 +660,25 @@ fn dots_bounded_same_event_retries_ignore_late_callback_and_private_error_text()
         assert_eq!(delivery["attempt"], attempt);
         f.call("dots_events_delivery_record", json!({"connector_id":f.connector_id,"event_id":delivery["event_id"],
             "epoch":delivery["epoch"],"attempt":attempt,"error_code":"synthetic-private-network-value"}));
+        let wake = f.private()["dots"]["wake"].clone();
+        if attempt < 3 {
+            assert_eq!(
+                wake["retry_at_ms"].as_i64().expect("retry deadline")
+                    - wake["updated_at_ms"]
+                        .as_i64()
+                        .expect("recorded callback time"),
+                if attempt == 1 { 2_000 } else { 4_000 }
+            );
+            assert!(
+                f.delivery().is_null(),
+                "backoff must prevent an immediate retry"
+            );
+        } else {
+            assert!(
+                wake["retry_at_ms"].is_null(),
+                "exhausted attempts do not schedule work"
+            );
+        }
         store::dots_update(&f.home, &f.connector_id, |c| {
             c["dots"]["wake"]["retry_at_ms"] = json!(0);
             Ok(())

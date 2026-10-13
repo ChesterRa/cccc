@@ -1,10 +1,13 @@
-import { useState, type ReactNode } from "react";
+import { useState, useId } from "react";
 import { useTranslation } from "react-i18next";
 import { SegmentedControl } from "../../components/ui/segmented-control";
-import { Switch } from "../../components/ui/switch";
+import {
+  SettingsCard,
+  SettingsRow,
+  SettingsSwitch,
+} from "../../components/modals/settings/SettingsKit";
 import { useGroupStore } from "../../stores/useGroupStore";
 import type { VoicePreferences, VoiceNotificationScope } from "../../services/api/codexVoice";
-import { CodexVoiceSettingsSection } from "./CodexVoiceSettingsSection";
 import type { useVoicePreferences } from "./useVoicePreferences";
 
 type Props = {
@@ -18,6 +21,7 @@ const SCOPES = ["off", "to_user", "all_chat"] as const;
 
 export function CodexVoicePreferenceFields({ preferences, section }: Props) {
   const { t } = useTranslation("modals");
+  const suppressLabel = useId();
   const groups = useGroupStore((state) => state.groups);
   const [search, setSearch] = useState("");
   const { value, saving, saved, error, change } = preferences;
@@ -49,13 +53,13 @@ export function CodexVoicePreferenceFields({ preferences, section }: Props) {
 
   if (section === "audio") {
     return (
-      <CodexVoiceSettingsSection
+      <SettingsCard
         title={t("voicePreferences.responseSection")}
         description={t("voicePreferences.nextCall")}
-        aside={status}
+        actions={status}
       >
-        <div className="grid gap-4 @min-[640px]/voice-settings:grid-cols-2 @min-[640px]/voice-settings:gap-6">
-          <PreferenceRow label={t("voicePreferences.verbosity")}>
+        <div className="divide-y divide-[var(--glass-border-subtle)]">
+          <SettingsRow label={t("voicePreferences.verbosity")}>
             <SegmentedControl
               label={t("voicePreferences.verbosity")}
               value={value.verbosity}
@@ -63,8 +67,8 @@ export function CodexVoicePreferenceFields({ preferences, section }: Props) {
               disabled={saving}
               onChange={(verbosity: VoicePreferences["verbosity"]) => void change({ verbosity })}
             />
-          </PreferenceRow>
-          <PreferenceRow label={t("voicePreferences.style")}>
+          </SettingsRow>
+          <SettingsRow label={t("voicePreferences.style")}>
             <SegmentedControl
               label={t("voicePreferences.style")}
               value={value.style}
@@ -72,46 +76,45 @@ export function CodexVoicePreferenceFields({ preferences, section }: Props) {
               disabled={saving}
               onChange={(style: VoicePreferences["style"]) => void change({ style })}
             />
-          </PreferenceRow>
+          </SettingsRow>
         </div>
-      </CodexVoiceSettingsSection>
+      </SettingsCard>
     );
   }
 
   const enabledCount = Object.values(value.groups).filter((scope) => scope !== "off").length;
   return (
-    <div className="grid items-start gap-4 @min-[900px]/voice-settings:gap-5 @min-[1100px]/voice-settings:grid-cols-[340px_minmax(0,1fr)]">
-      <CodexVoiceSettingsSection
+    <div className="space-y-5">
+      <SettingsCard
         title={t("voicePreferences.announceSection")}
         description={t("voicePreferences.notificationHint")}
-        aside={status}
+        actions={status}
       >
-        <label className="flex items-center justify-between gap-4 text-sm text-[var(--color-text-primary)]">
-          <span>{t("voicePreferences.suppressViewed")}</span>
-          <Switch
+        <SettingsRow label={t("voicePreferences.suppressViewed")} labelId={suppressLabel}>
+          <SettingsSwitch
+            labelledBy={suppressLabel}
             checked={value.suppress_viewed}
             disabled={saving}
-            onChange={(e) => void change({ suppress_viewed: e.target.checked })}
+            onChange={(checked) => void change({ suppress_viewed: checked })}
           />
-        </label>
-        <details className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">
+        </SettingsRow>
+        <details className="px-5 py-3.5 text-xs leading-5 text-[var(--color-text-secondary)]">
           <summary className="w-fit cursor-pointer py-1 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]">
             {t("voicePreferences.viewedHelp")}
           </summary>
           <p className="mt-1">{t("voicePreferences.viewedHint")}</p>
         </details>
-      </CodexVoiceSettingsSection>
+      </SettingsCard>
 
-      <CodexVoiceSettingsSection
+      <SettingsCard
         title={t("voicePreferences.groupsSection")}
-        aside={
+        actions={
           <span
             className={`rounded-full px-2.5 py-1 text-xs font-medium ${enabledCount ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300" : "bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]"}`}
           >
             {t("voicePreferences.enabledGroups", { count: enabledCount })}
           </span>
         }
-        flush
       >
         <div className="border-b border-[var(--glass-border-subtle)] p-3">
           <input
@@ -161,16 +164,7 @@ export function CodexVoicePreferenceFields({ preferences, section }: Props) {
             {t(groups.length ? "voicePreferences.noMatchingGroups" : "voicePreferences.noGroups")}
           </p>
         )}
-      </CodexVoiceSettingsSection>
-    </div>
-  );
-}
-
-function PreferenceRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-2 [&>[role=radiogroup]]:flex [&>[role=radiogroup]]:w-full">
-      <span className="text-xs font-medium text-[var(--color-text-secondary)]">{label}</span>
-      {children}
+      </SettingsCard>
     </div>
   );
 }

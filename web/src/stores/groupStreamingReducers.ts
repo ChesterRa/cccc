@@ -898,6 +898,7 @@ export function reconcileStreamingMessagePatch(
 export function completeStreamingEventsForActorPatch(
   bucket: StreamingChatBucket,
   actorId: string,
+  streamId?: string,
 ): StreamingChatBucketPatch | null {
   const targetActorId = String(actorId || "").trim();
   if (!targetActorId) return null;
@@ -917,13 +918,14 @@ export function completeStreamingEventsForActorPatch(
           })
         : {};
     const pendingEventId = String(data.pending_event_id || "").trim();
-    const streamId = String(data.stream_id || "").trim();
+    const itemStreamId = String(data.stream_id || "").trim();
+    if (streamId && itemStreamId !== streamId) return item;
     const text = String(data.text || "").trim();
     const activities = Array.isArray(data.activities) ? data.activities : [];
     const queuedOnly = isQueuedOnlyActivityList(activities);
     const isFreshLocalPlaceholder =
       (!pendingEventId || pendingEventId.startsWith("local_")) &&
-      streamId.startsWith("local:") &&
+      itemStreamId.startsWith("local:") &&
       !text &&
       queuedOnly;
     if (isFreshLocalPlaceholder) return item;
@@ -935,7 +937,7 @@ export function completeStreamingEventsForActorPatch(
       } = upsertReplySession(nextReplySessionsByPendingEventId, nextPendingEventIdByStreamId, {
         pendingEventId,
         actorId: targetActorId,
-        streamId,
+        streamId: itemStreamId,
         phase: "completed",
       }));
     }
@@ -954,14 +956,16 @@ export function completeStreamingEventsForActorPatch(
 export function clearStreamingEventsForActorPatch(
   bucket: StreamingChatBucket,
   actorId: string,
+  streamId?: string,
 ): StreamingChatBucketPatch | null {
   const targetActorId = String(actorId || "").trim();
   if (!targetActorId) return null;
-  const nextStreamingEvents = bucket.streamingEvents.filter(
-    (item) => String(item.by || "").trim() !== targetActorId,
-  );
+  const matches = (item: LedgerEvent) =>
+    String(item.by || "").trim() === targetActorId &&
+    (!streamId || (item.data as { stream_id?: unknown } | undefined)?.stream_id === streamId);
+  const nextStreamingEvents = bucket.streamingEvents.filter((item) => !matches(item));
   const removedStreamIds = bucket.streamingEvents
-    .filter((item) => String(item.by || "").trim() === targetActorId)
+    .filter(matches)
     .map((item) =>
       String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim(),
     )
@@ -985,6 +989,7 @@ export function clearStreamingEventsForActorPatch(
 export function clearEmptyStreamingEventsForActorPatch(
   bucket: StreamingChatBucket,
   actorId: string,
+  targetStreamId?: string,
 ): StreamingChatBucketPatch | null {
   const targetActorId = String(actorId || "").trim();
   if (!targetActorId) return null;
@@ -1001,6 +1006,7 @@ export function clearEmptyStreamingEventsForActorPatch(
             })
           : {};
       const streamId = String(data.stream_id || "").trim();
+      if (targetStreamId && streamId !== targetStreamId) return false;
       const pendingEventId = String(data.pending_event_id || "").trim();
       const eventText = String(data.text || "").trim();
       const cachedText = streamId
@@ -1053,6 +1059,7 @@ export function clearEmptyStreamingEventsForActorPatch(
 export function clearTransientStreamingEventsForActorPatch(
   bucket: StreamingChatBucket,
   actorId: string,
+  targetStreamId?: string,
 ): StreamingChatBucketPatch | null {
   const targetActorId = String(actorId || "").trim();
   if (!targetActorId) return null;
@@ -1069,6 +1076,7 @@ export function clearTransientStreamingEventsForActorPatch(
           : {};
       if (!data.transient_stream) return false;
       const streamId = String(data.stream_id || "").trim();
+      if (targetStreamId && streamId !== targetStreamId) return false;
       const pendingEventId = String(data.pending_event_id || "").trim();
       if (!pendingEventId) return true;
       if (hasCanonicalReplyForPendingEvent(bucket, targetActorId, pendingEventId)) return true;

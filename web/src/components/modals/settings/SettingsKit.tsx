@@ -242,12 +242,15 @@ export function SettingsSaveBar({
   busy,
   onSave,
   hint,
+  actions,
   disabled = false,
 }: {
   label: ReactNode;
   busy: boolean;
   onSave: () => void;
   hint?: ReactNode;
+  /** Related actions such as discarding a draft or saving a Runtime Profile. */
+  actions?: ReactNode;
   /** Nothing to save, or another action runs; unlike busy, keeps the label. */
   disabled?: boolean;
 }) {
@@ -260,6 +263,7 @@ export function SettingsSaveBar({
       {hint ? (
         <span className="mr-auto text-[13px] text-[var(--color-text-secondary)]">{hint}</span>
       ) : null}
+      {actions}
       <button
         type="button"
         onClick={onSave}

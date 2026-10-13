@@ -8,7 +8,8 @@ import {
   OpenCodeManagedModelHint,
 } from "./RuntimeProfileControls";
 import { SelectCombobox } from "../SelectCombobox";
-import { inputClass, labelClass } from "./settings/types";
+import { inputClass } from "./settings/types";
+import { SettingsCard, SettingsRow } from "./settings/SettingsKit";
 import type { ActorProfile } from "../../types";
 import {
   structuredVoiceRuntimes,
@@ -51,19 +52,17 @@ export function StructuredRuntimeSettingsFields({
   const { t } = useTranslation("modals");
   const { t: tActors } = useTranslation("actors");
   return (
-    <div className="space-y-5">
+    <SettingsCard title={tActors("sectionRuntime")} description={runtimeHint}>
+      <div className="px-5 py-3.5">
+        <RuntimeConfigurationModePicker
+          value={form.mode}
+          disabled={form.editingDisabled}
+          onChange={form.changeMode}
+        />
+      </div>
       <div>
-        <h3 className="text-sm font-semibold">{tActors("sectionRuntime")}</h3>
-        <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{runtimeHint}</p>
-        <div className="mt-4">
-          <RuntimeConfigurationModePicker
-            value={form.mode}
-            disabled={form.editingDisabled}
-            onChange={form.changeMode}
-          />
-        </div>
-        <div className="mt-4">
-          {form.mode === "profile" ? (
+        {form.mode === "profile" ? (
+          <div className="px-5 py-3.5">
             <RuntimeProfilePicker
               value={form.profileIdentity}
               profiles={form.compatibleProfiles}
@@ -73,10 +72,14 @@ export function StructuredRuntimeSettingsFields({
               detailsLabel={t("codexVoiceAnalystProfileDetails")}
               onChange={form.selectProfile}
             />
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <label className={labelClass()}>{tActors("runtime")}</label>
+          </div>
+        ) : (
+          <div className="divide-y divide-[var(--glass-border-subtle)]">
+            <SettingsRow
+              label={tActors("runtime")}
+              help={t("codexVoiceAnalystSupportedRuntimesHint")}
+            >
+              <div className="w-full min-w-0">
                 <SelectCombobox
                   className={inputClass()}
                   ariaLabel={tActors("runtime")}
@@ -91,9 +94,6 @@ export function StructuredRuntimeSettingsFields({
                     })),
                   ]}
                 />
-                <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
-                  {t("codexVoiceAnalystSupportedRuntimesHint")}
-                </p>
                 <OpenCodeManagedModelHint runtime={form.settings.runtime} />
                 {form.settings.runtime === "antigravity" && (
                   <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
@@ -105,7 +105,9 @@ export function StructuredRuntimeSettingsFields({
                   </p>
                 )}
               </div>
-              {form.settings.runtime && (
+            </SettingsRow>
+            {form.settings.runtime && (
+              <div className="px-5 py-3.5">
                 <RuntimeCommandControl
                   runtime={form.settings.runtime}
                   command={form.settings.command}
@@ -116,13 +118,13 @@ export function StructuredRuntimeSettingsFields({
                   onCommandChange={form.setCommand}
                   onUseDefaultCommandChange={form.setUseDefaultCommand}
                 />
-              )}
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
       {form.mode === "custom" && (
-        <details className="border-t border-[var(--glass-border-subtle)] pt-4">
+        <details className="px-5 py-3.5">
           <summary className="cursor-pointer select-none text-sm font-semibold">
             {tActors("sectionAdvanced")}
           </summary>
@@ -143,6 +145,6 @@ export function StructuredRuntimeSettingsFields({
           </div>
         </details>
       )}
-    </div>
+    </SettingsCard>
   );
 }

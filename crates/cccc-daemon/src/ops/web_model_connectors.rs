@@ -49,7 +49,7 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 Some(created) => object(created),
                 None => Err(OpError::new(
                     "connector_exists",
-                    "A shared connector already exists; manage it in the ChatGPT view",
+                    "A shared connector already exists; its credential was not changed",
                 )),
             };
         }

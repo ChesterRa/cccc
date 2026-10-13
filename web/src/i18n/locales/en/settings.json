@@ -1936,6 +1936,7 @@
       "disconnectHint": "Pause CCCC access and resolve unfinished work first. Also disable the native task in Dots."
     },
     "setup": {
+      "connectorReadFailed": "Could not read the shared connector. Retry or open shared settings.",
       "noConnector": "No shared CCCC connector yet. Create it here, then add CCCC as a plugin in ChatGPT with the values shown.",
       "connectorExists": "A shared connector already exists, so nothing was changed. If ChatGPT does not have the CCCC plugin yet, open the shared settings.",
       "createConnector": "Create connector and get plugin URL",

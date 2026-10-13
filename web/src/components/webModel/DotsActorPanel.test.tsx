@@ -714,3 +714,61 @@ it("keeps a host dialog open while the one-time connector URL is being created",
   expect(onBusyChange).toHaveBeenLastCalledWith(false);
   expect(host.querySelector("[data-chatgpt-plugin-setup]")).not.toBeNull();
 });
+
+it("blocks setup navigation and binding actions until the one-time connector response arrives", async () => {
+  mocks.connectors.mockResolvedValue({
+    ok: true,
+    result: { connectors: [], connector_base_url: "https://cccc.example.test" },
+  });
+  let finish!: (value: unknown) => void;
+  mocks.create.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+  const openShared = vi.fn();
+  await render({ onOpenSharedSettings: openShared });
+  await act(async () => button("dotsActor.setup.createConnector").click());
+  expect(button("dotsActor.sharedSettings").disabled).toBe(true);
+  expect(button("dotsActor.connect").disabled).toBe(true);
+  await act(async () => button("dotsActor.sharedSettings").click());
+  expect(openShared).not.toHaveBeenCalled();
+  await act(async () =>
+    finish({
+      ok: true,
+      result: {
+        connector: {
+          connector_id: "shared",
+          connector_url_path_token:
+            "https://cccc.example.test/mcp/web-model/shared/token/probe-only",
+        },
+      },
+    }),
+  );
+  expect(button("dotsActor.sharedSettings").disabled).toBe(false);
+  expect(button("dotsActor.connect").disabled).toBe(false);
+});
+
+it.each(["network", "api"])(
+  "reports a %s connector-read failure and allows an explicit retry",
+  async (failure) => {
+    mocks.connectors.mockResolvedValue({
+      ok: true,
+      result: { connectors: [], connector_base_url: "https://cccc.example.test" },
+    });
+    if (failure === "network") mocks.connectors.mockRejectedValueOnce(new Error("offline"));
+    else
+      mocks.connectors.mockResolvedValueOnce({
+        ok: false,
+        error: { code: "io_error", message: "probe-only failure" },
+      });
+    await render({ onOpenSharedSettings: vi.fn() });
+    const step = host.querySelector("[data-dots-plugin-step]")!;
+    expect(step.querySelector('[role="alert"]')?.textContent).toContain(
+      "dotsActor.setup.connectorReadFailed",
+    );
+    expect(button("dotsActor.setup.createConnector")).toBeUndefined();
+    expect(mocks.create).not.toHaveBeenCalled();
+    await act(async () => button("common:retry").click());
+    expect(mocks.connectors).toHaveBeenCalledTimes(2);
+    expect(step.querySelector('[role="alert"]')).toBeNull();
+    expect(button("dotsActor.setup.createConnector")).toBeTruthy();
+    expect(mocks.create).not.toHaveBeenCalled();
+  },
+);

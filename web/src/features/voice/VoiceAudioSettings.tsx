@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import { useVoiceAudioStore } from "../../stores/useVoiceAudioStore";
 import { SelectCombobox } from "../../components/SelectCombobox";
 import { Button } from "../../components/ui/button";
-import { inputClass, labelClass } from "../../components/modals/settings/types";
+import { inputClass } from "../../components/modals/settings/types";
+import { SettingsCard, SettingsRow } from "../../components/modals/settings/SettingsKit";
 import { useVoiceAudioDevices } from "./useVoiceAudioDevices";
 
 export function VoiceAudioSettings({
@@ -34,48 +35,41 @@ export function VoiceAudioSettings({
         if (node && focusRequest && initialFocusRef)
           initialFocusRef.current = node.querySelector<HTMLElement>('[role="combobox"]');
       }}
-      className="min-w-0 space-y-4 border-b border-[var(--glass-border-subtle)] pb-5"
+      className="min-w-0"
       aria-labelledby="voice-audio-heading"
       data-voice-audio-settings
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 id="voice-audio-heading" className="text-sm font-semibold">
-            {t("voiceAudio.title")}
-          </h3>
-          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-            {t("voiceAudio.scope")}
-          </p>
-        </div>
-        <Button variant="secondary" size="sm" onClick={() => void devices.refresh()}>
-          {t("voiceSettings.refresh")}
-        </Button>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="block min-w-0">
-          <span className={labelClass()}>{t("voiceAudio.microphone")}</span>
-          <SelectCombobox
-            ariaLabel={t("voiceAudio.microphone")}
-            className={inputClass()}
-            value={preferences.inputDeviceId}
-            placeholder={t(
-              devices.loaded || devices.error
-                ? "voiceAudio.savedUnavailable"
-                : "voiceAudio.loading",
-            )}
-            onChange={(inputDeviceId) => update({ inputDeviceId })}
-            items={[
-              { value: "", label: t("voiceAudio.systemDefault") },
-              ...devices.inputs.map((device) => ({
-                value: device.deviceId,
-                label: devices.label("input", device.deviceId),
-              })),
-            ]}
-          />
-        </label>
-        <div className="min-w-0">
-          <label className="block min-w-0">
-            <span className={labelClass()}>{t("voiceAudio.speaker")}</span>
+      <SettingsCard
+        title={<span id="voice-audio-heading">{t("voiceAudio.title")}</span>}
+        description={t("voiceAudio.scope")}
+        actions={
+          <Button variant="secondary" size="sm" onClick={() => void devices.refresh()}>
+            {t("voiceSettings.refresh")}
+          </Button>
+        }
+      >
+        <div className="grid divide-y divide-[var(--glass-border-subtle)] @min-[600px]/settings:grid-cols-2 @min-[600px]/settings:divide-y-0 @min-[600px]/settings:divide-x">
+          <SettingsRow label={t("voiceAudio.microphone")} stacked>
+            <SelectCombobox
+              ariaLabel={t("voiceAudio.microphone")}
+              className={inputClass()}
+              value={preferences.inputDeviceId}
+              placeholder={t(
+                devices.loaded || devices.error
+                  ? "voiceAudio.savedUnavailable"
+                  : "voiceAudio.loading",
+              )}
+              onChange={(inputDeviceId) => update({ inputDeviceId })}
+              items={[
+                { value: "", label: t("voiceAudio.systemDefault") },
+                ...devices.inputs.map((device) => ({
+                  value: device.deviceId,
+                  label: devices.label("input", device.deviceId),
+                })),
+              ]}
+            />
+          </SettingsRow>
+          <SettingsRow label={t("voiceAudio.speaker")} stacked>
             {devices.supportsOutputSelection ? (
               <SelectCombobox
                 ariaLabel={t("voiceAudio.speaker")}
@@ -100,22 +94,24 @@ export function VoiceAudioSettings({
                 {t("voiceAudio.systemSpeaker")}
               </p>
             )}
-          </label>
+          </SettingsRow>
         </div>
-      </div>
-      <p className="text-xs leading-5 text-[var(--color-text-muted)]">
-        {t("voiceAudio.applyHint")} {t("voiceAudio.browserAsrHint")}
-      </p>
-      <p
-        role={error ? "alert" : undefined}
-        className={
-          error
-            ? "text-xs leading-5 text-rose-600 dark:text-rose-400"
-            : "text-xs leading-5 text-[var(--color-text-muted)]"
-        }
-      >
-        {error || t("voiceAudio.permissionHint")}
-      </p>
+        <div className="space-y-2 px-5 py-3.5">
+          <p className="text-xs leading-5 text-[var(--color-text-muted)]">
+            {t("voiceAudio.applyHint")} {t("voiceAudio.browserAsrHint")}
+          </p>
+          <p
+            role={error ? "alert" : undefined}
+            className={
+              error
+                ? "text-xs leading-5 text-rose-600 dark:text-rose-400"
+                : "text-xs leading-5 text-[var(--color-text-muted)]"
+            }
+          >
+            {error || t("voiceAudio.permissionHint")}
+          </p>
+        </div>
+      </SettingsCard>
     </section>
   );
 }

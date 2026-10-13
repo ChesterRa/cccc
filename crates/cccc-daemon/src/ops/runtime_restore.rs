@@ -71,12 +71,19 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
     if !group.running || group.state == cccc_contracts::GroupState::Stopped {
         return Ok(());
     }
-    for actor in group
-        .actors
-        .iter()
-        .filter(|actor| should_restore_actor(group.state, actor))
-    {
-        if deepseek_restore_blocked(home, &group, actor) {
+    for stored_actor in group.actors.iter().filter(|actor| actor.enabled) {
+        let actor = match super::actor_profile_runtime::resolve(home, stored_actor) {
+            Ok(actor) => actor,
+            Err(error) => {
+                tracing::warn!(group_id = %group.group_id, actor_id = %stored_actor.id,
+                    message = %error.message, "failed to resolve actor runtime for restoration");
+                continue;
+            }
+        };
+        if !should_restore_actor(group.state, &actor) {
+            continue;
+        }
+        if deepseek_restore_blocked(home, &group, &actor) {
             tracing::info!(
                 group_id = %group.group_id,
                 actor_id = %actor.id,
@@ -84,10 +91,10 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
             );
             continue;
         }
-        let was_running = actor_runtime::actor_is_running(&group, actor);
-        match actor_runtime::apply(home, &group, &actor.id, "actor.restore") {
+        let was_running = actor_runtime::actor_is_running(&group, &actor);
+        match actor_runtime::apply_resolved(home, &group, &actor, "actor.restore") {
             Ok(_) => {
-                if !was_running && actor_runtime::actor_is_running(&group, actor) {
+                if !was_running && actor_runtime::actor_is_running(&group, &actor) {
                     record_respawn_event(store, &group, &actor.id);
                 }
                 actor_delivery::dispatch_unread(home, &group, &actor.id);
@@ -308,5 +315,82 @@ mod tests {
         restore_group(&home, &store, &group.group_id).expect("failed actor restore is nonfatal");
         assert!(!actor_runtime::actor_is_running(&group, &group.actors[0]));
         assert!(respawn_events(&store, &group).is_empty());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod profile_restore_tests {
+    use super::*;
+    use cccc_contracts::{ActorRuntime, RunnerKind, RuntimeMode};
+    use cccc_core::profiles::ProfileStore;
+    use serde_json::json;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn paused_group_does_not_restore_profile_switched_to_acp() {
+        let temp = tempfile::tempdir().expect("own fixture");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("Home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let workspace = temp.path().join("work");
+        std::fs::create_dir(&workspace).expect("workspace");
+        let group = store.create("profile pause audit", "").expect("Group");
+        let scope = cccc_core::scope::detect(&workspace).expect("scope");
+        let mut group =
+            cccc_core::group_scope::attach(&store, &group.group_id, scope).expect("attach");
+        let program = temp.path().join("kimi");
+        std::fs::write(
+            &program,
+            include_str!("codex_voice_analyst/native_acp/candidate_fixture.py"),
+        )
+        .expect("fake CLI");
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700))
+            .expect("executable");
+        let profiles = ProfileStore::new(home.clone()).expect("profiles");
+        let mut profile = json!({"name":"pause fixture","runtime":"kimi","runtime_mode":"default","command":[program.to_string_lossy()],"env":{"HOME":temp.path().join("provider").to_string_lossy(),"USERPROFILE":temp.path().join("provider").to_string_lossy(),"KIMI_CODE_HOME":temp.path().join("provider/kimi").to_string_lossy(),"ACP_FIXTURE_CLI":"/bin/true"}});
+        let created = profiles
+            .upsert(profile.as_object().expect("profile").clone(), None)
+            .expect("native Profile");
+        let mut actor = Actor::new("audit-paused");
+        actor.runtime = ActorRuntime::Kimi;
+        actor.enabled = true;
+        actor.default_scope_key = group.active_scope_key.clone();
+        actor = crate::ops::actor_profile_runtime::link(
+            &home,
+            &actor,
+            created["id"].as_str().expect("id"),
+        )
+        .expect("link native profile");
+        group.actors.push(actor);
+        group.running = true;
+        group.state = GroupState::Paused;
+        store.save(&group).expect("save paused Group");
+        // Editing a Profile applies at next startup, preserving the stored Actor snapshot.
+        profile["id"] = created["id"].clone();
+        profile["runtime_mode"] = json!("acp");
+        profiles
+            .upsert(profile.as_object().expect("profile").clone(), Some(1))
+            .expect("switch to ACP");
+        let saved = store.load(&group.group_id).expect("saved");
+        assert_eq!(saved.actors[0].runner, RunnerKind::Pty);
+        assert_eq!(saved.actors[0].runtime_mode, RuntimeMode::Default);
+        assert_eq!(
+            crate::ops::actor_profile_runtime::resolve(&home, &saved.actors[0])
+                .expect("effective")
+                .runner,
+            RunnerKind::Headless
+        );
+        struct Cleanup(String);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = crate::ops::local_headless::stop(&self.0, "audit-paused");
+            }
+        }
+        let _cleanup = Cleanup(group.group_id.clone());
+        restore_group(&home, &store, &group.group_id).expect("restore");
+        let running = crate::ops::local_headless::running(&group.group_id, "audit-paused");
+        assert!(
+            !running,
+            "a paused Group unexpectedly started its effective headless Profile"
+        );
     }
 }

@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { StructuredRuntimeSettingsFields } from "../../components/modals/StructuredRuntimeSettingsFields";
+import { SettingsSaveBar } from "../../components/modals/settings/SettingsKit";
 import { Button } from "../../components/ui/button";
 import { VoiceRuntimeProfileActions } from "../voice/VoiceRuntimeProfileActions";
 import { useCodexVoiceAnalystSettings } from "./useCodexVoiceAnalystSettings";
@@ -67,35 +68,35 @@ export function CodexVoiceAnalystSettingsFields({
             </p>
           )}
         </div>
-        <div className="flex flex-wrap justify-end gap-2 [&>button]:min-w-0 [&>button]:whitespace-normal">
-          {form.hasChanges ? (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={form.editingDisabled}
-              onClick={form.discard}
-            >
-              {t("codexVoiceDiscardChanges")}
-            </Button>
-          ) : null}
-          <VoiceRuntimeProfileActions
-            form={form}
-            name="Voice Analyst"
-            onEditingChange={onProfileEditingChange}
-          />
-          <Button
-            type="button"
-            className="w-full sm:w-auto"
-            onClick={() => void form.save()}
-            disabled={form.saveDisabled}
-          >
-            {form.saving
-              ? t("codexVoiceAnalystSettingsSaving")
-              : controller.analyst
-                ? t("codexVoiceAnalystSettingsApplyRestart")
-                : t("codexVoiceAnalystSettingsSave")}
-          </Button>
-        </div>
+        <SettingsSaveBar
+          label={
+            controller.analyst
+              ? t("codexVoiceAnalystSettingsApplyRestart")
+              : t("codexVoiceAnalystSettingsSave")
+          }
+          busy={form.saving}
+          disabled={form.saveDisabled}
+          onSave={() => void form.save()}
+          actions={
+            <>
+              {form.hasChanges ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={form.editingDisabled}
+                  onClick={form.discard}
+                >
+                  {t("codexVoiceDiscardChanges")}
+                </Button>
+              ) : null}
+              <VoiceRuntimeProfileActions
+                form={form}
+                name="Voice Analyst"
+                onEditingChange={onProfileEditingChange}
+              />
+            </>
+          }
+        />
       </div>
     </section>
   );

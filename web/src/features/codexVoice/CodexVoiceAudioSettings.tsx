@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { SelectCombobox } from "../../components/SelectCombobox";
-import { inputClass, labelClass } from "../../components/modals/settings/types";
+import { inputClass } from "../../components/modals/settings/types";
+import { SettingsCard, SettingsRow } from "../../components/modals/settings/SettingsKit";
 import { formatCodexVoiceName, type CodexRealtimeVoice } from "./codexVoicePreferences";
 import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
 
@@ -11,17 +12,11 @@ export function CodexVoiceAudioSettings({
 }) {
   const { t } = useTranslation("modals");
   return (
-    <section className="min-w-0 space-y-4" aria-labelledby="codex-voice-audio-heading">
-      <div>
-        <h3 id="codex-voice-audio-heading" className="text-sm font-semibold">
-          {t("codexVoiceVoiceLabel")}
-        </h3>
-        <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-          {t("codexVoiceAudioPreferencesHint")}
-        </p>
-      </div>
-      <label className="block min-w-0 max-w-lg">
-        <span className={labelClass()}>{t("codexVoiceVoiceLabel")}</span>
+    <SettingsCard
+      title={t("codexVoiceSettingsVoiceAudio")}
+      description={t("codexVoiceAudioPreferencesHint")}
+    >
+      <SettingsRow label={t("codexVoiceVoiceLabel")}>
         <SelectCombobox
           ariaLabel={t("codexVoiceVoiceLabel")}
           className={inputClass()}
@@ -32,7 +27,7 @@ export function CodexVoiceAudioSettings({
             label: formatCodexVoiceName(voice),
           }))}
         />
-      </label>
-    </section>
+      </SettingsRow>
+    </SettingsCard>
   );
 }

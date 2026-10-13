@@ -1920,6 +1920,7 @@
       "disconnectHint": "先暂停 CCCC 访问并结清未完成的任务；Dots 中的原生任务需另外停用。"
     },
     "setup": {
+      "connectorReadFailed": "无法读取共享连接器。请重试或打开共享设置。",
       "noConnector": "还没有共享 CCCC 连接器。在这里一键创建，然后按显示的三项把 CCCC 加为 ChatGPT 插件。",
       "connectorExists": "共享连接器已经存在，没有做任何改动。如果 ChatGPT 里还没有 CCCC 插件，请打开共享设置。",
       "createConnector": "创建连接器并获取插件地址",

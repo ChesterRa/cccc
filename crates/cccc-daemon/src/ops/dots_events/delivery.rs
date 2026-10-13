@@ -141,7 +141,12 @@ pub(super) fn record(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 "dots_callback_failed"
             })
         };
-        wake["retry_at_ms"] = json!(now + RETRY_DELAY_MS);
+        wake["retry_at_ms"] = if wake["state"] == "pending" {
+            // Three attempts: wait 2s after the first, 4s after the second.
+            json!(now + RETRY_DELAY_MS * (1_i64 << (attempt - 1)))
+        } else {
+            Value::Null
+        };
         if http == Some(410) {
             dots["subscription"]["enabled"] = json!(false);
             dots["wake"]["error_code"] = json!("dots_subscription_gone");

@@ -65,8 +65,8 @@ it("saves the chosen notification scope for exactly that Group", () => {
 
 it("saves the viewed-message switch", () => {
   const change = render("notifications");
-  const toggle = host.querySelector<HTMLInputElement>('input[role="switch"]')!;
-  expect(toggle.checked).toBe(true);
+  const toggle = host.querySelector<HTMLButtonElement>('button[role="switch"]')!;
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
   act(() => toggle.click());
   expect(change).toHaveBeenCalledWith({ suppress_viewed: false });
 });
