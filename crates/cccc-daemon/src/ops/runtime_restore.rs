@@ -1,5 +1,5 @@
-use cccc_contracts::{Actor, GroupState};
-use cccc_core::{GroupStore, HomeLayout};
+use cccc_contracts::{Actor, Event, GroupState};
+use cccc_core::{GroupStore, HomeLayout, ledger};
 
 use crate::dispatch::OpError;
 use crate::dispatch_concurrency::DispatchLocks;
@@ -86,6 +86,7 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
         }
         match actor_runtime::apply(home, &group, &actor.id, "actor.restore") {
             Ok(_) => {
+                record_respawn_event(home, &group, &actor.id);
                 actor_delivery::dispatch_unread(home, &group, &actor.id);
             }
             Err(error) => {
@@ -106,6 +107,35 @@ fn should_restore_actor(state: GroupState, actor: &Actor) -> bool {
         && !(state == GroupState::Paused && actor.runner == cccc_contracts::RunnerKind::Headless)
 }
 
+/// Record an actor.start ledger event when the daemon respawns an actor at startup.
+/// Without this, daemon respawns are invisible in the ledger — 31 actors restarted
+/// silently with no actor.start record, and reads showed "stopped" for running actors.
+fn record_respawn_event(home: &HomeLayout, group: &cccc_core::GroupDoc, actor_id: &str) {
+    let Ok(store) = GroupStore::new(home.clone()) else {
+        return;
+    };
+    let Ok(path) = store.ledger_path(&group.group_id) else {
+        return;
+    };
+    let mut event = Event::new("actor.start", &group.group_id);
+    event.by = "system".into();
+    event.data = serde_json::json!({
+        "actor_id": actor_id,
+        "reason": "daemon_respawn",
+    })
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+    if let Err(error) = ledger::append(&path, &event) {
+        tracing::warn!(
+            group_id = %group.group_id,
+            actor_id = %actor_id,
+            message = %error,
+            "failed to record daemon respawn actor.start event"
+        );
+    }
+}
+
 fn deepseek_restore_blocked(home: &HomeLayout, group: &cccc_core::GroupDoc, actor: &Actor) -> bool {
     actor.runtime == cccc_contracts::ActorRuntime::Deepseek
         && crate::ops::deepseek_runtime::manual_restart_required(home, group, actor)
@@ -113,9 +143,11 @@ fn deepseek_restore_blocked(home: &HomeLayout, group: &cccc_core::GroupDoc, acto
 
 #[cfg(test)]
 mod tests {
-    use super::{deepseek_restore_blocked, should_restore_actor};
+    use super::{
+        deepseek_restore_blocked, record_respawn_event, restore_group, should_restore_actor,
+    };
     use cccc_contracts::{Actor, ActorRuntime, GroupState};
-    use cccc_core::{GroupStore, HomeLayout};
+    use cccc_core::{GroupStore, HomeLayout, ledger};
 
     #[test]
     fn paused_groups_restore_terminal_runtimes_but_not_non_terminal_runtimes() {
@@ -169,5 +201,60 @@ mod tests {
         )
         .expect("record explicit restart generation");
         assert!(!deepseek_restore_blocked(&home, &group, &actor));
+    }
+
+    #[test]
+    fn respawn_records_actor_start_ledger_event() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("respawn test", "").expect("group");
+        let mut actor = Actor::new("peer1");
+        actor.enabled = true;
+        group.actors.push(actor.clone());
+        group.running = true;
+        store.save(&group).expect("save");
+
+        record_respawn_event(&home, &group, &actor.id);
+
+        let events = ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger path"))
+            .expect("read ledger");
+        let respawn = events
+            .iter()
+            .find(|e| e.kind == "actor.start" && e.data["reason"] == "daemon_respawn")
+            .expect("daemon respawn actor.start event not found");
+        assert_eq!(respawn.data["actor_id"], "peer1");
+        assert_eq!(respawn.by, "system");
+    }
+
+    /// Path-level regression: drive `restore_running` with a real actor and
+    /// assert the ledger holds the daemon-respawn event. The helper-level test
+    /// above calls `record_respawn_event` directly, so deleting the call site
+    /// in `restore_group` leaves the whole lib suite green — this test pins it.
+    #[test]
+    fn restore_path_journals_actor_start_on_daemon_respawn() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("restore path test", "").expect("group");
+        let mut actor = Actor::new("peer1");
+        actor.enabled = true;
+        actor.runtime = cccc_contracts::ActorRuntime::WebModel;
+        actor.runner = cccc_contracts::RunnerKind::Headless;
+        actor.default_scope_key = "global_scope".into();
+        group.actors.push(actor.clone());
+        group.running = true;
+        store.save(&group).expect("save");
+
+        restore_group(&home, &store, &group.group_id).expect("restore group");
+
+        let events = ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger path"))
+            .expect("read ledger");
+        let respawn = events
+            .iter()
+            .find(|e| e.kind == "actor.start" && e.data["reason"] == "daemon_respawn")
+            .expect("restore path journaled no actor.start reason=daemon_respawn");
+        assert_eq!(respawn.data["actor_id"], "peer1");
+        assert_eq!(respawn.by, "system");
     }
 }
