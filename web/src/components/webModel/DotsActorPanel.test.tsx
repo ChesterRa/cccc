@@ -4,7 +4,14 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { DotsActorState } from "../../services/api/webModel";
 
-const mocks = vi.hoisted(() => ({ load: vi.fn(), update: vi.fn(), copy: vi.fn(), language: "en" }));
+const mocks = vi.hoisted(() => ({
+  load: vi.fn(),
+  update: vi.fn(),
+  copy: vi.fn(),
+  connectors: vi.fn(),
+  create: vi.fn(),
+  language: "en",
+}));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, options?: { time?: string }) =>
@@ -13,6 +20,8 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 vi.mock("../../services/api", () => ({
+  fetchWebModelConnectors: () => mocks.connectors(),
+  createWebModelConnector: (...args: unknown[]) => mocks.create(...args),
   fetchDotsActorState: (...args: unknown[]) => mocks.load(...args),
   updateDotsActorConnection: (...args: unknown[]) => mocks.update(...args),
 }));
@@ -39,6 +48,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.language = "en";
   mocks.load.mockResolvedValue(state());
+  mocks.connectors.mockResolvedValue({
+    ok: true,
+    result: {
+      connectors: [{ connector_id: "shared", provider: "chatgpt_web" }],
+      connector_base_url: "https://cccc.example.test",
+    },
+  });
   mocks.update.mockResolvedValue({
     ok: true,
     result: {
@@ -607,4 +623,94 @@ it("does not ask an administrator to connect a read-only Actor whose first statu
   await act(async () => vi.advanceTimersByTimeAsync(2_000));
   expect(host.textContent).toContain("dotsActor.adminSetup");
   expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("creates the missing shared connector from step 1 and hands over its private URL only by copy", async () => {
+  mocks.connectors.mockResolvedValue({
+    ok: true,
+    result: { connectors: [], connector_base_url: "https://cccc.example.test" },
+  });
+  mocks.create.mockResolvedValue({
+    ok: true,
+    result: {
+      connector: {
+        connector_id: "shared",
+        connector_url_path_token: "https://cccc.example.test/mcp/web-model/shared/token/test-only",
+      },
+    },
+  });
+  await render({ onOpenSharedSettings: vi.fn() });
+  const step = host.querySelector("[data-dots-plugin-step]")!;
+  expect(step.textContent).toContain("dotsActor.setup.noConnector");
+  // The shared settings stay reachable beside the one-click creation.
+  expect(button("dotsActor.sharedSettings")).toBeTruthy();
+  await act(async () => button("dotsActor.setup.createConnector").click());
+  expect(mocks.create).toHaveBeenCalledExactlyOnceWith("chatgpt_web", { createOnly: true });
+  expect(step.querySelector("[data-chatgpt-plugin-setup]")).not.toBeNull();
+  expect(host.textContent).not.toContain("test-only");
+  expect(button("dotsActor.setup.createConnector")).toBeUndefined();
+  await act(async () => button("webModelShared.copy").click());
+  expect(mocks.copy).toHaveBeenLastCalledWith(
+    "https://cccc.example.test/mcp/web-model/shared/token/test-only",
+  );
+});
+
+it("offers no creation when a connector exists or the Web address is not public HTTPS", async () => {
+  await render({ onOpenSharedSettings: vi.fn() });
+  expect(button("dotsActor.setup.createConnector")).toBeUndefined();
+  expect(mocks.create).not.toHaveBeenCalled();
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  mocks.connectors.mockResolvedValue({
+    ok: true,
+    result: { connectors: [], connector_base_url: "http://localhost:8848" },
+  });
+  await render({ onOpenSharedSettings: vi.fn() });
+  expect(button("dotsActor.setup.createConnector")).toBeUndefined();
+  expect(host.textContent).toContain("webModelShared.publicUrlInvalid");
+});
+
+it("leaves a connector created elsewhere untouched when the page was stale", async () => {
+  mocks.connectors.mockResolvedValue({
+    ok: true,
+    result: { connectors: [], connector_base_url: "https://cccc.example.test" },
+  });
+  mocks.create.mockResolvedValue({
+    ok: false,
+    error: { code: "connector_exists", message: "exists" },
+  });
+  await render({ onOpenSharedSettings: vi.fn() });
+  await act(async () => button("dotsActor.setup.createConnector").click());
+  expect(host.textContent).toContain("dotsActor.setup.connectorExists");
+  expect(host.querySelector("[data-chatgpt-plugin-setup]")).toBeNull();
+  expect(button("dotsActor.setup.createConnector")).toBeUndefined();
+  expect(button("dotsActor.sharedSettings")).toBeTruthy();
+});
+
+it("keeps a host dialog open while the one-time connector URL is being created", async () => {
+  mocks.connectors.mockResolvedValue({
+    ok: true,
+    result: { connectors: [], connector_base_url: "https://cccc.example.test" },
+  });
+  let finish!: (value: unknown) => void;
+  mocks.create.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+  const onBusyChange = vi.fn();
+  await render({ onOpenSharedSettings: vi.fn(), onBusyChange });
+  onBusyChange.mockClear();
+  await act(async () => button("dotsActor.setup.createConnector").click());
+  expect(onBusyChange).toHaveBeenLastCalledWith(true);
+  await act(async () =>
+    finish({
+      ok: true,
+      result: {
+        connector: {
+          connector_id: "shared",
+          connector_url_path_token:
+            "https://cccc.example.test/mcp/web-model/shared/token/test-only",
+        },
+      },
+    }),
+  );
+  expect(onBusyChange).toHaveBeenLastCalledWith(false);
+  expect(host.querySelector("[data-chatgpt-plugin-setup]")).not.toBeNull();
 });

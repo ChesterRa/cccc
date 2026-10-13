@@ -84,7 +84,8 @@ fn setup_instruction(token: &str) -> String {
             "Create and save a native event-triggered task in Dots using ChatGPT's built-in task/monitoring capability. ",
             "Use the existing CCCC plugin, installed, connected and enabled in the same ChatGPT account as this Dot. ",
             "If the plugin was connected before this CCCC update, refresh its tools and events first. ",
-            "Ask the user for any plugin permissions required to claim tasks, reply and complete them; do not claim that setup succeeded while permissions are missing. ",
+            "By pasting these instructions I approve saving this persistent event-triggered task for this one CCCC Actor, accepting its queued turns, replying through CCCC and completing those turns; do not ask me to approve that again. ",
+            "Ask me only if ChatGPT itself blocks plugin permissions these steps need, and do not claim that setup succeeded while they are blocked. ",
             "Subscribe to event {event} with arguments {{\"actor_token\":\"{token}\"}}. ",
             "This binding credential grants subscription and cccc_runtime_wait_next_turn for this fixed CCCC Actor only. ",
             "It authorizes accepting and reading this Actor's queued tasks, not ordinary business tools. ",
@@ -502,6 +503,9 @@ mod tests {
         assert!(setup.contains("actor_token returned in that tool result"));
         assert!(setup.contains("not ordinary business tools"));
         assert!(setup.contains("turn_in_progress"));
+        // Pasting the setup is the approval: the Dot asks only when ChatGPT blocks it.
+        assert!(setup.contains("By pasting these instructions I approve saving this persistent"));
+        assert!(setup.contains("Ask me only if ChatGPT itself blocks plugin permissions"));
         // A Dot's task interface may lack ttlMs or a credential field: neither blocks setup.
         assert!(setup.contains("omit ttlMs if the task interface does not offer it"));
         assert!(setup.contains("subscription arguments are this native task's configuration"));

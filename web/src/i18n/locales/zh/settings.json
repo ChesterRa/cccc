@@ -1537,7 +1537,7 @@
     "lastSeen": "最近连接器请求：{{time}}",
     "pluginSetup": {
       "title": "在 ChatGPT 中添加 CCCC 插件（每个账号一次）",
-      "path": "在 ChatGPT 中打开 Plugins，选择 ＋ → Add custom MCP server，按下面三项填写。Dot 无法自己添加。",
+      "path": "在 ChatGPT 中打开 Plugins，点右上角 Add → Add custom MCP server，按下面三项填写。Dot 无法自己添加。",
       "openPlugins": "打开 ChatGPT 插件设置 ↗",
       "name": "名称",
       "url": "URL",
@@ -1920,6 +1920,10 @@
       "disconnectHint": "先暂停 CCCC 访问并结清未完成的任务；Dots 中的原生任务需另外停用。"
     },
     "setup": {
+      "noConnector": "还没有共享 CCCC 连接器。在这里一键创建，然后按显示的三项把 CCCC 加为 ChatGPT 插件。",
+      "connectorExists": "共享连接器已经存在，没有做任何改动。如果 ChatGPT 里还没有 CCCC 插件，请打开共享设置。",
+      "createConnector": "创建连接器并获取插件地址",
+      "creatingConnector": "正在创建…",
       "pluginTitle": "连接 CCCC 插件",
       "copyTitle": "复制设置说明，粘贴给你的 Dot",
       "waitTitle": "等待 CCCC 检测到订阅",

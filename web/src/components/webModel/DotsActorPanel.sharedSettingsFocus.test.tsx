@@ -12,6 +12,13 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: mocks.t, i18n: { language: "en" } }),
 }));
 vi.mock("../../services/api", () => ({
+  fetchWebModelConnectors: async () => ({
+    ok: true,
+    result: {
+      connectors: [{ connector_id: "shared", provider: "chatgpt_web" }],
+      connector_base_url: "https://cccc.example.test",
+    },
+  }),
   fetchDotsActorState: async () => ({
     ok: true,
     result: {

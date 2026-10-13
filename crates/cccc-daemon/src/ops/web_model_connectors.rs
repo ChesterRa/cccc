@@ -38,6 +38,21 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .as_str()
                 .ok_or_else(|| OpError::new("invalid_argument", "provider must be a string"))?,
         };
+        let create_only = match request.args.get("create_only") {
+            None => false,
+            Some(value) => value
+                .as_bool()
+                .ok_or_else(|| OpError::new("invalid_argument", "create_only must be a boolean"))?,
+        };
+        if create_only {
+            return match store::create_provider_if_absent(home, provider).map_err(OpError::io)? {
+                Some(created) => object(created),
+                None => Err(OpError::new(
+                    "connector_exists",
+                    "A shared connector already exists; manage it in the ChatGPT view",
+                )),
+            };
+        }
         return object(store::configure_provider(home, provider).map_err(OpError::io)?);
     }
     let id = required_arg(request, "connector_id")?;

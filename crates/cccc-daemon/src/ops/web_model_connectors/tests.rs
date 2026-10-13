@@ -341,3 +341,33 @@ fn grok_binding_requires_stopped_actor_preserves_pending_work_and_retires_on_run
         chatgpt["connector"]["secret_hash"]
     );
 }
+
+#[test]
+fn create_only_must_be_a_boolean_and_never_falls_back_to_rotation() {
+    let temp = tempfile::tempdir().expect("valid test fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("valid test fixture");
+    home.initialize().expect("valid test fixture");
+    store::configure(&home).expect("existing connector");
+    let before = store::load(&home).expect("load");
+    for flag in [serde_json::json!("true"), serde_json::json!(1), Value::Null] {
+        let error = execute(
+            &home,
+            &request(
+                "web_model_connector_configure",
+                serde_json::json!({"by":"user","provider":"chatgpt_web","create_only":flag}),
+            ),
+        )
+        .expect_err("a non-boolean create_only is refused");
+        assert_eq!(error.code, "invalid_argument", "{flag}");
+    }
+    let refused = execute(
+        &home,
+        &request(
+            "web_model_connector_configure",
+            serde_json::json!({"by":"user","provider":"chatgpt_web","create_only":true}),
+        ),
+    )
+    .expect_err("an existing connector is kept");
+    assert_eq!(refused.code, "connector_exists");
+    assert_eq!(store::load(&home).expect("load"), before, "nothing rotated");
+}

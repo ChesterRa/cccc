@@ -475,3 +475,34 @@ fn grok_url_requires_exact_provider_and_bot() {
         assert!(grok_bot_url(bad).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn create_if_absent_never_rotates_an_active_connector() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let created = create_provider_if_absent(&home, "chatgpt_web")
+        .expect("create")
+        .expect("absent, so created");
+    assert!(
+        created["secret"]
+            .as_str()
+            .is_some_and(|secret| secret.starts_with("wmcs_"))
+    );
+    let before = load(&home).expect("load");
+    // A second one-click create, e.g. from a stale page, changes nothing.
+    assert!(
+        create_provider_if_absent(&home, "chatgpt_web")
+            .expect("check")
+            .is_none()
+    );
+    assert_eq!(load(&home).expect("load"), before);
+    // After revocation it may create a fresh connector again.
+    let id = created["connector"]["connector_id"].as_str().expect("id");
+    assert!(revoke(&home, id).expect("revoke"));
+    assert!(
+        create_provider_if_absent(&home, "chatgpt_web")
+            .expect("create")
+            .is_some()
+    );
+}

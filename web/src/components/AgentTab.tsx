@@ -1005,7 +1005,7 @@ export function AgentTab({
                           openSettingsTarget({
                             scope: "global",
                             tab: "webModels",
-                            webModelProvider: "chatgpt_web",
+                            webModelProvider: "dots",
                           })
                       : undefined
                   }

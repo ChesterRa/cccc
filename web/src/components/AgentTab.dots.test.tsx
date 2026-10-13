@@ -56,6 +56,13 @@ vi.mock("./agentTerminal/useAgentTerminalConnection", () => ({
 vi.mock("./webModel/WebModelRuntimePanel", () => ({ WebModelRuntimePanel: mocks.browser }));
 vi.mock("./headless/ActorAcpControls", () => ({ ActorAcpControls: () => null }));
 vi.mock("../services/api", () => ({
+  fetchWebModelConnectors: async () => ({
+    ok: true,
+    result: {
+      connectors: [{ connector_id: "shared", provider: "chatgpt_web" }],
+      connector_base_url: "https://cccc.example.test",
+    },
+  }),
   fetchDotsActorState: (...args: unknown[]) => mocks.load(...args),
   updateDotsActorConnection: (...args: unknown[]) => mocks.update(...args),
 }));
@@ -214,7 +221,7 @@ it("opens the shared ChatGPT settings directly without Actor editing", async () 
   expect(mocks.settings).toHaveBeenCalledWith({
     scope: "global",
     tab: "webModels",
-    webModelProvider: "chatgpt_web",
+    webModelProvider: "dots",
   });
   expect(mocks.edit).not.toHaveBeenCalled();
 });

@@ -12,6 +12,7 @@ import {
   DotsStatusSummary,
   dotsCard,
 } from "./DotsActorSections";
+import { DotsPluginStep } from "./DotsPluginStep";
 import { phaseTone } from "./dotsActorStatus";
 
 type DotsActorPanelProps = {
@@ -391,7 +392,12 @@ function ActorPanel({
               title={t("dotsActor.setup.pluginTitle")}
               hint={t("dotsActor.connectHint")}
             >
-              {sharedButton ? <div>{sharedButton}</div> : null}
+              <DotsPluginStep
+                isVisible={visible}
+                disabled={locked}
+                sharedSettings={sharedButton}
+                onBusyChange={(busy) => current.current.onBusyChange?.(busy)}
+              />
             </DotsSetupStep>
             <DotsSetupStep
               number={2}

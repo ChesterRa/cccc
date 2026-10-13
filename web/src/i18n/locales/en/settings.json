@@ -1545,7 +1545,7 @@
     "lastSeen": "Last connector request: {{time}}",
     "pluginSetup": {
       "title": "Add CCCC as a plugin in ChatGPT (once per account)",
-      "path": "In ChatGPT, open Plugins, choose + and Add custom MCP server, then enter these values. A Dot cannot add it by itself.",
+      "path": "In ChatGPT, open Plugins, choose Add (top right) → Add custom MCP server, then enter these values. A Dot cannot add it by itself.",
       "openPlugins": "Open ChatGPT plugins ↗",
       "name": "Name",
       "url": "URL",
@@ -1936,6 +1936,10 @@
       "disconnectHint": "Pause CCCC access and resolve unfinished work first. Also disable the native task in Dots."
     },
     "setup": {
+      "noConnector": "No shared CCCC connector yet. Create it here, then add CCCC as a plugin in ChatGPT with the values shown.",
+      "connectorExists": "A shared connector already exists, so nothing was changed. If ChatGPT does not have the CCCC plugin yet, open the shared settings.",
+      "createConnector": "Create connector and get plugin URL",
+      "creatingConnector": "Creating…",
       "pluginTitle": "Connect the CCCC plugin",
       "copyTitle": "Copy the setup instructions to your Dot",
       "waitTitle": "Wait for CCCC to detect the subscription",

@@ -11,9 +11,9 @@ export async function copyTextToClipboard(value: string): Promise<boolean> {
     // Fall through to the DOM copy fallback below.
   }
 
+  if (typeof document === "undefined" || !document.body) return false;
+  const textarea = document.createElement("textarea");
   try {
-    if (typeof document === "undefined" || !document.body) return false;
-    const textarea = document.createElement("textarea");
     textarea.value = text;
     textarea.setAttribute("readonly", "true");
     textarea.style.position = "fixed";
@@ -23,10 +23,16 @@ export async function copyTextToClipboard(value: string): Promise<boolean> {
     document.body.appendChild(textarea);
     textarea.focus();
     textarea.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(textarea);
-    return !!ok;
+    return !!document.execCommand("copy");
   } catch {
     return false;
+  } finally {
+    // Copied text may be a credential: never leave it in the page, even when
+    // the legacy copy throws.
+    try {
+      document.body.removeChild(textarea);
+    } catch {
+      // It was never attached.
+    }
   }
 }

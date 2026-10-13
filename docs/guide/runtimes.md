@@ -560,14 +560,20 @@ Actor controls.
 1. Save an Actor with runtime **ChatGPT Dots** and open its main pane. Adding or
    enabling the Actor does not create the task in ChatGPT.
 2. If needed, open **Shared ChatGPT setup**, configure a publicly reachable HTTPS
-   Web address and create the shared connector. Add its private MCP URL as the
-   CCCC plugin in the account you use for Dots, and ensure that plugin is installed,
+   Web address and create the shared connector (the Dots pane can create it in
+   one click). Add its private MCP URL as the CCCC plugin in the account you use
+   for Dots: in ChatGPT open Plugins, choose Add → Add custom MCP server, name it
+   `CCCC`, paste the URL and choose No authentication. A Dot cannot add a plugin
+   itself, so this is done once per ChatGPT account. Ensure that plugin is installed,
    connected and enabled. Approve the plugin permissions ChatGPT requests for task
    claims, replies and completion. Reuse an existing CCCC plugin; after upgrading
    CCCC, select **Refresh tools** in its ChatGPT settings to refresh the tool and
    event catalogs. Do not create another connector or replace its credential just
    to refresh the tools. Dots does not require signing in through CCCC's hosted
    browser.
+
+   ![ChatGPT Plugins: Add → Add custom MCP server](../assets/screenshots/chatgpt-add-custom-mcp-server.png)
+
 3. Click **Connect Dots**, then **Copy setup instructions**. For an existing
    binding, use **Get setup instructions** to retrieve the same setup again.
    Neither requires pausing the Actor, but an accepted unfinished turn must be

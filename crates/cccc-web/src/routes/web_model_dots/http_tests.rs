@@ -961,3 +961,47 @@ async fn subscription_refresh_and_unsubscribe_use_modern_wire_contract_and_fixed
     );
     fixture.close().await;
 }
+
+#[tokio::test]
+async fn one_click_create_refuses_to_rotate_an_existing_connector() {
+    let mut fixture = Fixture::new();
+    fixture.start_daemon().await;
+    let before = fixture.connector()["secret_hash"].clone();
+    let (status, response) = fixture
+        .send(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/web-model/connectors")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {}", fixture.admin))
+                .body(Body::from(
+                    json!({"provider":"chatgpt_web","create_only":true}).to_string(),
+                ))
+                .expect("create-only request"),
+        )
+        .await;
+    assert_ne!(status, StatusCode::OK);
+    assert_eq!(response["ok"], false);
+    assert_eq!(response["error"]["code"], "connector_exists");
+    // A mistyped flag is refused rather than read as "rotate".
+    for flag in [json!("true"), json!(1), Value::Null] {
+        let (status, _) = fixture
+            .send(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/web-model/connectors")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", fixture.admin))
+                    .body(Body::from(
+                        json!({"provider":"chatgpt_web","create_only":flag}).to_string(),
+                    ))
+                    .expect("mistyped request"),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{flag}");
+    }
+    assert!(!response.to_string().contains("wmcs_"));
+    // The credential already added to ChatGPT keeps working.
+    assert_eq!(fixture.connector()["secret_hash"], before);
+    fixture.close().await;
+}

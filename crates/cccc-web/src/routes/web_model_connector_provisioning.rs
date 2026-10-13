@@ -28,10 +28,17 @@ pub(super) async fn create(State(state): State<AppState>, Json(body): Json<Value
             .as_str()
             .ok_or_else(|| ApiError::bad("provider must be a string"))?,
     };
+    // create_only: create when absent, never rotate an existing credential. Only
+    // a real boolean may choose; a mistyped flag must not fall back to rotation.
+    let create_only = match body.get("create_only") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => return Err(ApiError::bad("create_only must be a boolean")),
+    };
     let result = super::web_model_delivery_completion::call(
         &state,
         "web_model_connector_configure",
-        json!({"by":"user","provider":provider})
+        json!({"by":"user","provider":provider,"create_only":create_only})
             .as_object()
             .expect("literal JSON object")
             .clone(),

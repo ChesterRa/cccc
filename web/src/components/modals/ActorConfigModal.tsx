@@ -842,7 +842,12 @@ function EditActorConfigModal({
     openSettingsTarget({
       scope: "global",
       tab: "webModels",
-      webModelProvider: conversationRuntime === "grok_web_model" ? "grok_web" : "chatgpt_web",
+      webModelProvider:
+        conversationRuntime === "grok_web_model"
+          ? "grok_web"
+          : conversationRuntime === "chatgpt_dots"
+            ? "dots"
+            : "chatgpt_web",
     });
   };
   const [secretKeys, setSecretKeys] = useState<string[]>([]);

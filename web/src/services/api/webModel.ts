@@ -285,10 +285,18 @@ export type WebModelProvider = "chatgpt_web" | "grok_web";
 /** A Web Models settings view: a provider, or Dots on the shared ChatGPT connector. */
 export type WebModelView = WebModelProvider | "dots";
 
-export async function createWebModelConnector(provider: WebModelProvider = "chatgpt_web") {
+/**
+ * Create (or, by default, rotate) the provider's shared connector. With
+ * `createOnly`, an existing connector is refused with `connector_exists` and
+ * keeps its credential.
+ */
+export async function createWebModelConnector(
+  provider: WebModelProvider = "chatgpt_web",
+  options: { createOnly?: boolean } = {},
+) {
   return apiJson<WebModelConnectorCreateResult>("/api/v1/web-model/connectors", {
     method: "POST",
-    body: JSON.stringify({ provider }),
+    body: JSON.stringify(options.createOnly ? { provider, create_only: true } : { provider }),
   });
 }
 

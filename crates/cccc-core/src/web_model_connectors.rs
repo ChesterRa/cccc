@@ -140,11 +140,29 @@ pub fn configure(home: &HomeLayout) -> io::Result<Value> {
 }
 
 pub fn configure_provider(home: &HomeLayout, provider: &str) -> io::Result<Value> {
+    configure_inner(home, provider, true).map(|created| created.expect("configure always writes"))
+}
+
+/// Create the provider's connector only when none is active, in the same locked
+/// update that checks it. `None` means one exists and is left untouched: a
+/// one-click "create" must never rotate a credential already in use.
+pub fn create_provider_if_absent(home: &HomeLayout, provider: &str) -> io::Result<Option<Value>> {
+    configure_inner(home, provider, false)
+}
+
+fn configure_inner(
+    home: &HomeLayout,
+    provider: &str,
+    rotate_existing: bool,
+) -> io::Result<Option<Value>> {
     if !matches!(provider, "chatgpt_web" | "grok_web") {
         return Err(error("invalid_web_model_provider"));
     }
     update(home, |root| {
         let old = &root["connectors"][provider];
+        if !rotate_existing && old.is_object() && old["revoked"] != true {
+            return Ok(None);
+        }
         let now = cccc_contracts::utc_now();
         let mut connector = if old.is_object() && old["revoked"] != true {
             old.clone()
@@ -172,7 +190,7 @@ pub fn configure_provider(home: &HomeLayout, provider: &str) -> io::Result<Value
         if provider == "chatgpt_web" {
             root["requires_reconfiguration"] = json!(false);
         }
-        Ok(json!({"connector":connector,"secret":secret}))
+        Ok(Some(json!({"connector":connector,"secret":secret})))
     })
 }
 

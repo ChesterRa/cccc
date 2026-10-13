@@ -272,7 +272,7 @@ describe("Web Model effective Actor configuration", () => {
       }),
     );
   });
-  it("uses Dots event setup and the same ChatGPT settings without browser pairing or secrets", async () => {
+  it("uses Dots event setup and opens the Dots settings view without browser pairing or secrets", async () => {
     const p = props();
     p.runtime = "chatgpt_dots";
     p.savedRuntime = "chatgpt_dots";
@@ -287,7 +287,7 @@ describe("Web Model effective Actor configuration", () => {
     expect(useModalStore.getState().settingsTarget).toMatchObject({
       scope: "global",
       tab: "webModels",
-      webModelProvider: "chatgpt_web",
+      webModelProvider: "dots",
     });
     expect(p.onCancel).not.toHaveBeenCalled();
   });
