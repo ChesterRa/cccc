@@ -66,6 +66,10 @@ pub struct HeadlessStatus {
     pub task_id: Option<String>,
     pub updated_at: String,
     pub pid: Option<u32>,
+    /// Provider-reported cause for a non-nominal status (a failed turn).
+    /// None for every state whose meaning is already carried by `status`.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

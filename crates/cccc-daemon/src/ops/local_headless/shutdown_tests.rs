@@ -119,6 +119,7 @@ async fn shutdown_requests_all_jobs_and_confirms_stops_concurrently() {
                     task_id: None,
                     updated_at: String::new(),
                     pid: None,
+                    reason: None,
                 }),
                 stopped: AtomicBool::new(false),
                 stop_lock: Mutex::new(()),

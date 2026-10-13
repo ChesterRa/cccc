@@ -19,6 +19,7 @@ const REPLAY_START_TYPES: &[&str] = &[
 const REPLAY_END_TYPES: &[&str] = &[
     "headless.turn.completed",
     "headless.turn.failed",
+    "headless.turn.cancelled",
     "headless.control.completed",
     "headless.control.failed",
 ];

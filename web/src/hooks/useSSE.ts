@@ -540,7 +540,16 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         return;
       }
 
-      if (eventType === "headless.turn.completed" || eventType === "headless.turn.failed") {
+      // A cancelled turn closes like a completed one: it is a deliberate stop,
+      // not a failure, so it must not render as an error. It is included here
+      // defensively — the raw projection can label a cancelled turn completed
+      // before the settle event arrives, and this branch must handle either
+      // label so the flush and clear below always run.
+      if (
+        eventType === "headless.turn.completed" ||
+        eventType === "headless.turn.failed" ||
+        eventType === "headless.turn.cancelled"
+      ) {
         const failed = eventType === "headless.turn.failed";
         const turnId = typeof data.turn_id === "string" ? data.turn_id.trim() : "";
         const errorMessage = formatHeadlessErrorMessage(data.error);

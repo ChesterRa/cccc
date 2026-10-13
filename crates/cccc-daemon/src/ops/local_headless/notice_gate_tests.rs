@@ -24,6 +24,7 @@ fn session(temp: &std::path::Path) -> (Session, super::control_fixture::ControlD
         viewer: Mutex::new(None),
         status: Mutex::new(HeadlessStatus {
             status: "idle".into(),
+            reason: None,
             task_id: None,
             updated_at: String::new(),
             pid: None,

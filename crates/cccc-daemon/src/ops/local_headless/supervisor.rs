@@ -12,9 +12,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use tracing::Instrument;
 
+// Reachable from the `output` sibling module's session-level settle test,
+// which needs the same fake control socket.
 #[cfg(all(test, unix))]
 #[path = "control_fixture.rs"]
-mod control_fixture;
+pub(in crate::ops::local_headless) mod control_fixture;
 #[cfg(all(test, unix))]
 #[path = "notice_gate_tests.rs"]
 mod notice_gate_tests;
@@ -155,6 +157,7 @@ pub(super) fn attach_managed(
             task_id: None,
             updated_at: utc_now(),
             pid: app.process_id(),
+            reason: None,
         }),
         stopped: AtomicBool::new(false),
         stop_lock: Mutex::new(()),
