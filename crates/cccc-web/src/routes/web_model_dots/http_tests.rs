@@ -247,7 +247,15 @@ async fn authenticated_modern_scan_and_legacy_catalog_share_the_same_connector()
                 );
                 assert!(response["result"]["capabilities"]["events"].is_object());
             }
-            "events/list" => assert_eq!(response["result"]["events"][0]["name"], EVENT_NAME),
+            "events/list" => {
+                let event = &response["result"]["events"][0];
+                assert_eq!(event["name"], EVENT_NAME);
+                let description = event["inputSchema"]["properties"]["actor_token"]["description"]
+                    .as_str()
+                    .expect("subscription credential purpose");
+                assert!(description.contains("subscription only"));
+                assert!(description.contains("cannot claim work"));
+            }
             _ => assert!(
                 response["result"]["tools"]
                     .as_array()
@@ -261,7 +269,10 @@ async fn authenticated_modern_scan_and_legacy_catalog_share_the_same_connector()
     let (_, modern) = fixture.mcp("tools/list", json!({}), true).await;
     assert_eq!(legacy["result"]["tools"], modern["result"]["tools"]);
     for tool in legacy["result"]["tools"].as_array().expect("tools") {
-        if tool["name"] == "cccc_pair" {
+        if matches!(
+            tool["name"].as_str(),
+            Some("cccc_pair" | "cccc_runtime_wait_next_turn")
+        ) {
             assert!(tool["inputSchema"]["properties"]["actor_token"].is_null());
         } else {
             assert!(tool["inputSchema"]["properties"]["actor_token"].is_object());
@@ -341,7 +352,105 @@ async fn invalid_event_credentials_never_fall_back_to_a_paired_browser_session()
 }
 
 #[tokio::test]
-async fn dots_claim_grant_retrieves_one_turn_without_event_payload_or_business_authority() {
+async fn rejected_pairing_remains_in_shared_diagnostics_after_status_reads() {
+    let mut fixture = Fixture::new();
+    fixture.start_daemon().await;
+    let pair = connectors::begin_dots_pairing(&fixture.state.home, &fixture.connector_id)
+        .expect("setup")
+        .expect("new pair");
+    connectors::dots_update(&fixture.state.home, &fixture.connector_id, |connector| {
+        let key = json!([fixture.group_id, "dots"]).to_string();
+        connector["pairings"][key]["expires_at_ms"] = json!(0);
+        Ok(())
+    })
+    .expect("expire fixture code");
+    let metadata = json!({"openai/session":"synthetic-dot-session"});
+    let (_, rejected) = fixture
+        .mcp(
+            "tools/call",
+            json!({"name":"cccc_pair","arguments":{"code":pair["code"]},"_meta":metadata}),
+            true,
+        )
+        .await;
+    assert_eq!(rejected["result"]["isError"], true);
+    assert_eq!(fixture.connector()["last_error"], "pairing_expired");
+    let (_, observed) = fixture
+        .mcp(
+            "tools/call",
+            json!({"name":"cccc_connector_status","arguments":{},"_meta":metadata}),
+            true,
+        )
+        .await;
+    assert_ne!(observed["result"]["isError"], true);
+    let (_, listed) = fixture.admin_get("/api/v1/web-model/connectors").await;
+    let log = &listed["result"]["connectors"][0]["events_log"];
+    assert_eq!(log.as_array().expect("diagnostics").len(), 1);
+    assert_eq!(log[0]["tool_name"], "cccc_pair");
+    assert_eq!(log[0]["ok"], false);
+    assert_eq!(log[0]["reason"], "pairing_expired");
+    assert!(
+        !listed
+            .to_string()
+            .contains(pair["code"].as_str().expect("code"))
+    );
+    assert!(!listed.to_string().contains(&fixture.secret));
+    assert!(fixture.connector()["dots"]["execution"].is_null());
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn paired_dot_status_waits_for_subscription_without_creating_work() {
+    let mut fixture = Fixture::new();
+    fixture.start_daemon().await;
+    let pair = connectors::begin_dots_pairing(&fixture.state.home, &fixture.connector_id)
+        .expect("setup")
+        .expect("new Dot pair");
+    let metadata = json!({"openai/session":"synthetic-dot-session"});
+    let (_, paired) = fixture
+        .mcp(
+            "tools/call",
+            json!({"name":"cccc_pair",
+        "arguments":{"code":pair["code"]},"_meta":metadata}),
+            true,
+        )
+        .await;
+    assert_eq!(paired["result"]["structuredContent"]["state"], "bound");
+    let groups = GroupStore::new(fixture.state.home.clone()).expect("store");
+    groups
+        .mutate(&fixture.group_id, |group| {
+            group.running = true;
+            group.state = cccc_contracts::GroupState::Active;
+            group.actors[1].enabled = true;
+            Ok(())
+        })
+        .expect("enable Dot");
+    let before = fixture.connector()["dots"].clone();
+    let ledger_before = std::fs::read(groups.ledger_path(&fixture.group_id).expect("ledger"))
+        .expect("ledger bytes");
+    let (_, response) = fixture
+        .mcp(
+            "tools/call",
+            json!({"name":"cccc_connector_status",
+        "arguments":{},"_meta":metadata}),
+            true,
+        )
+        .await;
+    assert_eq!(
+        response["result"]["structuredContent"]["state"],
+        "waiting_subscription"
+    );
+    assert_eq!(response["result"]["structuredContent"]["paired"], true);
+    assert!(fixture.connector()["dots"] == before);
+    assert_eq!(
+        std::fs::read(groups.ledger_path(&fixture.group_id).expect("ledger"))
+            .expect("after status"),
+        ledger_before
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn paired_dot_claims_successive_turns_without_saved_credentials_or_event_payload() {
     let mut fixture = Fixture::new();
     fixture.start_daemon().await;
     let store = GroupStore::new(fixture.state.home.clone()).expect("store");
@@ -358,8 +467,55 @@ async fn dots_claim_grant_retrieves_one_turn_without_event_payload_or_business_a
             "callback_url":"https://callback.invalid/fixture","signing_secret":"synthetic-only-secret","expires_at_ms":null});
         Ok(())
     }).expect("subscription");
+    // A fresh background run only receives the saved handler. Subscription
+    // arguments, setup chat history and event data are not available to it.
+    let (_, setup) = fixture
+        .send(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/web-model/dots")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {}", fixture.admin))
+                .body(Body::from(
+                    json!({"group_id":fixture.group_id,"actor_id":"dots","action":"connect"})
+                        .to_string(),
+                ))
+                .expect("setup request"),
+        )
+        .await;
+    assert_eq!(setup["ok"], true);
+    let instructions = setup["result"]["instructions"]
+        .as_str()
+        .expect("instructions");
+    assert!(
+        instructions.contains("cccc_pair"),
+        "setup must explicitly pair the Dot conversation before background claims"
+    );
+    let handler = instructions
+        .split_once("BEGIN CCCC DOTS HANDLER\n")
+        .expect("setup must provide a self-contained handler")
+        .1
+        .split_once("\nEND CCCC DOTS HANDLER")
+        .expect("handler boundary")
+        .0;
+    assert!(
+        handler.lines().any(|line| line == "{}"),
+        "saved handler must claim without a literal persistent credential"
+    );
+    let saved_task = serde_json::to_vec(&json!({"instructions":handler})).expect("save handler");
+    let saved: Value = serde_json::from_slice(&saved_task).expect("restore handler");
+    let claim_args: Value = serde_json::from_str(
+        saved["instructions"]
+            .as_str()
+            .expect("saved instructions")
+            .lines()
+            .find(|line| *line == "{}")
+            .expect("credential-free claim arguments"),
+    )
+    .expect("claim arguments");
+    assert_eq!(claim_args, json!({}));
     let connector = fixture.connector();
-    let binding = connectors::binding_for_actor(
+    let route = connectors::binding_for_actor(
         &connector,
         &fixture.group_id,
         "dots",
@@ -367,30 +523,102 @@ async fn dots_claim_grant_retrieves_one_turn_without_event_payload_or_business_a
             .as_str()
             .expect("generation"),
     )
-    .expect("binding");
-    let grant = connectors::dots_subscription_token(&connector, &binding).expect("grant");
-    // Supplying another paired conversation's metadata must not turn a claim
-    // credential into that conversation's ordinary tool authorization.
+    .expect("Dots route");
+    let grant =
+        connectors::dots_subscription_token(&connector, &route).expect("subscription grant");
+    assert!(
+        !handler.contains(&grant),
+        "saved task instructions must contain no permanent credential"
+    );
     let metadata =
-        json!({"openai/session":"synthetic-browser-session","openai/subject":"synthetic-user"});
+        json!({"openai/session":"synthetic-dot-session","openai/subject":"synthetic-user"});
+    let (_, unpaired) = fixture
+        .mcp(
+            "tools/call",
+            json!({"name":"cccc_runtime_wait_next_turn","arguments":{},"_meta":metadata}),
+            true,
+        )
+        .await;
+    assert_eq!(unpaired["result"]["isError"], true);
+    let pairing_args: Value = serde_json::from_str(
+        instructions
+            .lines()
+            .find(|line| line.starts_with("{\"code\":"))
+            .expect("setup-only pairing code"),
+    )
+    .expect("pairing arguments");
+    // The operator may pause/resume access while following the copied setup.
+    // That revokes task execution authority, not this unexpired Actor pairing.
+    let issued_epoch = fixture.connector()["dots"]["epoch"].clone();
+    for op in ["actor_stop", "actor_start"] {
+        let response = fixture
+            .state
+            .client
+            .call(&DaemonRequest {
+                v: 1,
+                op: op.into(),
+                args: json!({"group_id":fixture.group_id,"actor_id":"dots","by":"user"})
+                    .as_object()
+                    .expect("lifecycle request")
+                    .clone(),
+            })
+            .await
+            .expect("owned lifecycle response");
+        assert!(response.ok, "{op} must succeed");
+    }
+    assert!(fixture.connector()["dots"]["epoch"] != issued_epoch);
+    let ledger_before =
+        std::fs::read(store.ledger_path(&fixture.group_id).expect("ledger")).expect("ledger bytes");
+    let (_, paired) = fixture
+        .mcp(
+            "tools/call",
+            json!({"name":"cccc_pair","arguments":pairing_args,"_meta":metadata}),
+            true,
+        )
+        .await;
+    assert_ne!(
+        paired["result"]["isError"], true,
+        "explicit setup pairs the Dot without a browser"
+    );
+    assert_eq!(paired["result"]["structuredContent"]["state"], "bound");
+    assert_eq!(
+        paired["result"]["structuredContent"]["routing_mode"],
+        "mcp_events"
+    );
+    assert!(fixture.connector()["dots"]["execution"].is_null());
+    assert_eq!(
+        std::fs::read(store.ledger_path(&fixture.group_id).expect("ledger"))
+            .expect("after pairing"),
+        ledger_before
+    );
     for tool in [
         "cccc_help",
         "cccc_context_get",
         "cccc_code_exec",
         "cccc_runtime_complete_turn",
     ] {
-        let (_, response) = fixture
-            .mcp(
-                "tools/call",
-                json!({"name":tool,
-            "arguments":{"actor_token":grant},"_meta":metadata}),
-                true,
-            )
-            .await;
-        assert_eq!(
-            response["result"]["isError"], true,
-            "claim grant must not authorize {tool}"
-        );
+        for arguments in [json!({}), json!({"actor_token":grant})] {
+            let (_, response) = fixture
+                .mcp(
+                    "tools/call",
+                    json!({"name":tool,"arguments":arguments,"_meta":metadata}),
+                    true,
+                )
+                .await;
+            assert_eq!(
+                response["result"]["isError"], true,
+                "pairing or subscription cannot authorize {tool}"
+            );
+        }
+    }
+    for invalid_metadata in [
+        json!({}),
+        json!({"openai/session":"unpaired-dot"}),
+        json!({"openai/session":"synthetic-dot-session","openai/subject":"another-user"}),
+    ] {
+        let (_, rejected) = fixture.mcp("tools/call", json!({"name":"cccc_runtime_wait_next_turn","arguments":{},"_meta":invalid_metadata}), true).await;
+        assert_eq!(rejected["result"]["isError"], true);
+        assert!(rejected["result"]["structuredContent"]["turn"].is_null());
     }
     let mut tokens = Vec::new();
     for text in ["first Dots packet", "second Dots packet"] {
@@ -420,11 +648,65 @@ async fn dots_claim_grant_retrieves_one_turn_without_event_payload_or_business_a
             "events must carry no execution credential"
         );
         assert!(delivery["event"]["data"]["event_id"].is_string());
+        // Getting corrected instructions for an already subscribed, woken Actor
+        // must preserve the binding, queued source, wake and execution epoch.
+        let before = fixture.connector()["dots"].clone();
+        let ledger_before = std::fs::read(store.ledger_path(&fixture.group_id).expect("ledger"))
+            .expect("ledger bytes");
+        let (_, restored) = fixture
+            .send(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/web-model/dots")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", fixture.admin))
+                    .body(Body::from(
+                        json!({"group_id":fixture.group_id,"actor_id":"dots","action":"connect"})
+                            .to_string(),
+                    ))
+                    .expect("restore request"),
+            )
+            .await;
+        assert_eq!(restored["ok"], true);
+        let restored_handler = restored["result"]["instructions"]
+            .as_str()
+            .expect("restored instructions")
+            .split_once("BEGIN CCCC DOTS HANDLER\n")
+            .expect("handler start")
+            .1
+            .split_once("\nEND CCCC DOTS HANDLER")
+            .expect("handler end")
+            .0;
+        assert!(restored_handler == handler);
+        assert!(
+            !restored["result"]["instructions"]
+                .as_str()
+                .expect("instructions")
+                .contains("wm_pair_")
+        );
+        assert!(fixture.connector()["dots"] == before);
+        assert_eq!(
+            std::fs::read(store.ledger_path(&fixture.group_id).expect("ledger"))
+                .expect("ledger bytes"),
+            ledger_before
+        );
+        // Load the handler afresh for every independent run; never inject the
+        // private connector's subscription arguments into the runtime context.
+        let restored_task: Value = serde_json::from_slice(&saved_task).expect("new background run");
+        let arguments: Value = serde_json::from_str(
+            restored_task["instructions"]
+                .as_str()
+                .expect("saved instructions")
+                .lines()
+                .find(|line| *line == "{}")
+                .expect("credential-free saved claim arguments"),
+        )
+        .expect("claim arguments");
         let (_, response) = fixture
             .mcp(
                 "tools/call",
                 json!({"name":"cccc_runtime_wait_next_turn",
-            "arguments":{"actor_token":grant}}),
+            "arguments":arguments,"_meta":metadata}),
                 true,
             )
             .await;
@@ -441,14 +723,14 @@ async fn dots_claim_grant_retrieves_one_turn_without_event_payload_or_business_a
         assert_eq!(token.len(), 43);
         assert!(
             token != grant,
-            "execution and claim credentials must differ"
+            "execution and subscription credentials must differ"
         );
         assert!(packet["turn"].to_string().contains(text));
         let (_, duplicate) = fixture
             .mcp(
                 "tools/call",
                 json!({"name":"cccc_runtime_wait_next_turn",
-            "arguments":{"actor_token":grant}}),
+            "arguments":{},"_meta":metadata}),
                 true,
             )
             .await;
@@ -493,8 +775,17 @@ async fn dots_claim_grant_retrieves_one_turn_without_event_payload_or_business_a
         .await;
     let ledger = std::fs::read_to_string(store.ledger_path(&fixture.group_id).expect("ledger"))
         .expect("read ledger");
+    let (_, diagnostics) = fixture.admin_get("/api/v1/web-model/connectors").await;
+    let log = diagnostics["result"]["connectors"][0]["events_log"]
+        .as_array()
+        .expect("shared call history");
+    assert!(log.len() <= 10);
+    let last = log.last().expect("completion recorded");
+    assert_eq!(last["tool_name"], "cccc_runtime_complete_turn");
+    assert_eq!(last["ok"], true);
     for private in tokens.iter().chain(std::iter::once(&grant)) {
         assert!(!public.to_string().contains(private));
+        assert!(!diagnostics.to_string().contains(private));
         assert!(!ledger.contains(private));
     }
     fixture.close().await;
@@ -649,8 +940,8 @@ async fn event_setup_does_not_start_an_actor_or_create_a_wake() {
             .as_str()
             .is_some_and(|text| {
                 text.contains("native event-triggered task in Dots")
-                    && text.contains("same ChatGPT account as this Dot")
-                    && text.contains("refresh its tools and events")
+                    && text.contains("this Dot's ChatGPT account")
+                    && text.contains("Refresh its tools and events")
                     && text.contains("permissions")
                     && text.contains("cccc_runtime_wait_next_turn")
                     && text.contains("cccc_runtime_complete_turn")
@@ -696,9 +987,41 @@ async fn event_setup_does_not_start_an_actor_or_create_a_wake() {
         .await;
     assert_eq!(status, StatusCode::OK);
     assert!(repeated["result"]["subscription_token"].is_null());
-    // Compare privately: the stable binding in the instruction must not rotate
-    // merely because the Actor was enabled between setup requests.
-    assert!(repeated["result"]["instructions"] == response["result"]["instructions"]);
+    // An explicit unpaired setup request replaces only the expiring code;
+    // its subscription credential and saved handler stay the same.
+    let handler = |value: &Value| {
+        value["result"]["instructions"]
+            .as_str()
+            .expect("instructions")
+            .split_once("BEGIN CCCC DOTS HANDLER\n")
+            .expect("handler start")
+            .1
+            .split_once("\nEND CCCC DOTS HANDLER")
+            .expect("handler end")
+            .0
+            .to_owned()
+    };
+    assert!(handler(&repeated) == handler(&response));
+    let connector = fixture.connector();
+    let route = connectors::binding_for_actor(
+        &connector,
+        &fixture.group_id,
+        "dots",
+        connector["dots"]["generation"]
+            .as_str()
+            .expect("generation"),
+    )
+    .expect("binding");
+    let subscription =
+        connectors::dots_subscription_token(&connector, &route).expect("subscription grant");
+    for setup in [&response, &repeated] {
+        assert!(
+            setup["result"]["instructions"]
+                .as_str()
+                .expect("instructions")
+                .contains(&subscription)
+        );
+    }
     assert!(fixture.connector()["dots"]["wake"].is_null());
     assert!(
         fixture

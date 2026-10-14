@@ -79,6 +79,37 @@ it("shows the bound Actor's subscription and the newest subscription outcome fir
   expect(calls[1].textContent).toContain("dotsSettings.callFailed(challenge_failed)");
 });
 
+it("shows pairing failures in shared diagnostics without changing the Actor's ready state", async () => {
+  mocks.connectors.mockResolvedValue({
+    ok: true,
+    result: {
+      connectors: [
+        {
+          ...connector,
+          events_log: [
+            {
+              at: "2026-10-14T02:00:00Z",
+              method: "tools/call",
+              tool_name: "cccc_pair",
+              ok: false,
+              reason: "pairing_expired",
+            },
+          ],
+        },
+      ],
+      connector_base_url: "https://cccc.example.test",
+    },
+  });
+  await render();
+  const call = host.querySelector('[data-dots-call="failed"]')!;
+  expect(call.textContent).toContain("cccc_pair");
+  expect(call.textContent).toContain("dotsSettings.callFailed(pairing_expired)");
+  expect(call.textContent).toContain("dotsSettings.reasons.pairingExpired");
+  expect(host.querySelector('[data-dots-actor="nn"]')!.textContent).toContain(
+    "dotsActor.phases.ready",
+  );
+});
+
 it("never offers to create a second connector; it sends the owner to the ChatGPT view", async () => {
   const onOpenChatGPT = vi.fn();
   mocks.connectors.mockResolvedValue({

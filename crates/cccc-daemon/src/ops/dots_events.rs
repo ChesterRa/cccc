@@ -142,6 +142,10 @@ pub(super) fn project(
         .as_str()
         .is_some_and(|id| !id.is_empty());
     let subscribed = subscribed(&dots["subscription"], chrono::Utc::now().timestamp_millis());
+    let paired = connector
+        .as_ref()
+        .and_then(|c| binding(c, group, actor))
+        .is_some_and(|b| b["session_key"].as_str().is_some_and(|key| !key.is_empty()));
     let phase = if has_turn {
         if !active(group, actor)
             || dots["execution"]["state"] != "active"
@@ -153,6 +157,8 @@ pub(super) fn project(
         }
     } else if connector.is_none() {
         "unconfigured"
+    } else if !paired {
+        "waiting_pairing"
     } else if !subscribed {
         "waiting_subscription"
     } else if !active(group, actor) {
@@ -170,7 +176,7 @@ pub(super) fn project(
     let last = &dots["last_execution"];
     Ok(
         json!({"group_id":group.group_id,"actor_id":actor.id,"enabled":actor.enabled,
-        "connected":connector.is_some(),"subscribed":subscribed,"phase":phase,"pending_count":pending,
+        "connected":connector.is_some(),"paired":paired,"subscribed":subscribed,"phase":phase,"pending_count":pending,
         "active_turn_id":runtime["active_turn_id"].as_str().unwrap_or(""),
         "active_event_ids":runtime["active_event_ids"].as_array().cloned().unwrap_or_default(),
         "last_execution":if last.is_object() { json!({"turn_id":last["turn_id"],"event_ids":last["event_ids"],
@@ -246,7 +252,46 @@ fn connect(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let current = connector(home, &group, &actor)?
         .ok_or_else(|| OpError::new("connector_unavailable", "Dots connection is unavailable"))?;
     let token = store::dots_subscription_token(&current, &route).map_err(state_error)?;
-    object(json!({"connected":true,"url":store::DOTS_URL,"subscription_token":token}))
+    let pairing = store::begin_dots_pairing(home, id).map_err(state_error)?;
+    object(
+        json!({"connected":true,"url":store::DOTS_URL,"subscription_token":token,
+        "pairing_code":pairing.as_ref().map(|pair| &pair["code"])}),
+    )
+}
+
+/// Called only by the authenticated private Web port's existing pairing tool,
+/// under the global lifecycle permit. A Dot code pairs only its fixed route.
+pub(super) fn accept_pairing(home: &HomeLayout, id: &str, pair: &Value) -> OpResult {
+    let request = DaemonRequest {
+        v: 1,
+        op: "web_model_pairing_accept".into(),
+        args: json!({"group_id":pair["group_id"],"actor_id":pair["actor_id"]})
+            .as_object()
+            .expect("pairing target")
+            .clone(),
+    };
+    let (group, actor) = group_actor(home, &request)?;
+    if pair["generation"] != cccc_core::actors::generation_identity(&actor) {
+        return Err(OpError::new(
+            "pairing_changed",
+            "The selected Dot Actor changed; get new setup instructions",
+        ));
+    }
+    if super::actor_runtime::actor_is_running(&group, &actor) {
+        return Err(OpError::new(
+            "actor_must_be_stopped",
+            "Stop the previous Actor runtime before pairing Dots",
+        ));
+    }
+    if pair["state"] != "bound" {
+        unresolved(home, &group, &actor)?;
+    }
+    store::confirm_dots_pairing(home, id, pair["pairing_id"].as_str().unwrap_or_default())
+        .map_err(OpError::io)?;
+    object(
+        json!({"state":"bound","routing_mode":"mcp_events","pairing_id":pair["pairing_id"],
+        "group_id":group.group_id,"actor_id":actor.id,"receipt":pair["receipt"]}),
+    )
 }
 
 fn disconnect(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

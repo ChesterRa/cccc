@@ -254,6 +254,19 @@ it("does not carry a previous Group's ready phase into the new Actor header whil
   );
 });
 
+it("does not show a running indicator for an unpaired Dot with a valid subscription", async () => {
+  mocks.load.mockResolvedValue(
+    dotsState({ connected: true, paired: false, subscribed: true, phase: "waiting_pairing" }),
+  );
+  await render(true, { ...actor, running: true, effective_working_state: "waiting" });
+  const indicator = host.querySelector(
+    '[role="img"][aria-label="settings:dotsActor.phases.waiting_pairing"]',
+  );
+  expect(indicator).not.toBeNull();
+  expect(indicator?.className).toContain("bg-slate-400/65");
+  expect(indicator?.className).not.toContain("bg-emerald-500 ring-");
+});
+
 it("retains the working indicator for an accepted task after its event subscription expires", async () => {
   mocks.load.mockResolvedValue(
     dotsState({

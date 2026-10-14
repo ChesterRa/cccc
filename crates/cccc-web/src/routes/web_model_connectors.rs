@@ -162,10 +162,9 @@ async fn run_connector_mcp(
         match store::resolve(state, connector, &request) {
             Ok(binding) => {
                 if connector["provider"] == "grok_web" || binding["transport"] == "mcp_events" {
-                    request["params"]["arguments"]
-                        .as_object_mut()
-                        .expect("validated credential arguments")
-                        .remove("actor_token");
+                    if let Some(arguments) = request["params"]["arguments"].as_object_mut() {
+                        arguments.remove("actor_token");
+                    }
                 }
                 let response = if binding["transport"] == "mcp_events"
                     && tool_name == "cccc_runtime_wait_next_turn"
@@ -205,7 +204,8 @@ async fn run_connector_mcp(
         "ok"
     };
     let (wait_status, turn_id, error) = activity::details(&tool_name, &response);
-    activity::record_route(
+    // A diagnostic write must not turn an accepted pairing or claim into a failure.
+    let _ = activity::record_route(
         state,
         connector["connector_id"].as_str().unwrap_or(""),
         bound_route.as_ref(),
@@ -217,7 +217,7 @@ async fn run_connector_mcp(
             turn_id: &turn_id,
             error: &error,
         },
-    )?;
+    );
     if modern {
         response = super::web_model_dots::protocol::complete(response);
     }

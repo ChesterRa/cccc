@@ -22,7 +22,7 @@ export type WebModelConnector = {
   last_wait_status?: string;
   last_turn_id?: string;
   last_error?: string;
-  /** Recent event subscription calls: outcome and a fixed reason code only. */
+  /** Shared connector diagnostics: event/tool outcomes and fixed reason codes only. */
   events_log?: DotsEventCall[];
   /** The Actor this connector's Dot is bound to, if any. */
   dots_actor?: { group_id: string; actor_id: string } | null;
@@ -40,6 +40,7 @@ export type WebModelConnectorCreateResult = {
 
 export type DotsPhase =
   | "unconfigured"
+  | "waiting_pairing"
   | "waiting_subscription"
   | "ready"
   | "pending"
@@ -50,13 +51,20 @@ export type DotsPhase =
   | "failed"
   | "stopped";
 
-export type DotsEventCall = { at: string; method: string; ok: boolean; reason: string | null };
+export type DotsEventCall = {
+  at: string;
+  method: string;
+  tool_name?: string;
+  ok: boolean;
+  reason: string | null;
+};
 
 export type DotsActorState = {
   group_id: string;
   actor_id: string;
   enabled: boolean;
   connected: boolean;
+  paired: boolean;
   subscribed: boolean;
   phase: DotsPhase;
   pending_count: number;

@@ -82,9 +82,202 @@ impl Fixture {
             .expect("active turn");
     }
 
+    fn pair(&self) -> String {
+        let session = session_key(
+            &self.connector(),
+            &json!({"openai/session":"synthetic-dot-session", "openai/subject":"synthetic-user"}),
+        )
+        .expect("host session hash");
+        let setup = begin_dots_pairing(&self.home, &self.connector_id)
+            .expect("setup")
+            .expect("unpaired Dot");
+        accept_pairing(
+            &self.home,
+            &self.connector_id,
+            setup["code"].as_str().expect("code"),
+            &session,
+        )
+        .expect("accept Dot code");
+        confirm_dots_pairing(
+            &self.home,
+            &self.connector_id,
+            setup["pairing_id"].as_str().expect("pair id"),
+        )
+        .expect("pair Dot session");
+        session
+    }
+
     fn route(&self, token: &str, tool: &str) -> Value {
         dots_binding_for_token(&self.connector(), token, tool).expect("route")
     }
+}
+
+#[test]
+fn dot_pairing_reuses_approved_session_without_touching_work_or_subscription() {
+    let fixture = Fixture::new();
+    let session = fixture.pair();
+    fixture.wake("event-one");
+    dots_update(&fixture.home, &fixture.connector_id, |c| {
+        c["dots"]["subscription"] = json!({"enabled":true,"subscription_id":"fixture-sub"});
+        Ok(())
+    })
+    .expect("native task");
+    let before = std::fs::read(store_path(&fixture.home)).expect("private state");
+    assert!(
+        begin_dots_pairing(&fixture.home, &fixture.connector_id)
+            .expect("existing pair")
+            .is_none()
+    );
+    assert!(std::fs::read(store_path(&fixture.home)).expect("unchanged state") == before);
+    assert!(dots_claim_binding(&fixture.connector(), &session).is_some());
+    assert!(dots_claim_binding(&fixture.connector(), "another-session").is_none());
+}
+
+#[test]
+fn dot_pairing_codes_cannot_outlive_expiry_disconnect_or_binding_replacement() {
+    for reason in ["expiry", "disconnect", "replacement"] {
+        let fixture = Fixture::new();
+        let setup = begin_dots_pairing(&fixture.home, &fixture.connector_id)
+            .expect("setup")
+            .expect("new pair");
+        accept_pairing(
+            &fixture.home,
+            &fixture.connector_id,
+            setup["code"].as_str().expect("code"),
+            "synthetic-host-key",
+        )
+        .expect("accepted candidate");
+        match reason {
+            "expiry" => dots_update(&fixture.home, &fixture.connector_id, |c| {
+                c["pairings"][route_key(&fixture.group_id, "dots")]["expires_at_ms"] = json!(0);
+                Ok(())
+            })
+            .expect("expire candidate"),
+            _ => {
+                retire_actor(&fixture.home, &fixture.group_id, "dots").expect("retire");
+                bind_dots(
+                    &fixture.home,
+                    &fixture.connector_id,
+                    &fixture.group_id,
+                    "dots",
+                    if reason == "disconnect" {
+                        fixture.binding["generation"].as_str().expect("generation")
+                    } else {
+                        "new-generation"
+                    },
+                )
+                .expect("replacement");
+            }
+        }
+        let before = std::fs::read(store_path(&fixture.home)).expect("before refused confirmation");
+        assert!(
+            confirm_dots_pairing(
+                &fixture.home,
+                &fixture.connector_id,
+                setup["pairing_id"].as_str().expect("pair id")
+            )
+            .is_err(),
+            "stale {reason} candidate must be refused"
+        );
+        assert!(dots_claim_binding(&fixture.connector(), "synthetic-host-key").is_none());
+        assert!(
+            std::fs::read(store_path(&fixture.home)).expect("after refused confirmation") == before
+        );
+    }
+}
+
+#[test]
+fn dot_pairing_while_paused_does_not_restore_task_authority() {
+    let fixture = Fixture::new();
+    let setup = begin_dots_pairing(&fixture.home, &fixture.connector_id)
+        .expect("setup")
+        .expect("new pair");
+    dots_invalidate(&fixture.home, &fixture.group_id, "dots").expect("stop execution authority");
+    let groups = GroupStore::new(fixture.home.clone()).expect("groups");
+    groups
+        .mutate(&fixture.group_id, |group| {
+            group.actors[0].enabled = false;
+            Ok(())
+        })
+        .expect("pause access");
+    accept_pairing(
+        &fixture.home,
+        &fixture.connector_id,
+        setup["code"].as_str().expect("code"),
+        "synthetic-host-key",
+    )
+    .expect("accept unexpired code");
+    confirm_dots_pairing(
+        &fixture.home,
+        &fixture.connector_id,
+        setup["pairing_id"].as_str().expect("pair id"),
+    )
+    .expect("pair the same paused Actor");
+    let captured =
+        dots_claim_binding(&fixture.connector(), "synthetic-host-key").expect("paired claim route");
+    assert!(validate_binding(&fixture.home, &captured).is_err());
+    groups
+        .mutate(&fixture.group_id, |group| {
+            group.actors[0].enabled = true;
+            Ok(())
+        })
+        .expect("resume access");
+    validate_binding(&fixture.home, &captured).expect("explicitly resumed claim authority");
+    dots_invalidate(&fixture.home, &fixture.group_id, "dots").expect("revoke captured authority");
+    assert!(validate_binding(&fixture.home, &captured).is_err());
+}
+
+#[test]
+fn a_dot_cannot_take_a_session_already_owned_by_a_browser_actor() {
+    let fixture = Fixture::new();
+    let browser_pair = begin_pairing(
+        &fixture.home,
+        &fixture.connector_id,
+        "browser-group",
+        "browser",
+        "browser-generation",
+        false,
+    )
+    .expect("browser setup");
+    accept_pairing(
+        &fixture.home,
+        &fixture.connector_id,
+        browser_pair["code"].as_str().expect("browser code"),
+        "owned-session",
+    )
+    .expect("browser accept");
+    let browser = confirm_pairing(
+        &fixture.home,
+        &fixture.connector_id,
+        "browser-group",
+        "browser",
+        "browser-generation",
+        browser_pair["pairing_id"]
+            .as_str()
+            .expect("browser pair id"),
+        "https://chatgpt.com/c/synthetic-browser",
+    )
+    .expect("browser confirmation");
+    let dot_pair = begin_dots_pairing(&fixture.home, &fixture.connector_id)
+        .expect("Dot setup")
+        .expect("Dot candidate");
+    accept_pairing(
+        &fixture.home,
+        &fixture.connector_id,
+        dot_pair["code"].as_str().expect("Dot code"),
+        "owned-session",
+    )
+    .expect("Dot candidate accepted");
+    assert!(
+        confirm_dots_pairing(
+            &fixture.home,
+            &fixture.connector_id,
+            dot_pair["pairing_id"].as_str().expect("Dot pair id")
+        )
+        .is_err()
+    );
+    assert!(binding_for_session(&fixture.connector(), "owned-session") == Some(browser));
+    assert!(dots_claim_binding(&fixture.connector(), "owned-session").is_none());
 }
 
 #[test]
@@ -168,18 +361,24 @@ fn one_dot_binding_reuses_connector_without_replacing_browser_routes() {
 }
 
 #[test]
-fn binding_grants_can_only_claim_and_unissued_execution_credentials_cannot_act() {
+fn subscription_credentials_cannot_claim_and_unissued_execution_credentials_cannot_act() {
     let fixture = Fixture::new();
     let subscription =
         dots_subscription_token(&fixture.connector(), &fixture.binding).expect("subscription");
     assert!(dots_subscription_binding(&fixture.connector(), &subscription).is_some());
-    for tool in ["cccc_message_send", "cccc_runtime_complete_turn"] {
+    for tool in [
+        "cccc_runtime_wait_next_turn",
+        "cccc_message_send",
+        "cccc_runtime_complete_turn",
+    ] {
         assert!(dots_binding_for_token(&fixture.connector(), &subscription, tool).is_none());
     }
     let token = fixture.wake("event-one");
     assert!(token != subscription, "authority credentials must differ");
     assert!(dots_subscription_binding(&fixture.connector(), &token).is_none());
-    let claim = fixture.route(&subscription, "cccc_runtime_wait_next_turn");
+    assert!(dots_claim_binding(&fixture.connector(), "unpaired-host-session").is_none());
+    let session = fixture.pair();
+    let claim = dots_claim_binding(&fixture.connector(), &session).expect("paired claim");
     assert_eq!(claim["dots_stage"], "claim");
     validate_binding(&fixture.home, &claim).expect("claim route");
     for tool in [
@@ -198,11 +397,12 @@ fn binding_grants_can_only_claim_and_unissued_execution_credentials_cannot_act()
 }
 
 #[test]
-fn static_claim_grant_is_limited_and_snapshots_the_current_wake_and_epoch() {
+fn paired_session_claim_is_limited_and_snapshots_the_current_wake_and_epoch() {
     let fixture = Fixture::new();
     let grant =
         dots_subscription_token(&fixture.connector(), &fixture.binding).expect("claim grant");
-    let idle = fixture.route(&grant, "cccc_runtime_wait_next_turn");
+    let session = fixture.pair();
+    let idle = dots_claim_binding(&fixture.connector(), &session).expect("paired idle claim");
     assert_eq!(idle["dots_stage"], "claim");
     assert_eq!(idle["dots_wake_id"], Value::Null);
     validate_binding(&fixture.home, &idle).expect("idle identity only");
@@ -221,7 +421,7 @@ fn static_claim_grant_is_limited_and_snapshots_the_current_wake_and_epoch() {
         validate_binding(&fixture.home, &idle).is_err(),
         "an idle read cannot borrow a wake created while waiting for the permit"
     );
-    let waiting = fixture.route(&grant, "cccc_runtime_wait_next_turn");
+    let waiting = dots_claim_binding(&fixture.connector(), &session).expect("paired waiting claim");
     assert_eq!(waiting["dots_wake_id"], "event-one");
     fixture.execution("event-one", "turn-one");
     validate_binding(&fixture.home, &waiting).expect("duplicate claim identity only");
@@ -242,10 +442,11 @@ fn static_claim_grant_is_limited_and_snapshots_the_current_wake_and_epoch() {
     dots_invalidate(&fixture.home, &fixture.group_id, "dots").expect("stop authority");
     assert!(validate_binding(&fixture.home, &waiting).is_err());
     assert!(validate_binding(&fixture.home, &execution).is_err());
-    let resumed_claim = fixture.route(&grant, "cccc_runtime_wait_next_turn");
+    let resumed_claim =
+        dots_claim_binding(&fixture.connector(), &session).expect("resumed paired claim");
     assert_ne!(waiting["dots_epoch"], resumed_claim["dots_epoch"]);
     validate_binding(&fixture.home, &resumed_claim)
-        .expect("continuing Actor grant captures only the new read identity");
+        .expect("continuing paired session captures only the new read identity");
 
     retire_actor(&fixture.home, &fixture.group_id, "dots").expect("unbind");
     let replacement = bind_dots(

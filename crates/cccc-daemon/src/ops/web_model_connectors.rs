@@ -62,9 +62,12 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if request.op == "web_model_pairing_accept" {
         let code = required_arg(request, "code")?;
         let session = required_arg(request, "session_key")?;
-        // Candidate receipt grants no tools. Confirmation checks the Actor's
-        // current generation and stopped state before granting any authority.
+        // Browser candidates remain pending until receipt verification. Dots
+        // commits only its explicitly selected route after lifecycle validation.
         let pair = store::accept_pairing(home, &id, &code, &session).map_err(OpError::io)?;
+        if pair["transport"] == "mcp_events" {
+            return super::dots_events::accept_pairing(home, &id, &pair);
+        }
         return object(
             json!({"state":pair["state"],"pairing_id":pair["pairing_id"],"receipt":pair["receipt"]}),
         );

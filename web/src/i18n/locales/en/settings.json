@@ -1845,10 +1845,10 @@
     "createHint": "After saving, continue in this Actor’s pane to connect a native Dots event task. Reuse the CCCC plugin in the same ChatGPT account; no CCCC browser login window is needed. One Dot connects to one Actor.",
     "connect": "Connect Dots",
     "getInstructions": "Get setup instructions",
-    "connectHint": "If the CCCC plugin is not installed and connected in your ChatGPT account, use Shared ChatGPT setup first. After upgrading CCCC, select Refresh tools in the plugin settings. Then connect, copy the instructions into Dots, and confirm saving a native event-triggered task.",
+    "connectHint": "If the CCCC plugin is not connected in your ChatGPT account, use Shared ChatGPT setup first. After upgrading CCCC, refresh the plugin’s tools. Copy the setup instructions into your Dot to pair it with this Actor and save a native event task.",
     "nativeStepCopy": "Copy the setup instructions below.",
-    "nativeStepPasteConfirm": "Open Dots, paste the instructions, and confirm saving a native event-triggered task in Dots. An ordinary chat message does not create the task.",
-    "nativeStepObserve": "Return here. CCCC detects the subscription automatically. If CCCC access is paused, resume it after the task is connected.",
+    "nativeStepPasteConfirm": "Paste into your Dot to complete pairing and save the native event task. Update the existing task rather than creating another; a chat reply alone does not save it.",
+    "nativeStepObserve": "Return here. CCCC checks both pairing and subscription automatically. If CCCC access is paused, resume it after setup is complete.",
     "adminSetup": "An administrator needs to connect this Actor to a native Dots task.",
     "adminStatus": "Administrator-managed connection",
     "adminManaged": "An administrator manages this Actor’s Dots connection and task status.",
@@ -1856,7 +1856,7 @@
     "sharedSettings": "Shared ChatGPT setup",
     "connectionSettings": "Connection settings",
     "openDots": "Open Dots ↗",
-    "instructions": "Create the native event-triggered task in Dots",
+    "instructions": "Dots setup instructions",
     "copyInstructions": "Copy setup instructions",
     "copied": "Copied",
     "pauseBeforeChanging": "Pause CCCC access before changing this connection.",
@@ -1872,6 +1872,7 @@
     "executionError": "Delivery needs attention. Review the task in Dots.",
     "phases": {
       "unconfigured": "Not connected",
+      "waiting_pairing": "Waiting for Dot pairing",
       "waiting_subscription": "Waiting for the native event task",
       "ready": "Ready for tasks",
       "delivering": "Sending event",
@@ -1930,7 +1931,7 @@
     },
     "settings": {
       "instructions": "Setup instructions",
-      "instructionsHint": "Use them to restore or rebuild the native task in Dots.",
+      "instructionsHint": "Retrieve the setup instructions to finish pairing or update the existing native event task. Queued messages are retained.",
       "shared": "Shared ChatGPT connector",
       "sharedHint": "Dots and ChatGPT Web Model Actors share one CCCC plugin.",
       "disconnectHint": "Pause CCCC access and resolve unfinished work first. Also disable the native task in Dots."
@@ -1943,11 +1944,11 @@
       "creatingConnector": "Creating…",
       "pluginTitle": "Connect the CCCC plugin",
       "copyTitle": "Copy the setup instructions to your Dot",
-      "waitTitle": "Wait for CCCC to detect the subscription",
+      "waitTitle": "Wait for pairing and subscription",
       "tipsTitle": "Did the Dot say saving failed?",
       "tipRefresh": "In ChatGPT's plugin settings, choose Refresh tools for CCCC, then ask the Dot to retry.",
       "tipPermissions": "Make sure the CCCC plugin may claim, reply to and complete tasks.",
-      "tipRetry": "A Dot replying \"done\" is not enough; this page turns ready only when CCCC sees the subscription."
+      "tipRetry": "A chat confirmation is not enough. CCCC must detect both pairing and subscription before this Actor can receive work."
     }
   },
   "dotsSettings": {
@@ -1965,10 +1966,19 @@
     "actorReadFailed": "Couldn't read this Actor's status just now. Showing the last known status; it retries automatically.",
     "noActor": "No Dots Actor is bound yet. Create an Actor with runtime ChatGPT Dots and connect it from its main pane.",
     "actorGroup": "Group {{group}}",
-    "diagnostics": "Subscription diagnostics",
-    "diagnosticsHint": "The last 10 event subscribe and unsubscribe calls, newest first. Only reason codes are kept, never credentials or callback addresses.",
-    "noCalls": "No subscription calls yet.",
-    "callOk": "Succeeded",
-    "callFailed": "Failed · {{reason}}"
+    "diagnostics": "Shared plugin diagnostics",
+    "diagnosticsHint": "The latest 10 subscription and task-tool outcomes, newest first. This plugin also serves ordinary ChatGPT Actors; these are not all this Dot’s calls. Only reason codes are kept, without credentials or call arguments.",
+    "noCalls": "No recorded calls yet.",
+    "callOk": "Call succeeded",
+    "callFailed": "Failed · {{reason}}",
+    "reasons": {
+      "pairingExpired": "Get fresh setup instructions for the intended Actor and use its code within 10 minutes.",
+      "bindingChanged": "Check the intended Actor and its current connection before requesting new setup instructions.",
+      "conversationUnpaired": "Use the paired conversation. If this Actor is paired but that same Dot is rejected, pause its CCCC access and explicitly disconnect and reconnect it.",
+      "executionToken": "Refresh the plugin tools and update the existing native task with the latest setup instructions. Turn tools use only the execution token returned by the claim.",
+      "actorStopped": "Resume CCCC access for the intended Actor if you want it to receive work.",
+      "refreshTools": "Refresh the CCCC plugin tools in ChatGPT and check the latest setup instructions.",
+      "callFailed": "Check the failed call reported in ChatGPT before retrying; this record alone does not establish whether a turn completed."
+    }
   }
 }

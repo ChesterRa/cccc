@@ -16,8 +16,9 @@ mod grok;
 pub use grok::{bind_grok, binding_for_token, grok_bot_url, grok_token};
 mod dots;
 pub use dots::{
-    DOTS_URL, bind_dots, dots_binding_for_token, dots_invalidate, dots_subscription_binding,
-    dots_subscription_token, dots_update, dots_wake_token,
+    DOTS_URL, begin_dots_pairing, bind_dots, confirm_dots_pairing, dots_binding_for_token,
+    dots_claim_binding, dots_invalidate, dots_subscription_binding, dots_subscription_token,
+    dots_update, dots_wake_token,
 };
 const PAIRING_TTL_MS: i64 = 10 * 60 * 1000;
 
@@ -329,21 +330,32 @@ pub fn begin_pairing(
         if c["bindings"][route_key(group, actor)]["transport"] == "mcp_events" {
             return Err(error("dots_requires_event_binding"));
         }
-        let code = format!(
-            "wm_pair_{}{}",
-            Uuid::new_v4().simple(),
-            Uuid::new_v4().simple()
-        );
-        let operation = Uuid::new_v4().to_string();
-        let now = now_ms();
-        let record = json!({"pairing_id":operation,"group_id":group,"actor_id":actor,"generation":generation,"automatic":automatic,"code_hash":hash(&code),"expires_at_ms":now+PAIRING_TTL_MS,"state":"waiting","session_key":null});
+        let (record, result) = pairing_candidate(group, actor, generation, automatic);
         // One record per Actor. Expired/failed attempts are retained until an
         // explicit retry or lifecycle removal, so a supervisor cannot resend.
         c["pairings"][route_key(group, actor)] = record;
-        Ok(
-            json!({"pairing_id":operation,"code":code,"expires_at_ms":now+PAIRING_TTL_MS,"state":"waiting"}),
-        )
+        Ok(result)
     })
+}
+
+fn pairing_candidate(
+    group: &str,
+    actor: &str,
+    generation: &str,
+    automatic: bool,
+) -> (Value, Value) {
+    let code = format!(
+        "wm_pair_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    let operation = Uuid::new_v4().to_string();
+    let expiry = now_ms() + PAIRING_TTL_MS;
+    (
+        json!({"pairing_id":operation,"group_id":group,"actor_id":actor,"generation":generation,
+            "automatic":automatic,"code_hash":hash(&code),"expires_at_ms":expiry,"state":"waiting","session_key":null}),
+        json!({"pairing_id":operation,"code":code,"expires_at_ms":expiry,"state":"waiting"}),
+    )
 }
 
 pub fn accept_pairing(home: &HomeLayout, id: &str, code: &str, session: &str) -> io::Result<Value> {

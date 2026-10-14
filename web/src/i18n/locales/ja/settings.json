@@ -1845,10 +1845,10 @@
     "createHint": "保存後、この Actor のパネルで Dots のネイティブイベントタスクに接続します。同じ ChatGPT アカウントの CCCC プラグインを使用し、CCCC のブラウザーログイン画面は不要です。1 つの Dot は 1 つの Actor に接続します。",
     "connect": "Dots に接続",
     "getInstructions": "設定手順を取得",
-    "connectHint": "ChatGPT アカウントに CCCC プラグインをインストールして接続していない場合は、先に共有 ChatGPT 設定を開いてください。CCCC の更新後はプラグイン設定で Refresh tools を選択します。その後、この Actor を接続し、手順を Dots に貼り付けてネイティブイベントタスクの保存を確認してください。",
+    "connectHint": "ChatGPT アカウントに CCCC プラグインが接続されていない場合は、共有 ChatGPT 設定を先に完了してください。CCCC の更新後はプラグインのツールを更新します。設定手順を Dot に貼り付け、この Actor とペアリングしてネイティブイベントタスクを保存します。",
     "nativeStepCopy": "下の設定手順をコピーします。",
-    "nativeStepPasteConfirm": "Dots を開いて手順を貼り付け、Dots のネイティブイベントで起動するタスクの保存を確認します。通常のチャットメッセージだけではタスクは作成されません。",
-    "nativeStepObserve": "ここに戻ると、CCCC がサブスクリプションを自動検出します。CCCC のアクセスを一時停止している場合は、タスク接続後に再開してください。",
+    "nativeStepPasteConfirm": "Dot に貼り付け、ペアリングとネイティブイベントタスクの保存を完了してください。既存のタスクを更新し、重複作成しないでください。チャットの返答だけでは保存は完了していません。",
+    "nativeStepObserve": "ここに戻ると、CCCC がペアリングと購読を自動確認します。設定完了後、CCCC アクセスが一時停止中なら再開してください。",
     "adminSetup": "管理者がこの Actor を Dots のネイティブタスクに接続する必要があります。",
     "adminStatus": "接続は管理者が管理",
     "adminManaged": "この Actor の Dots 接続とタスク状態は管理者が管理します。",
@@ -1856,7 +1856,7 @@
     "sharedSettings": "共有 ChatGPT 設定",
     "connectionSettings": "接続設定",
     "openDots": "Dots を開く ↗",
-    "instructions": "Dots でネイティブイベントタスクを作成",
+    "instructions": "Dots の設定手順",
     "copyInstructions": "設定手順をコピー",
     "copied": "コピーしました",
     "pauseBeforeChanging": "接続を変更する前に CCCC アクセスを一時停止してください。",
@@ -1871,6 +1871,7 @@
     "executionError": "配信の確認が必要です。Dots でタスクを確認してください。",
     "phases": {
       "unconfigured": "未接続",
+      "waiting_pairing": "Dot のペアリング待ち",
       "waiting_subscription": "ネイティブイベントタスクの接続待ち",
       "ready": "タスクを受付可能",
       "delivering": "イベントを送信中",
@@ -1930,7 +1931,7 @@
     },
     "settings": {
       "instructions": "設定手順",
-      "instructionsHint": "Dots でネイティブタスクを復元・再作成するときに使います。",
+      "instructionsHint": "ペアリングを完了するか既存のネイティブイベントタスクを更新するには、設定手順を再取得してください。待機中のメッセージは保持されます。",
       "shared": "共有 ChatGPT コネクタ",
       "sharedHint": "Dots と ChatGPT Web Model Actor は同じ CCCC プラグインを共有します。",
       "disconnectHint": "先に CCCC アクセスを一時停止し、未完了の作業を解決してください。Dots 側のネイティブタスクも別途無効にしてください。"
@@ -1943,11 +1944,11 @@
       "creatingConnector": "作成中…",
       "pluginTitle": "CCCC プラグインを接続",
       "copyTitle": "設定手順をコピーして Dot に貼り付け",
-      "waitTitle": "CCCC が購読を検出するのを待つ",
+      "waitTitle": "ペアリングと購読の完了を待つ",
       "tipsTitle": "Dot が保存に失敗したと言う場合",
       "tipRefresh": "ChatGPT のプラグイン設定で CCCC の Refresh tools を選び、Dot に再試行させてください。",
       "tipPermissions": "CCCC プラグインにタスクの受け取り・返信・完了を許可しているか確認してください。",
-      "tipRetry": "Dot が「設定済み」と返すだけでは完了ではありません。CCCC が購読を検出すると受付可能になります。"
+      "tipRetry": "チャットでの確認だけでは完了しません。CCCC がペアリングと購読の両方を検出してから、この Actor が作業を受け取れます。"
     }
   },
   "dotsSettings": {
@@ -1965,10 +1966,19 @@
     "actorReadFailed": "この Actor の状態を今は読み取れませんでした。最後に確認できた状態を表示し、自動で再試行します。",
     "noActor": "Dots Actor はまだ接続されていません。ランタイム ChatGPT Dots の Actor を作成し、そのメインパネルから接続してください。",
     "actorGroup": "グループ {{group}}",
-    "diagnostics": "購読の診断",
-    "diagnosticsHint": "直近 10 回の購読・購読解除の結果（新しい順）。理由コードのみを記録し、資格情報やコールバック先は記録しません。",
-    "noCalls": "購読の記録はまだありません。",
-    "callOk": "成功",
-    "callFailed": "失敗 · {{reason}}"
+    "diagnostics": "共有プラグインの診断",
+    "diagnosticsHint": "直近 10 回の購読とタスクツール呼び出しの結果（新しい順）。通常の ChatGPT Actor も使うプラグインのため、すべてがこの Dot の呼び出しとは限りません。理由コードのみを保存し、資格情報や引数は記録しません。",
+    "noCalls": "呼び出しの記録はまだありません。",
+    "callOk": "呼び出し成功",
+    "callFailed": "失敗 · {{reason}}",
+    "reasons": {
+      "pairingExpired": "対象 Actor の新しい設定手順を取得し、10 分以内にペアリングコードを使ってください。",
+      "bindingChanged": "対象 Actor と現在の接続を確認してから、新しい設定手順を取得してください。",
+      "conversationUnpaired": "ペアリング済みの会話を使ってください。Actor がペアリング済みなのに同じ Dot が拒否される場合は、その CCCC アクセスを一時停止し、明示的に切断して再接続してください。",
+      "executionToken": "プラグインのツールを更新し、最新の設定手順で既存のネイティブタスクを更新してください。タスクツールには取得時に返された実行用資格情報だけを使います。",
+      "actorStopped": "作業を受け取る場合は、対象 Actor の CCCC アクセスを再開してください。",
+      "refreshTools": "ChatGPT で CCCC プラグインのツールを更新し、最新の設定手順を確認してください。",
+      "callFailed": "再試行する前に、ChatGPT が報告した失敗した呼び出しを確認してください。この記録だけではターンの完了を判断できません。"
+    }
   }
 }

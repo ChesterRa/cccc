@@ -28,7 +28,8 @@ pub(super) fn next(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             continue;
         };
         if !active(&group, actor)
-            || binding(&connector, &group, actor).is_none()
+            || binding(&connector, &group, actor)
+                .is_none_or(|b| b["session_key"].as_str().is_none_or(str::is_empty))
             || !subscribed(&dots["subscription"], now)
         {
             continue;

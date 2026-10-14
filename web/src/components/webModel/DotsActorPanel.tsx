@@ -181,7 +181,7 @@ function ActorPanel({
   const enabled = isRunning || state?.enabled;
   const locked = readOnly || saving || Boolean(action) || pluginCreating || !state;
   const unresolved = Boolean(state?.active_turn_id);
-  const hasDelivery = Boolean(state?.subscribed || unresolved);
+  const hasDelivery = Boolean((state?.paired && state.subscribed) || unresolved);
   const canResolve = unresolved && (state?.phase === "failed" || state?.phase === "interrupted");
   const dotsLink = (
     <a
@@ -233,7 +233,7 @@ function ActorPanel({
   const connectButton = (
     <Button
       type="button"
-      variant={state?.subscribed ? "outline" : "default"}
+      variant={state?.subscribed || instructions ? "outline" : "default"}
       disabled={locked || unresolved}
       onClick={() => void update("connect")}
     >
@@ -280,10 +280,13 @@ function ActorPanel({
         className="min-h-32 w-full flex-1 resize-y rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-3 font-mono text-xs leading-relaxed"
       />
       <div>
-        <Button type="button" onClick={() => void copyInstructions()}>
+        <Button type="button" disabled={locked} onClick={() => void copyInstructions()}>
           {t(copied ? "dotsActor.copied" : "dotsActor.copyInstructions")}
         </Button>
       </div>
+      <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+        {t("dotsActor.nativeStepPasteConfirm")}
+      </p>
     </>
   ) : null;
 
@@ -410,13 +413,7 @@ function ActorPanel({
               active
             >
               {instructionsBox}
-              {instructions ? (
-                <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-                  {t("dotsActor.nativeStepPasteConfirm")}
-                </p>
-              ) : (
-                <div>{connectButton}</div>
-              )}
+              <div>{connectButton}</div>
             </DotsSetupStep>
             <DotsSetupStep
               number={3}

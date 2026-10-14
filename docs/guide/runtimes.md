@@ -575,41 +575,74 @@ Actor controls.
    ![ChatGPT Plugins: Add → Add custom MCP server](../assets/screenshots/chatgpt-add-custom-mcp-server.png)
 
 3. Click **Connect Dots**, then **Copy setup instructions**. For an existing
-   binding, use **Get setup instructions** to retrieve the same setup again.
-   Neither requires pausing the Actor, but an accepted unfinished turn must be
-   completed or explicitly resolved first. The copied instructions contain a
-   private credential; use them only in the intended Dots setup.
-4. Click **Open Dots**, paste the instructions into your Dot and ask it to save
-   the native event-triggered task. Confirm that the task was actually saved;
-   a promise to create it, an ordinary chat reply or a timed schedule is not a
-   completed setup. Required plugin permissions must also be granted.
-5. Return to CCCC. Connection is ready when CCCC observes the native event
-   subscription, rather than when ChatGPT says it is connected. In a running
-   Group, an enabled Actor can then receive queued work automatically. If its
-   access is paused, use **Resume CCCC access**. Send work to this Actor through
-   the Group; its replies return to that same Group.
+   binding, use **Get setup instructions**. Neither requires pausing the Actor,
+   but an accepted unfinished turn must be completed or explicitly resolved
+   first. These instructions contain private subscription configuration and,
+   when unpaired, a setup code valid for 10 minutes. Use them only in your Dot.
+   If the code expires, use **Get setup instructions** again in the same pane
+   and copy the updated instructions.
+   Pausing or resuming CCCC access does not expire that code; pairing while paused
+   does not grant task access until you resume it.
+4. Click **Open Dots** and paste the instructions into your Dot. It first calls
+   `cccc_pair` with the setup code to pair this conversation with the selected
+   Actor, then saves a native event-triggered task. If a task already exists for
+   this Actor, update it instead of creating another. The saved handler claims
+   work with `{}`; it contains no literal claim credential and does not need to
+   read subscription configuration, event payloads or earlier chat history.
+   Confirm that the handler was actually saved. A chat reply or a timed schedule
+   is not a completed setup. Grant any plugin permissions ChatGPT requests.
+5. Return to CCCC. CCCC checks pairing and subscription separately; either can
+   still be incomplete. An enabled Actor in a running Group can receive queued
+   work only after both are complete. If access is paused, use **Resume CCCC
+   access**. The setup also asks the Dot to run its saved handler once for
+   already queued, unclaimed work. Send work through the Group; replies return
+   to that same Group.
 
 One Dot is bound to one explicitly selected Actor and Group per connector.
 Dots has shared memory; separate CCCC Actors do not create independent Dot
 conversations. Its fixed home page is a viewer, not an identity proof. Runtime
 Profiles may select Dots, but cannot copy its binding or task credentials.
 
-Delivery is asynchronous. Events only wake the Dot; its saved setup credential
-permits subscribing and claiming one current task for the connected Actor.
-Claiming returns that task's materials and a separate execution credential.
-Only the execution credential can call business tools and complete the exact
-task. A successful webhook response means the event was received; CCCC marks
-work complete only after the Dot submits the exact task receipt. Waiting does
-not trigger a browser fallback.
+Delivery is asynchronous. Events only wake the Dot. The existing MCP connection
+authenticates calls, and CCCC matches ChatGPT's host-provided conversation
+metadata to the explicitly paired Actor. No permanent claim credential is
+attached to each message or saved in the native handler. The subscription
+credential remains in native subscription configuration; it cannot claim work
+or use business tools. Claiming returns task materials and a separate, temporary
+execution credential. Only that credential permits business tools and completion
+of the exact task. A successful webhook response acknowledges receipt, not task
+completion. Waiting never triggers browser delivery.
+
+If an older task asks to read subscription configuration or refuses to save a
+credential in its handler, get the current setup instructions and update that
+same task with the credential-free handler. Updating CCCC cannot rewrite a task
+already saved in ChatGPT. The instructions permit one claim of unclaimed queued
+work after setup; they do not replay accepted unfinished work.
+
+If host metadata is missing, CCCC cannot identify the caller. If the Dot reports
+`conversation_not_paired`, complete the explicit pairing. When CCCC already
+shows a paired Dot but this conversation is not recognized, pause CCCC access,
+resolve any unfinished turn, disconnect this Actor, and connect it again for a
+fresh pairing. This resets only the Dot connection; the shared plugin and other
+ChatGPT Actors remain connected. CCCC never treats an arbitrary unpaired chat
+as the account's Dot.
+
+For failed setup or tool calls, open the instance's **ChatGPT Dots** settings
+and check **Shared plugin diagnostics**. It keeps ten recent subscription and
+task-tool outcomes with safe reason codes and setup hints. Successful status
+reads do not erase these records. The plugin also serves ordinary ChatGPT
+Actors, so check the failed tool and time against the conversation you tested.
+An old diagnostic is not the Actor's current phase, and a successful claim or
+completion call alone does not replace the daemon's task completion receipt.
 
 Stopping the Actor blocks claims and retires existing execution credentials;
 it cannot recall actions already performed in the cloud. Starting it again
 restores permission to claim new queued work, including from a late cloud
 invocation. It does not return an unfinished task's materials again. Unconfirmed
 work remains visible for explicit recovery rather than being replayed
-automatically. Disconnecting or rebinding revokes the old setup credential.
+automatically. Disconnecting or rebinding revokes the old pairing and subscription credential.
 
-- **Not connected or no valid subscription:** finish the setup above. Waiting
+- **Not connected, waiting for pairing, or no valid subscription:** finish the setup above. Waiting
   does not create a cloud task automatically. Check that the CCCC plugin is
   connected and enabled in the Dot's account, refresh its tools after an upgrade,
   and save or restore the native event task. A connector address or recent request

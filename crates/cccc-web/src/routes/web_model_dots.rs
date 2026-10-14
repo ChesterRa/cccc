@@ -73,36 +73,44 @@ async fn change(State(state): State<AppState>, Json(body): Json<Value>) -> ApiRe
             .and_then(|m| m.remove("subscription_token"))
             .and_then(|v| v.as_str().map(str::to_owned))
             .ok_or_else(|| ApiError::bad("Dots subscription credential is unavailable"))?;
-        result["instructions"] = json!(setup_instruction(&token));
+        let code = result
+            .as_object_mut()
+            .and_then(|m| m.remove("pairing_code"));
+        result["instructions"] = json!(setup_instruction(
+            &token,
+            code.as_ref().and_then(Value::as_str)
+        ));
     }
     Ok(success(result))
 }
 
-fn setup_instruction(token: &str) -> String {
+fn setup_instruction(token: &str, pairing_code: Option<&str>) -> String {
+    let pairing = match pairing_code {
+        Some(code) => format!(r#"1. Pair this Dot with the selected CCCC Actor by calling cccc_pair once:
+{{"code":"{code}"}}
+This setup-only code is valid for 10 minutes; never save it in the task handler. Continue only with state=bound and routing_mode=mcp_events. On rejection, report the error and request fresh instructions for this Actor."#),
+        None => "1. This Actor is already paired. Use the same Dot conversation; do not pair or select another Actor.".into(),
+    };
     format!(
-        concat!(
-            "Create and save a native event-triggered task in Dots using ChatGPT's built-in task/monitoring capability. ",
-            "Use the existing CCCC plugin, installed, connected and enabled in the same ChatGPT account as this Dot. ",
-            "If the plugin was connected before this CCCC update, refresh its tools and events first. ",
-            "By pasting these instructions I approve saving this persistent event-triggered task for this one CCCC Actor, accepting its queued turns, replying through CCCC and completing those turns; do not ask me to approve that again. ",
-            "Ask me only if ChatGPT itself blocks plugin permissions these steps need, and do not claim that setup succeeded while they are blocked. ",
-            "Subscribe to event {event} with arguments {{\"actor_token\":\"{token}\"}}. ",
-            "This binding credential grants subscription and cccc_runtime_wait_next_turn for this fixed CCCC Actor only. ",
-            "It authorizes accepting and reading this Actor's queued tasks, not ordinary business tools. ",
-            "Do not substitute a timed schedule or polling, and do not look for an ordinary MCP tool named subscribe. ",
-            "When triggered, call cccc_runtime_wait_next_turn once with this saved binding credential, even if the event payload is not visible. ",
-            "The event is only a wake notification. If work_available is returned, use the actor_token returned in that tool result for this turn's CCCC calls, including cccc_code_exec. ",
-            "Process only the returned turn according to its system_prompt and instructions. ",
-            "Reply through CCCC, then call cccc_runtime_complete_turn with the exact turn_id and event_ids and that execution actor_token. ",
-            "The subscription arguments are this native task's configuration: keep the binding credential only there. Never use it for business calls or put either credential in CCCC messages, files, commands, JavaScript source or replies. ",
-            "If idle, stopped, or turn_in_progress is returned, exit without recovering or completing another task. Do not repeatedly poll. ",
-            "Pausing CCCC access rejects claims and revokes old execution credentials; it does not necessarily stop ChatGPT's cloud work. ",
-            "When the user starts this same Actor again, its persistent binding may claim new queued work. ",
-            "Request ttlMs=null for a persistent subscription, or omit ttlMs if the task interface does not offer it; both are persistent. Keep this native event task until I explicitly disable it. ",
-            "Confirm only after the event-triggered task has actually been saved."
-        ),
-        event = EVENT_NAME,
-        token = token
+        r#"Create and save a native event-triggered task in Dots using ChatGPT's built-in task/monitoring capability. If this Actor already has such a task, update that task instead of creating another.
+Use the existing CCCC plugin in this Dot's ChatGPT account. Refresh its tools and events if it predates this CCCC update.
+By pasting these instructions I approve pairing this Dot, saving or updating this Actor's event task, claiming queued work, replying and completing turns. Ask me only if ChatGPT itself blocks plugin permissions; report rejected calls and incomplete setup.
+
+{pairing}
+
+2. Subscribe through ChatGPT's native event-task capability to {EVENT_NAME} with arguments {{"actor_token":"{token}"}}. Request ttlMs=null, or omit ttlMs if the task interface does not offer it; both are persistent. Keep this credential only in subscription configuration. Do not substitute a timed schedule, polling or an ordinary MCP subscribe tool.
+Save exactly this credential-free handler as the task's instructions:
+
+BEGIN CCCC DOTS HANDLER
+When {EVENT_NAME} wakes this task, call cccc_runtime_wait_next_turn once:
+{{}}
+ChatGPT metadata identifies the explicitly paired Dot. Do not supply Actor or Group selectors or retrieve credentials from subscription configuration, event data, chat history or memory.
+If work_available, follow that turn's system_prompt and instructions. Use the actor_token returned in that tool result for all CCCC calls in this turn, including cccc_code_exec. Reply through CCCC, then call cccc_runtime_complete_turn with the exact turn_id, event_ids and execution actor_token.
+If idle, stopped or turn_in_progress, exit. If a call is rejected, report it and stop; do not poll, recover another turn, reconnect or infer another identity.
+Use execution credentials only in this turn's tool arguments. Never put them in messages, files, commands, JavaScript source, saved instructions or replies.
+END CCCC DOTS HANDLER
+
+3. Verify the task actually saved this handler with {{}} and no literal credential; a chat confirmation is not proof. If saving or subscription fails, report incomplete setup. Do not echo credentials. After successful setup, execute its saved handler once for queued, unclaimed work. Keep the task until I explicitly disable it."#
     )
 }
 
@@ -114,11 +122,14 @@ pub(super) fn extend_catalog(response: &mut Value) {
         if tool["name"] == "cccc_pair" {
             continue;
         }
-        let description = if tool["name"] == "cccc_runtime_wait_next_turn" {
-            "For ChatGPT Dots only: use this fixed Actor's saved binding credential to claim one queued turn. The first work_available result returns its actor_token for execution. Events only wake the task; no event payload is needed. Ordinary paired ChatGPT conversations omit this field. Never disclose credentials in messages, files or replies."
-        } else {
-            "For ChatGPT Dots only: use the execution actor_token returned by cccc_runtime_wait_next_turn for the current turn. The saved subscription/claim credential cannot authorize this tool. Ordinary paired ChatGPT conversations omit this field. Never include credentials in messages, files, commands, JavaScript source or replies."
-        };
+        if tool["name"] == "cccc_runtime_wait_next_turn" {
+            let original = tool["description"].as_str().unwrap_or_default();
+            tool["description"] = json!(format!(
+                "{original} For ChatGPT Dots: call once with {{}} from the explicitly paired Dot conversation. Host metadata identifies the fixed Actor; no saved credential or event payload is needed. If unpaired, use Get setup instructions in CCCC to pair this Dot. A successful claim returns the current turn's execution actor_token; pairing alone cannot authorize business tools."
+            ));
+            continue;
+        }
+        let description = "For ChatGPT Dots only: use the execution actor_token returned by cccc_runtime_wait_next_turn for the current turn. Pairing and the native subscription credential cannot authorize this tool. Ordinary paired ChatGPT conversations omit this field. Never include credentials in messages, files, commands, JavaScript source, saved instructions or replies.";
         tool["inputSchema"]["properties"]["actor_token"] = json!({"type":"string","minLength":43,"maxLength":43,
             "description":description});
     }
@@ -127,7 +138,7 @@ pub(super) fn extend_catalog(response: &mut Value) {
 fn definition() -> Value {
     json!({"name":EVENT_NAME,"description":"The explicitly connected CCCC Dots Actor has queued work. The event only wakes a task; retrieve and finish the exact work through CCCC tools.",
         "delivery":["webhook"],
-        "inputSchema":{"type":"object","properties":{"actor_token":{"type":"string","minLength":43,"maxLength":43,"description":"Binding credential from this fixed Actor's CCCC setup. Grants native subscription and one queued-task claim; does not authorize business tools."}},"required":["actor_token"],"additionalProperties":false},
+        "inputSchema":{"type":"object","properties":{"actor_token":{"type":"string","minLength":43,"maxLength":43,"description":"Subscription credential from this fixed Actor's CCCC setup. Authorizes native event subscription only; cannot claim work or authorize business tools."}},"required":["actor_token"],"additionalProperties":false},
         "payloadSchema":{"type":"object","properties":{"event_id":{"type":"string"}},"required":["event_id"],"additionalProperties":false}})
 }
 
@@ -165,9 +176,6 @@ pub(super) async fn handle(state: &AppState, connector: &Value, request: &Value)
     })
 }
 
-/// How many event subscription calls the connector keeps for diagnosis.
-const EVENT_LOG_LEN: usize = 10;
-
 /// Keep the outcome of recent event subscription calls on the connector, since
 /// later calls overwrite its last activity and callback errors are not logged.
 /// Only fixed reason codes are kept: never a credential or callback address.
@@ -184,14 +192,7 @@ fn note_event_call(
         "reason":error.map(SubscriptionError::reason)});
     // Diagnosis must never fail the call it describes.
     let _ = super::web_model_connector_store::update_connector(state, id, |connector| {
-        let mut log = connector["events_log"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        log.push(entry);
-        let excess = log.len().saturating_sub(EVENT_LOG_LEN);
-        log.drain(..excess);
-        connector["events_log"] = Value::Array(log);
+        super::web_model_connector_activity::append_call(connector, entry);
     });
 }
 
@@ -496,31 +497,52 @@ mod tests {
     }
 
     #[test]
-    fn task_setup_and_schema_claim_work_without_an_event_execution_credential() {
-        let setup = setup_instruction("synthetic-subscription-credential");
+    fn task_setup_and_schema_claim_work_without_saved_credentials_or_event_data() {
+        let setup = setup_instruction(
+            "synthetic-subscription-credential",
+            Some("synthetic-setup-code"),
+        );
         assert!(setup.contains("native event-triggered task in Dots"));
-        assert!(setup.contains("even if the event payload is not visible"));
+        assert!(setup.contains("cccc_pair"));
+        assert!(setup.contains("valid for 10 minutes"));
         assert!(setup.contains("actor_token returned in that tool result"));
-        assert!(setup.contains("not ordinary business tools"));
         assert!(setup.contains("turn_in_progress"));
-        // Pasting the setup is the approval: the Dot asks only when ChatGPT blocks it.
-        assert!(setup.contains("By pasting these instructions I approve saving this persistent"));
+        assert!(setup.contains("By pasting these instructions I approve pairing this Dot"));
         assert!(setup.contains("Ask me only if ChatGPT itself blocks plugin permissions"));
-        // A Dot's task interface may lack ttlMs or a credential field: neither blocks setup.
         assert!(setup.contains("omit ttlMs if the task interface does not offer it"));
-        assert!(setup.contains("subscription arguments are this native task's configuration"));
+        let handler = setup
+            .split_once("BEGIN CCCC DOTS HANDLER\n")
+            .expect("handler start")
+            .1
+            .split_once("\nEND CCCC DOTS HANDLER")
+            .expect("handler end")
+            .0;
+        assert!(handler.lines().any(|line| line == "{}"));
+        assert!(!handler.contains("synthetic-subscription-credential"));
+        assert!(!handler.contains("synthetic-setup-code"));
+        assert!(setup.contains("update that task instead of creating another"));
+        assert!(setup.contains("execute its saved handler once"));
+        let paired_setup = setup_instruction("synthetic-subscription-credential", None);
+        assert!(!paired_setup.contains("synthetic-setup-code"));
         let event = definition();
         assert_eq!(event["name"], EVENT_NAME);
         assert_eq!(event["inputSchema"]["required"], json!(["actor_token"]));
         assert!(event["payloadSchema"]["properties"]["actor_token"].is_null());
         assert_eq!(event["payloadSchema"]["required"], json!(["event_id"]));
-        let mut response = json!({"result":{"tools":[{"name":"cccc_help","inputSchema":{"properties":{}}},{"name":"cccc_pair","inputSchema":{"properties":{"code":{}}}}]}});
+        let mut response = json!({"result":{"tools":[
+            {"name":"cccc_help","inputSchema":{"properties":{}}},
+            {"name":"cccc_pair","inputSchema":{"properties":{"code":{}}}},
+            {"name":"cccc_runtime_wait_next_turn","inputSchema":{"properties":{}}}
+        ]}});
         extend_catalog(&mut response);
         assert!(
             response["result"]["tools"][0]["inputSchema"]["properties"]["actor_token"].is_object()
         );
-        assert!(
-            response["result"]["tools"][1]["inputSchema"]["properties"]["actor_token"].is_null()
-        );
+        for index in [1, 2] {
+            assert!(
+                response["result"]["tools"][index]["inputSchema"]["properties"]["actor_token"]
+                    .is_null()
+            );
+        }
     }
 }

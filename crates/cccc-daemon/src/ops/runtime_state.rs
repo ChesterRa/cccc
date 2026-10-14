@@ -263,7 +263,7 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
     {
         return Err(OpError::new(
             "dots_event_required",
-            "Dots work requires its fixed Actor claim grant through the connector",
+            "Dots work requires its explicitly paired session through the connector",
         ));
     }
     if super::local_headless::supports(actor) {

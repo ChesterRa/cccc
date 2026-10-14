@@ -1,5 +1,5 @@
-//! One explicitly authorized Dot route. Its binding grant only claims work;
-//! execution credentials are fenced to their epoch and accepted turn.
+//! One explicitly paired Dot route. Subscription configuration never grants
+//! task access; execution credentials are fenced to their accepted turn.
 use super::*;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 
@@ -73,6 +73,90 @@ pub fn bind_dots(
             "revision":binding["revision"],"epoch":Uuid::new_v4().to_string(),
             "subscription":null,"wake":null,"execution":null,"last_execution":null});
         Ok(binding)
+    })
+}
+
+/// A setup-only, expiring code authorizes pairing with the selected Dot Actor.
+/// Retrieving instructions for an already paired Actor never replaces its session.
+pub fn begin_dots_pairing(home: &HomeLayout, id: &str) -> io::Result<Option<Value>> {
+    dots_update(home, id, |connector| {
+        let (_, binding) = state(connector).ok_or_else(|| error("dots_binding_unavailable"))?;
+        if binding["session_key"]
+            .as_str()
+            .is_some_and(|key| !key.is_empty())
+        {
+            return Ok(None);
+        }
+        let (mut pair, result) = pairing_candidate(
+            binding["group_id"].as_str().expect("group"),
+            binding["actor_id"].as_str().expect("actor"),
+            binding["generation"].as_str().expect("generation"),
+            false,
+        );
+        pair["transport"] = json!("mcp_events");
+        pair["revision"] = binding["revision"].clone();
+        let key = route_key(
+            binding["group_id"].as_str().expect("group"),
+            binding["actor_id"].as_str().expect("actor"),
+        );
+        connector["pairings"][key] = pair;
+        Ok(Some(result))
+    })
+}
+
+/// The daemon validates the selected Actor under its lifecycle permit first.
+/// Unlike browser pairing, the user explicitly pastes this code into their Dot;
+/// no browser receipt or URL can establish the identity of a native event task.
+pub fn confirm_dots_pairing(home: &HomeLayout, id: &str, pairing_id: &str) -> io::Result<Value> {
+    dots_update(home, id, |connector| {
+        let (_, binding) = state(connector).ok_or_else(|| error("dots_binding_unavailable"))?;
+        let group = binding["group_id"].as_str().expect("group");
+        let actor = binding["actor_id"].as_str().expect("actor");
+        let key = route_key(group, actor);
+        let pair =
+            pairing_for_actor(connector, group, actor).ok_or_else(|| error("pairing_invalid"))?;
+        if pair["pairing_id"] != pairing_id
+            || pair["transport"] != "mcp_events"
+            || pair["generation"] != binding["generation"]
+            || pair["revision"] != binding["revision"]
+        {
+            return Err(error("pairing_changed"));
+        }
+        if pair["expires_at_ms"]
+            .as_i64()
+            .is_none_or(|expiry| expiry <= now_ms())
+        {
+            return Err(error("pairing_expired"));
+        }
+        if !matches!(
+            pair["state"].as_str(),
+            Some("awaiting_confirmation" | "bound")
+        ) {
+            return Err(error("pairing_not_received"));
+        }
+        let session = pair["session_key"]
+            .as_str()
+            .filter(|key| !key.is_empty())
+            .ok_or_else(|| error("pairing_not_received"))?;
+        if binding["session_key"]
+            .as_str()
+            .is_some_and(|existing| existing != session)
+            || connector["bindings"].as_object().is_none_or(|bindings| {
+                bindings
+                    .iter()
+                    .any(|(other, b)| other != &key && b["session_key"] == session)
+            })
+        {
+            return Err(error("binding_conflict"));
+        }
+        if binding["session_key"] == session {
+            return Ok(binding);
+        }
+        connector["bindings"][&key]["session_key"] = json!(session);
+        connector["bindings"][&key]["pairing_id"] = json!(pairing_id);
+        connector["bindings"][&key]["updated_at"] = json!(cccc_contracts::utc_now());
+        connector["pairings"][&key]["state"] = json!("bound");
+        Ok(connector["bindings"][&key].clone())
     })
 }
 
@@ -163,15 +247,6 @@ fn execution_matches(execution: &Value, dots: &Value, event_id: &str, state: &st
 
 pub fn dots_binding_for_token(connector: &Value, token: &str, tool_name: &str) -> Option<Value> {
     let (dots, binding) = state(connector)?;
-    if tool_name == "cccc_runtime_wait_next_turn" && token_matches(connector, &binding, token, None)
-    {
-        let mut captured = binding;
-        captured["connector_id"] = connector["connector_id"].clone();
-        captured["dots_epoch"] = dots["epoch"].clone();
-        captured["dots_wake_id"] = dots["wake"]["event_id"].clone();
-        captured["dots_stage"] = json!("claim");
-        return Some(captured);
-    }
     for (stage, record) in [
         ("execution", &dots["execution"]),
         ("completion", &dots["last_execution"]),
@@ -206,12 +281,26 @@ pub fn dots_binding_for_token(connector: &Value, token: &str, tool_name: &str) -
     None
 }
 
+/// Only a previously approved host session may request the current task.
+/// The returned snapshot is claim-only and cannot authorize business tools.
+pub fn dots_claim_binding(connector: &Value, session: &str) -> Option<Value> {
+    let (dots, mut binding) = state(connector)?;
+    if session.is_empty() || binding["session_key"] != session {
+        return None;
+    }
+    binding["connector_id"] = connector["connector_id"].clone();
+    binding["dots_epoch"] = dots["epoch"].clone();
+    binding["dots_wake_id"] = dots["wake"]["event_id"].clone();
+    binding["dots_stage"] = json!("claim");
+    Some(binding)
+}
+
 pub(super) fn validate_context(
     connector: &Value,
     expected: &Value,
     group: &crate::GroupDoc,
 ) -> io::Result<()> {
-    let (dots, _) = state(connector).ok_or_else(|| error("dots_binding_unavailable"))?;
+    let (dots, binding) = state(connector).ok_or_else(|| error("dots_binding_unavailable"))?;
     if expected["dots_epoch"] != dots["epoch"] {
         return Err(error("dots_task_expired"));
     }
@@ -224,7 +313,12 @@ pub(super) fn validate_context(
         return Err(error("dots_actor_stopped"));
     }
     if expected["dots_stage"] == "claim" {
-        return if expected.get("dots_wake_id") == Some(&dots["wake"]["event_id"]) {
+        return if binding["session_key"]
+            .as_str()
+            .is_some_and(|key| !key.is_empty())
+            && expected["session_key"] == binding["session_key"]
+            && expected.get("dots_wake_id") == Some(&dots["wake"]["event_id"])
+        {
             Ok(())
         } else {
             Err(error("dots_task_expired"))

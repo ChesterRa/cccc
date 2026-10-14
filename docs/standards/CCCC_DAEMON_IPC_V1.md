@@ -3386,7 +3386,7 @@ Notes:
 - The appended `actor.add` event starts that actor id's current generation. The daemon MUST initialize the new generation's read boundary at that append position, so events from before the add are not delivered as unread. Removing and later re-adding the same actor id starts a new generation at the later `actor.add` position.
 - Actor records also expose an opaque `generation` UUID for delayed remote recipient binding. Add assigns a fresh value, including when a supplied record came from an earlier Actor; update cannot overwrite it. Restart and ordinary edits preserve it. Existing records without this field use their original `created_at` identity (`legacy:<created_at>`) until they are recreated; browser ownership, pairing and tool routing MUST use that same identity and pairing MUST NOT assign a new generation after the browser opens. This does not replace the ledger-based inbox boundary above.
 - Multiple ChatGPT (`web_model`) and Grok Bot (`grok_web_model`) Actors MAY coexist, including linked Profiles and Group imports/resets. Runtime configuration does not grant connector authority. Conversation bindings MUST identify the exact Group, Actor and generation; copied/imported Actors MUST be unpaired.
-- `chatgpt_dots` is a headless event-driven Runtime sharing the `chatgpt_web` connector. One Dot binding per connector MAY authorize exactly one Group/Actor/generation. Profiles, copies and imports carry Runtime configuration, never that binding or cloud-task authority. It MUST NOT use browser message delivery or ChatGPT conversation pairing.
+- `chatgpt_dots` is a headless event-driven Runtime sharing the `chatgpt_web` connector. One Dot binding per connector MAY authorize exactly one Group/Actor/generation. Profiles, copies and imports carry Runtime configuration, never that binding or cloud-task authority. It MUST NOT use browser message delivery or browser receipt verification. Its host conversation is paired explicitly during native task setup.
 - A new actor generation MUST NOT inherit Web Model delivery preferences or persisted runner/turn status left by an earlier generation with the same actor id.
 - For a Web Model actor, successful add MUST establish the current generation's missing browser target as canonical empty state. A legacy actor-scoped browser shadow MUST NOT populate the new generation merely because it uses the same actor id.
 - Adding an enabled actor to an `active` or `idle` group MAY start it immediately and transition the group's runtime to running. Adding one to a `paused` or `stopped` group MUST only persist the actor and MUST NOT change the group lifecycle state.
@@ -7561,7 +7561,7 @@ Pairing/navigation/delivery share the Actor control permit. Cancellation invalid
 
 Unresolved delivery forbids changing conversations or removing the binding, including persisted completion `ambiguous` and `completion_conflict` states after the daemon has stopped working. Re-pairing the same saved stable URL MAY restore access while retaining all pending evidence. The Web UI MUST keep this manual recovery reachable for a stopped unpaired Actor with a saved conversation, even without an earlier pairing attempt. The browser port observes the owned Page URL and serializes pairing/navigation against delivery; URL opening alone never changes authority. Both preview navigation and saved-conversation alignment MUST preserve unsent text and attachment-only drafts.
 
-The ChatGPT remote MCP entrance advertises one fixed tool schema. Connector-level `cccc_pair` and read-only `cccc_connector_status` work before Actor activation; they are not nested tools in CCCC's `cccc_code_exec`, and do not constrain the host's own connector dispatch mechanism. Pairing MUST be declared state-changing: it records a pending link but does not itself read workspace files, execute tasks or grant business-tool access. Setup instructions MUST respect host approval requirements and report rejected calls; browser receipt verification activates the Actor route before subsequent calls can use its configured permissions. All business calls require a current enabled Web Model Actor binding. Each call uses host `params._meta["openai/session"]`, scoped by optional `openai/subject` and `openai/organization`; values must be nonempty strings, at most 1,024 bytes, without control characters. Persist only salted hashes, never raw host identifiers. Missing metadata or invalid/stale bindings MUST fail closed; tool arguments, HTTP session IDs, titles and default Actor selection MUST NOT substitute for host metadata.
+The ChatGPT remote MCP entrance advertises one fixed tool schema. Connector-level `cccc_pair` and read-only `cccc_connector_status` work before Actor activation; they are not nested tools in CCCC's `cccc_code_exec`, and do not constrain the host's own connector dispatch mechanism. Pairing MUST be declared state-changing: for browser Actors it records a pending link; for Dots, an explicitly user-issued setup code pairs the fixed event Actor immediately. Neither path reads workspace files or executes tasks. Dots pairing grants claim-only access, never business-tool access. Setup instructions MUST respect host approval requirements and report rejected calls; browser receipt verification activates the Actor route before subsequent calls can use its configured permissions. All business calls require a current enabled Web Model Actor binding. Each call uses host `params._meta["openai/session"]`, scoped by optional `openai/subject` and `openai/organization`; values must be nonempty strings, at most 1,024 bytes, without control characters. Persist only salted hashes, never raw host identifiers. Missing metadata or invalid/stale bindings MUST fail closed; tool arguments, HTTP session IDs, titles and default Actor selection MUST NOT substitute for host metadata.
 
 Code-mode nested calls MUST recheck captured Actor generation and binding revision before executing. Request context fixes the caller (`by`) and Group; `cccc_actor.actor_id` remains the explicit management target and MUST NOT be replaced with the caller. Other identity-bearing tools continue to use the bound Actor. Command stdin/output and code cells MUST remain scoped to their original Actor/binding; re-pairing MUST NOT transfer access to retained work. Credential rotation invalidates the old credential without reassigning conversations; revocation and Actor/Group removal invalidate affected routes. These checks cannot undo an already executed command.
 
@@ -7590,11 +7590,58 @@ ChatGPT conversation bindings MAY coexist. Browser pairing and browser delivery
 MUST NOT be used for Dots, including as a fallback after an event delay.
 
 Subscriptions need not contain OpenAI conversation metadata. The CCCC-issued
-binding credential grants native event subscription and only
-`cccc_runtime_wait_next_turn` for the explicitly configured Actor. This is
-continuous permission to read that Actor's queued task materials and accept one
-current turn; it MUST NOT authorize business tools. An event is only a wake
-notification and MUST NOT contain an execution credential or task body.
+subscription credential authorizes only native event subscription, not tool
+calls or task claims. It stays in native subscription configuration and MUST
+NOT be saved in handler instructions, chat memory or business messages. An
+event is only a wake notification and MUST NOT contain an execution credential
+or task body.
+
+Native setup explicitly pairs the Dot's host conversation with the selected
+Actor through the existing `cccc_pair` tool and a user-issued, 10-minute code.
+Only the code hash is persisted. Unlike browser pairing, successful Dots code
+acceptance commits the session association under the daemon lifecycle permit;
+no browser URL or assistant receipt is an identity proof. The selected Actor
+must still be Dots, with the same generation and binding revision, and
+must have no accepted unfinished turn. Repeating the same successful pairing
+is idempotent and MUST NOT interrupt an active turn. Codes cannot be used by
+another session, after expiry, or after lifecycle replacement. A host session
+already assigned to another Actor MUST NOT be transferred to Dots.
+Pausing or resuming access MUST NOT invalidate an unexpired setup code for the
+same Actor binding. Pairing MAY finish while paused, but MUST NOT enable the
+Actor or restore task execution authority. Claims and execution credentials
+remain fenced by the current enabled state and execution epoch.
+
+Subsequent Dots claims call `cccc_runtime_wait_next_turn` with `{}`. The already
+authenticated MCP entrance matches host `openai/session`, with optional subject
+and organization, against the explicitly approved salted session hash. The
+paired session grants continuous claim-only access to that fixed Actor. It
+MUST NOT authorize business tools without the current turn's execution
+credential. A subscription credential MUST NOT substitute for pairing, and an
+invalid supplied execution credential MUST NOT fall back to a session route.
+Missing, changed or unpaired host metadata MUST fail closed; the sole Dot
+binding, model-supplied names, subscription parameters and event payloads MUST
+NOT be used to guess a caller. A previously paired Actor whose host identity
+changed requires explicit user disconnect/connect before a new pairing; setup
+instruction reads cannot silently replace its approved session.
+
+The saved native handler contains no literal claim or pairing credential.
+Setup updates the existing event task for the same Actor instead of creating a
+duplicate. Retrieving instructions for an already paired Actor MUST preserve
+its session, subscription, wake, epoch and queued work, and MUST NOT claim work.
+After explicit setup, the saved handler MAY run once to claim already queued,
+unclaimed work. Idle, stopped or busy results MUST NOT initiate polling, a new
+wake or recovery of accepted work. Status distinguishes `waiting_pairing` from
+`waiting_subscription`; subscription success alone MUST NOT imply readiness,
+and no new wake is sent until the Dot is paired.
+
+Private connector settings retain at most ten recent native subscription,
+pairing, claim and completion outcomes, plus failures of published tool calls,
+in `events_log`. Entries contain the time, method, optional `tool_name`, success
+flag and a fixed reason code; they MUST NOT record call arguments, raw errors,
+response bodies or credentials. This history belongs to the shared connector,
+including ordinary ChatGPT Actors, and MUST NOT replace a Dots Actor's current
+daemon-owned phase. Successful observational calls do not displace this history.
+A diagnostic write failure MUST NOT change an already accepted tool result.
 
 The claim captures the current binding, Actor generation, execution epoch and
 wake identity before waiting for the daemon's operation permit. The daemon MUST
@@ -7631,11 +7678,11 @@ wake/execution facts are retained; lifecycle transitions do not prove that
 cloud work stopped and MUST NOT silently replay it. These fences cannot undo
 actions already performed in the cloud.
 
-Start resumes the same binding's continuous permission to claim new queued
+Start resumes the same paired session's continuous permission to claim new queued
 work; a late cloud invocation may therefore claim a new current turn. It MUST
 NOT recover an accepted unfinished turn's body or execution credential through
-the binding grant. Explicit unbinding, rebinding or Actor generation replacement
-revokes the old binding grant as well as its execution authority.
+the paired session. Explicit unbinding, rebinding or Actor generation replacement
+revokes the old pairing and subscription credential as well as its execution authority.
 
 The existing secret connector YAML owns the private Dots subscription, callback,
 signing secret, wake and execution state. Public binding/status results, Group
@@ -7652,7 +7699,7 @@ connection, network receipt and resolution operations require `by="user"`.
 | Operation | Inputs and result |
 | --- | --- |
 | `dots_events_status` | `group_id`, `actor_id`; safe subscription, delivery and canonical turn projection. Read-only; never subscribes, sends or claims work. |
-| `dots_events_connect` | User-authorized Actor with no unfinished turn and no previous local runtime still running; creates or reuses the one binding and returns its private subscription/claim credential for explicit task setup. The Actor may be enabled; retrieving the same binding preserves its epoch, subscription and wake. |
+| `dots_events_connect` | User-authorized Actor with no unfinished turn and no previous local runtime still running; creates or reuses the one binding and returns its private subscription credential plus an expiring pairing code while unpaired. The Actor may be enabled; retrieving an already paired binding preserves its session, epoch, subscription and wake. |
 | `dots_events_disconnect` | Stopped Actor with no unfinished turn; retires that binding and its private subscription authority. |
 | `dots_events_subscribe` | Exact binding revision/epoch and subscription credential, verified callback URL/signing secret, subscription ID and optional `ttl_ms`; persists the subscription after the Web port's signed challenge. Null TTL remains valid until revoked; the Web protocol treats an omitted TTL as null (persistent) and returns the granted `refreshBefore`, which is null for a persistent subscription. |
 | `dots_events_unsubscribe` | Exact subscription identity and callback; retires that subscription's task authority. An older callback cannot unsubscribe a replacement. |

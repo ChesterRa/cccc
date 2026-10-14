@@ -368,11 +368,7 @@ export function AgentTab({
 
   const runtimeIndicator = getRuntimeIndicatorState({
     isRunning: isDots
-      ? Boolean(
-          dotsState?.phase === "working" ||
-          (dotsState?.subscribed &&
-            !["stopped", "failed", "interrupted"].includes(dotsState.phase)),
-        )
+      ? ["ready", "pending", "delivering", "delivered", "working"].includes(dotsState?.phase || "")
       : Boolean(isRunning),
     workingState: isDots
       ? dotsState?.phase === "working"

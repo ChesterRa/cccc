@@ -15,7 +15,7 @@ pub(super) fn extend_catalog(response: &mut Value) {
             }),
             json!({
                 "name":"cccc_pair",
-                "description":"Use when the user connects this conversation to an Actor selected in CCCC. Send the temporary pairing code from this conversation's CCCC setup message back to the same CCCC connector. Records a pending link and returns a receipt; it does not read workspace files or execute tasks. Reply with the receipt exactly as plain text: CCCC verifies it in the selected Actor's window before activating the link. Once verified, subsequent CCCC tool calls use that Actor's configured permissions. Available before pairing through the connector, not inside CCCC's cccc_code_exec. Follow ChatGPT's normal approval flow; report blocked or failed calls.",
+                "description":"Use when the user explicitly connects this conversation to an Actor selected in CCCC. Send its temporary setup code to the same CCCC connector. For a browser Actor, this records a pending link: reply with the receipt exactly as plain text for CCCC to verify in its window. For Dots, this pairs the fixed event Actor immediately; the result states routing_mode=mcp_events. Dot pairing only permits cccc_runtime_wait_next_turn; business tools need the execution credential returned by that claim. Does not read files or execute tasks. Available before pairing through the connector, not inside cccc_code_exec. Follow ChatGPT's normal approval flow; report blocked or failed calls.",
                 "inputSchema":{"type":"object","properties":{"code":{"type":"string","description":"Temporary CCCC pairing code generated for the selected Actor and supplied in this conversation's setup message. Expires after 10 minutes; send it only to the same CCCC instance's cccc_pair tool."}},"required":["code"],"additionalProperties":false},
                 "annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}
             }),
@@ -138,6 +138,34 @@ pub(super) async fn handle(state: &AppState, connector: &Value, request: &Value)
     };
     if name == "cccc_connector_status" {
         let binding = store::binding_for_session(connector, &session);
+        let dots = binding
+            .as_ref()
+            .is_some_and(|b| b["transport"] == "mcp_events");
+        if dots {
+            let binding = binding.as_ref().expect("paired Dot");
+            let args =
+                json!({"by":"user","group_id":binding["group_id"],"actor_id":binding["actor_id"]})
+                    .as_object()
+                    .expect("Dot status arguments")
+                    .clone();
+            return Some(
+                match super::web_model_delivery_completion::call(state, "dots_events_status", args)
+                    .await
+                {
+                    Ok(status) => result(
+                        request,
+                        json!({"routing_mode":"mcp_events","state":status["phase"],
+                    "paired":status["paired"],"group_id":binding["group_id"],"actor_id":binding["actor_id"]}),
+                        false,
+                    ),
+                    Err(_) => result(
+                        request,
+                        json!({"routing_mode":"mcp_events","state":"actor_unavailable"}),
+                        false,
+                    ),
+                },
+            );
+        }
         let available = binding.as_ref().is_some_and(|b| {
             let mut b = b.clone();
             b["connector_id"] = connector["connector_id"].clone();
@@ -157,9 +185,15 @@ pub(super) async fn handle(state: &AppState, connector: &Value, request: &Value)
             .await
         {
             Ok(mut pair) => {
-                pair["instructions"] = json!(
-                    "CCCC received the pairing code. Reply with the receipt field exactly as plain text so CCCC can verify it in the selected Actor's window and activate the link. This receipt alone does not grant workspace access. After verification, subsequent CCCC tool calls use that Actor's configured permissions. Wait for the next task message; no task execution is part of this setup. Follow ChatGPT's normal approval flow."
-                );
+                pair["instructions"] = if pair["routing_mode"] == "mcp_events" {
+                    json!(
+                        "This Dot conversation is paired with the selected CCCC Actor. No business task was claimed. Continue saving or updating the native event task from the setup instructions. Save a handler that calls cccc_runtime_wait_next_turn with {} and no literal credential. Pairing alone does not authorize business tools; use only the execution actor_token returned by a successful claim."
+                    )
+                } else {
+                    json!(
+                        "CCCC received the pairing code. Reply with the receipt field exactly as plain text so CCCC can verify it in the selected Actor's window and activate the link. This receipt alone does not grant workspace access. After verification, subsequent CCCC tool calls use that Actor's configured permissions. Wait for the next task message; no task execution is part of this setup. Follow ChatGPT's normal approval flow."
+                    )
+                };
                 result(request, pair, false)
             }
             Err(error) => result(request, json!({"error":error.to_string()}), true),

@@ -34,6 +34,7 @@ const state = (patch: Partial<DotsActorState> = {}) => ({
     actor_id: "dot",
     enabled: false,
     connected: false,
+    paired: Boolean(patch.subscribed),
     subscribed: false,
     phase: "unconfigured" as const,
     pending_count: 0,
@@ -84,6 +85,23 @@ const render = async (props: Partial<React.ComponentProps<typeof DotsActorPanel>
 };
 const button = (text: string) =>
   [...host.querySelectorAll("button")].find((b) => b.textContent === text)!;
+it("keeps Dot pairing setup visible when the native task subscribed before pairing", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: {
+      ...state({ connected: true, enabled: true, subscribed: true }).result,
+      paired: false,
+      phase: "waiting_pairing",
+      pending_count: 2,
+    },
+  });
+  await render();
+  expect(host.textContent).toContain("dotsActor.phases.waiting_pairing");
+  expect(host.textContent).toContain("dotsActor.setup.copyTitle");
+  expect(host.textContent).not.toContain("dotsActor.delivery.title");
+  expect(button("dotsActor.getInstructions").disabled).toBe(false);
+  expect(mocks.update).not.toHaveBeenCalled();
+});
 it("only reads on opening and keeps native task instructions in the accepted setup response", async () => {
   await render();
   expect(mocks.load).toHaveBeenCalledWith("g_a", "dot");
@@ -94,6 +112,91 @@ it("only reads on opening and keeps native task instructions in the accepted set
   expect(host.textContent).toContain("Create a native Work event task");
   await act(async () => button("dotsActor.copyInstructions").click());
   expect(mocks.copy).toHaveBeenCalledWith(expect.stringContaining("actor_token=synthetic-only"));
+});
+it.each([
+  [false, false, "waiting_pairing"],
+  [false, true, "waiting_pairing"],
+  [true, false, "waiting_subscription"],
+] as const)(
+  "keeps setup regeneration reachable after code expiry (paired=%s, subscribed=%s)",
+  async (paired, subscribed, phase) => {
+    mocks.load.mockResolvedValue(state({ connected: true, paired, subscribed, phase }));
+    mocks.update.mockResolvedValueOnce({
+      ok: true,
+      result: { instructions: "synthetic old setup" },
+    });
+    await render();
+    await act(async () => button("dotsActor.getInstructions").click());
+    await act(async () => button("dotsActor.copyInstructions").click());
+    expect(button("dotsActor.copied")).toBeDefined();
+    await act(async () => vi.advanceTimersByTimeAsync(10 * 60_000 + 1));
+    const regenerate = button("dotsActor.getInstructions");
+    expect(regenerate).toBeDefined();
+    expect(regenerate.disabled).toBe(false);
+    expect(mocks.update).toHaveBeenCalledOnce();
+    mocks.update.mockResolvedValueOnce({
+      ok: true,
+      result: { instructions: "synthetic fresh setup" },
+    });
+    await act(async () => regenerate.click());
+    expect(host.querySelector("textarea")!.value).toBe("synthetic fresh setup");
+    expect(button("dotsActor.copied")).toBeUndefined();
+    expect(mocks.update).toHaveBeenCalledTimes(2);
+    expect(mocks.update).toHaveBeenLastCalledWith("g_a", "dot", "connect", undefined);
+    await act(async () => button("dotsActor.copyInstructions").click());
+    expect(mocks.copy).toHaveBeenLastCalledWith("synthetic fresh setup");
+  },
+);
+it("blocks copying the old setup during regeneration and leaves failure recovery available", async () => {
+  mocks.load.mockResolvedValue(state({ connected: true, phase: "waiting_pairing" }));
+  mocks.update.mockResolvedValueOnce({ ok: true, result: { instructions: "synthetic old setup" } });
+  await render();
+  await act(async () => button("dotsActor.getInstructions").click());
+  const regenerate = button("dotsActor.getInstructions");
+  expect(regenerate).toBeDefined();
+  let finish!: (value: unknown) => void;
+  mocks.update.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+  await act(async () => regenerate.click());
+  expect(button("dotsActor.getInstructions").disabled).toBe(true);
+  expect(button("dotsActor.copyInstructions").disabled).toBe(true);
+  await act(async () => button("dotsActor.getInstructions").click());
+  expect(mocks.update).toHaveBeenCalledTimes(2);
+  await act(async () =>
+    finish({ ok: false, error: { message: "synthetic regeneration rejected" } }),
+  );
+  expect(host.querySelector('[role="alert"]')!.textContent).toBe("synthetic regeneration rejected");
+  expect(host.querySelector("textarea")!.value).toBe("synthetic old setup");
+  expect(button("dotsActor.getInstructions").disabled).toBe(false);
+  mocks.update.mockResolvedValueOnce({
+    ok: true,
+    result: { instructions: "synthetic recovered setup" },
+  });
+  await act(async () => button("dotsActor.getInstructions").click());
+  expect(host.querySelector("textarea")!.value).toBe("synthetic recovered setup");
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  expect(button("dotsActor.copyInstructions").disabled).toBe(false);
+});
+it("keeps task-update guidance reachable for an enabled Actor waiting for its Dot to claim", async () => {
+  mocks.load.mockResolvedValue(
+    state({
+      enabled: true,
+      connected: true,
+      subscribed: true,
+      phase: "delivered",
+      pending_count: 1,
+    }),
+  );
+  await render();
+  expect(mocks.update).not.toHaveBeenCalled();
+  expect(host.textContent).not.toContain("dotsActor.nativeStepPasteConfirm");
+  await act(async () => button("dotsActor.getInstructions").click());
+  expect(mocks.update).toHaveBeenCalledTimes(1);
+  expect(mocks.update).toHaveBeenCalledWith("g_a", "dot", "connect", undefined);
+  expect(host.textContent).toContain("dotsActor.nativeStepPasteConfirm");
+  expect(host.textContent).toContain("dotsActor.phases.delivered");
+  expect(button("dotsActor.disconnect").disabled).toBe(true);
+  await act(async () => button("dotsActor.copyInstructions").click());
+  expect(mocks.copy).toHaveBeenCalledWith(host.querySelector("textarea")!.value);
 });
 it("does not allow connection changes while CCCC access is enabled or unresolved work remains", async () => {
   mocks.load.mockResolvedValue(

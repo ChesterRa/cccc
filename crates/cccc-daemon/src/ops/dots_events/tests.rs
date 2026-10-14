@@ -65,10 +65,21 @@ impl Fixture {
             connector_id,
             subscription_token: String::new(),
         };
-        f.subscription_token = f.call("dots_events_connect", json!({}))["subscription_token"]
+        let setup = f.call("dots_events_connect", json!({}));
+        f.subscription_token = setup["subscription_token"]
             .as_str()
             .expect("subscription setup token")
             .to_owned();
+        let key = store::session_key(
+            &f.private(),
+            &json!({"openai/session":"synthetic-dot-session"}),
+        )
+        .expect("host session hash");
+        let paired = f.call(
+            "web_model_pairing_accept",
+            json!({"connector_id":f.connector_id,"code":setup["pairing_code"],"session_key":key}),
+        );
+        assert_eq!(paired["state"], "bound");
         f
     }
 
@@ -156,18 +167,18 @@ impl Fixture {
         .expect("owned execution credential")
     }
 
-    fn grant_capture(&self) -> Value {
-        store::dots_binding_for_token(
+    fn claim_capture(&self) -> Value {
+        let key = store::session_key(
             &self.private(),
-            &self.subscription_token,
-            "cccc_runtime_wait_next_turn",
+            &json!({"openai/session":"synthetic-dot-session"}),
         )
-        .expect("fixed Actor claim grant")
+        .expect("host session hash");
+        store::dots_claim_binding(&self.private(), &key).expect("paired Dot claim")
     }
 
     fn captured(&self, delivery: &Value, tool: &str) -> Value {
         if tool == "cccc_runtime_wait_next_turn" {
-            return self.grant_capture();
+            return self.claim_capture();
         }
         store::dots_binding_for_token(&self.private(), &self.wake_token(delivery), tool)
             .expect("valid execution credential")
@@ -187,6 +198,59 @@ impl Fixture {
             "status":"done","_cccc_web_binding":captured}),
         )
     }
+}
+
+#[test]
+fn dots_waits_for_explicit_pairing_and_duplicate_setup_does_not_interrupt_a_turn() {
+    let mut f = Fixture::default_enabled();
+    let setup = f.call("dots_events_connect", json!({}));
+    f.subscription_token = setup["subscription_token"]
+        .as_str()
+        .expect("subscription credential")
+        .to_owned();
+    f.start();
+    f.source("synthetic queued work before pairing");
+    let status = f.call("dots_events_status", json!({}));
+    assert_eq!(status["phase"], "waiting_pairing");
+    assert_eq!(status["paired"], false);
+    assert_eq!(status["subscribed"], true);
+    assert!(
+        f.delivery().is_null(),
+        "subscription alone must not send work to an unpaired conversation"
+    );
+    let key = store::session_key(
+        &f.private(),
+        &json!({"openai/session":"synthetic-dot-session"}),
+    )
+    .expect("host key");
+    let args =
+        json!({"connector_id":f.connector_id,"code":setup["pairing_code"],"session_key":key});
+    let before = super::super::runtime_state::actor_state(&f.home, &f.group.group_id, "dot")
+        .expect("runtime state");
+    let pair = f.call("web_model_pairing_accept", args.clone());
+    assert_eq!(pair["state"], "bound");
+    assert_eq!(pair["routing_mode"], "mcp_events");
+    assert_eq!(
+        super::super::runtime_state::actor_state(&f.home, &f.group.group_id, "dot")
+            .expect("after pairing"),
+        before
+    );
+    assert_eq!(f.call("dots_events_status", json!({}))["paired"], true);
+    f.delivery();
+    let packet = f.claim(&f.claim_capture());
+    assert_eq!(packet["status"], "work_available");
+    let state_before = f.private();
+    assert_eq!(f.call("web_model_pairing_accept", args)["state"], "bound");
+    assert!(
+        f.private() == state_before,
+        "duplicate pairing must not alter active work"
+    );
+    let wrong = f.response("web_model_pairing_accept", json!({"connector_id":f.connector_id,"code":setup["pairing_code"],"session_key":"other-session"}));
+    assert!(
+        !wrong.ok,
+        "a used setup code cannot pair a different conversation"
+    );
+    assert!(f.private() == state_before);
 }
 
 #[test]
@@ -236,7 +300,7 @@ fn dots_connect_accepts_default_enabled_actor_after_observational_status() {
     );
     assert_eq!(
         f.call("dots_events_status", json!({}))["phase"],
-        "waiting_subscription"
+        "waiting_pairing"
     );
     assert!(
         groups
@@ -348,7 +412,7 @@ fn dots_connect_requires_unfinished_turn_resolution_and_disconnect_still_require
     f.start();
     f.source("accepted work remains owned while connection controls are used");
     let delivery = f.delivery();
-    let turn = f.claim(&f.grant_capture())["turn"].clone();
+    let turn = f.claim(&f.claim_capture())["turn"].clone();
     let live = f.captured(&delivery, "cccc_runtime_complete_turn");
     let before = f.private();
     let refused = f.response("dots_events_connect", json!({}));
@@ -469,7 +533,7 @@ fn dots_claim_handshake_returns_execution_credential_only_to_the_first_owner() {
     );
     assert_eq!(data.as_object().expect("event data").len(), 1);
     assert_eq!(data["event_id"], delivery["event_id"]);
-    let captured = f.grant_capture();
+    let captured = f.claim_capture();
     assert_eq!(captured["dots_stage"], "claim");
     assert!(!f.response("message_send", json!({"by":"dot","to":["user"],"text":"forbidden fixed-grant business","_cccc_web_binding":captured})).ok);
 
@@ -488,7 +552,7 @@ fn dots_claim_handshake_returns_execution_credential_only_to_the_first_owner() {
         .expect("claimed task authority");
     assert_eq!(live["dots_stage"], "execution");
     assert_eq!(live["dots_turn_id"], claimed["turn"]["turn_id"]);
-    for duplicate in [f.claim(&captured), f.claim(&f.grant_capture())] {
+    for duplicate in [f.claim(&captured), f.claim(&f.claim_capture())] {
         assert_eq!(duplicate["status"], "turn_in_progress");
         assert_eq!(duplicate["turn"], Value::Null);
         assert!(duplicate.get("actor_token").is_none());
@@ -515,7 +579,7 @@ fn dots_claim_handshake_returns_execution_credential_only_to_the_first_owner() {
 fn dots_claim_without_a_wake_is_idle_and_cannot_borrow_a_later_wake() {
     let f = Fixture::new();
     f.start();
-    let idle_capture = f.grant_capture();
+    let idle_capture = f.claim_capture();
     assert_eq!(idle_capture["dots_wake_id"], Value::Null);
     let idle = f.claim(&idle_capture);
     assert_eq!(idle["status"], "idle");
@@ -531,7 +595,7 @@ fn dots_claim_without_a_wake_is_idle_and_cannot_borrow_a_later_wake() {
         )
         .ok
     );
-    let fresh = f.claim(&f.grant_capture());
+    let fresh = f.claim(&f.claim_capture());
     assert_eq!(fresh["status"], "work_available");
     assert!(fresh["actor_token"].is_string());
 }
@@ -596,7 +660,7 @@ fn dots_stop_start_fences_late_work_and_requires_explicit_resolution_without_rep
     f.start();
     f.source("accepted original input");
     let delivery = f.delivery();
-    let original_claim = f.grant_capture();
+    let original_claim = f.claim_capture();
     let turn = f.claim(&original_claim)["turn"].clone();
     let live = f.captured(&delivery, "cccc_runtime_complete_turn");
     let subscription = f.private()["dots"]["subscription"].clone();
@@ -612,7 +676,7 @@ fn dots_stop_start_fences_late_work_and_requires_explicit_resolution_without_rep
         )
         .ok
     );
-    let busy = f.claim(&f.grant_capture());
+    let busy = f.claim(&f.claim_capture());
     assert_eq!(busy["status"], "turn_in_progress");
     assert_eq!(busy["turn"], Value::Null);
     assert!(busy.get("actor_token").is_none());
@@ -758,7 +822,7 @@ fn dots_restart_with_missing_execution_projection_keeps_turn_and_user_can_resolv
     })
     .expect("simulate crash between durable stores");
     assert!(f.delivery().is_null());
-    let blocked = f.claim(&f.grant_capture());
+    let blocked = f.claim(&f.claim_capture());
     assert_eq!(blocked["status"], "turn_in_progress");
     assert_eq!(blocked["turn"], Value::Null);
     assert!(blocked.get("actor_token").is_none());
@@ -794,7 +858,7 @@ fn dots_permanent_callback_failures_do_not_retry_and_stop_start_only_rewakes_una
         })
         .expect("advance owned failure fixture");
         assert!(f.delivery().is_null());
-        let failed_wake = f.claim(&f.grant_capture());
+        let failed_wake = f.claim(&f.claim_capture());
         assert_eq!(failed_wake["status"], "idle");
         assert_eq!(failed_wake["turn"], Value::Null);
         assert!(failed_wake.get("actor_token").is_none());
@@ -924,7 +988,7 @@ fn dots_partial_admission_crash_resolution_does_not_replay_claimed_source() {
         Ok(())
     })
     .expect("simulate crash immediately before accepted delivery commit");
-    let blocked = f.claim(&f.grant_capture());
+    let blocked = f.claim(&f.claim_capture());
     assert_eq!(blocked["status"], "turn_in_progress");
     assert_eq!(blocked["turn"], Value::Null);
     assert!(blocked.get("actor_token").is_none());

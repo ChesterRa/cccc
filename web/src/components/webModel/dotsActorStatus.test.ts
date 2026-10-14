@@ -8,6 +8,7 @@ const state = (patch: Partial<DotsActorState>): DotsActorState => ({
   enabled: true,
   connected: true,
   subscribed: true,
+  paired: true,
   phase: "ready",
   pending_count: 0,
   ...patch,

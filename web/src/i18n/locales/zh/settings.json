@@ -1829,10 +1829,10 @@
     "createHint": "保存后，在此 Actor 的主面板中连接 Dots 原生事件任务。同一 ChatGPT 账号复用现有 CCCC 插件，无需打开 CCCC 浏览器登录窗口。一个 Dot 只连接一个 Actor。",
     "connect": "连接 Dots",
     "getInstructions": "获取设置说明",
-    "connectHint": "如果你的 ChatGPT 账号尚未安装并连接 CCCC 插件，请先打开共享 ChatGPT 设置。升级 CCCC 后，请在插件设置中选择 Refresh tools。然后连接此 Actor，将说明复制到 Dots，并确认保存原生事件触发的任务。",
+    "connectHint": "如果 ChatGPT 账号尚未连接 CCCC 插件，请先完成共享 ChatGPT 设置。升级 CCCC 后刷新插件工具。将设置说明复制到你的 Dot，为此 Actor 配对并保存原生事件任务。",
     "nativeStepCopy": "复制下方的设置说明。",
-    "nativeStepPasteConfirm": "打开 Dots，粘贴说明，并确认保存 Dots 原生事件触发的任务。只发送普通聊天消息不会创建任务。",
-    "nativeStepObserve": "返回这里，CCCC 会自动检测订阅。如果 CCCC 访问已暂停，连接任务后再恢复访问。",
+    "nativeStepPasteConfirm": "粘贴到你的 Dot，完成配对并保存原生事件任务。已有任务请更新，不要重复创建；聊天回复不代表任务已经保存。",
+    "nativeStepObserve": "返回这里，CCCC 会自动检查配对和订阅。设置完成后，如果 CCCC 访问已暂停，请恢复访问。",
     "adminSetup": "需要管理员将此 Actor 连接到 Dots 原生任务。",
     "adminStatus": "连接由管理员管理",
     "adminManaged": "此 Actor 的 Dots 连接和任务状态由管理员管理。",
@@ -1840,7 +1840,7 @@
     "sharedSettings": "共享 ChatGPT 设置",
     "connectionSettings": "连接设置",
     "openDots": "打开 Dots ↗",
-    "instructions": "在 Dots 中创建原生事件触发的任务",
+    "instructions": "Dots 设置说明",
     "copyInstructions": "复制设置说明",
     "copied": "已复制",
     "pauseBeforeChanging": "修改连接前，请先暂停 CCCC 访问。",
@@ -1855,6 +1855,7 @@
     "executionError": "投递需要处理，请在 Dots 中检查任务。",
     "phases": {
       "unconfigured": "尚未连接",
+      "waiting_pairing": "等待 Dot 配对",
       "waiting_subscription": "等待原生事件任务连接",
       "ready": "可接收任务",
       "delivering": "正在发送事件",
@@ -1914,7 +1915,7 @@
     },
     "settings": {
       "instructions": "设置说明",
-      "instructionsHint": "在 Dots 中恢复或重建原生任务时使用。",
+      "instructionsHint": "重新获取说明以完成配对或更新已有原生事件任务。排队消息会保留。",
       "shared": "共享 ChatGPT 连接器",
       "sharedHint": "Dots 与 ChatGPT Web Model Actor 共用同一个 CCCC 插件。",
       "disconnectHint": "先暂停 CCCC 访问并结清未完成的任务；Dots 中的原生任务需另外停用。"
@@ -1927,11 +1928,11 @@
       "creatingConnector": "正在创建…",
       "pluginTitle": "连接 CCCC 插件",
       "copyTitle": "复制设置说明，粘贴给你的 Dot",
-      "waitTitle": "等待 CCCC 检测到订阅",
+      "waitTitle": "等待配对和订阅完成",
       "tipsTitle": "Dot 说保存失败？",
       "tipRefresh": "在 ChatGPT 插件设置里对 CCCC 选择 Refresh tools，再让 Dot 重试。",
       "tipPermissions": "确认已允许 CCCC 插件领取、回复和完成任务。",
-      "tipRetry": "Dot 只回复“已设置”不算完成；CCCC 检测到订阅后，这里才会变成可接收任务。"
+      "tipRetry": "聊天中的确认不算完成；CCCC 必须检测到配对和订阅都已完成，这个 Actor 才能接收任务。"
     }
   },
   "dotsSettings": {
@@ -1949,10 +1950,19 @@
     "actorReadFailed": "暂时无法读取此 Actor 的状态。下面显示的是最后一次确认的状态，会自动重试。",
     "noActor": "还没有绑定 Dots Actor。创建运行时为 ChatGPT Dots 的 Actor，并在它的主面板中连接。",
     "actorGroup": "工作组 {{group}}",
-    "diagnostics": "订阅诊断",
-    "diagnosticsHint": "最近 10 次订阅 / 取消订阅的结果，最新的在前。只记录原因代码，不记录凭据和回调地址。",
-    "noCalls": "还没有订阅记录。",
-    "callOk": "成功",
-    "callFailed": "失败 · {{reason}}"
+    "diagnostics": "共用插件诊断",
+    "diagnosticsHint": "最近 10 次订阅和任务工具调用结果，最新的在前。插件也服务普通 ChatGPT Actor，这些记录不全属于当前 Dot。只保留原因代码，不记录凭据或调用参数。",
+    "noCalls": "还没有调用记录。",
+    "callOk": "调用成功",
+    "callFailed": "失败 · {{reason}}",
+    "reasons": {
+      "pairingExpired": "为目标 Actor 获取新的设置说明，并在 10 分钟内使用其中的配对码。",
+      "bindingChanged": "先核对目标 Actor 及其当前连接，再获取新的设置说明。",
+      "conversationUnpaired": "请使用已配对的会话。如果 Actor 已配对，但同一个 Dot 仍被拒绝，请暂停其 CCCC 访问，再明确断开并重新连接。",
+      "executionToken": "刷新插件工具，用最新设置说明更新已有原生任务。任务工具只使用领取返回的执行凭据。",
+      "actorStopped": "如需接收任务，请恢复目标 Actor 的 CCCC 访问。",
+      "refreshTools": "在 ChatGPT 中刷新 CCCC 插件工具，并核对最新设置说明。",
+      "callFailed": "重试前查看 ChatGPT 报告的具体失败调用；仅凭此记录不能判断任务是否已经完成。"
+    }
   }
 }

@@ -9,7 +9,7 @@ pub(super) fn claim(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .ok_or_else(|| {
             OpError::new(
                 "permission_denied",
-                "A current Dots Actor claim grant is required",
+                "A current paired Dots session is required",
             )
         })?;
     if string_arg(request, "by").as_deref() != Some(actor.id.as_str()) {
@@ -21,7 +21,7 @@ pub(super) fn claim(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if captured["dots_stage"] != "claim" {
         return Err(OpError::new(
             "permission_denied",
-            "Dots work requires its fixed Actor claim grant",
+            "Dots work requires its paired session's claim authority",
         ));
     }
     let id = captured["connector_id"]
@@ -40,6 +40,8 @@ pub(super) fn claim(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             return Err(denied("dots_binding_changed"));
         };
         if route["revision"] != captured["revision"]
+            || route["session_key"].as_str().is_none_or(str::is_empty)
+            || route["session_key"] != captured["session_key"]
             || c["dots"]["epoch"] != captured["dots_epoch"]
             || c["dots"]["wake"]["event_id"] != *captured_wake
         {
