@@ -89,13 +89,20 @@ pub(super) fn require_group(request: &DaemonRequest, group_id: &str) -> Result<(
 }
 
 fn require_reference(request: &DaemonRequest, profile: &Value) -> Result<(), OpError> {
-    for (args, field) in [
-        (["profile_scope", "scope"], "scope"),
-        (["profile_owner", "owner_id"], "owner_id"),
+    // Legacy records predate stored identity fields; read them with the same
+    // defaults as listing and lookup (global, no owner), so explicit references
+    // to them resolve while other scopes and owners still do not match.
+    for (args, field, default) in [
+        (["profile_scope", "scope"], "scope", "global"),
+        (["profile_owner", "owner_id"], "owner_id", ""),
     ] {
         if let Some(expected) = args.iter().find_map(|arg| string_arg(request, arg))
             && !expected.is_empty()
-            && profile.get(field).and_then(Value::as_str) != Some(expected.as_str())
+            && profile
+                .get(field)
+                .and_then(Value::as_str)
+                .unwrap_or(default)
+                != expected
         {
             return Err(OpError::new("profile_not_found", "profile not found"));
         }

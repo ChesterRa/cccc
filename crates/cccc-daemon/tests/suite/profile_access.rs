@@ -501,3 +501,49 @@ fn secretary_profile_secret_copy_is_admin_only_and_keeps_voice_identities_separa
         Some("secretary-fixture")
     );
 }
+
+#[test]
+fn legacy_profile_without_identity_fields_is_addressable_as_global_and_deletable() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let gid =
+        call(&home, "group_create", json!({"title":"G","by":"user"})).result["group"]["group_id"]
+            .as_str()
+            .expect("group")
+            .to_owned();
+    // A record from before scope/owner_id were stored: keyed by its bare id.
+    let path = home.root().join("state/actor_profiles/profiles.json");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+    std::fs::write(
+        &path,
+        json!({"profiles":{"legacy":{"id":"legacy","name":"Legacy","runtime":"claude",
+            "command":["claude"],"submit":"enter","runner":"pty","revision":2,"env":{}}}})
+        .to_string(),
+    )
+    .expect("legacy fixture");
+    call(&home, "group_stop", json!({"group_id":gid,"by":"user"}));
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":gid,"actor_id":"linked","profile_id":"legacy","enabled":false,"by":"user"}),
+    );
+    let global = json!({"profile_id":"legacy","profile_scope":"global","profile_owner":""});
+
+    // The Web UI addresses every listed global profile with an explicit scope.
+    let read = call(&home, "actor_profile_get", global.clone());
+    assert_eq!(read.result["profile"]["id"], "legacy");
+    // Another identity with the same id still does not resolve to it.
+    let other = raw_call(
+        &home,
+        "actor_profile_get",
+        json!({"profile_id":"legacy","profile_scope":"user","profile_owner":"user-a"}),
+    );
+    assert!(!other.ok);
+
+    let in_use = raw_call(&home, "actor_profile_delete", global.clone());
+    assert_eq!(in_use.error.expect("in use").code, "profile_in_use");
+    let mut forced = global.as_object().cloned().expect("args");
+    forced.insert("force_detach".into(), json!(true));
+    call(&home, "actor_profile_delete", Value::Object(forced));
+    assert!(!raw_call(&home, "actor_profile_get", global).ok);
+}
