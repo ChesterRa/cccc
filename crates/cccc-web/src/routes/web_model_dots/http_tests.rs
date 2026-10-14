@@ -441,10 +441,10 @@ async fn paired_dot_status_waits_for_subscription_without_creating_work() {
     );
     assert_eq!(response["result"]["structuredContent"]["paired"], true);
     assert!(fixture.connector()["dots"] == before);
-    assert_eq!(
-        std::fs::read(groups.ledger_path(&fixture.group_id).expect("ledger"))
-            .expect("after status"),
-        ledger_before
+    assert_only_background_activity_appended(
+        &groups.ledger_path(&fixture.group_id).expect("ledger"),
+        &ledger_before,
+        "reading connector status",
     );
     fixture.close().await;
 }
@@ -586,10 +586,10 @@ async fn paired_dot_claims_successive_turns_without_saved_credentials_or_event_p
         "mcp_events"
     );
     assert!(fixture.connector()["dots"]["execution"].is_null());
-    assert_eq!(
-        std::fs::read(store.ledger_path(&fixture.group_id).expect("ledger"))
-            .expect("after pairing"),
-        ledger_before
+    assert_only_background_activity_appended(
+        &store.ledger_path(&fixture.group_id).expect("ledger"),
+        &ledger_before,
+        "pairing",
     );
     for tool in [
         "cccc_help",
@@ -685,10 +685,10 @@ async fn paired_dot_claims_successive_turns_without_saved_credentials_or_event_p
                 .contains("wm_pair_")
         );
         assert!(fixture.connector()["dots"] == before);
-        assert_eq!(
-            std::fs::read(store.ledger_path(&fixture.group_id).expect("ledger"))
-                .expect("ledger bytes"),
-            ledger_before
+        assert_only_background_activity_appended(
+            &store.ledger_path(&fixture.group_id).expect("ledger"),
+            &ledger_before,
+            "restoring instructions",
         );
         // Load the handler afresh for every independent run; never inject the
         // private connector's subscription arguments into the runtime context.
@@ -1327,4 +1327,26 @@ async fn one_click_create_refuses_to_rotate_an_existing_connector() {
     // The credential already added to ChatGPT keeps working.
     assert_eq!(fixture.connector()["secret_hash"], before);
     fixture.close().await;
+}
+
+/// The operation under test writes nothing to the ledger. The daemon's
+/// once-a-second activity publisher may still project running Actors into the
+/// window, so only its `actor.activity` lines may follow the snapshot.
+fn assert_only_background_activity_appended(
+    path: &std::path::Path,
+    before: &[u8],
+    operation: &str,
+) {
+    let after = std::fs::read(path).expect("ledger bytes");
+    let appended = after
+        .strip_prefix(before)
+        .unwrap_or_else(|| panic!("{operation} must not rewrite the ledger"));
+    for line in String::from_utf8_lossy(appended).lines() {
+        let event: Event = serde_json::from_str(line).expect("ledger event");
+        assert!(
+            event.kind == "actor.activity" && event.by == "system",
+            "{operation} must not write {}",
+            event.kind
+        );
+    }
 }
