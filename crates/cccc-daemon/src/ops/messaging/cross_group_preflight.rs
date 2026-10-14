@@ -44,6 +44,7 @@ pub(super) fn upload(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::not_found)?;
     let mut data = super::upload_preflight_data(request);
     data.remove("dst_group_id");
+    super::message_validation::normalize_scope(&destination, &mut data)?;
     crate::ops::messaging_recipients::apply_cross_group_recipient(&destination, &mut data)?;
     crate::ops::messaging_recipients::normalize_chat_preflight(
         &destination,
@@ -80,6 +81,8 @@ pub(super) fn send_files(
         return super::send_cross_group(home, &forwarded);
     }
     let mut check = forwarded.clone();
+    // File paths belong to the source scope, not the receiving message scope.
+    check.args.remove("path");
     check.args.insert("has_attachments".into(), json!(true));
     upload(home, &check)?;
     let files = super::files::read(group, paths, super::cross_group_attachments::MAX_BYTES)?;

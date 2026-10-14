@@ -6,8 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.43]
+
 ### Added
 
+- Local cross-Group file and image attachments through Web uploads and MCP `cccc_file_send`, with a 100 MiB combined limit. Validate source bytes, scope and destination placement before ledger writes, preserve the accepted content on interrupted relay retries, and retain both Groups' reply references and obligations.
+- ChatGPT Dots through native MCP Events and the shared ChatGPT connector: explicit conversation pairing, persistent event subscriptions, credential-free saved handlers, per-turn execution authority and exact completion receipts. Actor and settings views provide setup, instruction regeneration, delivery stages and bounded safe diagnostics; callbacks support configured proxies. Dots does not use browser message delivery.
 - Runtime Profile summaries distinguish native TUI, ACP and Pi RPC. OpenCode and Kilo expose their existing New session action in the Actor pane.
 - Pi official RPC support across Actors, Runtime Profiles, Voice Analyst and Voice Secretary, with session-local MCP, verified resume, precise cancellation and explicit extension interactions. Pi requires 1.1.0 or newer and has a structured workspace rather than a native terminal attachment.
 - Optional official ACP modes for Kimi Code, Auggie, Kiro V3, Hermes and Droid, sharing the existing managed lifecycle and Voice adapters while retaining native TUI defaults. Model and permission settings apply on new and resumed sessions; saved settings do not change a running surface before restart. Hermes cancellation retires its process while retaining the conversation, preventing interrupted input from being replayed into a subsequent task.
@@ -20,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Changed
 
+- Improve mobile Presentation navigation, slot selection and Standard/Enhanced previews; follow the visual viewport for overlays, coalesce terminal resize requests, and normalize composer slash commands and attachment chips.
 - Share labelled controls, compact page layouts and save actions across settings pages. The settings menu groups appearance and presentation controls and provides an explicit All settings entry.
 - Notify idle managed Actors immediately when concrete Mail is written, preserving the configured disable switches and ordinary delay for busy or unknown states. Broadcast Mail does not accelerate other pending Mail, and Mail consumption remains explicit.
 - Simplify the Group header and sidebar, and give terminal panels full-height columns with fewer simultaneous panels on narrow screens.
@@ -31,6 +36,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- Ignore the obsolete per-Group Secretary enable flag for recording, preserving lease ownership and Group permissions. Reject invalid destination scopes and unreadable or content-mismatched existing blobs before recording a cross-Group send; existing files are not overwritten.
+- Keep Dots pairing codes valid across pause/resume until their ten-minute expiry, retain instruction regeneration while setup is incomplete, and revalidate captured authority before pending local-tool side effects. Older saved cloud tasks require the current handler; upgrading CCCC does not silently rewrite them.
+- Preserve restored Actor-start facts and process-exit diagnostics; settle managed failures and cancellations exactly once. Replayed historical failures cannot replace newer daemon state, while matching late stop events still clear terminated streaming output.
+- Read and edit Profiles with missing stored scope/owner fields using the established defaults, and validate private-environment copy sources independently of their targets, including the Web selectors.
 - Correct Hermes native MCP setup argument order and confirmations, and verify the saved entry is enabled before reporting success. ACP startup and prompt errors identify the failed request and retain bounded, redacted Hermes diagnostic details.
 - Keep Kiro V3 ACP authentication with its native CLI login. Surface unconfirmed ACP prompt submission errors in the Actor execution record with safe diagnostics and RPC codes, preserving ambiguous delivery and preventing automatic replay.
 - Keep Guidance reads and mutations tied to their original Group, and constrain expanded-editor keyboard focus to its own dialog. Connector setup checks the configured Web address before creation, warns for known local HTTPS addresses and does not claim verified connectivity.

@@ -190,6 +190,22 @@ keyboard focus into it; closing it returns focus to the Voice options button.
 Transcription and prompt-processing status appear above the input instead of
 competing with action buttons. The wider-screen controls remain inline.
 
+## Codex Voice provider connection
+
+Codex Voice is experimental. Its call connection currently reads a local Codex
+ChatGPT login from `CODEX_HOME/auth.json` (by default `~/.codex/auth.json`) or
+`CCCC_CODEX_AUTH_PATH`, then connects to ChatGPT's Codex realtime backend
+(default base URL: `https://chatgpt.com/backend-api/codex`). The call connection
+and the separate Voice Analyst have different configuration: choosing an
+Analyst Runtime does not configure the call provider.
+
+This is distinct from the [public OpenAI Realtime API](https://developers.openai.com/api/docs/guides/realtime).
+An API key or API credits alone do not configure the current call path. Call
+availability and compatibility depend on the configured ChatGPT account and
+provider backend. See the [provider implementation](https://github.com/ChesterRa/cccc/blob/main/crates/cccc-daemon/src/ops/codex_voice_controller/provider.rs)
+for the current connection, rather than treating this feature as a public
+Realtime API integration.
+
 ## Workspace modes
 
 **Prompt** works in the composer. By default, recording adds recognized text
@@ -506,20 +522,24 @@ sidecar. Semantic input is appended to the daemon-owned durable input log before
 the daemon records the corresponding ledger event and global task. A task fixes
 its Group, scope and document/request identity at acceptance. Retrying the same
 append returns the same task, including an unconfirmed outcome. The task-bound
-MCP tool supplies context and accepts the terminal business result. The model
-incrementally edits a document working copy; the daemon alone checks its original
-registration/base digest and atomically commits the original. A conflict retains
-the candidate without replacing newer user work. A → B → A uses independent
-processes and threads, never a shared cross-Group model context.
+MCP tool supplies context and accepts the terminal business result. Through that
+tool, the model edits a document working copy and the daemon checks its original
+registration/base digest before atomically committing the original. A conflict
+retains the candidate without replacing newer user work. Native tools retain the
+Runtime's own permissions; working copies do not provide a filesystem sandbox.
+A → B → A supplies fresh task targets to the same resident process and conversation.
+Shared model history is not a Group confidentiality boundary.
 
-The **Secretary tasks** section in the existing workspace shows this Group's
+The **Recent tasks** list in the existing workspace shows this Group's
 queued, processing, needs-information, conflict, failed and unconfirmed tasks.
-Cancel retains source input and does not stop recording. Needs-information work
-releases its process before asking for a follow-up. Explicit continuation starts
-a new task; uncertain outcomes require review and confirmation. Document
-candidates can be reviewed/copied through the ordinary editor, not auto-merged.
-A document lane and a separate Ask/Prompt lane keep long document work from
-blocking interactive requests; no idle processes are retained.
+Cancel retains source input and does not stop recording. A normal clarification
+followed by a confirmed provider turn end releases the execution position while
+retaining the healthy shared session. Blocking Runtime approval requests close
+the session before another task can run. Use the task's continuation and retry
+controls; uncertain outcomes remain visible for review. Document candidates can
+be reviewed/copied through the ordinary editor, not auto-merged. All task kinds
+run serially, so long document work may delay Ask/Prompt. Idle time alone does
+not close the resident process; hiding the workspace does not stop it either.
 Archived documents are retained in durable state but omitted from the working
 document projection. Archiving the current document selects the most recently
 updated remaining active document, or clears the active target when none remain.

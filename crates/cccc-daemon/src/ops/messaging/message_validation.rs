@@ -15,7 +15,10 @@ pub(super) fn normalize(
     Ok(())
 }
 
-fn normalize_scope(group: &GroupDoc, data: &mut Map<String, Value>) -> Result<(), OpError> {
+pub(super) fn normalize_scope(
+    group: &GroupDoc,
+    data: &mut Map<String, Value>,
+) -> Result<(), OpError> {
     let Some(raw) = data
         .get("path")
         .and_then(Value::as_str)

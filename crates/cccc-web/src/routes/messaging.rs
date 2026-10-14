@@ -221,7 +221,11 @@ async fn upload(
             {
                 uploaded_bytes = uploaded_bytes.saturating_add(chunk.len());
                 if uploaded_bytes > MAX_LOCAL_UPLOAD_BYTES {
-                    return Err(ApiError::bad("attachments exceed 100 MiB in total"));
+                    return Err(ApiError::bad_code(
+                        "attachment_too_large",
+                        "attachments exceed 100 MiB in total",
+                        json!({}),
+                    ));
                 }
                 upload
                     .write_chunk(&chunk)

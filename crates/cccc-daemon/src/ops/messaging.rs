@@ -204,6 +204,9 @@ fn send_cross_group_with_reply(
     }
     delivery_data.remove("dst_group_id");
     delivery_data.remove("to_group_id");
+    // The destination's normal send must not reject its scope after the source
+    // audit has already been recorded. Blob references are placed below.
+    message_validation::normalize_scope(&destination, &mut delivery_data)?;
     // A relay retry re-verifies from the accepted source event's records.
     let attachments = cross_group_attachments::verify(home, &source.group_id, &mut delivery_data)?;
     super::messaging_recipients::apply_cross_group_recipient(&destination, &mut delivery_data)?;

@@ -183,6 +183,7 @@
   "selectGroupFirst": "先にグループを選択してください。",
   "busy": "ビジー。",
   "attachFile": "ファイルを添付",
+  "attachmentsTooLarge": "添付ファイルの合計サイズが上限を超えています。サイズを減らして再送してください。",
   "removeAttachment": "添付ファイルを削除 {{name}}",
   "builtInAssistantsArea": "組み込みアシスタント",
   "builtInAssistantsTitle": "アシスタント",

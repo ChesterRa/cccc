@@ -43,7 +43,17 @@ pub(super) fn verify(
         let name = path.strip_prefix("state/blobs/").unwrap_or(path).to_owned();
         let source = cccc_core::blobs::resolve(home, source_group_id, &name)
             .map_err(|error| invalid(&error.to_string()))?;
+        if std::fs::metadata(&source).map_err(OpError::io)?.len() > MAX_BYTES.saturating_sub(total)
+        {
+            return Err(OpError::new(
+                "attachment_too_large",
+                "attachments exceed 100 MiB in total",
+            ));
+        }
         let (sha256, bytes) = cccc_core::blobs::digest_file(&source).map_err(OpError::io)?;
+        if !name[..64].eq_ignore_ascii_case(&sha256) {
+            return Err(invalid("stored attachment contents do not match its name"));
+        }
         if object
             .get("sha256")
             .and_then(Value::as_str)

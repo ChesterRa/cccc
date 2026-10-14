@@ -3852,22 +3852,36 @@ Result:
 { group_id: string; actor_id: string; keys: string[] }
 ```
 
-### 8.5 Actor Profiles (Global)
+### 8.5 Actor Profiles
 
-Actor Profiles are global reusable runtime profiles stored under `CCCC_HOME/state/actor_profiles/`.
-They are not group-local settings.
+Actor Profiles are reusable runtime profiles stored under `CCCC_HOME/state/actor_profiles/`.
+They are not group-local settings. A Profile's identity is `(scope, owner_id, id)`:
+`scope: "global"` has an empty owner; `scope: "user"` requires an owner.
+Global Profiles are readable by users and writable by administrators; user Profiles
+are readable and writable by their owner or an administrator.
+
+Operations addressing a Profile accept `profile_scope?: "global" | "user"` and
+`profile_owner?: string` (aliases: `scope` and `owner_id`), defaulting to `"global"`
+and `""`. Records lacking these stored fields have the same default identity;
+an explicit global reference must work for reads, secret operations, updates and
+deletion. Saving such a record stores its effective identity without creating a
+second Profile or changing its secrets. A different scope or owner identifies a
+different Profile, even when the `id` is the same.
 
 #### `actor_profile_list`
 
 Args:
 ```ts
-{ by?: string }
+{ by?: string; view?: "global" | "my" | "accessible" | "all" }
 ```
 
 Result:
 ```ts
 { profiles: Array<Record<string, unknown>> } // each profile includes usage_count
 ```
+
+`view` defaults to `"global"`; `"my"` lists the caller's user Profiles,
+`"accessible"` lists global and caller-owned Profiles, and `"all"` is administrator-only.
 
 #### `actor_profile_get`
 
@@ -3900,6 +3914,8 @@ Args:
   profile: {
     id?: string
     name: string
+    scope?: "global" | "user"
+    owner_id?: string
     runtime: string
     runtime_mode?: "default" | "acp"
     command?: string[] | string
@@ -3916,6 +3932,7 @@ Args:
 ```
 
 Notes:
+- Updates preserve the existing Profile's effective scope and owner; explicitly supplying the same default identity for an older record is not an identity change. Writes still require the corresponding owner or administrator permission and honor `expected_revision`.
 - Runtime variables are unified as profile secrets (`actor_profile_secret_*`).
 - `profile.env` is accepted only as a legacy bridge and migrated into profile secrets; stored profile `env` is kept empty.
 - `command` accepts the historical shell-command string for compatibility, but successful writes normalize it to a `string[]`. Readers must continue to accept an existing string until that profile is saved again.
@@ -4008,9 +4025,16 @@ Args:
 {
   profile_id: string
   source_profile_id: string
+  source_profile_scope?: "global" | "user" // default global
+  source_profile_owner?: string           // default empty
   by?: string
 }
 ```
+
+The target requires write access and the source requires read access, each checked
+against its own Profile identity. Reject an inaccessible source before changing
+the target's secret map. Source selectors also accept `source_scope` and
+`source_owner_id`, matching the existing Web copy request.
 
 Result:
 ```ts
@@ -4194,6 +4218,8 @@ cross-group copy lacks its far copy is handled the same way. A `reply` routed ba
 cross-group origin is validated as that cross-group send. Connect reply uploads use the canonical reply authorization. The HTTP port MUST discard its staged files on rejection
 or duplicate replay. The eventual operation MUST validate again at the commit
 boundary; preflight is not a reservation.
+For a cross-group duplicate, `result` is the underlying cross-group send or
+reply receipt, including its source and destination ledger events.
 
 #### `send_files`
 
@@ -4201,11 +4227,15 @@ Store one or more files from the group's active scope in the group blob store,
 then append one `chat.message` carrying those files as attachments. This is the
 daemon-owned upload boundary for SDK clients; callers MUST NOT write directly
 to `state/blobs/` or manufacture attachment records.
+With `dst_group_id`, send those files to another Group on this instance through
+the existing `send_cross_group` path. CCCC Connect uses `connect_send_files`
+instead; `dst_instance_id` is not a selector for this operation.
 
 Args:
 ```ts
 {
   group_id: string
+  dst_group_id?: string         // another local Group; omitted means same-Group send
   paths: string[]               // absolute, or relative to the active scope root
   text?: string                 // defaults to a compact file notice
   by?: string
@@ -4225,6 +4255,14 @@ have been validated and read, deterministic normal-send validation (including
 message mode, recipients, and required peer insight) MUST succeed before any new
 blob is stored. A request rejected by that preflight MUST NOT add a blob or
 ledger event.
+For a cross-group send, the combined files MUST fit the 100 MiB cross-group
+limit. Destination and recipient preflight precedes source reads and blob
+storage. Source file paths do not select a destination workspace. An accepted
+retry MUST use the saved source record without rereading source files; if the
+destination copy is missing, it completes that copy rather than returning a
+premature duplicate. The receipt is the `send_cross_group` receipt, whose
+`event`/`dst_event` belongs to the destination Group and `source_event`/`src_event`
+is the source audit record. Without `dst_group_id`, the result below is unchanged.
 
 Result:
 ```ts
@@ -4368,6 +4406,7 @@ Notes:
   foreman-only group administration permission does not apply to message delivery.
 - Text or at least one attachment is required. Each attachment `path` MUST
   name a blob in the origin Group. The daemon hashes the stored bytes and
+  verifies that their digest matches the blob name's digest prefix, then
   rejects a declared `sha256` or `bytes` that differs (`invalid_attachments`),
   and rejects more than 100 MiB in total (`attachment_too_large`). Records are
   rewritten from the stored bytes; `kind` is `image` exactly when `mime_type`
@@ -4375,10 +4414,12 @@ Notes:
 - Verified blobs are placed in the destination Group under the same
   `state/blobs/` name before either ledger entry is written, so each copy reads
   its own Group's blob. Placement is idempotent and repeats on a relay retry.
-  It grants no read access to the origin Group.
+  Existing entries MUST resolve within the destination blob store and match
+  the verified source bytes; invalid entries are rejected before recording,
+  not overwritten. Placement grants no read access to the origin Group.
 - Connect sends use their qualified instance/Group destination and bounded
   attachment contract.
-- Destination Group, recipient and attachment validation MUST precede the
+- Destination Group, recipient, message scope and attachment validation MUST precede the
   source append. Reusing an accepted `client_id` with a different
   `dst_group_id` MUST fail with `idempotency_conflict`; a partial delivery retry
   keeps the accepted message's content, recipients and thread references.

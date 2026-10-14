@@ -2,7 +2,9 @@
 
 For the separate Grok Bot runtime, see [Grok Bot Web Model](/guide/grok-web-model-runtime). Its Actor routing uses per-call credentials rather than ChatGPT conversation pairing.
 
-The `web_model` runtime lets a ChatGPT web chat participate in a CCCC group through browser delivery plus a remote MCP connector. In ChatGPT sessions that expose the CCCC MCP connector, **GPT-5.x** can act as a first-class local development actor: it can receive routed CCCC messages, call CCCC MCP tools, edit the active workspace, run scoped commands, inspect git output, and report back through the same coordination layer as Codex or Claude Code. When the selected GPT-5.x chat exposes the CCCC MCP connector, ChatGPT web capacity can become additional local-development agent capacity and reduce pressure on native Codex usage for work that fits the ChatGPT Web path.
+The `web_model` runtime lets a ChatGPT conversation participate in a CCCC Group through browser message delivery and remote MCP tools. A conversation that exposes the CCCC connector can receive routed messages, edit the active workspace, run scoped commands, inspect Git output and report back through the same coordination layer as Codex or Claude Code. The browser adapter operates the ChatGPT website UI; it is separate from Codex CLI's app-server integration and is not a public ChatGPT message API.
+
+Remote MCP provides the tool connection; it does not authorize browser automation or change the provider's account terms. Use this integration within the applicable [OpenAI terms](https://openai.com/policies/terms-of-use/). For ChatGPT-native event-triggered work without browser message delivery, see [ChatGPT Dots](/guide/runtimes#chatgpt-dots).
 
 MCP availability is determined by the selected ChatGPT model and account, not by CCCC. Use a ChatGPT session that can actually see the CCCC connector for local development. CCCC also offers an experimental **GPT Pro** delivery mode for accounts where attaching an image makes the connector available to a GPT Pro chat. This is an observed ChatGPT behavior rather than a supported model-selection API, so it can stop working when ChatGPT changes. CCCC never switches the ChatGPT model for you.
 
@@ -36,6 +38,8 @@ batch, reset pairing or clear conversation history.
 Mental model: the ChatGPT Web Model actor is a normal CCCC agent whose model surface happens to be ChatGPT Web. It reuses the same `cccc_bootstrap`, `cccc_help`, messaging, coordination, capability, memory, and repository tool paths as Codex/Claude actors. Browser delivery and remote-MCP pull are transport adapters, not a separate help system.
 
 Connector model: one authenticated CCCC connector serves multiple verified ChatGPT conversations. All Actors share one dedicated browser profile and login; each owns a persistent separate window and Page target. No active-tab scheduler chooses the delivery recipient. Rotating the global credential invalidates the old URL while preserving pairings. Revoking and recreating the connector requires new pairings.
+
+Shared login means these Actor conversations use the same configured ChatGPT account. Separate Actor identities control CCCC routing and workspace permissions; they do not create separate provider accounts or subscription entitlements. Feature availability and usage limits remain those of that account. CCCC Connect accounts and Group connections are separate from this provider login.
 
 In global Web Model settings, **Open login window** reveals the login window and restores the ChatGPT entry page if that window is blank. It preserves an ongoing sign-in flow. **Check login** only inspects readiness; it does not reload the page. **Close login window** closes only that window; Actor windows, queued work and the saved login remain intact. It does not require stopping Actors. Signing out of ChatGPT still affects all Actor windows sharing the login.
 

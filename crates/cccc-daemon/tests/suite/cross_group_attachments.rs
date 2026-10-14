@@ -94,6 +94,12 @@ fn cross_group_reply_delivers_its_files_to_both_groups_and_settles_the_obligatio
 fn invalid_cross_group_attachments_write_nothing_in_either_group() {
     let f = fixture();
     let own = blobs::store(&f.home, &f.origin, b"origin bytes").expect("own blob");
+    let corrupt = blobs::store(&f.home, &f.origin, b"before change").expect("corrupt fixture");
+    std::fs::write(
+        blobs::resolve(&f.home, &f.origin, &corrupt.path).expect("source path"),
+        b"after changes",
+    )
+    .expect("change stored source");
     let foreign = blobs::store(&f.home, &f.receiver, b"receiver bytes").expect("foreign");
     // A sparse file just over the limit, stored as a content-addressed name.
     let oversized = "f".repeat(64);
@@ -109,6 +115,7 @@ fn invalid_cross_group_attachments_write_nothing_in_either_group() {
     let before = (f.count(&f.origin), f.count(&f.receiver));
 
     for (attachment, code) in [
+        (json!({"path":corrupt.path}), "invalid_attachments"),
         (json!({"path":foreign.path}), "invalid_attachments"),
         (
             json!({"path":own.path,"sha256":"0".repeat(64)}),
@@ -197,6 +204,98 @@ fn a_retried_cross_group_send_completes_its_files_once() {
 }
 
 #[test]
+fn cross_group_invalid_scope_is_rejected_before_upload_or_source_recording() {
+    let f = fixture();
+    let blob = blobs::store(&f.home, &f.origin, b"scope payload").expect("blob");
+    let unattached = f._temp.path().join("unattached");
+    std::fs::create_dir(&unattached).expect("unattached directory");
+    let args = json!({
+        "group_id":f.origin,"dst_group_id":f.receiver,"by":"user","to":["receiver"],
+        "text":"scope payload","message_mode":"send","path":unattached,
+        "attachments":[{"path":blob.path}]
+    });
+    let before = (f.count(&f.origin), f.count(&f.receiver));
+    let mut preflight = args.clone();
+    preflight
+        .as_object_mut()
+        .expect("object")
+        .remove("attachments");
+    preflight["operation"] = json!("send_cross_group");
+    preflight["has_attachments"] = json!(true);
+    let mut outcomes = Vec::new();
+    for (op, request) in [
+        ("message_upload_preflight", preflight),
+        ("send_cross_group", args),
+    ] {
+        let rejected = call_raw(&f.home, op, request);
+        outcomes.push((
+            op,
+            rejected.ok,
+            rejected.error.map(|error| error.code),
+            (f.count(&f.origin), f.count(&f.receiver)),
+            blobs::resolve(&f.home, &f.receiver, &blob.path).is_ok(),
+        ));
+    }
+    assert!(
+        outcomes.iter().all(|(_, ok, code, counts, placed)| !ok
+            && code.as_deref() == Some("scope_not_attached")
+            && *counts == before
+            && !placed),
+        "{outcomes:?}"
+    );
+}
+
+#[test]
+fn cross_group_unusable_destination_blob_is_rejected_without_recording_or_replacing_it() {
+    let mut outcomes = Vec::new();
+    for corrupt_file in [false, true] {
+        let f = fixture();
+        let blob = blobs::store(&f.home, &f.origin, b"original payload").expect("blob");
+        let destination = f
+            .store
+            .state_dir(&f.receiver)
+            .expect("state")
+            .join("blobs")
+            .join(&blob.sha256);
+        std::fs::create_dir_all(destination.parent().expect("parent")).expect("blobs directory");
+        if corrupt_file {
+            std::fs::write(&destination, b"modified payload").expect("corrupt fixture");
+        } else {
+            std::fs::create_dir(&destination).expect("blocked fixture");
+        }
+        let before = (f.count(&f.origin), f.count(&f.receiver));
+        let rejected = call_raw(
+            &f.home,
+            "send_cross_group",
+            json!({
+                "group_id":f.origin,"dst_group_id":f.receiver,"by":"user","to":["receiver"],
+                "text":"original payload","message_mode":"send","attachments":[{"path":blob.path}]
+            }),
+        );
+        outcomes.push((
+            corrupt_file,
+            rejected.ok,
+            (f.count(&f.origin), f.count(&f.receiver)),
+            before,
+        ));
+        if corrupt_file {
+            assert_eq!(
+                std::fs::read(&destination).expect("existing file"),
+                b"modified payload"
+            );
+        } else {
+            assert!(destination.is_dir());
+        }
+    }
+    assert!(
+        outcomes
+            .iter()
+            .all(|(_, ok, counts, before)| !ok && counts == before),
+        "{outcomes:?}"
+    );
+}
+
+#[test]
 fn upload_preflight_accepts_cross_group_sends_and_replies_but_not_outsiders() {
     let f = fixture();
     let sent = call(
@@ -253,7 +352,7 @@ fn scope_files_sent_to_another_group_arrive_without_the_source_scope() {
     );
     let args = json!({
         "group_id":f.origin,"dst_group_id":f.receiver,"by":"user","to":["receiver"],
-        "message_mode":"send","client_id":"scope-file","paths":["frame.png"]
+        "message_mode":"send","client_id":"scope-file","paths":["frame.png"],"path":scope
     });
 
     let sent = call(&f.home, "send_files", args.clone());

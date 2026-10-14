@@ -10,7 +10,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 |---------|------------|----------------------|-----------|
 | Claude Code | `claude` | CCCC-managed Agent View session + native TUI | Injected into each managed session |
 | Cline CLI | `cline` | `cline` | Auto |
-| Codex CLI | `codex` | `codex` | Auto |
+| Codex CLI | `codex` | CCCC-managed app-server + native TUI | Actor-scoped MCP injected into the managed session |
 | DeepSeek Harness | `deepseek` | CCCC-managed `dsh-acp-demo` (structured ACP, no native terminal) | Automatic on first start; explicit setup remains available |
 | GitHub Copilot CLI | `copilot` | `copilot` | Auto |
 | Cursor CLI | `cursor` | `cursor-agent` | Prompt-assisted |
@@ -31,6 +31,8 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Grok Bot Web Model | `grok_web_model` | Dedicated Grok Bot URL | Browser delivery + credential-routed remote MCP connector |
 
 `custom` is also supported as a manual fallback for any command-line agent that can be launched by CCCC.
+
+Codex sessions use the CLI's documented [app-server interface](https://learn.chatgpt.com/docs/app-server). ChatGPT Web combines browser message delivery with remote MCP tool access; Dots uses [MCP Events](https://developers.openai.com/plugins/build/mcp-events) instead of browser delivery. These are distinct integration paths with their own setup requirements and provider dependencies.
 
 ## Autonomy Defaults
 

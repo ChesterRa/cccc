@@ -547,3 +547,150 @@ fn legacy_profile_without_identity_fields_is_addressable_as_global_and_deletable
     call(&home, "actor_profile_delete", Value::Object(forced));
     assert!(!raw_call(&home, "actor_profile_get", global).ok);
 }
+
+#[test]
+fn legacy_profile_can_be_saved_with_web_identity_without_changing_access_or_secrets() {
+    for identity in [json!({}), json!({"scope":"global"}), json!({"owner_id":""})] {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let mut legacy = json!({"id":"legacy","name":"Legacy","runtime":"claude",
+            "command":["claude"],"submit":"enter","revision":2,"env":{}});
+        legacy
+            .as_object_mut()
+            .expect("profile")
+            .extend(identity.as_object().expect("identity").clone());
+        let path = home.root().join("state/actor_profiles/profiles.json");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(&path, json!({"profiles":{"legacy":legacy}}).to_string())
+            .expect("legacy fixture");
+        let global = json!({"profile_id":"legacy","profile_scope":"global","profile_owner":""});
+        let mut secret_args = global.as_object().cloned().expect("args");
+        secret_args.insert(
+            "set".into(),
+            json!({"TOKEN":"profile-fixture-private-value"}),
+        );
+        call(
+            &home,
+            "actor_profile_secret_update",
+            Value::Object(secret_args),
+        );
+
+        // This is the explicit identity sent by the Web profile editor, even
+        // when the old record it listed omitted either identity field.
+        let edit = json!({"profile_id":"legacy","scope":"global","owner_id":"",
+            "name":"Edited","runtime":"claude","command":["claude"],"env":{},
+            "expected_revision":2});
+        let mut guest_edit = edit.as_object().cloned().expect("edit");
+        guest_edit.insert("caller_id".into(), json!("user-a"));
+        guest_edit.insert("is_admin".into(), json!(false));
+        assert_denied(raw_call(
+            &home,
+            "actor_profile_upsert",
+            Value::Object(guest_edit),
+        ));
+
+        let saved = call(&home, "actor_profile_upsert", edit.clone());
+        assert_eq!(saved.result["profile"]["scope"], "global");
+        assert_eq!(saved.result["profile"]["owner_id"], "");
+        assert_eq!(saved.result["profile"]["name"], "Edited");
+        assert_eq!(saved.result["profile"]["revision"], 3);
+        assert_eq!(saved.result["profile"]["env"], json!({}));
+        assert!(
+            !raw_call(&home, "actor_profile_upsert", edit).ok,
+            "stale revision must fail"
+        );
+
+        let list = call(&home, "actor_profile_list", json!({}));
+        assert_eq!(
+            list.result["profiles"].as_array().expect("profiles").len(),
+            1
+        );
+        let keys = call(&home, "actor_profile_secret_keys", global.clone());
+        assert_eq!(keys.result["keys"], json!(["TOKEN"]));
+        assert_eq!(keys.result["masked_values"]["TOKEN"], "********");
+        let profiles = cccc_core::profiles::ProfileStore::new(home.clone()).expect("store");
+        assert!(
+            profiles.secret_values("legacy").expect("secrets")["TOKEN"]
+                == "profile-fixture-private-value",
+            "existing secret must be preserved"
+        );
+        call(&home, "actor_profile_delete", global);
+        assert!(
+            call(&home, "actor_profile_list", json!({})).result["profiles"]
+                .as_array()
+                .expect("profiles")
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn profile_secret_copy_checks_source_identity_independently_of_target() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    for (id, scope, owner, key) in [
+        ("shared", "global", "", "SHARED_KEY"),
+        ("personal", "user", "user-a", "PREVIOUS_KEY"),
+        ("owned", "user", "user-a", "OWNED_KEY"),
+        ("other", "user", "user-b", "OTHER_KEY"),
+    ] {
+        call(
+            &home,
+            "actor_profile_upsert",
+            json!({"profile_id":id,"name":id,
+            "scope":scope,"owner_id":owner}),
+        );
+        call(
+            &home,
+            "actor_profile_secret_update",
+            json!({"profile_id":id,
+                "scope":scope,"owner_id":owner,"set":{key:"copy-fixture-private-value"}}),
+        );
+    }
+    // Cover both IPC names and the selectors sent by the Web copy workflow.
+    for (scope_field, owner_field) in [
+        ("source_profile_scope", "source_profile_owner"),
+        ("source_scope", "source_owner_id"),
+    ] {
+        let mut copy = json!({"profile_id":"personal","scope":"user","owner_id":"user-a",
+            "source_profile_id":"shared","caller_id":"user-a","is_admin":false})
+        .as_object()
+        .cloned()
+        .expect("args");
+        copy.insert(scope_field.into(), json!("global"));
+        copy.insert(owner_field.into(), json!(""));
+        let copied = call(
+            &home,
+            "actor_profile_copy_profile_secrets",
+            Value::Object(copy.clone()),
+        );
+        assert_eq!(copied.result["keys"], json!(["SHARED_KEY"]));
+
+        copy.insert("source_profile_id".into(), json!("owned"));
+        copy.insert(scope_field.into(), json!("user"));
+        copy.insert(owner_field.into(), json!("user-a"));
+        let owned = call(
+            &home,
+            "actor_profile_copy_profile_secrets",
+            Value::Object(copy.clone()),
+        );
+        assert_eq!(owned.result["keys"], json!(["OWNED_KEY"]));
+
+        copy.insert("source_profile_id".into(), json!("other"));
+        copy.insert(owner_field.into(), json!("user-b"));
+        assert_denied(raw_call(
+            &home,
+            "actor_profile_copy_profile_secrets",
+            Value::Object(copy),
+        ));
+        let keys = call(
+            &home,
+            "actor_profile_secret_keys",
+            json!({"profile_id":"personal",
+            "scope":"user","owner_id":"user-a","caller_id":"user-a","is_admin":false}),
+        );
+        assert_eq!(keys.result["keys"], json!(["OWNED_KEY"]));
+        assert_eq!(keys.result["masked_values"]["OWNED_KEY"], "********");
+    }
+}

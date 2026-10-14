@@ -1,7 +1,7 @@
 #![cfg(unix)]
 mod auth_support;
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::http::{Request, StatusCode, header};
 use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupStore, HomeLayout};
@@ -79,6 +79,49 @@ fn blob_count(groups: &GroupStore, group_id: &str) -> usize {
 }
 
 #[tokio::test]
+async fn oversized_upload_reports_its_limit_without_retaining_a_blob_or_message() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("upload limit", "").expect("group");
+    let ledger = groups.ledger_path(&group.group_id).expect("ledger");
+    let before = std::fs::read(&ledger).expect("ledger before");
+    let boundary = "cccc-oversized-upload";
+    let prefix = Bytes::from(format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"large.bin\"\r\n\r\n"
+    ));
+    let chunk = Bytes::from(vec![0_u8; 64 * 1024]);
+    let suffix = Bytes::from(format!("x\r\n--{boundary}--\r\n"));
+    let chunks = std::iter::once(prefix)
+        .chain(std::iter::repeat_n(chunk, 1600))
+        .chain(std::iter::once(suffix))
+        .map(Ok::<_, std::convert::Infallible>);
+    let response = auth_support::authenticated_app(home.clone())
+        .oneshot(
+            Request::post(format!("/api/v1/groups/{}/send_upload", group.group_id))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from_stream(futures_util::stream::iter(chunks)))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let payload: Value = serde_json::from_slice(&bytes).expect("JSON");
+    assert_eq!(payload["error"]["code"], "attachment_too_large");
+    assert_eq!(blob_count(&groups, &group.group_id), 0);
+    assert_eq!(std::fs::read(&ledger).expect("ledger after"), before);
+}
+
+#[tokio::test]
 async fn upload_to_another_group_delivers_a_readable_image_there() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
@@ -136,6 +179,24 @@ async fn upload_to_another_group_delivers_a_readable_image_there() {
     )
     .await;
     assert_ne!(status, StatusCode::OK, "{payload}");
+    assert_eq!(blob_count(&groups, &source.group_id), before);
+
+    // Scope validation must precede committing the staged upload as well.
+    let boundary = "cccc-cross-group-scope";
+    let mut body = multipart(boundary, &destination.group_id);
+    let closing = format!("--{boundary}--\r\n");
+    assert!(body.ends_with(closing.as_bytes()));
+    body.truncate(body.len() - closing.len());
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"path\"\r\n\r\n{}\r\n{closing}",
+            temp.path().display()
+        )
+        .as_bytes(),
+    );
+    let (status, payload) = post(&home, &source.group_id, boundary, body).await;
+    assert_ne!(status, StatusCode::OK);
+    assert_eq!(payload["error"]["code"], "scope_not_attached");
     assert_eq!(blob_count(&groups, &source.group_id), before);
 
     // A member of the source Group alone cannot upload into another Group.

@@ -138,12 +138,30 @@ pub fn place(
         .join("blobs");
     fs::create_dir_all(&blobs_dir)?;
     let target = blobs_dir.join(name);
+    let verify_existing = || -> io::Result<()> {
+        // An existing name is reusable only when it resolves inside this
+        // Group and carries the verified source bytes. Never overwrite it.
+        let stored = resolve(home, group_id, &relative)?;
+        if fs::metadata(&stored)?.len() != fs::metadata(source)?.len()
+            || digest_file(&stored)?.0 != sha256
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "existing destination blob does not match the source",
+            ));
+        }
+        Ok(())
+    };
     if target.is_file() {
+        verify_existing()?;
         return Ok(relative);
     }
     match fs::hard_link(source, &target) {
         Ok(()) => return Ok(relative),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(relative),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            verify_existing()?;
+            return Ok(relative);
+        }
         Err(_) => {}
     }
     let mut copy = BlobUpload {
@@ -168,10 +186,11 @@ pub fn place(
             "blob changed while it was copied",
         ));
     }
-    if let Err(error) = copy.file.persist_noclobber(&target)
-        && error.error.kind() != io::ErrorKind::AlreadyExists
-    {
-        return Err(error.error);
+    if let Err(error) = copy.file.persist_noclobber(&target) {
+        if error.error.kind() != io::ErrorKind::AlreadyExists {
+            return Err(error.error);
+        }
+        verify_existing()?;
     }
     Ok(relative)
 }
@@ -180,7 +199,9 @@ fn valid_blob_name(name: &str) -> bool {
     if name.len() < 64 || name.len() > 185 {
         return false;
     }
-    let (digest, suffix) = name.split_at(64);
+    let Some((digest, suffix)) = name.split_at_checked(64) else {
+        return false;
+    };
     if !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return false;
     }
@@ -226,6 +247,8 @@ mod tests {
         assert!(!valid_blob_name(&format!("{digest}_../secret")));
         assert!(!valid_blob_name(&format!("{digest}_image/name.png")));
         assert!(!valid_blob_name("not-a-digest_image.png"));
+        assert!(!valid_blob_name(&format!("{}é", "a".repeat(63))));
+        assert!(!valid_blob_name(&format!("{}🟦", "a".repeat(61))));
     }
 
     #[test]

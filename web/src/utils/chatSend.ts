@@ -24,6 +24,7 @@ export function formatSendMessageError(args: {
   if (["NETWORK_ERROR", "EMPTY_RESPONSE", "PARSE_ERROR"].includes(code)) {
     return args.t("sendResultUnknown");
   }
+  if (code === "attachment_too_large") return args.t("attachmentsTooLarge");
   if (!code) return message || args.t("sendFailed", { defaultValue: "Failed to send message." });
   if (!message) return code;
   return `${code}: ${message}`;

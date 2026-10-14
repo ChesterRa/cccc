@@ -187,6 +187,7 @@
   "selectGroupFirst": "请先选择一个工作组。",
   "busy": "处理中。",
   "attachFile": "添加附件",
+  "attachmentsTooLarge": "附件总大小超出限制，请减少附件后重试。",
   "removeAttachment": "移除附件 {{name}}",
   "builtInAssistantsArea": "内建助手",
   "builtInAssistantsTitle": "助手",

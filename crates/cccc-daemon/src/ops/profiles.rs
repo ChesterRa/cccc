@@ -112,17 +112,20 @@ fn upsert(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .flatten();
     if let Some(existing) = existing {
         super::profile_access::require_write(request, &existing)?;
-        for field in ["scope", "owner_id"] {
-            if profile
-                .get(field)
-                .is_some_and(|value| value != &existing[field])
-            {
+        for (field, default) in [("scope", "global"), ("owner_id", "")] {
+            let identity = json!(
+                existing
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .unwrap_or(default)
+            );
+            if profile.get(field).is_some_and(|value| value != &identity) {
                 return Err(OpError::new(
                     "permission_denied",
                     "profile scope and owner cannot be changed",
                 ));
             }
-            profile.insert(field.into(), existing[field].clone());
+            profile.insert(field.into(), identity);
         }
     } else {
         super::profile_access::normalize_new(request, &mut profile)?;
@@ -346,14 +349,24 @@ fn copy_profile(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "profile not found"))?;
     super::profile_access::require_write(request, &target)?;
-    let source_scope =
-        string_arg(request, "source_profile_scope").unwrap_or_else(|| "global".into());
-    let source_owner = string_arg(request, "source_profile_owner").unwrap_or_default();
+    let source_scope = string_arg(request, "source_profile_scope")
+        .or_else(|| string_arg(request, "source_scope"))
+        .unwrap_or_else(|| "global".into());
+    let source_owner = string_arg(request, "source_profile_owner")
+        .or_else(|| string_arg(request, "source_owner_id"))
+        .unwrap_or_default();
     let source_profile = profiles
         .get_ref(&source, &source_scope, &source_owner)
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "source profile not found"))?;
-    super::profile_access::require_read(request, &source_profile)?;
+    let mut source_request = request.clone();
+    source_request
+        .args
+        .insert("profile_scope".into(), json!(source_scope));
+    source_request
+        .args
+        .insert("profile_owner".into(), json!(source_owner));
+    super::profile_access::require_read(&source_request, &source_profile)?;
     let values = profiles
         .secret_values_ref(&source, &source_scope, &source_owner)
         .map_err(OpError::io)?;

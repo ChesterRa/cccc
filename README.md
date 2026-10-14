@@ -6,12 +6,12 @@
 
 ### Coordinate your coding agents like a group chat
 
-**Read receipts, delivery tracking, cross-instance collaboration, and mobile ops —
-for Claude Code, Codex, ChatGPT Web, and other supported runtimes in one durable group.**
+**Local-first coordination for coding agents, with durable collaboration state,
+explicit message status, cross-instance collaboration, and Web/IM access.**
 
-Run multiple coding agents as a **persistent, coordinated team** across runtimes, machines, and trusted working groups — not a pile of disconnected terminal sessions.
+Run multiple coding agents as a **persistent, coordinated team** across runtimes, machines, and trusted working groups.
 
-One install command. No Rust toolchain or infrastructure required.
+One install command. No Rust toolchain, database server, message broker, or Docker required.
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=232425)](https://pypi.org/project/cccc-pair/)
 [![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
@@ -41,7 +41,7 @@ CCCC runs your agents as one durable, coordinated system:
 - **Durable coordination** — message history lives in an append-only ledger; tasks and shared context have their own persistent stores.
 - **Visible delivery semantics** — routing plus separate stored, runtime-delivery, read, and reply facts replace best-effort prompting.
 - **One control plane** — Web UI, CLI, MCP, and IM bridges all operate on the same daemon-owned state.
-- **Multi-runtime by default** — Claude Code, Codex CLI, ChatGPT Web, Grok Build, and other supported runtimes can collaborate in one group.
+- **Multi-runtime by default** — supported CLI runtimes and optional Web integrations can collaborate in one group, with runtime-specific capabilities and setup requirements.
 - **CCCC Connect across instances** — use same-account discovery, approved cross-member Group connections, or account-free Direct connections; each instance keeps its own state and access boundaries.
 - **Local-first operations** — one install command, runtime state in `CCCC_HOME`, and remote supervision only when you choose to expose it.
 
@@ -57,20 +57,20 @@ CCCC installs with one command and needs no separately operated database, messag
 | **Multi-runtime orchestration** | Mix supported coding-agent runtimes in one Group, with `custom` for other command-line agents |
 | **CCCC Connect** | Connect your own instances, selected Groups across member accounts, or two Groups directly without an account |
 | **Workspace tools** | Browse and edit files, inspect Git changes, pin documents in Presentation, and operate tiled native terminals |
-| **Voice workflows** | One global Voice Secretary handles speech, documents and composer drafts for all Groups in a shared conversation; experimental Codex Voice uses a separate Realtime Analyst |
+| **Voice workflows** | One global Voice Secretary handles speech, documents and composer drafts for all Groups in a shared conversation; experimental ChatGPT-backed Codex Voice uses a separate Analyst |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
 
-## 0.4.42 Highlights
+## 0.4.43 Highlights
 
-- **Optional official ACP:** Antigravity, GitHub Copilot, Devin CLI and Cursor support structured Actors and Voice Analyst without a native terminal. TUI remains the default; saved mode changes apply on restart or next start.
-- **Voice investigations and host personas:** ACP investigations show task status, decisions and results; completed call-bound work returns to that call's Realtime context. Host APIs can request persona calls without an Analyst or Actor notifications.
-- **Conversation recovery:** Claude pauses unverifiable resumes with visible diagnostics and explicit recovery; Codex resumes long conversations without transferring their full history to CCCC. Closing a managed terminal preserves its healthy provider session.
-- **Clearer daily controls:** thin activity rings, accurate unread Mail badges, retained per-Group recipients, installation detection and more predictable Actor/Profile saves.
-- **Grok and lifecycle reliability:** required Bot URLs work with linked Profiles, browser login windows close independently, and Unix process cleanup retains unresolved ownership records across crashes.
+- **One global Voice Secretary:** a resident conversation handles fixed-target tasks from all Groups. Prompt defaults to dictation with optional polishing; documents, questions and results keep their original destinations. Supported native terminals are interactive.
+- **Unified Voice controls:** shared microphone/speaker preferences, per-Group capture choices, consistent runtime/Profile forms, and a Codex Voice Analyst that starts collapsed.
+- **ChatGPT Dots through native events:** explicit conversation pairing and a persistent ChatGPT task use the shared MCP plugin without browser message delivery. Setup, asynchronous delivery stages and recovery are visible in the Actor pane.
+- **More structured runtimes:** Pi official RPC and optional ACP for Kimi Code, Auggie, Kiro V3, Hermes and Droid. ACP/RPC workspaces do not imply a native terminal; existing native TUI defaults remain available.
+- **Reliable everyday collaboration:** prompt idle Mail notices, local cross-Group files/images and correctly routed replies, consistent IM relay modes, safer session recovery and Group process cleanup, stable Context relationships, and clearer shared settings.
 
-See the [0.4.42 release notes](docs/release/v0.4.42_release_notes.md) for setup, upgrade steps and validation limits. When upgrading an older Actor-specific ChatGPT connector setup, follow the shared-connector migration in the [0.4.41 notes](docs/release/v0.4.41_release_notes.md).
+See the [0.4.43 release notes](docs/release/v0.4.43_release_notes.md) for setup, upgrade steps and validation limits. The global Secretary shares model history across Groups; its fixed task destinations are not a confidentiality boundary. Older Dots tasks need the current credential-free handler. Very old Actor-specific ChatGPT connectors still follow the [0.4.41 migration](docs/release/v0.4.41_release_notes.md).
 
 ## Quick Start
 
@@ -184,58 +184,20 @@ The SDK does not include a daemon. It connects to a running `cccc` core instance
 
 ```mermaid
 graph TB
-    subgraph Agents["Agent Runtimes"]
-        direction LR
-        A1["Claude Code"]
-        A2["Codex CLI"]
-        A3["ChatGPT Web<br/>Remote MCP"]
-        A4["Grok Build"]
-        A5["Other runtimes + custom"]
-    end
+    A1["CLI runtimes + custom<br/>Codex · Claude · Grok · ..."]
+    A3["Browser runtimes<br/>ChatGPT Web · Grok Bot"]
+    A6["ChatGPT Dots"]
+    Daemon["CCCC daemon · single writer<br/>Ledger · tasks · context · Actor lifecycle"]
+    Ports["CCCC Web UI · CLI · MCP"]
+    IM["IM bridges"]
+    Remote["Connected CCCC Groups"]
 
-    subgraph Daemon["CCCC Daemon · single writer"]
-        direction LR
-        Ledger[("Ledger<br/>append-only JSONL")]
-        ActorMgr["Actor<br/>Manager"]
-        Auto["Automation<br/>Rules · Nudge · Cron"]
-        Ledger ~~~ ActorMgr ~~~ Auto
-    end
-
-    subgraph Ports["Control Plane"]
-        direction LR
-        Web["Web UI<br/>:8848"]
-        CLI["CLI"]
-        MCP["MCP<br/>(stdio)"]
-    end
-
-    subgraph IM["IM Bridges"]
-        direction LR
-        TG["Telegram"]
-        SL["Slack"]
-        DC["Discord"]
-        MM["Mattermost"]
-        FS["Feishu"]
-        DT["DingTalk"]
-        WC["WeCom"]
-        WX["Weixin"]
-    end
-
-    subgraph Remote["Connected CCCC Groups"]
-        direction LR
-        RG1["Another instance"]
-        RG2["Another machine"]
-    end
-
-    A1 <-->|Native terminal<br/>MCP + protocol| Daemon
-    A2 <-->|Native terminal<br/>MCP + protocol| Daemon
+    A1 <-->|Terminal / runtime protocols<br/>MCP| Daemon
     A3 <-->|Browser delivery<br/>Remote MCP| Daemon
-    A4 <-->|MCP tools| Daemon
-    A5 <-->|MCP tools| Daemon
+    A6 <-->|MCP Events<br/>Remote MCP| Daemon
     Daemon <--> Ports
-    Web <--> IM
-    Daemon <-->|CCCC Connect<br/>account-authorized messages| RG1
-    Daemon <-->|Direct<br/>approved Group pair| RG2
-
+    Ports <-->|Web-hosted bridges| IM
+    Daemon <-->|CCCC Connect / Direct<br/>approved connections| Remote
 ```
 
 **Key design decisions:**
@@ -248,7 +210,7 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC supports 20 built-in runtime integrations, plus `custom` for other command-line agents. Each actor in a Group can use a different runtime. Integration surfaces and setup requirements vary:
+CCCC provides the following runtime integrations, plus `custom` for other command-line agents. Each actor in a Group can use a different runtime. Integration surfaces and setup requirements vary:
 
 | Runtime | Integration | Entrypoint / Surface |
 |---------|-------------|----------------------|
@@ -262,7 +224,8 @@ CCCC supports 20 built-in runtime integrations, plus `custom` for other command-
 | Kiro CLI | Native TUI or official ACP; session MCP | `kiro-cli` |
 | Kilo Code CLI | Managed ACP session + native TUI; per-session MCP | `kilo` |
 | Antigravity CLI | Auto MCP setup | `agy` |
-| ChatGPT Web | Remote MCP + Browser Delivery | `chatgpt.com` conversation |
+| ChatGPT Web | Browser UI delivery + remote MCP | `chatgpt.com` conversation |
+| ChatGPT Dots | MCP Events + task-scoped remote MCP; no browser message delivery | One explicitly paired Dot |
 | Grok Bot Web Model | Remote MCP + Browser Delivery; per-Actor routing credential | Required `grok.com/bot/<UUID>` URL |
 | Grok Build | Managed ACP session + native TUI; automatic native MCP setup | `grok` |
 | Hermes Agent | Native TUI or official ACP; session MCP | `hermes` |
@@ -298,15 +261,21 @@ For setup commands, interaction details, and troubleshooting for every supported
 
 ### ChatGPT Web as a local development actor
 
-CCCC delivers Group messages into paired ChatGPT conversations. Multiple Web Model Actors share one dedicated browser login and one authenticated remote MCP connector, with a persistent window and confirmed conversation pairing for each Actor. They can receive messages, reply, inspect or edit repository files, and run scoped shell/git commands. Shared setup lives in instance settings; conversation setup lives in Actor settings. Normal Actor startup verifies its conversation automatically before delivering queued tasks; no preparatory pairing click is required.
+CCCC delivers Group messages into paired ChatGPT conversations through browser UI automation. Multiple Web Model Actors share one dedicated browser login and one authenticated remote MCP connector, with a persistent window and confirmed conversation pairing for each Actor. They can receive messages, reply, inspect or edit repository files, and run scoped shell/git commands. Shared setup lives in instance settings; conversation setup lives in Actor settings. Normal Actor startup verifies its conversation automatically before delivering queued tasks; no preparatory pairing click is required.
 
-Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy). CCCC defaults to stable text-only delivery and also offers an experimental **GPT Pro** mode that attaches a tiny blank PNG when delivering each batch. This compatibility workaround does not switch ChatGPT models or guarantee connector availability, and may stop working when ChatGPT changes. Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
+Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy). CCCC defaults to text-only browser delivery and also offers an experimental **GPT Pro** mode that attaches a tiny blank PNG when delivering each batch. This compatibility workaround does not switch ChatGPT models or guarantee connector availability, and may stop working when ChatGPT changes. Shared login means these Actor conversations use the same configured ChatGPT account, with that account's features and limits. Full setup and integration boundaries: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
+
+### ChatGPT Dots
+
+**ChatGPT Dots** (`chatgpt_dots`) uses ChatGPT-native event-triggered tasks and remote MCP. It shares the configured CCCC plugin with ChatGPT Web Actors, but does not use browser message delivery or require CCCC's browser login. Pair your Dot with one Actor and save its native event task to enable delivery. Event acceptance, task claim and completion are reported separately. See [Dots setup](https://chesterra.github.io/cccc/guide/runtimes#chatgpt-dots).
 
 ### Grok Bot Web Model
 
 **Grok Bot Web Model** (`grok_web_model`) uses the same CCCC workspace tools and delivery queue, with a shared Grok login, one MCP connector, and a dedicated Bot URL per Actor. An existing `https://grok.com/bot/<UUID>` URL is required; CCCC does not create Bots. Configure shared login and the connector in global Web Model settings, then save the Bot URL in Actor settings and start the Actor. CCCC supplies its routing credential with each task, without a separate pairing message. This browser runtime is separate from the Grok Build CLI (`grok`). See [Grok Bot setup and current validation boundaries](https://chesterra.github.io/cccc/guide/grok-web-model-runtime).
 
 ## CCCC Connect: across instances and teams
+
+Account here means your CCCC account. Provider logins and usage entitlements are separate from CCCC Connect authorization.
 
 Choose the connection scope that fits your work:
 
@@ -371,7 +340,7 @@ The built-in Web UI at `http://127.0.0.1:8848` provides:
 - **Project Context** — shared coordination, tasks, Agent state and self-evolving skills
 - **Group Space** — NotebookLM integration for shared knowledge management
 - **ChatGPT Web Model setup** — connect one ChatGPT Web conversation as a CCCC actor
-- **Voice Secretary & Codex Voice** — a global Secretary with Custom runtime settings or a linked Profile, processing tasks sequentially in a shared conversation while preserving each task's Group destination. Experimental realtime Voice keeps a separate Analyst. Both workflows share voice settings and audio device preferences; each Group retains its documents, requests and capture choices, without a per-Group secretary Actor.
+- **Voice Secretary & Codex Voice** — a global Secretary with Custom runtime settings or a linked Profile, processing tasks sequentially in a shared conversation while preserving each task's Group destination. Experimental Codex Voice uses a ChatGPT-backed call connection and a separate Analyst. Both workflows share voice settings and audio device preferences; each Group retains its documents, requests and capture choices, without a per-Group secretary Actor. See [voice setup and provider connection](https://chesterra.github.io/cccc/guide/voice-secretary#codex-voice-provider-connection).
 - **CCCC Connect settings** — account discovery, selected Group connections and Direct pairing
 - **IM bridge configuration** — Telegram, Slack, Discord, Mattermost, Feishu, DingTalk, WeCom and Weixin
 - **Settings** — messaging policies, delivery tuning, terminal transcript controls

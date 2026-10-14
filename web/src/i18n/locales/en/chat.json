@@ -187,6 +187,7 @@
   "selectGroupFirst": "Select a group first.",
   "busy": "Busy.",
   "attachFile": "Attach file",
+  "attachmentsTooLarge": "Attachments are too large. Reduce their total size and try again.",
   "removeAttachment": "Remove attachment {{name}}",
   "builtInAssistantsArea": "Built-in assistants",
   "builtInAssistantsTitle": "Assistants",
