@@ -1059,7 +1059,12 @@ describe("api.message refs", () => {
     );
   });
 
-  it("rejects unsupported local cross-group files before any HTTP request", async () => {
+  it("uploads local cross-group files through the source Group with a destination", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: {} }),
+    });
     const api = await import("../../src/services/api");
     const file = new File(["image"], "shot.png", { type: "image/png" });
     const result = await api.sendCrossGroupMessage(
@@ -1070,8 +1075,10 @@ describe("api.message refs", () => {
       "send",
       [file],
     );
-    expect(result).toMatchObject({ ok: false, error: { code: "attachments_not_supported" } });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/api/v1/groups/g-src/send_upload");
+    expect((init.body as FormData).get("dst_group_id")).toBe("g-dst");
   });
 
   it("sends tracked delegation payloads through the daemon endpoint", async () => {

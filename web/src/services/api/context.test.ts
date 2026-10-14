@@ -5,6 +5,8 @@ import {
   deliverMessage,
   fetchSlashCommandCapabilityState,
   replyMessage,
+  sendCrossGroupMessage,
+  sendMessage,
 } from "./context";
 
 describe("capability state API helpers", () => {
@@ -112,5 +114,61 @@ describe("message delivery control API helpers", () => {
     );
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
     expect(JSON.parse(String(request?.body))).toEqual({});
+  });
+});
+
+describe("cross-group attachment API helper", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("uploads files with the destination Group and reply thread", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true, result: {} })));
+    const file = new File(["png"], "chart.png", { type: "image/png" });
+
+    const response = await sendCrossGroupMessage(
+      "g1",
+      "g2",
+      "see chart",
+      ["lead"],
+      "send",
+      [file],
+      { replyTo: "local-parent", clientId: "client-1", remoteReplyToEventId: "remote-parent" },
+    );
+
+    expect(response.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(url)).toContain("/api/v1/groups/g1/send_upload");
+    const form = (init as RequestInit).body as FormData;
+    expect(form.get("dst_group_id")).toBe("g2");
+    expect(form.get("to_json")).toBe(JSON.stringify(["lead"]));
+    expect(form.get("reply_to")).toBe("local-parent");
+    expect(form.get("client_id")).toBe("client-1");
+    expect(form.get("remote_reply_to_event_id")).toBe("remote-parent");
+    expect((form.get("files") as File).name).toBe("chart.png");
+  });
+
+  it("refuses more than 100 MiB in total before uploading", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const half = new File(["x"], "half.bin");
+    Object.defineProperty(half, "size", { value: 50 * 1024 * 1024 + 1 });
+
+    for (const send of [
+      () => sendCrossGroupMessage("g1", "g2", "", ["lead"], "send", [half, half]),
+      () => sendMessage("g1", "", ["user"], [half, half]),
+      () => replyMessage("g1", "", ["user"], "parent", [half, half]),
+    ]) {
+      const response = await send();
+      expect(response).toEqual({
+        ok: false,
+        error: { code: "attachment_too_large", message: "Attachments exceed 100 MiB in total." },
+      });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -186,7 +186,6 @@
   "messageMode": "Message mode: {{mode}}",
   "selectGroupFirst": "Select a group first.",
   "busy": "Busy.",
-  "crossGroupAttachment": "Attachments cannot be sent cross-group yet.",
   "attachFile": "Attach file",
   "removeAttachment": "Remove attachment {{name}}",
   "builtInAssistantsArea": "Built-in assistants",

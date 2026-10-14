@@ -545,6 +545,18 @@ export async function readInbox(groupId: string, actorId: string, limit = 50) {
   );
 }
 
+/** The server's per-message attachment total; checked first to skip a doomed upload. */
+export const MAX_MESSAGE_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+
+function attachmentLimitError(files: File[]) {
+  const total = files.reduce((sum, file) => sum + Number(file.size || 0), 0);
+  if (total <= MAX_MESSAGE_ATTACHMENT_BYTES) return null;
+  return {
+    ok: false as const,
+    error: { code: "attachment_too_large", message: "Attachments exceed 100 MiB in total." },
+  };
+}
+
 export async function sendMessage(
   groupId: string,
   text: string,
@@ -555,6 +567,8 @@ export async function sendMessage(
   refs?: MessageRef[],
 ) {
   if (files && files.length > 0) {
+    const tooLarge = attachmentLimitError(files);
+    if (tooLarge) return tooLarge;
     const form = new FormData();
     form.append("by", "user");
     form.append("text", text);
@@ -655,6 +669,8 @@ export async function replyMessage(
   messageMode: "send" | "mail" = "send",
 ) {
   if (files && files.length > 0) {
+    const tooLarge = attachmentLimitError(files);
+    if (tooLarge) return tooLarge;
     const form = new FormData();
     form.append("by", "user");
     form.append("text", text);
@@ -749,13 +765,18 @@ export async function sendCrossGroupMessage(
       : {}),
   };
   if (files && files.length > 0) {
-    return {
-      ok: false as const,
-      error: {
-        code: "attachments_not_supported",
-        message: "Local cross-group attachments are not supported.",
-      },
-    };
+    const tooLarge = attachmentLimitError(files);
+    if (tooLarge) return tooLarge;
+    // The daemon copies the uploaded files into the destination Group.
+    const form = new FormData();
+    form.append("by", "user");
+    form.append("text", text);
+    form.append("dst_group_id", dstGroupId);
+    form.append("to_json", JSON.stringify(to));
+    form.append("message_mode", messageMode);
+    for (const [key, value] of Object.entries(replyMetadata)) form.append(key, value);
+    for (const file of files) form.append("files", file);
+    return apiForm(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_upload`, form);
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_cross_group`, {
     method: "POST",

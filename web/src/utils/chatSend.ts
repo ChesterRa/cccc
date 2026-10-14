@@ -2,14 +2,6 @@ import type { Actor, LedgerEvent } from "../types";
 
 export type ChatTFunction = (key: string, options?: Record<string, unknown>) => string;
 
-export function shouldBlockLocalCrossGroupAttachments(input: {
-  attachmentCount: number;
-  targets: Array<{ isCrossGroup?: boolean }>;
-}): boolean {
-  if (input.attachmentCount <= 0) return false;
-  return input.targets.some((target) => Boolean(target.isCrossGroup));
-}
-
 export function supportsChatStreamingPlaceholder(
   actor: Pick<Actor, "runtime" | "runner" | "runner_effective">,
 ): boolean {

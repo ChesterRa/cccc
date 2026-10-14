@@ -523,9 +523,11 @@ For replies over the local cross-group transport, each copy's `reply_to` MUST
 identify the parent in that copy's Group. The source audit record retains
 `dst_reply_to` for the destination parent, so a partially delivered reply can be
 retried without changing either thread or its destination Group. A conflicting
-retry MUST be rejected before any additional ledger write. Unsupported local
-cross-group attachments MUST be rejected before recording a reply or settling
-its obligation. The local reply fulfills the addressed
+retry MUST be rejected before any additional ledger write. Local cross-group
+attachments are copied into the destination Group's own blob store before
+either copy is recorded, so each copy's `path` resolves in its own Group; invalid
+attachments MUST be rejected before recording a reply or settling its
+obligation. The local reply fulfills the addressed
 Actor's existing reply obligation. The `reply` result exposes the caller's local
 event, not the destination copy.
 

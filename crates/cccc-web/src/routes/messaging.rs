@@ -174,20 +174,23 @@ async fn inbox_read(
 
 async fn send_upload(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
     Path(group_id): Path<String>,
     multipart: Multipart,
 ) -> ApiResult {
-    upload(&state, &group_id, multipart, false).await
+    upload(&state, &principal, &group_id, multipart, false).await
 }
 async fn reply_upload(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
     Path(group_id): Path<String>,
     multipart: Multipart,
 ) -> ApiResult {
-    upload(&state, &group_id, multipart, true).await
+    upload(&state, &principal, &group_id, multipart, true).await
 }
 async fn upload(
     state: &AppState,
+    principal: &Principal,
     group_id: &str,
     mut multipart: Multipart,
     is_reply: bool,
@@ -251,11 +254,24 @@ async fn upload(
         args.insert("message_mode".into(), Value::String(message_mode));
     }
     args.insert("group_id".into(), Value::String(group_id.into()));
+    // A send naming another Group crosses Groups; the daemon copies the files.
+    let destination = args
+        .get("dst_group_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let operation = match (&destination, is_reply) {
+        (_, true) => "reply",
+        (Some(destination), false) => {
+            // Same rule as the JSON cross-group route, before any file is kept.
+            super::messaging_cross_group::ensure_access(principal, destination)?;
+            "send_cross_group"
+        }
+        (None, false) => "send",
+    };
     let mut preflight_args = args.clone();
-    preflight_args.insert(
-        "operation".into(),
-        Value::String(if is_reply { "reply" } else { "send" }.into()),
-    );
+    preflight_args.insert("operation".into(), Value::String(operation.into()));
     preflight_args.insert(
         "has_attachments".into(),
         Value::Bool(!staged_uploads.is_empty()),
@@ -280,7 +296,7 @@ async fn upload(
         attachments.push(json!({"kind":"file","path":blob.path,"title":filename,"mime_type":content_type,"bytes":blob.bytes,"sha256":blob.sha256}));
     }
     args.insert("attachments".into(), Value::Array(attachments));
-    call(state, if is_reply { "reply" } else { "send" }, args).await
+    call(state, operation, args).await
 }
 
 async fn daemon_body(state: &AppState, op: &str, group_id: String, body: Value) -> ApiResult {

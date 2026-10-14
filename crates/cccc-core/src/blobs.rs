@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{self, Write};
-use std::path::PathBuf;
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 
 use crate::{GroupStore, HomeLayout};
 
@@ -102,6 +102,80 @@ pub fn resolve(home: &HomeLayout, group_id: &str, relative: &str) -> io::Result<
         .ok_or_else(|| io::Error::other("invalid blob path"))
 }
 
+/// Hash a stored blob without loading it into memory.
+pub fn digest_file(path: &Path) -> io::Result<(String, u64)> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024];
+    let mut bytes = 0_u64;
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        bytes += read as u64;
+    }
+    Ok((format!("{:x}", hasher.finalize()), bytes))
+}
+
+/// Place a blob held elsewhere into `group_id` under the same name. Entries are
+/// immutable, so an existing one is kept. A hard link shares the bytes; when
+/// linking is impossible a streamed copy is re-hashed before it is visible.
+pub fn place(
+    home: &HomeLayout,
+    group_id: &str,
+    name: &str,
+    source: &Path,
+    sha256: &str,
+) -> io::Result<String> {
+    if !valid_blob_name(name) {
+        return Err(io::Error::other("invalid blob path"));
+    }
+    let relative = format!("state/blobs/{name}");
+    let blobs_dir = GroupStore::new(home.clone())?
+        .state_dir(group_id)?
+        .join("blobs");
+    fs::create_dir_all(&blobs_dir)?;
+    let target = blobs_dir.join(name);
+    if target.is_file() {
+        return Ok(relative);
+    }
+    match fs::hard_link(source, &target) {
+        Ok(()) => return Ok(relative),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(relative),
+        Err(_) => {}
+    }
+    let mut copy = BlobUpload {
+        file: tempfile::NamedTempFile::new_in(&blobs_dir)?,
+        blobs_dir,
+        hasher: Sha256::new(),
+        bytes: 0,
+    };
+    let mut file = fs::File::open(source)?;
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        copy.write_chunk(&buffer[..read])?;
+    }
+    copy.file.as_file().sync_all()?;
+    if format!("{:x}", copy.hasher.finalize()) != sha256 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "blob changed while it was copied",
+        ));
+    }
+    if let Err(error) = copy.file.persist_noclobber(&target)
+        && error.error.kind() != io::ErrorKind::AlreadyExists
+    {
+        return Err(error.error);
+    }
+    Ok(relative)
+}
+
 fn valid_blob_name(name: &str) -> bool {
     if name.len() < 64 || name.len() > 185 {
         return false;
@@ -152,6 +226,32 @@ mod tests {
         assert!(!valid_blob_name(&format!("{digest}_../secret")));
         assert!(!valid_blob_name(&format!("{digest}_image/name.png")));
         assert!(!valid_blob_name("not-a-digest_image.png"));
+    }
+
+    #[test]
+    fn placing_a_blob_shares_it_with_another_group_idempotently() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let source = store.create("source", "").expect("source");
+        let target = store.create("target", "").expect("target");
+        let info = super::store(&home, &source.group_id, b"shared bytes").expect("blob");
+        let path = resolve(&home, &source.group_id, &info.path).expect("source path");
+        assert_eq!(
+            digest_file(&path).expect("digest"),
+            (info.sha256.clone(), 12)
+        );
+        assert!(resolve(&home, &target.group_id, &info.path).is_err());
+        for _ in 0..2 {
+            let placed =
+                place(&home, &target.group_id, &info.sha256, &path, &info.sha256).expect("place");
+            assert_eq!(placed, info.path);
+        }
+        assert_eq!(
+            fs::read(resolve(&home, &target.group_id, &info.path).expect("target")).expect("read"),
+            b"shared bytes"
+        );
+        assert!(place(&home, &target.group_id, "../escape", &path, &info.sha256).is_err());
     }
 
     #[test]

@@ -10,6 +10,8 @@ mod capability_install_events;
 mod capability_install_events_support;
 #[path = "suite/capability_state.rs"]
 mod capability_state;
+#[path = "suite/cross_group_attachments.rs"]
+mod cross_group_attachments;
 #[path = "suite/cross_group_foreman_default.rs"]
 mod cross_group_foreman_default;
 #[path = "suite/cross_group_sender_snapshot.rs"]

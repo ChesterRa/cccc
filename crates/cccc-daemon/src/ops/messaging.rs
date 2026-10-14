@@ -10,6 +10,8 @@ use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg
 use crate::ops::{actor_delivery, messaging_inbox};
 
 mod cancellation;
+pub(crate) mod cross_group_attachments;
+mod cross_group_preflight;
 mod delegation;
 pub(super) mod files;
 pub(crate) mod install_command;
@@ -68,6 +70,9 @@ fn send_files(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "send_files owns attachments; do not provide attachment records",
         ));
     }
+    if string_arg(request, "dst_group_id").is_some_and(|value| !value.trim().is_empty()) {
+        return cross_group_preflight::send_files(home, request, &group, paths);
+    }
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     if let Some(event) =
         super::message_idempotency::find(home, &group.group_id, "chat.message", &by, &request.args)
@@ -113,7 +118,16 @@ fn send_cross_group_with_reply(
         .get("attachments")
         .cloned()
         .unwrap_or_else(|| json!([]));
-    if text.trim().is_empty()
+    let existing_source = super::message_idempotency::find(
+        home,
+        &source.group_id,
+        "chat.message",
+        &by,
+        &request.args,
+    );
+    // An accepted message replays from its record, so only new content is checked.
+    if existing_source.is_none()
+        && text.trim().is_empty()
         && attachments
             .as_array()
             .is_none_or(|attachments| attachments.is_empty())
@@ -123,13 +137,6 @@ fn send_cross_group_with_reply(
             "text or attachments is required",
         ));
     }
-    let existing_source = super::message_idempotency::find(
-        home,
-        &source.group_id,
-        "chat.message",
-        &by,
-        &request.args,
-    );
     if let Some(event) = &existing_source
         && event.data.get("dst_group_id").and_then(Value::as_str) != Some(&destination_id)
     {
@@ -197,17 +204,8 @@ fn send_cross_group_with_reply(
     }
     delivery_data.remove("dst_group_id");
     delivery_data.remove("to_group_id");
-    if let Some(attachments) = delivery_data.get("attachments") {
-        let items = attachments
-            .as_array()
-            .ok_or_else(|| OpError::new("invalid_attachments", "attachments must be an array"))?;
-        if !items.is_empty() {
-            return Err(OpError::new(
-                "attachments_not_supported",
-                "local cross-group attachments are not supported",
-            ));
-        }
-    }
+    // A relay retry re-verifies from the accepted source event's records.
+    let attachments = cross_group_attachments::verify(home, &source.group_id, &mut delivery_data)?;
     super::messaging_recipients::apply_cross_group_recipient(&destination, &mut delivery_data)?;
     super::messaging_recipients::normalize_chat_data(
         &destination,
@@ -216,6 +214,9 @@ fn send_cross_group_with_reply(
         false,
     )?;
 
+    // Files are placed before either entry so the destination copy never
+    // references a blob its Group cannot read.
+    attachments.place(home, &destination.group_id)?;
     let source_event = if let Some(existing) = existing_source {
         existing
     } else {
@@ -348,10 +349,7 @@ fn message_upload_preflight(home: &HomeLayout, request: &DaemonRequest) -> OpRes
     match required_arg(request, "operation")?.as_str() {
         "send" => preflight_upload_send(home, request),
         "reply" => preflight_upload_reply(home, request),
-        "send_cross_group" => Err(OpError::new(
-            "attachments_not_supported",
-            "local cross-group attachments are not supported",
-        )),
+        "send_cross_group" => cross_group_preflight::upload(home, request),
         _ => Err(OpError::new(
             "invalid_args",
             "operation must be send, reply, or send_cross_group",
@@ -400,6 +398,9 @@ fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResul
     if let Some(event) =
         super::message_idempotency::find(home, &group.group_id, "chat.message", &by, &request.args)
     {
+        if let Some(outcome) = cross_group_preflight::accepted_reply(home, &event, &reply_to) {
+            return outcome;
+        }
         return preflight_duplicate(event);
     }
     let target = find_event(home, &group.group_id, &reply_to)?;
@@ -434,6 +435,20 @@ fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResul
             "to".into(),
             json!(default_reply_recipients(&group, &by, &target)),
         );
+    }
+    let routed = routed_reply_recipients(&forwarded.args);
+    if !routed.is_empty() {
+        let destination = cross_group_reply_destination(home, &forwarded, &target, &routed)?;
+        let mut cross_group = forwarded.clone();
+        cross_group.args.remove("reply_to");
+        cross_group
+            .args
+            .insert("dst_group_id".into(), json!(destination));
+        cross_group.args.insert(
+            "to".into(),
+            json!(routed.iter().map(|(_, actor)| actor).collect::<Vec<_>>()),
+        );
+        return cross_group_preflight::upload(home, &cross_group);
     }
     let mut data = upload_preflight_data(&forwarded);
     message_validation::normalize(home, &group, &mut data)?;
@@ -569,12 +584,6 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     // send_cross_group instead of failing recipient resolution.
     let routed = routed_reply_recipients(&forwarded.args);
     if !routed.is_empty() {
-        if routed.len() != recipient_tokens(&forwarded.args).len() {
-            return Err(OpError::new(
-                "invalid_recipient",
-                "replies cannot mix local and cross-group recipients",
-            ));
-        }
         return reply_cross_group(home, &forwarded, &group, &target, &routed);
     }
     send(home, &forwarded, "chat.message")
@@ -613,13 +622,19 @@ pub(crate) fn reply_crosses_groups(home: &HomeLayout, request: &DaemonRequest) -
     event.data.contains_key("src_group_id")
 }
 
-fn reply_cross_group(
+/// The one origin Group a routed reply may go back to.
+fn cross_group_reply_destination(
     home: &HomeLayout,
     forwarded: &DaemonRequest,
-    group: &GroupDoc,
     target: &Event,
     routed: &[(String, String)],
-) -> OpResult {
+) -> Result<String, OpError> {
+    if routed.len() != recipient_tokens(&forwarded.args).len() {
+        return Err(OpError::new(
+            "invalid_recipient",
+            "replies cannot mix local and cross-group recipients",
+        ));
+    }
     let mut destinations = routed
         .iter()
         .map(|(group_id, _)| group_id.clone())
@@ -638,6 +653,34 @@ fn reply_cross_group(
             "cross-group replies must address the original source group",
         ));
     }
+    // Provenance fields are caller-supplied message data and grant nothing
+    // alone. Only the origin Group's ledger proves it sent this message here;
+    // callers of the replying Group cannot write that record.
+    let source_event_id = target
+        .data
+        .get("src_event_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let delivered = find_event(home, &destinations[0], source_event_id).is_ok_and(|source| {
+        source.data.get("dst_group_id").and_then(Value::as_str) == Some(&target.group_id)
+    });
+    if !delivered {
+        return Err(OpError::new(
+            "invalid_recipient",
+            "the reply target is not a delivery from that group",
+        ));
+    }
+    Ok(destinations.remove(0))
+}
+
+fn reply_cross_group(
+    home: &HomeLayout,
+    forwarded: &DaemonRequest,
+    group: &GroupDoc,
+    target: &Event,
+    routed: &[(String, String)],
+) -> OpResult {
+    let destination = cross_group_reply_destination(home, forwarded, target, routed)?;
     let recipients = routed
         .iter()
         .map(|(_, actor)| actor.clone())
@@ -654,7 +697,7 @@ fn reply_cross_group(
         .insert("group_id".into(), json!(group.group_id));
     request
         .args
-        .insert("dst_group_id".into(), json!(destinations[0]));
+        .insert("dst_group_id".into(), json!(destination));
     request.args.insert("to".into(), json!(recipients));
     if let Some(source_event_id) = target
         .data

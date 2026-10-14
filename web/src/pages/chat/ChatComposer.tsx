@@ -848,7 +848,6 @@ export function ChatComposer({
     requestAnimationFrame(() => composerRef.current?.focus());
   };
 
-  const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
   const allModeOptions: Array<{ key: ComposerMessageMode; label: string; description: string }> = [
     { key: "send", label: t("modeSend"), description: t("modeSendDesc") },
     { key: "request_reply", label: t("modeSendReply"), description: t("modeSendReplyDesc") },
@@ -927,7 +926,6 @@ export function ChatComposer({
   const fileDisabledReason = (() => {
     if (!selectedGroupId) return t("selectGroupFirst");
     if (busy === "send") return t("busy");
-    if (isCrossGroup) return t("crossGroupAttachment");
     return t("attachFile");
   })();
   const sendShortcutLabel = useMemo(() => {
@@ -1272,14 +1270,14 @@ export function ChatComposer({
                 <button
                   className={classNames(
                     "glass-btn flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60 sm:h-9 sm:w-9",
-                    busy !== "send" && selectedGroupId && !isCrossGroup
+                    busy !== "send" && selectedGroupId
                       ? isDark
                         ? "hover:bg-white/10 hover:text-[var(--color-text-primary)]"
                         : "hover:bg-black/5 hover:text-gray-800"
                       : "",
                   )}
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={!selectedGroupId || busy === "send" || isCrossGroup}
+                  disabled={!selectedGroupId || busy === "send"}
                   aria-label={t("attachFile")}
                   title={fileDisabledReason}
                 >

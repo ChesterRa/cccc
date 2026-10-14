@@ -182,7 +182,6 @@
   "messageMode": "メッセージモード： {{mode}}",
   "selectGroupFirst": "先にグループを選択してください。",
   "busy": "ビジー。",
-  "crossGroupAttachment": "添付ファイルはまだグループ間で送信できません。",
   "attachFile": "ファイルを添付",
   "removeAttachment": "添付ファイルを削除 {{name}}",
   "builtInAssistantsArea": "組み込みアシスタント",

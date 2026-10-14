@@ -17,7 +17,7 @@ import {
 import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
 import type { Actor, LedgerEvent, MessageRef } from "../types";
-import { formatSendMessageError, shouldBlockLocalCrossGroupAttachments } from "../utils/chatSend";
+import { formatSendMessageError } from "../utils/chatSend";
 import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
 import { useConnectMentionGroups } from "./useConnectMentionGroups";
@@ -714,18 +714,6 @@ export function useChatTab({
       setDestGroupId(selectedGroupId);
       return;
     }
-    if (
-      shouldBlockLocalCrossGroupAttachments({
-        attachmentCount: composerFilesSnapshot.length,
-        targets: sendPlanTargets,
-      })
-    ) {
-      showError(
-        "Local cross-group send does not support attachments yet. Send without attachments.",
-      );
-      return;
-    }
-
     // Preserve reading intent before optimistic rows change the list geometry.
     const shouldLockBottomAfterSend = shouldFollowCurrentSend();
 

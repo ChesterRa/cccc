@@ -353,13 +353,6 @@ async fn file(
         request.insert("message_mode".into(), Value::String(message_mode));
         crate::argument_normalization::normalize_message_author(&mut request);
         crate::argument_normalization::normalize_recipients(&mut request);
-        if request
-            .get("dst_group_id")
-            .and_then(Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty())
-        {
-            return Err("local cross-group file sends are not supported; use dst_instance_id with dst_group_id for CCCC Connect".into());
-        }
         request.insert("paths".into(), json!([path.to_string_lossy().into_owned()]));
         let result = daemon(client, "send_files", request).await?;
         let attachment = result["event"]["data"]["attachments"]

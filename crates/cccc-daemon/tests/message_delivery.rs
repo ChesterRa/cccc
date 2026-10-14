@@ -2120,6 +2120,24 @@ async fn wait_until(mut condition: impl FnMut() -> bool) {
     }
 }
 
+/// Fail ledger appends while reads still work. Root/CAP_DAC_OVERRIDE bypass
+/// mode bits; such a run skips the case rather than pretending it was tested.
+fn block_ledger_writes(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o444)).expect("read-only");
+    if std::fs::OpenOptions::new().append(true).open(path).is_ok() {
+        allow_ledger_writes(path);
+        eprintln!("ledger write-failure case skipped: this process bypasses file mode bits");
+        return false;
+    }
+    true
+}
+
+fn allow_ledger_writes(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).expect("writable");
+}
+
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     let response = call_raw(home, op, args);
     assert!(
@@ -2467,10 +2485,11 @@ fn local_cross_group_reply_routes_back_to_origin_and_threads_there() {
 
     // Simulate failure after the local audit event was accepted. Retry must
     // recover the remote parent from that event, without duplicating either copy.
+    // The origin stays readable: replies prove their route from its ledger.
     let path = store.ledger_path(source_id).expect("ledger path");
-    let held = path.with_extension("retry-fixture");
-    std::fs::rename(&path, &held).expect("hold fixture ledger");
-    std::fs::create_dir(&path).expect("block fixture destination");
+    if !block_ledger_writes(&path) {
+        return;
+    }
     let pending = call_raw(
         &home,
         "reply",
@@ -2479,8 +2498,7 @@ fn local_cross_group_reply_routes_back_to_origin_and_threads_there() {
             "text":"retry answer", "message_mode":"mail", "client_id":"partial-reply"
         }),
     );
-    std::fs::remove_dir(&path).expect("unblock fixture destination");
-    std::fs::rename(&held, &path).expect("restore fixture ledger");
+    allow_ledger_writes(&path);
     assert!(!pending.ok);
     assert_eq!(
         (count(source_id), count(destination_id)),
@@ -2502,73 +2520,6 @@ fn local_cross_group_reply_routes_back_to_origin_and_threads_there() {
     assert_eq!(
         (count(source_id), count(destination_id)),
         (before.0 + 1, before.1 + 1)
-    );
-}
-
-#[test]
-fn cross_group_attachments_are_rejected_without_settling_reply_obligations() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let store = GroupStore::new(home.clone()).expect("store");
-    let origin = store.create("origin", "").expect("origin");
-    let receiver = store.create("receiver", "").expect("receiver");
-    call(
-        &home,
-        "actor_add",
-        json!({"group_id":receiver.group_id,"actor_id":"receiver","by":"user"}),
-    );
-    store
-        .mutate(&receiver.group_id, |group| {
-            group.state = cccc_contracts::GroupState::Paused;
-            Ok(())
-        })
-        .expect("pause fixture");
-    let sent = call(
-        &home,
-        "send_cross_group",
-        json!({
-            "group_id":origin.group_id,"dst_group_id":receiver.group_id,"by":"user",
-            "to":["receiver"],"text":"question","message_mode":"request_reply"
-        }),
-    );
-    let parent = &sent.result["dst_event"]["id"];
-    let blob = cccc_core::blobs::store(&home, &receiver.group_id, b"reply attachment")
-        .expect("local blob");
-    let read = |group_id: &str| {
-        ledger::read_all(&store.ledger_path(group_id).expect("ledger path")).expect("ledger")
-    };
-    let before = (read(&origin.group_id), read(&receiver.group_id));
-    for op in ["reply", "send_cross_group"] {
-        let mut args = json!({
-            "group_id":receiver.group_id,"dst_group_id":origin.group_id,"by":"receiver",
-            "reply_to":parent,"text":"answer","message_mode":"send",
-            "attachments":[{"path":blob.path}]
-        });
-        if op == "send_cross_group" {
-            args["to"] = json!(["user"]);
-        }
-        let rejected = call_raw(&home, op, args);
-        assert!(!rejected.ok);
-        assert_eq!(
-            read(&origin.group_id),
-            before.0,
-            "destination must not change"
-        );
-        assert_eq!(read(&receiver.group_id), before.1, "source must not change");
-        assert_eq!(
-            rejected.error.as_ref().map(|error| error.code.as_str()),
-            Some("attachments_not_supported")
-        );
-    }
-    let status = call(
-        &home,
-        "ledger_statuses",
-        json!({"group_id":receiver.group_id,"event_ids":[parent]}),
-    );
-    assert_eq!(
-        status.result["statuses"][parent.as_str().expect("parent")]["obligation_status"]["receiver"]
-            ["replied"],
-        false
     );
 }
 
@@ -2607,15 +2558,12 @@ fn cross_group_retries_reject_conflicting_routes_even_after_partial_delivery() {
             "text":"original answer","message_mode":"send","client_id":client_id
         });
         let path = store.ledger_path(&origin.group_id).expect("ledger path");
-        let held = path.with_extension("retry-fixture");
-        if partial {
-            std::fs::rename(&path, &held).expect("hold fixture ledger");
-            std::fs::create_dir(&path).expect("block fixture destination");
+        if partial && !block_ledger_writes(&path) {
+            continue;
         }
         let accepted = call_raw(&home, "reply", original_args.clone());
         if partial {
-            std::fs::remove_dir(&path).expect("unblock fixture destination");
-            std::fs::rename(&held, &path).expect("restore fixture ledger");
+            allow_ledger_writes(&path);
         }
         assert_eq!(accepted.ok, !partial);
         let before = (

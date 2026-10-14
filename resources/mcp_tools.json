@@ -601,7 +601,7 @@
         },
         "dst_group_id": {
           "type": "string",
-          "description": "Target Group ID for a CCCC Connect file send; requires dst_instance_id. Local cross-group attachment forwarding is not supported."
+          "description": "Target Group ID. Alone it sends to another Group on this instance (100 MiB total); with dst_instance_id it is the Group on a connected instance."
         },
         "text": {
           "type": "string",

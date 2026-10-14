@@ -4187,8 +4187,11 @@ The operation MUST perform the deterministic validation used by the eventual
 Insight, and content, without waking actors, changing group state, writing the
 ledger, storing blobs, or starting delivery. `send` and `reply` additionally
 perform successful-idempotency lookup and MUST return a duplicate result before
-an upload is committed. Local cross-group uploads are unsupported and rejected.
-Connect reply uploads use the canonical reply authorization. The HTTP port MUST discard its staged files on rejection
+an upload is committed. `send_cross_group` returns a duplicate only when the
+destination copy exists; an accepted send interrupted before that copy returns
+`ready: true` so the commit completes it; a `reply` whose accepted local
+cross-group copy lacks its far copy is handled the same way. A `reply` routed back to a local
+cross-group origin is validated as that cross-group send. Connect reply uploads use the canonical reply authorization. The HTTP port MUST discard its staged files on rejection
 or duplicate replay. The eventual operation MUST validate again at the commit
 boundary; preflight is not a reservation.
 
@@ -4261,9 +4264,13 @@ the source audit record. Retries reuse these persisted identities. Mixed local
 and cross-group audiences, or another destination Group, are rejected before
 writing either ledger. A retry of an accepted local cross-group reply with the
 same `client_id` but a different `reply_to` MUST fail with `idempotency_conflict`
-without writing either ledger, including after partial delivery. Local
-cross-group attachments MUST be rejected with `attachments_not_supported`
-before recording the reply or settling its reply obligation.
+without writing either ledger, including after partial delivery. Attachments
+follow the `send_cross_group` rules; invalid attachments MUST be rejected
+before recording the reply or settling its reply obligation. A reply routes back only when the
+origin Group's ledger holds the source event named by the parent's
+`src_event_id` with `dst_group_id` equal to the replying Group; provenance
+fields a caller wrote onto a local message grant no route
+(`invalid_recipient`).
 The returned `event` MUST be the caller's local event;
 `dst_event` identifies the delivered copy. Dispatch ownership MUST cover both
 Groups, using the existing cross-group send policy.
@@ -4347,7 +4354,7 @@ Cross-group send implemented as:
 
 Args:
 ```ts
-{ group_id: string; dst_group_id: string; text: string; by?: string; to?: string[]; message_mode: "send" | "request_reply" | "mail"; insight?: string; require_peer_insight?: boolean }
+{ group_id: string; dst_group_id: string; text?: string; attachments?: AttachmentRefV1[]; by?: string; to?: string[]; message_mode: "send" | "request_reply" | "mail"; insight?: string; require_peer_insight?: boolean }
 ```
 
 Result:
@@ -4359,10 +4366,20 @@ Notes:
 - Local `user` / `system` principals and registered source actors, including
   peers, may send cross-group messages; unknown source actors are rejected. The
   foreman-only group administration permission does not apply to message delivery.
-- Local cross-group forwarding rejects attachments. Connect sends use their
-  qualified instance/Group destination and bounded attachment contract.
-- Destination Group and recipient validation, and rejection of unsupported
-  attachments, MUST precede the source append. Reusing an accepted `client_id` with a different
+- Text or at least one attachment is required. Each attachment `path` MUST
+  name a blob in the origin Group. The daemon hashes the stored bytes and
+  rejects a declared `sha256` or `bytes` that differs (`invalid_attachments`),
+  and rejects more than 100 MiB in total (`attachment_too_large`). Records are
+  rewritten from the stored bytes; `kind` is `image` exactly when `mime_type`
+  is `image/*`.
+- Verified blobs are placed in the destination Group under the same
+  `state/blobs/` name before either ledger entry is written, so each copy reads
+  its own Group's blob. Placement is idempotent and repeats on a relay retry.
+  It grants no read access to the origin Group.
+- Connect sends use their qualified instance/Group destination and bounded
+  attachment contract.
+- Destination Group, recipient and attachment validation MUST precede the
+  source append. Reusing an accepted `client_id` with a different
   `dst_group_id` MUST fail with `idempotency_conflict`; a partial delivery retry
   keeps the accepted message's content, recipients and thread references.
 

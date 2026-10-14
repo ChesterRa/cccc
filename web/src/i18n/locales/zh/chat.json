@@ -186,7 +186,6 @@
   "messageMode": "消息模式：{{mode}}",
   "selectGroupFirst": "请先选择一个工作组。",
   "busy": "处理中。",
-  "crossGroupAttachment": "跨组附件功能暂不支持。",
   "attachFile": "添加附件",
   "removeAttachment": "移除附件 {{name}}",
   "builtInAssistantsArea": "内建助手",

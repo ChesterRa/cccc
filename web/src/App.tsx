@@ -135,7 +135,6 @@ export default function App({
   const {
     activeGroupId,
     destGroupId,
-    composerFiles,
     replyTarget,
     setDestGroupId,
     setReplyTarget,
@@ -144,7 +143,6 @@ export default function App({
     useShallow((s) => ({
       activeGroupId: s.activeGroupId,
       destGroupId: s.destGroupId,
-      composerFiles: s.composerFiles,
       replyTarget: s.replyTarget,
       setDestGroupId: s.setDestGroupId,
       setReplyTarget: s.setReplyTarget,
@@ -373,14 +371,12 @@ export default function App({
   }, [groups]);
 
   const hasReplyTarget = !!replyTarget;
-  const hasComposerFiles = composerFiles.length > 0;
 
   useAppGroupLifecycle({
     selectedGroupId: remoteSelected ? "" : selectedGroupId,
     destGroupId,
     sendGroupId,
     hasReplyTarget,
-    hasComposerFiles,
     setDestGroupId,
     fileInputRef,
     resetDragDrop,
