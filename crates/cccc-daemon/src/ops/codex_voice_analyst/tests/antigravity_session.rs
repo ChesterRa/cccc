@@ -553,14 +553,24 @@ fn antigravity_supervisor_keeps_actual_acp_surface_after_a_pending_mode_edit() {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
+    // The reply chunk is journaled by the session reader thread after the turn
+    // starts. Cancelling first would race that write under load.
+    let journal_path = store
+        .state_dir(&group.group_id)
+        .expect("state directory")
+        .join("headless/events.jsonl");
+    let started = std::time::Instant::now();
+    while !std::fs::read_to_string(&journal_path)
+        .is_ok_and(|journal| journal.contains("headless.message.delta"))
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the live reply must reach the journal"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
     assert!(supervisor::cancel_turn(&group.group_id, "alpha", generation).expect("cancel"));
-    let journal = std::fs::read_to_string(
-        store
-            .state_dir(&group.group_id)
-            .expect("state directory")
-            .join("headless/events.jsonl"),
-    )
-    .expect("journal");
+    let journal = std::fs::read_to_string(&journal_path).expect("journal");
     assert!(journal.contains("headless.turn.started"));
     assert!(journal.contains("headless.message.delta"));
     assert!(!journal.contains("FOREIGN"));
