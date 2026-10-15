@@ -43,6 +43,25 @@ describe("message attachment links", () => {
     expect(links.downloadName).toBe("draft.png");
   });
 
+  it("uses the stored blob once the upload is confirmed", () => {
+    // The local URL is revoked about a minute after confirmation.
+    const confirmed = {
+      groupId: "g1",
+      path: "state/blobs/stored-hash",
+      title: "clip.mp4",
+      localPreviewUrl: "blob:preview",
+      fallbackLabel: "video",
+    };
+    const shown = buildMessageAttachmentLinks(confirmed);
+    expect(shown.previewHref).toBe("blob:preview");
+    expect(shown.downloadHref).toContain("/api/v1/groups/g1/blobs/stored-hash?");
+    expect(shown.downloadHref).toContain("download=true");
+
+    const onDemand = buildMessageAttachmentLinks({ ...confirmed, preferStoredPreview: true });
+    expect(onDemand.previewHref).toContain("/api/v1/groups/g1/blobs/stored-hash?");
+    expect(onDemand.previewHref).not.toContain("download=true");
+  });
+
   it("removes path and header control characters from suggested names", () => {
     expect(safeAttachmentFilename('../folder\\report\r\n"final".txt')).toBe("report_final_.txt");
     expect(safeAttachmentFilename("..", "file")).toBe("file");

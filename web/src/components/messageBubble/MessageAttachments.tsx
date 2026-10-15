@@ -1,9 +1,14 @@
 import type { MessageAttachment } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks";
-import { isImageAttachment, isSvgAttachment } from "../../utils/messageAttachments";
+import {
+  isImageAttachment,
+  isSvgAttachment,
+  isVideoAttachment,
+} from "../../utils/messageAttachments";
 import { FileIcon } from "../Icons";
 import { ImagePreview } from "./ImagePreview";
+import { VideoPreview } from "./VideoPreview";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 
 export function MessageAttachments({
@@ -24,7 +29,10 @@ export function MessageAttachments({
   sectionClassName?: string;
 }) {
   const imageAttachments = attachments.filter((attachment) => isImageAttachment(attachment));
-  const fileAttachments = attachments.filter((attachment) => !isImageAttachment(attachment));
+  const videoAttachments = attachments.filter((attachment) => isVideoAttachment(attachment));
+  const fileAttachments = attachments.filter(
+    (attachment) => !isImageAttachment(attachment) && !isVideoAttachment(attachment),
+  );
   const useImageGrid = imageAttachments.length > 1;
 
   if (attachments.length <= 0 || !blobGroupId) return null;
@@ -69,11 +77,40 @@ export function MessageAttachments({
           })}
         </div>
       )}
+      {videoAttachments.length > 0 && (
+        <div
+          className={classNames(
+            "flex max-w-full flex-col items-start gap-3",
+            imageAttachments.length > 0 && "mt-3",
+          )}
+        >
+          {videoAttachments.map((attachment, index) => {
+            const links = buildMessageAttachmentLinks({
+              groupId: blobGroupId,
+              path: attachment.path,
+              title: attachment.title,
+              localPreviewUrl: attachment.local_preview_url,
+              fallbackLabel: "video",
+              preferStoredPreview: true,
+            });
+            return (
+              <VideoPreview
+                key={`video:${attachmentKeyPrefix}:${index}`}
+                href={links.previewHref}
+                downloadHref={links.downloadHref}
+                downloadName={links.downloadName}
+                label={links.label}
+                downloadTitle={downloadTitle(links.label)}
+              />
+            );
+          })}
+        </div>
+      )}
       {fileAttachments.length > 0 && (
         <div
           className={classNames(
             "flex max-w-full flex-wrap items-start gap-2",
-            imageAttachments.length > 0 && "mt-3",
+            (imageAttachments.length > 0 || videoAttachments.length > 0) && "mt-3",
           )}
         >
           {fileAttachments.map((attachment, index) => {

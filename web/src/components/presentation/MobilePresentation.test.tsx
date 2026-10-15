@@ -156,6 +156,37 @@ describe("mobile presentation surface", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("lets a media player's own controls take Tab and wraps focus that leaves it", async () => {
+    // The phone Files surface previews workspace video and audio in this portal.
+    await act(async () => {
+      root.render(
+        <MobilePresentationSurface isOpen isDark={false} label="Files" onClose={() => {}}>
+          <button type="button">Open in browser</button>
+          <video controls />
+        </MobilePresentationSurface>,
+      );
+    });
+    const surface = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const first = surface.querySelector<HTMLButtonElement>("button")!;
+    const player = surface.querySelector<HTMLVideoElement>("video")!;
+    const guard = surface.lastElementChild as HTMLElement;
+    expect(guard.hasAttribute("data-focus-guard")).toBe(true);
+
+    player.focus();
+    const insidePlayer = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => document.dispatchEvent(insidePlayer));
+    expect(insidePlayer.defaultPrevented).toBe(false);
+
+    // Leaving the player's last control lands on the guard, which wraps.
+    await act(async () => guard.focus());
+    expect(document.activeElement).toBe(first);
+    expect(surface.contains(document.activeElement)).toBe(true);
+  });
+
   it("closes the phone slot panel from its shared header", async () => {
     const close = vi.fn();
     await act(async () => {

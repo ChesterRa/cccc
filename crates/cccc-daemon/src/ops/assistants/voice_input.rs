@@ -18,8 +18,10 @@ const INPUT_STATE_SCHEMA: u64 = 1;
 pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let session_id = safe_id(&required_arg(request, "session_id")?)?;
+    // A blank id means "not provided": an empty closing flush carries none.
     let segment_id = safe_id(
         &string_arg(request, "segment_id")
+            .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| format!("seg-{}", Uuid::new_v4().simple())),
     )?;
     let text = string_arg(request, "text")

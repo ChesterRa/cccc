@@ -1,14 +1,10 @@
-import { buttonVariants } from "../ui/button-variants";
 import { GraphicViewer } from "../viewer/GraphicViewer";
-import { useModalA11y } from "../../hooks/useModalA11y";
-import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
-import { FloatingPortal } from "@floating-ui/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { classNames } from "../../utils/classNames";
-import { CloseIcon, DownloadIcon } from "../Icons";
 import { MESSAGE_IMAGE_PREVIEW_HEIGHT_PX } from "./imageLayout";
 import { ImagePreviewFailure } from "./ImagePreviewFailure";
+import { MediaLightbox } from "./MediaLightbox";
 
 const IMAGE_LOAD_ERROR_CACHE = new Set<string>();
 const LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE = {
@@ -147,7 +143,6 @@ export function ImagePreview({
   }, [displaySrc, href, resolvedHref]);
 
   const isLightboxVisible = isLightboxOpen && !loadError;
-  const { modalRef } = useModalA11y(isLightboxVisible, () => setIsLightboxOpen(false));
   useEffect(() => {
     if (loadError) setIsLightboxOpen(false);
   }, [loadError]);
@@ -235,76 +230,16 @@ export function ImagePreview({
         )}
       </button>
 
-      {isLightboxVisible && (
-        <FloatingPortal>
-          <div className="fixed inset-0 z-[80] flex items-center justify-center sm:p-4 animate-fade-in">
-            <button
-              type="button"
-              className={classNames("absolute inset-0", "glass-overlay")}
-              onClick={() => setIsLightboxOpen(false)}
-              aria-label={t("common:close")}
-            />
-
-            <div
-              className={classNames(
-                "relative z-[81] flex h-[100dvh] sm:h-[90dvh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl",
-                "glass-modal",
-              )}
-              ref={modalRef}
-              role="dialog"
-              aria-modal="true"
-              aria-label={t("imagePreviewDialog")}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div
-                className={classNames(
-                  "flex items-center justify-between gap-3 border-b px-4 py-3",
-                  "border-[var(--glass-border-subtle)]",
-                )}
-              >
-                <div className="min-w-0">
-                  <p
-                    className={classNames(
-                      "truncate text-sm font-medium",
-                      "text-[var(--color-text-primary)]",
-                    )}
-                  >
-                    {alt}
-                  </p>
-                  <p className={classNames("text-xs", "text-[var(--color-text-tertiary)]")}>
-                    {t("imagePreviewHint")}
-                  </p>
-                </div>
-
-                <div className="flex shrink-0 items-center gap-2">
-                  <AuthenticatedDownloadLink
-                    href={downloadHref}
-                    download={downloadName}
-                    className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11`}
-                    title={t("download", { name: alt })}
-                    aria-label={t("download", { name: alt })}
-                  >
-                    <DownloadIcon size={18} aria-hidden="true" />
-                  </AuthenticatedDownloadLink>
-
-                  <button
-                    type="button"
-                    onClick={() => setIsLightboxOpen(false)}
-                    className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11`}
-                    aria-label={t("common:close")}
-                  >
-                    <CloseIcon size={18} />
-                  </button>
-                </div>
-              </div>
-
-              <div className="min-h-0 flex-1">
-                <GraphicViewer src={displaySrc || resolvedHref || href} alt={alt} />
-              </div>
-            </div>
-          </div>
-        </FloatingPortal>
-      )}
+      <MediaLightbox
+        open={isLightboxVisible}
+        onClose={() => setIsLightboxOpen(false)}
+        dialogLabel={t("imagePreviewDialog")}
+        title={alt}
+        downloadHref={downloadHref}
+        downloadName={downloadName}
+      >
+        <GraphicViewer src={displaySrc || resolvedHref || href} alt={alt} />
+      </MediaLightbox>
     </>
   );
 }

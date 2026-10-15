@@ -11,6 +11,9 @@ const IMAGE_ATTACHMENT_EXTENSIONS = new Set([
   ".avif",
 ]);
 
+// Containers browsers commonly play inline.
+const VIDEO_ATTACHMENT_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".webm"]);
+
 function attachmentPathOrName(attachment: MessageAttachment): string {
   return String(attachment.path || attachment.title || "")
     .trim()
@@ -36,6 +39,22 @@ export function isImageAttachment(attachment: MessageAttachment): boolean {
     .toLowerCase();
   if (mime.startsWith("image/")) return true;
   return IMAGE_ATTACHMENT_EXTENSIONS.has(attachmentExtension(attachment));
+}
+
+export function isVideoAttachment(attachment: MessageAttachment): boolean {
+  if (isImageAttachment(attachment)) return false;
+  const mime = String(attachment.mime_type || "")
+    .trim()
+    .toLowerCase();
+  if (mime.startsWith("video/")) return true;
+  const extension = attachmentExtension(attachment);
+  if (VIDEO_ATTACHMENT_EXTENSIONS.has(extension)) return true;
+  // Blob paths are content hashes; the original name lives in the title.
+  const title = String(attachment.title || "")
+    .trim()
+    .toLowerCase();
+  const dot = title.lastIndexOf(".");
+  return dot >= 0 && VIDEO_ATTACHMENT_EXTENSIONS.has(title.slice(dot));
 }
 
 export function isSvgAttachment(attachment: MessageAttachment): boolean {

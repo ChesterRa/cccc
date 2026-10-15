@@ -180,3 +180,85 @@ it("leaves focus inside a portaled child dialog and restores the parent trigger 
   expect(document.activeElement).toBe(trigger);
   await act(async () => root.unmount());
 });
+
+function MediaFixture() {
+  const { modalRef } = useModalA11y(true, () => {});
+  return (
+    <div ref={modalRef}>
+      <button id="download">download</button>
+      <button id="close">close</button>
+      <video id="player" controls />
+      <span id="guard" tabIndex={0} data-focus-guard />
+    </div>
+  );
+}
+
+it("lets Tab walk a media player's own controls and enters them from the end on Shift+Tab", async () => {
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  });
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<MediaFixture />));
+  const download = host.querySelector<HTMLButtonElement>("#download")!;
+  const player = host.querySelector<HTMLVideoElement>("#player")!;
+  const guard = host.querySelector<HTMLElement>("#guard")!;
+  expect(document.activeElement).toBe(download);
+
+  // Focus stays on the element while Tab moves between its native controls.
+  player.focus();
+  const insidePlayer = new KeyboardEvent("keydown", { key: "Tab", cancelable: true });
+  document.dispatchEvent(insidePlayer);
+  expect(insidePlayer.defaultPrevented).toBe(false);
+  expect(document.activeElement).toBe(player);
+
+  // Wrapping backward lands on the guard so the browser steps into the
+  // player's last control; the guard itself is never a boundary.
+  download.focus();
+  const backwards = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, cancelable: true });
+  document.dispatchEvent(backwards);
+  expect(backwards.defaultPrevented).toBe(false);
+  expect(document.activeElement).toBe(guard);
+  expect(guard.dataset.focusPassThrough).toBe("true");
+  await act(async () => root.unmount());
+});
+
+function UnguardedMediaFixture() {
+  const { modalRef } = useModalA11y(true, () => {});
+  return (
+    <div ref={modalRef}>
+      <button id="action">action</button>
+      <video id="unguarded-player" controls />
+    </div>
+  );
+}
+
+it("keeps a media player as one wrapping stop in a modal without a focus guard", async () => {
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  });
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<UnguardedMediaFixture />));
+  const action = host.querySelector<HTMLButtonElement>("#action")!;
+  const player = host.querySelector<HTMLVideoElement>("#unguarded-player")!;
+
+  // Nothing would catch focus leaving the player, so the trap keeps it inside.
+  player.focus();
+  const forwards = new KeyboardEvent("keydown", { key: "Tab", cancelable: true });
+  document.dispatchEvent(forwards);
+  expect(forwards.defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(action);
+
+  const backwards = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, cancelable: true });
+  document.dispatchEvent(backwards);
+  expect(backwards.defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(player);
+  await act(async () => root.unmount());
+});

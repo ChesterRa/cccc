@@ -316,8 +316,14 @@ async fn transcript_segment(
 ) -> ApiResult {
     let mut args = object(body);
     args.insert("group_id".into(), json!(group_id));
-    args.entry("session_id")
-        .or_insert_with(|| json!(format!("vs_{}", short_id())));
+    // A blank session id is as good as none; give the segment its own session.
+    if args
+        .get("session_id")
+        .and_then(Value::as_str)
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        args.insert("session_id".into(), json!(format!("vs_{}", short_id())));
+    }
     args.entry("by").or_insert_with(|| json!("user"));
     call(&state, "assistant_voice_transcript_append", args).await
 }

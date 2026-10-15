@@ -1283,6 +1283,38 @@ fn enabled_voice_group() -> (tempfile::TempDir, HomeLayout, GroupStore, String) 
     (temp, home, store, group.group_id)
 }
 
+#[test]
+fn an_empty_document_flush_without_segment_id_is_accepted() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let document_path = "docs/voice-secretary/empty-flush.md";
+    // Stopping a document recording that recognized nothing flushes empty text
+    // with an empty segment id; it must close the window, not fail.
+    for text in ["", "spoken words"] {
+        ok(
+            &home,
+            "assistant_voice_transcript_append",
+            json!({
+                "group_id":group_id,"by":"user","session_id":"empty-flush-session",
+                "segment_id":"","text":text,"flush":true,"is_final":true,
+                "document_path":document_path
+            }),
+        );
+    }
+    let rejected = call(
+        &home,
+        "assistant_voice_transcript_append",
+        json!({
+            "group_id":group_id,"by":"user","session_id":"empty-flush-session",
+            "segment_id":"../escape","text":"x","document_path":document_path
+        }),
+    );
+    assert_eq!(
+        rejected.error.as_ref().map(|error| error.code.as_str()),
+        Some("invalid_args"),
+        "an unsafe explicit id is still refused"
+    );
+}
+
 fn ok(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     let response = call(home, op, args);
     assert!(response.ok, "{op} failed: {:?}", response.error);

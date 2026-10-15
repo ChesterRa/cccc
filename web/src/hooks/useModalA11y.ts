@@ -2,12 +2,13 @@
 import { useCallback, useEffect, useId, useRef, type RefObject } from "react";
 
 const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), summary, video[controls], audio[controls], [tabindex]:not([tabindex="-1"])';
 
 function focusableElements(modal: HTMLElement): HTMLElement[] {
   return Array.from(modal.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((element) => {
     if (
       element.matches(":disabled") ||
+      element.hasAttribute("data-focus-guard") ||
       element.tabIndex < 0 ||
       element.closest('[hidden], [inert], [aria-hidden="true"]')
     )
@@ -51,7 +52,7 @@ function removeModal(id: string): void {
   if (idx >= 0) modalStack.splice(idx, 1);
 }
 
-function focusFirst(modal: HTMLDivElement): void {
+export function focusFirst(modal: HTMLElement): void {
   const first = focusableElements(modal)[0];
   if (first) {
     first.focus();
@@ -154,6 +155,13 @@ export function useModalA11y(
       )
         return;
 
+      // Native media controls live in the element's own shadow tree, so focus
+      // stays on the element while Tab moves between them. Let the browser walk
+      // them only when a trailing ModalFocusGuard can catch focus leaving the
+      // player; without one, the element stays a single wrapping stop.
+      const guard = modal.querySelector<HTMLElement>("[data-focus-guard]");
+      if (guard && active instanceof HTMLMediaElement && modal.contains(active)) return;
+
       const focusables = focusableElements(modal);
       if (focusables.length === 0) {
         e.preventDefault();
@@ -167,6 +175,13 @@ export function useModalA11y(
 
       if (e.shiftKey) {
         if (active === first || !modal.contains(active)) {
+          if (last instanceof HTMLMediaElement && guard) {
+            // Step back from the guard natively so focus enters the player's
+            // last own control instead of the element as a whole.
+            guard.dataset.focusPassThrough = "true";
+            guard.focus();
+            return;
+          }
           e.preventDefault();
           last.focus();
         }
