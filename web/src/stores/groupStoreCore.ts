@@ -22,6 +22,7 @@ import type {
   StreamingActivity,
 } from "../types";
 import { dedupeStreamingActivities, type StreamingReplySession } from "./chatStreamingSessions";
+import { projectSenderHistory, type SenderHistory } from "./senderHistoryProjection";
 
 export type ChatWindowState = {
   groupId: string;
@@ -34,6 +35,7 @@ export type ChatWindowState = {
 
 export type GroupChatBucket = {
   events: LedgerEvent[];
+  senderHistory: SenderHistory | null;
   streamingEvents: LedgerEvent[];
   streamingTextByStreamId: Record<string, string>;
   streamingActivitiesByStreamId: Record<string, StreamingActivity[]>;
@@ -75,6 +77,7 @@ export type GroupStateSnapshot = {
 
 export const EMPTY_CHAT_BUCKET: GroupChatBucket = {
   events: [],
+  senderHistory: null,
   streamingEvents: [],
   streamingTextByStreamId: {},
   streamingActivitiesByStreamId: {},
@@ -510,6 +513,7 @@ export function getGroupChatBucket(
   const cached = getCachedGroupView(gid);
   return {
     events: cached?.events ? [...cached.events] : [],
+    senderHistory: null,
     streamingEvents: [],
     streamingTextByStreamId: {},
     streamingActivitiesByStreamId: {},
@@ -886,6 +890,12 @@ export function buildChatBucketPatch(
       ...state.chatByGroup,
       [gid]: {
         events: nextEvents,
+        senderHistory:
+          patch.senderHistory !== undefined
+            ? patch.senderHistory
+            : prev.senderHistory && patch.events
+              ? projectSenderHistory(prev.senderHistory, patch.events, prev.events)
+              : (prev.senderHistory ?? null),
         streamingEvents: nextStreamingEvents,
         streamingTextByStreamId: nextStreamingTextByStreamId,
         streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,

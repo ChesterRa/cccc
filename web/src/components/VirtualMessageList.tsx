@@ -80,6 +80,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onReply,
   onShowRecipients,
   onCopyLink,
+  onViewContext,
   onCopyContent,
   onRelay,
   onOpenSource,
@@ -987,6 +988,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               effectiveHighlightEventId={effectiveHighlightEventId}
               onReply={onReply}
               onShowRecipients={onShowRecipients}
+              onViewContext={onViewContext}
               onCopyLink={onCopyLink}
               onCopyContent={onCopyContent}
               onRelay={onRelay}

@@ -7,7 +7,7 @@ import {
   groupMessagesVisible,
   type ChatScrollSnapshot,
 } from "../../stores/useUIStore";
-import type { Actor, GroupMeta, LedgerEvent } from "../../types";
+import type { Actor, LedgerEvent } from "../../types";
 import { buildReplyComposerState } from "../../utils/chatReply";
 import { copyTextToClipboard } from "../../utils/copy";
 import { appendSenderPerspective, getMessageInsight } from "../../utils/messagePerspective";
@@ -16,7 +16,6 @@ import { canOpenSourceMessageLocally } from "./chatTabBasics";
 export function useChatMessageActions(input: {
   selectedGroupId: string;
   actors: Actor[];
-  groups: GroupMeta[];
   groupSettings: Parameters<typeof buildReplyComposerState>[3];
   composerRef?: React.RefObject<HTMLTextAreaElement | null>;
   setChatAtBottom: (value: boolean) => void;
@@ -108,7 +107,7 @@ export function useChatMessageActions(input: {
       const groupId = String(srcGroupId || "").trim();
       const eventId = String(srcEventId || "").trim();
       if (!groupId || !eventId) return;
-      if (!canOpenSourceMessageLocally(input.groups, groupId)) {
+      if (!canOpenSourceMessageLocally(useGroupStore.getState().groups, groupId)) {
         input.showError(
           input.t("sourceMessageNotLocal", {
             groupId,
@@ -124,12 +123,12 @@ export function useChatMessageActions(input: {
         url.searchParams.set("event", eventId);
         url.searchParams.set("tab", "chat");
         window.history.replaceState({}, "", `${url.pathname}?${url.searchParams.toString()}`);
-        if (input.selectedGroupId === groupId) {
-          useUIStore.getState().setActiveTab("chat");
-          void input.openChatWindow(groupId, eventId);
-        } else useGroupStore.getState().setSelectedGroupId(groupId);
+        const store = useGroupStore.getState();
+        if (store.selectedGroupId !== groupId) store.setSelectedGroupId(groupId);
+        useUIStore.getState().setActiveTab("chat");
+        void input.openChatWindow(groupId, eventId);
       };
-      if (input.selectedGroupId === groupId) navigate();
+      if (useGroupStore.getState().selectedGroupId === groupId) navigate();
       else requestWorkspaceNavigation(navigate);
     },
     [input],

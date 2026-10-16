@@ -11,17 +11,16 @@ export function getRuntimeRingTone(
   const actorState = String(workingState || "")
     .trim()
     .toLowerCase();
-  if (!isRunning) return item.liveWorkCard?.phase === "failed" ? "attention" : "stopped";
-
-  // Headless runtimes already expose their real daemon-derived working state.
-  // Live-work transcript state can lag during reconnect/catch-up, so don't let
-  // stale pending/streaming cards light the ring after the actor is idle.
+  // Managed runtimes expose the current daemon-owned state. Task history can
+  // retain an older outcome after recovery and must not override this ring.
   if (hasManagedRuntimeOutput(item.actor)) {
+    if (!isRunning) return "stopped";
     if (actorState === "stuck" || actorState === "error") return "attention";
     if (actorState === "working") return "active";
-    if (item.liveWorkCard?.phase === "failed") return "attention";
     return "idle";
   }
+
+  if (!isRunning) return item.liveWorkCard?.phase === "failed" ? "attention" : "stopped";
 
   if (actorState === "error" || item.liveWorkCard?.phase === "failed") return "attention";
 

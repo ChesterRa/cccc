@@ -2,8 +2,7 @@ import { useMemo } from "react";
 import type { OutboxEntry } from "../../stores/chatOutboxStore";
 import type { GroupChatBucket } from "../../stores/groupStoreCore";
 import { getChatSession } from "../../stores/useUIStore";
-import type { Actor, ChatMessageData, GroupDoc, LedgerEvent } from "../../types";
-import { projectMessageMode } from "../../utils/crossGroupRecipients";
+import type { Actor, GroupDoc, LedgerEvent } from "../../types";
 import { isFormalChatMessageEvent } from "../../utils/chatSend";
 import { hasRenderableChatMessageContent } from "../../utils/ledgerEventHandlers";
 import {
@@ -22,6 +21,10 @@ import {
   dropOrphanQueuedPlaceholders,
 } from "./chatStreamingProjection";
 import { resolveChatListHistoryState } from "./chatListHistoryState";
+import { matchesChatFilters } from "./chatMessageFilters";
+import { useChatSenderHistory } from "./useChatSenderHistory";
+
+const EMPTY_SENDERS: readonly string[] = [];
 
 type ChatEmptyState = "ready" | "hydrating" | "business_empty" | "filtered_empty";
 
@@ -32,6 +35,7 @@ export function useChatMessageView(input: {
   outboxEntries: Pick<OutboxEntry, "localId" | "event">[];
   chatWindow: GroupChatBucket["chatWindow"];
   chatFilter: ReturnType<typeof getChatSession>["chatFilter"];
+  senders?: readonly string[];
   scrollSnapshot: ReturnType<typeof getChatSession>["scrollSnapshot"];
   hasLoadedTail: boolean;
   hasMoreHistory: boolean;
@@ -43,13 +47,16 @@ export function useChatMessageView(input: {
   actors: Actor[];
   needsActors: boolean;
 }) {
+  const senders = input.senders ?? EMPTY_SENDERS;
+  const senderHistory = useChatSenderHistory(input.selectedGroupId, senders);
+  const conversationEvents = senders.length === 0 ? input.events : senderHistory.events;
   const inChatWindow =
     !!input.chatWindow &&
     String(input.chatWindow.groupId || "") === String(input.selectedGroupId || "");
   const viewKey =
     inChatWindow && input.chatWindow
       ? `${input.selectedGroupId}:window:${input.chatWindow.centerEventId}`
-      : `${input.selectedGroupId}:live`;
+      : `${input.selectedGroupId}:live:${input.chatFilter}:${JSON.stringify(senders)}`;
   const orderState = useMemo(
     () => ({ viewKey, map: new Map<string, number>(), next: 0 }),
     [viewKey],
@@ -69,7 +76,7 @@ export function useChatMessageView(input: {
   );
 
   const liveChatMessages = useMemo(() => {
-    const canonical = input.events
+    const canonical = conversationEvents
       .filter(isFormalChatMessageEvent)
       .filter(shouldShowInConversation)
       .map(toVisibleConversationEvent);
@@ -88,30 +95,15 @@ export function useChatMessageView(input: {
     const pending = input.outboxEntries
       .filter((entry) => !canonicalClientIds.has(entry.localId))
       .map((entry) => entry.event);
-    const ordered = sortChatMessages(
-      mergeVisibleChatMessages(canonical, [], pending, orderState),
-      new Map(),
+    const merged = mergeVisibleChatMessages(
+      canonical,
+      [],
+      pending,
+      senders.length ? { map: new Map(), next: 0 } : orderState,
     );
-    if (input.chatFilter === "mail") {
-      return ordered.filter(
-        (event) => projectMessageMode(event.data as ChatMessageData) === "mail",
-      );
-    }
-    if (input.chatFilter === "request_reply") {
-      return ordered.filter(
-        (event) => projectMessageMode(event.data as ChatMessageData) === "request_reply",
-      );
-    }
-    if (input.chatFilter === "user") {
-      return ordered.filter((event) => {
-        const data = event.data as ChatMessageData;
-        if (String(data?.dst_group_id || "").trim()) return false;
-        const to = Array.isArray(data?.to) ? data.to : [];
-        return event.by === "user" || to.includes("user") || to.includes("@user");
-      });
-    }
-    return ordered;
-  }, [input.events, input.chatFilter, input.outboxEntries, orderState]);
+    const ordered = senders.length ? merged : sortChatMessages(merged, new Map());
+    return ordered.filter((event) => matchesChatFilters(event, input.chatFilter, senders));
+  }, [conversationEvents, input.chatFilter, input.outboxEntries, orderState, senders]);
 
   const chatMessages = useMemo(() => {
     if (!inChatWindow || !input.chatWindow) return liveChatMessages;
@@ -125,20 +117,23 @@ export function useChatMessageView(input: {
     () =>
       input.events.some(
         (event) => isFormalChatMessageEvent(event) && shouldShowInConversation(event),
-      ) || input.outboxEntries.length > 0,
-    [input.events, input.outboxEntries],
+      ) ||
+      input.outboxEntries.length > 0 ||
+      senderHistory.events.length > 0,
+    [input.events, input.outboxEntries, senderHistory.events.length],
   );
   const restoreSnapshot =
     !inChatWindow && shouldRestoreDetachedScrollSnapshot(input.scrollSnapshot);
   const historyState = resolveChatListHistoryState({
     selectedGroupId: input.selectedGroupId,
     chatFilter: input.chatFilter,
+    senderFiltered: senders.length > 0,
     filteredMessageCount: chatMessages.length,
     hasAnyChatMessages,
     inChatWindow,
-    hasLoadedTail: input.hasLoadedTail,
-    hasMoreHistory: input.hasMoreHistory,
-    isLoadingHistory: input.isLoadingHistory,
+    hasLoadedTail: senders.length === 0 ? input.hasLoadedTail : senderHistory.loaded,
+    hasMoreHistory: senders.length === 0 ? input.hasMoreHistory : senderHistory.hasMore,
+    isLoadingHistory: senders.length === 0 ? input.isLoadingHistory : senderHistory.loading,
     isChatWindowLoading: input.isChatWindowLoading,
   });
   const effectiveIsLoadingHistory = historyState.isLoadingHistory;
@@ -194,5 +189,7 @@ export function useChatMessageView(input: {
     effectiveIsLoadingHistory,
     effectiveHasMoreHistory,
     chatEmptyState: emptyState,
+    senderHistoryError: senders.length === 0 ? "" : senderHistory.error,
+    loadSenderHistory: senderHistory.loadMore,
   };
 }

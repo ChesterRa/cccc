@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as api from "../../services/api";
 import type { LedgerEvent } from "../../types";
+import type { GroupChatBucket } from "../../stores/groupStoreCore";
 import { reconcileLedgerTail } from "./reconcileLedgerTail";
 
 const testState = vi.hoisted(() => ({
-  chatByGroup: {} as Record<string, { events: LedgerEvent[] }>,
+  chatByGroup: {} as Record<
+    string,
+    Pick<GroupChatBucket, "events"> & Partial<Pick<GroupChatBucket, "senderHistory">>
+  >,
   setEvents: vi.fn(),
   setHasMoreHistory: vi.fn(),
   promoteStreamingEventsByPrefix: vi.fn(),
@@ -49,7 +53,7 @@ describe("reconcileLedgerTail", () => {
     vi.clearAllMocks();
     testState.chatByGroup = { "g-test": { events: [event("anchor")] } };
     testState.setEvents.mockImplementation((events: LedgerEvent[], groupId: string) => {
-      testState.chatByGroup[groupId] = { events };
+      testState.chatByGroup[groupId] = { ...testState.chatByGroup[groupId], events };
     });
     fetchStatuses.mockResolvedValue({ ok: true, result: { statuses: {} } });
   });
@@ -108,5 +112,41 @@ describe("reconcileLedgerTail", () => {
     expect(cursor).toBe("latest-fact");
     expect(testState.setHasMoreHistory).toHaveBeenCalledWith(true, "g-test");
     expect(testState.chatByGroup["g-test"].events.map((item) => item.id)).toContain("tail-2");
+  });
+
+  it("refreshes receipts for sender-only rows as well as the raw reconnect tail", async () => {
+    testState.chatByGroup["g-test"].senderHistory = {
+      key: "filter",
+      senders: ["user"],
+      events: [event("private-old"), event("anchor")],
+      messageRevision: 0,
+      receiptRevision: 0,
+    };
+    fetchBoundary.mockResolvedValue({
+      ok: true,
+      result: { events: [event("anchor")], has_more: true, count: 1 },
+    });
+    await reconcileLedgerTail("g-test", () => true, "anchor");
+    expect(fetchStatuses).toHaveBeenCalledWith("g-test", ["anchor", "private-old"]);
+  });
+
+  it("keeps reconnect receipt batches within the daemon's 1,000-ID limit", async () => {
+    const privateEvents = Array.from({ length: 1001 }, (_, index) => event(`private-${index}`));
+    testState.chatByGroup["g-test"].senderHistory = {
+      key: "filter",
+      senders: ["user"],
+      events: privateEvents,
+      messageRevision: 0,
+      receiptRevision: 0,
+    };
+    fetchBoundary.mockResolvedValue({
+      ok: true,
+      result: { events: [event("anchor")], has_more: true, count: 1 },
+    });
+    await reconcileLedgerTail("g-test", () => true, "anchor");
+    expect(fetchStatuses).toHaveBeenCalledTimes(2);
+    const requested = fetchStatuses.mock.calls.flatMap((call) => call[1]);
+    expect(requested).toEqual(["anchor", ...privateEvents.map((event) => event.id)]);
+    expect(fetchStatuses.mock.calls.every((call) => call[1].length <= 1000)).toBe(true);
   });
 });

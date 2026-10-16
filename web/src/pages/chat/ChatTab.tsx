@@ -26,6 +26,7 @@ import { classNames } from "../../utils/classNames";
 import { ChatComposer } from "./ChatComposer";
 import { GroupWorkArea, type RuntimeActorRenderer } from "./GroupWorkArea";
 import { RuntimeDock } from "./RuntimeDock";
+import { ChatSenderFilter } from "./ChatSenderFilter";
 import { useChatTab } from "../../hooks/useChatTab";
 import { useTranslation } from "react-i18next";
 import { useComposerStore, useGroupStore, useModalStore, useUIStore } from "../../stores";
@@ -222,6 +223,11 @@ export function ChatTab({
     hasAnyChatMessages,
     chatFilter,
     setChatFilter,
+    chatSenderFilter,
+    setChatSenderFilter,
+    senderHistoryError,
+    retrySenderHistory,
+    viewMessageContext,
     chatViewKey,
     chatWindowProps,
     chatInitialScrollTargetId,
@@ -650,7 +656,8 @@ export function ChatTab({
     ["mail", t("filterMail")],
     ["request_reply", t("filterNeedReply")],
   ];
-  const showMessageFilters = !readOnly && !chatWindowProps && hasAnyChatMessages;
+  const hasChatFilter = chatFilter !== "all" || chatSenderFilter.length > 0;
+  const showMessageFilters = !readOnly && !chatWindowProps && (hasAnyChatMessages || hasChatFilter);
   const showSetupNotice = !readOnly && (needsScope || needsActors) && chatMessages.length > 0;
 
   return (
@@ -722,7 +729,7 @@ export function ChatTab({
                               )}
                               onClick={exitChatWindow}
                             >
-                              {t("returnToLatest")}
+                              {t(hasChatFilter ? "returnToFilteredChat" : "returnToLatest")}
                             </button>
                           )}
                         </div>
@@ -798,30 +805,52 @@ export function ChatTab({
                       data-message-filters
                     >
                       <div
-                        className="chat-reading-width flex h-11 items-stretch gap-5 overflow-x-auto scrollbar-hide"
+                        className="chat-reading-width flex min-h-11 flex-wrap items-center gap-x-3"
                         role="group"
                         aria-label={t("chatFilters")}
                       >
-                        {filterOptions.map(([key, label]) => {
-                          const active = chatFilter === key;
-                          return (
-                            <button
-                              key={key}
-                              type="button"
-                              className={classNames(
-                                "shrink-0 px-0.5 text-[13px] whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]",
-                                active
-                                  ? "font-semibold text-[var(--color-text-primary)] shadow-[inset_0_-2px_0_var(--color-text-primary)]"
-                                  : "font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]",
-                              )}
-                              onClick={() => setChatFilter(key)}
-                              aria-pressed={active}
-                            >
-                              {label}
-                            </button>
-                          );
-                        })}
+                        <div className="flex h-11 min-w-0 items-stretch gap-4 overflow-x-auto scrollbar-hide">
+                          {filterOptions.map(([key, label]) => {
+                            const active = chatFilter === key;
+                            return (
+                              <button
+                                key={key}
+                                type="button"
+                                className={classNames(
+                                  "shrink-0 px-0.5 text-[13px] leading-5 whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]",
+                                  active
+                                    ? "font-semibold text-[var(--color-text-primary)] shadow-[inset_0_-2px_0_var(--color-text-primary)]"
+                                    : "font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]",
+                                )}
+                                onClick={() => setChatFilter(key)}
+                                aria-pressed={active}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <ChatSenderFilter
+                          value={chatSenderFilter}
+                          actors={actors}
+                          onChange={setChatSenderFilter}
+                        />
                       </div>
+                      {senderHistoryError ? (
+                        <div
+                          role="status"
+                          className="chat-reading-width flex items-center gap-2 pb-2 text-xs text-[var(--color-text-secondary)]"
+                        >
+                          <span>{t("senderHistoryFailed")}</span>
+                          <button
+                            type="button"
+                            className="min-h-9 underline"
+                            onClick={() => void retrySenderHistory()}
+                          >
+                            {t("common:retry")}
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   )}
 
@@ -878,7 +907,7 @@ export function ChatTab({
                       groupLabelById={messageGroupLabelById}
                       webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
                       viewKey={chatViewKey}
-                      followOnViewChangeKey={chatFilter}
+                      followOnViewChangeKey={chatViewKey}
                       initialScrollTargetId={chatInitialScrollTargetId}
                       initialScrollAnchorId={chatInitialScrollAnchorId}
                       initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
@@ -889,6 +918,9 @@ export function ChatTab({
                       onShowRecipients={showRecipients}
                       onCopyLink={copyMessageLink}
                       onCopyContent={copyMessageText}
+                      onViewContext={
+                        hasChatFilter && !chatWindowProps ? viewMessageContext : undefined
+                      }
                       onRelay={relayMessage}
                       onOpenSource={openSourceMessage}
                       onOpenPresentationRef={openPresentationRef}

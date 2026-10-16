@@ -221,7 +221,9 @@ describe("runtimeDockItems", () => {
       runtimeStateSource: "managed_session",
     });
 
-    expect(getRuntimeRingTone(failedItem, false, "idle")).toBe("attention");
+    expect(getRuntimeRingTone(failedItem, false, "idle")).toBe("stopped");
+    expect(getRuntimeRingTone(failedItem, true, "idle")).toBe("idle");
+    expect(getRuntimeRingTone(failedItem, true, "error")).toBe("attention");
     expect(getRuntimeRingTone(pendingItem, false, "idle")).toBe("stopped");
     expect(getRuntimeRingTone(pendingItem, true, "idle")).toBe("idle");
     expect(getRuntimeRingTone(streamingFinalAnswerItem, true, "working")).toBe("active");

@@ -318,6 +318,7 @@ export interface MessageBubbleProps {
   onReply: () => void;
   onShowRecipients: () => void;
   onCopyLink?: (eventId: string) => void;
+  onViewContext?: (eventId: string) => void;
   onCopyContent?: (ev: LedgerEvent) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
@@ -345,6 +346,7 @@ export const MessageBubble = memo(
     onReply,
     onShowRecipients,
     onCopyLink,
+    onViewContext,
     onCopyContent: _onCopyContent,
     onRelay,
     onOpenSource,
@@ -872,6 +874,7 @@ export const MessageBubble = memo(
             copyableMessageText={copyableMessageText}
             onCopyMessageText={() => void handleCopyMessageText()}
             onShowRecipients={onShowRecipients}
+            onViewContext={onViewContext}
             onCopyLink={onCopyLink}
             onRelay={onRelay}
             onReply={onReply}
@@ -896,6 +899,7 @@ export const MessageBubble = memo(
       prevProps.webModelDeliveryStatus === nextProps.webModelDeliveryStatus &&
       prevProps.isHighlighted === nextProps.isHighlighted &&
       prevProps.collapseHeader === nextProps.collapseHeader &&
+      prevProps.onViewContext === nextProps.onViewContext &&
       prevProps.onRelay === nextProps.onRelay &&
       prevProps.onOpenSource === nextProps.onOpenSource &&
       prevProps.onOpenPresentationRef === nextProps.onOpenPresentationRef &&

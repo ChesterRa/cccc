@@ -9,7 +9,7 @@ type UseAppGroupLifecycleOptions = {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   resetDragDrop: () => void;
   setActiveTab: (tab: string) => void;
-  closeChatWindow: () => void;
+  closeChatWindow: (groupId?: string) => void;
   loadGroup: (groupId: string) => void;
   connectStream: (groupId: string) => void;
   cleanupSSE: () => void;
@@ -68,7 +68,6 @@ export function useAppGroupLifecycle({
     if (fileInputRef.current) fileInputRef.current.value = "";
     resetDragDrop();
     setActiveTab("chat");
-    closeChatWindow();
 
     if (!selectedGroupId) return;
 
@@ -76,6 +75,9 @@ export function useAppGroupLifecycle({
     connectStream(selectedGroupId);
 
     return () => {
+      // Retire the Group being left, not a message window explicitly opened
+      // in the destination while this selection change was committing.
+      closeChatWindow(selectedGroupId);
       cleanupSSE();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

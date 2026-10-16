@@ -116,8 +116,7 @@ function RuntimeDockActorButtonView({
   });
   const ringTone = getRuntimeRingTone(item, isRunning, workingState);
   const ringPresentation = getRuntimeRingPresentation(ringTone, isDark);
-  const useRuntimeStatus =
-    workingState === "error" || (workingState === "working" && hasManagedRuntimeOutput(item.actor));
+  const useRuntimeStatus = hasManagedRuntimeOutput(item.actor) || workingState === "error";
   const statusLabel =
     item.liveWorkCard && !useRuntimeStatus
       ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))

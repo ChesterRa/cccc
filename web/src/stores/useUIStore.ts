@@ -21,6 +21,26 @@ interface UINotice {
 }
 
 export type ChatFilter = "all" | "user" | "mail" | "request_reply";
+/** Empty means unrestricted; entries are concrete event.by identities. */
+export type ChatSenderFilter = string[];
+
+function normalizeChatSenderFilter(value: unknown): ChatSenderFilter {
+  // Retain saved person selections from the previous single-choice UI.
+  const values = Array.isArray(value)
+    ? value
+    : value === "user"
+      ? ["user"]
+      : typeof value === "string" && value.startsWith("actor:")
+        ? [value.slice(6)]
+        : [];
+  return [
+    ...new Set(
+      values
+        .filter((id): id is string => typeof id === "string" && !!id.trim())
+        .map((id) => id.trim()),
+    ),
+  ].sort();
+}
 export type ChatFollowMode = "follow" | "detached";
 export const CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION = 1;
 
@@ -48,6 +68,7 @@ export interface ChatSessionState {
   showScrollButton: boolean;
   chatUnreadCount: number;
   chatFilter: ChatFilter;
+  chatSenderFilter: ChatSenderFilter;
   scrollSnapshot: ChatScrollSnapshot | null;
   mobileSurface: MobileSurface;
   presentationDockOpen: boolean;
@@ -66,6 +87,7 @@ const DEFAULT_CHAT_SESSION: ChatSessionState = {
   showScrollButton: false,
   chatUnreadCount: 0,
   chatFilter: "all",
+  chatSenderFilter: [],
   scrollSnapshot: null,
   mobileSurface: "messages",
   presentationDockOpen: false,
@@ -125,6 +147,7 @@ interface UIState {
   setChatSidePanelLayout: (groupId: string, layout: { width?: number; compact?: boolean }) => void;
   setComposerHeight: (v: number | null) => void;
   setChatFilter: (groupId: string, v: ChatFilter) => void;
+  setChatSenderFilter: (groupId: string, v: ChatSenderFilter) => void;
   setChatScrollSnapshot: (groupId: string, snap: ChatScrollSnapshot | null) => void;
   setGroupWorkView: (groupId: string, view: GroupWorkView) => void;
   setGroupTerminalPage: (groupId: string, page: number) => void;
@@ -250,6 +273,7 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
       workView?: unknown;
       terminalPage?: unknown;
       chatFilter?: unknown;
+      chatSenderFilter?: unknown;
       mobileSurface?: unknown;
       presentationDockOpen?: unknown;
       presentationDisplayMode?: unknown;
@@ -271,6 +295,7 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
           ? session.chatFilter
           : "all",
       scrollSnapshot: null,
+      chatSenderFilter: normalizeChatSenderFilter(session.chatSenderFilter),
       mobileSurface: MOBILE_SURFACES.includes(session.mobileSurface as MobileSurface)
         ? (session.mobileSurface as MobileSurface)
         : "messages",
@@ -308,6 +333,7 @@ function saveChatSessions(sessions: Record<string, ChatSessionState>): void {
           workView: session.workView,
           terminalPage: session.terminalPage,
           chatFilter: session.chatFilter,
+          chatSenderFilter: session.chatSenderFilter,
           mobileSurface: session.mobileSurface,
           presentationDockOpen: session.presentationDockOpen,
           presentationDisplayMode: session.presentationDisplayMode,
@@ -472,7 +498,19 @@ export const useUIStore = create<UIState>((set) => ({
     }),
   setChatFilter: (groupId, v) =>
     set((state) => {
-      const chatSessions = updateChatSession(state.chatSessions, groupId, { chatFilter: v });
+      const chatSessions = updateChatSession(state.chatSessions, groupId, {
+        chatFilter: v,
+        scrollSnapshot: null,
+      });
+      saveChatSessions(chatSessions);
+      return { chatSessions };
+    }),
+  setChatSenderFilter: (groupId, v) =>
+    set((state) => {
+      const chatSessions = updateChatSession(state.chatSessions, groupId, {
+        chatSenderFilter: normalizeChatSenderFilter(v),
+        scrollSnapshot: null,
+      });
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),

@@ -72,7 +72,7 @@ export function VideoPreview({
     );
   }
   return (
-    <figure className="w-full min-w-[min(16rem,82vw)] max-w-[min(30rem,82vw)] overflow-hidden rounded-xl border border-[var(--glass-border-subtle)]">
+    <figure className="w-full min-w-0 max-w-[min(30rem,82vw)] overflow-hidden rounded-xl border border-[var(--glass-border-subtle)]">
       <button
         ref={frame}
         type="button"

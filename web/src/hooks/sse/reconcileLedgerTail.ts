@@ -129,7 +129,8 @@ export async function reconcileLedgerTail(
       ? mergeForwardLedgerEvents(currentEvents, reconciledEvents, anchor)
       : mergeLedgerEvents(currentEvents, reconciledEvents, MAX_RECONCILED_EVENTS);
 
-  store.setEvents(nextEvents, groupId);
+  // Invalidate the filtered forward read before raw-cache trimming can hide a matching row.
+  store.setEvents(nextEvents, groupId, reconciledEvents);
   if (catchup.hasMoreHistory !== null) {
     store.setHasMoreHistory(catchup.hasMoreHistory, groupId);
   } else if (currentEvents.length + catchup.events.length > MAX_RECONCILED_EVENTS) {
@@ -147,14 +148,17 @@ export async function reconcileLedgerTail(
     completeCanonicalOutboxReconciliation(groupId, reconciliation);
   }
 
-  const eventIds = nextEvents
+  const eventIds = [...nextEvents, ...(store.chatByGroup[groupId]?.senderHistory?.events || [])]
     .filter((event) => event.kind === "chat.message")
     .map((event) => String(event.id || "").trim())
     .filter(Boolean);
   if (eventIds.length === 0) return catchup.cursor;
-  const statuses = await api.fetchLedgerStatuses(groupId, eventIds);
-  if (statuses.ok && isCurrentGroup()) {
-    store.mergeEventStatuses(statuses.result.statuses || {}, groupId);
+  const uniqueIds = [...new Set(eventIds)];
+  for (let start = 0; start < uniqueIds.length && isCurrentGroup(); start += 1000) {
+    const statuses = await api.fetchLedgerStatuses(groupId, uniqueIds.slice(start, start + 1000));
+    if (statuses.ok && isCurrentGroup()) {
+      store.mergeEventStatuses(statuses.result.statuses || {}, groupId);
+    }
   }
   return catchup.cursor;
 }

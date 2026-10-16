@@ -2673,6 +2673,12 @@ is idempotent for the stable session, document transcript, and semantic input
 records. Document paths must be repository-relative `.md` paths and must not
 traverse symbolic links.
 
+An omitted or blank `segment_id` requests a generated ID. The Web transcript
+endpoint also generates a `session_id` when omitted or blank; direct daemon
+calls require a nonblank session ID. Producers that need retry idempotency MUST
+retain both IDs. Empty text is accepted only with `flush=true` and creates no
+semantic input or Secretary task. Nonblank IDs must remain safe path components.
+
 Idempotency is checked against the complete semantic input log, not the bounded
 session display window. If the input log was committed but its ledger input or
 notify event was interrupted, retrying the same segment reuses the canonical
@@ -4071,6 +4077,37 @@ environment. It never copies Analyst, Actor or ASR credentials.
 
 ### 8.6 Chat Messaging
 
+#### `ledger_search`
+
+Read events from one Group without delivering messages or creating runtime work.
+
+```ts
+{
+  group_id: string
+  kind?: "all" | "chat" | "notify" // default all
+  q?: string                     // case-insensitive text search; default empty
+  by?: string                    // exact event.by filter; empty means unrestricted
+  by_any?: string[]              // OR of concrete event.by identities; empty/omitted means unrestricted
+  before?: string                // exclusive ledger event ID
+  after?: string                 // exclusive ledger event ID
+  limit?: number                 // default 50, clamped to 1..200
+  with_read_status?: boolean
+  with_obligation_status?: boolean
+}
+```
+
+Result: `{ events: CCCSEventV1[], count: number, has_more: boolean }`.
+Filters combine with AND; `by_any` matches any identity in its set. Both sender
+filters may be used together, in which case both must match. Entries in `by_any`
+MUST be nonblank strings; invalid collections return `invalid_args`.
+Filtering precedes the page limit. Without `after`, return the latest matching
+page before `before`; with `after`, return the earliest matching page after it.
+Results retain ledger order and one cursor spans all selected senders. Cursor IDs
+need not match the sender filter. An unknown cursor returns `event_not_found`.
+For HTTP `GET /api/v1/groups/{group_id}/ledger/search`, `by_any` is a JSON-encoded
+array query parameter. Existing single-sender `by` queries retain their semantics.
+
+
 #### `send`
 
 Append a `chat.message` event. `message_mode` is required and is the only
@@ -4271,6 +4308,16 @@ Result:
   message_mode: "send" | "request_reply" | "mail"
 }
 ```
+
+Web resolves stored message attachments through
+`GET /api/v1/groups/{group_id}/blobs/{blob_name}`. The endpoint supports HEAD and
+byte ranges (206/416), streams rather than buffers the whole file, and rechecks
+Group access for each request, including conditional cache reads. Responses use
+`Cache-Control: private, no-cache`. A supplied `If-Range` returns the full current
+representation. `download=true` adds a safe attachment filename; otherwise inert
+image/video types are detected from the stored bytes, not trusted filename
+extensions. Unrecognized content remains `application/octet-stream` (plain text
+may use its display filename).
 
 #### `reply`
 

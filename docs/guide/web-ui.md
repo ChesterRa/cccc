@@ -143,6 +143,28 @@ Collapse returns to the compact rail; closing the sidebar only hides it and keep
 
 ### Message search and settings
 
+The conversation's **Sender** menu lets you check one or more senders. Each Actor
+appears once; the current Foreman has a role label. Checked senders are combined
+with OR, and the message-type tabs apply alongside them. **User** matches messages
+the user sent; the **User-related** tab also includes messages addressed to the user.
+Selections take effect immediately and the popup stays open for further choices.
+No checked senders means unrestricted. **Show all** and the sender's clear button
+remove only the sender condition; **All** resets only the message type. Each Group
+remembers the selected Actor identities in this browser, so changing the Foreman
+role does not retarget a selection. Older matching messages share one history
+cursor and remain available through pagination. A removed Actor's selected identity
+remains available to uncheck. Filtered history follows ledger append order and
+receives the same live read, reply and cancellation updates as the full conversation.
+Reconnect catch-up also covers messages beyond the bounded raw cache. Live arrivals
+are confirmed through a batched cursor read before joining the filtered rows, so
+an older replay cannot appear as the newest message. Failed reads keep a retry
+action; changing the filter or Group discards the departed view's pending reads.
+
+Sending keeps the filters. If they hide the sent message, a confirmation offers
+**View message**, including cross-Group sends; the action returns to the originating
+Group even if you have switched Groups. **View context** on a filtered message opens its surrounding
+conversation; returning to the conversation restores the filters.
+
 Message search shows the current Group name and Actor display names. Enter or **Search** submits the keywords; changing a filter reruns the submitted query. Typing new keywords does not change existing highlights or pagination until you submit again. Initial guidance, loading, no matches and failed requests are separate states. **Open** returns to the message context; reply and copying the event ID remain available.
 
 Settings keeps **This group** and **This instance** separate. Section forms share a plain work surface, while independent configurations and authorization states retain their own boundaries. Under **Branding**, save the product name explicitly; icon uploads and resets apply immediately. The product name changes the Web sidebar, sign-in screen and browser tab, not the instance name shown in Connect.
@@ -777,6 +799,15 @@ With an empty message input, press `Up` to recall your most recent message in th
 Continue with `Up` / `Down` to browse the already loaded message history. Editing or repositioning
 the cursor leaves history mode. Recall restores message text only; recipients, reply context,
 attachments, and delivery options remain those currently shown in the composer.
+
+### Message attachments
+
+Click an image or a video's first frame to open its preview. Video frames load
+when their message comes into view; playback starts when you open the player.
+The player uses native browser controls and pauses other message videos.
+Escape or Close returns to the message. Downloads remain available when the
+browser cannot decode a video. Confirmed uploads play and download from the
+Group's stored blob, so they remain available after the local upload preview expires.
 
 ### Message diagrams
 

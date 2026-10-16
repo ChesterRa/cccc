@@ -34,6 +34,7 @@ export interface VirtualMessageListProps {
   onReply: (event: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
   onCopyLink?: (eventId: string) => void;
+  onViewContext?: (eventId: string) => void;
   onCopyContent?: (event: LedgerEvent) => void;
   onRelay?: (event: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;

@@ -76,20 +76,31 @@ export function SelectMenu<Value extends string | number>({
         className={cn(
           // A long list stays a dropdown rather than a full-height column, but never overflows the viewport.
           // The list is an opaque panel: the shared glass blur behind it would only cost paint work.
-          "max-w-[calc(100vw-24px)] max-h-[min(18rem,var(--radix-popover-content-available-height))] overflow-y-auto rounded-lg !bg-[var(--color-bg-primary)] !backdrop-blur-none p-1",
+          // Override glass-modal's unlayered overflow:hidden so pointer and touch scrolling remain available.
+          "max-w-[calc(100vw-24px)] max-h-[min(18rem,var(--radix-popover-content-available-height))] !overflow-y-auto overscroll-contain rounded-lg !bg-[var(--color-bg-primary)] !backdrop-blur-none p-1",
           contentClassName,
         )}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
-          menu.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+          const content = menu.current;
+          const selected = content?.querySelector<HTMLElement>('[aria-checked="true"]');
+          selected?.focus();
+          // Radix measures the available height after mount. Reveal the focused
+          // selection once that height has constrained the scroll region.
+          requestAnimationFrame(() => {
+            if (content?.dataset.state === "open" && document.activeElement === selected) {
+              selected?.scrollIntoView({ block: "nearest" });
+            }
+          });
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          // Closing animation cleanup may run after another choice has opened.
-          // Restore only abandoned focus, never steal it from the next menu.
+          // The departing menu's cleanup may run after another menu has opened.
+          // Use its event target; the mutable ref can already point to the new menu.
+          const closingMenu = event.currentTarget;
           if (
             document.activeElement === document.body ||
-            menu.current?.contains(document.activeElement)
+            (closingMenu instanceof HTMLElement && closingMenu.contains(document.activeElement))
           ) {
             trigger.current?.focus();
           }

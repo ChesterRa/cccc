@@ -72,7 +72,15 @@ export async function fetchMessageWindow(
 export async function searchChatMessages(
   groupId: string,
   q: string,
-  opts?: { limit?: number; before?: string; after?: string; includeStatuses?: boolean },
+  opts?: {
+    limit?: number;
+    before?: string;
+    after?: string;
+    includeStatuses?: boolean;
+    by?: string;
+    byAny?: string[];
+  },
+  init?: RequestInit,
 ) {
   const params = buildLedgerStatusParams(opts?.includeStatuses !== false);
   params.set("kind", "chat");
@@ -80,8 +88,11 @@ export async function searchChatMessages(
   params.set("limit", String(opts?.limit ?? 50));
   if (opts?.before) params.set("before", opts.before);
   if (opts?.after) params.set("after", opts.after);
+  if (opts?.by) params.set("by", opts.by);
+  if (opts?.byAny?.length) params.set("by_any", JSON.stringify(opts.byAny));
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`,
+    init,
   );
 }
 

@@ -64,6 +64,13 @@ async fn an_empty_closing_flush_with_blank_ids_is_recorded() {
     .expect("json");
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["ok"], true, "{body}");
+    assert!(
+        body["result"]["session_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+    assert!(body["result"]["input_event"].is_null());
+    assert!(body["result"]["secretary_task_id"].is_null());
 
     let _ = cccc_client::DaemonClient::new(home)
         .call(&DaemonRequest {

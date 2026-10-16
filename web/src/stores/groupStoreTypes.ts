@@ -48,7 +48,8 @@ export interface GroupState {
   getOrderedGroups: () => GroupMeta[];
   setSelectedGroupId: (id: string) => void;
   setGroupDoc: (doc: GroupDoc | null) => void;
-  setEvents: (events: LedgerEvent[], groupId?: string) => void;
+  setEvents: (events: LedgerEvent[], groupId?: string, sourceEvents?: LedgerEvent[]) => void;
+  setSenderHistory: (history: GroupChatBucket["senderHistory"], groupId: string) => void;
   mergeEventStatuses: (
     statuses: Record<string, LedgerEventStatusPayload>,
     groupId?: string,

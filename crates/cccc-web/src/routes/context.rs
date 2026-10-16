@@ -122,6 +122,18 @@ async fn ledger_search(
     Path(group_id): Path<String>,
     Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult {
+    let by_any = query
+        .get("by_any")
+        .map(|value| {
+            serde_json::from_str::<Vec<String>>(value).map_err(|_| {
+                crate::api::ApiError::bad_code(
+                    "invalid_args",
+                    "by_any must be a JSON array of sender identities",
+                    json!({"field":"by_any"}),
+                )
+            })
+        })
+        .transpose()?;
     call(
         &state,
         "ledger_search",
@@ -130,6 +142,7 @@ async fn ledger_search(
             "q":first_non_blank_query(&query,&["q","query"]),
             "kind":query.get("kind"),
             "by":query.get("by"),
+            "by_any":by_any,
             "before":query.get("before"),
             "after":query.get("after"),
             "limit":query.get("limit"),

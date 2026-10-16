@@ -3,6 +3,7 @@ mod auth_support;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use cccc_core::access_tokens::AccessTokenStore;
 use cccc_core::{GroupStore, HomeLayout};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
@@ -181,4 +182,50 @@ async fn an_empty_blob_answers_a_suffix_range_with_its_empty_body() {
             .to_bytes()
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn cached_and_partial_blob_reads_recheck_current_group_access() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("video", "")
+        .expect("group");
+    let blob = cccc_core::blobs::store(&home, &group.group_id, MP4).expect("blob");
+    let tokens = AccessTokenStore::new(home.clone()).expect("tokens");
+    let token = tokens
+        .create("viewer", vec![group.group_id.clone()], false, None)
+        .expect("viewer");
+    let url = format!(
+        "/api/v1/groups/{}/blobs/{}?filename=clip.mp4",
+        group.group_id, blob.sha256
+    );
+    let app = cccc_web::app(home);
+    let send = |request: axum::http::request::Builder| {
+        app.clone().oneshot(
+            request
+                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                .body(Body::empty())
+                .expect("request"),
+        )
+    };
+    let admitted = send(Request::get(&url).header(header::RANGE, "bytes=4-11"))
+        .await
+        .expect("partial response");
+    assert_eq!(admitted.status(), StatusCode::PARTIAL_CONTENT);
+    let last_modified = admitted.headers()[header::LAST_MODIFIED].clone();
+    tokens
+        .update(&token.token_id(), Some(Vec::new()), None)
+        .expect("revoke Group access")
+        .expect("viewer remains registered");
+
+    for request in [
+        Request::get(&url).header(header::RANGE, "bytes=12-"),
+        Request::get(&url).header(header::IF_MODIFIED_SINCE, last_modified),
+        Request::head(&url),
+    ] {
+        let denied = send(request).await.expect("denied response");
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    }
 }

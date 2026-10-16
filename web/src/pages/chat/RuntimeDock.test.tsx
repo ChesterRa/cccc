@@ -195,3 +195,85 @@ it.each(["headless", "pty"] as const)(
     expect(mocks.open).toHaveBeenCalledWith(actor.id);
   },
 );
+
+it.each(["headless", "pty"] as const)(
+  "shows the recovered %s owner state while retaining older task results",
+  async (runner) => {
+    const card: LiveWorkCard = {
+      actorId: actor.id,
+      actorLabel: actor.id,
+      runtime: actor.runtime!,
+      phase: "failed",
+      streamPhase: "final_answer",
+      text: "Previous failure",
+      transcriptBlocks: [],
+      activities: [],
+      updatedAt: "2026-09-26T09:00:00Z",
+      streamId: "old-turn",
+      pendingEventId: "",
+    };
+    const recovered = {
+      ...actor,
+      runner,
+      runner_effective: runner,
+      effective_working_state: "idle",
+    };
+    await render({ ...recovered, effective_working_state: "error" }, "g1", [card]);
+    expect(host.querySelector("button")?.title).toContain("Error");
+
+    for (const phase of ["failed", "pending"] as const) {
+      const previous = { ...card, phase };
+      await render(recovered, "g1", [previous]);
+      expect.soft(host.querySelector("button")?.title).toContain("Running");
+      expect.soft(host.querySelector(".sr-only")?.textContent).toContain("Running");
+      expect(activity()).toBeNull();
+      expect
+        .soft(
+          getRuntimeRingTone({ actor: recovered, runner, liveWorkCard: previous }, true, "idle"),
+        )
+        .toBe("idle");
+    }
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(mocks.open).toHaveBeenCalledWith(actor.id);
+  },
+);
+
+it.each([
+  ["headless", "waiting", true, "Waiting", "idle"],
+  ["pty", "waiting", true, "Waiting", "idle"],
+  ["headless", "stopped", false, "Stopped", "stopped"],
+  ["pty", "stopped", false, "Stopped", "stopped"],
+] as const)(
+  "shows the %s owner's current %s state before an older failed preview",
+  async (runner, workingState, running, label, tone) => {
+    const current = {
+      ...actor,
+      runner,
+      runner_effective: runner,
+      running,
+      effective_working_state: workingState,
+    };
+    const card: LiveWorkCard = {
+      actorId: actor.id,
+      actorLabel: actor.id,
+      runtime: actor.runtime!,
+      phase: "failed",
+      streamPhase: "final_answer",
+      text: "Previous failure",
+      transcriptBlocks: [],
+      activities: [],
+      updatedAt: "2026-09-26T09:00:00Z",
+      streamId: "old-turn",
+      pendingEventId: "",
+    };
+    await render(current, "g1", [card]);
+    expect.soft(host.querySelector("button")?.title).toContain(label);
+    expect.soft(host.querySelector(".sr-only")?.textContent).toContain(label);
+    expect(activity()).toBeNull();
+    expect
+      .soft(
+        getRuntimeRingTone({ actor: current, runner, liveWorkCard: card }, running, workingState),
+      )
+      .toBe(tone);
+  },
+);

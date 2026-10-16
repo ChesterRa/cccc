@@ -1,7 +1,13 @@
 import { isBrowserWebModelRuntime } from "../types";
 // Group state store (groups, actors, events, context, settings).
 import { create } from "zustand";
-import type { GroupMeta, GroupDoc, GroupRuntimeStatus, HeadlessStreamEvent } from "../types";
+import type {
+  GroupMeta,
+  GroupDoc,
+  GroupRuntimeStatus,
+  HeadlessStreamEvent,
+  LedgerEvent,
+} from "../types";
 import { normalizeReplySessionTimestamp, upsertReplySession } from "./chatStreamingSessions";
 import {
   buildChatBucketPatch,
@@ -54,7 +60,33 @@ import {
 import { mergeOlderLedgerEvents } from "./groupHistoryMerge";
 import { computeGroupRuntimePatch } from "../utils/groupRuntimeProjection";
 import { projectCrossGroupReceipts } from "../utils/mergeLedgerEvents";
-import { fetchRuntimes } from "../services/api";
+import { fetchLedgerStatuses, fetchRuntimes } from "../services/api";
+import { projectSenderHistory } from "./senderHistoryProjection";
+
+// All mounted conversation projections consume the same daemon-owned receipts.
+function updateChatEventLists(
+  bucket: GroupChatBucket,
+  update: (events: LedgerEvent[]) => LedgerEvent[],
+  receiptFact = false,
+): Partial<GroupChatBucket> | null {
+  const patch: Partial<GroupChatBucket> = {};
+  const events = update(bucket.events);
+  if (events !== bucket.events) patch.events = events;
+  if (bucket.chatWindow) {
+    const events = update(bucket.chatWindow.events);
+    if (events !== bucket.chatWindow.events) patch.chatWindow = { ...bucket.chatWindow, events };
+  }
+  if (bucket.senderHistory) {
+    const events = update(bucket.senderHistory.events);
+    if (events !== bucket.senderHistory.events || receiptFact)
+      patch.senderHistory = {
+        ...bucket.senderHistory,
+        events,
+        receiptRevision: bucket.senderHistory.receiptRevision + Number(receiptFact),
+      };
+  }
+  return Object.keys(patch).length ? patch : null;
+}
 
 let runtimeDetectionRequest: Promise<void> | null = null;
 
@@ -268,28 +300,25 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         ...(nextGroupDoc !== state.groupDoc ? { groupDoc: nextGroupDoc } : {}),
       };
     }),
-  setEvents: (events, groupId) =>
-    set(
-      (state) =>
-        buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { events }) ?? state,
-    ),
+  setEvents: (events, groupId, sourceEvents) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const projection = bucket.senderHistory
+        ? projectSenderHistory(bucket.senderHistory, sourceEvents ?? events, bucket.events)
+        : null;
+      return buildChatBucketPatch(state, gid, { events, senderHistory: projection }) ?? state;
+    }),
+  setSenderHistory: (senderHistory, groupId) =>
+    set((state) => buildChatBucketPatch(state, groupId, { senderHistory }) ?? state),
   mergeEventStatuses: (statuses, groupId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
-      const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const nextEvents = mergeLedgerEventStatuses(bucket.events, statuses);
-      const nextChatWindow = bucket.chatWindow
-        ? {
-            ...bucket.chatWindow,
-            events: mergeLedgerEventStatuses(bucket.chatWindow.events, statuses),
-          }
-        : bucket.chatWindow;
-      if (nextEvents === bucket.events && nextChatWindow === bucket.chatWindow) return state;
-      return (
-        buildChatBucketPatch(state, gid, { events: nextEvents, chatWindow: nextChatWindow }) ??
-        state
+      const patch = updateChatEventLists(getGroupChatBucket(state.chatByGroup, gid), (events) =>
+        mergeLedgerEventStatuses(events, statuses),
       );
+      return patch ? (buildChatBucketPatch(state, gid, patch) ?? state) : state;
     }),
   setChatWindow: (chatWindow, groupId) =>
     set(
@@ -303,7 +332,12 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
       if (event.id && bucket.events.some((e) => e.id === event.id)) return state;
       const nextEvents = projectCrossGroupReceipts(bucket.events.concat([event]));
-      const patch: Partial<GroupChatBucket> = { events: nextEvents };
+      const patch: Partial<GroupChatBucket> = {
+        events: nextEvents,
+        senderHistory: bucket.senderHistory
+          ? projectSenderHistory(bucket.senderHistory, [event], bucket.events)
+          : null,
+      };
       if (
         String(event.kind || "").trim() === "chat.message" &&
         String(event.by || "").trim() !== "user"
@@ -727,86 +761,65 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     return runtimeDetectionRequest;
   },
 
-  updateReadStatus: (eventId, actorId, groupId) =>
+  updateReadStatus: (eventId, actorId, groupId) => {
+    const gid = resolveChatGroupId(get(), groupId);
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const eventIndex = bucket.events.findIndex(
-        (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
-      );
-      if (eventIndex < 0 && !bucket.chatWindow) return state;
-
-      const liveResult =
-        eventIndex >= 0
-          ? updateReadThroughIndex(bucket.events, eventIndex, actorId)
-          : { next: bucket.events, changed: false };
-      let nextWindow = bucket.chatWindow;
-      let didChange = liveResult.changed;
-
-      if (bucket.chatWindow) {
-        const windowIndex = bucket.chatWindow.events.findIndex(
-          (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
-        );
-        if (windowIndex >= 0) {
-          const windowResult = updateReadThroughIndex(
-            bucket.chatWindow.events,
-            windowIndex,
-            actorId,
+      const patch = updateChatEventLists(
+        bucket,
+        (events) => {
+          const index = events.findIndex(
+            (event) => event.kind === "chat.message" && event.id === eventId,
           );
-          if (windowResult.changed) {
-            nextWindow = { ...bucket.chatWindow, events: windowResult.next };
-            didChange = true;
-          }
-        }
-      }
-
-      if (!didChange) return state;
-      return (
-        buildChatBucketPatch(state, gid, { events: liveResult.next, chatWindow: nextWindow }) ??
-        state
+          if (index < 0) return events;
+          const result = updateReadThroughIndex(events, index, actorId);
+          return result.changed ? result.next : events;
+        },
+        true,
       );
-    }),
+      return patch ? (buildChatBucketPatch(state, gid, patch) ?? state) : state;
+    });
+    const history = get().chatByGroup[gid]?.senderHistory;
+    if (!history || history.events.some((event) => event.id === eventId)) return;
+    // A cursor on an excluded sender gives no position inside this projection.
+    // Ask the daemon for unread Mail receipts rather than inferring them from time.
+    const ids = history.events
+      .filter((event) => event._read_status?.[actorId] === false)
+      .map((event) => String(event.id || ""))
+      .filter(Boolean);
+    // ledger_statuses accepts at most 1,000 IDs per read.
+    for (let start = 0; start < ids.length; start += 1000) {
+      void fetchLedgerStatuses(gid, ids.slice(start, start + 1000), { noCache: true })
+        .then((response) => {
+          if (response.ok && get().chatByGroup[gid]?.senderHistory?.key === history.key)
+            get().mergeEventStatuses(response.result.statuses, gid);
+        })
+        .catch(() => {
+          /* A failed read leaves receipts unchanged; reconnect refreshes them. */
+        });
+    }
+  },
 
   updateObligationStatus: (eventId, statusPatch, groupId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const eventIndex = bucket.events.findIndex(
-        (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
-      );
-      if (eventIndex < 0 && !bucket.chatWindow) return state;
-
-      const liveResult =
-        eventIndex >= 0
-          ? updateObligationAtIndex(bucket.events, eventIndex, statusPatch)
-          : { next: bucket.events, changed: false };
-      let nextWindow = bucket.chatWindow;
-      let didChange = liveResult.changed;
-
-      if (bucket.chatWindow) {
-        const windowIndex = bucket.chatWindow.events.findIndex(
-          (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
-        );
-        if (windowIndex >= 0) {
-          const windowResult = updateObligationAtIndex(
-            bucket.chatWindow.events,
-            windowIndex,
-            statusPatch,
+      const patch = updateChatEventLists(
+        bucket,
+        (events) => {
+          const index = events.findIndex(
+            (event) => event.kind === "chat.message" && event.id === eventId,
           );
-          if (windowResult.changed) {
-            nextWindow = { ...bucket.chatWindow, events: windowResult.next };
-            didChange = true;
-          }
-        }
-      }
-
-      if (!didChange) return state;
-      return (
-        buildChatBucketPatch(state, gid, { events: liveResult.next, chatWindow: nextWindow }) ??
-        state
+          if (index < 0) return events;
+          const result = updateObligationAtIndex(events, index, statusPatch);
+          return result.changed ? result.next : events;
+        },
+        true,
       );
+      return patch ? (buildChatBucketPatch(state, gid, patch) ?? state) : state;
     }),
   setHasMoreHistory: (value, groupId) =>
     set(

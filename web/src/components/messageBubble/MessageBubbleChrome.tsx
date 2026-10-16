@@ -129,6 +129,7 @@ export function MessageFooter({
   onCopyMessageText,
   onShowRecipients,
   onCopyLink,
+  onViewContext,
   onRelay,
   onReply,
   canReply,
@@ -150,6 +151,7 @@ export function MessageFooter({
   onCopyMessageText: () => void;
   onShowRecipients: () => void;
   onCopyLink?: (eventId: string) => void;
+  onViewContext?: (eventId: string) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onReply: () => void;
   canReply: boolean;
@@ -372,6 +374,15 @@ export function MessageFooter({
               title={copiedMessageText ? t("common:copied") : t("copyText")}
             >
               {copiedMessageText ? t("common:copied") : t("copyText")}
+            </button>
+          ) : null}
+          {eventId && onViewContext ? (
+            <button
+              type="button"
+              className="touch-target-sm rounded-full px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-black/8 dark:hover:bg-white/12"
+              onClick={() => onViewContext(eventId)}
+            >
+              {t("viewMessageContext")}
             </button>
           ) : null}
           {eventId && onCopyLink ? (

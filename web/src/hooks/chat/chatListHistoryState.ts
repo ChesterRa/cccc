@@ -3,6 +3,7 @@ import type { ChatFilter } from "../../stores/useUIStore";
 export function resolveChatListHistoryState(input: {
   selectedGroupId: string;
   chatFilter: ChatFilter;
+  senderFiltered?: boolean;
   filteredMessageCount: number;
   hasAnyChatMessages: boolean;
   inChatWindow: boolean;
@@ -23,9 +24,9 @@ export function resolveChatListHistoryState(input: {
   }
   const isFilteredEmpty =
     input.hasLoadedTail &&
-    input.chatFilter !== "all" &&
+    (input.chatFilter !== "all" || input.senderFiltered === true) &&
     input.filteredMessageCount <= 0 &&
-    input.hasAnyChatMessages;
+    (input.hasAnyChatMessages || input.senderFiltered === true);
   return {
     isLoadingHistory: input.isLoadingHistory,
     hasMoreHistory: !input.hasLoadedTail || input.hasMoreHistory,

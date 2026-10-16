@@ -1,6 +1,7 @@
 use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::{HomeLayout, ledger};
 use serde_json::{Value, json};
+use std::collections::HashSet;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 
@@ -22,6 +23,7 @@ pub fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         kind: kind(request, "all"),
         text: string_arg(request, "q").unwrap_or_default(),
         by: string_arg(request, "by").unwrap_or_default(),
+        by_any: sender_ids(request)?,
         before: nonempty(request, "before"),
         after: nonempty(request, "after"),
         limit: integer(request, "limit", 50).clamp(1, 200),
@@ -119,6 +121,7 @@ struct Query {
     kind: Kind,
     text: String,
     by: String,
+    by_any: HashSet<String>,
     before: Option<String>,
     after: Option<String>,
     limit: usize,
@@ -138,6 +141,7 @@ fn page(events: &[Event], query: Query) -> Result<Page, OpError> {
         .iter()
         .filter(|event| matches_kind(event, query.kind))
         .filter(|event| query.by.is_empty() || event.by == query.by)
+        .filter(|event| query.by_any.is_empty() || query.by_any.contains(&event.by))
         .filter(|event| {
             text.is_empty()
                 || serde_json::to_string(event)
@@ -166,6 +170,30 @@ fn cursor(events: &[Event], id: Option<&str>) -> Result<Option<usize>, OpError> 
         .position(|event| event.id == id)
         .map(Some)
         .ok_or_else(|| OpError::new("event_not_found", format!("event not found: {id}")))
+}
+
+fn sender_ids(request: &DaemonRequest) -> Result<HashSet<String>, OpError> {
+    let Some(value) = request.args.get("by_any").filter(|value| !value.is_null()) else {
+        return Ok(HashSet::new());
+    };
+    let invalid = || {
+        OpError::new(
+            "invalid_args",
+            "by_any must be an array of nonempty sender identities",
+        )
+    };
+    value
+        .as_array()
+        .ok_or_else(invalid)?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|id| !id.trim().is_empty())
+                .map(str::to_owned)
+                .ok_or_else(invalid)
+        })
+        .collect()
 }
 
 fn matches_kind(event: &Event, kind: Kind) -> bool {

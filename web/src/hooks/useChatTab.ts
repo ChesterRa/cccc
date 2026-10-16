@@ -66,6 +66,7 @@ import {
 import { prepareComposerMessage } from "./chat/prepareComposerMessage";
 import { useChatMessageActions } from "./chat/useChatMessageActions";
 import { useChatMessageView } from "./chat/useChatMessageView";
+import { matchesChatFilters } from "./chat/chatMessageFilters";
 import { useTaskReferenceIndex } from "./chat/useTaskReferenceIndex";
 import { useShallow } from "zustand/react/shallow";
 interface UseChatTabOptions {
@@ -137,6 +138,7 @@ export function useChatTab({
   const busy = useUIStore((s) => s.busy);
   const chatSessions = useUIStore((s) => s.chatSessions);
   const setChatFilter = useUIStore((s) => s.setChatFilter);
+  const setChatSenderFilter = useUIStore((s) => s.setChatSenderFilter);
   const setShowScrollButton = useUIStore((s) => s.setShowScrollButton);
   const setChatUnreadCount = useUIStore((s) => s.setChatUnreadCount);
   const setChatScrollSnapshot = useUIStore((s) => s.setChatScrollSnapshot);
@@ -155,7 +157,9 @@ export function useChatTab({
     () => getChatSession(selectedGroupId, chatSessions),
     [selectedGroupId, chatSessions],
   );
-  const { chatFilter, showScrollButton, chatUnreadCount, scrollSnapshot } = chatSession;
+  const { chatFilter, chatSenderFilter, showScrollButton, chatUnreadCount, scrollSnapshot } =
+    chatSession;
+  const senders = chatSenderFilter;
 
   const {
     composerGroupMentionTokens,
@@ -429,6 +433,8 @@ export function useChatTab({
     effectiveIsLoadingHistory,
     effectiveHasMoreHistory,
     chatEmptyState,
+    senderHistoryError,
+    loadSenderHistory,
   } = useChatMessageView({
     selectedGroupId,
     events,
@@ -436,6 +442,7 @@ export function useChatTab({
     outboxEntries,
     chatWindow,
     chatFilter,
+    senders,
     scrollSnapshot,
     hasLoadedTail,
     hasMoreHistory,
@@ -471,6 +478,12 @@ export function useChatTab({
       setChatFilter(selectedGroupId, nextFilter);
     },
     [selectedGroupId, setChatFilter],
+  );
+  const updateChatSenderFilter = useCallback(
+    (value: ReturnType<typeof getChatSession>["chatSenderFilter"]) => {
+      if (selectedGroupId) setChatSenderFilter(selectedGroupId, value);
+    },
+    [selectedGroupId, setChatSenderFilter],
   );
 
   // Agent state snapshot
@@ -540,6 +553,46 @@ export function useChatTab({
     },
     [composerFiles, setComposerFiles],
   );
+
+  const {
+    copyMessageLink,
+    copyMessageText,
+    startReply,
+    cancelReply,
+    showRecipients,
+    relayMessage,
+    openSourceMessage,
+    exitChatWindow,
+    handleScrollButtonClick,
+    handleScrollChange,
+    handleScrollSnapshot,
+    addAgent,
+    loadCurrentGroupHistory,
+  } = useChatMessageActions({
+    selectedGroupId,
+    actors,
+    groupSettings,
+    composerRef,
+    setChatAtBottom,
+    hasForeman,
+    inChatWindow,
+    t,
+    showError,
+    showNotice,
+    setDestGroupId,
+    setReplyToText,
+    setReplyTarget,
+    setRecipientsModal,
+    setRelayModal,
+    openChatWindow,
+    closeChatWindow,
+    setShowScrollButton,
+    setChatUnreadCount,
+    setChatScrollSnapshot,
+    setNewActorRole,
+    openModal,
+    loadMoreHistory,
+  });
 
   const sendMessage = useCallback(async () => {
     if (sendInFlightRef.current) return; // keyboard shortcut can bypass UI state; keep send single-flight locally
@@ -716,6 +769,11 @@ export function useChatTab({
     }
     // Preserve reading intent before optimistic rows change the list geometry.
     const shouldLockBottomAfterSend = shouldFollowCurrentSend();
+    const sentMessageVisible = matchesChatFilters(
+      { by: "user", data: { message_mode: messageModeSnapshot } } as LedgerEvent,
+      chatFilter,
+      senders,
+    );
 
     // Failed optimistic sends restore the original composer snapshot.
     if (sendsLocal && !sendsCrossGroup) {
@@ -733,7 +791,7 @@ export function useChatTab({
       insertLocalAssistantPlaceholders();
     }
 
-    applyImmediateComposerFeedback(shouldLockBottomAfterSend);
+    applyImmediateComposerFeedback(shouldLockBottomAfterSend && sentMessageVisible);
     sendInFlightRef.current = true;
     let successfulSendCount = 0;
     try {
@@ -764,14 +822,13 @@ export function useChatTab({
         showError(formatSendMessageError({ code: sendError.code, message: sendError.message, t }));
         return;
       }
-      const canonicalEvent =
-        sendsLocal &&
-        !sendsCrossGroup &&
-        resp.result &&
-        typeof resp.result === "object" &&
-        "event" in resp.result
-          ? (resp.result.event as LedgerEvent | null | undefined)
-          : undefined;
+      const result = resp.result as {
+        event?: LedgerEvent;
+        source_event?: LedgerEvent;
+        src_event?: LedgerEvent;
+      } | null;
+      const canonicalEvent = sendsLocal && !sendsCrossGroup ? result?.event : undefined;
+      const sourceEvent = canonicalEvent ?? result?.source_event ?? result?.src_event;
 
       if (sendsCrossGroup) {
         removeOutbox(selectedGroupId, localId);
@@ -796,8 +853,24 @@ export function useChatTab({
       if (selectedGroupId) {
         if (groupMessagesVisible(selectedGroupId, useUIStore.getState()))
           setChatUnreadCount(selectedGroupId, 0);
-        setChatFilter(selectedGroupId, "all");
         setChatMobileSurface(selectedGroupId, "messages");
+      }
+      const currentSession = getChatSession(selectedGroupId, useUIStore.getState().chatSessions);
+      const currentSenders = currentSession.chatSenderFilter;
+      if (
+        sourceEvent?.id &&
+        useGroupStore.getState().selectedGroupId === selectedGroupId &&
+        !matchesChatFilters(sourceEvent, currentSession.chatFilter, currentSenders)
+      ) {
+        const eventId = sourceEvent.id;
+        showNotice({
+          message: t("sentOutsideChatFilter"),
+          actionLabel: t("viewSentMessage"),
+          onAction: () => {
+            useUIStore.getState().dismissNotice();
+            openSourceMessage(selectedGroupId, eventId);
+          },
+        });
       }
       onMessageSent?.();
     } catch (error) {
@@ -834,7 +907,10 @@ export function useChatTab({
     closeChatWindow,
     fileInputRef,
     shouldFollowCurrentSend,
-    setChatFilter,
+    chatFilter,
+    senders,
+    showNotice,
+    openSourceMessage,
     setChatMobileSurface,
     setShowScrollButton,
     setChatUnreadCount,
@@ -851,47 +927,6 @@ export function useChatTab({
     chatViewKey,
   ]);
 
-  const {
-    copyMessageLink,
-    copyMessageText,
-    startReply,
-    cancelReply,
-    showRecipients,
-    relayMessage,
-    openSourceMessage,
-    exitChatWindow,
-    handleScrollButtonClick,
-    handleScrollChange,
-    handleScrollSnapshot,
-    addAgent,
-    loadCurrentGroupHistory,
-  } = useChatMessageActions({
-    selectedGroupId,
-    actors,
-    groups,
-    groupSettings,
-    composerRef,
-    setChatAtBottom,
-    hasForeman,
-    inChatWindow,
-    t,
-    showError,
-    showNotice,
-    setDestGroupId,
-    setReplyToText,
-    setReplyTarget,
-    setRecipientsModal,
-    setRelayModal,
-    openChatWindow,
-    closeChatWindow,
-    setShowScrollButton,
-    setChatUnreadCount,
-    setChatScrollSnapshot,
-    setNewActorRole,
-    openModal,
-    loadMoreHistory,
-  });
-
   // ============ Return ============
 
   return {
@@ -902,6 +937,11 @@ export function useChatTab({
     hasAnyChatMessages,
     chatFilter,
     setChatFilter: updateChatFilter,
+    chatSenderFilter,
+    setChatSenderFilter: updateChatSenderFilter,
+    senderHistoryError,
+    retrySenderHistory: loadSenderHistory,
+    viewMessageContext: (eventId: string) => openSourceMessage(selectedGroupId, eventId),
     chatViewKey,
     chatWindowProps,
     chatInitialScrollTargetId,
@@ -912,7 +952,11 @@ export function useChatTab({
     inChatWindow,
     isLoadingHistory: effectiveIsLoadingHistory,
     hasMoreHistory: effectiveHasMoreHistory,
-    loadMoreHistory: inChatWindow ? undefined : loadCurrentGroupHistory,
+    loadMoreHistory: inChatWindow
+      ? undefined
+      : senders.length > 0
+        ? loadSenderHistory
+        : loadCurrentGroupHistory,
     chatEmptyState,
 
     // UI state

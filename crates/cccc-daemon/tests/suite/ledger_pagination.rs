@@ -51,6 +51,73 @@ fn chat_pagination_filters_noise_before_applying_limit() {
 }
 
 #[test]
+fn sender_union_uses_one_history_cursor_and_filters_before_limiting() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"sender union"}));
+    let group_id = created.result["group"]["group_id"].as_str().expect("group");
+    for index in 0..10 {
+        let mut event = Event::new("chat.message", group_id);
+        event.id = format!("message-{index}");
+        event.by = ["lead", "other", "peer"][index % 3].into();
+        event.data.insert("text".into(), json!("matching text"));
+        call(&home, "event_append", json!({"event":event}));
+        append(&home, group_id, "actor.activity", &format!("noise-{index}"));
+    }
+    let query = json!({"group_id":group_id,"kind":"chat","by_any":["lead","peer"],"limit":3});
+    let latest = call(&home, "ledger_search", query.clone());
+    assert_eq!(ids(&latest), ["message-6", "message-8", "message-9"]);
+    assert_eq!(latest.result["has_more"], true);
+    let mut older = query.clone();
+    older["before"] = json!("message-6");
+    let older = call(&home, "ledger_search", older);
+    assert_eq!(ids(&older), ["message-2", "message-3", "message-5"]);
+    let mut oldest = query.clone();
+    oldest["before"] = json!("message-2");
+    let oldest = call(&home, "ledger_search", oldest);
+    assert_eq!(ids(&oldest), ["message-0"]);
+    assert_eq!(oldest.result["has_more"], false);
+    let mut after = query.clone();
+    after["after"] = json!("message-3");
+    after["limit"] = json!(2);
+    let after = call(&home, "ledger_search", after);
+    assert_eq!(ids(&after), ["message-5", "message-6"]);
+    assert_eq!(after.result["has_more"], true);
+    let mut exact = query;
+    exact["by"] = json!("lead");
+    assert_eq!(
+        ids(&call(&home, "ledger_search", exact)),
+        ["message-3", "message-6", "message-9"]
+    );
+}
+
+#[test]
+fn invalid_sender_collections_do_not_silently_remove_the_filter() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"invalid senders"}));
+    let group_id = created.result["group"]["group_id"].as_str().expect("group");
+    for value in [json!("lead"), json!(["lead", 1]), json!([""])] {
+        let response = call_raw(
+            &home,
+            "ledger_search",
+            json!({"group_id":group_id,"by_any":value}),
+        );
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.expect("invalid senders").code,
+            "invalid_args"
+        );
+    }
+    let empty = call(
+        &home,
+        "ledger_search",
+        json!({"group_id":group_id,"kind":"chat","by_any":[]}),
+    );
+    assert!(ids(&empty).is_empty());
+}
+
+#[test]
 fn message_window_is_centered_and_reports_both_directions() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
