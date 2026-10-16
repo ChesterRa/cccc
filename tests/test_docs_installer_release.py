@@ -166,24 +166,6 @@ def test_release_index_uses_authenticated_paginated_ci_metadata(
         assert output.read_text(encoding="utf-8") == previous
 
 
-def test_docs_installer_renderer_accepts_a_released_version_override() -> None:
-    selected_version = "0.4.34-rc3"
-    selected_env = {**os.environ, "CCCC_DOCS_INSTALL_VERSION": selected_version}
-    try:
-        subprocess.run(
-            ["node", "scripts/prepare_docs_installers.mjs"],
-            cwd=ROOT,
-            env=selected_env,
-            check=True,
-        )
-        shell_installer = (ROOT / "docs/public/install.sh").read_text(encoding="utf-8")
-        powershell_installer = (ROOT / "docs/public/install.ps1").read_text(encoding="utf-8")
-        assert f'DEFAULT_VERSION="{selected_version}"' in shell_installer
-        assert f'$defaultVersion = "{selected_version}"' in powershell_installer
-    finally:
-        subprocess.run(["node", "scripts/prepare_docs_installers.mjs"], cwd=ROOT, check=True)
-
-
 def test_docs_installer_resolver_skips_prerelease_and_newer_incomplete_release(
     tmp_path: Path,
 ) -> None:

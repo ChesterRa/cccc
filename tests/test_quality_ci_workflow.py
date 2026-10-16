@@ -588,11 +588,9 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
     assert checkout["with"]["ref"] == "${{ github.event.repository.default_branch }}"
     docs_runs = _runs(docs_workflow["jobs"]["build"])
     resolver_command = "node scripts/resolve_docs_installer_version.mjs --output docs/public/releases.json"
-    assert f'version="$({resolver_command})"' in docs_runs
-    assert 'echo "version=$version" >> "$GITHUB_OUTPUT"' in docs_runs
     resolver = next(
         step for step in docs_workflow["jobs"]["build"]["steps"]
-        if step.get("id") == "installer-release"
+        if step.get("run") == resolver_command
     )
     assert resolver["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
     verification = "cmp docs/public/releases.json docs/.vitepress/dist/releases.json"
@@ -608,19 +606,15 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
         for step in docs_workflow["jobs"]["build"]["steps"]
         if step.get("name") == "Build with VitePress"
     )
-    assert build["env"]["CCCC_DOCS_INSTALL_VERSION"] == (
-        "${{ steps.installer-release.outputs.version }}"
-    )
+    assert "CCCC_DOCS_INSTALL_VERSION" not in build.get("env", {})
     assert package["scripts"]["prebuild"] == "npm run prepare:installers"
     assert package["scripts"]["prepare:installers"] == "node ../scripts/prepare_docs_installers.mjs"
 
     subprocess.run(["node", "scripts/prepare_docs_installers.mjs"], cwd=ROOT, check=True)
-    with (ROOT / "Cargo.toml").open("rb") as handle:
-        version = tomllib.load(handle)["workspace"]["package"]["version"]
     shell_installer = (ROOT / "docs/public/install.sh").read_text(encoding="utf-8")
     powershell_installer = (ROOT / "docs/public/install.ps1").read_text(encoding="utf-8")
-    assert f'DEFAULT_VERSION="{version}"' in shell_installer
-    assert f'$defaultVersion = "{version}"' in powershell_installer
+    assert 'DEFAULT_VERSION=""' in shell_installer
+    assert '$defaultVersion = ""' in powershell_installer
     tls_bootstrap = "[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12"
     assert tls_bootstrap in powershell_installer
     assert powershell_installer.index(tls_bootstrap) < powershell_installer.index("Invoke-WebRequest")

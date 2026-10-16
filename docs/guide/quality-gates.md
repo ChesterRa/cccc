@@ -143,7 +143,9 @@ universal wheel, importable CCCC Python package, fallback engine, or second Rust
 registry distribution.
 
 The Pages build uses its workflow token to resolve complete stable/RC releases,
-then publishes `releases.json` alongside the stable-pinned installers. It must
+then publishes `releases.json` alongside installers that resolve GitHub's latest
+stable release at execution time. Website installers must not pin the build-time
+version; release-asset installers remain version-bound for reproducibility. It must
 fail before deployment if resolution fails or VitePress does not preserve that
 index. For the first rollout, deploy Pages and verify
 `https://chesterra.github.io/cccc/releases.json` before distributing the CLI that

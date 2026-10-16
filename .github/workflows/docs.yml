@@ -54,17 +54,12 @@ jobs:
         run: npm ci
         working-directory: docs
 
-      - name: Resolve complete release channels and stable installer version
-        id: installer-release
+      - name: Resolve complete release channels
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          version="$(node scripts/resolve_docs_installer_version.mjs --output docs/public/releases.json)"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+        run: node scripts/resolve_docs_installer_version.mjs --output docs/public/releases.json
 
       - name: Build with VitePress
-        env:
-          CCCC_DOCS_INSTALL_VERSION: ${{ steps.installer-release.outputs.version }}
         run: npm run build
         working-directory: docs
 
