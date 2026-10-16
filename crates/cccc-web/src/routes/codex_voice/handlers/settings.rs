@@ -10,6 +10,37 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+pub(super) async fn voice_provider_metadata() -> Vec<Value> {
+    use cccc_contracts::codex_voice::VoiceProvider;
+    use cccc_daemon::experimental_codex_voice::{
+        default_realtime_voice, grok_credentials_available, realtime_voices,
+    };
+    let mut providers = Vec::new();
+    for provider in [VoiceProvider::Codex, VoiceProvider::Grok] {
+        let config =
+            RealtimeCallConfig::from_environment_for(provider, default_realtime_voice(provider))
+                .ok();
+        let native_available = provider == VoiceProvider::Codex
+            || config
+                .as_ref()
+                .is_some_and(|config| config.grok_executable.is_some());
+        let credentials_available = if let Some(config) = &config {
+            match provider {
+                VoiceProvider::Codex => {
+                    read_realtime_credentials_available(&config.auth_path).await
+                }
+                VoiceProvider::Grok => grok_credentials_available(&config.auth_path).await,
+            }
+        } else {
+            false
+        };
+        providers.push(json!({"id":provider,"voices":realtime_voices(provider),
+            "default_voice":default_realtime_voice(provider),
+            "credentials_available":credentials_available,"native_runtime_available":native_available}));
+    }
+    providers
+}
+
 pub(super) async fn codex_voice_readiness(home: &cccc_core::HomeLayout) -> Value {
     let settings = cccc_core::codex_voice_settings::load(home).unwrap_or_default();
     let custom_environment =

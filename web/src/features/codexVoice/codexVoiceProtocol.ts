@@ -1,10 +1,17 @@
+import type { VoiceHandoffContext, VoiceProvider } from "../../services/api";
+
 const MAX_VISIBLE_TRANSCRIPT_CHARS = 4_000;
+const MAX_HANDOFF_MESSAGES = 12;
+const MAX_HANDOFF_TEXT_BYTES = 8 * 1024;
+const MAX_HANDOFF_SNAPSHOTS = 64;
 
 export type RealtimeTranscriptUpdate = {
   role: "user" | "assistant";
   text: string;
   final: boolean;
   turnId?: string;
+  replace?: boolean;
+  truncated?: boolean;
 };
 export type VoiceConversationTurn = {
   id: string;
@@ -16,6 +23,8 @@ export const MAX_CONVERSATION_TURNS = 40;
 
 export class RealtimeTranscriptAccumulator {
   private turns: VoiceConversationTurn[] = [];
+  private historyWasTruncated = false;
+  private readonly handoffContexts = new Map<string, VoiceHandoffContext>();
   private readonly activeIds: Partial<Record<RealtimeTranscriptUpdate["role"], string>> = {};
   private readonly provisionalIds: Partial<Record<RealtimeTranscriptUpdate["role"], string>> = {};
   private nextId = 0;
@@ -46,6 +55,53 @@ export class RealtimeTranscriptAccumulator {
     return this.turns.filter((turn) => turn.text.trim()).map((turn) => ({ ...turn }));
   }
 
+  handoffContext(delegationId?: string): VoiceHandoffContext {
+    const saved = delegationId ? this.handoffContexts.get(delegationId) : undefined;
+    if (saved) return saved;
+    const turns = this.history();
+    const messages: VoiceHandoffContext["messages"] = [];
+    let remaining = MAX_HANDOFF_TEXT_BYTES;
+    let truncated = this.historyWasTruncated;
+    const encoder = new TextEncoder();
+    for (let index = turns.length - 1; index >= 0; index--) {
+      if (messages.length === MAX_HANDOFF_MESSAGES || remaining === 0) {
+        truncated = true;
+        break;
+      }
+      const turn = turns[index];
+      const bytes = encoder.encode(turn.text);
+      let start = Math.max(0, bytes.length - remaining);
+      // Retain a UTF-8 suffix without splitting a code point.
+      while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start++;
+      if (start > 0) truncated = true;
+      if (start < bytes.length) {
+        messages.unshift({
+          role: turn.role,
+          text: start ? new TextDecoder().decode(bytes.subarray(start)) : turn.text,
+          incomplete: !turn.final || start > 0,
+        });
+        remaining -= bytes.length - start;
+      }
+      if (start > 0) break;
+    }
+    const context = { messages, truncated };
+    if (delegationId) {
+      this.handoffContexts.set(delegationId, context);
+      if (this.handoffContexts.size > MAX_HANDOFF_SNAPSHOTS)
+        this.handoffContexts.delete(this.handoffContexts.keys().next().value!);
+    }
+    return context;
+  }
+
+  completeTurn(id: string): void {
+    const turn = this.turns.find((candidate) => candidate.id === id);
+    if (!turn) return;
+    turn.final = true;
+    if (this.activeIds[turn.role] === id) delete this.activeIds[turn.role];
+    if (this.provisionalIds[turn.role] === id) delete this.provisionalIds[turn.role];
+    this.final[turn.role] = true;
+  }
+
   private ensureTurn(
     id: string,
     role: RealtimeTranscriptUpdate["role"],
@@ -66,6 +122,7 @@ export class RealtimeTranscriptAccumulator {
     if (!turn) {
       turn = { id, role, text: "", final: false };
       this.turns.push(turn);
+      if (this.turns.length > MAX_CONVERSATION_TURNS) this.historyWasTruncated = true;
       this.turns = this.turns.slice(-MAX_CONVERSATION_TURNS);
     }
     return turn;
@@ -76,10 +133,19 @@ export class RealtimeTranscriptAccumulator {
     const activeId = this.activeIds[role];
     const id = update.turnId || activeId || `local-${++this.nextId}`;
     const turn = this.ensureTurn(id, role, !!update.turnId);
+    if (
+      update.truncated ||
+      update.text.length > MAX_VISIBLE_TRANSCRIPT_CHARS ||
+      (!update.final &&
+        !update.replace &&
+        turn.text.length + update.text.length > MAX_VISIBLE_TRANSCRIPT_CHARS)
+    )
+      this.historyWasTruncated = true;
     if (!update.turnId && !activeId) this.provisionalIds[role] = id;
-    turn.text = update.final
-      ? boundedText(update.text)
-      : boundedDelta(`${turn.text}${update.text}`);
+    turn.text =
+      update.final || update.replace
+        ? boundedText(update.text)
+        : boundedDelta(`${turn.text}${update.text}`);
     turn.final = update.final;
     if (update.final) {
       if (this.activeIds[role] === id) delete this.activeIds[role];
@@ -94,37 +160,87 @@ export class RealtimeTranscriptAccumulator {
       return this.text[role];
     }
     if (this.final[role] || this.activeRole !== role) this.text[role] = "";
-    this.text[role] = boundedDelta(`${this.text[role]}${update.text}`);
+    this.text[role] = update.replace
+      ? boundedText(update.text)
+      : boundedDelta(`${this.text[role]}${update.text}`);
     this.final[role] = false;
     this.activeRole = role;
     return this.text[role];
   }
 }
 
-export function shouldForwardProviderEvent(value: unknown): boolean {
+export function shouldForwardProviderEvent(
+  value: unknown,
+  provider: VoiceProvider = "codex",
+): boolean {
   return (
     !!value &&
     typeof value === "object" &&
-    (value as Record<string, unknown>).type === "delegation.created"
+    (value as Record<string, unknown>).type ===
+      (provider === "grok" ? "response.function_call_arguments.done" : "delegation.created")
   );
 }
 
-export function realtimeTranscriptUpdate(value: unknown): RealtimeTranscriptUpdate | null {
+export function realtimeTranscriptUpdate(
+  value: unknown,
+  provider: VoiceProvider = "codex",
+): RealtimeTranscriptUpdate | null {
   if (!value || typeof value !== "object") return null;
   const event = value as Record<string, unknown>;
   const type = String(event.type || "");
+  if (provider === "grok") {
+    if (
+      type === "conversation.item.input_audio_transcription.updated" ||
+      type === "conversation.item.input_audio_transcription.completed"
+    ) {
+      return typeof event.transcript === "string" && typeof event.item_id === "string"
+        ? {
+            role: "user",
+            text: event.transcript,
+            final: type.endsWith("completed"),
+            replace: true,
+            turnId: event.item_id,
+          }
+        : null;
+    }
+    if (
+      type === "response.output_audio_transcript.delta" ||
+      type === "response.output_audio_transcript.done"
+    ) {
+      const text = type.endsWith("done") ? event.transcript : event.delta;
+      return typeof text === "string" && typeof event.response_id === "string"
+        ? { role: "assistant", text, final: type.endsWith("done"), turnId: event.response_id }
+        : null;
+    }
+    return null;
+  }
   if (type === "input_transcript.added" || type === "output_transcript.added") {
     const item = asRecord(event.item);
     const text = boundedDelta(item?.text);
     if (!text) return null;
-    return { role: type === "input_transcript.added" ? "user" : "assistant", text, final: false };
+    return {
+      role: type === "input_transcript.added" ? "user" : "assistant",
+      text,
+      final: false,
+      ...(typeof item?.text === "string" && item.text.length > MAX_VISIBLE_TRANSCRIPT_CHARS
+        ? { truncated: true }
+        : {}),
+    };
   }
   if (type !== "turn.done") return null;
   const turn = asRecord(event.turn);
   const role = turn?.role === "user" ? "user" : turn?.role === "assistant" ? "assistant" : null;
   const text = boundedText(turn?.transcript);
   return role && typeof turn?.transcript === "string"
-    ? { role, text, final: true, ...(typeof turn.id === "string" ? { turnId: turn.id } : {}) }
+    ? {
+        role,
+        text,
+        final: true,
+        ...(typeof turn.id === "string" ? { turnId: turn.id } : {}),
+        ...(turn.transcript.trim().length > MAX_VISIBLE_TRANSCRIPT_CHARS
+          ? { truncated: true }
+          : {}),
+      }
     : null;
 }
 
@@ -162,16 +278,14 @@ function providerErrorIdentifier(value: unknown): string {
 
 export function boundedText(value: unknown): string {
   if (typeof value !== "string") return "";
-  const text = value.trim();
-  if (text.length <= MAX_VISIBLE_TRANSCRIPT_CHARS) return text;
-  return text.slice(text.length - MAX_VISIBLE_TRANSCRIPT_CHARS);
+  return boundedDelta(value.trim());
 }
 
 export function boundedDelta(value: unknown): string {
   if (typeof value !== "string") return "";
-  return value.length <= MAX_VISIBLE_TRANSCRIPT_CHARS
-    ? value
-    : value.slice(value.length - MAX_VISIBLE_TRANSCRIPT_CHARS);
+  let start = Math.max(0, value.length - MAX_VISIBLE_TRANSCRIPT_CHARS);
+  if (start > 0 && (value.codePointAt(start - 1) ?? 0) > 0xffff) start++;
+  return value.slice(start);
 }
 
 export class CodexVoiceFailure extends Error {

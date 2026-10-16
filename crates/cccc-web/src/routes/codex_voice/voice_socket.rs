@@ -1,6 +1,7 @@
 use axum::extract::ws::{Message, WebSocket};
+use cccc_contracts::codex_voice::VoiceProvider;
 use cccc_daemon::experimental_codex_voice::{
-    AnalystLifecycleEvent, CodexVoiceCall, VoiceDelegationAdmission, parse_provider_delegation,
+    AnalystLifecycleEvent, CodexVoiceCall, VoiceDelegationAdmission, parse_provider_delegation_for,
     realtime_greeting_commands, realtime_notice_commands,
 };
 use serde_json::{Value, json};
@@ -138,7 +139,12 @@ pub(super) async fn serve(
                 if !session.info().connected { end_reason = "call_stopped"; break; }
                 if analyst.is_none() { continue; }
                 let runtime = session.analyst().expect("assistant call");
-                for (id, command) in runtime.manual_results_for_call(&generation) {
+                for (id, mut command) in runtime.manual_results_for_call(&generation) {
+                    // Manual tasks have no provider tool call, but their completed
+                    // outcomes still need the same per-report Grok announcement.
+                    if info.provider == VoiceProvider::Grok {
+                        command["_cccc_report_id"] = Value::String(id.clone());
+                    }
                     if !send_provider_command(&mut socket, command).await { break 'session; }
                     runtime.manual_result_projected(&id);
                 }
@@ -235,16 +241,30 @@ pub(super) async fn serve(
                             continue;
                         }
                         let provider_event = &value["event"];
-                        let provider = match parse_provider_delegation(provider_event) {
+                        let provider = match parse_provider_delegation_for(call.provider(), provider_event) {
                             Ok(provider) => provider,
                             Err(error) => {
-                                tracing::warn!(%error, "invalid Codex Realtime delegation event");
+                                tracing::warn!(%error, "invalid Realtime delegation event");
+                                if let Some(id) = provider_event["call_id"].as_str().filter(|id| !id.is_empty() && id.len() <= 256)
+                                    && !send_delegation_receipt(&mut socket, call.provider(), id, false).await { break; }
                                 if !send_error(&mut socket, "invalid_provider_event", "Codex Voice received an invalid delegation event.").await { break; }
                                 continue;
                             }
                         };
-                        if provider.is_none() { continue; }
-                        match call.route_provider_event(&generation, provider_event).await {
+                        let Some(provider) = provider else { continue; };
+                        let conversation = match value.get("context") {
+                            Some(context) => serde_json::from_value::<cccc_contracts::codex_voice::VoiceHandoffContext>(context.clone()),
+                            None => Ok(Default::default()),
+                        };
+                        let conversation = match conversation {
+                            Ok(context) => context,
+                            Err(_) => {
+                                if !send_delegation_receipt(&mut socket, call.provider(), &provider.id, false).await { break; }
+                                if !send_error(&mut socket, "invalid_provider_event", "Realtime Voice received invalid conversation context.").await { break; }
+                                continue;
+                            }
+                        };
+                        match call.route_provider_event(&generation, provider_event, &conversation).await {
                             Ok(Some(VoiceDelegationAdmission::NativeInput { delegation_id, text })) => {
                                 let delivery = session.analyst().expect("assistant call").submit_native_voice_input(&text).await;
                                 if !matches!(delivery, Ok(true)) {
@@ -256,6 +276,7 @@ pub(super) async fn serve(
                                     // input echo. Once correlated, the delegation was accepted and
                                     // must neither be rejected nor replayed.
                                     if !rolled_back {
+                                        if !send_delegation_receipt(&mut socket, call.provider(), &provider.id, true).await { break; }
                                         continue;
                                     }
                                     let error = match delivery {
@@ -264,6 +285,7 @@ pub(super) async fn serve(
                                         Ok(true) => unreachable!(),
                                     };
                                     tracing::warn!(%error, %delegation_id, "Voice Analyst native input delivery failed");
+                                    if !send_delegation_receipt(&mut socket, call.provider(), &provider.id, false).await { break; }
                                     for command in realtime_notice_commands(
                                         "I couldn't deliver that investigation to the Voice Analyst. Please check its terminal in CCCC.",
                                     ) {
@@ -274,12 +296,15 @@ pub(super) async fn serve(
                                         "analyst_delivery_failed",
                                         "The Voice Analyst did not accept that investigation.",
                                     ).await { break; }
-                                }
+                                } else if !send_delegation_receipt(&mut socket, call.provider(), &provider.id, true).await { break; }
                             }
                             Ok(Some(VoiceDelegationAdmission::Turn(_)
                                 | VoiceDelegationAdmission::NativeInputPending | VoiceDelegationAdmission::Queued{..}))
-                            | Ok(None) => {}
+                            | Ok(None) => {
+                                if !send_delegation_receipt(&mut socket, call.provider(), &provider.id, true).await { break; }
+                            }
                             Err(error) => {
+                                if !send_delegation_receipt(&mut socket, call.provider(), &provider.id, false).await { break; }
                                 for command in realtime_notice_commands(
                                     "I couldn't deliver that investigation to the Voice Analyst. Please check its terminal in CCCC.",
                                 ) {
@@ -475,6 +500,22 @@ async fn finish(state: &AppState, attachment: crate::codex_voice::SessionAttachm
 
 async fn send_provider_command(socket: &mut WebSocket, command: Value) -> bool {
     send_json(socket, json!({"type":"provider_command","message":command})).await
+}
+
+async fn send_delegation_receipt(
+    socket: &mut WebSocket,
+    provider: cccc_contracts::codex_voice::VoiceProvider,
+    call_id: &str,
+    accepted: bool,
+) -> bool {
+    if provider != cccc_contracts::codex_voice::VoiceProvider::Grok {
+        return true;
+    }
+    send_provider_command(
+        socket,
+        json!({"type":"cccc.delegation.receipt", "call_id":call_id, "accepted":accepted}),
+    )
+    .await
 }
 
 async fn send_notification_results(

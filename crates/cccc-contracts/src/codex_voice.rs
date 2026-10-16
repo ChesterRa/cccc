@@ -3,6 +3,17 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 mod application_context;
 pub use application_context::{VoiceApplicationContext, VoiceCallMode};
+mod handoff_context;
+pub use handoff_context::{VoiceHandoffContext, VoiceHandoffMessage, VoiceHandoffRole};
+
+/// Foreground speech provider, independent of the investigation Runtime.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceProvider {
+    #[default]
+    Codex,
+    Grok,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexVoiceSettings {

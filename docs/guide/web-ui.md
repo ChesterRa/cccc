@@ -19,7 +19,7 @@ Open http://127.0.0.1:8848/ in your browser.
 The Web UI has these main areas:
 
 - **Header**: Group title and controls, work view switch, and settings menu
-- **Sidebar**: Group list, navigation, and the persistent Codex Voice control
+- **Sidebar**: Group list, navigation, and the persistent Voice control
 - **Main Area**: Group message history or a paginated terminal view
 - **Input**: Message composer with @mention support
 
@@ -329,9 +329,9 @@ navigation state. Use **Refresh** to load edits from disk; publishing a new card
 also updates the reader. They do not reload on the automatic image/Markdown
 refresh timer.
 
-### Codex Voice (Experimental)
+### Voice conversation (Experimental)
 
-The **Codex Voice** control below the Group list is a global assistant entry, not a Group roster item.
+The **Voice** control below the Group list is a global assistant entry, not a Group roster item.
 It has two stable actions: the main control always opens the Voice console, and the adjacent
 microphone/square control starts or stops live audio. The same meanings are preserved in the
 collapsed sidebar and active-call mobile bar. Settings, mute, and the Analyst terminal are not
@@ -339,8 +339,13 @@ separate Dock actions.
 
 The Voice console is one operational workspace. Call state, audio settings, mute, and Stop are in its
 top audio-control area. The conversation keeps up to 40 recent spoken entries from this call,
-updating streaming fragments with the final transcript. These entries stay in this browser's memory
-until the next call or page reload. The collapsible right pane embeds the selected Voice Analyst
+updating streaming fragments with the final transcript. The display stays in this browser's memory
+until the next call or page reload. Investigations include a bounded recent excerpt so the Analyst
+can understand follow-ups and retain your limits; that excerpt becomes part of its retained conversation.
+Voice is instructed to prepare a self-contained task and clarify essential ambiguity before handing it off.
+Handoffs follow the user's current request language and preserve technical identifiers and explicit
+output-language requirements; an already-clear request can keep its original wording.
+The collapsible right pane embeds the selected Voice Analyst
 runtime's writable TUI; its work status is independent of the live audio status. On desktop, drag
 the divider to adjust the pane widths; focus it and use Left/Right or Home/End for keyboard control.
 Double-click the divider to restore the default ratio. This browser remembers the chosen ratio,
@@ -350,16 +355,37 @@ Settings replace the console body inside the same panel; call controls stay avai
 **Back to conversation** or Escape returns to the console without disconnecting its terminal.
 Analyst drafts survive tab changes and panel minimization until explicitly saved or discarded.
 The minimize control keeps the call running; **Stop voice** ends live audio.
-Its tabs are **Voice & audio**, **Message notifications**, and **Voice Analyst**. Speaking voice,
-microphone and supported speaker choices remain in Voice & audio, alongside response detail
+Its settings tabs are **Call preferences**, **Message notifications**, and **Voice Analyst**.
+Microphone and supported speaker choices are shared with Voice Secretary in the global audio section.
+Call preferences contain the voice service and speaking voice, alongside response detail
 (concise / standard / detailed) and speaking style (natural / direct / patient). Expression defaults
 save automatically for the instance and apply to the next call, without restarting the Analyst.
 Detail applies to incoming Actor notifications as well as answers. Voice is instructed to identify
 each notification's Group and sender. Detailed asks it to retain substantive findings, numbers,
 conditions, qualifications and next steps in natural speech; raw tool traces remain in the Analyst terminal.
-Speaking voice and device choices are saved in this browser and also apply to the next call. Spoken
-instructions can override them. The host must already be signed in through `codex login`, and the browser must
-allow microphone access. That host login belongs only to the Realtime provider call.
+Choose **Codex Voice** or **Grok Voice** in the console title or **Call preferences**. The service
+and its speaking voice are fixed during a call; end it before changing them. This browser remembers
+the selected service and each service's voice independently. Microphone and speaker choices stay
+shared with Voice Secretary. Switching service does not change the independent Analyst runtime or
+its retained conversation. Spoken instructions can override expression defaults.
+
+On the CCCC host, **Codex Voice** uses `codex login`; **Grok Voice** uses a first-party Grok Build
+subscription login (`grok login`) and requires `grok` on CCCC's PATH. Neither path requires an extra
+API key. The console distinguishes a missing Grok executable from a missing login and offers a status
+refresh. Status reads do not start a CLI or refresh login; Start uses Grok's native authentication
+manager, including its credential lock, and gives the browser only a short-lived connection secret.
+Grok uses `grok-voice-3.0`, direct browser WebSocket audio and server voice-activity detection. The
+browser resamples its microphone to 24 kHz PCM and plays output through the shared selected speaker.
+An interrupted response stops locally at once. An investigation tool acknowledges reception after
+CCCC accepts it; the actual result returns later through the same global Analyst.
+
+The host advertises each service's supported voices and default; Web has no second voice allowlist.
+Codex offers 25 voices, including Himari, Miko, Rindo and Rivage, with Cove as its default. Grok
+currently offers 28 built-in voices with Eve as its default. The menu shows documented primary-language
+hints for new Codex voices and supports searching by language; these hints do not restrict the
+conversation language. A saved choice is preserved until the
+host catalog confirms it is unavailable. Account eligibility, service availability and subscription
+limits remain provider-owned; CCCC does not promise free or unlimited voice usage.
 
 #### Message notifications and source links
 
@@ -565,9 +591,9 @@ therefore observes and controls the existing Analyst session instead of starting
 conversation.
 
 If Realtime Voice reports a provider error, its error code is shown separately
-from Analyst failures. The browser console retains a bounded error explanation;
-CCCC's server log records only bounded code/type/event/parameter identifiers and
-the call generation, not the explanation or conversation content. A stopped
+from Analyst failures. Browser and server diagnostics retain only bounded
+code/type/event/parameter identifiers and the call generation. Provider explanations
+can quote conversation content or credentials and are not logged. A stopped
 audio call does not discard the warm Analyst session. Provider diagnostics do
 not retry requests or change the existing disconnect policy.
 
@@ -650,7 +676,7 @@ live ACP prompt echo: CCCC acknowledges the request from the matching user messa
 authenticated backend stream, then uses the ACP response as the exact completion fence. A completed
 Voice turn with no result is reported as failed instead of silently returning an empty answer.
 
-The session manager keeps at most one Codex Voice call and one warm Voice Analyst per interactive
+The session manager keeps at most one voice call and one warm Voice Analyst per interactive
 Web host. The normal launcher permits one such Web process per `CCCC_HOME`, while the call also uses
 the existing daemon-owned global recording lease shared with Voice Secretary. Hiding the details
 panel, switching Groups, or leaving the tab in the background does not stop or retarget the call.

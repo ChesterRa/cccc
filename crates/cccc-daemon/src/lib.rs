@@ -48,9 +48,11 @@ pub mod experimental_codex_voice {
     pub use crate::ops::codex_voice_analyst::{LaunchConfig, TurnReceipt};
     pub use crate::ops::codex_voice_controller::{
         CodexVoiceAnalyst, CodexVoiceCall, DEFAULT_REALTIME_VOICE, FinalProjection,
-        ProviderDelegation, REALTIME_VOICES, RealtimeCallConfig, RealtimeCallError,
-        create_realtime_answer, parse_provider_delegation, realtime_greeting_commands,
-        realtime_notice_commands, validate_realtime_voice,
+        GrokRealtimeConnection, ProviderDelegation, REALTIME_VOICES, RealtimeCallConfig,
+        RealtimeCallError, create_grok_connection, create_realtime_answer, default_realtime_voice,
+        grok_credentials_available, parse_provider_delegation, parse_provider_delegation_for,
+        realtime_greeting_commands, realtime_notice_commands, realtime_voices,
+        validate_provider_voice, validate_realtime_voice,
     };
     pub use crate::ops::codex_voice_lifecycle::{
         AnalystLifecycleEvent, AnalystTurnOrigin, VoiceDelegationAdmission,

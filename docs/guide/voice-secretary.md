@@ -59,8 +59,8 @@ Codex and Claude use dedicated MCP configurations; Copilot disables other config
 servers and built-in MCPs for the task process. Other providers may still expose
 user-configured services; this is not a filesystem or connected-service sandbox.
 All voice settings use **Settings → This instance → Voice**, with two tabs:
-**Voice Secretary** and **Codex Voice**. Secretary has Runtime/model, capture and
-recognition, and document-processing sections. Codex Voice has Realtime call
+**Voice Secretary** and **Voice conversation**. Secretary has Runtime/model, capture and
+recognition, and document-processing sections. Voice conversation has Realtime call
 preferences and Voice Analyst. Their runtime forms use the same direct/Profile
 choices, but credentials, contexts and results stay separate.
 The shared **Audio devices** section above the two tabs owns microphone and speaker
@@ -69,7 +69,7 @@ choices for both workflows and all Groups in the current browser. The Secretary'
 changes apply to the next recording or call, leaving active audio unchanged.
 Local and external ASR capture audio from the browser and use the selected microphone;
 Browser ASR uses the browser's default microphone. The Secretary does not play audio;
-the speaker choice applies to audio-producing workflows such as Codex Voice. Browsers
+the speaker choice applies to audio-producing workflows such as Codex Voice and Grok Voice. Browsers
 without output selection use the system speaker. Missing devices remain selected
 until the user chooses another device; refreshing never requests microphone access.
 If browser storage cannot be written, the editor reports that choices are retained
@@ -190,14 +190,48 @@ keyboard focus into it; closing it returns focus to the Voice options button.
 Transcription and prompt-processing status appear above the input instead of
 competing with action buttons. The wider-screen controls remain inline.
 
-## Codex Voice provider connection
+## Live voice provider connections
 
-Codex Voice is experimental. Its call connection currently reads a local Codex
+Grok Voice reuses the CCCC host's first-party Grok Build subscription login (`grok login`). It requires
+`grok` on PATH and uses the native auth manager for refresh; API keys are disabled for this path.
+The auth file follows native `GROK_AUTH_PATH`, `GROK_HOME/auth.json`, then `~/.grok/auth.json`.
+A temporary isolated helper reads only the selected login and never starts a model session. CCCC
+mints a short-lived connection secret; browser audio streams directly to Grok Voice 3.0 using mono
+PCM16LE at 24 kHz. Long-lived OAuth credentials stay on the host. Subscription entitlement and limits
+remain subject to the provider; this is not a separate API-key configuration or a free-usage promise.
+
+
+Live voice is experimental. Choose Codex Voice or Grok Voice in the existing voice console;
+the separate Voice Analyst runtime stays independent. Codex Voice reads a local Codex
 ChatGPT login from `CODEX_HOME/auth.json` (by default `~/.codex/auth.json`) or
 `CCCC_CODEX_AUTH_PATH`, then connects to ChatGPT's Codex realtime backend
 (default base URL: `https://chatgpt.com/backend-api/codex`). The call connection
 and the separate Voice Analyst have different configuration: choosing an
 Analyst Runtime does not configure the call provider.
+
+The speaking-voice menu labels the primary language of newly documented Codex voices
+and can be searched by that language. These are voice profiles, not a restriction on
+the conversation language. The hints follow OpenAI's [ChatGPT Voice profiles](https://help.openai.com/en/articles/20001274-chatgpt-voice);
+voices without a documented primary language keep their name alone.
+
+For investigations, Voice is instructed to turn the complete spoken request into a concise task,
+including its confirmed target, necessary background, limits and latest corrections. A clear request
+can pass unchanged, including the original wording from Codex's native delegation. Voice is instructed
+to keep the user's current request language, technical identifiers and any explicit output-language
+requirement. Both services attach a bounded, speaker-labelled excerpt from the current call
+to help the Analyst resolve follow-ups such as "check that one". The provider request remains intact;
+drafts and omitted history are marked. This excerpt becomes part of the retained Analyst conversation.
+Assistant speech and quoted Actor messages confer no additional authority. Essential ambiguity should
+prompt one focused question. This uses the existing Analyst, with no extra rewrite model or task console.
+
+Grok Voice acknowledges investigation acceptance briefly, then announces each complete result in arrival
+order, including investigations entered directly in the Analyst console during that call. Progress remains
+visible in the Analyst. Reports wait for the user's automatic reply, the previous response and playback to
+finish; each response is directed to that report rather than whichever question was asked most recently.
+You can interrupt normally. An interrupted report is not automatically replayed, and later queued reports
+remain available during the same call. A missing older delivery confirmation does not block independently
+ready reports; uncertain delivery is warned about rather than retried. Ending the call clears its local
+announcement queue without replaying Analyst work. Codex Voice retains its native delegation/progress path.
 
 This is distinct from the [public OpenAI Realtime API](https://developers.openai.com/api/docs/guides/realtime).
 An API key or API credits alone do not configure the current call path. Call
@@ -205,6 +239,21 @@ availability and compatibility depend on the configured ChatGPT account and
 provider backend. See the [provider implementation](https://github.com/ChesterRa/cccc/blob/main/crates/cccc-daemon/src/ops/codex_voice_controller/provider.rs)
 for the current connection, rather than treating this feature as a public
 Realtime API integration.
+
+The subscription connection offers the 25 v3 voices listed by Codex 0.163.0's
+`thread/realtime/listVoices`, including Himari, Miko, Rindo and Rivage. Cove
+remains the default. Choose a voice in **Call preferences**; type a name to filter
+the list. The selection is saved in this browser and applies to the next call.
+Web uses the host's advertised catalog, so a newly supported voice survives a page reload. Microphone and
+speaker preferences remain shared with Voice Secretary.
+
+GPT-Live-1.1 is the default voice model for Plus and higher tiers, including
+Codex, according to the [October 15 system card](https://deploymentsafety.openai.com/gpt-live-1-1).
+CCCC keeps the subscription channel's `gpt-live-1-codex` identifier; that name
+does not establish which product revision the provider serves to an account.
+Voice availability still depends on the account and provider rollout. No separate
+API key is required, and selecting a Claude or Grok Analyst changes the working
+Runtime rather than the voice provider.
 
 ## Workspace modes
 

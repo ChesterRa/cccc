@@ -33,7 +33,7 @@ def website(tmp_path):
     target = targets.get((platform.system(), platform.machine()))
     if target is None:
         pytest.skip("Unix installer requires a supported host")
-    for version in ("1.0.0", "1.1.0"):
+    for version in ("1.0.0", "1.1.0", "1.2.0-rc1"):
         package = f"cccc-v{version}-{target}"
         binary = tmp_path / package / "cccc"
         binary.parent.mkdir()
@@ -80,6 +80,7 @@ def website(tmp_path):
         return subprocess.run(
             ["sh", str(tmp_path / "docs/public/install.sh")],
             env={**os.environ, "HOME": str(tmp_path / "home"),
+                 "CCCC_HOME": str(tmp_path / "state"),
                  "CCCC_INSTALL_DIR": str(tmp_path / "bin"), "CCCC_VERSION": version,
                  "CCCC_RELEASE_BASE_URL": f"http://127.0.0.1:{server.server_port}/releases",
                  "CCCC_NO_MODIFY_PATH": "1"},
@@ -104,12 +105,13 @@ def test_website_installer_follows_latest_without_rebuilding(website):
     assert state["requests"].count("/releases/latest") == 2
 
 
-def test_explicit_version_bypasses_latest(website):
+@pytest.mark.parametrize("version", ["v1.0.0", "1.2.0-rc1"])
+def test_explicit_version_bypasses_latest(website, version):
     state, install, binary = website
     state["latest"] = None
-    result = install("v1.0.0")
+    result = install(version)
     assert result.returncode == 0, result.stderr
-    assert subprocess.check_output([str(binary), "--version"], text=True).strip() == "cccc 1.0.0"
+    assert subprocess.check_output([str(binary), "--version"], text=True).strip() == f"cccc {version.removeprefix('v')}"
     assert "/releases/latest" not in state["requests"]
 
 
@@ -124,3 +126,30 @@ def test_failed_latest_resolution_preserves_installed_version(website):
     assert "could not resolve the latest release" in result.stderr
     assert state["requests"] == ["/releases/latest"]
     assert binary.read_bytes() == previous
+
+
+@pytest.mark.parametrize("failure", ["manifest_missing", "archive_missing", "checksum_mismatch"])
+def test_failed_latest_download_preserves_installation_without_downgrading(website, tmp_path, failure):
+    state, install, binary = website
+    assert install("1.0.0").returncode == 0
+    marker = binary.with_name(".cccc-standalone")
+    previous = binary.read_bytes(), marker.read_bytes()
+    release = tmp_path / "releases/download/v1.1.0"
+    archive = next(release.glob("*.tar.gz"))
+    if failure == "manifest_missing":
+        (release / "SHA256SUMS").unlink()
+    elif failure == "archive_missing":
+        archive.unlink()
+    else:
+        archive.write_bytes(b"corrupted download")
+    state["latest"] = "1.1.0"
+    state["requests"].clear()
+
+    result = install()
+
+    assert result.returncode != 0
+    assert state["requests"][0] == "/releases/latest"
+    assert any(path.startswith("/releases/download/v1.1.0/") for path in state["requests"])
+    assert not any(path.startswith("/releases/download/v1.0.0/") for path in state["requests"])
+    assert (binary.read_bytes(), marker.read_bytes()) == previous
+    assert not binary.with_name(".cccc-install.lock").exists()

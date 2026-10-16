@@ -74,7 +74,19 @@ impl StartDiagnostic {
             Some(RealtimeCallError::HttpStatus(status)) => Some(*status),
             _ => None,
         };
-        let code = if let Some(lease) = error.downcast_ref::<LeaseError>() {
+        let code = if let Some(
+            RealtimeCallError::GrokCredentials
+            | RealtimeCallError::GrokRuntime
+            | RealtimeCallError::GrokAuthentication,
+        ) = realtime
+        {
+            stage = StartStage::Realtime;
+            match realtime {
+                Some(RealtimeCallError::GrokRuntime) => "grok_voice_runtime_missing",
+                Some(RealtimeCallError::GrokCredentials) => "grok_voice_login_required",
+                _ => "grok_voice_auth_failed",
+            }
+        } else if let Some(lease) = error.downcast_ref::<LeaseError>() {
             stage = StartStage::Recording;
             if lease.code == "assistant_voice_recording_busy" {
                 "codex_voice_recording_busy"
@@ -98,6 +110,11 @@ impl StartDiagnostic {
                     }
                     Some(RealtimeCallError::HttpStatus(429)) => "codex_voice_realtime_rate_limited",
                     Some(RealtimeCallError::HttpStatus(_)) => "codex_voice_realtime_rejected",
+                    Some(
+                        RealtimeCallError::GrokCredentials
+                        | RealtimeCallError::GrokRuntime
+                        | RealtimeCallError::GrokAuthentication,
+                    ) => unreachable!("handled above"),
                     None if request.is_some_and(reqwest::Error::is_timeout) => {
                         "codex_voice_realtime_timeout"
                     }
@@ -123,6 +140,15 @@ impl StartDiagnostic {
 
     pub(crate) fn into_api_error(self) -> ApiError {
         let message = match self.code {
+            "grok_voice_runtime_missing" => {
+                "Install Grok Build on the CCCC host before starting Grok Voice."
+            }
+            "grok_voice_login_required" => {
+                "Sign in with grok login on the CCCC host. Grok Voice uses that account, without an API key."
+            }
+            "grok_voice_auth_failed" => {
+                "Grok could not provide a usable native login. Update Grok Build or sign in again; the Analyst session is retained."
+            }
             "codex_voice_setup_failed" => {
                 "Codex Voice configuration could not be loaded. Check Voice settings."
             }
@@ -139,7 +165,7 @@ impl StartDiagnostic {
                 "CCCC could not acquire or keep recording access. Try starting voice again."
             }
             "codex_voice_realtime_auth_failed" => {
-                "Realtime Voice could not use the ChatGPT login. Check its login; the Analyst session is retained."
+                "Realtime Voice could not use the selected account login. Check its login; the Analyst session is retained."
             }
             "codex_voice_realtime_timeout" => {
                 "Connecting to Realtime Voice timed out. Try again; the Analyst session is retained."

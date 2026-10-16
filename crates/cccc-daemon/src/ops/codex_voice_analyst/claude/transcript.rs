@@ -18,6 +18,27 @@ pub(super) struct PendingNativeInput<'a> {
     pub(super) text: &'a str,
 }
 
+pub(super) fn matching_native_input<'a>(
+    record: &Value,
+    pending: &'a std::collections::VecDeque<super::super::native_input::PendingNativeInput>,
+) -> Option<PendingNativeInput<'a>> {
+    if record["type"] != "user" {
+        return None;
+    }
+    let content = record.pointer("/message/content")?;
+    if contains_tool_result(content) {
+        return None;
+    }
+    let text = text_content(content);
+    pending
+        .iter()
+        .find(|input| input.expected_text == text)
+        .map(|input| PendingNativeInput {
+            delegation_id: &input.delegation_id,
+            text: &input.expected_text,
+        })
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum IngestOutcome {
     None,
@@ -516,6 +537,60 @@ mod tests {
             TranscriptState::new("generation-1".into(), "session-1".into(), events),
             receiver,
         )
+    }
+
+    #[test]
+    fn missing_native_echo_does_not_steal_or_block_a_later_claude_result() {
+        let (mut state, mut events) = harness();
+        let mut pending = std::collections::VecDeque::new();
+        for (id, text) in [
+            ("missing", "missing input"),
+            ("later", "inspect the fixture"),
+        ] {
+            super::super::super::native_input::register(&mut pending, id.into(), text.into())
+                .expect("valid synthetic Claude record");
+        }
+        let record = json!({
+            "type":"user","sessionId":"session-1","promptId":"confirmed-prompt",
+            "message":{"content":"inspect the fixture"}
+        });
+        let matched = matching_native_input(&record, &pending).expect("match the later input");
+        assert_eq!(
+            state
+                .ingest_with_native(&record, None, Some(matched))
+                .expect("valid synthetic Claude record"),
+            IngestOutcome::Native("later".into())
+        );
+        super::super::super::native_input::forget(&mut pending, "later");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].delegation_id, "missing");
+        let started = events.try_recv().expect("native lifecycle event");
+        assert_eq!(started.requested_delegation_id.as_deref(), Some("later"));
+        state
+            .ingest(
+                &json!({"type":"assistant","sessionId":"session-1",
+                "message":{"content":[{"type":"text","text":"the synthetic result"}]}}),
+                None,
+            )
+            .expect("valid synthetic Claude record");
+        state
+            .ingest(
+                &json!({"type":"system","sessionId":"session-1","subtype":"turn_duration"}),
+                None,
+            )
+            .expect("valid synthetic Claude record");
+        assert_eq!(
+            events.try_recv().expect("native lifecycle event").message["params"]["delta"],
+            "the synthetic result"
+        );
+        assert_eq!(
+            events.try_recv().expect("native lifecycle event").message["params"]["item"]["text"],
+            "the synthetic result"
+        );
+        assert_eq!(
+            events.try_recv().expect("native lifecycle event").message["params"]["turn"]["status"],
+            "completed"
+        );
     }
 
     #[test]

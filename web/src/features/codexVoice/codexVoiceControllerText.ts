@@ -13,6 +13,7 @@ export function codexVoiceCallStatus(
     Boolean(
       controller.readiness &&
       (!controller.readiness.realtime_credentials_available ||
+        controller.readiness.realtime_runtime_available === false ||
         !controller.readiness.analyst_runtime_available),
     );
   const labelKey = controller.externalCall
@@ -56,7 +57,12 @@ export function codexVoiceCallReadinessProblem(
   t: (key: string, options?: Record<string, unknown>) => string,
   readiness: CodexVoiceReadiness | null,
 ): string {
-  if (!readiness || readiness.realtime_credentials_available) return "";
+  if (!readiness) return "";
+  if (readiness.realtime_provider === "grok") {
+    if (readiness.realtime_runtime_available === false) return t("codexVoiceGrokRuntimeRequired");
+    return readiness.realtime_credentials_available ? "" : t("codexVoiceGrokLoginRequired");
+  }
+  if (readiness.realtime_credentials_available) return "";
   return t("codexVoiceCodexLoginRequired");
 }
 

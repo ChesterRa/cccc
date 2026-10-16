@@ -176,10 +176,15 @@ async fn shared_actor_and_analyst(runtime: ActorRuntime, prefix: &str) {
                             .await
                             .expect("cancellable prompt");
                         // The native TUI must cancel the same ACP-originated work.
+                        // Wait for each native acknowledgement: two raw Esc bytes
+                        // read together are decoded as Alt+Esc by OpenTUI.
                         tokio::time::sleep(Duration::from_secs(1)).await;
+                        let cursor = cccc_runtime::retained_history(&group.group_id, "kilo-test")
+                            .expect("native output cursor")
+                            .end_cursor;
                         cccc_runtime::write(&group.group_id, "kilo-test", b"\x1b")
                             .expect("first Esc");
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        wait_for_cancel_confirmation(&group.group_id, cursor).await;
                         cccc_runtime::write(&group.group_id, "kilo-test", b"\x1b")
                             .expect("second Esc");
                         assert_eq!(
@@ -256,6 +261,35 @@ async fn shared_actor_and_analyst(runtime: ActorRuntime, prefix: &str) {
     .await;
     model_server.abort();
     observed.expect("Kilo admission probe");
+}
+
+async fn wait_for_cancel_confirmation(group_id: &str, mut cursor: u64) {
+    let mut output = String::new();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let page = cccc_runtime::history_since(group_id, "kilo-test", cursor, 65536)
+                .expect("native TUI output after first Esc");
+            cursor = page.end_cursor;
+            output.push_str(&page.data);
+            if output.contains("again to interrupt") {
+                return;
+            }
+            assert!(
+                cccc_runtime::status(group_id, "kilo-test")
+                    .expect("native TUI status")
+                    .running,
+                "native TUI stopped before acknowledging the first Esc"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "native TUI did not acknowledge first Esc within 15 seconds; new output bytes={}",
+            output.len()
+        )
+    });
 }
 
 async fn local_model(axum::Json(body): axum::Json<Value>) -> axum::response::Response {

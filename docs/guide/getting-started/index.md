@@ -46,18 +46,6 @@ Linux x86-64 with glibc 2.28+, Apple Silicon macOS 11+, or Windows x86-64, plus
 at least one AI agent CLI. CCCC v0.4.37 is the final archived release for Intel
 Macs.
 
-The website installer resolves the latest stable GitHub Release each time it
-runs, including when upgrading an existing standalone installation. It does not
-select prereleases. To install a specific version, set `CCCC_VERSION` on the
-installer process, for example:
-
-```bash
-curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.43 sh
-```
-
-On Windows, set `$env:CCCC_VERSION` before running the installer. If latest-release
-resolution fails, installation stops without falling back to an older version.
-
 - At least one AI agent CLI:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended)
   - [Codex CLI](https://github.com/openai/codex)
@@ -129,6 +117,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 
 The installer downloads a checksum-verified native executable and refuses to
 overwrite a command it does not own.
+
+The website installer resolves the latest stable GitHub Release each time it
+runs, including when upgrading an existing standalone installation. It does not
+select prereleases. To install a specific version, set `CCCC_VERSION` on the
+installer process, for example:
+
+```bash
+curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.43 sh
+```
+
+On Windows, set `$env:CCCC_VERSION` before running the installer. If latest-release
+resolution fails, installation stops without falling back to an older version.
 
 ### From PyPI (v0.4.36+)
 

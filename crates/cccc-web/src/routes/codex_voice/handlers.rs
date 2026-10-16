@@ -3,7 +3,10 @@ use axum::Json;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, Query, State};
 use axum::response::Response;
-use cccc_daemon::experimental_codex_voice::{DEFAULT_REALTIME_VOICE, REALTIME_VOICES};
+use cccc_contracts::codex_voice::VoiceProvider;
+use cccc_daemon::experimental_codex_voice::{
+    DEFAULT_REALTIME_VOICE, REALTIME_VOICES, default_realtime_voice,
+};
 use serde_json::{Value, json};
 
 use crate::AppState;
@@ -89,20 +92,33 @@ pub(super) async fn active(State(state): State<AppState>) -> ApiResult {
         "voices":REALTIME_VOICES,
         "default_voice":DEFAULT_REALTIME_VOICE,
         "readiness":readiness,
+        "providers":settings::voice_provider_metadata().await,
     })))
 }
 
 pub(super) async fn start(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
     require_interactive_web(&state)?;
-    let offer_sdp = body["offer_sdp"]
-        .as_str()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| ApiError::bad("offer_sdp is required"))?;
+    let provider: VoiceProvider = match body.get("provider") {
+        None => VoiceProvider::Codex,
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|_| ApiError::bad("provider must be codex or grok"))?,
+    };
+    let offer_sdp = body["offer_sdp"].as_str().unwrap_or_default();
+    if provider == VoiceProvider::Codex && offer_sdp.trim().is_empty() {
+        return Err(ApiError::bad("offer_sdp is required for Codex"));
+    }
+    if provider == VoiceProvider::Grok && !offer_sdp.is_empty() {
+        return Err(ApiError::bad(
+            "Grok uses WebSocket audio and does not accept offer_sdp",
+        ));
+    }
     let client_session_id = body["client_session_id"]
         .as_str()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| ApiError::bad("client_session_id is required"))?;
-    let voice = body["voice"].as_str().unwrap_or(DEFAULT_REALTIME_VOICE);
+    let voice = body["voice"]
+        .as_str()
+        .unwrap_or(default_realtime_voice(provider));
     let application_context = serde_json::from_value::<
         Option<cccc_contracts::codex_voice::VoiceApplicationContext>,
     >(body["application_context"].clone())
@@ -112,24 +128,33 @@ pub(super) async fn start(State(state): State<AppState>, Json(body): Json<Value>
         )
     })?;
     let started = std::time::Instant::now();
-    let outcome = state
-        .codex_voice
-        .start(
-            &state.home,
-            client_session_id,
-            offer_sdp,
-            voice,
-            application_context,
-        )
-        .await
-        .map_err(|error| {
-            let diagnostic =
-                StartDiagnostic::from_error(&error, started.elapsed().as_millis() as u64);
-            // The packaged cccc entrypoint has no tracing subscriber. Emit one
-            // safe line on failure without globally enabling unrelated logs.
-            eprintln!("[cccc] Codex Voice start failed: {}", diagnostic.details());
-            diagnostic.into_api_error()
-        })?;
+    let outcome = match provider {
+        VoiceProvider::Codex => {
+            state
+                .codex_voice
+                .start(
+                    &state.home,
+                    client_session_id,
+                    offer_sdp,
+                    voice,
+                    application_context,
+                )
+                .await
+        }
+        VoiceProvider::Grok => {
+            state
+                .codex_voice
+                .start_grok(&state.home, client_session_id, voice, application_context)
+                .await
+        }
+    }
+    .map_err(|error| {
+        let diagnostic = StartDiagnostic::from_error(&error, started.elapsed().as_millis() as u64);
+        // The packaged cccc entrypoint has no tracing subscriber. Emit one
+        // safe line on failure without globally enabling unrelated logs.
+        eprintln!("[cccc] Codex Voice start failed: {}", diagnostic.details());
+        diagnostic.into_api_error()
+    })?;
     match outcome {
         StartOutcome::Busy(info) => Err(ApiError::conflict(
             "codex_voice_busy",
@@ -145,6 +170,7 @@ pub(super) async fn start(State(state): State<AppState>, Json(body): Json<Value>
                 "call":payload::info_value(info),
                 "analyst":started.session.analyst().map(|analyst| payload::analyst_info_value(analyst.info())),
                 "answer_sdp":started.answer_sdp,
+                "provider_connection":started.provider_connection,
                 "experimental":true,
             })))
         }

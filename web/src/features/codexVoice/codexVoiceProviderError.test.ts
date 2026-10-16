@@ -121,9 +121,10 @@ describe("Realtime provider error diagnostics", () => {
       expect(JSON.stringify(messages)).not.toContain("private input");
       expect(warning).toHaveBeenCalledTimes(1);
       expect(warning).toHaveBeenCalledWith(
-        "Codex Realtime Voice provider error",
-        expect.objectContaining({ message: "provider explanation quoting private input" }),
+        "Realtime Voice provider error",
+        expect.objectContaining({ code: code || "" }),
       );
+      expect(JSON.stringify(warning.mock.calls)).not.toContain("private input");
       expect(close).toHaveBeenCalledTimes(1);
       expect(stopTrack).toHaveBeenCalledTimes(1);
     },

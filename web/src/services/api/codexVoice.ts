@@ -42,9 +42,30 @@ export const markVoiceMessagesViewed = (messages: VoiceMessageRef[]) =>
   });
 
 export type VoiceCallMode = "assistant" | "persona";
+export type VoiceProvider = "codex" | "grok";
+/** Quoted recent speech from one call, attached only to explicit delegations. */
+export type VoiceHandoffContext = {
+  messages: { role: "user" | "assistant"; text: string; incomplete: boolean }[];
+  truncated: boolean;
+};
+export type VoiceProviderInfo = {
+  id: VoiceProvider;
+  voices: string[];
+  default_voice: string;
+  credentials_available: boolean;
+  native_runtime_available: boolean;
+};
+export type GrokVoiceConnection = {
+  transport: "websocket_pcm";
+  url: string;
+  client_secret: string;
+  expires_at: number;
+  session: Record<string, unknown>;
+};
 export type VoiceApplicationContext = { id: string; instructions: string; mode?: VoiceCallMode };
 
 export type CodexVoiceCallInfo = {
+  provider?: VoiceProvider;
   generation: string;
   analyst_generation: string | null;
   mode: VoiceCallMode;
@@ -77,6 +98,7 @@ export type VoiceManualInvestigation = {
 };
 
 export type CodexVoiceActiveResult = {
+  providers?: VoiceProviderInfo[];
   call: CodexVoiceCallInfo | null;
   analyst: CodexVoiceAnalystInfo | null;
   voices: string[];
@@ -85,6 +107,8 @@ export type CodexVoiceActiveResult = {
 };
 
 export type CodexVoiceReadiness = {
+  realtime_provider?: VoiceProvider;
+  realtime_runtime_available?: boolean;
   supported_modes: VoiceCallMode[];
   analyst_runtime: string;
   analyst_runtime_available: boolean;
@@ -93,6 +117,7 @@ export type CodexVoiceReadiness = {
 };
 
 export type CodexVoiceStartResult = {
+  provider_connection?: GrokVoiceConnection | null;
   call: CodexVoiceCallInfo;
   analyst: CodexVoiceAnalystInfo | null;
   answer_sdp: string;
@@ -118,8 +143,9 @@ export async function fetchActiveCodexVoiceCall() {
 }
 
 export async function startCodexVoiceCall(args: {
+  provider?: VoiceProvider;
   clientSessionId: string;
-  offerSdp: string;
+  offerSdp?: string;
   voice: string;
   applicationContext?: VoiceApplicationContext;
   signal?: AbortSignal;
@@ -129,6 +155,7 @@ export async function startCodexVoiceCall(args: {
     signal: args.signal,
     body: JSON.stringify({
       client_session_id: args.clientSessionId,
+      ...(args.provider ? { provider: args.provider } : {}),
       offer_sdp: args.offerSdp,
       voice: args.voice,
       ...(args.applicationContext ? { application_context: args.applicationContext } : {}),

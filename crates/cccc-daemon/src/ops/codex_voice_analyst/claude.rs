@@ -1104,12 +1104,7 @@ async fn run_client(
                                     text: &pending.text,
                                     turn_id: &pending.turn_id,
                                 });
-                                let native = native_inputs.front().map(|pending| {
-                                    transcript::PendingNativeInput {
-                                        delegation_id: &pending.delegation_id,
-                                        text: &pending.expected_text,
-                                    }
-                                });
+                                let native = transcript::matching_native_input(&record, &native_inputs);
                                 state.ingest_with_native(&record, controlled, native)
                             };
                             match result {
@@ -1121,11 +1116,10 @@ async fn run_client(
                                     pending = None;
                                 }
                                 Ok(transcript::IngestOutcome::Native(delegation_id)) => {
-                                    debug_assert_eq!(
-                                        native_inputs.front().map(|pending| pending.delegation_id.as_str()),
-                                        Some(delegation_id.as_str())
+                                    debug_assert!(
+                                        native_inputs.iter().any(|input| input.delegation_id == delegation_id)
                                     );
-                                    native_inputs.pop_front();
+                                    super::native_input::forget(&mut native_inputs, &delegation_id);
                                 }
                                 Ok(transcript::IngestOutcome::None) => {}
                                 Err(error) => {

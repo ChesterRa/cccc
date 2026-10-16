@@ -29,6 +29,7 @@ import {
 import { Button } from "../ui/button";
 import { IconButton } from "../ui/icon-button";
 import { ModalFrame } from "./ModalFrame";
+import { VoiceProviderSelect } from "../../features/codexVoice/VoiceProviderSelect";
 
 type Props = {
   isOpen: boolean;
@@ -142,8 +143,11 @@ export function CodexVoiceAnalystModal({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="truncate text-base font-semibold text-[var(--color-text-primary)]">
-                {t("codexVoiceTitle")}
+              <h2 className="min-w-0 text-base font-semibold text-[var(--color-text-primary)]">
+                <VoiceProviderSelect
+                  controller={controller}
+                  className="min-h-9 max-w-full text-base font-semibold pointer-coarse:min-h-11"
+                />
               </h2>
               <span className="hidden rounded-full border border-[var(--glass-border-subtle)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)] sm:inline-flex">
                 {t("codexVoiceExperimental")}
@@ -308,6 +312,15 @@ export function CodexVoiceAnalystModal({
                 </div>
               ))}
             </dl>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={controller.checking}
+              onClick={() => void controller.refresh()}
+            >
+              {t("settings:voiceSettings.refresh")}
+            </Button>
             <Button
               type="button"
               variant="secondary"

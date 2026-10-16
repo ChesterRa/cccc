@@ -212,6 +212,7 @@ async fn voice_sockets_revoke_idle_terminals_and_report_notification_failure() {
     );
     let call_generation = call.generation().to_owned();
     let session = Arc::new(ActiveSession {
+        provider_connection: None,
         verbosity: Default::default(),
         notification_paused: tokio::sync::watch::channel(false).0,
         call,
@@ -222,20 +223,44 @@ async fn voice_sockets_revoke_idle_terminals_and_report_notification_failure() {
         voice: "cove".into(),
         connection_state: AtomicU8::new(CONNECTION_UNATTACHED),
     });
-    assert!(session.matches_start("fixture", &[0; 32], "cove", Some(&context)));
-    assert!(!session.matches_start("fixture", &[0; 32], "cove", None));
+    assert!(session.matches_start(
+        "fixture",
+        &[0; 32],
+        cccc_contracts::codex_voice::VoiceProvider::Codex,
+        "cove",
+        Some(&context)
+    ));
+    assert!(!session.matches_start(
+        "fixture",
+        &[0; 32],
+        cccc_contracts::codex_voice::VoiceProvider::Codex,
+        "cove",
+        None
+    ));
     let changed = cccc_contracts::codex_voice::VoiceApplicationContext::new(
         "work:two".into(),
         context.instructions().into(),
     )
     .expect("changed work context");
-    assert!(!session.matches_start("fixture", &[0; 32], "cove", Some(&changed)));
+    assert!(!session.matches_start(
+        "fixture",
+        &[0; 32],
+        cccc_contracts::codex_voice::VoiceProvider::Codex,
+        "cove",
+        Some(&changed)
+    ));
     let changed = cccc_contracts::codex_voice::VoiceApplicationContext::new(
         context.id().into(),
         "日本語。別の資料範囲".into(),
     )
     .expect("changed instructions");
-    assert!(!session.matches_start("fixture", &[0; 32], "cove", Some(&changed)));
+    assert!(!session.matches_start(
+        "fixture",
+        &[0; 32],
+        cccc_contracts::codex_voice::VoiceProvider::Codex,
+        "cove",
+        Some(&changed)
+    ));
     state.codex_voice.state.lock().await.active = Some(Arc::clone(&session));
     // Corruption is a credible ingestion failure. It must be visible to the
     // connected owner without falsely declaring the Analyst disconnected.
@@ -284,6 +309,8 @@ async fn voice_sockets_revoke_idle_terminals_and_report_notification_failure() {
     )
     .expect("assistant fixture");
     let config = RealtimeCallConfig {
+        provider: cccc_contracts::codex_voice::VoiceProvider::Codex,
+        grok_executable: None,
         auth_path: temp.path().join("missing-auth.json"),
         base_url: "http://127.0.0.1:1".into(),
         voice: "cove".into(),

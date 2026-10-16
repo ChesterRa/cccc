@@ -67,7 +67,29 @@ describe("Codex Voice realtime event model", () => {
       const delegation = { type: "delegation.created", item: { id: "d1", text: "查天气" } };
       await transport.handleProviderMessage(JSON.stringify(delegation));
       expect(frames.filter((frame) => frame.type === "provider_event")).toEqual([
-        { type: "provider_event", event: delegation },
+        {
+          type: "provider_event",
+          event: delegation,
+          context: {
+            messages: [
+              { role: "user", text: "帮我查天气。", incomplete: false },
+              { role: "assistant", text: "好的，我来查。", incomplete: false },
+            ],
+            truncated: false,
+          },
+        },
+      ]);
+      const firstHandoff = frames.find((frame) => frame.type === "provider_event");
+      await transport.handleProviderMessage(
+        JSON.stringify({
+          type: "turn.done",
+          turn: { id: "u2", role: "user", transcript: "改查东京，仍然只查天气。" },
+        }),
+      );
+      await transport.handleProviderMessage(JSON.stringify(delegation));
+      expect(frames.filter((frame) => frame.type === "provider_event")).toEqual([
+        firstHandoff,
+        firstHandoff,
       ]);
     } finally {
       await session.stop();

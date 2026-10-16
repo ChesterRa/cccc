@@ -2,6 +2,129 @@ use super::*;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
 
 #[tokio::test]
+async fn an_abandoned_correlated_start_cannot_defer_every_later_event_forever() {
+    for cancelled in [false, true] {
+        let (client, server) = tokio::io::duplex(4096);
+        let client = tokio_tungstenite::WebSocketStream::from_raw_socket(
+            client,
+            tokio_tungstenite::tungstenite::protocol::Role::Client,
+            None,
+        )
+        .await;
+        let mut server = tokio_tungstenite::WebSocketStream::from_raw_socket(
+            server,
+            tokio_tungstenite::tungstenite::protocol::Role::Server,
+            None,
+        )
+        .await;
+        let client = std::sync::Arc::new(ProtocolClient::new(client, "fixture-start".into(), None));
+        let mut events = client.subscribe();
+        let request = {
+            let client = std::sync::Arc::clone(&client);
+            tokio::spawn(async move {
+                client
+                    .request(
+                        "turn/start",
+                        json!({
+                            "threadId":"fixture-thread",
+                            "responsesapiClientMetadata":{"cccc_turn_correlation_id":"fixture-input"}
+                        }),
+                        Duration::from_millis(100),
+                    )
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(1), server.next())
+            .await
+            .expect("start request deadline")
+            .expect("start request frame")
+            .expect("start request");
+        server
+            .send(Message::Text(
+                json!({"method":"turn/started","params":{"threadId":"fixture-thread","turn":{"id":"unknown-turn"}}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .expect("deferred event");
+        if cancelled {
+            request.abort();
+            assert!(request.await.expect_err("request cancelled").is_cancelled());
+        } else {
+            assert_eq!(
+                request
+                    .await
+                    .expect("request task")
+                    .expect_err("unconfirmed start")
+                    .kind(),
+                io::ErrorKind::TimedOut
+            );
+        }
+        let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("unconfirmed admission must become an explicit disconnect")
+            .expect("disconnect event");
+        assert_eq!(
+            event.message["method"],
+            super::super::MANAGED_AGENT_DISCONNECTED_METHOD
+        );
+        assert_eq!(
+            event.message["params"]["diagnostic"]["code"],
+            "admission_response_lost"
+        );
+        assert_eq!(
+            client
+                .request("thread/read", json!({}), Duration::from_millis(100))
+                .await
+                .expect_err("unresolved session is not reusable")
+                .kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        client.close().await;
+    }
+}
+
+#[tokio::test]
+async fn a_read_timeout_does_not_disconnect_a_healthy_session_or_hold_its_events() {
+    let (client, server) = tokio::io::duplex(4096);
+    let client = tokio_tungstenite::WebSocketStream::from_raw_socket(
+        client,
+        tokio_tungstenite::tungstenite::protocol::Role::Client,
+        None,
+    )
+    .await;
+    let mut server = tokio_tungstenite::WebSocketStream::from_raw_socket(
+        server,
+        tokio_tungstenite::tungstenite::protocol::Role::Server,
+        None,
+    )
+    .await;
+    let client = ProtocolClient::new(client, "fixture-read-timeout".into(), None);
+    let mut events = client.subscribe();
+    let error = client
+        .request("thread/read", json!({}), Duration::from_millis(20))
+        .await
+        .expect_err("fixture omits read reply");
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    server
+        .send(Message::Text(
+            json!({"method":"turn/started","params":{"threadId":"fixture-thread","turn":{"id":"later-turn"}}})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("later event");
+    let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+        .await
+        .expect("healthy event deadline")
+        .expect("healthy event");
+    assert_eq!(event.message["method"], "turn/started");
+    assert_eq!(event.message["params"]["turn"]["id"], "later-turn");
+    assert!(events.try_recv().is_err());
+    client.close().await;
+}
+
+#[tokio::test]
 async fn remote_close_records_code_without_logging_peer_reason() {
     let (client, server) = tokio::io::duplex(4096);
     let client = tokio_tungstenite::WebSocketStream::from_raw_socket(

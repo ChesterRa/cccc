@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 
 pub(super) fn info_value(info: SessionInfo) -> Value {
     json!({
+        "provider":info.provider,
         "generation":info.generation,
         "analyst_generation":info.analyst_generation,
         "mode":info.mode,

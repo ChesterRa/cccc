@@ -303,6 +303,7 @@ async fn scoped_users_cannot_read_or_mutate_global_voice_notification_state() {
 #[test]
 fn public_voice_payloads_do_not_expose_local_paths_or_codex_commands() {
     let value = info_value(SessionInfo {
+        provider: cccc_contracts::codex_voice::VoiceProvider::Codex,
         generation: "voice-1".into(),
         analyst_generation: Some("analyst-1".into()),
         mode: Default::default(),

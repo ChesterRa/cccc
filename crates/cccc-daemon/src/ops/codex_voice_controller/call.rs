@@ -1,9 +1,12 @@
+#[cfg(test)]
 use super::delegation::validate_delegation;
 use super::projection::{
-    CallProjection, delegation_context_commands, session_context_commands, validate_final_result,
+    CallProjection, delegation_context_commands, grok_report_command, session_context_commands,
+    validate_final_result,
 };
 use super::*;
 use anyhow::{Context, Result, bail};
+use cccc_contracts::codex_voice::VoiceHandoffContext;
 use serde_json::Value;
 
 impl CodexVoiceCall {
@@ -18,6 +21,21 @@ impl CodexVoiceCall {
         analyst: Option<Arc<CodexVoiceAnalyst>>,
         application_context: Option<cccc_contracts::codex_voice::VoiceApplicationContext>,
     ) -> Result<Self> {
+        Self::start_with_provider(
+            home,
+            analyst,
+            application_context,
+            cccc_contracts::codex_voice::VoiceProvider::Codex,
+        )
+        .await
+    }
+
+    pub async fn start_with_provider(
+        home: &HomeLayout,
+        analyst: Option<Arc<CodexVoiceAnalyst>>,
+        application_context: Option<cccc_contracts::codex_voice::VoiceApplicationContext>,
+        provider: cccc_contracts::codex_voice::VoiceProvider,
+    ) -> Result<Self> {
         let mode = application_context
             .as_ref()
             .map(|context| context.mode())
@@ -28,6 +46,7 @@ impl CodexVoiceCall {
         let generation = uuid::Uuid::new_v4().simple().to_string();
         let lease = CallLease::acquire(home, "", "", &format!("codex-voice:{generation}"))?;
         Ok(Self {
+            provider,
             generation,
             application_context,
             analyst,
@@ -40,17 +59,22 @@ impl CodexVoiceCall {
         &self.generation
     }
 
+    pub fn provider(&self) -> cccc_contracts::codex_voice::VoiceProvider {
+        self.provider
+    }
+
     pub fn application_context(
         &self,
     ) -> Option<&cccc_contracts::codex_voice::VoiceApplicationContext> {
         self.application_context.as_ref()
     }
 
-    fn delegation_input(&self, request: &str) -> String {
-        self.application_context.as_ref().map_or_else(
-            || request.to_owned(),
-            |context| context.analyst_input(request),
-        )
+    fn delegation_input(&self, request: &str, conversation: &VoiceHandoffContext) -> String {
+        let request = conversation.analyst_input(request);
+        match &self.application_context {
+            Some(context) => context.analyst_input(&request),
+            None => request,
+        }
     }
 
     #[cfg(test)]
@@ -113,7 +137,7 @@ impl CodexVoiceCall {
         if self.mode() == cccc_contracts::codex_voice::VoiceCallMode::Persona {
             return Ok(None);
         }
-        let Some(delegation) = parse_provider_delegation(event)? else {
+        let Some(delegation) = parse_provider_delegation_for(self.provider, event)? else {
             return Ok(None);
         };
         self.begin_delegation(expected_generation, &delegation)
@@ -125,19 +149,27 @@ impl CodexVoiceCall {
         &self,
         expected_generation: &str,
         event: &Value,
+        conversation: &VoiceHandoffContext,
     ) -> Result<Option<VoiceDelegationAdmission>> {
         self.require_generation(expected_generation)?;
         if self.mode() == cccc_contracts::codex_voice::VoiceCallMode::Persona {
             return Ok(None);
         }
-        let Some(delegation) = parse_provider_delegation(event)? else {
+        let Some(mut delegation) = parse_provider_delegation_for(self.provider, event)? else {
             return Ok(None);
         };
-        validate_delegation(&delegation)?;
+        if self.provider == cccc_contracts::codex_voice::VoiceProvider::Grok {
+            delegation.id = format!("grok:{}:{}", self.generation, delegation.id);
+        }
+        // The parser validated the raw provider ID and payload. The host-only
+        // namespace must not consume that provider's 256-byte ID budget.
         let admission = self
             .require_analyst()?
             .lifecycle
-            .admit_voice(&delegation.id, &self.delegation_input(&delegation.text))
+            .admit_voice(
+                &delegation.id,
+                &self.delegation_input(&delegation.text, conversation),
+            )
             .await?;
         if let VoiceDelegationAdmission::Turn(receipt) = &admission {
             self.follow_analyst_turn(receipt).await;
@@ -168,7 +200,10 @@ impl CodexVoiceCall {
         let admission = self
             .require_analyst()?
             .lifecycle
-            .admit_voice(&delegation.id, &self.delegation_input(&delegation.text))
+            .admit_voice(
+                &delegation.id,
+                &self.delegation_input(&delegation.text, &VoiceHandoffContext::default()),
+            )
             .await?;
         let turn = match admission {
             VoiceDelegationAdmission::Turn(turn) => turn,
@@ -260,6 +295,11 @@ impl CodexVoiceCall {
         if projection.projected {
             return Ok(Vec::new());
         }
+        if self.provider == cccc_contracts::codex_voice::VoiceProvider::Grok {
+            // The Analyst UI still streams progress. Grok receives one complete
+            // report per result so partial speech cannot consume its final answer.
+            return Ok(Vec::new());
+        }
         let chunks = projection.progress.push(delta)?;
         Ok(chunks
             .into_iter()
@@ -287,18 +327,27 @@ impl CodexVoiceCall {
             projection.delegation_id = delegation_id.trim().to_owned();
         }
         let target = projection.delegation_id.clone();
-        let had_progress = projection.progress.streamed();
-        let remaining = projection.progress.finish(result);
-        let commands = if had_progress || projection.delegation_ids.len() > 1 {
-            remaining
-                .into_iter()
-                .flat_map(|chunk| session_context_commands(&chunk))
-                .collect()
+        let commands = if self.provider == cccc_contracts::codex_voice::VoiceProvider::Grok {
+            vec![grok_report_command(
+                &self.generation,
+                &projection.delegation_ids,
+                analyst_turn_id,
+                result,
+            )]
         } else {
-            remaining
-                .into_iter()
-                .flat_map(|chunk| delegation_context_commands(&target, &chunk))
-                .collect()
+            let had_progress = projection.progress.streamed();
+            let remaining = projection.progress.finish(result);
+            if had_progress || projection.delegation_ids.len() > 1 {
+                remaining
+                    .into_iter()
+                    .flat_map(|chunk| session_context_commands(&chunk))
+                    .collect()
+            } else {
+                remaining
+                    .into_iter()
+                    .flat_map(|chunk| delegation_context_commands(&target, &chunk))
+                    .collect()
+            }
         };
         projection.projected = true;
         Ok(Some(FinalProjection {

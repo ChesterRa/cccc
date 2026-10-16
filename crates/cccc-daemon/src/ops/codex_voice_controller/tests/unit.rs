@@ -71,7 +71,14 @@ fn realtime_offer_validation_preserves_wire_bytes() {
 #[test]
 fn realtime_voice_selection_is_allowlisted_and_normalized() {
     assert_eq!(validate_realtime_voice(" Cove ").expect("Cove"), "cove");
-    assert_eq!(REALTIME_VOICES.len(), 9);
+    assert_eq!(
+        validate_realtime_voice(" Himari ").expect("Himari"),
+        "himari"
+    );
+    assert_eq!(validate_realtime_voice("RIVAGE").expect("Rivage"), "rivage");
+    assert_eq!(REALTIME_VOICES.len(), 25);
+    // Public API voices are not necessarily available on the Codex subscription channel.
+    assert!(validate_realtime_voice("quartz").is_err());
     assert!(validate_realtime_voice("arbitrary-provider-value").is_err());
     assert!(validate_realtime_voice("").is_err());
 }
@@ -303,6 +310,8 @@ async fn realtime_answer_rejects_an_oversized_chunked_body_while_streaming() {
 
     let error = create_realtime_answer(
         &RealtimeCallConfig {
+            provider: cccc_contracts::codex_voice::VoiceProvider::Codex,
+            grok_executable: None,
             auth_path,
             base_url: format!("http://{address}"),
             voice: "cove".into(),

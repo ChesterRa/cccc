@@ -6,10 +6,12 @@ impl ActiveSession {
         &self,
         client_session_id: &str,
         offer_digest: &[u8; 32],
+        provider: cccc_contracts::codex_voice::VoiceProvider,
         voice: &str,
         context: Option<&cccc_contracts::codex_voice::VoiceApplicationContext>,
     ) -> bool {
         self.client_session_id == client_session_id
+            && self.call.provider() == provider
             && &self.offer_digest == offer_digest
             && self.voice == voice
             && self.call.application_context() == context
@@ -29,6 +31,7 @@ impl ActiveSession {
 
     pub(crate) fn info(&self) -> SessionInfo {
         SessionInfo {
+            provider: self.call.provider(),
             generation: self.call.generation().to_owned(),
             analyst_generation: self
                 .analyst

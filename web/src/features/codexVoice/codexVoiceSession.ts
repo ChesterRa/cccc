@@ -17,6 +17,7 @@ import {
 } from "./codexVoiceMedia";
 import {
   boundedDelta,
+  asRecord,
   boundedText,
   failure,
   failureCode,
@@ -28,6 +29,7 @@ import {
 } from "./codexVoiceProtocol";
 import { CodexVoiceProviderChannel } from "./codexVoiceProviderChannel";
 import { CodexVoicePeerMonitor } from "./codexVoicePeerMonitor";
+import { GrokVoiceTransport } from "./grokVoiceTransport";
 
 // Leave room for JSON escaping of 256-byte managed result IDs inside the
 // server's 128 KiB frame limit, independently of its 1,024-ID observation limit.
@@ -48,7 +50,7 @@ export class CodexVoiceBrowserSession {
   private readonly clientSessionId = createClientSessionId();
   private stream: MediaStream | null = null;
   private peer: RTCPeerConnection | null = null;
-  private readonly providerChannel: CodexVoiceProviderChannel;
+  private readonly providerChannel: CodexVoiceProviderChannel | GrokVoiceTransport;
   private readonly peerMonitor = new CodexVoicePeerMonitor();
   private eventSocket: CodexVoiceEventSocket | null = null;
   private call: CodexVoiceCallInfo | null = null;
@@ -65,7 +67,7 @@ export class CodexVoiceBrowserSession {
     this.audio = args.audio;
     this.preferences = args.preferences;
     this.callbacks = args.callbacks;
-    this.providerChannel = new CodexVoiceProviderChannel(
+    const channelCallbacks: ConstructorParameters<typeof CodexVoiceProviderChannel> = [
       (data) => void this.handleProviderMessage(data),
       (code) => {
         console.warn("Codex Voice output failed", { code, ...this.providerChannel.receipt() });
@@ -97,7 +99,19 @@ export class CodexVoiceBrowserSession {
         this.callbacks.onOutputStatus?.(this.providerChannel.outputStatus());
         this.sendServerMessage({ type: "provider_receipt", ...this.providerChannel.receipt() });
       },
-    );
+    ];
+    this.providerChannel =
+      args.preferences.provider === "grok"
+        ? new GrokVoiceTransport(
+            channelCallbacks,
+            (speaking) => {
+              if (!this.stopping) this.callbacks.onPhase(speaking ? "speaking" : "listening");
+            },
+            (blocked) => {
+              if (!this.stopping) this.callbacks.onPlaybackBlocked(blocked);
+            },
+          )
+        : new CodexVoiceProviderChannel(...channelCallbacks);
   }
 
   async start(): Promise<void> {
@@ -106,9 +120,14 @@ export class CodexVoiceBrowserSession {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw failure("microphone_unsupported");
       }
-      if (typeof RTCPeerConnection === "undefined") {
+      if (
+        !(this.providerChannel instanceof GrokVoiceTransport) &&
+        typeof RTCPeerConnection === "undefined"
+      ) {
         throw failure("webrtc_unsupported");
       }
+      if (this.providerChannel instanceof GrokVoiceTransport)
+        this.providerChannel.prepareAudio(this.audio);
       await applyOutputDevice(this.audio, this.preferences.outputDeviceId);
       if (this.stopping) return;
       const stream = await captureMicrophone(this.preferences.inputDeviceId);
@@ -118,28 +137,31 @@ export class CodexVoiceBrowserSession {
       }
       this.stream = stream;
 
-      const peer = new RTCPeerConnection();
-      this.peer = peer;
-      this.peerMonitor.bind({
-        peer,
-        audio: this.audio,
-        resumeAudio: () => this.resumeAudio(),
-        onPhase: (phase) => this.callbacks.onPhase(phase),
-        onFailure: (code) => void this.fail(code),
-        isStopping: () => this.stopping,
-      });
-      for (const track of this.stream.getAudioTracks()) peer.addTrack(track, this.stream);
-      const dataChannel = peer.createDataChannel("oai-events");
-      this.providerChannel.bind(dataChannel);
+      let offerSdp: string | undefined;
+      if (!(this.providerChannel instanceof GrokVoiceTransport)) {
+        const peer = new RTCPeerConnection();
+        this.peer = peer;
+        this.peerMonitor.bind({
+          peer,
+          audio: this.audio,
+          resumeAudio: () => this.resumeAudio(),
+          onPhase: (phase) => this.callbacks.onPhase(phase),
+          onFailure: (code) => void this.fail(code),
+          isStopping: () => this.stopping,
+        });
+        for (const track of this.stream.getAudioTracks()) peer.addTrack(track, this.stream);
+        const dataChannel = peer.createDataChannel("oai-events");
+        this.providerChannel.bind(dataChannel);
 
-      const offer = await peer.createOffer();
-      if (this.stopping) return;
-      await peer.setLocalDescription(offer);
-      if (this.stopping) return;
-      await waitForIceGathering(peer);
-      if (this.stopping) return;
-      const offerSdp = peer.localDescription?.sdp;
-      if (!offerSdp?.trim()) throw failure("webrtc_offer_failed");
+        const offer = await peer.createOffer();
+        if (this.stopping) return;
+        await peer.setLocalDescription(offer);
+        if (this.stopping) return;
+        await waitForIceGathering(peer);
+        if (this.stopping) return;
+        offerSdp = peer.localDescription?.sdp;
+        if (!offerSdp?.trim()) throw failure("webrtc_offer_failed");
+      }
 
       this.callbacks.onPhase("connecting");
       const requestAbort = new AbortController();
@@ -147,6 +169,7 @@ export class CodexVoiceBrowserSession {
       const response = await startCodexVoiceCall({
         clientSessionId: this.clientSessionId,
         offerSdp,
+        ...(this.preferences.provider ? { provider: this.preferences.provider } : {}),
         voice: this.preferences.voice,
         signal: requestAbort.signal,
       });
@@ -173,9 +196,15 @@ export class CodexVoiceBrowserSession {
       this.eventSocket = eventSocket;
       await eventSocket.connect();
       if (this.stopping) return;
-      await peer.setRemoteDescription({ type: "answer", sdp: response.result.answer_sdp });
-      if (this.stopping) return;
-      await waitForDataChannelOpen(peer, () => this.providerChannel.readyState());
+      if (this.providerChannel instanceof GrokVoiceTransport) {
+        if (!response.result.provider_connection)
+          throw failure("grok_voice_connection_unavailable");
+        await this.providerChannel.connect(response.result.provider_connection, stream);
+      } else if (this.peer) {
+        await this.peer.setRemoteDescription({ type: "answer", sdp: response.result.answer_sdp });
+        if (this.stopping) return;
+        await waitForDataChannelOpen(this.peer, () => this.providerChannel.readyState());
+      }
       if (this.stopping) return;
       this.callbacks.onPhase("listening");
     } catch (error) {
@@ -215,6 +244,8 @@ export class CodexVoiceBrowserSession {
 
   async resumeAudio(): Promise<boolean> {
     if (this.stopping) return false;
+    if (this.providerChannel instanceof GrokVoiceTransport)
+      return this.providerChannel.resumeAudio();
     try {
       await this.audio.play();
       if (this.stopping) return false;
@@ -359,26 +390,57 @@ export class CodexVoiceBrowserSession {
     if (this.providerChannel.observe(event)) {
       this.sendServerMessage({ type: "provider_receipt", ...this.providerChannel.receipt() });
     }
+    if (this.stopping) return;
     this.transcripts.observeTurn(event);
-    const transcript = realtimeTranscriptUpdate(event);
+    const provider = this.preferences.provider || "codex";
+    if (provider === "grok") {
+      const value = asRecord(event);
+      if (value?.type === "response.done") {
+        const id = asRecord(value.response)?.id;
+        if (typeof id === "string") this.transcripts.completeTurn(id);
+        this.callbacks.onConversation?.(this.transcripts.history());
+        if (
+          this.providerChannel instanceof GrokVoiceTransport &&
+          !this.providerChannel.isPlaying() &&
+          !this.providerChannel.isResponding()
+        )
+          this.callbacks.onPhase("listening");
+      }
+      if (value?.type === "input_audio_buffer.speech_started") this.callbacks.onPhase("listening");
+      if (value?.type === "input_audio_buffer.speech_stopped" || value?.type === "response.created")
+        this.callbacks.onPhase("responding");
+    }
+    const transcript = realtimeTranscriptUpdate(event, provider);
     if (transcript) {
       const accumulatedText = this.transcripts.apply(transcript);
       this.callbacks.onConversation?.(this.transcripts.history());
       if (transcript.role === "user") {
         this.callbacks.onUserTranscript(accumulatedText);
-        if (transcript.final) this.callbacks.onPhase("responding");
+        if (provider === "codex" && transcript.final) this.callbacks.onPhase("responding");
       } else {
         this.callbacks.onAssistantTranscript(accumulatedText);
-        this.callbacks.onPhase(transcript.final ? "listening" : "speaking");
+        if (provider === "codex")
+          this.callbacks.onPhase(transcript.final ? "listening" : "speaking");
       }
     }
-    if (shouldForwardProviderEvent(event)) {
-      this.sendServerMessage({ type: "provider_event", event });
+    if (shouldForwardProviderEvent(event, provider)) {
+      const value = asRecord(event);
+      const id = provider === "grok" ? value?.call_id : asRecord(value?.item)?.id;
+      const key =
+        typeof id === "string" && id.length > 0 && id.length <= 256
+          ? `${provider}:${id}`
+          : undefined;
+      this.sendServerMessage({
+        type: "provider_event",
+        event,
+        context: this.transcripts.handoffContext(key),
+      });
     }
     const providerError = realtimeProviderError(event);
     if (providerError && !this.stopping) {
-      const { message, ...diagnostic } = providerError;
-      console.warn("Codex Realtime Voice provider error", { ...diagnostic, message });
+      const { message: _message, ...diagnostic } = providerError;
+      // Provider explanations can echo input or connection credentials.
+      console.warn("Realtime Voice provider error", diagnostic);
       this.sendServerMessage({ type: "provider_error", error: diagnostic });
       await this.fail("provider_error", providerError.code || undefined);
     }

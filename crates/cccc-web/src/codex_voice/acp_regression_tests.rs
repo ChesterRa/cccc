@@ -4,7 +4,7 @@ use cccc_contracts::{ActorRuntime, CodexVoiceAnalystSettings, RuntimeMode};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, os::unix::fs::PermissionsExt, time::Duration};
 
-fn isolated_child(name: &str) -> bool {
+pub(super) fn isolated_child(name: &str) -> bool {
     if std::env::var_os("CCCC_TEST_VOICE_ACP_CHILD").is_some() {
         return false;
     }
@@ -17,6 +17,8 @@ fn isolated_child(name: &str) -> bool {
         .env("CCCC_LAUNCHER_PATH", launcher)
         .env("HOME", temp.path().join("provider-home"))
         .env("CODEX_HOME", temp.path().join("codex"))
+        .env("GROK_HOME", temp.path().join("grok"))
+        .env_remove("GROK_AUTH_PATH")
         .env_remove("CCCC_CODEX_AUTH_PATH")
         .output()
         .expect("fixture child");
@@ -29,7 +31,7 @@ fn isolated_child(name: &str) -> bool {
     true
 }
 
-async fn fixture() -> (
+pub(super) async fn fixture() -> (
     tempfile::TempDir,
     HomeLayout,
     CodexVoiceSessions,
@@ -309,6 +311,7 @@ async fn local_assistant_call(
             .expect("fixture lease"),
     );
     let session = Arc::new(ActiveSession {
+        provider_connection: None,
         verbosity: Default::default(),
         notification_paused: tokio::sync::watch::channel(false).0,
         call,

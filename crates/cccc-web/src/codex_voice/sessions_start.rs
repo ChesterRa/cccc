@@ -25,6 +25,22 @@ impl CodexVoiceSessions {
             .await
     }
 
+    pub(crate) async fn start_grok(
+        &self,
+        home: &HomeLayout,
+        client_session_id: &str,
+        voice: &str,
+        application_context: Option<cccc_contracts::codex_voice::VoiceApplicationContext>,
+    ) -> Result<StartOutcome> {
+        let mut realtime = RealtimeCallConfig::from_environment_for(
+            cccc_contracts::codex_voice::VoiceProvider::Grok,
+            voice,
+        )?;
+        realtime.application_context = application_context;
+        self.start_with_realtime(home, client_session_id, "", realtime)
+            .await
+    }
+
     pub(super) async fn start_with_realtime(
         &self,
         home: &HomeLayout,
@@ -47,12 +63,14 @@ impl CodexVoiceSessions {
             if session.matches_start(
                 &client_session_id,
                 &offer_digest,
+                realtime.provider,
                 &realtime.voice,
                 realtime.application_context.as_ref(),
             ) {
                 return Ok(StartOutcome::Started(StartedSession {
                     session: Arc::clone(session),
                     answer_sdp: session.answer_sdp.clone(),
+                    provider_connection: session.provider_connection.clone(),
                     newly_created: false,
                 }));
             }
@@ -127,15 +145,16 @@ impl CodexVoiceSessions {
             Some(analyst)
         };
 
-        let call = CodexVoiceCall::start(
+        let call = CodexVoiceCall::start_with_provider(
             home,
             analyst.as_ref().map(|analyst| analyst.analyst()),
             realtime.application_context.clone(),
+            realtime.provider,
         )
         .await
         .context(StartStage::Recording)?;
         let generation = call.generation().to_owned();
-        let answer_sdp =
+        let (answer_sdp, provider_connection) =
             match create_realtime_answer_with_heartbeat(&call, &realtime, offer_sdp).await {
                 Ok(answer) => answer,
                 Err(error) => {
@@ -151,6 +170,7 @@ impl CodexVoiceSessions {
             client_session_id,
             offer_digest,
             answer_sdp: answer_sdp.clone(),
+            provider_connection: provider_connection.clone(),
             voice: realtime.voice,
             connection_state: AtomicU8::new(CONNECTION_UNATTACHED),
         });
@@ -158,6 +178,7 @@ impl CodexVoiceSessions {
         Ok(StartOutcome::Started(StartedSession {
             session,
             answer_sdp,
+            provider_connection,
             newly_created: true,
         }))
     }
@@ -318,9 +339,15 @@ async fn create_realtime_answer_with_heartbeat(
     call: &CodexVoiceCall,
     realtime: &RealtimeCallConfig,
     offer_sdp: &str,
-) -> Result<String> {
+) -> Result<(String, Option<GrokRealtimeConnection>)> {
     let generation = call.generation().to_owned();
-    let answer = create_realtime_answer(realtime, offer_sdp);
+    let answer = async {
+        if realtime.provider == cccc_contracts::codex_voice::VoiceProvider::Grok {
+            Ok((String::new(), Some(create_grok_connection(realtime).await?)))
+        } else {
+            Ok::<_, anyhow::Error>((create_realtime_answer(realtime, offer_sdp).await?, None))
+        }
+    };
     tokio::pin!(answer);
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

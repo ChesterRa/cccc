@@ -198,6 +198,18 @@ async fn protocol_loop<S>(
     let mut turn_delegations = HashMap::new();
     let (terminal_error, diagnostic) = loop {
         tokio::select! {
+            _ = async {
+                if let Some(response) = pending_turn_start.and_then(|id| pending.get_mut(&id)) {
+                    response.response.closed().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {
+                // A timed-out or cancelled owner can no longer resolve the admission
+                // barrier. Do not silently buffer every subsequent event forever,
+                // guess the turn's owner, or replay a possibly accepted request.
+                break ("correlated Codex turn/start lost its response owner".into(), json!({"code":"admission_response_lost"}));
+            }
             command = commands.recv() => match command {
                 Some(ProtocolCommand::Request(request)) => {
                     let id = next_id;

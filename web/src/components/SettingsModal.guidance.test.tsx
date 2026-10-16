@@ -90,10 +90,14 @@ it.each([0, 1])(
     )[index];
     trigger.focus();
     await act(async () => trigger.click());
-    const child = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
-      (dialog) => !host.contains(dialog),
-    )!;
-    expect(child).toBeDefined();
+    // BodyPortal attaches its host in an effect, after the click's render.
+    const child = await vi.waitFor(() => {
+      const dialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
+        (candidate) => !host.contains(candidate),
+      );
+      expect(dialog).toBeDefined();
+      return dialog!;
+    });
     expect(child.contains(document.activeElement)).toBe(true);
     const first = child.querySelector<HTMLButtonElement>("button")!;
     const last = child.querySelector<HTMLTextAreaElement>("textarea")!;

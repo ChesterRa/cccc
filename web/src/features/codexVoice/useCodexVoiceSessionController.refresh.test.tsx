@@ -94,6 +94,44 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+it("uses the selected service's prerequisites and catalog without borrowing the Codex login", async () => {
+  const base = snapshot();
+  fixture.active.mockResolvedValue({
+    ...base,
+    result: {
+      ...base.result,
+      providers: [
+        {
+          id: "codex",
+          voices: ["cove"],
+          default_voice: "cove",
+          credentials_available: true,
+          native_runtime_available: true,
+        },
+        {
+          id: "grok",
+          voices: ["eve", "ara"],
+          default_voice: "eve",
+          credentials_available: false,
+          native_runtime_available: true,
+        },
+      ],
+    },
+  });
+  await act(async () => root.render(<App />));
+  await act(async () => current.updatePreferences({ provider: "grok" }));
+  expect(current.supportedVoices).toEqual(["eve", "ara"]);
+  expect(current.readiness).toMatchObject({
+    realtime_provider: "grok",
+    realtime_credentials_available: false,
+  });
+  await act(async () => current.start());
+  expect(current.error).toBe("codexVoiceGrokLoginRequired");
+  expect(fixture.sessions).toHaveLength(0);
+  await act(async () => current.updatePreferences({ provider: "codex" }));
+  expect(current.readiness?.realtime_credentials_available).toBe(true);
+});
 let host: HTMLDivElement;
 let root: Root;
 let current!: ReturnType<typeof useCodexVoiceSessionController>;
@@ -135,6 +173,21 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 const mount = () => act(async () => root.render(<App />));
+
+it("uses the host voice catalog and default without starting a call", async () => {
+  const response = snapshot();
+  fixture.active.mockResolvedValue({
+    ...response,
+    result: { ...response.result, voices: ["aube", "himari"], default_voice: "aube" },
+  });
+  await mount();
+  expect(current.supportedVoices).toEqual(["aube", "himari"]);
+  expect(current.preferences.voice).toBe("aube");
+  await act(async () => current.updatePreferences({ voice: "himari" }));
+  await act(async () => current.refresh(false));
+  expect(current.preferences.voice).toBe("himari");
+  expect(fixture.sessions).toHaveLength(0);
+});
 
 it("reports an initial status read failure without inventing an execution error or terminal action", async () => {
   fixture.active.mockResolvedValue(failure);

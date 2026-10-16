@@ -1,4 +1,5 @@
 use super::super::AnalystEvent;
+use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -57,9 +58,25 @@ pub(super) async fn wait_for_turn_status(
     events: &mut broadcast::Receiver<AnalystEvent>,
     turn_id: &str,
 ) -> String {
+    let mut recent = VecDeque::new();
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let event = events.recv().await.expect("Analyst event");
+            let params = &event.message["params"];
+            let observed_turn = params["turn"]["id"]
+                .as_str()
+                .or_else(|| params["turnId"].as_str())
+                .unwrap_or_default();
+            if recent.len() == 12 {
+                recent.pop_front();
+            }
+            // Keep identifiers and phases, never text, tool input or credentials.
+            recent.push_back(format!(
+                "{} turn={} status={}",
+                event.message["method"].as_str().unwrap_or_default(),
+                observed_turn,
+                params["turn"]["status"].as_str().unwrap_or_default()
+            ));
             if event.message["method"] == "turn/completed"
                 && event.message["params"]["turn"]["id"] == turn_id
             {
@@ -71,5 +88,7 @@ pub(super) async fn wait_for_turn_status(
         }
     })
     .await
-    .expect("Analyst terminal status timeout")
+    .unwrap_or_else(|_| {
+        panic!("Analyst terminal status timeout for {turn_id}; recent events: {recent:?}")
+    })
 }

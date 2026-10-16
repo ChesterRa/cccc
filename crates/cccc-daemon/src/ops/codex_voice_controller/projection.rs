@@ -146,6 +146,27 @@ pub(super) fn session_context_commands(value: &str) -> Vec<Value> {
         .collect()
 }
 
+pub(super) fn grok_report_command(
+    generation: &str,
+    delegation_ids: &[String],
+    report_id: &str,
+    text: &str,
+) -> Value {
+    let prefix = format!("grok:{generation}:");
+    let ids: Vec<_> = delegation_ids
+        .iter()
+        .map(|id| id.strip_prefix(prefix.as_str()).unwrap_or(id))
+        .collect();
+    // Grok has no Codex delegation-context protocol. Retain the actual request
+    // association in host context, including when several inputs steer one turn.
+    let header = json!({"cccc_investigation_calls":ids, "completed":true});
+    json!({
+        "type":"session.context.append", "channel":"speakable",
+        "_cccc_report_id":report_id,
+        "content":[{"type":"input_text","text":format!("CCCC investigation update {header}\n{text}")}]
+    })
+}
+
 pub(super) fn delegation_context_commands(delegation_id: &str, value: &str) -> Vec<Value> {
     utf8_chunks(value, CONTEXT_CHUNK_BYTES)
         .into_iter()

@@ -74,6 +74,27 @@ fn analyst_timeout_credentials_and_recording_conflicts_stay_distinct() {
     );
 }
 
+#[test]
+fn grok_prerequisites_keep_safe_actionable_categories() {
+    for (error, code) in [
+        (RealtimeCallError::GrokRuntime, "grok_voice_runtime_missing"),
+        (
+            RealtimeCallError::GrokCredentials,
+            "grok_voice_login_required",
+        ),
+        (
+            RealtimeCallError::GrokAuthentication,
+            "grok_voice_auth_failed",
+        ),
+    ] {
+        let error = Error::new(error).context("private-native-path-and-credential");
+        let details = StartDiagnostic::from_error(&error, 20).details();
+        assert_eq!(details["code"], code);
+        assert_eq!(details["stage"], "realtime");
+        assert!(!details.to_string().contains("private-native"));
+    }
+}
+
 fn no_proxy_client(timeout: std::time::Duration) -> reqwest::Client {
     reqwest::Client::builder()
         .no_proxy()

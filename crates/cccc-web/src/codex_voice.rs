@@ -1,8 +1,8 @@
 use cccc_core::HomeLayout;
 use cccc_core::codex_voice_settings::ResolvedAgentRuntime;
 use cccc_daemon::experimental_codex_voice::{
-    AnalystLifecycleEvent, CodexVoiceAnalyst, CodexVoiceCall, LaunchConfig, RealtimeCallConfig,
-    create_realtime_answer,
+    AnalystLifecycleEvent, CodexVoiceAnalyst, CodexVoiceCall, GrokRealtimeConnection, LaunchConfig,
+    RealtimeCallConfig, create_grok_connection, create_realtime_answer,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -20,6 +20,8 @@ mod analyst_runtime;
 mod analyst_settings;
 mod analyst_tasks;
 mod analyst_terminal;
+#[cfg(all(test, unix))]
+mod grok_tests;
 mod notifications;
 mod persistence;
 #[cfg(test)]
@@ -38,6 +40,7 @@ const CONNECTION_CLOSING: u8 = 2;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionInfo {
+    pub provider: cccc_contracts::codex_voice::VoiceProvider,
     pub generation: String,
     pub analyst_generation: Option<String>,
     pub mode: cccc_contracts::codex_voice::VoiceCallMode,
@@ -84,6 +87,7 @@ pub(crate) struct VoiceState {
 pub(crate) struct StartedSession {
     pub session: Arc<ActiveSession>,
     pub answer_sdp: String,
+    pub provider_connection: Option<GrokRealtimeConnection>,
     pub newly_created: bool,
 }
 
@@ -120,6 +124,7 @@ pub(crate) struct ActiveSession {
     client_session_id: String,
     offer_digest: [u8; 32],
     answer_sdp: String,
+    provider_connection: Option<GrokRealtimeConnection>,
     voice: String,
     connection_state: AtomicU8,
 }

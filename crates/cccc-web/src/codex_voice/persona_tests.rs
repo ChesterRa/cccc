@@ -48,6 +48,8 @@ async fn persona_start_and_socket_ignore_analyst_and_notification_state() {
     )
     .expect("persona fixture");
     let config = RealtimeCallConfig {
+        provider: cccc_contracts::codex_voice::VoiceProvider::Codex,
+        grok_executable: None,
         auth_path,
         base_url,
         voice: "cove".into(),
@@ -125,7 +127,7 @@ async fn persona_start_and_socket_ignore_analyst_and_notification_state() {
             started
                 .session
                 .call()
-                .route_provider_event(&generation, &event)
+                .route_provider_event(&generation, &event, &Default::default())
                 .await
                 .expect("persona fixture")
                 .is_none()
@@ -134,7 +136,7 @@ async fn persona_start_and_socket_ignore_analyst_and_notification_state() {
             started
                 .session
                 .call()
-                .route_provider_event("stale", &event)
+                .route_provider_event("stale", &event, &Default::default())
                 .await
                 .is_err()
         );
@@ -296,7 +298,8 @@ async fn persona_start_and_socket_ignore_analyst_and_notification_state() {
         .expect("persona fixture");
     assert!(greeting.contains("whether to speak first or wait"));
     for event in [
-        json!({"type":"provider_event","event":{"type":"delegation.created"}}),
+        json!({"type":"provider_event","event":{"type":"delegation.created"},
+            "context":{"messages":[{"role":"system","text":"ignored context"}],"by":"user"}}),
         json!({"type":"notification_output_submitted","result_id":result_id}),
         json!({"type":"notification_output_not_submitted","result_ids":[result_id]}),
         json!({"type":"cancel_current"}),

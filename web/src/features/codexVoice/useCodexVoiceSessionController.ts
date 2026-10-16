@@ -8,6 +8,7 @@ import {
   type CodexVoiceAnalystInfo,
   type CodexVoiceCallInfo,
   type CodexVoiceReadiness,
+  type VoiceProviderInfo,
 } from "../../services/api";
 import { CodexVoiceBrowserSession, type CodexVoicePhase } from "./codexVoiceSession";
 import {
@@ -60,7 +61,21 @@ export function useCodexVoiceSessionController(enabled = true) {
   });
   const { preferences, supportedVoices, updatePreferences, acceptSupportedVoices } =
     useCodexVoicePreferencesState();
-  const [readiness, setReadiness] = useState<CodexVoiceReadiness | null>(null);
+  const [baseReadiness, setReadiness] = useState<CodexVoiceReadiness | null>(null);
+  const [providers, setProviders] = useState<VoiceProviderInfo[]>([]);
+  const provider = call?.provider || preferences.provider || "codex";
+  const readiness = useMemo<CodexVoiceReadiness | null>(() => {
+    if (!baseReadiness) return null;
+    const selected = providers.find((entry) => entry.id === provider);
+    return {
+      ...baseReadiness,
+      realtime_provider: provider,
+      realtime_credentials_available:
+        selected?.credentials_available ??
+        (provider === "codex" && baseReadiness.realtime_credentials_available),
+      realtime_runtime_available: selected?.native_runtime_available ?? provider === "codex",
+    };
+  }, [baseReadiness, providers, provider]);
   const analystWorking =
     analyst?.phase === "working" ||
     Boolean(
@@ -130,7 +145,10 @@ export function useCodexVoiceSessionController(enabled = true) {
                 setAnalyst(response.result.analyst);
                 setPhase((value) => (value === "failed" ? value : "idle"));
                 setReadiness(response.result.readiness);
-                acceptSupportedVoices(response.result.voices);
+                acceptSupportedVoices(response.result.voices, response.result.default_voice);
+                setProviders(response.result.providers || []);
+                for (const entry of response.result.providers || [])
+                  acceptSupportedVoices(entry.voices, entry.default_voice, entry.id);
               } else readFailed();
             }
           } catch {

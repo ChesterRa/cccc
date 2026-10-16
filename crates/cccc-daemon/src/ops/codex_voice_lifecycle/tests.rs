@@ -141,6 +141,98 @@ async fn oversized_results_are_explicit_and_a_bounded_authoritative_final_can_re
 }
 
 #[tokio::test]
+async fn a_missing_native_receipt_does_not_silence_a_hundred_later_results() {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    lifecycle
+        .state
+        .lock()
+        .await
+        .native_pending
+        .push_back(PendingStart {
+            delegation_id: "unconfirmed-old-input".into(),
+            origin: AnalystTurnOrigin::Voice,
+            cancelling: false,
+        });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        for index in 0..100 {
+            let id = format!("confirmed-input-{index}");
+            let turn = format!("confirmed-turn-{index}");
+            let answer = format!("synthetic result {index}");
+            lifecycle
+                .state
+                .lock()
+                .await
+                .native_pending
+                .push_back(PendingStart {
+                    delegation_id: id.clone(),
+                    origin: AnalystTurnOrigin::Voice,
+                    cancelling: false,
+                });
+            session.publish_event_with_delegation_for_test(
+                json!({
+                    "method":"turn/started",
+                    "params":{"threadId":"thread-lifecycle","turn":{"id":turn}}
+                }),
+                Some(id.clone()),
+            );
+            let AnalystLifecycleEvent::Started { receipt, origin } =
+                events.recv().await.expect("native lifecycle event")
+            else {
+                panic!("a confirmed later input must start")
+            };
+            assert_eq!(receipt.delegation_id, id);
+            assert_eq!(origin, AnalystTurnOrigin::Voice);
+            session.publish_event_for_test(json!({
+                "method":"item/agentMessage/delta",
+                "params":{"turnId":turn,"delta":answer}
+            }));
+            let AnalystLifecycleEvent::Progress {
+                text, speakable, ..
+            } = events.recv().await.expect("native lifecycle event")
+            else {
+                panic!("a confirmed later input must retain progress")
+            };
+            assert!(speakable);
+            assert_eq!(text, answer);
+            session.publish_event_for_test(json!({
+                "method":"turn/completed",
+                "params":{"turn":{"id":turn,"status":"completed"}}
+            }));
+            let AnalystLifecycleEvent::Completed {
+                delegation_id,
+                result,
+                status,
+                speakable,
+                ..
+            } = events.recv().await.expect("native lifecycle event")
+            else {
+                panic!("a confirmed later input must retain its result")
+            };
+            assert!(speakable);
+            assert_eq!(delegation_id, id);
+            assert_eq!(result, answer);
+            assert_eq!(status, "completed");
+            let state = lifecycle.state.lock().await;
+            assert_eq!(state.native_pending.len(), 1);
+            assert_eq!(
+                state.native_pending[0].delegation_id,
+                "unconfirmed-old-input"
+            );
+        }
+    })
+    .await
+    .expect("one missing receipt must not stall subsequent results");
+    session
+        .stop(session.generation())
+        .await
+        .expect("stop fake Analyst");
+    server.await.expect("fake app-server");
+}
+
+#[tokio::test]
 async fn an_undelivered_native_voice_input_rolls_back_without_reclassifying_terminal_work() {
     let (session, server) = test_session().await;
     let session = Arc::new(session);

@@ -8,13 +8,26 @@ use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
 pub(super) async fn fake_analyst_server()
 -> (String, JoinHandle<()>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
-    fake_analyst_server_inner(None, None).await
+    fake_analyst_server_inner(None, None, None).await
 }
 
 pub(super) async fn context_analyst_server(
     prefix: String,
 ) -> (String, JoinHandle<()>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
-    fake_analyst_server_inner(None, Some(prefix)).await
+    fake_analyst_server_inner(None, Some(prefix), None).await
+}
+
+pub(super) async fn recording_analyst_server() -> (
+    String,
+    JoinHandle<()>,
+    Arc<AtomicUsize>,
+    Arc<AtomicUsize>,
+    Arc<std::sync::Mutex<Vec<String>>>,
+) {
+    let inputs = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (endpoint, task, starts, steers) =
+        fake_analyst_server_inner(None, None, Some(Arc::clone(&inputs))).await;
+    (endpoint, task, starts, steers, inputs)
 }
 
 pub(super) async fn gated_analyst_server() -> (
@@ -25,13 +38,15 @@ pub(super) async fn gated_analyst_server() -> (
     tokio::sync::oneshot::Sender<()>,
 ) {
     let (release, wait) = tokio::sync::oneshot::channel();
-    let (endpoint, server, starts, steers) = fake_analyst_server_inner(Some(wait), None).await;
+    let (endpoint, server, starts, steers) =
+        fake_analyst_server_inner(Some(wait), None, None).await;
     (endpoint, server, starts, steers, release)
 }
 
 async fn fake_analyst_server_inner(
     mut interrupt_gate: Option<tokio::sync::oneshot::Receiver<()>>,
     expected_input_prefix: Option<String>,
+    observed_inputs: Option<Arc<std::sync::Mutex<Vec<String>>>>,
 ) -> (String, JoinHandle<()>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
     let endpoint = format!("ws://{}", listener.local_addr().expect("address"));
@@ -53,6 +68,18 @@ async fn fake_analyst_server_inner(
                 continue;
             }
             let id = request["id"].as_u64().expect("id");
+            if matches!(
+                request["method"].as_str(),
+                Some("turn/start" | "turn/steer")
+            ) && let Some(inputs) = &observed_inputs
+            {
+                inputs.lock().expect("fixture inputs").push(
+                    request["params"]["input"][0]["text"]
+                        .as_str()
+                        .expect("input text")
+                        .to_owned(),
+                );
+            }
             if matches!(
                 request["method"].as_str(),
                 Some("turn/start" | "turn/steer")
