@@ -1,5 +1,5 @@
 // AutomationTab configures built-in automation loops and user-authored scheduled rules.
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import * as api from "../../../services/api";
@@ -97,13 +97,26 @@ export function AutomationTab(props: AutomationTabProps) {
   const [editingOneShotAfterMinutes, setEditingOneShotAfterMinutes] = useState(30);
 
   const [showCompletedRules, setShowCompletedRules] = useState(false);
+  const groupVisit = useRef({ groupId: props.groupId, request: 0 });
+  if (groupVisit.current.groupId !== props.groupId) {
+    groupVisit.current = { groupId: props.groupId, request: 0 };
+  }
 
-  const loadRules = async () => {
-    if (!props.groupId) return;
+  const beginOperation = () => {
+    const visit = groupVisit.current;
+    const request = ++visit.request;
     setRulesBusy(true);
     setRulesErr("");
+    return () => groupVisit.current === visit && visit.request === request;
+  };
+
+  const loadRules = async (operationIsCurrent?: () => boolean) => {
+    if (!props.groupId) return;
+    // A mutation's follow-up read belongs to that same operation, including its UI effects.
+    const isCurrent = operationIsCurrent ?? beginOperation();
     try {
       const resp = await api.fetchAutomation(props.groupId);
+      if (!isCurrent()) return;
       if (!resp.ok) {
         setRulesErr(resp.error?.message || t("automation.failedToLoad"));
         return;
@@ -119,14 +132,35 @@ export function AutomationTab(props: AutomationTabProps) {
         Array.isArray(resp.result.supported_vars) ? resp.result.supported_vars.map(String) : [],
       );
     } catch {
-      setRulesErr(t("automation.failedToLoad"));
+      if (isCurrent()) setRulesErr(t("automation.failedToLoad"));
     } finally {
-      setRulesBusy(false);
+      if (isCurrent()) setRulesBusy(false);
     }
   };
 
   useEffect(() => {
+    const visit = groupVisit.current;
+    setRuleset(null);
+    setSnippetCatalog({ built_in: {}, built_in_overrides: {}, custom: {} });
+    setRulesVersion(undefined);
+    setStatus({});
+    setConfigPath("");
+    setSupportedVars([]);
+    setRulesErr("");
+    setRulesBusy(false);
+    setShowCompletedRules(false);
+    setEditingRuleDraft(null);
+    setEditingRuleSourceId(null);
+    setEditingRuleIsNew(false);
+    setEditingOneShotMode("after");
+    setEditingOneShotAfterMinutes(30);
+    setTemplateErr("");
+    setNewSnippetId("");
+    setSnippetManagerOpen(false);
     if (props.groupId) void loadRules();
+    return () => {
+      visit.request += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on group switch
   }, [props.groupId]);
 
@@ -454,31 +488,33 @@ export function AutomationTab(props: AutomationTabProps) {
       return false;
     }
 
-    setRulesBusy(true);
-    setRulesErr("");
+    const isCurrent = beginOperation();
     try {
       const resp = await api.updateAutomation(
         props.groupId,
         buildPersistedRuleset(nextDraft),
         rulesVersion,
       );
+      if (!isCurrent()) return false;
       if (!resp.ok) {
         const code = String(resp.error?.code || "").trim();
         if (code === "version_conflict") {
-          await loadRules();
-          setRulesErr(copy.versionConflictMessage);
+          await loadRules(isCurrent);
+          if (isCurrent()) {
+            setRulesErr(copy.versionConflictMessage);
+          }
           return false;
         }
         setRulesErr(resp.error?.message || copy.failureMessage);
         return false;
       }
-      await loadRules();
-      return true;
+      await loadRules(isCurrent);
+      return isCurrent();
     } catch {
-      setRulesErr(copy.failureMessage);
+      if (isCurrent()) setRulesErr(copy.failureMessage);
       return false;
     } finally {
-      setRulesBusy(false);
+      if (isCurrent()) setRulesBusy(false);
     }
   };
 
@@ -551,15 +587,17 @@ export function AutomationTab(props: AutomationTabProps) {
     if (!props.groupId) return;
     const ok = window.confirm(t("automation.resetConfirm"));
     if (!ok) return;
-    setRulesBusy(true);
-    setRulesErr("");
+    const isCurrent = beginOperation();
     try {
       const resp = await api.resetAutomationBaseline(props.groupId, rulesVersion);
+      if (!isCurrent()) return;
       if (!resp.ok) {
         const code = String(resp.error?.code || "").trim();
         if (code === "version_conflict") {
-          await loadRules();
-          setRulesErr(t("automation.versionConflictShort"));
+          await loadRules(isCurrent);
+          if (isCurrent()) {
+            setRulesErr(t("automation.versionConflictShort"));
+          }
           return;
         }
         setRulesErr(resp.error?.message || t("automation.failedToReset"));
@@ -567,11 +605,11 @@ export function AutomationTab(props: AutomationTabProps) {
       }
       closeRuleEditor();
       closeSnippetManager();
-      await loadRules();
+      await loadRules(isCurrent);
     } catch {
-      setRulesErr(t("automation.failedToReset"));
+      if (isCurrent()) setRulesErr(t("automation.failedToReset"));
     } finally {
-      setRulesBusy(false);
+      if (isCurrent()) setRulesBusy(false);
     }
   };
 

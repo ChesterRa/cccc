@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { Mail } from "lucide-react";
 import { Actor, LedgerEvent } from "../../types";
 import { formatFullTime, formatTime } from "../../utils/time";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
@@ -93,14 +94,14 @@ export function InboxModal({
           return (
             <div key={String(ev.id || idx)} className="rounded-xl px-4 py-3 glass-panel">
               <div className="flex items-center justify-between gap-3">
+                <div className="text-xs font-semibold truncate text-[var(--color-text-primary)]">
+                  {getDisplayName(ev.by || "") || "—"}
+                </div>
                 <div
-                  className="text-xs truncate text-[var(--color-text-muted)]"
+                  className="text-xs shrink-0 text-[var(--color-text-muted)]"
                   title={formatFullTime(ev.ts)}
                 >
                   {formatTime(ev.ts)}
-                </div>
-                <div className="text-xs font-medium truncate text-[var(--color-text-secondary)]">
-                  {getDisplayName(ev.by || "") || "—"}
                 </div>
               </div>
               <div className="mt-2 text-sm break-words">
@@ -126,8 +127,10 @@ export function InboxModal({
           );
         })}
         {!messages.length && (
-          <div className="text-center py-12">
-            <div className="text-4xl mb-3">📭</div>
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]">
+              <Mail size={22} aria-hidden="true" />
+            </div>
             <div className="text-sm text-[var(--color-text-muted)]">{t("inbox.noUnread")}</div>
           </div>
         )}

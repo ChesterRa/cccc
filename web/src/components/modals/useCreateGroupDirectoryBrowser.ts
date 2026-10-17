@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../services/api";
 import { useFormStore } from "../../stores";
@@ -8,6 +8,13 @@ export function useCreateGroupDirectoryBrowser() {
   const { t } = useTranslation("modals");
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
+  const requestSeq = useRef(0);
+  useEffect(
+    () => () => {
+      requestSeq.current += 1;
+    },
+    [],
+  );
   const setDirItems = useFormStore((state) => state.setDirItems);
   const setCurrentDir = useFormStore((state) => state.setCurrentDir);
   const setParentDir = useFormStore((state) => state.setParentDir);
@@ -17,9 +24,11 @@ export function useCreateGroupDirectoryBrowser() {
 
   const fetchContents = useCallback(
     async (path: string) => {
+      const seq = ++requestSeq.current;
       setShowDirBrowser(true);
       setError("");
       const response = await api.fetchDirContents(path);
+      if (seq !== requestSeq.current) return false;
       if (!response.ok) {
         setError(response.error?.message || t("createGroup.failedToListDirectory"));
         return false;

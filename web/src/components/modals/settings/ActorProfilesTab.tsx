@@ -26,10 +26,14 @@ import {
 import { CapabilityPicker } from "../../CapabilityPicker";
 import { SelectCombobox } from "../../SelectCombobox";
 import { BodyPortal } from "../../ui/BodyPortal";
-import { formatRuntimeCommand } from "../runtimeProfileControlsModel";
+import {
+  defaultCommandForRuntime,
+  formatRuntimeCommand,
+  runtimeProfileRuntimeLabel,
+  supportsRuntimeDefaultCommand,
+} from "../runtimeProfileControlsModel";
 import { RuntimeSelector } from "../RuntimeSelector";
 import { structuredVoiceRuntimes } from "../../../features/voice/voiceRuntimeOptions";
-import { runtimeProfileRuntimeLabel } from "../runtimeProfileControlsModel";
 
 interface ActorProfilesTabProps {
   isDark: boolean;
@@ -55,40 +59,6 @@ type EditorState = {
   capabilityDefaultScope: "actor" | "session";
   capabilitySessionTtlSeconds: number;
 };
-
-const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
-  amp: "amp",
-  auggie: "auggie",
-  claude: "claude --dangerously-skip-permissions",
-  cline: "cline --tui --auto-approve true",
-  codex:
-    "codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search",
-  copilot: "copilot --allow-all",
-  cursor: "cursor-agent --yolo --approve-mcps",
-  devin: "devin --permission-mode dangerous",
-  kiro: "kiro-cli chat --trust-all-tools",
-  kilo: "kilo",
-  antigravity: "agy --dangerously-skip-permissions",
-  droid: "droid --auto high",
-  grok: "grok --always-approve",
-  hermes: "hermes --tui --yolo",
-  kimi: "kimi --yolo",
-  opencode: "opencode --auto",
-  pi: "pi",
-  web_model: "",
-  chatgpt_dots: "",
-  grok_web_model: "",
-  custom: "",
-};
-
-function defaultCommandForRuntime(runtime: string): string {
-  const key = String(runtime || "").trim();
-  return String(RUNTIME_DEFAULT_COMMANDS[key] || key || "").trim();
-}
-
-function supportsRuntimeDefaultCommand(runtime: string): boolean {
-  return String(runtime || "").trim() !== "custom";
-}
 
 function buildEditor(profile?: ActorProfile | null): EditorState {
   const runtime = String(profile?.runtime || "codex");
@@ -144,9 +114,11 @@ export function ActorProfilesTab({
 
   const [editorOpen, setEditorOpen] = useState(false);
   const editorVisit = useRef(0);
+  const listVisit = useRef(0);
   useEffect(
     () => () => {
       editorVisit.current += 1;
+      listVisit.current += 1;
     },
     [],
   );
@@ -515,16 +487,19 @@ export function ActorProfilesTab({
   ) : null;
 
   const loadProfiles = async () => {
+    const visit = ++listVisit.current;
     setBusy(true);
     setErr("");
     try {
       const session = await ensureSessionContext();
+      if (visit !== listVisit.current) return;
       if (isMyScope && !(session?.signedIn && session.userId)) {
         setProfiles([]);
         setErr(t("actorProfiles.myProfilesLoginRequired"));
         return;
       }
       const resp = await api.listProfiles(isMyScope ? "my" : "global");
+      if (visit !== listVisit.current) return;
       if (resp.ok) {
         setProfiles(Array.isArray(resp.result?.profiles) ? resp.result.profiles : []);
       } else {
@@ -533,10 +508,12 @@ export function ActorProfilesTab({
         );
       }
     } catch (e) {
-      console.error("Failed to load actor profiles:", e);
-      setErr(t("actorProfiles.loadFailed"));
+      if (visit === listVisit.current) {
+        console.error("Failed to load actor profiles:", e);
+        setErr(t("actorProfiles.loadFailed"));
+      }
     } finally {
-      setBusy(false);
+      if (visit === listVisit.current) setBusy(false);
     }
   };
 
@@ -593,8 +570,11 @@ export function ActorProfilesTab({
     if (isActive && !editorOnly) {
       void loadProfiles();
     }
+    return () => {
+      listVisit.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, editorOnly]);
+  }, [isActive, editorOnly, scope]);
 
   const openNew = () => {
     editorVisit.current += 1;

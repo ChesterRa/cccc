@@ -45,7 +45,7 @@ let host: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -62,6 +62,33 @@ const card = (title: string) =>
   cards().find((node) => node.querySelector("h3")?.textContent === title)!;
 const button = (label: string, scope: ParentNode = host) =>
   [...scope.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === label);
+const notebookSelectors = () =>
+  [...host.querySelectorAll<HTMLButtonElement>('button[role="combobox"]')].filter(
+    (element) => element.getAttribute("aria-label") === "groupSpace.chooseNotebook",
+  );
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function connectedStatus(bound: boolean) {
+  return {
+    ok: true,
+    result: {
+      provider: { auth_configured: true, write_ready: true },
+      bindings: {
+        work: bound ? { status: "bound", remote_space_id: "nb-work" } : null,
+        memory: null,
+      },
+    },
+  };
+}
 
 it("starts a Google connection from the account card and locks notebooks until then", async () => {
   mockConnection(false);
@@ -113,4 +140,83 @@ it("binds a chosen notebook per lane and asks before destructive actions", async
   await act(async () => button("groupSpace.bindSelected", memory)!.click());
   expect(api.bindGroupSpace).toHaveBeenCalledWith("g1", "nb-work", "notebooklm", "memory");
   expect(host.querySelector('[role="alert"]')?.textContent).toBe("bind failed");
+});
+
+it.each(["group", "reconnect"] as const)(
+  "releases selectors after an unbind supersedes the %s notebook read with a cached refresh",
+  async (trigger) => {
+    mockConnection(true);
+    vi.stubGlobal("confirm", () => true);
+    let bound = true;
+    let reconnecting = false;
+    const listRead = deferred<{ ok: boolean; result: { spaces: typeof SPACES } }>();
+    api.fetchGroupSpaceStatus.mockImplementation(async () => connectedStatus(bound));
+    api.controlGroupSpaceProviderAuth.mockImplementation(async ({ action }: { action: string }) => {
+      if (action === "start") {
+        reconnecting = true;
+        return { ok: true, result: { auth: { state: "running" } } };
+      }
+      return { ok: true, result: { auth: { state: reconnecting ? "succeeded" : "idle" } } };
+    });
+    api.fetchGroupSpaceSpaces
+      .mockResolvedValueOnce({ ok: true, result: { spaces: SPACES } })
+      .mockReturnValueOnce(listRead.promise);
+    api.unbindGroupSpace.mockImplementation(async () => {
+      bound = false;
+      return connectedStatus(false);
+    });
+
+    await mount();
+    expect(notebookSelectors()).toHaveLength(2);
+    expect(notebookSelectors().every((element) => !element.disabled)).toBe(true);
+    await act(async () => {
+      if (trigger === "group") root.render(<GroupSpaceTab isDark={false} groupId="g2" />);
+      else button("groupSpace.switchGoogle")!.click();
+    });
+    expect(api.fetchGroupSpaceSpaces).toHaveBeenCalledTimes(2);
+    expect(notebookSelectors().every((element) => element.disabled)).toBe(true);
+
+    await act(async () => button("groupSpace.unbind")!.click());
+    expect(api.unbindGroupSpace).toHaveBeenCalledWith(
+      trigger === "group" ? "g2" : "g1",
+      "notebooklm",
+      "work",
+    );
+    expect(notebookSelectors().every((element) => !element.disabled)).toBe(true);
+
+    await act(async () => {
+      listRead.resolve({ ok: true, result: { spaces: [] } });
+      await listRead.promise;
+    });
+    await act(async () => button("groupSpace.refresh")!.click());
+    expect(api.fetchGroupSpaceSpaces).toHaveBeenCalledTimes(2);
+    expect(notebookSelectors().every((element) => !element.disabled)).toBe(true);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.textContent).toContain("Work notebook");
+  },
+);
+
+it("keeps selectors busy until the current Group read finishes even if an older read fails", async () => {
+  mockConnection(true);
+  const oldRead = deferred<{ ok: boolean; result: { spaces: typeof SPACES } }>();
+  const currentRead = deferred<{ ok: boolean; result: { spaces: typeof SPACES } }>();
+  api.fetchGroupSpaceSpaces
+    .mockResolvedValueOnce({ ok: true, result: { spaces: SPACES } })
+    .mockReturnValueOnce(oldRead.promise)
+    .mockReturnValueOnce(currentRead.promise);
+  await mount();
+  await act(async () => root.render(<GroupSpaceTab isDark={false} groupId="g2" />));
+  await act(async () => root.render(<GroupSpaceTab isDark={false} groupId="g3" />));
+  expect(api.fetchGroupSpaceSpaces).toHaveBeenCalledTimes(3);
+  await act(async () => {
+    oldRead.reject(new Error("Old Group list failed"));
+    await oldRead.promise.catch(() => {});
+  });
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  expect(notebookSelectors().every((element) => element.disabled)).toBe(true);
+  await act(async () => {
+    currentRead.resolve({ ok: true, result: { spaces: SPACES } });
+    await currentRead.promise;
+  });
+  expect(notebookSelectors().every((element) => !element.disabled)).toBe(true);
 });

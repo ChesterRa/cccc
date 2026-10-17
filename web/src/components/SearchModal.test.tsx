@@ -133,3 +133,10 @@ it.each(["close", "group"])(
     expect(host.textContent).toContain("searchStart");
   },
 );
+it("runs a filtered search immediately when a kind filter is selected before submitting a query", async () => {
+  vi.mocked(apiJson).mockResolvedValueOnce(response("notify result"));
+  await render();
+  await click("kindNotify");
+  expect(String(vi.mocked(apiJson).mock.lastCall?.[0])).toContain("q=&kind=notify");
+  expect(host.textContent).toContain("notify result");
+});

@@ -1,5 +1,40 @@
 import { RUNTIME_INFO, supportsAcpMode, type ActorProfile } from "../../types";
 
+export const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
+  amp: "amp",
+  auggie: "auggie",
+  claude: "claude --dangerously-skip-permissions",
+  cline: "cline --tui --auto-approve true",
+  codex:
+    "codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search",
+  deepseek: "deepseek",
+  copilot: "copilot --allow-all",
+  cursor: "cursor-agent --yolo --approve-mcps",
+  devin: "devin --permission-mode dangerous",
+  kiro: "kiro-cli chat --trust-all-tools",
+  kilo: "kilo",
+  antigravity: "agy --dangerously-skip-permissions",
+  droid: "droid --auto high",
+  grok: "grok --always-approve",
+  hermes: "hermes --tui --yolo",
+  kimi: "kimi --yolo",
+  opencode: "opencode --auto",
+  pi: "pi",
+  web_model: "",
+  chatgpt_dots: "",
+  grok_web_model: "",
+  custom: "",
+};
+
+export function defaultCommandForRuntime(runtime: string): string {
+  const key = String(runtime || "").trim();
+  return String(RUNTIME_DEFAULT_COMMANDS[key] || key || "").trim();
+}
+
+export function supportsRuntimeDefaultCommand(runtime: string): boolean {
+  return String(runtime || "").trim() !== "custom";
+}
+
 export function runtimeProfileRuntimeLabel(
   profile: Pick<ActorProfile, "runtime" | "runtime_mode">,
 ): string {

@@ -169,9 +169,15 @@ export function SearchModal({
   };
 
   const filterSearch = (next: Partial<Pick<SearchCriteria, "kind" | "by">>) => {
+    const nextKind = next.kind !== undefined ? next.kind : kind;
+    const nextBy = next.by !== undefined ? next.by : by;
     if (next.kind !== undefined) setKind(next.kind);
     if (next.by !== undefined) setBy(next.by);
-    if (lastSearch.current) void doSearch({ ...lastSearch.current, ...next });
+    if (lastSearch.current) {
+      void doSearch({ ...lastSearch.current, ...next });
+    } else if (nextKind !== "all" || nextBy !== "") {
+      void doSearch({ query: query.trim(), kind: nextKind, by: nextBy });
+    }
   };
   const loadOlder = () => {
     const before = results[0]?.id;
