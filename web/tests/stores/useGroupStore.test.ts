@@ -2806,4 +2806,41 @@ describe("useGroupStore streaming placeholder cleanup", () => {
     expect(bucket.pendingEventIdByStreamId["local:msg-3:peer-1"]).toBeUndefined();
     expect(bucket.pendingEventIdByStreamId["pending:evt-3:peer-1"]).toBe("evt-3");
   });
+
+  it("preserves headless preview index references when non-preview bucket fields change", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore
+      .getState()
+      .reconcileStreamingMessage({
+        actorId: "peer-1",
+        pendingEventId: "evt-1",
+        streamId: "stream-1",
+        ts: "2026-10-17T00:00:00Z",
+        fullText: "Streaming answer",
+        eventText: "Streaming answer",
+        activities: [],
+        completed: false,
+        transientStream: false,
+        groupId: "g-demo",
+      });
+
+    const before = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    mod.useGroupStore
+      .getState()
+      .appendHeadlessEvent(
+        {
+          id: "raw-1",
+          ts: "2026-10-17T00:00:01Z",
+          actor_id: "peer-1",
+          type: "headless.message.delta",
+          data: { delta: "x" },
+        },
+        "g-demo",
+      );
+    const afterRaw = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(afterRaw.previewSessionsByActorId).toBe(before.previewSessionsByActorId);
+    expect(afterRaw.latestActorPreviewByActorId).toBe(before.latestActorPreviewByActorId);
+    expect(afterRaw.latestActorTextByActorId).toBe(before.latestActorTextByActorId);
+    expect(afterRaw.latestActorActivitiesByActorId).toBe(before.latestActorActivitiesByActorId);
+  });
 });

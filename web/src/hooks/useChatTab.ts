@@ -117,7 +117,18 @@ export function useChatTab({
     isLoadingHistory,
     isChatWindowLoading,
   } = useGroupStore(
-    useCallback((state) => selectChatBucketState(state, selectedGroupId), [selectedGroupId]),
+    useShallow((state) => {
+      const bucket = selectChatBucketState(state, selectedGroupId);
+      return {
+        events: bucket.events,
+        streamingEvents: bucket.streamingEvents,
+        chatWindow: bucket.chatWindow,
+        hasMoreHistory: bucket.hasMoreHistory,
+        hasLoadedTail: bucket.hasLoadedTail,
+        isLoadingHistory: bucket.isLoadingHistory,
+        isChatWindowLoading: bucket.isChatWindowLoading,
+      };
+    }),
   );
   const groups = useGroupStore((state) => state.groups);
   const appendEvent = useGroupStore((state) => state.appendEvent);

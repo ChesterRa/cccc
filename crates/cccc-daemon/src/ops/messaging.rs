@@ -775,14 +775,17 @@ fn reply_request_cancel(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
     let path = store(home)?
         .ledger_path(&group.group_id)
         .map_err(OpError::io)?;
-    if let Some(existing) = cccc_core::ledger::read_all(&path)
-        .map_err(OpError::io)?
-        .into_iter()
-        .find(|event| {
-            event.kind == "chat.reply_request.cancelled"
-                && event.data.get("source_event_id").and_then(Value::as_str)
-                    == Some(source_event_id.as_str())
-        })
+    if let Some(existing) = cccc_core::ledger::inspect(&path, |events, _| {
+        events
+            .iter()
+            .find(|event| {
+                event.kind == "chat.reply_request.cancelled"
+                    && event.data.get("source_event_id").and_then(Value::as_str)
+                        == Some(source_event_id.as_str())
+            })
+            .cloned()
+    })
+    .map_err(OpError::io)?
     {
         return object(json!({
             "event":existing,"duplicate":true,"propagation":cancellation::propagate(home, &source, &existing)
@@ -841,12 +844,15 @@ fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let ledger_path = store(home)?
         .ledger_path(&group.group_id)
         .map_err(OpError::io)?;
-    let events = cccc_core::ledger::read_all(&ledger_path).map_err(OpError::io)?;
-    let source_position = events
-        .iter()
-        .position(|event| event.id == source.id)
+    let (source_position, generations) =
+        cccc_core::ledger::inspect_status(&ledger_path, |_events, positions, generations| {
+            positions
+                .get(&source.id)
+                .copied()
+                .map(|pos| (pos, generations.clone()))
+        })
+        .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("event_not_found", "source event is not in the ledger"))?;
-    let generations = cccc_core::inbox::actor_generation_positions(&events);
     let mut requested = Vec::new();
     for value in actor_ids {
         let actor_id = value

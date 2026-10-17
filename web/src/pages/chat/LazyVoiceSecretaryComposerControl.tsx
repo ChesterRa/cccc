@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, memo, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import { MicrophoneIcon } from "../../components/Icons";
 import { classNames } from "../../utils/classNames";
@@ -48,7 +48,9 @@ const VoiceSecretaryComposerControl = lazy(loadVoiceSecretaryComposerControl);
 
 export type { VoiceSecretaryCaptureMode };
 
-export function LazyVoiceSecretaryComposerControl(props: VoiceSecretaryComposerControlProps) {
+export const LazyVoiceSecretaryComposerControl = memo(function LazyVoiceSecretaryComposerControl(
+  props: VoiceSecretaryComposerControlProps,
+) {
   const { t } = useTranslation("chat");
   const assistantRow = props.variant === "assistantRow";
   return (
@@ -71,4 +73,4 @@ export function LazyVoiceSecretaryComposerControl(props: VoiceSecretaryComposerC
       <VoiceSecretaryComposerControl {...props} />
     </Suspense>
   );
-}
+});

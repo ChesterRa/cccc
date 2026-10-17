@@ -4,7 +4,12 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { Actor } from "../types";
 
-const mocks = vi.hoisted(() => ({ add: vi.fn(), refresh: vi.fn(), t: (key: string) => key }));
+const mocks = vi.hoisted(() => ({
+  add: vi.fn(),
+  refresh: vi.fn(),
+  recipientsProps: vi.fn(),
+  t: (key: string) => key,
+}));
 vi.mock("react-i18next", async (original) => ({
   ...(await original<typeof import("react-i18next")>()),
   useTranslation: () => ({ t: mocks.t }),
@@ -34,7 +39,12 @@ vi.mock("./modals/GroupEditModal", () => ({ GroupEditModal: () => null }));
 vi.mock("./modals/InboxModal", () => ({ InboxModal: () => null }));
 vi.mock("./presentation/PresentationPinModal", () => ({ PresentationPinModal: () => null }));
 vi.mock("./modals/RelayMessageModal", () => ({ RelayMessageModal: () => null }));
-vi.mock("./modals/RecipientsModal", () => ({ RecipientsModal: () => null }));
+vi.mock("./modals/RecipientsModal", () => ({
+  RecipientsModal: (props: unknown) => {
+    mocks.recipientsProps(props);
+    return null;
+  },
+}));
 import { AppModals } from "./AppModals";
 import { useFormStore, useGroupStore, useModalStore, useUIStore } from "../stores";
 import { getChatSession } from "../stores/useUIStore";
@@ -68,7 +78,6 @@ beforeEach(() => {
     selectedGroupId: "g_a",
     actors: [],
     groups: [],
-    events: [],
     groupDoc: null,
     refreshActors: mocks.refresh,
     runtimes: [],
@@ -88,6 +97,7 @@ afterEach(async () => {
 });
 function AppLifecycleHost() {
   const modals = useModalStore((state) => state.modals);
+  const recipientsEventId = useModalStore((state) => state.recipientsEventId);
   const groupId = useGroupStore((state) => state.selectedGroupId);
   const actors = useGroupStore((state) => state.actors);
   const activeTab = useUIStore((state) => state.activeTab);
@@ -100,7 +110,7 @@ function AppLifecycleHost() {
     setShowScrollButton: vi.fn(),
     setChatUnreadCount: vi.fn(),
   });
-  return shouldMountAppModals({ modals }) ? (
+  return shouldMountAppModals({ modals, recipientsEventId }) ? (
     <AppModals
       codexVoice={{} as React.ComponentProps<typeof AppModals>["codexVoice"]}
       isDark={false}
@@ -181,4 +191,37 @@ it("retains the existing unsaved-work navigation guard and does not change Group
   await act(async () => finishWorkspaceNavigation(true));
   expect(useUIStore.getState().activeTab).toBe("dot-created");
   expect(useGroupStore.getState().selectedGroupId).toBe("g_a");
+});
+it("resolves RecipientsModal metadata from the selected Group's chatByGroup bucket", async () => {
+  useGroupStore
+    .getState()
+    .setEvents(
+      [
+        {
+          id: "evt-reply-req",
+          kind: "chat.message",
+          by: "user",
+          ts: "2026-10-17T00:00:00Z",
+          data: { text: "Please reply", to: ["dot-created"], message_mode: "request_reply" },
+          _obligation_status: {
+            "dot-created": {
+              replied: false,
+              reply_requested: true,
+              cancelled: false,
+              delivery_state: "accepted",
+            },
+          },
+        },
+      ],
+      "g_a",
+    );
+  useGroupStore.setState({ actors: [created] });
+  useModalStore.setState({
+    modals: { ...useModalStore.getState().modals, addActor: false },
+    recipientsEventId: "evt-reply-req",
+  });
+  await render();
+  expect(mocks.recipientsProps).toHaveBeenLastCalledWith(
+    expect.objectContaining({ isOpen: true, messageMode: "request_reply", canCancelReply: true }),
+  );
 });

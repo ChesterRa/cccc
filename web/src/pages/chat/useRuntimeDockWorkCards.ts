@@ -6,7 +6,14 @@ import { buildLiveWorkCards, type LiveWorkCard } from "./liveWorkCards";
 export function useRuntimeDockWorkCards(args: {
   actors: Actor[];
   events: LedgerEvent[];
-  bucket?: GroupChatBucket;
+  bucket?: Pick<
+    GroupChatBucket,
+    | "latestActorPreviewByActorId"
+    | "previewSessionsByActorId"
+    | "latestActorTextByActorId"
+    | "latestActorActivitiesByActorId"
+    | "replySessionsByPendingEventId"
+  >;
 }): LiveWorkCard[] {
   return useMemo(
     () =>
@@ -19,6 +26,14 @@ export function useRuntimeDockWorkCards(args: {
         latestActorActivitiesByActorId: args.bucket?.latestActorActivitiesByActorId || {},
         replySessionsByPendingEventId: args.bucket?.replySessionsByPendingEventId || {},
       }),
-    [args.actors, args.bucket, args.events],
+    [
+      args.actors,
+      args.events,
+      args.bucket?.latestActorActivitiesByActorId,
+      args.bucket?.latestActorPreviewByActorId,
+      args.bucket?.latestActorTextByActorId,
+      args.bucket?.previewSessionsByActorId,
+      args.bucket?.replySessionsByPendingEventId,
+    ],
   );
 }

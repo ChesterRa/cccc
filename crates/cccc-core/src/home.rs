@@ -45,6 +45,9 @@ impl HomeLayout {
     }
 
     pub fn initialize(&self) -> Result<(), HomeError> {
+        if self.marker().is_file() && self.daemon_dir().is_dir() && self.groups_dir().is_dir() {
+            return Ok(());
+        }
         if self.root.exists() && !self.marker().exists() {
             let mut entries = fs::read_dir(&self.root).map_err(|source| self.io(source))?;
             if entries.next().is_some() && !self.is_existing_home() {

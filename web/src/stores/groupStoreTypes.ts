@@ -21,8 +21,6 @@ export interface GroupState {
   selectedGroupId: string;
   chatByGroup: Record<string, GroupChatBucket>;
   groupDoc: GroupDoc | null;
-  events: LedgerEvent[];
-  chatWindow: ChatWindowState | null;
   actors: Actor[];
   internalRuntimeActorsByGroup: Record<string, Actor[]>;
   groupContext: GroupContext | null;
@@ -32,9 +30,6 @@ export interface GroupState {
   runtimeDetectionStatus: "idle" | "loading" | "ready" | "error";
   selectedGroupActorsHydrating: boolean;
   selectedGroupActorStatusProvisional: boolean;
-  hasMoreHistory: boolean;
-  isLoadingHistory: boolean;
-  isChatWindowLoading: boolean;
 
   setGroups: (groups: GroupMeta[]) => void;
   setGroupOrder: (order: string[]) => void;
@@ -105,7 +100,7 @@ export interface GroupState {
   ) => void;
   clearStreamingPlaceholder: (actorId: string, pendingEventId: string, groupId?: string) => void;
   prependEvents: (events: LedgerEvent[], groupId?: string) => void;
-  setChatWindow: (w: GroupState["chatWindow"], groupId?: string) => void;
+  setChatWindow: (w: ChatWindowState | null, groupId?: string) => void;
   setActors: (actors: Actor[]) => void;
   updateGroupRuntimeState: (groupId: string, patch: Partial<GroupRuntimeStatus>) => void;
   incrementActorUnread: (actorIds: string[]) => void;

@@ -44,6 +44,7 @@ import {
   useComposerStore,
   useInboxStore,
   useFormStore,
+  selectChatBucketState,
 } from "../stores";
 import { getRecipientActorIdsForEvent } from "../hooks/useSSE";
 import { getChatSession } from "../stores/useUIStore";
@@ -137,6 +138,7 @@ export function AppModals({
     groupDoc,
     events,
     chatWindow,
+    senderHistoryEvents,
     actors,
     groupContext,
     groupSettings,
@@ -154,29 +156,33 @@ export function AppModals({
     openChatWindow,
     mergeEventStatuses,
   } = useGroupStore(
-    useShallow((s) => ({
-      groups: s.groups,
-      selectedGroupId: s.selectedGroupId,
-      groupDoc: s.groupDoc,
-      events: s.events,
-      chatWindow: s.chatWindow,
-      actors: s.actors,
-      groupContext: s.groupContext,
-      groupSettings: s.groupSettings,
-      groupPresentation: s.groupPresentation,
-      runtimes: s.runtimes,
-      runtimeDetectionStatus: s.runtimeDetectionStatus,
-      setSelectedGroupId: s.setSelectedGroupId,
-      setGroupContext: s.setGroupContext,
-      setGroupSettings: s.setGroupSettings,
-      setGroupPresentation: s.setGroupPresentation,
-      refreshGroups: s.refreshGroups,
-      refreshSettings: s.refreshSettings,
-      refreshActors: s.refreshActors,
-      loadGroup: s.loadGroup,
-      openChatWindow: s.openChatWindow,
-      mergeEventStatuses: s.mergeEventStatuses,
-    })),
+    useShallow((s) => {
+      const bucket = selectChatBucketState(s, s.selectedGroupId);
+      return {
+        groups: s.groups,
+        selectedGroupId: s.selectedGroupId,
+        groupDoc: s.groupDoc,
+        events: bucket.events,
+        chatWindow: bucket.chatWindow,
+        senderHistoryEvents: bucket.senderHistory?.events,
+        actors: s.actors,
+        groupContext: s.groupContext,
+        groupSettings: s.groupSettings,
+        groupPresentation: s.groupPresentation,
+        runtimes: s.runtimes,
+        runtimeDetectionStatus: s.runtimeDetectionStatus,
+        setSelectedGroupId: s.setSelectedGroupId,
+        setGroupContext: s.setGroupContext,
+        setGroupSettings: s.setGroupSettings,
+        setGroupPresentation: s.setGroupPresentation,
+        refreshGroups: s.refreshGroups,
+        refreshSettings: s.refreshSettings,
+        refreshActors: s.refreshActors,
+        loadGroup: s.loadGroup,
+        openChatWindow: s.openChatWindow,
+        mergeEventStatuses: s.mergeEventStatuses,
+      };
+    }),
   );
 
   const {
@@ -545,12 +551,17 @@ export function AppModals({
     );
     if (liveHit) return liveHit;
     const windowEvents = Array.isArray(chatWindow?.events) ? chatWindow.events : [];
+    const windowHit = windowEvents.find(
+      (x) => x.kind === "chat.message" && String(x.id || "") === _recipientsEventId,
+    );
+    if (windowHit) return windowHit;
+    const filteredEvents = Array.isArray(senderHistoryEvents) ? senderHistoryEvents : [];
     return (
-      windowEvents.find(
+      filteredEvents.find(
         (x) => x.kind === "chat.message" && String(x.id || "") === _recipientsEventId,
       ) || null
     );
-  }, [chatWindow?.events, events, _recipientsEventId]);
+  }, [chatWindow?.events, events, senderHistoryEvents, _recipientsEventId]);
 
   const messageMeta = useMemo(() => {
     if (!messageMetaEvent) return null;
@@ -1579,12 +1590,18 @@ export function AppModals({
         ? (chatWindow.events || []).find((ev) => String(ev.id || "") === eid) || null
         : null;
     if (fromWindow) return fromWindow;
-    return (events || []).find((ev) => String(ev.id || "") === eid) || null;
-  }, [chatWindow, events, relayEventId, relaySource, selectedGroupId]);
+    const fromLive = (events || []).find((ev) => String(ev.id || "") === eid) || null;
+    if (fromLive) return fromLive;
+    return (senderHistoryEvents || []).find((ev) => String(ev.id || "") === eid) || null;
+  }, [chatWindow, events, relayEventId, relaySource, selectedGroupId, senderHistoryEvents]);
 
   const presentationReferenceEvents = useMemo(() => {
     const next = new Map<string, LedgerEvent>();
     for (const event of events || []) {
+      if (!event?.id) continue;
+      next.set(String(event.id), event);
+    }
+    for (const event of senderHistoryEvents || []) {
       if (!event?.id) continue;
       next.set(String(event.id), event);
     }
@@ -1595,7 +1612,7 @@ export function AppModals({
       }
     }
     return Array.from(next.values());
-  }, [chatWindow, events, selectedGroupId]);
+  }, [chatWindow, events, selectedGroupId, senderHistoryEvents]);
 
   const presentationViewerSourceEvent = useMemo(() => {
     const focusEventId = String(presentationViewer?.focusEventId || "").trim();

@@ -55,16 +55,20 @@ fn events_for_segment(
     session_id: &str,
     segment_id: &str,
 ) -> Result<Option<Event>, OpError> {
-    let events = ledger::read_all(&store.ledger_path(group_id).map_err(OpError::io)?)
-        .map_err(OpError::io)?;
-    let input = events
-        .iter()
-        .find(|event| {
-            event.kind == "assistant.voice.input"
-                && event_data_string(event, &["session_id"]) == Some(session_id)
-                && event_data_string(event, &["segment_id"]) == Some(segment_id)
-        })
-        .cloned();
+    let input = ledger::inspect(
+        &store.ledger_path(group_id).map_err(OpError::io)?,
+        |events, _| {
+            events
+                .iter()
+                .find(|event| {
+                    event.kind == "assistant.voice.input"
+                        && event_data_string(event, &["session_id"]) == Some(session_id)
+                        && event_data_string(event, &["segment_id"]) == Some(segment_id)
+                })
+                .cloned()
+        },
+    )
+    .map_err(OpError::io)?;
     Ok(input)
 }
 

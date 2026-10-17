@@ -431,13 +431,21 @@ export function ChatComposer({
     parts.push(escapeHtml(composerText.slice(cursor)));
     return parts.join("");
   }, [composerText, liveAgentMentionTokens, liveGroupMentionTokens]);
-  const consumedSuggestedUserMessageIds = readConsumedSuggestedUserMessageIds();
-  for (const eventId of sessionConsumedSuggestedUserMessageIds) {
-    consumedSuggestedUserMessageIds.add(eventId);
-  }
-  const suggestedUserMessage = latestSuggestedUserMessage(
-    suggestionSourceMessages || recentMessages,
-    consumedSuggestedUserMessageIds,
+  const consumedSuggestedUserMessageIds = useMemo(() => {
+    void selectedGroupId;
+    const ids = readConsumedSuggestedUserMessageIds();
+    for (const eventId of sessionConsumedSuggestedUserMessageIds) {
+      ids.add(eventId);
+    }
+    return ids;
+  }, [selectedGroupId, sessionConsumedSuggestedUserMessageIds]);
+  const suggestedUserMessage = useMemo(
+    () =>
+      latestSuggestedUserMessage(
+        suggestionSourceMessages || recentMessages,
+        consumedSuggestedUserMessageIds,
+      ),
+    [consumedSuggestedUserMessageIds, recentMessages, suggestionSourceMessages],
   );
   const canShowSuggestedUserMessageForTarget = composerTargetAllowsSuggestedUserMessage({
     selectedGroupId,
@@ -1189,7 +1197,7 @@ export function ChatComposer({
                 <button
                   type="button"
                   className={classNames(
-                    "absolute left-3 top-3 z-10 flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                    "touch-target-sm absolute left-3 top-3 z-10 flex h-6 w-6 items-center justify-center rounded-md transition-colors",
                     isDark
                       ? "text-white/45 hover:bg-white/10 hover:text-white/75"
                       : "text-gray-400 hover:bg-black/[0.06] hover:text-gray-600",
@@ -1294,7 +1302,7 @@ export function ChatComposer({
                     statusPortalTarget={voiceStatusTarget}
                     captureMode={voiceCaptureMode}
                     onCaptureModeChange={setVoiceCaptureMode}
-                    composerText={composerText}
+                    hasComposerText={Boolean(composerText.trim())}
                     composerContext={composerAssistantContext}
                     onQuoteDocument={onQuoteVoiceDocumentRef}
                     onPromptDraft={fillPromptDraftFromSpeech}

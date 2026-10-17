@@ -340,6 +340,15 @@ function cloneGroupPresentation(
   };
 }
 
+export function getCachedGroupActors(groupId: string): Actor[] {
+  const gid = String(groupId || "").trim();
+  if (!gid) return [];
+  const cached = groupViewCache.get(gid);
+  if (!cached) return [];
+  if (Date.now() - cached.cachedAt > GROUP_VIEW_CACHE_TTL_MS) return [];
+  return Array.isArray(cached.actors) ? cached.actors : [];
+}
+
 export function getCachedGroupView(groupId: string): GroupViewSnapshot | null {
   const gid = String(groupId || "").trim();
   if (!gid) return null;
@@ -873,13 +882,29 @@ export function buildChatBucketPatch(
     patch.rawHeadlessEventsByActorId !== undefined
       ? patch.rawHeadlessEventsByActorId
       : prevRawHeadlessEventsByActorId;
-  const previewIndex = deriveHeadlessPreviewIndex(
-    prevPreviewSessionsByActorId,
-    nextStreamingEvents,
-    nextStreamingTextByStreamId,
-    nextStreamingActivitiesByStreamId,
-    nextReplySessionsByPendingEventId,
-  );
+  const previewInputsChanged =
+    nextStreamingEvents !== prev.streamingEvents ||
+    nextStreamingTextByStreamId !== prevStreamingTextByStreamId ||
+    nextStreamingActivitiesByStreamId !== prevStreamingActivitiesByStreamId ||
+    nextReplySessionsByPendingEventId !== prevReplySessionsByPendingEventId ||
+    !prev.previewSessionsByActorId ||
+    !prev.latestActorPreviewByActorId ||
+    !prev.latestActorTextByActorId ||
+    !prev.latestActorActivitiesByActorId;
+  const previewIndex = previewInputsChanged
+    ? deriveHeadlessPreviewIndex(
+        prevPreviewSessionsByActorId,
+        nextStreamingEvents,
+        nextStreamingTextByStreamId,
+        nextStreamingActivitiesByStreamId,
+        nextReplySessionsByPendingEventId,
+      )
+    : {
+        previewSessionsByActorId: prevPreviewSessionsByActorId,
+        latestActorPreviewByActorId: prev.latestActorPreviewByActorId,
+        latestActorTextByActorId: prev.latestActorTextByActorId,
+        latestActorActivitiesByActorId: prev.latestActorActivitiesByActorId,
+      };
   const nextHasMoreHistory =
     patch.hasMoreHistory !== undefined ? patch.hasMoreHistory : prev.hasMoreHistory;
   if (patch.events !== undefined || patch.hasMoreHistory !== undefined) {

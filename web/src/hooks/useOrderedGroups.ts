@@ -1,9 +1,10 @@
+import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useGroupStore } from "../stores/useGroupStore";
 
 /** Subscribe to the inputs as well as the stable imperative getter. */
 export function useOrderedGroups() {
-  const { getOrderedGroups } = useGroupStore(
+  const { groups, groupOrder, selectedGroupId, groupDoc, actors, getOrderedGroups } = useGroupStore(
     useShallow((state) => ({
       groups: state.groups,
       groupOrder: state.groupOrder,
@@ -13,5 +14,12 @@ export function useOrderedGroups() {
       getOrderedGroups: state.getOrderedGroups,
     })),
   );
-  return getOrderedGroups();
+  return useMemo(() => {
+    void groups;
+    void groupOrder;
+    void selectedGroupId;
+    void groupDoc;
+    void actors;
+    return getOrderedGroups();
+  }, [actors, getOrderedGroups, groupDoc, groupOrder, groups, selectedGroupId]);
 }

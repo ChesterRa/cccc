@@ -244,12 +244,12 @@ async fn run_monitor(
             }
             _ = rescan_interval.tick() => {
                 let Some(inner) = inner.upgrade() else { break; };
-                publish_active_feed_changes(&inner);
+                let _ = tokio::task::spawn_blocking(move || publish_active_feed_changes(&inner)).await;
                 continue;
             }
             _ = prune_interval.tick() => {
                 let Some(inner) = inner.upgrade() else { break; };
-                prune_deleted_groups(&inner);
+                let _ = tokio::task::spawn_blocking(move || prune_deleted_groups(&inner)).await;
                 continue;
             }
         };
@@ -257,18 +257,26 @@ async fn run_monitor(
             break;
         };
         let mut group_ids = HashSet::new();
+        let mut needs_prune = !path.exists();
         collect_group_id(&inner.groups_root, &path, &mut group_ids);
         tokio::time::sleep(WATCH_COALESCE_DELAY).await;
         while let Ok(path) = receiver.try_recv() {
+            needs_prune |= !path.exists();
             collect_group_id(&inner.groups_root, &path, &mut group_ids);
         }
-        for group_id in group_ids {
-            publish_group_changes(&inner, &group_id);
-        }
-        prune_deleted_groups(&inner);
-        if rescan_required.swap(false, Ordering::AcqRel) {
-            publish_all_changes(&inner);
-        }
+        let rescan_all = rescan_required.swap(false, Ordering::AcqRel);
+        let _ = tokio::task::spawn_blocking(move || {
+            for group_id in group_ids {
+                publish_group_changes(&inner, &group_id);
+            }
+            if needs_prune || rescan_all {
+                prune_deleted_groups(&inner);
+            }
+            if rescan_all {
+                publish_all_changes(&inner);
+            }
+        })
+        .await;
     }
     if let Some(watcher) = watcher {
         let _ = std::thread::spawn(move || drop(watcher));

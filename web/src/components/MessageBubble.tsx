@@ -745,22 +745,24 @@ export const MessageBubble = memo(
             />
           </div>
         </div>
-        <FloatingPortal>
-          <AgentStateTooltip
-            isOpen={isAgentStateOpen && !collapseHeader}
-            canShow={canShowAgentState && !collapseHeader}
-            isPositioned={isAgentStatePositioned}
-            setFloating={setAgentStateFloating}
-            floatingStyles={floatingStyles}
-            senderDisplayName={senderDisplayName}
-            updatedAt={agentState?.updated_at ? String(agentState.updated_at) : undefined}
-            agentStateDisplay={agentStateDisplay}
-            stateTask={stateTask}
-            blockerCount={blockerCount}
-            stateNext={stateNext}
-            stateChanged={stateChanged}
-          />
-        </FloatingPortal>
+        {isAgentStateOpen && canShowAgentState && !collapseHeader ? (
+          <FloatingPortal>
+            <AgentStateTooltip
+              isOpen={true}
+              canShow={true}
+              isPositioned={isAgentStatePositioned}
+              setFloating={setAgentStateFloating}
+              floatingStyles={floatingStyles}
+              senderDisplayName={senderDisplayName}
+              updatedAt={agentState?.updated_at ? String(agentState.updated_at) : undefined}
+              agentStateDisplay={agentStateDisplay}
+              stateTask={stateTask}
+              blockerCount={blockerCount}
+              stateNext={stateNext}
+              stateChanged={stateChanged}
+            />
+          </FloatingPortal>
+        ) : null}
 
         {/* Message Content */}
         <div

@@ -47,15 +47,22 @@ vi.mock("./VoiceSecretaryWorkspacePanel", () => ({
     onEditDocumentChange,
     onSaveDocument,
     onLoadLatestDocument,
+    documentRemoteChanged,
   }: {
     documentDraft: string;
     activeDocumentWritePath: string;
     onEditDocumentChange: (value: string) => void;
     onSaveDocument: () => void;
     onLoadLatestDocument: () => void;
+    documentRemoteChanged: boolean;
   }) => (
     <>
-      <output data-workspace-document={activeDocumentWritePath}>{documentDraft}</output>
+      <output
+        data-workspace-document={activeDocumentWritePath}
+        data-remote-changed={documentRemoteChanged}
+      >
+        {documentDraft}
+      </output>
       <button onClick={() => onEditDocumentChange("saved edit")} data-edit-document />
       <button onClick={onSaveDocument} data-save-document />
       <button onClick={onLoadLatestDocument} data-load-document />
@@ -460,4 +467,81 @@ describe("Voice Secretary workspace refresh ownership", () => {
     );
     expect(documentText()).toBe("updated in settings");
   });
+
+  it("defers active document body fetch until the workspace is opened", async () => {
+    const metadataOnly = workspace("A", "");
+    delete metadataOnly.documents![0].content;
+    metadataOnly.documents![0].content_chars = 12;
+    mocks.workspace.mockResolvedValue({ ok: true, result: metadataOnly });
+    mocks.document.mockResolvedValue({
+      ok: true,
+      result: { document: { ...metadataOnly.documents![0], content: "loaded on open" } },
+    });
+
+    await render("A", false);
+    expect(mocks.workspace).toHaveBeenCalledTimes(1);
+    expect(mocks.document).not.toHaveBeenCalled();
+
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(mocks.document).toHaveBeenCalledWith("A", "A.md");
+    expect(documentText()).toBe("loaded on open");
+  });
+
+  it.each(["unchanged", "changed", "empty"])(
+    "does not infer a body conflict from a closed metadata refresh (%s body on reopen)",
+    async (change) => {
+      await render();
+      await click("[data-edit-document]");
+      await click("[data-voice-sheet-close]");
+
+      const metadata = workspace("A", "");
+      delete metadata.documents![0].content;
+      metadata.documents![0].content_chars = 8;
+      mocks.workspace.mockResolvedValue({ ok: true, result: metadata });
+      mocks.document
+        .mockClear()
+        .mockResolvedValue({
+          ok: true,
+          result: {
+            document: {
+              ...metadata.documents![0],
+              content:
+                change === "unchanged" ? "original" : change === "empty" ? "" : "remote edit",
+            },
+          },
+        });
+
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      expect(mocks.document).not.toHaveBeenCalled();
+      // Keep the reopen read pending so we can also inspect the metadata-only state.
+      let finish!: (value: unknown) => void;
+      mocks.document.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+      expect(documentText()).toBe("saved edit");
+      expect(
+        document.querySelector("[data-remote-changed]")?.getAttribute("data-remote-changed"),
+      ).toBe("false");
+      await act(async () =>
+        finish({
+          ok: true,
+          result: {
+            document: {
+              ...metadata.documents![0],
+              content:
+                change === "unchanged" ? "original" : change === "empty" ? "" : "remote edit",
+            },
+          },
+        }),
+      );
+      expect(documentText()).toBe("saved edit");
+      expect(
+        document.querySelector("[data-remote-changed]")?.getAttribute("data-remote-changed"),
+      ).toBe(String(change !== "unchanged"));
+    },
+  );
 });

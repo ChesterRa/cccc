@@ -540,7 +540,7 @@ pub fn inspect_status<T>(
     inspect: impl FnOnce(
         &[Event],
         &std::collections::HashMap<String, usize>,
-        &std::collections::HashMap<String, std::collections::BTreeSet<String>>,
+        &std::collections::HashMap<String, usize>,
     ) -> T,
 ) -> io::Result<T> {
     crate::ledger_index::inspect_status(path, inspect)

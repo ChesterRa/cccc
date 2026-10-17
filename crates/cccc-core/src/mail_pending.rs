@@ -31,44 +31,51 @@ pub fn still_awaited(
     let store = GroupStore::new(home.clone())?;
     let cursor = inbox::cursors(home, &group.group_id)?.remove(actor_id);
     let wanted = mail_ids.iter().cloned().collect::<HashSet<_>>();
-    ledger::inspect(&store.ledger_path(&group.group_id)?, |events, positions| {
-        let generation = inbox::actor_generation_positions(events)
-            .get(actor_id)
-            .copied()
-            .unwrap_or(0);
-        let cursor_position = cursor.as_ref().and_then(|id| positions.get(id)).copied();
-        let mut replied = HashSet::new();
-        let mut delivery = std::collections::HashMap::<&str, &str>::new();
-        for event in events {
-            let source = |key: &str| event.data.get(key).and_then(Value::as_str);
-            if event.kind == "chat.message" && event.by == actor_id {
-                if let Some(target) = source("reply_to").filter(|id| wanted.contains(*id)) {
-                    replied.insert(target);
+    ledger::inspect_status(
+        &store.ledger_path(&group.group_id)?,
+        |events, positions, generations| {
+            let generation = generations.get(actor_id).copied().unwrap_or(0);
+            let cursor_position = cursor.as_ref().and_then(|id| positions.get(id)).copied();
+            let scan_start = mail_ids
+                .iter()
+                .filter_map(|id| positions.get(id.as_str()).copied())
+                .min()
+                .unwrap_or(events.len())
+                .max(generation);
+            let mut replied = HashSet::new();
+            let mut delivery = std::collections::HashMap::<&str, &str>::new();
+            for event in events.get(scan_start..).unwrap_or_default() {
+                let source = |key: &str| event.data.get(key).and_then(Value::as_str);
+                if event.kind == "chat.message" && event.by == actor_id {
+                    if let Some(target) = source("reply_to").filter(|id| wanted.contains(*id)) {
+                        replied.insert(target);
+                    }
+                } else if event.kind == "runtime.delivery"
+                    && source("actor_id") == Some(actor_id)
+                    && let (Some(target), Some(state)) =
+                        (source("source_event_id"), source("state"))
+                    && wanted.contains(target)
+                {
+                    delivery.insert(target, state);
                 }
-            } else if event.kind == "runtime.delivery"
-                && source("actor_id") == Some(actor_id)
-                && let (Some(target), Some(state)) = (source("source_event_id"), source("state"))
-                && wanted.contains(target)
-            {
-                delivery.insert(target, state);
             }
-        }
-        mail_ids
-            .iter()
-            .filter(|id| {
-                positions.get(id.as_str()).is_some_and(|&position| {
-                    position >= generation
-                        && is_mail(&events[position])
-                        && awaiting(
-                            cursor_position.is_some_and(|cursor| cursor >= position),
-                            replied.contains(id.as_str()),
-                            delivery.get(id.as_str()).copied(),
-                        )
+            mail_ids
+                .iter()
+                .filter(|id| {
+                    positions.get(id.as_str()).is_some_and(|&position| {
+                        position >= generation
+                            && is_mail(&events[position])
+                            && awaiting(
+                                cursor_position.is_some_and(|cursor| cursor >= position),
+                                replied.contains(id.as_str()),
+                                delivery.get(id.as_str()).copied(),
+                            )
+                    })
                 })
-            })
-            .cloned()
-            .collect()
-    })
+                .cloned()
+                .collect()
+        },
+    )
 }
 
 fn is_mail(event: &Event) -> bool {

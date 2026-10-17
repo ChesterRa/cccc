@@ -21,6 +21,8 @@ const expandIconMarkup = renderToStaticMarkup(
   <ExpandIcon className="w-3.5 h-3.5" strokeWidth={2} aria-hidden="true" />,
 );
 
+let sharedMarkdownCache: { key: string; instance: MarkdownIt } | null = null;
+
 type MermaidPreviewState = {
   svg: string;
   source: string;
@@ -186,6 +188,24 @@ export function MarkdownRenderer({
   };
 
   const md = useMemo(() => {
+    const sharedKey = resolveUrl
+      ? ""
+      : [
+          enableMermaid ? "1" : "0",
+          labels.copy,
+          labels.copied,
+          labels.expand,
+          labels.expandDiagram,
+          labels.renderFailed,
+          labels.rendering,
+          labels.tableScrollRegion,
+          labels.tooLarge,
+          labels.viewDiagram,
+          labels.viewSource,
+        ].join("\u0000");
+    if (sharedKey && sharedMarkdownCache?.key === sharedKey) {
+      return sharedMarkdownCache.instance;
+    }
     const instance = new MarkdownIt({
       html: false, // Security: Disable raw HTML to prevent XSS
       linkify: true,
@@ -330,6 +350,9 @@ export function MarkdownRenderer({
         "</div>"
       );
     };
+    if (sharedKey) {
+      sharedMarkdownCache = { key: sharedKey, instance };
+    }
     return instance;
   }, [
     enableMermaid,

@@ -359,12 +359,19 @@ pub(super) fn confirm_secretary_handoff(home: &HomeLayout, request: &DaemonReque
             "Secretary proposals require user confirmation",
         ));
     }
-    if let Some(event) = ledger::read_all(&store.ledger_path(&group_id).map_err(OpError::io)?)
-        .map_err(OpError::io)?
-        .into_iter()
-        .find(|event| {
-            event.kind == "system.notify" && event.data["context"]["secretary_task_id"] == task_id
-        })
+    if let Some(event) = ledger::inspect(
+        &store.ledger_path(&group_id).map_err(OpError::io)?,
+        |events, _| {
+            events
+                .iter()
+                .find(|event| {
+                    event.kind == "system.notify"
+                        && event.data["context"]["secretary_task_id"] == task_id
+                })
+                .cloned()
+        },
+    )
+    .map_err(OpError::io)?
     {
         return object(json!({"group_id":group_id,"notify_event":event,"already_forwarded":true}));
     }

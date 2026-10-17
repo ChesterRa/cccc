@@ -13,7 +13,7 @@ import {
   buildChatBucketPatch,
   buildPrimedGroupState,
   ensureGroupChatBucket,
-  getCachedGroupView,
+  getCachedGroupActors,
   getGroupChatBucket,
   GroupChatBucket,
   HEADLESS_RAW_EVENT_LIMIT,
@@ -128,8 +128,6 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   selectedGroupId: initialSelectedGroupId,
   chatByGroup: {},
   groupDoc: null,
-  events: [],
-  chatWindow: null,
   actors: [],
   internalRuntimeActorsByGroup: {},
   groupContext: null,
@@ -139,9 +137,6 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   runtimeDetectionStatus: "idle",
   selectedGroupActorsHydrating: false,
   selectedGroupActorStatusProvisional: false,
-  hasMoreHistory: true,
-  isLoadingHistory: false,
-  isChatWindowLoading: false,
 
   // Sync actions
   setGroups: (groups) => {
@@ -198,11 +193,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     return ordered.map((group) => {
       const gid = String(group.group_id || "").trim();
       const isSelected = gid === String(selectedGroupId || "").trim();
-      const cached = isSelected ? null : getCachedGroupView(gid);
       const patch = computeGroupRuntimePatch({
         group,
         groupDoc: isSelected ? groupDoc : null,
-        actors: isSelected ? actors : cached?.actors || [],
+        actors: isSelected ? actors : getCachedGroupActors(gid),
       });
       return { ...group, ...patch };
     });
@@ -228,17 +222,12 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           selectedGroupId: "",
           chatByGroup: {},
           groupDoc: null,
-          events: [],
           actors: [],
           groupContext: null,
           groupSettings: null,
           groupPresentation: null,
           selectedGroupActorsHydrating: false,
           selectedGroupActorStatusProvisional: false,
-          chatWindow: null,
-          hasMoreHistory: false,
-          isLoadingHistory: false,
-          isChatWindowLoading: false,
         };
       }
 

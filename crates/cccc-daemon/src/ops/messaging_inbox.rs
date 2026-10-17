@@ -57,14 +57,11 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let path = crate::dispatch::store(home)?
         .ledger_path(&group.group_id)
         .map_err(OpError::io)?;
-    let result = ledger::inspect(&path, |events, _| {
+    let result = ledger::inspect_status(&path, |events, _, generations| {
         let generation = if actor_id == "user" {
             0
         } else {
-            inbox::actor_generation_positions(events)
-                .get(&actor_id)
-                .copied()
-                .unwrap_or(0)
+            generations.get(&actor_id).copied().unwrap_or(0)
         };
         let visible = events[generation..]
             .iter()

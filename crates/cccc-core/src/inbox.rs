@@ -70,27 +70,29 @@ pub fn list_unread_many(
     }
     let store = GroupStore::new(home.clone())?;
     let state = load(home, &group.group_id)?;
-    ledger::inspect(&store.ledger_path(&group.group_id)?, |events, positions| {
-        let generations = actor_generation_positions(events);
-        actor_ids
-            .iter()
-            .map(|actor_id| {
-                let cursor_start = state
-                    .cursors
-                    .get(actor_id)
-                    .and_then(|id| positions.get(id))
-                    .map_or(0, |index| index + 1);
-                let generation_start = generations.get(actor_id).copied().unwrap_or(0);
-                let unread = events[cursor_start.max(generation_start)..]
-                    .iter()
-                    .filter(|event| is_mail_for_actor(group, event, actor_id))
-                    .take(limit.min(1000))
-                    .cloned()
-                    .collect();
-                (actor_id.clone(), unread)
-            })
-            .collect()
-    })
+    ledger::inspect_status(
+        &store.ledger_path(&group.group_id)?,
+        |events, positions, generations| {
+            actor_ids
+                .iter()
+                .map(|actor_id| {
+                    let cursor_start = state
+                        .cursors
+                        .get(actor_id)
+                        .and_then(|id| positions.get(id))
+                        .map_or(0, |index| index + 1);
+                    let generation_start = generations.get(actor_id).copied().unwrap_or(0);
+                    let unread = events[cursor_start.max(generation_start)..]
+                        .iter()
+                        .filter(|event| is_mail_for_actor(group, event, actor_id))
+                        .take(limit.min(1000))
+                        .cloned()
+                        .collect();
+                    (actor_id.clone(), unread)
+                })
+                .collect()
+        },
+    )
 }
 
 pub fn consume_unread(
@@ -106,24 +108,23 @@ pub fn consume_unread(
     with_exclusive_lock(&lock_path, || {
         recover_pending_locked(home, &group.group_id)?;
         let mut state = load_raw(home, &group.group_id)?;
-        let messages =
-            ledger::inspect(&store.ledger_path(&group.group_id)?, |events, positions| {
+        let messages = ledger::inspect_status(
+            &store.ledger_path(&group.group_id)?,
+            |events, positions, generations| {
                 let cursor_start = state
                     .cursors
                     .get(actor_id)
                     .and_then(|id| positions.get(id))
                     .map_or(0, |index| index + 1);
-                let generation_start = actor_generation_positions(events)
-                    .get(actor_id)
-                    .copied()
-                    .unwrap_or(0);
+                let generation_start = generations.get(actor_id).copied().unwrap_or(0);
                 events[cursor_start.max(generation_start)..]
                     .iter()
                     .filter(|event| is_mail_for_actor(group, event, actor_id))
                     .take(limit.min(200))
                     .cloned()
                     .collect::<Vec<_>>()
-            })?;
+            },
+        )?;
 
         let Some(boundary) = messages.last() else {
             let (cursor_event_id, cursor_ts, cursor_updated_at) =

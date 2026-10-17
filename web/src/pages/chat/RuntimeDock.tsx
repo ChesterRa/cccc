@@ -5,6 +5,7 @@ import { Mail } from "lucide-react";
 import { ActorAvatar } from "../../components/ActorAvatar";
 import { PlusIcon } from "../../components/Icons";
 import { useActorDisplayState } from "../../hooks/useActorDisplayState";
+import { useGroupStore } from "../../stores";
 import type { Actor, HeadlessStreamEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { hasManagedRuntimeOutput } from "../../utils/headlessRuntimeSupport";
@@ -336,14 +337,18 @@ export function RuntimeDock({
   onOpenRuntimeActor,
 }: RuntimeDockProps) {
   const { t } = useTranslation("chat");
+  const storeRuntimeEvents = useGroupStore(
+    (state) => state.chatByGroup?.[String(groupId || "").trim()]?.rawHeadlessEventsByActorId,
+  );
+  const effectiveRuntimeEvents = runtimeEvents ?? storeRuntimeEvents;
 
   const items = useMemo(
     () => buildRuntimeDockItems({ actors: runtimeActors, liveWorkCards }),
     [runtimeActors, liveWorkCards],
   );
   const tickerEntries = useMemo(
-    () => buildRuntimeDockTickerEntries(items, runtimeEvents),
-    [items, runtimeEvents],
+    () => buildRuntimeDockTickerEntries(items, effectiveRuntimeEvents),
+    [items, effectiveRuntimeEvents],
   );
 
   if (items.length <= 0) return null;

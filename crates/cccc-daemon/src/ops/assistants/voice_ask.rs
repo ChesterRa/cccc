@@ -571,11 +571,7 @@ fn append_feedback_event(
         )
     );
     let path = store.ledger_path(group_id).map_err(OpError::io)?;
-    if let Some(existing) = ledger::read_all(&path)
-        .map_err(OpError::io)?
-        .into_iter()
-        .find(|event| event.id == event_id)
-    {
+    if let Some(existing) = ledger::find_event(&path, &event_id).map_err(OpError::io)? {
         return Ok(existing);
     }
     let mut event = Event::new("assistant.voice.request", group_id);

@@ -68,7 +68,7 @@ import {
   updateVoiceAssistantRecordingLease,
   withAuthToken,
 } from "../../services/api";
-import { useUIStore, useModalStore, useGroupStore } from "../../stores";
+import { useUIStore, useModalStore, useGroupStore, useComposerStore } from "../../stores";
 import { getChatSession } from "../../stores/useUIStore";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { AnimatedShinyText } from "../../registry/magicui/animated-shiny-text";
@@ -239,6 +239,7 @@ export type VoiceSecretaryComposerControlProps = {
   onCaptureModeChange?: (mode: VoiceSecretaryCaptureMode) => void;
   onQuoteDocument?: (ref: VoiceDocumentMessageRef) => void;
   composerText?: string;
+  hasComposerText?: boolean;
   composerContext?: Record<string, unknown>;
   onPromptDraft?: (text: string, opts?: { mode?: "replace" | "append" }) => void;
   onFocusComposer?: () => void;
@@ -309,12 +310,22 @@ export function VoiceSecretaryComposerControl({
   captureMode: composerCaptureMode = "prompt",
   onCaptureModeChange,
   onQuoteDocument,
-  composerText = "",
+  composerText,
+  hasComposerText,
   composerContext = {},
   onPromptDraft,
   onFocusComposer,
   initiallyOpen = false,
 }: VoiceSecretaryComposerControlProps) {
+  const readCurrentComposerText = useCallback(
+    () =>
+      composerText !== undefined
+        ? composerText
+        : String(useComposerStore.getState().composerText || ""),
+    [composerText],
+  );
+  const hasPromptText =
+    hasComposerText ?? Boolean((composerText ?? readCurrentComposerText()).trim());
   const { t } = useTranslation("chat");
   const showError = useUIStore((state) => state.showError);
   const showNotice = useUIStore((state) => state.showNotice);
@@ -473,7 +484,9 @@ export function VoiceSecretaryComposerControl({
     },
     [],
   );
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
+  const openRef = useRef(open);
+  openRef.current = open;
   const [showAssistantModeMenu, setShowAssistantModeMenu] = useState(false);
   const [showAssistantLanguageMenu, setShowAssistantLanguageMenu] = useState(false);
   const assistantModeTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1372,7 +1385,7 @@ export function VoiceSecretaryComposerControl({
             nextViewedPath &&
             (opts?.forceActiveDocumentContent ||
               activeDocumentRevisionChanged ||
-              documentNeedsContentLoad(nextActiveDocument))
+              (openRef.current && documentNeedsContentLoad(nextActiveDocument)))
           ) {
             const contentLoad = documentContentLoadTracker.current.begin();
             setDocumentContentLoadingPath(nextViewedPath);
@@ -1411,7 +1424,8 @@ export function VoiceSecretaryComposerControl({
             : false;
           const serverChangedFromBase =
             serverTitle !== documentBaseTitleRef.current ||
-            serverContent !== documentBaseContentRef.current;
+            (nextActiveDocument.content !== undefined &&
+              serverContent !== documentBaseContentRef.current);
           if (!localDirty || !sameDocument) {
             loadDocumentDraft(nextActiveDocument);
           } else if (serverChangedFromBase) {
@@ -2303,10 +2317,11 @@ export function VoiceSecretaryComposerControl({
       const sessionScope = explicitGroupId ? null : voiceRecordingSessionScopeRef.current;
       const gid = explicitGroupId || recordingTargetGroupId();
       const voiceTranscript = normalizeBrowserTranscriptChunk(text);
+      const currentComposerText = readCurrentComposerText();
       const snapshot = String(
         explicitGroupId
-          ? (opts?.composerText ?? composerText ?? "")
-          : (sessionScope?.composerText ?? composerText ?? ""),
+          ? (opts?.composerText ?? currentComposerText)
+          : (sessionScope?.composerText ?? currentComposerText),
       );
       const requestComposerContext = explicitGroupId
         ? (opts?.composerContext ?? composerContext)
@@ -2429,7 +2444,7 @@ export function VoiceSecretaryComposerControl({
     [
       clearPendingPromptRequest,
       composerContext,
-      composerText,
+      readCurrentComposerText,
       getActiveCaptureConfig,
       getRecordingRecognitionLanguage,
       finalizeLiveTranscriptPreview,
@@ -2902,7 +2917,7 @@ export function VoiceSecretaryComposerControl({
   useEffect(() => () => unmountCleanupRef.current(), []);
 
   const startBrowserSpeech = useCallback(
-    async (runId: number, latestAssistant: BuiltinAssistant | null) => {
+    async (runId: number, latestAssistant: BuiltinAssistant | null, composerSnapshot: string) => {
       const gid = String(selectedGroupId || "").trim();
       const browserBackendSelected = latestAssistant?.config?.recognition_backend === "browser_asr";
       const browserRecognitionLanguage = getRecordingRecognitionLanguage();
@@ -3043,7 +3058,7 @@ export function VoiceSecretaryComposerControl({
         documentPath: effectiveCaptureTargetDocumentPath,
         captureMode,
         dispatchTarget: captureDispatchTarget,
-        composerText,
+        composerText: composerSnapshot,
         composerContext,
       });
       recordingRef.current = true;
@@ -3353,7 +3368,6 @@ export function VoiceSecretaryComposerControl({
       captureTransportMode,
       captureMode,
       composerContext,
-      composerText,
       clearBrowserSpeechMediaHandlers,
       clearBrowserSpeechRestartTimer,
       clearBrowserSpeechStopFinalizeTimer,
@@ -3436,7 +3450,7 @@ export function VoiceSecretaryComposerControl({
   }, [captureDispatchTarget, updateLiveTranscriptPreview]);
 
   const startServiceAudio = useCallback(
-    async (runId: number, latestAssistant: BuiltinAssistant | null) => {
+    async (runId: number, latestAssistant: BuiltinAssistant | null, composerSnapshot: string) => {
       const gid = String(selectedGroupId || "").trim();
       const failStart = () => endRecordingRun(runId);
       const latestReadiness = resolveVoiceServiceReadiness({ assistant: latestAssistant });
@@ -3585,7 +3599,7 @@ export function VoiceSecretaryComposerControl({
           documentPath: effectiveCaptureTargetDocumentPath,
           captureMode,
           dispatchTarget: captureDispatchTarget,
-          composerText,
+          composerText: composerSnapshot,
           composerContext,
         });
         setSpeechError("");
@@ -4029,7 +4043,6 @@ export function VoiceSecretaryComposerControl({
       captureMode,
       captureTransportMode,
       composerContext,
-      composerText,
       commitServiceLatestPartialTranscript,
       flushServiceDocumentCheckpoint,
       endRecordingRun,
@@ -4679,6 +4692,8 @@ export function VoiceSecretaryComposerControl({
     const gid = String(selectedGroupId || "").trim();
     const runId = beginRecordingRun();
     if (!runId) return;
+    // Bind the draft to this Group before any settings, lease or microphone await.
+    const composerSnapshot = readCurrentComposerText();
     setRecordingTarget({
       mode: captureMode,
       documentPath: effectiveCaptureTargetDocumentPath,
@@ -4702,9 +4717,9 @@ export function VoiceSecretaryComposerControl({
           recognitionLanguageOverride || latestAssistant?.config?.recognition_language || "auto",
       };
       if (latestAssistant?.config?.recognition_backend === "browser_asr") {
-        await startBrowserSpeech(runId, latestAssistant);
+        await startBrowserSpeech(runId, latestAssistant, composerSnapshot);
       } else {
-        await startServiceAudio(runId, latestAssistant);
+        await startServiceAudio(runId, latestAssistant, composerSnapshot);
       }
     } catch (error) {
       if (!isActiveRecordingRun(runId)) return;
@@ -4723,6 +4738,7 @@ export function VoiceSecretaryComposerControl({
     isActiveRecordingRun,
     isCurrentGroup,
     recognitionLanguageOverride,
+    readCurrentComposerText,
     startBrowserSpeech,
     startServiceAudio,
     showError,
@@ -4853,7 +4869,7 @@ export function VoiceSecretaryComposerControl({
     composerCaptureMode === "prompt" &&
     !secretaryNotReadyReason &&
     !pendingPromptBlocksOtherGroup &&
-    !!composerText.trim() &&
+    hasPromptText &&
     !promptOptimizePending &&
     !pendingPromptDraft;
   const pendingAskFeedback = askNotice.requestId
@@ -5160,7 +5176,7 @@ export function VoiceSecretaryComposerControl({
         })
       : promptOptimizePending
         ? t("voiceSecretaryPromptOptimizingButton", { defaultValue: "Optimizing..." })
-        : !composerText.trim()
+        : !hasPromptText
           ? t("voiceSecretaryPromptOptimizeNeedsText", { defaultValue: "Type a prompt first" })
           : t("voiceSecretaryPromptOptimizeButton", { defaultValue: "Optimize current prompt" });
   const handleAssistantRowModeChange = useCallback(
@@ -5269,7 +5285,7 @@ export function VoiceSecretaryComposerControl({
       void requestPromptRefine("", "composer_prompt_refine", {
         operation: "replace_with_refined_prompt",
         targetGroupId: selectedGroupId,
-        composerText,
+        composerText: readCurrentComposerText(),
         composerContext,
       });
     },
@@ -5277,7 +5293,7 @@ export function VoiceSecretaryComposerControl({
       actionBusy,
       canOptimizeComposerPrompt,
       composerContext,
-      composerText,
+      readCurrentComposerText,
       controlDisabled,
       requestPromptRefine,
       selectedGroupId,

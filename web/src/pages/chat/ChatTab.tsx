@@ -29,6 +29,7 @@ import { RuntimeDock } from "./RuntimeDock";
 import { ChatSenderFilter } from "./ChatSenderFilter";
 import { useChatTab } from "../../hooks/useChatTab";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import { useComposerStore, useGroupStore, useModalStore, useUIStore } from "../../stores";
 import { getChatSession } from "../../stores/useUIStore";
 import { findPresentationSlot } from "../../utils/presentation";
@@ -345,7 +346,19 @@ export function ChatTab({
   const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
   const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
   const liveWorkBucket = useGroupStore(
-    (state) => state.chatByGroup[String(selectedGroupId || "").trim()],
+    useShallow((state) => {
+      const bucket = state.chatByGroup[String(selectedGroupId || "").trim()];
+      if (!bucket) return undefined;
+      return {
+        events: bucket.events,
+        chatWindow: bucket.chatWindow,
+        latestActorPreviewByActorId: bucket.latestActorPreviewByActorId,
+        previewSessionsByActorId: bucket.previewSessionsByActorId,
+        latestActorTextByActorId: bucket.latestActorTextByActorId,
+        latestActorActivitiesByActorId: bucket.latestActorActivitiesByActorId,
+        replySessionsByPendingEventId: bucket.replySessionsByPendingEventId,
+      };
+    }),
   );
   const presentationAttention = useModalStore((state) =>
     selectedGroupId
@@ -945,7 +958,6 @@ export function ChatTab({
                         groupId={selectedGroupId}
                         runtimeActors={runtimeActors}
                         liveWorkCards={liveWorkCards}
-                        runtimeEvents={liveWorkBucket?.rawHeadlessEventsByActorId}
                         activeRuntimeActorId={activeRuntimeActorId}
                         isDark={isDark}
                         isSmallScreen={isSmallScreen}

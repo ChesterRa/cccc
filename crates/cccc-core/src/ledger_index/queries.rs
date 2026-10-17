@@ -1,5 +1,5 @@
 use cccc_contracts::Event;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 
@@ -18,13 +18,17 @@ pub(crate) fn inspect<T>(
 
 pub(crate) fn inspect_status<T>(
     path: &Path,
-    inspect: impl FnOnce(&[Event], &HashMap<String, usize>, &HashMap<String, BTreeSet<String>>) -> T,
+    inspect: impl FnOnce(&[Event], &HashMap<String, usize>, &HashMap<String, usize>) -> T,
 ) -> io::Result<T> {
     let entry = current(path)?;
     let index = entry
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    Ok(inspect(&index.events, &index.positions, &index.replied_by))
+    Ok(inspect(
+        &index.events,
+        &index.positions,
+        &index.actor_generations,
+    ))
 }
 
 pub(crate) fn find_event(path: &Path, event_id: &str) -> io::Result<Option<Event>> {

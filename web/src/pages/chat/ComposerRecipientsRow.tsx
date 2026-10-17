@@ -34,7 +34,7 @@ export function ComposerRecipientsRow({
   const popover = useRecipientPopover({ isSmallScreen });
   const actorChipDisabled = !selectedGroupId || busy === "send" || !!selectedGroupActorsHydrating;
   const chipBaseClass =
-    "flex h-6 flex-shrink-0 items-center justify-center whitespace-nowrap rounded-lg border px-2 text-xs font-medium leading-none transition-all sm:px-2.5 sm:text-xs";
+    "touch-target-sm flex h-6 flex-shrink-0 items-center justify-center whitespace-nowrap rounded-lg border px-2 text-xs font-medium leading-none transition-all sm:px-2.5 sm:text-xs";
   const chipActiveClass = isDark
     ? "border-white bg-white text-[rgb(20,20,22)] shadow-none"
     : "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white shadow-none";
@@ -128,7 +128,7 @@ export function ComposerRecipientsRow({
       {toTokens.length > 0 && (
         <button
           className={classNames(
-            "flex-shrink-0 h-7 w-7 rounded-full flex items-center justify-center transition-colors opacity-50 hover:opacity-100",
+            "touch-target-sm flex-shrink-0 h-7 w-7 rounded-full flex items-center justify-center transition-colors opacity-50 hover:opacity-100",
             isDark
               ? "text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
               : "text-gray-400 hover:bg-black/5 hover:text-gray-700",

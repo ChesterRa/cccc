@@ -117,9 +117,8 @@ fn web_model_queue_fields(
     let pending = super::runtime_delivery::pending_sources(home, group, actor, 10_000)?;
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
-    ledger::inspect(&path, |events, positions| {
-        let Some(active_position) = events.iter().position(|event| event.id == active_event_id)
-        else {
+    ledger::inspect(&path, |_events, positions| {
+        let Some(active_position) = positions.get(active_event_id).copied() else {
             return fields;
         };
         let queued = pending

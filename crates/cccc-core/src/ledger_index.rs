@@ -1,5 +1,5 @@
 use cccc_contracts::Event;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -19,7 +19,7 @@ struct LedgerIndex {
     positions: HashMap<String, usize>,
     client_ids: HashMap<ClientKey, usize>,
     relays: HashMap<String, usize>,
-    replied_by: HashMap<String, BTreeSet<String>>,
+    actor_generations: HashMap<String, usize>,
     estimated_bytes: u64,
 }
 
@@ -40,7 +40,7 @@ impl LedgerIndex {
         self.positions.clear();
         self.client_ids.clear();
         self.relays.clear();
-        self.replied_by.clear();
+        self.actor_generations.clear();
         for (position, event) in self.events.iter().enumerate() {
             self.positions.insert(event.id.clone(), position);
             if let Some(client_id) = event
@@ -61,7 +61,7 @@ impl LedgerIndex {
             {
                 self.relays.insert(source_id.to_owned(), position);
             }
-            index_reply(event, &mut self.replied_by);
+            index_actor_generation(event, position, &mut self.actor_generations);
         }
     }
 
@@ -86,7 +86,7 @@ impl LedgerIndex {
         {
             self.relays.insert(source_id.to_owned(), position);
         }
-        index_reply(&event, &mut self.replied_by);
+        index_actor_generation(&event, position, &mut self.actor_generations);
         self.estimated_bytes = self
             .estimated_bytes
             .saturating_add(estimate_event_bytes(&event));
@@ -95,23 +95,24 @@ impl LedgerIndex {
     }
 }
 
-fn index_reply(event: &Event, replied_by: &mut HashMap<String, BTreeSet<String>>) {
-    if event.kind != "chat.message" {
+fn index_actor_generation(
+    event: &Event,
+    position: usize,
+    actor_generations: &mut HashMap<String, usize>,
+) {
+    if event.kind != "actor.add" {
         return;
     }
-    let target = event
+    if let Some(actor_id) = event
         .data
-        .get("reply_to")
-        .and_then(serde_json::Value::as_str);
-    let actor = Some(event.by.as_str());
-    if let (Some(target), Some(actor)) = (target, actor)
-        && !target.is_empty()
-        && !actor.is_empty()
+        .get("actor")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|actor| actor.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|actor_id| !actor_id.is_empty())
     {
-        replied_by
-            .entry(target.to_owned())
-            .or_default()
-            .insert(actor.to_owned());
+        actor_generations.insert(actor_id.to_owned(), position);
     }
 }
 

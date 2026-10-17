@@ -17,8 +17,9 @@ pub fn statuses(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if event_ids.is_empty() {
         return object(json!({"statuses": {}}));
     }
-    let statuses =
-        StatusSnapshot::with(home, &group_id, |snapshot| snapshot.for_events(&event_ids))?;
+    let statuses = StatusSnapshot::with(home, &group_id, &event_ids, |snapshot| {
+        snapshot.for_events(&event_ids)
+    })?;
     object(json!({"statuses": statuses}))
 }
 
@@ -27,15 +28,18 @@ pub(super) fn for_events(
     group_id: &str,
     event_ids: &[String],
 ) -> Result<BTreeMap<String, Value>, OpError> {
-    StatusSnapshot::with(home, group_id, |snapshot| snapshot.for_events(event_ids))
+    StatusSnapshot::with(home, group_id, event_ids, |snapshot| {
+        snapshot.for_events(event_ids)
+    })
 }
 
 pub fn read_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let event_id = required_arg(request, "event_id")?;
-    let read_status = StatusSnapshot::with(home, &group_id, |snapshot| {
+    let event_ids = std::slice::from_ref(&event_id);
+    let read_status = StatusSnapshot::with(home, &group_id, event_ids, |snapshot| {
         snapshot
-            .for_events(std::slice::from_ref(&event_id))
+            .for_events(event_ids)
             .remove(&event_id)
             .and_then(|value| value.get("read_status").cloned())
             .unwrap_or_else(|| json!({}))
@@ -48,7 +52,7 @@ struct StatusSnapshot<'a> {
     events: &'a [Event],
     positions: &'a HashMap<String, usize>,
     cursor_positions: HashMap<String, usize>,
-    actor_generations: HashMap<String, usize>,
+    actor_generations: &'a HashMap<String, usize>,
     reply_positions: ReplyPositions,
     delivery_statuses: DeliveryStatuses,
     cancellation_positions: CancellationPositions,
@@ -60,6 +64,7 @@ impl StatusSnapshot<'_> {
     fn with<T>(
         home: &HomeLayout,
         group_id: &str,
+        event_ids: &[String],
         use_snapshot: impl FnOnce(&StatusSnapshot<'_>) -> T,
     ) -> Result<T, OpError> {
         let group = store(home)?
@@ -67,7 +72,7 @@ impl StatusSnapshot<'_> {
             .map_err(|_| OpError::new("group_not_found", format!("group not found: {group_id}")))?;
         let path = store(home)?.ledger_path(group_id).map_err(OpError::io)?;
         let cursors = inbox::cursors(home, group_id).map_err(OpError::io)?;
-        ledger::inspect_status(&path, |events, positions, _replied_by| {
+        ledger::inspect_status(&path, |events, positions, actor_generations| {
             let cursor_positions = cursors
                 .into_iter()
                 .filter_map(|(actor_id, event_id)| {
@@ -77,14 +82,20 @@ impl StatusSnapshot<'_> {
                         .map(|index| (actor_id, index))
                 })
                 .collect();
-            let actor_generations = inbox::actor_generation_positions(events);
+            let scan_start = event_ids
+                .iter()
+                .filter_map(|event_id| positions.get(event_id.as_str()).copied())
+                .filter(|&pos| events.get(pos).is_some_and(|e| e.kind == "chat.message"))
+                .min()
+                .unwrap_or(events.len());
+            let tail_events = events.get(scan_start..).unwrap_or_default();
             let (delivery_statuses, reply_positions, cancellation_positions) =
-                collect_message_outcomes(events);
-            let connect_receipts = events.iter().filter(|event| event.kind == "chat.cross_group_receipt" && event.by == "system" && event.data.get("transport").and_then(Value::as_str) == Some("connect")).filter_map(|event| {
+                collect_message_outcomes_from(tail_events, scan_start);
+            let connect_receipts = tail_events.iter().filter(|event| event.kind == "chat.cross_group_receipt" && event.by == "system" && event.data.get("transport").and_then(Value::as_str) == Some("connect")).filter_map(|event| {
                 let source = event.data.get("source_event_id")?.as_str()?;
                 Some((source.to_owned(), json!({"state":event.data.get("status"), "error":event.data.get("error"), "remote_event_id":event.data.get("remote_event_id")})))
             }).collect();
-            let retired_bridge = events.iter().filter(|event| cccc_core::group_bridge_retirement::is_retired_receipt(event)).filter_map(|event| event.data.get("source_event_id")?.as_str().map(str::to_owned)).collect();
+            let retired_bridge = tail_events.iter().filter(|event| cccc_core::group_bridge_retirement::is_retired_receipt(event)).filter_map(|event| event.data.get("source_event_id")?.as_str().map(str::to_owned)).collect();
             use_snapshot(&StatusSnapshot {
                 group,
                 events,
@@ -102,11 +113,13 @@ impl StatusSnapshot<'_> {
     }
 
     fn for_events(&self, event_ids: &[String]) -> BTreeMap<String, Value> {
-        let requested = event_ids.iter().map(String::as_str).collect::<HashSet<_>>();
-        self.events
+        event_ids
             .iter()
-            .filter(|event| event.kind == "chat.message" && requested.contains(event.id.as_str()))
-            .map(|event| (event.id.clone(), self.status(event)))
+            .filter_map(|event_id| {
+                let &position = self.positions.get(event_id.as_str())?;
+                let event = self.events.get(position)?;
+                (event.kind == "chat.message").then(|| (event.id.clone(), self.status(event)))
+            })
             .collect()
     }
 
@@ -199,7 +212,7 @@ impl StatusSnapshot<'_> {
             .filter(|actor| actor.id != event.by)
             .filter(|actor| {
                 inbox::actor_generation_contains(
-                    &self.actor_generations,
+                    self.actor_generations,
                     self.positions,
                     &actor.id,
                     event,
@@ -239,13 +252,22 @@ impl StatusSnapshot<'_> {
     }
 }
 
+#[cfg(test)]
 fn collect_message_outcomes(
     events: &[Event],
+) -> (DeliveryStatuses, ReplyPositions, CancellationPositions) {
+    collect_message_outcomes_from(events, 0)
+}
+
+fn collect_message_outcomes_from(
+    events: &[Event],
+    start_position: usize,
 ) -> (DeliveryStatuses, ReplyPositions, CancellationPositions) {
     let mut deliveries = HashMap::<String, HashMap<String, String>>::new();
     let mut replies = HashMap::<String, HashMap<String, usize>>::new();
     let mut cancellations = HashMap::<String, usize>::new();
-    for (position, event) in events.iter().enumerate() {
+    for (offset, event) in events.iter().enumerate() {
+        let position = start_position + offset;
         if event.kind == "chat.message" {
             if let Some(source_event_id) = event
                 .data
