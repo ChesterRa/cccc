@@ -230,28 +230,8 @@ fn url_host(host: &str) -> String {
 }
 
 fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(), OpError> {
-    let normalized = im_state::canonicalize_config(platform, config)
-        .ok_or_else(|| OpError::new("invalid_args", "unsupported IM platform"))?;
-    if platform == "mattermost"
-        && normalized
-            .get("mattermost_url")
-            .and_then(Value::as_str)
-            .and_then(im_state::normalize_mattermost_url)
-            .is_none()
-    {
-        return Err(OpError::new(
-            "invalid_args",
-            "Mattermost site URL is invalid",
-        ));
-    }
-    if !im_state::has_required_credentials(platform, &normalized) {
-        return Err(OpError::new(
-            "invalid_args",
-            format!("missing credentials for {platform}"),
-        ));
-    }
-    *config = normalized;
-    Ok(())
+    im_state::validate_and_normalize_config(platform, config)
+        .map_err(|message| OpError::new("invalid_args", message))
 }
 
 fn preserve_config_policy(
@@ -259,41 +239,11 @@ fn preserve_config_policy(
     config: &mut Map<String, Value>,
     previous: Option<&Map<String, Value>>,
 ) {
-    for key in ["files"] {
-        if !config.contains_key(key)
-            && let Some(value) = previous.and_then(|previous| previous.get(key)).cloned()
-        {
-            config.insert(key.into(), value);
-        }
-    }
-    config.entry("files").or_insert_with(|| {
-        json!({
-            "enabled":true,
-            "max_mb":if matches!(platform, "telegram" | "slack") { 20 } else { 10 }
-        })
-    });
+    im_state::preserve_config_policy(platform, config, previous);
 }
 
 fn status_payload(group_id: &str, value: &Value) -> Value {
-    let config = value.get("config").filter(|value| value.is_object());
-    json!({
-        "group_id":group_id,
-        "configured":config.is_some(),
-        "enabled":value["enabled"].as_bool().unwrap_or(false),
-        "platform":config.and_then(|value|value["platform"].as_str()).unwrap_or(""),
-        "running":value["running"].as_bool().unwrap_or(false),
-        "adapter_available":value["adapter_available"].as_bool().unwrap_or(false),
-        "last_error":value.get("last_error").cloned().unwrap_or(Value::Null),
-        "last_error_at":value.get("last_error_at").cloned().unwrap_or(Value::Null),
-        "last_api_ok_at":value.get("last_api_ok_at").cloned().unwrap_or(Value::Null),
-        "last_api_error":value.get("last_api_error").cloned().unwrap_or(Value::Null),
-        "last_api_error_at":value.get("last_api_error_at").cloned().unwrap_or(Value::Null),
-        "last_send_ok_at":value.get("last_send_ok_at").cloned().unwrap_or(Value::Null),
-        "pid":value.get("pid").cloned().unwrap_or(Value::Null),
-        "subscribers":value.get("subscribers").and_then(Value::as_array).map_or(0,|items| {
-            items.iter().filter(|item| item["subscribed"].as_bool().unwrap_or(true)).count()
-        })
-    })
+    im_state::status_payload(group_id, value)
 }
 fn bind(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
@@ -388,61 +338,22 @@ fn revoke(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map(thread_id_value)
         .unwrap_or_default();
     let (revoked, unsubscribed) = update(home, &group_id, |state| {
-        let mut revoked = false;
-        array(state, "authorized").retain_mut(|item| {
-            if !same_chat_target(item, &chat_id, &thread_id) {
-                return true;
-            }
-            if is_weixin_target(item) {
-                if item["subscribed"].as_bool() != Some(false) {
-                    item["subscribed"] = Value::Bool(false);
-                    revoked = true;
-                }
-                true
-            } else {
-                revoked = true;
-                false
-            }
-        });
-        let mut unsubscribed = false;
-        for subscriber in array(state, "subscribers") {
-            if same_chat_target(subscriber, &chat_id, &thread_id)
-                && subscriber["subscribed"].as_bool().unwrap_or(true)
-            {
-                subscriber["subscribed"] = Value::Bool(false);
-                unsubscribed = true;
-            }
-        }
-        Ok((revoked, unsubscribed))
+        Ok(im_state::revoke_chat_target(
+            state, &chat_id, &thread_id, array,
+        ))
     })?;
     object(json!({"revoked":revoked,"unsubscribed":unsubscribed}))
 }
 
-fn is_weixin_target(item: &Value) -> bool {
-    item["platform"]
-        .as_str()
-        .is_some_and(|platform| platform.eq_ignore_ascii_case("weixin"))
-}
-
 fn same_chat_target(item: &Value, chat_id: &str, thread_id: &str) -> bool {
-    item["chat_id"].as_str() == Some(chat_id)
-        && thread_id_value(&item["thread_id"]) == normalize_thread_id(thread_id)
+    im_state::same_chat_target(item, chat_id, thread_id)
 }
 
 fn thread_id_value(value: &Value) -> String {
     match value {
-        Value::String(value) => normalize_thread_id(value),
-        Value::Number(value) => normalize_thread_id(&value.to_string()),
+        Value::String(value) => im_state::normalize_thread_id_str(value),
+        Value::Number(value) => im_state::normalize_thread_id_str(&value.to_string()),
         _ => String::new(),
-    }
-}
-
-fn normalize_thread_id(value: &str) -> String {
-    let value = value.trim();
-    if value.is_empty() || value == "0" {
-        String::new()
-    } else {
-        value.to_owned()
     }
 }
 

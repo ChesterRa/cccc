@@ -1007,21 +1007,13 @@ export function VoiceSecretaryComposerControl({
   const selectedAudioDeviceLabel = inputDeviceId
     ? audioDeviceLabel("input", inputDeviceId)
     : SERVICE_DEFAULT_MIC_LABEL;
-  useEffect(() => {
-    viewedDocumentPathRef.current = viewedDocumentPath;
-  }, [viewedDocumentPath]);
-
-  useEffect(() => {
-    captureTargetDocumentPathRef.current = captureTargetDocumentPath;
-  }, [captureTargetDocumentPath]);
-
-  useEffect(() => {
-    documentsRef.current = documents;
-    documentTitleDraftRef.current = documentTitleDraft;
-    documentDraftRef.current = documentDraft;
-    documentBaseTitleRef.current = documentBaseTitle;
-    documentBaseContentRef.current = documentBaseContent;
-  }, [documentBaseContent, documentBaseTitle, documentDraft, documentTitleDraft, documents]);
+  viewedDocumentPathRef.current = viewedDocumentPath;
+  captureTargetDocumentPathRef.current = captureTargetDocumentPath;
+  documentsRef.current = documents;
+  documentTitleDraftRef.current = documentTitleDraft;
+  documentDraftRef.current = documentDraft;
+  documentBaseTitleRef.current = documentBaseTitle;
+  documentBaseContentRef.current = documentBaseContent;
 
   const loadDocumentDraft = useCallback((document: AssistantVoiceDocument | null) => {
     const title = String(document?.title || "");

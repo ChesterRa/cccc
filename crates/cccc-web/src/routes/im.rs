@@ -500,22 +500,7 @@ async fn verbose(
 }
 
 fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(), ApiError> {
-    let normalized = im_state::canonicalize_config(platform, config)
-        .ok_or_else(|| ApiError::bad("unsupported IM platform"))?;
-    if platform == "mattermost"
-        && normalized
-            .get("mattermost_url")
-            .and_then(Value::as_str)
-            .and_then(im_state::normalize_mattermost_url)
-            .is_none()
-    {
-        return Err(ApiError::bad("Mattermost site URL is invalid"));
-    }
-    if !im_state::has_required_credentials(platform, &normalized) {
-        return Err(ApiError::bad(format!("missing credentials for {platform}")));
-    }
-    *config = normalized;
-    Ok(())
+    im_state::validate_and_normalize_config(platform, config).map_err(ApiError::bad)
 }
 
 fn preserve_config_policy(
@@ -523,19 +508,7 @@ fn preserve_config_policy(
     config: &mut Map<String, Value>,
     previous: Option<&Map<String, Value>>,
 ) {
-    for key in ["files"] {
-        if !config.contains_key(key)
-            && let Some(value) = previous.and_then(|previous| previous.get(key)).cloned()
-        {
-            config.insert(key.into(), value);
-        }
-    }
-    config.entry("files").or_insert_with(|| {
-        json!({
-            "enabled":true,
-            "max_mb":if matches!(platform, "telegram" | "slack") { 20 } else { 10 }
-        })
-    });
+    im_state::preserve_config_policy(platform, config, previous);
 }
 
 fn load(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
@@ -565,23 +538,7 @@ fn update<T>(
 }
 
 fn status_payload(group_id: &str, value: &Value) -> Value {
-    let config = value.get("config").filter(|value| value.is_object());
-    json!({
-        "group_id":group_id,"configured":config.is_some(),
-        "enabled":value["enabled"].as_bool().unwrap_or(false),
-        "platform":config.and_then(|value|value["platform"].as_str()).unwrap_or(""),
-        "running":value["running"].as_bool().unwrap_or(false),
-        "adapter_available":value["adapter_available"].as_bool().unwrap_or(false),
-        "last_error":value.get("last_error").cloned().unwrap_or(Value::Null),
-        "last_error_at":value.get("last_error_at").cloned().unwrap_or(Value::Null),
-        "last_api_ok_at":value.get("last_api_ok_at").cloned().unwrap_or(Value::Null),
-        "last_api_error":value.get("last_api_error").cloned().unwrap_or(Value::Null),
-        "last_api_error_at":value.get("last_api_error_at").cloned().unwrap_or(Value::Null),
-        "last_send_ok_at":value.get("last_send_ok_at").cloned().unwrap_or(Value::Null),
-        "pid":value.get("pid").cloned().unwrap_or(Value::Null),
-        "subscribers":array_field(value,"subscribers").into_iter()
-            .filter(|item|item["subscribed"].as_bool().unwrap_or(true)).count()
-    })
+    im_state::status_payload(group_id, value)
 }
 
 fn ensure_access(principal: &Principal, group_id: &str) -> Result<(), ApiError> {

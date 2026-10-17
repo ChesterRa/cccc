@@ -46,9 +46,8 @@ pub fn load_workflow(home: &HomeLayout, group_id: &str) -> io::Result<Value> {
 }
 
 fn load_canonical(home: &HomeLayout, group_id: &str) -> io::Result<Value> {
-    migrate_legacy_group_state(home, group_id)?;
     let store = GroupStore::new(home.clone())?;
-    store.load(group_id)?;
+    migrate_legacy_group_state(&store, group_id)?;
     let path = state_path(&store, group_id)?;
     with_exclusive_lock(&lock_path(&path), || {
         load_canonical_unlocked(&path, group_id)
@@ -61,9 +60,8 @@ pub fn update<T>(
     group_id: &str,
     change: impl FnOnce(&mut Map<String, Value>) -> io::Result<T>,
 ) -> io::Result<T> {
-    migrate_legacy_group_state(home, group_id)?;
     let store = GroupStore::new(home.clone())?;
-    store.load(group_id)?;
+    migrate_legacy_group_state(&store, group_id)?;
     let assistant = crate::voice_secretary_settings::assistant_view(home)?;
     let path = state_path(&store, group_id)?;
     with_exclusive_lock(&lock_path(&path), || {
@@ -332,8 +330,7 @@ fn records_array_as_map(value: Option<&Value>, id_field: &str) -> Value {
     Value::Object(records)
 }
 
-fn migrate_legacy_group_state(home: &HomeLayout, group_id: &str) -> io::Result<()> {
-    let store = GroupStore::new(home.clone())?;
+fn migrate_legacy_group_state(store: &GroupStore, group_id: &str) -> io::Result<()> {
     let group = store.load(group_id)?;
     let Some(legacy) = group
         .extra
@@ -342,7 +339,7 @@ fn migrate_legacy_group_state(home: &HomeLayout, group_id: &str) -> io::Result<(
     else {
         return Ok(());
     };
-    let path = state_path(&store, group_id)?;
+    let path = state_path(store, group_id)?;
     with_exclusive_lock(&lock_path(&path), || {
         let mut canonical = load_canonical_unlocked(&path, group_id)?;
         merge_legacy_into_canonical(&mut canonical, legacy);

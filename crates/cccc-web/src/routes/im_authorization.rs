@@ -1,4 +1,5 @@
 use cccc_contracts::utc_now;
+use cccc_core::im_state;
 use serde_json::{Map, Value, json};
 
 pub(super) fn upsert_authorized(state: &mut Map<String, Value>, mut item: Value) -> Value {
@@ -48,35 +49,7 @@ pub(super) fn revoke(
     chat_id: &str,
     thread_id: &str,
 ) -> (bool, bool) {
-    let mut revoked = false;
-    array_mut(state, "authorized").retain_mut(|item| {
-        if !same_target(item, chat_id, thread_id) {
-            return true;
-        }
-        if item["platform"]
-            .as_str()
-            .is_some_and(|platform| platform.eq_ignore_ascii_case("weixin"))
-        {
-            if item["subscribed"].as_bool() != Some(false) {
-                item["subscribed"] = Value::Bool(false);
-                revoked = true;
-            }
-            true
-        } else {
-            revoked = true;
-            false
-        }
-    });
-    let mut unsubscribed = false;
-    for subscriber in array_mut(state, "subscribers") {
-        if same_target(subscriber, chat_id, thread_id)
-            && subscriber["subscribed"].as_bool().unwrap_or(true)
-        {
-            subscriber["subscribed"] = Value::Bool(false);
-            unsubscribed = true;
-        }
-    }
-    (revoked, unsubscribed)
+    im_state::revoke_chat_target(state, chat_id, thread_id, array_mut)
 }
 
 pub(super) fn retain_active(items: &mut Vec<Value>) {
@@ -116,25 +89,11 @@ pub(super) fn enrich_verbose(authorized: &mut [Value], subscribers: &[Value]) {
 }
 
 fn same_target(item: &Value, chat_id: &str, thread_id: &str) -> bool {
-    item["chat_id"].as_str() == Some(chat_id)
-        && self::thread_id(item) == normalize_thread_id(thread_id)
+    im_state::same_chat_target(item, chat_id, thread_id)
 }
 
 fn thread_id(item: &Value) -> String {
-    match item.get("thread_id") {
-        Some(Value::String(value)) => normalize_thread_id(value),
-        Some(Value::Number(value)) => normalize_thread_id(&value.to_string()),
-        _ => String::new(),
-    }
-}
-
-fn normalize_thread_id(value: &str) -> String {
-    let value = value.trim();
-    if value.is_empty() || value == "0" {
-        String::new()
-    } else {
-        value.to_owned()
-    }
+    im_state::item_thread_id(item)
 }
 
 fn array_mut<'a>(state: &'a mut Map<String, Value>, key: &str) -> &'a mut Vec<Value> {
