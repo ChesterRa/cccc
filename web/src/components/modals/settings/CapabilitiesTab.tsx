@@ -169,6 +169,7 @@ export function CapabilitiesTab({
   const selfEvolvingSurface = surface === "selfEvolving";
   const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState("");
+  const manageBusy = busyKey.startsWith("manage");
   const [err, setErr] = useState("");
   const [manageErr, setManageErr] = useState("");
   const [manageNotice, setManageNotice] = useState("");
@@ -188,12 +189,19 @@ export function CapabilitiesTab({
   const [manageUsage, setManageUsage] = useState<CapabilityUsageSummary | null>(null);
   const [manageUsageLoading, setManageUsageLoading] = useState(false);
   const overviewRequestSeqRef = useRef(0);
+  const manageVisitRef = useRef(0);
+  const manageReadSeqRef = useRef(0);
+  const slashStateReadSeqRef = useRef(0);
+  const actionRequestSeqRef = useRef(0);
+  const contextVisitRef = useRef({ groupId, surface, isActive });
   const failedLoadTextRef = useRef("");
 
   failedLoadTextRef.current = t("capabilities.failedLoad");
 
   const closeSelfProposedManager = useCallback(() => {
+    manageVisitRef.current += 1;
     setManageCapabilityId("");
+    setManageActors([]);
     setManageAssignedActorIds([]);
     setManageHiddenActorIds([]);
     setManageUsage(null);
@@ -202,69 +210,101 @@ export function CapabilitiesTab({
     setManageNotice("");
   }, []);
 
-  const load = useCallback(async () => {
-    if (!isActive) return;
-    const requestSeq = overviewRequestSeqRef.current + 1;
-    overviewRequestSeqRef.current = requestSeq;
-    setLoading(true);
-    setErr("");
-    try {
-      const [overviewResp, groupsResp, stateResp] = await Promise.all([
-        api.fetchCapabilityOverview({
-          includeIndexed: true,
-          includeSourceInstances: false,
-          limit: SELF_PROPOSED_OVERVIEW_LIMIT,
-          offset: 0,
-          kind: "skill",
-          policy: "all",
-          sourceId: SELF_PROPOSED_SOURCE_ID,
-        }),
-        selfEvolvingSurface ? Promise.resolve(null) : api.fetchGroups(),
-        selfEvolvingSurface || !String(groupId || "").trim()
-          ? Promise.resolve(null)
-          : api.fetchSlashCommandCapabilityState(String(groupId || "").trim(), "user", {
-              noCache: true,
-            }),
-      ]);
-      if (overviewRequestSeqRef.current != requestSeq) return;
-      if (!overviewResp.ok) {
-        setErr(overviewResp.error?.message || failedLoadTextRef.current);
+  const load = useCallback(
+    async (operationIsCurrent: () => boolean = () => true) => {
+      if (!isActive || !operationIsCurrent()) return;
+      const context = contextVisitRef.current;
+      const requestSeq = ++overviewRequestSeqRef.current;
+      const slashStateReadSeq =
+        !selfEvolvingSurface && String(groupId || "").trim()
+          ? ++slashStateReadSeqRef.current
+          : undefined;
+      const isCurrent = () =>
+        contextVisitRef.current === context && overviewRequestSeqRef.current === requestSeq;
+      setLoading(true);
+      setErr("");
+      try {
+        const [overviewResp, groupsResp, stateResp] = await Promise.all([
+          api.fetchCapabilityOverview({
+            includeIndexed: true,
+            includeSourceInstances: false,
+            limit: SELF_PROPOSED_OVERVIEW_LIMIT,
+            offset: 0,
+            kind: "skill",
+            policy: "all",
+            sourceId: SELF_PROPOSED_SOURCE_ID,
+          }),
+          selfEvolvingSurface ? Promise.resolve(null) : api.fetchGroups(),
+          selfEvolvingSurface || !String(groupId || "").trim()
+            ? Promise.resolve(null)
+            : api.fetchSlashCommandCapabilityState(String(groupId || "").trim(), "user", {
+                noCache: true,
+              }),
+        ]);
+        if (!isCurrent()) return;
+        if (!overviewResp.ok) {
+          setErr(overviewResp.error?.message || failedLoadTextRef.current);
+          setItems([]);
+          setGroups([]);
+        } else {
+          const nextItems = Array.isArray(overviewResp.result?.items)
+            ? overviewResp.result.items
+            : [];
+          setItems(nextItems);
+        }
+        if (groupsResp?.ok) {
+          setGroups(Array.isArray(groupsResp.result?.groups) ? groupsResp.result.groups : []);
+        } else if (!selfEvolvingSurface) {
+          setGroups([]);
+        }
+        if (stateResp?.ok && slashStateReadSeqRef.current === slashStateReadSeq) {
+          setSlashHiddenCapabilityIds(
+            normalizeCapabilityIdList(stateResp.result?.actor_hidden_capabilities),
+          );
+        } else if (
+          !selfEvolvingSurface &&
+          (slashStateReadSeq === undefined || slashStateReadSeqRef.current === slashStateReadSeq)
+        ) {
+          setSlashHiddenCapabilityIds([]);
+        }
+      } catch (e) {
+        if (!isCurrent()) return;
+        setErr(e instanceof Error ? e.message : failedLoadTextRef.current);
         setItems([]);
         setGroups([]);
-      } else {
-        const nextItems = Array.isArray(overviewResp.result?.items)
-          ? overviewResp.result.items
-          : [];
-        setItems(nextItems);
+      } finally {
+        if (isCurrent()) {
+          setLoading(false);
+        }
       }
-      if (groupsResp?.ok) {
-        setGroups(Array.isArray(groupsResp.result?.groups) ? groupsResp.result.groups : []);
-      } else if (!selfEvolvingSurface) {
-        setGroups([]);
-      }
-      if (stateResp?.ok) {
-        setSlashHiddenCapabilityIds(
-          normalizeCapabilityIdList(stateResp.result?.actor_hidden_capabilities),
-        );
-      } else if (!selfEvolvingSurface) {
-        setSlashHiddenCapabilityIds([]);
-      }
-    } catch (e) {
-      if (overviewRequestSeqRef.current != requestSeq) return;
-      setErr(e instanceof Error ? e.message : failedLoadTextRef.current);
-      setItems([]);
-      setGroups([]);
-    } finally {
-      if (overviewRequestSeqRef.current === requestSeq) {
-        setLoading(false);
-      }
-    }
-  }, [groupId, isActive, selfEvolvingSurface]);
+    },
+    [groupId, isActive, selfEvolvingSurface],
+  );
 
   useEffect(() => {
+    if (
+      contextVisitRef.current.groupId !== groupId ||
+      contextVisitRef.current.surface !== surface ||
+      contextVisitRef.current.isActive !== isActive
+    ) {
+      contextVisitRef.current = { groupId, surface, isActive };
+      overviewRequestSeqRef.current += 1;
+      actionRequestSeqRef.current += 1;
+      setLoading(false);
+      setBusyKey("");
+      setErr("");
+      setSlashHiddenCapabilityIds([]);
+      closeSelfProposedManager();
+    }
     if (!isActive) return;
     void load();
-  }, [isActive, load]);
+    return () => {
+      contextVisitRef.current = { ...contextVisitRef.current };
+      overviewRequestSeqRef.current += 1;
+      manageVisitRef.current += 1;
+      actionRequestSeqRef.current += 1;
+    };
+  }, [closeSelfProposedManager, groupId, isActive, load, surface]);
 
   const selfProposedCandidates = useMemo(() => {
     const gid = String(groupId || "").trim();
@@ -467,6 +507,10 @@ export function CapabilitiesTab({
       return;
     }
     if (!capId || !canManageSkillAssignments(row)) return;
+    const context = contextVisitRef.current;
+    const isCurrentContext = () => contextVisitRef.current === context;
+    const actionSeq = ++actionRequestSeqRef.current;
+    const isCurrentAction = () => actionRequestSeqRef.current === actionSeq;
     const nextHidden = nextSlashCommandHiddenCapabilities(
       slashHiddenCapabilityIds,
       capId,
@@ -482,33 +526,34 @@ export function CapabilitiesTab({
         reason: "web_capabilities_slash_visibility",
       });
       if (!resp.ok) {
-        setErr(resp.error?.message || t("capabilities.failedSlashVisibility"));
-        await refreshSlashHiddenState();
+        if (isCurrentContext()) {
+          setErr(resp.error?.message || t("capabilities.failedSlashVisibility"));
+        }
+        await refreshSlashHiddenState(isCurrentContext);
         return;
       }
-      const stateResp = await api.fetchSlashCommandCapabilityState(gid, "user", { noCache: true });
-      if (stateResp.ok) {
-        setSlashHiddenCapabilityIds(
-          normalizeCapabilityIdList(stateResp.result?.actor_hidden_capabilities),
-        );
-      }
       publishCapabilityChanged(gid);
+      await refreshSlashHiddenState(isCurrentContext);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : t("capabilities.failedSlashVisibility"));
-      await refreshSlashHiddenState();
+      if (isCurrentContext()) {
+        setErr(e instanceof Error ? e.message : t("capabilities.failedSlashVisibility"));
+      }
+      await refreshSlashHiddenState(isCurrentContext);
     } finally {
-      setBusyKey("");
+      if (isCurrentAction()) setBusyKey("");
     }
   };
 
-  const refreshSlashHiddenState = async () => {
+  const refreshSlashHiddenState = async (isCurrent: () => boolean = () => true) => {
+    if (!isCurrent()) return;
     const gid = String(groupId || "").trim();
     if (!gid) {
-      setSlashHiddenCapabilityIds([]);
+      if (isCurrent()) setSlashHiddenCapabilityIds([]);
       return;
     }
+    const seq = ++slashStateReadSeqRef.current;
     const resp = await api.fetchSlashCommandCapabilityState(gid, "user", { noCache: true });
-    if (resp.ok) {
+    if (isCurrent() && slashStateReadSeqRef.current === seq && resp.ok) {
       setSlashHiddenCapabilityIds(
         normalizeCapabilityIdList(resp.result?.actor_hidden_capabilities),
       );
@@ -526,6 +571,13 @@ export function CapabilitiesTab({
       setManageUsageLoading(false);
       return;
     }
+    const context = contextVisitRef.current;
+    const visit = manageVisitRef.current;
+    const seq = ++manageReadSeqRef.current;
+    const isCurrent = () =>
+      contextVisitRef.current === context &&
+      manageVisitRef.current === visit &&
+      manageReadSeqRef.current === seq;
     setManageUsageLoading(true);
     try {
       const [actorsResp, usageResp] = await Promise.all([
@@ -534,60 +586,33 @@ export function CapabilitiesTab({
           ? api.fetchGroupCapabilityState(gid, "user", { capabilityId: capId, noCache: true })
           : Promise.resolve(null),
       ]);
+      if (!isCurrent()) return;
       const actors =
         actorsResp.ok && Array.isArray(actorsResp.result?.actors) ? actorsResp.result.actors : [];
       const usage = usageResp && usageResp.ok ? usageResp.result?.capability_usage || null : null;
-      setManageActors(actors);
-      setManageUsage(usage);
-      setManageAssignedActorIds(deriveManagedAssignedActorIds(actors, capId, usage));
-      setManageHiddenActorIds(deriveManagedHiddenActorIds(actors, capId, usage));
+      if (actorsResp.ok) {
+        setManageActors(actors);
+        setManageAssignedActorIds(deriveManagedAssignedActorIds(actors, capId, usage));
+        setManageHiddenActorIds(deriveManagedHiddenActorIds(actors, capId, usage));
+      }
+      if (usageResp?.ok) setManageUsage(usage);
       if (!actorsResp.ok) {
         setManageErr(actorsResp.error?.message || t("capabilities.manageActorLoadFailed"));
       } else if (usageResp && !usageResp.ok) {
         setManageErr(usageResp.error?.message || t("capabilities.manageUsageLoadFailed"));
       }
     } catch (e) {
-      setManageActors([]);
-      setManageAssignedActorIds([]);
-      setManageHiddenActorIds([]);
-      setManageUsage(null);
+      if (!isCurrent()) return;
       setManageErr(e instanceof Error ? e.message : t("capabilities.manageUsageLoadFailed"));
     } finally {
-      setManageUsageLoading(false);
-    }
-  };
-
-  const refreshManageUsage = async (capabilityId: string = manageCapabilityId) => {
-    const gid = String(groupId || "").trim();
-    const capId = String(capabilityId || "").trim();
-    if (!gid || !capId) {
-      setManageUsage(null);
-      setManageUsageLoading(false);
-      return;
-    }
-    setManageUsageLoading(true);
-    try {
-      const resp = await api.fetchGroupCapabilityState(gid, "user", {
-        capabilityId: capId,
-        noCache: true,
-      });
-      if (!resp.ok) {
-        setManageUsage(null);
-        setManageErr(resp.error?.message || t("capabilities.manageUsageLoadFailed"));
-        return;
-      }
-      setManageUsage(resp.result?.capability_usage || null);
-    } catch (e) {
-      setManageUsage(null);
-      setManageErr(e instanceof Error ? e.message : t("capabilities.manageUsageLoadFailed"));
-    } finally {
-      setManageUsageLoading(false);
+      if (isCurrent()) setManageUsageLoading(false);
     }
   };
 
   const openSkillAssignmentManager = (row: CapabilityOverviewItem) => {
     const capId = String(row.capability_id || "").trim();
     if (!capId) return;
+    manageVisitRef.current += 1;
     setManageCapabilityId(capId);
     setManageName(String(row.name || capId));
     setManageDescription(String(row.description_short || ""));
@@ -605,6 +630,10 @@ export function CapabilitiesTab({
     );
     const reasons = Array.isArray(row.qualification_reasons) ? row.qualification_reasons : [];
     setManageQualificationReason(String(row.blocked_reason || reasons[0] || ""));
+    setManageActors([]);
+    setManageAssignedActorIds([]);
+    setManageHiddenActorIds([]);
+    setManageUsage(null);
     setManageErr("");
     setManageNotice("");
     void refreshManageAssignmentState(capId);
@@ -661,6 +690,14 @@ export function CapabilitiesTab({
       qualification_reasons: qualificationReasons,
       capsule_text: capsuleText,
     };
+    const context = contextVisitRef.current;
+    const visit = manageVisitRef.current;
+    const actionSeq = ++actionRequestSeqRef.current;
+    const isCurrentContext = () => contextVisitRef.current === context;
+    const isCurrent = () =>
+      isCurrentContext() &&
+      manageVisitRef.current === visit &&
+      actionRequestSeqRef.current === actionSeq;
     setBusyKey(`manage:${capId}`);
     setManageErr("");
     setManageNotice("");
@@ -672,32 +709,38 @@ export function CapabilitiesTab({
         reason: "web_self_proposed_manage",
       });
       if (!resp.ok) {
-        setManageErr(resp.error?.message || t("capabilities.manageSaveFailed"));
+        if (isCurrent()) setManageErr(resp.error?.message || t("capabilities.manageSaveFailed"));
         return;
       }
-      const savedRecord =
-        resp.result?.record && typeof resp.result.record === "object"
-          ? (resp.result.record as Record<string, unknown>)
-          : {};
-      const savedQualification = String(savedRecord.qualification_status || "")
-        .trim()
-        .toLowerCase();
-      if (savedQualification === "blocked" || savedQualification === "qualified") {
-        setManageQualificationStatus(savedQualification);
+      if (isCurrent()) {
+        const savedRecord =
+          resp.result?.record && typeof resp.result.record === "object"
+            ? (resp.result.record as Record<string, unknown>)
+            : {};
+        const savedQualification = String(savedRecord.qualification_status || "")
+          .trim()
+          .toLowerCase();
+        if (savedQualification === "blocked" || savedQualification === "qualified") {
+          setManageQualificationStatus(savedQualification);
+        }
+        const savedReasons = Array.isArray(savedRecord.qualification_reasons)
+          ? savedRecord.qualification_reasons
+              .map((item) => String(item || "").trim())
+              .filter(Boolean)
+          : [];
+        if (savedReasons[0]) setManageQualificationReason(savedReasons[0]);
+        const savedCapsuleText = String(savedRecord.capsule_text || "").trim();
+        if (savedCapsuleText) setManageCapsuleText(savedCapsuleText);
+        setManageNotice(t(noticeKey));
       }
-      const savedReasons = Array.isArray(savedRecord.qualification_reasons)
-        ? savedRecord.qualification_reasons.map((item) => String(item || "").trim()).filter(Boolean)
-        : [];
-      if (savedReasons[0]) setManageQualificationReason(savedReasons[0]);
-      const savedCapsuleText = String(savedRecord.capsule_text || "").trim();
-      if (savedCapsuleText) setManageCapsuleText(savedCapsuleText);
-      setManageNotice(t(noticeKey));
-      await load();
-      await refreshManageUsage(capId);
+      // Content and qualification updates leave assignment and usage records unchanged.
+      await load(isCurrentContext);
     } catch (e) {
-      setManageErr(e instanceof Error ? e.message : t("capabilities.manageSaveFailed"));
+      if (isCurrent()) {
+        setManageErr(e instanceof Error ? e.message : t("capabilities.manageSaveFailed"));
+      }
     } finally {
-      setBusyKey("");
+      if (actionRequestSeqRef.current === actionSeq) setBusyKey("");
     }
   };
 
@@ -727,13 +770,25 @@ export function CapabilitiesTab({
       return;
     }
     if (!capId) return;
+    const context = contextVisitRef.current;
+    const visit = manageVisitRef.current;
+    const actionSeq = ++actionRequestSeqRef.current;
+    const isCurrentContext = () => contextVisitRef.current === context;
+    const isCurrent = () =>
+      isCurrentContext() &&
+      manageVisitRef.current === visit &&
+      actionRequestSeqRef.current === actionSeq;
+    const reportError = (message: string) => {
+      if (isCurrent()) setManageErr(message);
+    };
     setBusyKey(`manage-use:${capId}`);
-    setManageErr("");
+    reportError("");
     setManageNotice("");
     try {
+      // Closing the manager only ends UI updates, not the submitted writes or rollback.
       const actorsResp = await api.fetchActors(gid, false, { noCache: true });
       if (!actorsResp.ok) {
-        setManageErr(actorsResp.error?.message || t("capabilities.manageActorLoadFailed"));
+        reportError(actorsResp.error?.message || t("capabilities.manageActorLoadFailed"));
         return;
       }
       const actors = Array.isArray(actorsResp.result?.actors) ? actorsResp.result.actors : [];
@@ -750,7 +805,7 @@ export function CapabilitiesTab({
         reason: "web_self_proposed_actor_assignment",
       });
       if (!userSessionResp.ok) {
-        setManageErr(
+        reportError(
           userSessionResp.error?.message || t("capabilities.manageActorAssignmentsFailed"),
         );
         return;
@@ -777,14 +832,12 @@ export function CapabilitiesTab({
             reason: "web_self_proposed_actor_assignment",
           });
           if (!actorResp.ok) {
-            setManageErr(
-              actorResp.error?.message || t("capabilities.manageActorAssignmentsFailed"),
-            );
+            reportError(actorResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
             return;
           }
           if (!capabilityEnableResultSucceeded(actorResp.result)) {
             const reason = capabilityEnableResultReason(actorResp.result);
-            setManageErr(
+            reportError(
               reason
                 ? t("capabilities.manageActorActivationFailedWithReason", { reason })
                 : t("capabilities.manageActorActivationFailed"),
@@ -803,7 +856,7 @@ export function CapabilitiesTab({
                 actorId: aid,
                 reason: "web_self_proposed_actor_assignment_rollback",
               });
-              setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+              reportError(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;
             }
           } else if (hasHidden !== shouldHide) {
@@ -811,7 +864,7 @@ export function CapabilitiesTab({
               capabilityHidden: nextHidden,
             });
             if (!resp.ok) {
-              setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+              reportError(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;
             }
           }
@@ -822,7 +875,7 @@ export function CapabilitiesTab({
               capabilityHidden: nextHidden,
             });
             if (!resp.ok) {
-              setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+              reportError(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;
             }
           } else if (hasHidden !== shouldHide) {
@@ -830,7 +883,7 @@ export function CapabilitiesTab({
               capabilityHidden: nextHidden,
             });
             if (!resp.ok) {
-              setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+              reportError(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;
             }
           }
@@ -841,9 +894,7 @@ export function CapabilitiesTab({
             reason: "web_self_proposed_actor_assignment",
           });
           if (!actorResp.ok) {
-            setManageErr(
-              actorResp.error?.message || t("capabilities.manageActorAssignmentsFailed"),
-            );
+            reportError(actorResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
             return;
           }
           const sessionResp = await api.enableGroupCapability(gid, capId, {
@@ -853,7 +904,7 @@ export function CapabilitiesTab({
             reason: "web_self_proposed_actor_assignment",
           });
           if (!sessionResp.ok) {
-            setManageErr(
+            reportError(
               sessionResp.error?.message || t("capabilities.manageActorAssignmentsFailed"),
             );
             return;
@@ -868,17 +919,19 @@ export function CapabilitiesTab({
           reason: "web_self_proposed_actor_assignment",
         });
         if (!groupResp.ok) {
-          setManageErr(groupResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+          reportError(groupResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
           return;
         }
       }
-      setManageNotice(t("capabilities.manageActorAssignmentsSaved"));
-      await refreshManageAssignmentState(capId);
-      await load();
+      if (isCurrent()) {
+        setManageNotice(t("capabilities.manageActorAssignmentsSaved"));
+        await refreshManageAssignmentState(capId);
+      }
+      await load(isCurrentContext);
     } catch (e) {
-      setManageErr(e instanceof Error ? e.message : t("capabilities.manageActorAssignmentsFailed"));
+      reportError(e instanceof Error ? e.message : t("capabilities.manageActorAssignmentsFailed"));
     } finally {
-      setBusyKey("");
+      if (actionRequestSeqRef.current === actionSeq) setBusyKey("");
     }
   };
 
@@ -892,6 +945,14 @@ export function CapabilitiesTab({
     if (!capId) return;
     if (typeof window !== "undefined" && !window.confirm(t("capabilities.manageRemoveConfirm")))
       return;
+    const context = contextVisitRef.current;
+    const visit = manageVisitRef.current;
+    const actionSeq = ++actionRequestSeqRef.current;
+    const isCurrentContext = () => contextVisitRef.current === context;
+    const isCurrent = () =>
+      isCurrentContext() &&
+      manageVisitRef.current === visit &&
+      actionRequestSeqRef.current === actionSeq;
     setBusyKey(`manage-remove:${capId}`);
     setManageErr("");
     setManageNotice("");
@@ -901,15 +962,17 @@ export function CapabilitiesTab({
         reason: "web_self_proposed_uninstall",
       });
       if (!resp.ok) {
-        setManageErr(resp.error?.message || t("capabilities.manageRemoveFailed"));
+        if (isCurrent()) setManageErr(resp.error?.message || t("capabilities.manageRemoveFailed"));
         return;
       }
-      closeSelfProposedManager();
-      await load();
+      if (isCurrent()) closeSelfProposedManager();
+      await load(isCurrentContext);
     } catch (e) {
-      setManageErr(e instanceof Error ? e.message : t("capabilities.manageRemoveFailed"));
+      if (isCurrent()) {
+        setManageErr(e instanceof Error ? e.message : t("capabilities.manageRemoveFailed"));
+      }
     } finally {
-      setBusyKey("");
+      if (actionRequestSeqRef.current === actionSeq) setBusyKey("");
     }
   };
 
@@ -921,7 +984,7 @@ export function CapabilitiesTab({
     return (
       <SlashCommandVisibilityButton
         hidden={hidden}
-        busy={busyKey === `slash-visible:${capId}`}
+        busy={manageBusy || busyKey === `slash-visible:${capId}`}
         visibleLabel={t("capabilities.slashCommandVisible")}
         hiddenLabel={t("capabilities.slashCommandHidden")}
         showActionLabel={t("capabilities.showInSlashCommands")}
@@ -1075,6 +1138,7 @@ export function CapabilitiesTab({
                       <button
                         type="button"
                         className={secondaryButtonClass("sm")}
+                        disabled={manageBusy}
                         onClick={() => openSkillAssignmentManager(row)}
                       >
                         {t("capabilities.selfProposedManage")}
@@ -1140,6 +1204,7 @@ export function CapabilitiesTab({
                             <button
                               type="button"
                               className={secondaryButtonClass("sm")}
+                              disabled={manageBusy}
                               onClick={() => openSkillAssignmentManager(row)}
                             >
                               {t("capabilities.selfProposedManage")}

@@ -115,10 +115,12 @@ export function ActorProfilesTab({
   const [editorOpen, setEditorOpen] = useState(false);
   const editorVisit = useRef(0);
   const listVisit = useRef(0);
+  const usageVisit = useRef(0);
   useEffect(
     () => () => {
       editorVisit.current += 1;
       listVisit.current += 1;
+      usageVisit.current += 1;
     },
     [],
   );
@@ -168,9 +170,10 @@ export function ActorProfilesTab({
     [editor.runtime],
   );
 
-  const ensureSessionContext = async () => {
+  const ensureSessionContext = async (isCurrent: () => boolean = () => true) => {
     try {
       const resp = await api.fetchWebAccessSession();
+      if (!isCurrent()) return null;
       if (!resp.ok) {
         setSessionUserId("");
         return null;
@@ -181,7 +184,7 @@ export function ActorProfilesTab({
       setSessionUserId(userId);
       return { userId, signedIn };
     } catch {
-      setSessionUserId("");
+      if (isCurrent()) setSessionUserId("");
       return null;
     }
   };
@@ -488,18 +491,19 @@ export function ActorProfilesTab({
 
   const loadProfiles = async () => {
     const visit = ++listVisit.current;
+    const isCurrent = () => listVisit.current === visit;
     setBusy(true);
     setErr("");
     try {
-      const session = await ensureSessionContext();
-      if (visit !== listVisit.current) return;
+      const session = await ensureSessionContext(isCurrent);
+      if (!isCurrent()) return;
       if (isMyScope && !(session?.signedIn && session.userId)) {
         setProfiles([]);
         setErr(t("actorProfiles.myProfilesLoginRequired"));
         return;
       }
       const resp = await api.listProfiles(isMyScope ? "my" : "global");
-      if (visit !== listVisit.current) return;
+      if (!isCurrent()) return;
       if (resp.ok) {
         setProfiles(Array.isArray(resp.result?.profiles) ? resp.result.profiles : []);
       } else {
@@ -508,12 +512,12 @@ export function ActorProfilesTab({
         );
       }
     } catch (e) {
-      if (visit === listVisit.current) {
+      if (isCurrent()) {
         console.error("Failed to load actor profiles:", e);
         setErr(t("actorProfiles.loadFailed"));
       }
     } finally {
-      if (visit === listVisit.current) setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
@@ -566,18 +570,42 @@ export function ActorProfilesTab({
     setSecretMasks(masked);
   };
 
+  const listContextRef = useRef({ scope });
   useEffect(() => {
+    const scopeChanged = listContextRef.current.scope !== scope;
+    listContextRef.current = { scope };
+    if (scopeChanged) {
+      listVisit.current += 1;
+      usageVisit.current += 1;
+      setProfiles([]);
+      setErr("");
+      setBusy(false);
+      setUsageBusyProfileId("");
+      setSessionUserId("");
+      if (!editorOnly) {
+        editorVisit.current += 1;
+        setEditorBusy(false);
+        setEditorErr("");
+        setSecretKeys([]);
+        setSecretMasks({});
+        setDuplicateSourceProfileId("");
+        setEditorOpen(false);
+      }
+    }
     if (isActive && !editorOnly) {
       void loadProfiles();
     }
     return () => {
+      listContextRef.current = { scope };
       listVisit.current += 1;
+      usageVisit.current += 1;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, editorOnly, scope]);
 
   const openNew = () => {
     editorVisit.current += 1;
+    setEditorBusy(false);
     setEditor(buildEditor());
     setSecretKeys([]);
     setSecretMasks({});
@@ -591,6 +619,7 @@ export function ActorProfilesTab({
 
   const openEdit = async (profile: ActorProfile) => {
     const visit = ++editorVisit.current;
+    setEditorBusy(false);
     setEditor(buildEditor(profile));
     setSecretKeys([]);
     setSecretMasks({});
@@ -605,6 +634,7 @@ export function ActorProfilesTab({
 
   const openDuplicate = async (profile: ActorProfile) => {
     const visit = ++editorVisit.current;
+    setEditorBusy(false);
     const sourceId = String(profile.id || "").trim();
     setEditor({
       ...buildEditor(profile),
@@ -631,13 +661,15 @@ export function ActorProfilesTab({
       setErr(t("actorProfiles.myProfilesLoginRequired"));
       return;
     }
-    setBusy(true);
+    const context = listContextRef.current;
+    const isCurrent = () => listContextRef.current === context;
     setErr("");
     try {
       const resp = await api.deleteProfile(String(profile.id || ""), {
         scope: profileScope,
         ownerId,
       });
+      if (!isCurrent()) return;
       if (!resp.ok) {
         const code = String(resp.error?.code || "").trim();
         if (code === "profile_in_use") {
@@ -668,22 +700,25 @@ export function ActorProfilesTab({
               "actorProfiles.deleteInUseForce",
             )}`,
           );
-          if (!forceConfirm) return;
+          if (!forceConfirm || !isCurrent()) return;
           const forceResp = await api.deleteProfile(String(profile.id || ""), {
             scope: profileScope,
             ownerId,
             forceDetach: true,
           });
           if (!forceResp.ok) {
-            setErr(
-              scopeRequestError(
-                forceResp.error?.code,
-                forceResp.error?.message || t("actorProfiles.deleteFailed"),
-              ),
-            );
+            if (isCurrent()) {
+              setErr(
+                scopeRequestError(
+                  forceResp.error?.code,
+                  forceResp.error?.message || t("actorProfiles.deleteFailed"),
+                ),
+              );
+            }
             return;
           }
-          await loadProfiles();
+          // Detachment changes shared Actor state even after this page has closed.
+          if (isCurrent()) await loadProfiles();
           await refreshAllGroupsActors();
           return;
         }
@@ -697,16 +732,18 @@ export function ActorProfilesTab({
       }
       await loadProfiles();
     } catch (e) {
-      console.error(`Failed to delete actor profile id=${String(profile.id || "")}:`, e);
-      setErr(t("actorProfiles.deleteFailed"));
-    } finally {
-      setBusy(false);
+      if (isCurrent()) {
+        console.error(`Failed to delete actor profile id=${String(profile.id || "")}:`, e);
+        setErr(t("actorProfiles.deleteFailed"));
+      }
     }
   };
 
   const handleShowUsage = async (profile: ActorProfile) => {
     const profileId = String(profile.id || "").trim();
     if (!profileId) return;
+    const usageSeq = ++usageVisit.current;
+    const isCurrent = () => usageVisit.current === usageSeq;
     setUsageBusyProfileId(profileId);
     setErr("");
     try {
@@ -714,6 +751,7 @@ export function ActorProfilesTab({
         scope: profileScope,
         ownerId: isMyScope ? sessionUserId.trim() : "",
       });
+      if (!isCurrent()) return;
       if (!resp.ok) {
         setErr(
           scopeRequestError(
@@ -747,10 +785,12 @@ export function ActorProfilesTab({
         .join("\n\n");
       window.alert(lines ? `${title}\n\n${lines}` : `${title}\n\n${t("actorProfiles.usageEmpty")}`);
     } catch (e) {
-      console.error(`Failed to load usage for actor profile id=${profileId}:`, e);
-      setErr(t("actorProfiles.usageLoadFailed"));
+      if (isCurrent()) {
+        console.error(`Failed to load usage for actor profile id=${profileId}:`, e);
+        setErr(t("actorProfiles.usageLoadFailed"));
+      }
     } finally {
-      setUsageBusyProfileId("");
+      if (isCurrent()) setUsageBusyProfileId("");
     }
   };
 
@@ -765,6 +805,8 @@ export function ActorProfilesTab({
       setEditorErr(t("actorProfiles.myProfilesLoginRequired"));
       return;
     }
+    const visit = editorVisit.current;
+    const isCurrentEditor = () => editorVisit.current === visit;
     setEditorBusy(true);
     setEditorErr("");
     try {
@@ -830,29 +872,34 @@ export function ActorProfilesTab({
       const expectedRevision = editor.id ? editor.revision : undefined;
       const upsertResp = await api.saveProfile(payload, expectedRevision);
       if (!upsertResp.ok) {
-        setEditorErr(
-          scopeRequestError(
-            upsertResp.error?.code,
-            upsertResp.error?.message || t("actorProfiles.saveFailed"),
-          ),
-        );
+        if (isCurrentEditor()) {
+          setEditorErr(
+            scopeRequestError(
+              upsertResp.error?.code,
+              upsertResp.error?.message || t("actorProfiles.saveFailed"),
+            ),
+          );
+        }
         return;
       }
       const profile = upsertResp.result?.profile;
       const profileId = String(profile?.id || "").trim();
       if (!profileId) {
-        setEditorErr(t("actorProfiles.saveFailed"));
+        if (isCurrentEditor()) setEditorErr(t("actorProfiles.saveFailed"));
         return;
       }
 
       // Configuration is committed even if a subsequent secret operation fails.
       // Keep the draft, but retry against this exact Profile and revision.
-      setEditor((current) => ({
-        ...current,
-        id: profileId,
-        revision: Number(profile?.revision || 0),
-      }));
+      if (isCurrentEditor()) {
+        setEditor((current) => ({
+          ...current,
+          id: profileId,
+          revision: Number(profile?.revision || 0),
+        }));
+      }
 
+      // Finish the submitted writes for this Profile even if its editor has departed.
       if (copyFromProfileId && copyFromProfileId !== profileId) {
         const copyResp = await api.copyProfilePrivateEnvFromProfile(
           profileId,
@@ -860,12 +907,14 @@ export function ActorProfilesTab({
           profileLookup,
         );
         if (!copyResp.ok) {
-          setEditorErr(copyResp.error?.message || t("actorProfiles.saveSecretsFailed"));
+          if (isCurrentEditor()) {
+            setEditorErr(copyResp.error?.message || t("actorProfiles.saveSecretsFailed"));
+          }
           return;
         }
       }
 
-      if (copyFromProfileId) setDuplicateSourceProfileId("");
+      if (copyFromProfileId && isCurrentEditor()) setDuplicateSourceProfileId("");
       if (hasSecretOps) {
         const secretResp = await api.updateProfilePrivateEnv(
           profileId,
@@ -875,19 +924,26 @@ export function ActorProfilesTab({
           profileLookup,
         );
         if (!secretResp.ok) {
-          setEditorErr(secretResp.error?.message || t("actorProfiles.saveSecretsFailed"));
+          if (isCurrentEditor()) {
+            setEditorErr(secretResp.error?.message || t("actorProfiles.saveSecretsFailed"));
+          }
           return;
         }
       }
-      await loadProfiles();
+      if (!isCurrentEditor()) return;
+      if (!editorOnly) {
+        await loadProfiles();
+      }
+      if (!isCurrentEditor()) return;
       setDuplicateSourceProfileId("");
       editorVisit.current += 1;
+      setEditorBusy(false);
       setEditorOpen(false);
       onSaved?.(profile);
     } catch {
-      setEditorErr(t("actorProfiles.saveFailed"));
+      if (isCurrentEditor()) setEditorErr(t("actorProfiles.saveFailed"));
     } finally {
-      setEditorBusy(false);
+      if (isCurrentEditor()) setEditorBusy(false);
     }
   };
 

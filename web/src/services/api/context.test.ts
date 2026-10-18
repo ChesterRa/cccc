@@ -4,6 +4,8 @@ import {
   cancelReplyRequest,
   deliverMessage,
   fetchSlashCommandCapabilityState,
+  fetchGroupCapabilityState,
+  updateGroupCapabilityVisibility,
   replyMessage,
   sendCrossGroupMessage,
   sendMessage,
@@ -42,6 +44,51 @@ describe("capability state API helpers", () => {
     expect(url).toContain("actor_id=user");
     expect(url).toContain("view=slash_commands");
   });
+
+  it.each([
+    ["full", false],
+    ["full", true],
+    ["slash", false],
+    ["slash", true],
+  ] as const)(
+    "starts a fresh %s read after a visibility write (noCache=%s)",
+    async (view, noCache) => {
+      vi.stubGlobal("window", { location: { search: "" } });
+      let finishOld!: (response: Response) => void;
+      const old = new Promise<Response>((resolve) => {
+        finishOld = resolve;
+      });
+      let reads = 0;
+      const state = (hidden: string[]) =>
+        new Response(JSON.stringify({ ok: true, result: { actor_hidden_capabilities: hidden } }));
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        if (String(input).endsWith("/capabilities/visibility")) {
+          return new Response(JSON.stringify({ ok: true, result: {} }));
+        }
+        reads += 1;
+        return reads === 1 ? old : state(["skill:fixture:first"]);
+      });
+      const fetchState = () =>
+        view === "slash"
+          ? fetchSlashCommandCapabilityState("g-visibility", "user", { noCache })
+          : fetchGroupCapabilityState("g-visibility", "user", { noCache });
+      const pending = fetchState();
+      try {
+        await updateGroupCapabilityVisibility("g-visibility", "skill:fixture:first", {
+          hidden: true,
+        });
+        const refreshed = fetchState();
+        expect(reads).toBe(2);
+        expect(await refreshed).toMatchObject({
+          ok: true,
+          result: { actor_hidden_capabilities: ["skill:fixture:first"] },
+        });
+      } finally {
+        finishOld(state([]));
+        await pending;
+      }
+    },
+  );
 });
 
 describe("reply message API helper", () => {

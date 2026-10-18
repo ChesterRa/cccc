@@ -22,6 +22,7 @@ import {
   ApiResponse,
   capabilityStateRequestKey,
   clearContextRequest,
+  clearSharedReadRequest,
   contextRequestKey,
   FetchContextOptions,
   normalizeContext,
@@ -344,7 +345,7 @@ export async function updateGroupCapabilityVisibility(
   capabilityId: string,
   opts?: { hidden?: boolean; actorId?: string; reason?: string },
 ) {
-  return apiJson<Record<string, unknown>>(
+  const response = await apiJson<Record<string, unknown>>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/visibility`,
     {
       method: "POST",
@@ -356,6 +357,13 @@ export async function updateGroupCapabilityVisibility(
       }),
     },
   );
+  // A read started before this write cannot reconcile its completed outcome.
+  for (const view of ["", "slash_commands"]) {
+    const key = capabilityStateRequestKey(groupId, opts?.actorId || "user", "", view);
+    clearSharedReadRequest(key);
+    clearSharedReadRequest(`${key}:no-cache`);
+  }
+  return response;
 }
 
 export async function useGroupCapability(

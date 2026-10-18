@@ -10,7 +10,19 @@ const api = vi.hoisted(() => ({
   exportGroupCopy: vi.fn(),
   importGroupCopy: vi.fn(),
 }));
+const groupStore = vi.hoisted(() => ({
+  selectedGroupId: null as string | null,
+  refreshGroups: vi.fn(),
+  setSelectedGroupId: vi.fn(),
+  loadGroup: vi.fn(),
+}));
 vi.mock("../../../services/api", () => api);
+vi.mock("../../../stores/useGroupStore", () => ({
+  useGroupStore: Object.assign(
+    (selector: (state: typeof groupStore) => unknown) => selector(groupStore),
+    { getState: () => groupStore },
+  ),
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 import { CopyGroupsTab } from "./CopyGroupsTab";
 
@@ -85,6 +97,8 @@ it("keeps the last chosen directory when earlier navigation finishes late", asyn
 async function mountTab(groupId?: string) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.clearAllMocks();
+  groupStore.selectedGroupId = groupId || null;
+  groupStore.refreshGroups.mockResolvedValue(undefined);
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -97,7 +111,19 @@ async function mountTab(groupId?: string) {
     await act(async () => root.unmount());
     host.remove();
   };
-  return { host, button, unmount };
+  const selectGroup = async (nextGroupId: string) => {
+    groupStore.selectedGroupId = nextGroupId;
+    await act(async () => root.render(<CopyGroupsTab isDark={false} groupId={nextGroupId} />));
+  };
+  return { host, button, unmount, selectGroup };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 async function choosePackage(host: HTMLElement, file: File) {
@@ -133,6 +159,29 @@ it("exports from the export card's actions and only inside a group", async () =>
   expect(api.exportGroupCopy).toHaveBeenCalledWith("g1");
   expect(inside.host.querySelector('[role="alert"]')?.textContent).toBe("nope");
   await inside.unmount();
+});
+
+it("delivers an accepted export after the settings page closes", async () => {
+  const exported = deferred<{ ok: true; result: { filename: string; blob: Blob } }>();
+  const blob = new Blob(["synthetic ZIP"]);
+  const createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-export");
+  const revokeUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  const { button, unmount } = await mountTab("g1");
+  api.exportGroupCopy.mockReturnValue(exported.promise);
+  try {
+    await act(async () => button("copyGroups.exportButton")!.click());
+    await unmount();
+    await act(async () =>
+      exported.resolve({ ok: true, result: { filename: "synthetic.zip", blob } }),
+    );
+    expect(createUrl).toHaveBeenCalledWith(blob);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe("synthetic.zip");
+    expect(revokeUrl).toHaveBeenCalledWith("blob:synthetic-export");
+  } finally {
+    vi.restoreAllMocks();
+  }
 });
 
 it("imports only a previewed package, and only after the user confirms", async () => {
@@ -183,4 +232,112 @@ it("reset drops the chosen package and releases its staged upload", async () => 
   } finally {
     await unmount();
   }
+});
+
+it("keeps a package preview pending across Group selection changes", async () => {
+  const { host, button, selectGroup, unmount } = await mountTab("g1");
+  const preview = deferred<{
+    ok: true;
+    result: { upload_id: string; preview: { source_title: string; actors: [] } };
+  }>();
+  api.previewGroupCopy.mockReturnValue(preview.promise);
+  try {
+    await act(async () => {
+      const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+      Object.defineProperty(input, "files", { value: [new File(["zip"], "pack.zip")] });
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await selectGroup("g2");
+    expect(host.querySelector<HTMLInputElement>('input[type="file"]')!.disabled).toBe(true);
+    await act(async () => {
+      preview.resolve({
+        ok: true,
+        result: { upload_id: "preview-upload", preview: { source_title: "Source", actors: [] } },
+      });
+    });
+    expect(button("copyGroups.importButton")!.disabled).toBe(false);
+    expect(api.cleanupGroupCopyUpload).not.toHaveBeenCalled();
+  } finally {
+    await unmount();
+  }
+});
+
+it("finishes one accepted import after switching Groups without redirecting the new selection", async () => {
+  const { host, button, selectGroup, unmount } = await mountTab("g1");
+  const imported = deferred<{ ok: true; result: { group_id: string } }>();
+  api.importGroupCopy.mockReturnValue(imported.promise);
+  vi.stubGlobal("confirm", () => true);
+  try {
+    await choosePackage(host, new File(["zip"], "pack.zip"));
+    await act(async () => button("copyGroups.importButton")!.click());
+    await selectGroup("g2");
+    expect(button("copyGroups.importButton")!.disabled).toBe(true);
+    await act(async () => button("copyGroups.importButton")!.click());
+    expect(api.importGroupCopy).toHaveBeenCalledTimes(1);
+    await act(async () => imported.resolve({ ok: true, result: { group_id: "imported" } }));
+    expect(groupStore.refreshGroups).toHaveBeenCalledTimes(1);
+    expect(groupStore.setSelectedGroupId).not.toHaveBeenCalled();
+    expect(groupStore.loadGroup).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("copyGroups.imported");
+    expect(button("copyGroups.importButton")!.disabled).toBe(true);
+    expect(button("common:reset")).toBeUndefined();
+    expect(host.querySelector<HTMLInputElement>('input[type="file"]')!.disabled).toBe(false);
+  } finally {
+    vi.unstubAllGlobals();
+    await unmount();
+  }
+});
+
+it("opens the imported Group after a successful import while the selection is unchanged", async () => {
+  const { host, button, unmount } = await mountTab("g1");
+  api.importGroupCopy.mockResolvedValue({ ok: true, result: { group_id: "imported" } });
+  vi.stubGlobal("confirm", () => true);
+  try {
+    await choosePackage(host, new File(["zip"], "pack.zip"));
+    await act(async () => button("copyGroups.importButton")!.click());
+    expect(groupStore.refreshGroups).toHaveBeenCalledTimes(1);
+    expect(groupStore.setSelectedGroupId).toHaveBeenCalledWith("imported");
+    expect(groupStore.loadGroup).toHaveBeenCalledWith("imported");
+  } finally {
+    vi.unstubAllGlobals();
+    await unmount();
+  }
+});
+
+it("does not redirect when the selection changes during the post-import refresh", async () => {
+  const { host, button, selectGroup, unmount } = await mountTab("g1");
+  const refresh = deferred<void>();
+  groupStore.refreshGroups.mockReturnValue(refresh.promise);
+  api.importGroupCopy.mockResolvedValue({ ok: true, result: { group_id: "imported" } });
+  vi.stubGlobal("confirm", () => true);
+  try {
+    await choosePackage(host, new File(["zip"], "pack.zip"));
+    await act(async () => button("copyGroups.importButton")!.click());
+    expect(groupStore.refreshGroups).toHaveBeenCalledTimes(1);
+    await selectGroup("g2");
+    await act(async () => refresh.resolve());
+    expect(groupStore.setSelectedGroupId).not.toHaveBeenCalled();
+    expect(groupStore.loadGroup).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+    await unmount();
+  }
+});
+
+it("refreshes Groups after an accepted import completes with its settings page closed", async () => {
+  const { host, button, unmount } = await mountTab("g1");
+  const imported = deferred<{ ok: true; result: { group_id: string } }>();
+  api.importGroupCopy.mockReturnValue(imported.promise);
+  vi.stubGlobal("confirm", () => true);
+  try {
+    await choosePackage(host, new File(["zip"], "pack.zip"));
+    await act(async () => button("copyGroups.importButton")!.click());
+  } finally {
+    vi.unstubAllGlobals();
+    await unmount();
+  }
+  await act(async () => imported.resolve({ ok: true, result: { group_id: "imported" } }));
+  expect(groupStore.refreshGroups).toHaveBeenCalledTimes(1);
+  expect(groupStore.setSelectedGroupId).not.toHaveBeenCalled();
+  expect(groupStore.loadGroup).not.toHaveBeenCalled();
 });

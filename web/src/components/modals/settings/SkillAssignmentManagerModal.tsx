@@ -143,6 +143,7 @@ export function SkillAssignmentManagerModal({
 }: SkillAssignmentManagerModalProps) {
   const { modalRef } = useModalA11y(true, onClose);
   const sourceId = String(candidate.source_id || "");
+  const writeBusy = busyKey.startsWith("manage");
 
   return (
     <BodyPortal>
@@ -298,7 +299,7 @@ export function SkillAssignmentManagerModal({
                   <button
                     type="button"
                     className={primaryButtonClass(false)}
-                    disabled={busyKey === `manage:${capabilityId}`}
+                    disabled={writeBusy}
                     onClick={onSaveRecord}
                   >
                     {busyKey === `manage:${capabilityId}` ? labels.saving : labels.save}
@@ -467,7 +468,7 @@ export function SkillAssignmentManagerModal({
                   <button
                     type="button"
                     className={secondaryButtonClass()}
-                    disabled={busyKey === `manage-use:${capabilityId}`}
+                    disabled={usageLoading || writeBusy}
                     onClick={onSaveActorAssignments}
                   >
                     {labels.saveActorAssignments}
@@ -492,7 +493,7 @@ export function SkillAssignmentManagerModal({
                         ? neutralActionButtonClass
                         : "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-300"
                     }`}
-                    disabled={busyKey === `manage:${capabilityId}`}
+                    disabled={writeBusy}
                     onClick={onToggleRecordBlock}
                   >
                     {qualificationStatus === "blocked" ? labels.unblockSkill : labels.blockSkill}
@@ -500,7 +501,7 @@ export function SkillAssignmentManagerModal({
                   <button
                     type="button"
                     className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs min-h-[38px] text-rose-600 dark:text-rose-300 disabled:opacity-60"
-                    disabled={busyKey === `manage-remove:${capabilityId}`}
+                    disabled={writeBusy}
                     onClick={onRemoveRecord}
                   >
                     {labels.remove}

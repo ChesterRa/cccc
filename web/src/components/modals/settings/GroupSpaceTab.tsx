@@ -128,6 +128,13 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
   const loadSeqRef = useRef(0);
   const actionSeqRef = useRef(0);
   const pollInFlightRef = useRef(false);
+  const hintTimerRef = useRef<number | null>(null);
+  const clearHintTimer = () => {
+    if (hintTimerRef.current !== null) {
+      window.clearTimeout(hintTimerRef.current);
+      hintTimerRef.current = null;
+    }
+  };
 
   const providerState = status?.provider || null;
   const workBinding = status?.bindings?.work || null;
@@ -184,8 +191,12 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     Boolean(authFlow?.projected_browser?.active);
 
   const setHintWithTimeout = (text: string) => {
+    clearHintTimer();
     setHint(text);
-    window.setTimeout(() => setHint(""), 2400);
+    hintTimerRef.current = window.setTimeout(() => {
+      hintTimerRef.current = null;
+      setHint("");
+    }, 2400);
   };
 
   const loadAll = async (opts?: { refreshSpaces?: boolean }) => {
@@ -259,21 +270,25 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     }
   };
 
-  const draftGroupRef = useRef(groupId);
+  const pageVisitRef = useRef({ groupId });
   useEffect(() => {
-    if (draftGroupRef.current !== groupId) {
-      draftGroupRef.current = groupId;
+    const groupChanged = pageVisitRef.current.groupId !== groupId;
+    pageVisitRef.current = { groupId };
+    setHint("");
+    setActionBusy(false);
+    if (groupChanged) {
+      clearHintTimer();
       setStatus(null);
       setWorkBindRemoteId("");
       setMemoryBindRemoteId("");
       setErr("");
-      setHint("");
       setLoading(false);
-      setActionBusy(false);
     }
     if (!isActive || !groupId) return;
     void loadAll({ refreshSpaces: true });
     return () => {
+      pageVisitRef.current = { groupId };
+      clearHintTimer();
       loadSeqRef.current += 1;
       actionSeqRef.current += 1;
     };
@@ -282,11 +297,15 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
 
   useEffect(() => {
     if (!isActive || !groupId || !connectionRunning) return;
+    let cancelled = false;
+    const page = pageVisitRef.current;
+    const isCurrentPage = () => pageVisitRef.current === page;
     const pollOnce = async () => {
-      if (pollInFlightRef.current) return;
+      if (pollInFlightRef.current || cancelled) return;
       pollInFlightRef.current = true;
       try {
         const resp = await api.controlGroupSpaceProviderAuth({ provider, action: "status" });
+        if (cancelled || !isCurrentPage()) return;
         if (!resp.ok) {
           setErr(resp.error?.message || t("groupSpace.loadFailed"));
           return;
@@ -296,6 +315,7 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         const nextState = String(nextAuth?.state || "").trim();
         if (nextState && nextState !== "running") {
           await loadAll({ refreshSpaces: nextState === "succeeded" });
+          if (!isCurrentPage()) return;
           if (nextState === "succeeded") {
             const flowKey = String(
               nextAuth?.session_id || nextAuth?.started_at || "succeeded",
@@ -307,7 +327,9 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
           }
         }
       } catch (e) {
-        setErr(e instanceof Error ? e.message : t("groupSpace.loadFailed"));
+        if (!cancelled && isCurrentPage()) {
+          setErr(e instanceof Error ? e.message : t("groupSpace.loadFailed"));
+        }
       } finally {
         pollInFlightRef.current = false;
       }
@@ -316,11 +338,17 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     const timer = window.setInterval(() => {
       void pollOnce();
     }, 3000);
-    return () => window.clearInterval(timer);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- poll only while auth flow is running
   }, [isActive, groupId, connectionRunning]);
 
   const handleStartConnect = async (forceReauth: boolean = false) => {
+    const actionSeq = ++actionSeqRef.current;
+    const page = pageVisitRef.current;
+    const isCurrent = () => actionSeqRef.current === actionSeq && pageVisitRef.current === page;
     setActionBusy(true);
     setErr("");
     try {
@@ -331,6 +359,7 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         forceReauth,
         projected: true,
       });
+      if (!isCurrent()) return;
       if (!resp.ok) {
         setErr(
           resp.error?.message ||
@@ -341,17 +370,23 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
       setAuthFlow(resp.result?.auth || null);
       setHintWithTimeout(t(forceReauth ? "groupSpace.switchStarted" : "groupSpace.connectStarted"));
     } catch {
-      setErr(t(forceReauth ? "groupSpace.switchStartFailed" : "groupSpace.connectStartFailed"));
+      if (isCurrent()) {
+        setErr(t(forceReauth ? "groupSpace.switchStartFailed" : "groupSpace.connectStartFailed"));
+      }
     } finally {
-      setActionBusy(false);
+      if (isCurrent()) setActionBusy(false);
     }
   };
 
   const handleCancelConnect = async () => {
+    const actionSeq = ++actionSeqRef.current;
+    const page = pageVisitRef.current;
+    const isCurrent = () => actionSeqRef.current === actionSeq && pageVisitRef.current === page;
     setActionBusy(true);
     setErr("");
     try {
       const resp = await api.controlGroupSpaceProviderAuth({ provider, action: "cancel" });
+      if (!isCurrent()) return;
       if (!resp.ok) {
         setErr(resp.error?.message || t("groupSpace.connectCancelFailed"));
         return;
@@ -360,19 +395,23 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
       setHintWithTimeout(t("groupSpace.connectCancelRequested"));
       await loadAll();
     } catch {
-      setErr(t("groupSpace.connectCancelFailed"));
+      if (isCurrent()) setErr(t("groupSpace.connectCancelFailed"));
     } finally {
-      setActionBusy(false);
+      if (isCurrent()) setActionBusy(false);
     }
   };
 
   const handleDisconnect = async () => {
     const confirmText = t("groupSpace.disconnectConfirm");
     if (!window.confirm(confirmText)) return;
+    const actionSeq = ++actionSeqRef.current;
+    const page = pageVisitRef.current;
+    const isCurrent = () => actionSeqRef.current === actionSeq && pageVisitRef.current === page;
     setActionBusy(true);
     setErr("");
     try {
       const resp = await api.controlGroupSpaceProviderAuth({ provider, action: "disconnect" });
+      if (!isCurrent()) return;
       if (!resp.ok) {
         setErr(resp.error?.message || t("groupSpace.disconnectFailed"));
         return;
@@ -381,9 +420,9 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
       setHintWithTimeout(t("groupSpace.disconnectSuccess"));
       await loadAll();
     } catch {
-      setErr(t("groupSpace.disconnectFailed"));
+      if (isCurrent()) setErr(t("groupSpace.disconnectFailed"));
     } finally {
-      setActionBusy(false);
+      if (isCurrent()) setActionBusy(false);
     }
   };
 
@@ -392,7 +431,8 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     const rid = String(remoteSpaceId || "").trim();
     if (!gid || !rid) return;
     const actionSeq = ++actionSeqRef.current;
-    const isCurrent = () => actionSeqRef.current === actionSeq && draftGroupRef.current === groupId;
+    const page = pageVisitRef.current;
+    const isCurrent = () => actionSeqRef.current === actionSeq && pageVisitRef.current === page;
     setActionBusy(true);
     setErr("");
     try {
@@ -418,7 +458,8 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     const gid = String(groupId || "").trim();
     if (!gid) return;
     const actionSeq = ++actionSeqRef.current;
-    const isCurrent = () => actionSeqRef.current === actionSeq && draftGroupRef.current === groupId;
+    const page = pageVisitRef.current;
+    const isCurrent = () => actionSeqRef.current === actionSeq && pageVisitRef.current === page;
     setActionBusy(true);
     setErr("");
     try {
@@ -449,7 +490,8 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     );
     if (!window.confirm(confirmText)) return;
     const actionSeq = ++actionSeqRef.current;
-    const isCurrent = () => actionSeqRef.current === actionSeq && draftGroupRef.current === groupId;
+    const page = pageVisitRef.current;
+    const isCurrent = () => actionSeqRef.current === actionSeq && pageVisitRef.current === page;
     setActionBusy(true);
     setErr("");
     try {

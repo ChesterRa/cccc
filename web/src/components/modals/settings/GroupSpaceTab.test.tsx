@@ -109,6 +109,70 @@ it("starts a Google connection from the account card and locks notebooks until t
   );
 });
 
+it.each(["stay", "group", "inactive"])(
+  "finishes successful auth feedback using page ownership (after=%s)",
+  async (after) => {
+    mockConnection(false);
+    const polled = deferred<{
+      ok: true;
+      result: { auth: { state: string; session_id: string } };
+    }>();
+    const refreshed = deferred<ReturnType<typeof connectedStatus>>();
+    let started = false;
+    api.controlGroupSpaceProviderAuth.mockImplementation(async ({ action }: { action: string }) => {
+      if (action === "start") {
+        started = true;
+        return { ok: true, result: { auth: { state: "running" } } };
+      }
+      return started ? polled.promise : { ok: true, result: { auth: { state: "idle" } } };
+    });
+    await mount();
+    api.fetchGroupSpaceStatus
+      .mockReturnValueOnce(refreshed.promise)
+      .mockResolvedValue(connectedStatus(true));
+    await act(async () => button("groupSpace.connectGoogle")!.click());
+    await act(async () =>
+      polled.resolve({
+        ok: true,
+        result: { auth: { state: "succeeded", session_id: "synthetic-flow" } },
+      }),
+    );
+    expect(api.fetchGroupSpaceStatus).toHaveBeenCalledTimes(2);
+    if (after !== "stay") {
+      await act(async () =>
+        root.render(
+          <GroupSpaceTab
+            isDark={false}
+            groupId={after === "group" ? "g2" : "g1"}
+            isActive={after !== "inactive"}
+          />,
+        ),
+      );
+    }
+    await act(async () => refreshed.resolve(connectedStatus(true)));
+    if (after === "stay") expect(host.textContent).toContain("groupSpace.googleConnectSuccess");
+    else expect(host.textContent).not.toContain("groupSpace.googleConnectSuccess");
+  },
+);
+
+it("releases a departed auth action's busy state when the same page is reopened", async () => {
+  mockConnection(false);
+  const started = deferred<{ ok: true; result: { auth: { state: string } } }>();
+  api.controlGroupSpaceProviderAuth.mockImplementation(async ({ action }: { action: string }) =>
+    action === "start" ? started.promise : { ok: true, result: { auth: { state: "idle" } } },
+  );
+  await mount();
+  await act(async () => button("groupSpace.connectGoogle")!.click());
+  expect(button("groupSpace.connectGoogle")!.disabled).toBe(true);
+  await act(async () =>
+    root.render(<GroupSpaceTab isDark={false} groupId="g1" isActive={false} />),
+  );
+  await mount();
+  await act(async () => started.resolve({ ok: true, result: { auth: { state: "succeeded" } } }));
+  expect(button("groupSpace.connectGoogle")!.disabled).toBe(false);
+  expect(host.textContent).not.toContain("groupSpace.connectStarted");
+});
+
 it("binds a chosen notebook per lane and asks before destructive actions", async () => {
   mockConnection(true);
   await mount();

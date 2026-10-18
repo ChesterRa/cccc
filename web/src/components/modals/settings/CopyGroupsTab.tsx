@@ -76,6 +76,7 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
 
   useEffect(() => {
     return () => {
+      previewRequestSeqRef.current += 1;
       const uploadId = stagedUploadIdRef.current;
       stagedUploadIdRef.current = "";
       if (uploadId) void api.cleanupGroupCopyUpload(uploadId);
@@ -94,7 +95,9 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
     try {
       const resp = await api.previewGroupCopy(file);
       if (!resp.ok) {
-        setErr(resp.error?.message || t("copyGroups.failedToPreview"));
+        if (requestId === previewRequestSeqRef.current) {
+          setErr(resp.error?.message || t("copyGroups.failedToPreview"));
+        }
         return;
       }
       const nextPreview = resp.result as CopyPreviewResult;
@@ -117,25 +120,31 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
 
   const handleExport = async () => {
     if (!groupId) return;
+    const requestId = ++previewRequestSeqRef.current;
     setBusy(true);
     setErr("");
     setInfo("");
     try {
       const resp = await api.exportGroupCopy(groupId);
       if (!resp.ok) {
-        setErr(resp.error?.message || t("copyGroups.failedToExport"));
+        if (requestId === previewRequestSeqRef.current) {
+          setErr(resp.error?.message || t("copyGroups.failedToExport"));
+        }
         return;
       }
       downloadBlobFile(
         resp.result.filename || `cccc-group--${groupTitle || groupId}.zip`,
         resp.result.blob,
       );
+      if (requestId !== previewRequestSeqRef.current) return;
       setInfo(t("copyGroups.downloaded"));
-      window.setTimeout(() => setInfo(""), 1400);
+      window.setTimeout(() => {
+        if (requestId === previewRequestSeqRef.current) setInfo("");
+      }, 1400);
     } catch {
-      setErr(t("copyGroups.failedToExport"));
+      if (requestId === previewRequestSeqRef.current) setErr(t("copyGroups.failedToExport"));
     } finally {
-      setBusy(false);
+      if (requestId === previewRequestSeqRef.current) setBusy(false);
     }
   };
 
@@ -144,6 +153,11 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
     const ok = window.confirm(t("copyGroups.importConfirm", { filename: copyFile.name }));
     if (!ok) return;
 
+    const requestId = ++previewRequestSeqRef.current;
+    const selectedGroupId = useGroupStore.getState().selectedGroupId;
+    const isCurrent = () => requestId === previewRequestSeqRef.current;
+    const canNavigate = () =>
+      isCurrent() && useGroupStore.getState().selectedGroupId === selectedGroupId;
     setBusy(true);
     setErr("");
     setInfo("");
@@ -156,28 +170,35 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
         targetTitle.trim(),
       );
       if (!resp.ok) {
-        setErr(resp.error?.message || t("copyGroups.failedToImport"));
+        if (isCurrent()) setErr(resp.error?.message || t("copyGroups.failedToImport"));
         return;
       }
       const nextGroupId = String(resp.result?.group_id || "").trim();
       stagedUploadIdRef.current = "";
-      setCopyFile(null);
-      setCopyPreview(null);
-      setWorkspaceRoot("");
-      setTargetTitle("");
-      setInfo(t("copyGroups.imported"));
+      if (isCurrent()) {
+        setCopyFile(null);
+        setCopyPreview(null);
+        setWorkspaceRoot("");
+        setTargetTitle("");
+        setInfo(t("copyGroups.imported"));
+      }
+      // Import creates a Group independently of the current workspace selection.
       await refreshGroups();
-      if (nextGroupId) {
+      if (!isCurrent()) return;
+      if (nextGroupId && canNavigate()) {
         requestWorkspaceNavigation(() => {
+          if (!canNavigate()) return;
           setSelectedGroupId(nextGroupId);
           void loadGroup(nextGroupId);
         });
       }
-      window.setTimeout(() => setInfo(""), 1600);
+      window.setTimeout(() => {
+        if (requestId === previewRequestSeqRef.current) setInfo("");
+      }, 1600);
     } catch {
-      setErr(t("copyGroups.failedToImport"));
+      if (requestId === previewRequestSeqRef.current) setErr(t("copyGroups.failedToImport"));
     } finally {
-      setBusy(false);
+      if (requestId === previewRequestSeqRef.current) setBusy(false);
     }
   };
 

@@ -194,6 +194,66 @@ const input = (value: string) =>
     field.dispatchEvent(new Event("input", { bubbles: true }));
   });
 
+it.each(["response", "rejection", "validation"])(
+  "keeps the same editor's pending credential metadata after a save %s failure",
+  async (failure) => {
+    const keys = deferred();
+    fixture.keys.mockReturnValueOnce(keys.promise);
+    if (failure === "rejection")
+      fixture.save.mockRejectedValueOnce(new Error("Synthetic save failed"));
+    else
+      fixture.save.mockResolvedValueOnce({
+        ok: false,
+        error: { code: "fixture_failure", message: "Synthetic save failed" },
+      });
+    await render("A", 1);
+    const draft = failure === "validation" ? "INVALID_WITHOUT_EQUALS" : "DRAFT_SETTING=synthetic";
+    await input(draft);
+    await act(async () =>
+      [...dialog().querySelectorAll("button")]
+        .find((element) => element.textContent === "common:save")!
+        .click(),
+    );
+    expect(fixture.save).toHaveBeenCalledTimes(failure === "validation" ? 0 : 1);
+    expect(fixture.env).not.toHaveBeenCalled();
+    await act(async () => keys.resolve(metadata("STORED_KEY")));
+    expect(dialog().textContent).toContain("STORED_KEY");
+    expect(dialog().textContent).not.toContain("actorProfiles.noSecrets");
+    expect(dialog().querySelector('[title="STORED_KEY=synthetic-mask"]')).not.toBeNull();
+    expect(dialog().querySelector("textarea")!.value).toBe(draft);
+    expect(
+      [...dialog().querySelectorAll<HTMLButtonElement>("button")].find(
+        (element) => element.textContent === "common:save",
+      )!.disabled,
+    ).toBe(false);
+  },
+);
+
+it.each([true, false])(
+  "still rejects the prior editor's metadata after a save and replacement (save ok=%s)",
+  async (success) => {
+    const oldKeys = deferred();
+    fixture.keys.mockReturnValueOnce(oldKeys.promise).mockResolvedValue(metadata("B_KEY"));
+    fixture.save.mockResolvedValueOnce(
+      success
+        ? { ok: true, result: { profile: { ...profile("A"), revision: 2 } } }
+        : { ok: false, error: { code: "fixture_failure", message: "Synthetic save failed" } },
+    );
+    await render("A", 1);
+    await act(async () =>
+      [...dialog().querySelectorAll("button")]
+        .find((element) => element.textContent === "common:save")!
+        .click(),
+    );
+    await render("B", 2);
+    await input("B_DRAFT=synthetic");
+    await act(async () => oldKeys.resolve(metadata("A_KEY")));
+    expect(dialog().textContent).toContain("B_KEY");
+    expect(dialog().textContent).not.toContain("A_KEY");
+    expect(dialog().querySelector("textarea")!.value).toBe("B_DRAFT=synthetic");
+  },
+);
+
 it("drops Profile A metadata arriving after Profile B and preserves B's new private-env draft", async () => {
   const a = deferred();
   fixture.keys.mockImplementation((id: string) =>

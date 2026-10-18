@@ -101,6 +101,17 @@ export function useAppModalActorActions(args: {
   const newProfileSaveRef = useRef<ActorProfile | null>(null);
   const editActorNotesBaselineRef = useRef("");
   const editActorNotesSeqRef = useRef(0);
+  const editActorVisitRef = useRef(0);
+  const profileLoadSeqRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      editActorVisitRef.current += 1;
+      editActorNotesSeqRef.current += 1;
+      profileLoadSeqRef.current += 1;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!addActorModalOpen) newProfileSaveRef.current = null;
@@ -109,6 +120,10 @@ export function useAppModalActorActions(args: {
   const editingActorId = editingActor?.id;
   useEffect(() => {
     editProfileSaveRef.current = null;
+    editActorVisitRef.current += 1;
+    editActorNotesSeqRef.current += 1;
+    editActorNotesBaselineRef.current = "";
+    setEditActorNotesBusy(false);
   }, [selectedGroupId, editingActorId]);
 
   const loadEditingActorNotes = useCallback(
@@ -180,16 +195,18 @@ export function useAppModalActorActions(args: {
   );
 
   const loadActorProfiles = useCallback(async () => {
+    const seq = ++profileLoadSeqRef.current;
     setActorProfilesBusy(true);
     try {
       const resp = await api.listActorProfiles();
+      if (seq !== profileLoadSeqRef.current) return;
       if (!resp.ok) {
         showError(resp.error?.message || t("failedToLoadActorProfiles"));
         return;
       }
       setActorProfiles(Array.isArray(resp.result?.profiles) ? resp.result.profiles : []);
     } finally {
-      setActorProfilesBusy(false);
+      if (seq === profileLoadSeqRef.current) setActorProfilesBusy(false);
     }
   }, [showError, t]);
 
@@ -318,6 +335,11 @@ export function useAppModalActorActions(args: {
       if (!window.confirm(msg)) return;
     }
 
+    const targetGroupId = selectedGroupId;
+    const visit = ++editActorVisitRef.current;
+    const isCurrentEdit = () =>
+      editActorVisitRef.current === visit &&
+      useGroupStore.getState().selectedGroupId === targetGroupId;
     setBusy("actor-update");
     try {
       let actorSnapshot: Record<string, unknown> = savedActor as unknown as Record<string, unknown>;
@@ -325,15 +347,15 @@ export function useAppModalActorActions(args: {
       // A new Grok route must be configured while stopped. Do this before
       // changing runtime so an enabled Actor cannot start without its Bot URL.
       if (grokBotUrl !== undefined) {
-        const stopResp = await api.stopActor(selectedGroupId, actorId);
+        const stopResp = await api.stopActor(targetGroupId, actorId);
         if (!stopResp.ok) throw new Error(`${stopResp.error.code}: ${stopResp.error.message}`);
         actorSnapshot = { ...actorSnapshot, enabled: false, running: false };
-        setEditingActor(actorSnapshot as Actor);
+        if (isCurrentEdit()) setEditingActor(actorSnapshot as Actor);
       }
 
       if (mode === "custom" && linkedBefore && convertToCustom) {
         const convertResp = await api.updateActor(
-          selectedGroupId,
+          targetGroupId,
           actorId,
           undefined,
           undefined,
@@ -349,7 +371,7 @@ export function useAppModalActorActions(args: {
             : undefined;
         if (updated && typeof updated === "object") {
           actorSnapshot = updated;
-          setEditingActor(updated as Actor);
+          if (isCurrentEdit()) setEditingActor(updated as Actor);
         }
       }
 
@@ -357,7 +379,7 @@ export function useAppModalActorActions(args: {
         const needProfilePatch = profileChanged || titleChanged || autoloadChanged;
         if (needProfilePatch) {
           const profileResp = await api.updateActor(
-            selectedGroupId,
+            targetGroupId,
             actorId,
             undefined,
             undefined,
@@ -378,7 +400,7 @@ export function useAppModalActorActions(args: {
               : undefined;
           if (updated && typeof updated === "object") {
             actorSnapshot = updated;
-            setEditingActor(updated as Actor);
+            if (isCurrentEdit()) setEditingActor(updated as Actor);
           }
         }
       } else {
@@ -393,7 +415,7 @@ export function useAppModalActorActions(args: {
           autoloadChanged;
         if (needCustomPatch) {
           const customResp = await api.updateActor(
-            selectedGroupId,
+            targetGroupId,
             actorId,
             nextRuntime !== snapshotRuntime ? editActorRuntime : undefined,
             nextCommand !== snapshotCommand ? nextCommand : undefined,
@@ -414,14 +436,14 @@ export function useAppModalActorActions(args: {
               : undefined;
           if (updated && typeof updated === "object") {
             actorSnapshot = updated;
-            setEditingActor(updated as Actor);
+            if (isCurrentEdit()) setEditingActor(updated as Actor);
           }
         }
       }
 
       if (willChangeSecrets) {
         const envResp = await api.updateActorPrivateEnv(
-          selectedGroupId,
+          targetGroupId,
           actorId,
           setVars,
           unsetKeys,
@@ -430,12 +452,12 @@ export function useAppModalActorActions(args: {
         if (!envResp.ok) {
           throw new Error(`${envResp.error.code}: ${envResp.error.message}`);
         }
-        payload.onSecretsSaved?.(envResp.result.keys);
+        if (isCurrentEdit()) payload.onSecretsSaved?.(envResp.result.keys);
       }
 
       if (actorNotesChanged) {
         const actorNotesResp = await persistActorNotes(
-          selectedGroupId,
+          targetGroupId,
           actorId,
           nextActorNotes,
           actors.map((item) => String(item.id || "").trim()).filter(Boolean),
@@ -443,22 +465,23 @@ export function useAppModalActorActions(args: {
         if (!actorNotesResp.ok) {
           throw new Error(actorNotesResp.error);
         }
-        editActorNotesBaselineRef.current = nextActorNotes;
+        if (isCurrentEdit()) editActorNotesBaselineRef.current = nextActorNotes;
       }
 
       if (grokBotUrl !== undefined) {
-        const bindResp = await api.bindGrokBot(selectedGroupId, actorId, grokBotUrl);
+        const bindResp = await api.bindGrokBot(targetGroupId, actorId, grokBotUrl);
         if (!bindResp.ok) throw new Error(`${bindResp.error.code}: ${bindResp.error.message}`);
       }
 
       if (options.restart) {
-        const restartResp = await api.restartActor(selectedGroupId, actorId);
+        const restartResp = await api.restartActor(targetGroupId, actorId);
         if (!restartResp.ok) {
           throw new Error(`${restartResp.error.code}: ${restartResp.error.message}`);
         }
       }
 
-      await refreshActors();
+      await refreshActors(targetGroupId);
+      if (!isCurrentEdit()) return;
       setEditingActor(null);
 
       if (!options.restart && grokBotUrl === undefined) {
@@ -475,7 +498,7 @@ export function useAppModalActorActions(args: {
         }
       }
     } finally {
-      setBusy("");
+      if (useUIStore.getState().busy === "actor-update") setBusy("");
     }
   };
 
@@ -871,6 +894,7 @@ export function useAppModalActorActions(args: {
   }, [closeModal, resetAddActorForm]);
 
   const handleCancelEditActor = useCallback(() => {
+    editActorVisitRef.current += 1;
     editActorNotesSeqRef.current += 1;
     editActorNotesBaselineRef.current = "";
     setEditActorNotesBusy(false);
