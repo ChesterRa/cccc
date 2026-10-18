@@ -53,18 +53,22 @@ export async function updateObservability(args: {
   assistantRuntimeVisibility?: "hidden" | "visible";
 }) {
   clearWebAccessSessionReadRequest();
-  return apiJson<{ observability: Observability }>("/api/v1/observability", {
-    method: "PUT",
-    body: JSON.stringify({
-      by: "user",
-      developer_mode: args.developerMode,
-      log_level: args.logLevel,
-      terminal_transcript_per_actor_bytes: args.terminalTranscriptPerActorBytes,
-      terminal_ui_scrollback_lines: args.terminalUiScrollbackLines,
-      peer_runtime_visibility: args.peerRuntimeVisibility,
-      assistant_runtime_visibility: args.assistantRuntimeVisibility,
-    }),
-  });
+  try {
+    return await apiJson<{ observability: Observability }>("/api/v1/observability", {
+      method: "PUT",
+      body: JSON.stringify({
+        by: "user",
+        developer_mode: args.developerMode,
+        log_level: args.logLevel,
+        terminal_transcript_per_actor_bytes: args.terminalTranscriptPerActorBytes,
+        terminal_ui_scrollback_lines: args.terminalUiScrollbackLines,
+        peer_runtime_visibility: args.peerRuntimeVisibility,
+        assistant_runtime_visibility: args.assistantRuntimeVisibility,
+      }),
+    });
+  } finally {
+    clearWebAccessSessionReadRequest();
+  }
 }
 
 export async function fetchRemoteAccessState() {
@@ -155,7 +159,11 @@ export async function clearWebBrandingAsset(assetKind: "logo_icon" | "favicon") 
 
 export async function logoutWebAccess() {
   clearWebAccessSessionReadRequest();
-  return apiJson<{ signed_out: boolean }>("/api/v1/web_access/logout", { method: "POST" });
+  try {
+    return await apiJson<{ signed_out: boolean }>("/api/v1/web_access/logout", { method: "POST" });
+  } finally {
+    clearWebAccessSessionReadRequest();
+  }
 }
 
 export async function updateRemoteAccessConfig(args: {
@@ -169,19 +177,24 @@ export async function updateRemoteAccessConfig(args: {
 }) {
   clearPingReadRequest();
   clearWebAccessSessionReadRequest();
-  return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access", {
-    method: "PUT",
-    body: JSON.stringify({
-      by: "user",
-      provider: args.provider,
-      mode: args.mode,
-      enabled: args.enabled,
-      require_access_token: args.requireAccessToken,
-      web_host: args.webHost,
-      web_port: args.webPort,
-      web_public_url: args.webPublicUrl,
-    }),
-  });
+  try {
+    return await apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access", {
+      method: "PUT",
+      body: JSON.stringify({
+        by: "user",
+        provider: args.provider,
+        mode: args.mode,
+        enabled: args.enabled,
+        require_access_token: args.requireAccessToken,
+        web_host: args.webHost,
+        web_port: args.webPort,
+        web_public_url: args.webPublicUrl,
+      }),
+    });
+  } finally {
+    clearPingReadRequest();
+    clearWebAccessSessionReadRequest();
+  }
 }
 
 export async function startRemoteAccess() {
@@ -199,12 +212,17 @@ export async function stopRemoteAccess() {
 export async function applyRemoteAccess() {
   clearPingReadRequest();
   clearWebAccessSessionReadRequest();
-  return apiJson<{
-    accepted: boolean;
-    remote_access: RemoteAccessState;
-    target_local_url?: string | null;
-    target_remote_url?: string | null;
-  }>("/api/v1/remote_access/apply?by=user", { method: "POST" });
+  try {
+    return await apiJson<{
+      accepted: boolean;
+      remote_access: RemoteAccessState;
+      target_local_url?: string | null;
+      target_remote_url?: string | null;
+    }>("/api/v1/remote_access/apply?by=user", { method: "POST" });
+  } finally {
+    clearPingReadRequest();
+    clearWebAccessSessionReadRequest();
+  }
 }
 
 export async function fetchAccessTokens() {
@@ -226,10 +244,14 @@ export async function createAccessToken(
   };
   if (customToken?.trim()) body.custom_token = customToken.trim();
   if (bootstrapToken?.trim()) body.bootstrap_token = bootstrapToken.trim();
-  return apiJson<{ access_token: AccessTokenEntry }>("/api/v1/access-tokens", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  try {
+    return await apiJson<{ access_token: AccessTokenEntry }>("/api/v1/access-tokens", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  } finally {
+    clearWebAccessSessionReadRequest();
+  }
 }
 
 export async function updateAccessToken(
@@ -237,10 +259,14 @@ export async function updateAccessToken(
   updates: { allowed_groups?: string[]; is_admin?: boolean },
 ) {
   clearWebAccessSessionReadRequest();
-  return apiJson<{ access_token: AccessTokenEntry }>(
-    `/api/v1/access-tokens/${encodeURIComponent(tokenId)}`,
-    { method: "PATCH", body: JSON.stringify(updates) },
-  );
+  try {
+    return await apiJson<{ access_token: AccessTokenEntry }>(
+      `/api/v1/access-tokens/${encodeURIComponent(tokenId)}`,
+      { method: "PATCH", body: JSON.stringify(updates) },
+    );
+  } finally {
+    clearWebAccessSessionReadRequest();
+  }
 }
 
 export async function revealAccessToken(tokenId: string) {
@@ -249,9 +275,13 @@ export async function revealAccessToken(tokenId: string) {
 
 export async function deleteAccessToken(tokenId: string) {
   clearWebAccessSessionReadRequest();
-  return apiJson<{
-    deleted: boolean;
-    access_tokens_remain?: boolean;
-    deleted_current_session?: boolean;
-  }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, { method: "DELETE" });
+  try {
+    return await apiJson<{
+      deleted: boolean;
+      access_tokens_remain?: boolean;
+      deleted_current_session?: boolean;
+    }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, { method: "DELETE" });
+  } finally {
+    clearWebAccessSessionReadRequest();
+  }
 }

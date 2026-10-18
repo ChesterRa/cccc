@@ -2,9 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   cancelReplyRequest,
+  contextSync,
   deliverMessage,
+  enableGroupCapability,
+  fetchContext,
   fetchSlashCommandCapabilityState,
   fetchGroupCapabilityState,
+  uninstallCapability,
   updateGroupCapabilityVisibility,
   replyMessage,
   sendCrossGroupMessage,
@@ -89,6 +93,107 @@ describe("capability state API helpers", () => {
       }
     },
   );
+
+  it.each(["enable", "uninstall"] as const)(
+    "invalidates in-flight capability-scoped reads when %s completes",
+    async (action) => {
+      vi.stubGlobal("window", { location: { search: "" } });
+      let finishOld!: (response: Response) => void;
+      const old = new Promise<Response>((resolve) => {
+        finishOld = resolve;
+      });
+      let reads = 0;
+      const state = (used: boolean) =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: { capability_usage: { capability_id: "skill:fixture:first", used } },
+          }),
+        );
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.endsWith("/capabilities/enable") || url.endsWith("/capabilities/uninstall")) {
+          return new Response(
+            JSON.stringify({ ok: true, result: { enabled: true, state: "ready" } }),
+          );
+        }
+        reads += 1;
+        return reads === 1 ? old : state(action === "enable");
+      });
+
+      const pending = fetchGroupCapabilityState("g-cap", "user", {
+        capabilityId: "skill:fixture:first",
+        noCache: true,
+      });
+      try {
+        if (action === "enable") {
+          await enableGroupCapability("g-cap", "skill:fixture:first", {
+            enabled: true,
+            scope: "actor",
+            actorId: "peer-1",
+          });
+        } else {
+          await uninstallCapability("g-cap", "skill:fixture:first");
+        }
+        const refreshed = fetchGroupCapabilityState("g-cap", "user", {
+          capabilityId: "skill:fixture:first",
+          noCache: true,
+        });
+        expect(reads).toBe(2);
+        expect(await refreshed).toMatchObject({
+          ok: true,
+          result: {
+            capability_usage: { capability_id: "skill:fixture:first", used: action === "enable" },
+          },
+        });
+      } finally {
+        finishOld(state(false));
+        await pending;
+      }
+    },
+  );
+
+  it("invalidates a context read started while contextSync was in flight", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    let finishSync!: (response: Response) => void;
+    const syncPromise = new Promise<Response>((resolve) => {
+      finishSync = resolve;
+    });
+    let finishOldRead!: (response: Response) => void;
+    const oldReadPromise = new Promise<Response>((resolve) => {
+      finishOldRead = resolve;
+    });
+    let contextReads = 0;
+    const makeContextResponse = (version: string) =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: { version, coordination: { brief: {}, tasks: [] }, agent_states: [] },
+        }),
+      );
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/groups/g-ctx/context") && init?.method === "POST") {
+        return syncPromise;
+      }
+      contextReads += 1;
+      return contextReads === 1 ? oldReadPromise : makeContextResponse("v2");
+    });
+
+    const syncing = contextSync("g-ctx", [{ op: "coordination.brief.update", objective: "new" }]);
+    const inFlightRead = fetchContext("g-ctx", { detail: "summary" });
+    finishSync(new Response(JSON.stringify({ ok: true, result: { version: "v2" } })));
+    await syncing;
+
+    try {
+      const postSyncRead = fetchContext("g-ctx", { detail: "summary" });
+      expect(contextReads).toBe(2);
+      expect(await postSyncRead).toMatchObject({ ok: true, result: { version: "v2" } });
+    } finally {
+      finishOldRead(makeContextResponse("v1"));
+      await inFlightRead;
+    }
+  });
 });
 
 describe("reply message API helper", () => {

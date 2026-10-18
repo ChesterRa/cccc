@@ -176,4 +176,41 @@ describe("Web Access connection drafts", () => {
     expect(button("webAccess.saveChanges").disabled).toBe(true);
     expect(api.updateRemoteAccessConfig).not.toHaveBeenCalled();
   });
+
+  it("does not let a stale in-flight refresh overwrite a newer saved configuration", async () => {
+    await render();
+    let resolveStaleRefresh!: (value: {
+      ok: true;
+      result: { remote_access: RemoteAccessState };
+    }) => void;
+    vi.mocked(api.fetchRemoteAccessState).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStaleRefresh = resolve;
+        }),
+    );
+
+    // Start a slow refresh while still on localState
+    await act(async () => {
+      button("webAccess.refresh").click();
+    });
+
+    // User switches to LAN and saves while the old refresh is still in flight
+    await choose("lan");
+    await click("webAccess.saveChanges");
+    expect(saved.provider).toBe("manual");
+    expect(host.querySelector('[role="combobox"]')?.getAttribute("aria-label")).toBe(
+      "webAccess.providerLabel",
+    );
+
+    // Now the stale pre-save refresh resolves with localState ("off")
+    await act(async () => {
+      resolveStaleRefresh({ ok: true, result: { remote_access: { ...localState } } });
+    });
+
+    // The UI must remain on the newly saved LAN configuration ("manual"), not revert to local-only
+    expect(host.querySelector('[role="combobox"]')?.getAttribute("aria-label")).toBe(
+      "webAccess.providerLabel",
+    );
+  });
 });

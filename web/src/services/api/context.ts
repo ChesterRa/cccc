@@ -21,8 +21,8 @@ import {
   apiJson,
   ApiResponse,
   capabilityStateRequestKey,
+  clearCapabilityStateRequests,
   clearContextRequest,
-  clearSharedReadRequest,
   contextRequestKey,
   FetchContextOptions,
   normalizeContext,
@@ -83,10 +83,14 @@ export async function contextSync(
   dryRun: boolean = false,
 ) {
   clearContextRequest(groupId);
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/context`, {
-    method: "POST",
-    body: JSON.stringify({ ops, by: "user", dry_run: dryRun }),
-  });
+  try {
+    return await apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/context`, {
+      method: "POST",
+      body: JSON.stringify({ ops, by: "user", dry_run: dryRun }),
+    });
+  } finally {
+    clearContextRequest(groupId);
+  }
 }
 
 export async function updateCoordinationBrief(groupId: string, brief: CoordinationBrief) {
@@ -266,10 +270,15 @@ export async function blockCapabilityGlobal(
     scope: "global",
   };
   if (String(groupId || "").trim()) body.group_id = String(groupId || "").trim();
-  return apiJson<Record<string, unknown>>(`/api/v1/capabilities/block`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  clearCapabilityStateRequests(groupId);
+  try {
+    return await apiJson<Record<string, unknown>>(`/api/v1/capabilities/block`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  } finally {
+    clearCapabilityStateRequests(groupId);
+  }
 }
 
 export async function fetchGroupCapabilityState(
@@ -323,21 +332,26 @@ export async function enableGroupCapability(
     cleanup?: boolean;
   },
 ) {
-  return apiJson<Record<string, unknown>>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/enable`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        capability_id: capabilityId,
-        enabled: opts?.enabled ?? true,
-        scope: opts?.scope || "session",
-        actor_id: opts?.actorId || "user",
-        ttl_seconds: opts?.ttlSeconds || 3600,
-        reason: opts?.reason || "",
-        cleanup: opts?.cleanup || false,
-      }),
-    },
-  );
+  clearCapabilityStateRequests(groupId);
+  try {
+    return await apiJson<Record<string, unknown>>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/enable`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          capability_id: capabilityId,
+          enabled: opts?.enabled ?? true,
+          scope: opts?.scope || "session",
+          actor_id: opts?.actorId || "user",
+          ttl_seconds: opts?.ttlSeconds || 3600,
+          reason: opts?.reason || "",
+          cleanup: opts?.cleanup || false,
+        }),
+      },
+    );
+  } finally {
+    clearCapabilityStateRequests(groupId);
+  }
 }
 
 export async function updateGroupCapabilityVisibility(
@@ -345,25 +359,24 @@ export async function updateGroupCapabilityVisibility(
   capabilityId: string,
   opts?: { hidden?: boolean; actorId?: string; reason?: string },
 ) {
-  const response = await apiJson<Record<string, unknown>>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/visibility`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        capability_id: capabilityId,
-        hidden: opts?.hidden ?? true,
-        actor_id: opts?.actorId || "user",
-        reason: opts?.reason || "",
-      }),
-    },
-  );
-  // A read started before this write cannot reconcile its completed outcome.
-  for (const view of ["", "slash_commands"]) {
-    const key = capabilityStateRequestKey(groupId, opts?.actorId || "user", "", view);
-    clearSharedReadRequest(key);
-    clearSharedReadRequest(`${key}:no-cache`);
+  clearCapabilityStateRequests(groupId);
+  try {
+    return await apiJson<Record<string, unknown>>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/visibility`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          capability_id: capabilityId,
+          hidden: opts?.hidden ?? true,
+          actor_id: opts?.actorId || "user",
+          reason: opts?.reason || "",
+        }),
+      },
+    );
+  } finally {
+    // A read started before this write cannot reconcile its completed outcome.
+    clearCapabilityStateRequests(groupId);
   }
-  return response;
 }
 
 export async function useGroupCapability(
@@ -387,10 +400,15 @@ export async function useGroupCapability(
   };
   if (String(args.toolName || "").trim()) body.tool_name = String(args.toolName || "").trim();
   if (args.toolArguments) body.tool_arguments = args.toolArguments;
-  return apiJson<Record<string, unknown>>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/use`,
-    { method: "POST", body: JSON.stringify(body) },
-  );
+  clearCapabilityStateRequests(groupId);
+  try {
+    return await apiJson<Record<string, unknown>>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/use`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  } finally {
+    clearCapabilityStateRequests(groupId);
+  }
 }
 
 export async function importCapability(
@@ -405,21 +423,26 @@ export async function importCapability(
     reason?: string;
   },
 ) {
-  return apiJson<Record<string, unknown>>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/import`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        record,
-        dry_run: opts?.dryRun || false,
-        enable_after_import: opts?.enableAfterImport || false,
-        scope: opts?.scope || "session",
-        actor_id: opts?.actorId || "user",
-        ttl_seconds: opts?.ttlSeconds || 3600,
-        reason: opts?.reason || "",
-      }),
-    },
-  );
+  clearCapabilityStateRequests(groupId);
+  try {
+    return await apiJson<Record<string, unknown>>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/import`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          record,
+          dry_run: opts?.dryRun || false,
+          enable_after_import: opts?.enableAfterImport || false,
+          scope: opts?.scope || "session",
+          actor_id: opts?.actorId || "user",
+          ttl_seconds: opts?.ttlSeconds || 3600,
+          reason: opts?.reason || "",
+        }),
+      },
+    );
+  } finally {
+    clearCapabilityStateRequests(groupId);
+  }
 }
 
 export async function installCapabilityTarget(
@@ -432,19 +455,24 @@ export async function installCapabilityTarget(
     reason?: string;
   },
 ) {
-  return apiJson<Record<string, unknown>>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/install`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        target,
-        scope: opts?.scope || "actor",
-        actor_id: opts?.actorId || "user",
-        ttl_seconds: opts?.ttlSeconds || 3600,
-        reason: opts?.reason || "",
-      }),
-    },
-  );
+  clearCapabilityStateRequests(groupId);
+  try {
+    return await apiJson<Record<string, unknown>>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/install`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          target,
+          scope: opts?.scope || "actor",
+          actor_id: opts?.actorId || "user",
+          ttl_seconds: opts?.ttlSeconds || 3600,
+          reason: opts?.reason || "",
+        }),
+      },
+    );
+  } finally {
+    clearCapabilityStateRequests(groupId);
+  }
 }
 
 export async function uninstallCapability(
@@ -452,17 +480,22 @@ export async function uninstallCapability(
   capabilityId: string,
   opts?: { actorId?: string; reason?: string },
 ) {
-  return apiJson<Record<string, unknown>>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/uninstall`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        capability_id: capabilityId,
-        actor_id: opts?.actorId || "user",
-        reason: opts?.reason || "",
-      }),
-    },
-  );
+  clearCapabilityStateRequests(groupId);
+  try {
+    return await apiJson<Record<string, unknown>>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/uninstall`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          capability_id: capabilityId,
+          actor_id: opts?.actorId || "user",
+          reason: opts?.reason || "",
+        }),
+      },
+    );
+  } finally {
+    clearCapabilityStateRequests(groupId);
+  }
 }
 
 export async function deleteCapabilitySource(

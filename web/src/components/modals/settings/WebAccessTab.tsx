@@ -148,6 +148,14 @@ export function WebAccessTab({
   }, [focusReach, isActive]);
 
   const [remoteState, setRemoteState] = useState<RemoteAccessState | null>(null);
+  const remoteStateRef = useRef<RemoteAccessState | null>(null);
+  const remoteMutationSeqRef = useRef(0);
+  const loadSeqRef = useRef(0);
+  const commitRemoteState = (next: RemoteAccessState | null, fromMutation = false) => {
+    if (fromMutation) remoteMutationSeqRef.current += 1;
+    remoteStateRef.current = next;
+    setRemoteState(next);
+  };
   const [accessTokens, setAccessTokens] = useState<api.AccessTokenEntry[]>([]);
   const [session, setSession] = useState<WebAccessSession | null>(null);
   const [groups, setGroups] = useState<GroupMeta[]>([]);
@@ -240,10 +248,14 @@ export function WebAccessTab({
 
   const load = async () => {
     if (!isActive) return;
+    const seq = ++loadSeqRef.current;
+    const remoteMutationAtStart = remoteMutationSeqRef.current;
+    const isCurrentLoad = () => loadSeqRef.current === seq;
     setBusy(true);
     setError("");
     try {
       const sessionResp = await api.fetchWebAccessSession();
+      if (!isCurrentLoad()) return;
       let sessionState: WebAccessSession | null = null;
       if (sessionResp.ok && sessionResp.result?.web_access_session) {
         sessionState = sessionResp.result.web_access_session;
@@ -263,23 +275,29 @@ export function WebAccessTab({
         api.fetchRemoteAccessState(),
         api.fetchGroups(),
       ]);
-      if (remoteResp.ok && remoteResp.result?.remote_access) {
+      if (!isCurrentLoad()) return;
+      if (
+        remoteResp.ok &&
+        remoteResp.result?.remote_access &&
+        remoteMutationSeqRef.current === remoteMutationAtStart
+      ) {
         const state = remoteResp.result.remote_access;
-        setRemoteState(state);
+        const prevRemote = remoteStateRef.current;
+        commitRemoteState(state);
         // Status refreshes must not replace a pending access configuration.
         const sync = <T,>(current: T, previous: T, next: T): T =>
-          !remoteState || Object.is(current, previous) ? next : current;
+          !prevRemote || Object.is(current, previous) ? next : current;
         setProvider((current) =>
           sync(
             current,
-            (remoteState?.provider as "off" | "manual" | "tailscale" | "reach") || "off",
+            (prevRemote?.provider as "off" | "manual" | "tailscale" | "reach") || "off",
             (state.provider as "off" | "manual" | "tailscale" | "reach") || "off",
           ),
         );
         setMode((current) =>
           sync(
             current,
-            String(remoteState?.mode || "tailnet_only"),
+            String(prevRemote?.mode || "tailnet_only"),
             String(state.mode || "tailnet_only"),
           ),
         );
@@ -287,7 +305,7 @@ export function WebAccessTab({
           sync(
             current,
             String(
-              remoteState?.config?.web_host || remoteState?.diagnostics?.web_host || "127.0.0.1",
+              prevRemote?.config?.web_host || prevRemote?.diagnostics?.web_host || "127.0.0.1",
             ),
             String(state.config?.web_host || state.diagnostics?.web_host || "127.0.0.1"),
           ),
@@ -295,7 +313,7 @@ export function WebAccessTab({
         setWebPort((current) =>
           sync(
             current,
-            String(remoteState?.config?.web_port || remoteState?.diagnostics?.web_port || 8848),
+            String(prevRemote?.config?.web_port || prevRemote?.diagnostics?.web_port || 8848),
             String(state.config?.web_port || state.diagnostics?.web_port || 8848),
           ),
         );
@@ -303,12 +321,12 @@ export function WebAccessTab({
           sync(
             current,
             String(
-              remoteState?.config?.web_public_url || remoteState?.diagnostics?.web_public_url || "",
+              prevRemote?.config?.web_public_url || prevRemote?.diagnostics?.web_public_url || "",
             ),
             String(state.config?.web_public_url || state.diagnostics?.web_public_url || ""),
           ),
         );
-      } else if (!remoteResp.ok) {
+      } else if (!remoteResp.ok && remoteMutationSeqRef.current === remoteMutationAtStart) {
         setError(remoteResp.error?.message || t("webAccess.loadFailed"));
       }
       if (groupsResp.ok && groupsResp.result?.groups) {
@@ -319,6 +337,7 @@ export function WebAccessTab({
       );
       if (canAccessGlobal && !sessionState?.bootstrap_required) {
         const tokensResp = await api.fetchAccessTokens();
+        if (!isCurrentLoad()) return;
         if (tokensResp.ok && tokensResp.result?.access_tokens) {
           setAccessTokens(tokensResp.result.access_tokens);
         } else if (!tokensResp.ok) {
@@ -330,14 +349,18 @@ export function WebAccessTab({
         setPendingDeleteTokenId(null);
       }
     } catch {
-      setError(t("webAccess.loadFailed"));
+      if (isCurrentLoad()) setError(t("webAccess.loadFailed"));
     } finally {
-      setBusy(false);
+      if (isCurrentLoad()) setBusy(false);
     }
   };
 
   useEffect(() => {
     void load();
+    return () => {
+      loadSeqRef.current += 1;
+      setBusy(false);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
 
@@ -730,7 +753,7 @@ export function WebAccessTab({
         setError(resp.error?.message || t("webAccess.saveFailed"));
         return;
       }
-      setRemoteState(resp.result.remote_access);
+      commitRemoteState(resp.result.remote_access, true);
       if (resp.result.remote_access.restart_required) {
         if (resp.result.remote_access.apply_supported) {
           pushHint(t("webAccess.applyReady"));
@@ -775,7 +798,7 @@ export function WebAccessTab({
         setError(resp.error?.message || t("webAccess.applyFailed"));
         return;
       }
-      setRemoteState(resp.result.remote_access);
+      commitRemoteState(resp.result.remote_access, true);
       if (!resp.result.accepted) {
         pushHint(t("webAccess.applyNotNeeded"));
         return;
@@ -825,7 +848,7 @@ export function WebAccessTab({
         setError(resp.error?.message || t("webAccess.startFailed"));
         return;
       }
-      setRemoteState(resp.result.remote_access);
+      commitRemoteState(resp.result.remote_access, true);
       pushHint(t("webAccess.started"));
     } catch {
       setError(t("webAccess.startFailed"));
@@ -843,7 +866,7 @@ export function WebAccessTab({
         setError(resp.error?.message || t("webAccess.stopFailed"));
         return;
       }
-      setRemoteState(resp.result.remote_access);
+      commitRemoteState(resp.result.remote_access, true);
       pushHint(t("webAccess.stopped"));
     } catch {
       setError(t("webAccess.stopFailed"));

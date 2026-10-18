@@ -127,6 +127,8 @@ export function ContextModal({
   const [activityBusyKind, setActivityBusyKind] = useState<"decision" | "handoff" | null>(null);
   const [activityError, setActivityError] = useState("");
   const lastOpenedGroupRef = useRef("");
+  const modalVisitRef = useRef({ groupId, isOpen });
+  const projectReadSeqRef = useRef(0);
 
   const {
     columns: taskColumnPages,
@@ -253,12 +255,16 @@ export function ContextModal({
     async (force: boolean = false): Promise<ProjectMdInfo | null> => {
       if (!groupId) return null;
       if (!force && projectMd !== null) return projectMd;
+      const visit = modalVisitRef.current;
+      const seq = ++projectReadSeqRef.current;
+      const isCurrent = () => modalVisitRef.current === visit && projectReadSeqRef.current === seq;
       setProjectBusy(true);
       setProjectError("");
       try {
         const resp = await apiJson<ProjectMdInfo>(
           `/api/v1/groups/${encodeURIComponent(groupId)}/project_md`,
         );
+        if (!isCurrent()) return null;
         if (!resp.ok) {
           setProjectMd(null);
           setProjectError(
@@ -268,14 +274,22 @@ export function ContextModal({
         }
         setProjectMd(resp.result);
         return resp.result ?? null;
+      } catch {
+        if (isCurrent()) {
+          setProjectMd(null);
+          setProjectError(tr("context.failedToLoadProject", "Failed to load PROJECT.md"));
+        }
+        return null;
       } finally {
-        setProjectBusy(false);
+        if (isCurrent()) setProjectBusy(false);
       }
     },
     [groupId, projectMd, tr],
   );
 
   useEffect(() => {
+    modalVisitRef.current = { groupId, isOpen };
+    projectReadSeqRef.current += 1;
     if (!isOpen || !groupId) return;
 
     setActiveView("coordination");
@@ -289,6 +303,7 @@ export function ContextModal({
     setTaskEditorMode("none");
     setSelectedTaskId("");
     setTaskDraft(null);
+    setSyncBusy(false);
     setSyncError("");
     setEditingBrief(false);
     setProjectMd(null);
@@ -304,6 +319,10 @@ export function ContextModal({
     setHandoffDraft(emptyNoteDraft());
     setActivityBusyKind(null);
     setActivityError("");
+    return () => {
+      modalVisitRef.current = { groupId, isOpen };
+      projectReadSeqRef.current += 1;
+    };
   }, [groupId, isOpen]);
 
   useEffect(() => {
@@ -323,10 +342,24 @@ export function ContextModal({
 
   useEffect(() => {
     if (!isOpen || !groupId) return;
-    if ((steeringTab === "project" || editingProject) && projectMd === null && !projectBusy) {
+    if (
+      (steeringTab === "project" || editingProject) &&
+      projectMd === null &&
+      !projectBusy &&
+      !projectError
+    ) {
       void loadProjectMd();
     }
-  }, [editingProject, groupId, isOpen, loadProjectMd, projectBusy, projectMd, steeringTab]);
+  }, [
+    editingProject,
+    groupId,
+    isOpen,
+    loadProjectMd,
+    projectBusy,
+    projectError,
+    projectMd,
+    steeringTab,
+  ]);
 
   const filteredBoard = board;
   const hasTaskFilters =
@@ -469,19 +502,24 @@ export function ContextModal({
         }
       }
 
+      const visit = modalVisitRef.current;
+      const isCurrent = () => modalVisitRef.current === visit;
       setSyncBusy(true);
       setSyncError("");
       try {
         const resp = await updateCoordinationTask(groupId, { ...task, status: nextStatus });
         const nextResp = await applyContextWriteback(resp);
         if (!nextResp.ok) {
-          setSyncError(
-            nextResp.error?.message ||
-              resp.error?.message ||
-              tr("context.failedToApplyChanges", "Failed to apply changes"),
-          );
+          if (isCurrent()) {
+            setSyncError(
+              nextResp.error?.message ||
+                resp.error?.message ||
+                tr("context.failedToApplyChanges", "Failed to apply changes"),
+            );
+          }
           return;
         }
+        if (!isCurrent()) return;
         if (selectedTaskId === task.id && taskEditorMode === "edit") {
           setPendingTaskReadback({
             taskId: task.id,
@@ -489,9 +527,9 @@ export function ContextModal({
           });
         }
         await refreshTasks();
-        if (selectedTaskId === task.id) await loadTaskDetail(task.id);
+        if (isCurrent() && selectedTaskId === task.id) await loadTaskDetail(task.id);
       } finally {
-        setSyncBusy(false);
+        if (isCurrent()) setSyncBusy(false);
       }
     },
     [
@@ -661,6 +699,8 @@ export function ContextModal({
 
   const handleSaveBrief = useCallback(async () => {
     if (!groupId) return;
+    const visit = modalVisitRef.current;
+    const isCurrent = () => modalVisitRef.current === visit;
     setSyncBusy(true);
     setSyncError("");
     try {
@@ -673,16 +713,18 @@ export function ContextModal({
       });
       const nextResp = await applyContextWriteback(resp);
       if (!nextResp.ok) {
-        setSyncError(
-          nextResp.error?.message ||
-            resp.error?.message ||
-            tr("context.failedToApplyChanges", "Failed to apply changes"),
-        );
+        if (isCurrent()) {
+          setSyncError(
+            nextResp.error?.message ||
+              resp.error?.message ||
+              tr("context.failedToApplyChanges", "Failed to apply changes"),
+          );
+        }
         return;
       }
-      setEditingBrief(false);
+      if (isCurrent()) setEditingBrief(false);
     } finally {
-      setSyncBusy(false);
+      if (isCurrent()) setSyncBusy(false);
     }
   }, [applyContextWriteback, briefDraft, groupId, tr]);
 
@@ -712,6 +754,8 @@ export function ContextModal({
       }
     }
 
+    const visit = modalVisitRef.current;
+    const isCurrent = () => modalVisitRef.current === visit;
     setSyncBusy(true);
     setSyncError("");
     try {
@@ -735,14 +779,18 @@ export function ContextModal({
         ]);
         const nextResp = await applyContextWriteback(resp);
         if (!nextResp.ok) {
-          setSyncError(
-            nextResp.error?.message ||
-              resp.error?.message ||
-              tr("context.failedToApplyChanges", "Failed to apply changes"),
-          );
+          if (isCurrent()) {
+            setSyncError(
+              nextResp.error?.message ||
+                resp.error?.message ||
+                tr("context.failedToApplyChanges", "Failed to apply changes"),
+            );
+          }
           return;
         }
+        if (!isCurrent()) return;
         await refreshTasks();
+        if (!isCurrent()) return;
         setTaskEditorMode("none");
         setSelectedTaskId("");
         setTaskDraft(null);
@@ -767,21 +815,24 @@ export function ContextModal({
       });
       const nextResp = await applyContextWriteback(resp);
       if (!nextResp.ok) {
-        setSyncError(
-          nextResp.error?.message ||
-            resp.error?.message ||
-            tr("context.failedToApplyChanges", "Failed to apply changes"),
-        );
+        if (isCurrent()) {
+          setSyncError(
+            nextResp.error?.message ||
+              resp.error?.message ||
+              tr("context.failedToApplyChanges", "Failed to apply changes"),
+          );
+        }
         return;
       }
+      if (!isCurrent()) return;
       setPendingTaskReadback({
         taskId: selectedTask.id,
         previousUpdatedAt: String(selectedTask.updated_at || ""),
       });
       await refreshTasks();
-      await loadTaskDetail(selectedTask.id);
+      if (isCurrent()) await loadTaskDetail(selectedTask.id);
     } finally {
-      setSyncBusy(false);
+      if (isCurrent()) setSyncBusy(false);
     }
   }, [
     applyContextWriteback,
@@ -816,19 +867,24 @@ export function ContextModal({
         if (!confirmed) return;
       }
 
+      const visit = modalVisitRef.current;
+      const isCurrent = () => modalVisitRef.current === visit;
       setSyncBusy(true);
       setSyncError("");
       try {
         const resp = await deleteCoordinationTask(groupId, task.id);
         const nextResp = await applyContextWriteback(resp);
         if (!nextResp.ok) {
-          setSyncError(
-            nextResp.error?.message ||
-              resp.error?.message ||
-              tr("context.failedToDeleteTask", "Failed to delete task"),
-          );
+          if (isCurrent()) {
+            setSyncError(
+              nextResp.error?.message ||
+                resp.error?.message ||
+                tr("context.failedToDeleteTask", "Failed to delete task"),
+            );
+          }
           return;
         }
+        if (!isCurrent()) return;
         if (selectedTaskId === task.id) {
           setTaskEditorMode("none");
           setSelectedTaskId("");
@@ -837,7 +893,7 @@ export function ContextModal({
         forgetTask(task.id);
         await refreshTasks();
       } finally {
-        setSyncBusy(false);
+        if (isCurrent()) setSyncBusy(false);
       }
     },
     [
@@ -878,14 +934,19 @@ export function ContextModal({
   );
 
   const handleEditProject = useCallback(async () => {
+    const visit = modalVisitRef.current;
     openSteeringTab("project");
     const loaded = await loadProjectMd(true);
-    setProjectText(String(loaded?.content || ""));
+    if (modalVisitRef.current !== visit || !loaded) return;
+    setProjectText(String(loaded.content || ""));
     setEditingProject(true);
   }, [loadProjectMd, openSteeringTab]);
 
   const handleSaveProject = useCallback(async () => {
     if (!groupId) return;
+    const visit = modalVisitRef.current;
+    const isCurrent = () => modalVisitRef.current === visit;
+    projectReadSeqRef.current += 1;
     setProjectBusy(true);
     setProjectError("");
     setProjectNotice("");
@@ -897,15 +958,19 @@ export function ContextModal({
       );
       const nextResp = await applyContextWriteback(resp);
       if (!nextResp.ok) {
-        setProjectError(
-          nextResp.error?.message ||
-            resp.error?.message ||
-            tr("context.failedToSaveProject", "Failed to save PROJECT.md"),
-        );
+        if (isCurrent()) {
+          setProjectError(
+            nextResp.error?.message ||
+              resp.error?.message ||
+              tr("context.failedToSaveProject", "Failed to save PROJECT.md"),
+          );
+        }
         return;
       }
-      setProjectMd(nextResp.result);
-      setEditingProject(false);
+      if (isCurrent()) {
+        setProjectMd(nextResp.result);
+        setEditingProject(false);
+      }
 
       let notice = tr("context.projectSaved", "PROJECT.md saved.");
       if (notifyAgents) {
@@ -914,9 +979,11 @@ export function ContextModal({
           body: JSON.stringify({ text: notifyMessage, by: "user", to: ["@all"], path: "" }),
         });
         if (!notifyResp.ok) {
-          setNotifyError(
-            notifyResp.error?.message || tr("context.failedToNotify", "Failed to notify agents"),
-          );
+          if (isCurrent()) {
+            setNotifyError(
+              notifyResp.error?.message || tr("context.failedToNotify", "Failed to notify agents"),
+            );
+          }
           notice = tr(
             "context.projectSavedNotifyFailed",
             "PROJECT.md saved, but chat notification failed.",
@@ -928,10 +995,12 @@ export function ContextModal({
           );
         }
       }
-      setProjectNotice(notice);
-      setNotifyAgents(false);
+      if (isCurrent()) {
+        setProjectNotice(notice);
+        setNotifyAgents(false);
+      }
     } finally {
-      setProjectBusy(false);
+      if (isCurrent()) setProjectBusy(false);
     }
   }, [applyContextWriteback, groupId, notifyAgents, notifyMessage, projectText, tr]);
 
@@ -944,6 +1013,8 @@ export function ContextModal({
         setActivityError(tr("context.noteSummaryRequired", "Summary is required."));
         return;
       }
+      const visit = modalVisitRef.current;
+      const isCurrent = () => modalVisitRef.current === visit;
       setActivityBusyKind(kind);
       setActivityError("");
       try {
@@ -955,20 +1026,23 @@ export function ContextModal({
         );
         const nextResp = await applyContextWriteback(resp);
         if (!nextResp.ok) {
-          setActivityError(
-            nextResp.error?.message ||
-              resp.error?.message ||
-              tr("context.failedToApplyChanges", "Failed to apply changes"),
-          );
+          if (isCurrent()) {
+            setActivityError(
+              nextResp.error?.message ||
+                resp.error?.message ||
+                tr("context.failedToApplyChanges", "Failed to apply changes"),
+            );
+          }
           return;
         }
+        if (!isCurrent()) return;
         if (kind === "decision") {
           setDecisionDraft(emptyNoteDraft());
         } else {
           setHandoffDraft(emptyNoteDraft());
         }
       } finally {
-        setActivityBusyKind(null);
+        if (isCurrent()) setActivityBusyKind(null);
       }
     },
     [applyContextWriteback, decisionDraft, groupId, handoffDraft, tr],

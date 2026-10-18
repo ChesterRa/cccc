@@ -60,6 +60,11 @@ export async function fetchActors(
   );
 }
 
+function invalidateGroupActorsReads(groupId: string, includeGroups = true) {
+  clearActorsReadOnlyRequest(groupId);
+  if (includeGroups) clearGroupsReadRequest();
+}
+
 export async function addActor(
   groupId: string,
   actorId: string,
@@ -77,30 +82,33 @@ export async function addActor(
     capabilityHidden?: string[];
   },
 ) {
-  clearActorsReadOnlyRequest(groupId);
-  clearGroupsReadRequest();
-  return apiJson<{ actor: Actor }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors`, {
-    method: "POST",
-    body: JSON.stringify({
-      actor_id: actorId,
-      role,
-      runtime,
-      ...(options?.runtimeMode ? { runtime_mode: options.runtimeMode } : {}),
-      command,
-      env: {},
-      env_private: envPrivate && Object.keys(envPrivate).length ? envPrivate : undefined,
-      profile_id: options?.profileId || undefined,
-      profile_scope: options?.profileScope || undefined,
-      profile_owner: options?.profileOwner || undefined,
-      capability_autoload: Array.isArray(options?.capabilityAutoload)
-        ? options.capabilityAutoload
-        : [],
-      capability_hidden: Array.isArray(options?.capabilityHidden) ? options.capabilityHidden : [],
-      title: options?.title || "",
-      default_scope_key: "",
-      by: "user",
-    }),
-  });
+  invalidateGroupActorsReads(groupId);
+  try {
+    return await apiJson<{ actor: Actor }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors`, {
+      method: "POST",
+      body: JSON.stringify({
+        actor_id: actorId,
+        role,
+        runtime,
+        ...(options?.runtimeMode ? { runtime_mode: options.runtimeMode } : {}),
+        command,
+        env: {},
+        env_private: envPrivate && Object.keys(envPrivate).length ? envPrivate : undefined,
+        profile_id: options?.profileId || undefined,
+        profile_scope: options?.profileScope || undefined,
+        profile_owner: options?.profileOwner || undefined,
+        capability_autoload: Array.isArray(options?.capabilityAutoload)
+          ? options.capabilityAutoload
+          : [],
+        capability_hidden: Array.isArray(options?.capabilityHidden) ? options.capabilityHidden : [],
+        title: options?.title || "",
+        default_scope_key: "",
+        by: "user",
+      }),
+    });
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
 }
 
 export async function updateActor(
@@ -120,8 +128,7 @@ export async function updateActor(
     capabilityHidden?: string[];
   },
 ) {
-  clearActorsReadOnlyRequest(groupId);
-  clearGroupsReadRequest();
+  invalidateGroupActorsReads(groupId);
   const body: Record<string, unknown> = { by: "user" };
   if (runtime !== undefined && runtime !== "") body.runtime = runtime;
   if (command !== undefined) body.command = command.trim();
@@ -134,29 +141,41 @@ export async function updateActor(
   if (typeof opts?.enabled === "boolean") body.enabled = opts.enabled;
   if (Array.isArray(opts?.capabilityAutoload)) body.capability_autoload = opts.capabilityAutoload;
   if (Array.isArray(opts?.capabilityHidden)) body.capability_hidden = opts.capabilityHidden;
-  return apiJson(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
-    { method: "POST", body: JSON.stringify(body) },
-  );
+  try {
+    return await apiJson(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
 }
 
 export async function uploadActorAvatar(groupId: string, actorId: string, file: File) {
-  clearActorsReadOnlyRequest(groupId);
+  invalidateGroupActorsReads(groupId, false);
   const form = new FormData();
   form.set("by", "user");
   form.set("file", file);
-  return apiForm<{ actor: Actor }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/avatar`,
-    form,
-  );
+  try {
+    return await apiForm<{ actor: Actor }>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/avatar`,
+      form,
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId, false);
+  }
 }
 
 export async function clearActorAvatar(groupId: string, actorId: string) {
-  clearActorsReadOnlyRequest(groupId);
-  return apiJson<{ actor: Actor }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/avatar?by=user`,
-    { method: "DELETE" },
-  );
+  invalidateGroupActorsReads(groupId, false);
+  try {
+    return await apiJson<{ actor: Actor }>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/avatar?by=user`,
+      { method: "DELETE" },
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId, false);
+  }
 }
 
 export async function attachActorProfile(
@@ -165,74 +184,95 @@ export async function attachActorProfile(
   profileId: string,
   opts?: ProfileLookupOptions,
 ) {
-  clearActorsReadOnlyRequest(groupId);
-  clearGroupsReadRequest();
-  return apiJson<{ actor: Actor }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        by: "user",
-        profile_id: profileId,
-        profile_scope: opts?.scope || undefined,
-        profile_owner: opts?.ownerId || undefined,
-      }),
-    },
-  );
+  invalidateGroupActorsReads(groupId);
+  try {
+    return await apiJson<{ actor: Actor }>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          by: "user",
+          profile_id: profileId,
+          profile_scope: opts?.scope || undefined,
+          profile_owner: opts?.ownerId || undefined,
+        }),
+      },
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
 }
 
 export async function convertActorToCustom(groupId: string, actorId: string) {
-  clearActorsReadOnlyRequest(groupId);
-  clearGroupsReadRequest();
-  return apiJson<{ actor: Actor }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
-    { method: "POST", body: JSON.stringify({ by: "user", profile_action: "convert_to_custom" }) },
-  );
+  invalidateGroupActorsReads(groupId);
+  try {
+    return await apiJson<{ actor: Actor }>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
+      { method: "POST", body: JSON.stringify({ by: "user", profile_action: "convert_to_custom" }) },
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
 }
 
 export async function removeActor(groupId: string, actorId: string) {
-  clearActorsReadOnlyRequest(groupId);
-  clearGroupsReadRequest();
-  return apiJson(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}?by=user`,
-    { method: "DELETE" },
-  );
+  invalidateGroupActorsReads(groupId);
+  try {
+    return await apiJson(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}?by=user`,
+      { method: "DELETE" },
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
 }
 
 export async function startActor(groupId: string, actorId: string) {
-  clearActorsReadOnlyRequest(groupId);
-  clearGroupsReadRequest();
-  return apiJson(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/start`,
-    { method: "POST" },
-  );
+  invalidateGroupActorsReads(groupId);
+  try {
+    return await apiJson(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/start`,
+      { method: "POST" },
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
 }
 
 export async function stopActor(groupId: string, actorId: string) {
-  clearActorsReadOnlyRequest(groupId);
-  clearGroupsReadRequest();
-  return apiJson(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/stop`,
-    { method: "POST" },
-  );
+  invalidateGroupActorsReads(groupId);
+  try {
+    return await apiJson(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/stop`,
+      { method: "POST" },
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
 }
 
 export async function restartActor(groupId: string, actorId: string) {
-  clearActorsReadOnlyRequest(groupId);
-  clearGroupsReadRequest();
-  return apiJson(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/restart?by=user`,
-    { method: "POST" },
-  );
+  invalidateGroupActorsReads(groupId);
+  try {
+    return await apiJson(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/restart?by=user`,
+      { method: "POST" },
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
 }
 
 export async function newActorSession(groupId: string, actorId: string) {
-  clearActorsReadOnlyRequest(groupId);
-  clearGroupsReadRequest();
-  return apiJson(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/new_session?by=user`,
-    { method: "POST" },
-  );
+  invalidateGroupActorsReads(groupId);
+  try {
+    return await apiJson(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/new_session?by=user`,
+      { method: "POST" },
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
 }
 
 export async function fetchActorPrivateEnvKeys(groupId: string, actorId: string) {

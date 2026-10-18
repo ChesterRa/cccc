@@ -310,6 +310,16 @@ export function clearContextRequest(groupId: string, detail?: ContextDetailLevel
   }
 }
 
+export function clearCapabilityStateRequests(groupId?: string): void {
+  const gid = String(groupId || "").trim();
+  const prefix = gid ? `capability-state:${gid}:` : "capability-state:";
+  for (const key of Array.from(sharedReadRequests.keys())) {
+    if (key.startsWith(prefix)) {
+      sharedReadRequests.delete(key);
+    }
+  }
+}
+
 export function invalidateContextRead(groupId: string): void {
   clearContextRequest(groupId);
 }

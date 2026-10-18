@@ -1591,16 +1591,24 @@ export async function updateGroupPrompt(
   const body: Record<string, unknown> = { content, by: "user" };
   if (opts?.editorMode) body.editor_mode = opts.editorMode;
   if (Array.isArray(opts?.changedBlocks)) body.changed_blocks = opts.changedBlocks;
-  return apiJson<GroupPromptInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/prompts/${kind}`, {
-    method: "PUT",
-    body: JSON.stringify(body),
-  });
+  try {
+    return await apiJson<GroupPromptInfo>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/prompts/${kind}`,
+      { method: "PUT", body: JSON.stringify(body) },
+    );
+  } finally {
+    clearSharedReadRequest(groupPromptsRequestKey(groupId));
+  }
 }
 
 export async function resetGroupPrompt(groupId: string, kind: GroupPromptKind) {
   clearSharedReadRequest(groupPromptsRequestKey(groupId));
-  return apiJson<GroupPromptInfo>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/prompts/${kind}?confirm=${encodeURIComponent(kind)}`,
-    { method: "DELETE" },
-  );
+  try {
+    return await apiJson<GroupPromptInfo>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/prompts/${kind}?confirm=${encodeURIComponent(kind)}`,
+      { method: "DELETE" },
+    );
+  } finally {
+    clearSharedReadRequest(groupPromptsRequestKey(groupId));
+  }
 }
