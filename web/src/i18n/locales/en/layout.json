@@ -169,7 +169,6 @@
     "confirm": "Confirm",
     "cancel": "Cancel",
     "approve": "Approve",
-    "remove": "Remove",
     "disconnect": "Disconnect",
     "states": {
       "invited": "Waiting for the other Group to apply",
@@ -218,7 +217,6 @@
     "connectionTrouble": "Could not confirm the connection. Retrying automatically; check that the inviter is running and its receiving address is reachable. After changing that address, cancel the request and use a new invitation.",
     "errorDetails": "Technical details",
     "cancelPairHint": "Cancel this invitation or connection request? The other side will need a new invitation to connect.",
-    "history": "Closed invitations and connections ({{count}})",
     "cancelInvite": "Cancel invitation",
     "cancelRequest": "Cancel request",
     "suggestedAddress": "Selected from this machine’s network interfaces. The other machine must be on a network that can reach it, such as the same LAN or VPN.",

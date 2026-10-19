@@ -37,7 +37,6 @@ afterEach(async () => {
   host.remove();
   vi.useRealTimers();
 });
-
 it("clears a recovered polling error and treats cached online status as unconfirmed on failure", async () => {
   vi.useFakeTimers();
   value.relations = [
@@ -135,6 +134,7 @@ it("approves the requesting pair in one click and never presents pending as conn
   ]);
 });
 it("shows the setup explanation only until a Group pair is connected", async () => {
+  vi.useFakeTimers();
   await render();
   expect(host.textContent).toContain("direct.description");
   expect(host.textContent).toContain("direct.chooseHint");
@@ -151,7 +151,9 @@ it("shows the setup explanation only until a Group pair is connected", async () 
       error: null,
     },
   ];
-  await render();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
   expect(host.textContent).toContain("direct.states.online");
   expect(host.textContent).not.toContain("direct.description");
   expect(host.textContent).not.toContain("direct.chooseHint");
@@ -159,7 +161,7 @@ it("shows the setup explanation only until a Group pair is connected", async () 
   expect(button("direct.inviteGroup")).toBeDefined();
   expect(button("direct.useInvite")).toBeDefined();
 });
-it("offers removal for expired invitations but cannot approve a replaced Group", async () => {
+it("automatically removes expired invitations without approving a replaced Group", async () => {
   value.relations = [
     {
       id: "direct-id",
@@ -172,11 +174,11 @@ it("offers removal for expired invitations but cannot approve a replaced Group",
     },
   ];
   await render();
-  expect(host.textContent).toContain("direct.states.replaced");
+  expect(host.textContent).not.toContain("direct.states.replaced");
   expect(button("direct.approve")).toBeUndefined();
-  expect(button("direct.remove")).toBeDefined();
+  expect(button("direct.remove")).toBeUndefined();
+  expect(postBodies()).toEqual([{ action: "remove", group_id: "group-a", id: "direct-id" }]);
 });
-
 function invitation(expires = Date.now() + 1800000) {
   return `cccc-direct:${btoa(
     String.fromCharCode(
@@ -227,7 +229,6 @@ const postBodies = () =>
   mocks.request.mock.calls
     .filter(([, init]) => init?.method === "POST")
     .map(([, init]) => JSON.parse(init.body));
-
 it("keeps an expired pending join visible until the receiver confirms a decision", async () => {
   vi.useFakeTimers();
   value.relations = [relation({ state: "pending", initiated: true, expired: true })];
@@ -247,13 +248,12 @@ it("keeps an expired pending join visible until the receiver confirms a decision
   await act(async () => {
     await vi.advanceTimersByTimeAsync(3000);
   });
-  expect(host.textContent).toContain("direct.states.expired");
-  expect(host.textContent).toContain("direct.history");
-  expect(button("direct.remove")).toBeDefined();
+  expect(host.textContent).not.toContain("direct.states.expired");
+  expect(host.textContent).not.toContain("direct.history");
+  expect(button("direct.remove")).toBeUndefined();
   expect(button("direct.cancelRequest")).toBeUndefined();
-  expect(postBodies()).toEqual([]);
+  expect(postBodies()).toEqual([{ action: "remove", group_id: "group-a", id: "direct-fixture" }]);
 });
-
 it("shows initial loading without asserting that receiving is off", async () => {
   mocks.request.mockImplementation(() => new Promise(() => {}));
   await render();

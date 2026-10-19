@@ -242,7 +242,13 @@ restarts and closed browsers. Do not copy one running `CCCC_HOME` into a second
 simultaneously running instance: that copies its cryptographic identity.
 
 Use **Disconnect** on either side to revoke that Group pair. A revoked grant
-cannot be reopened; create a new invitation. Removing a closed record clears its
+cannot be reopened; create a new invitation. The Direct connection panel automatically
+removes confirmed closed or expired records, including older records, without a
+second **Remove** click. Offline connections and requests still awaiting the remote
+side's decision remain visible. Closed records are no longer shown in a history
+section, and the panel has no separate **Remove** action. Background cleanup
+does not restore closed records to the UI.
+Removing a closed record clears its
 route preference for future messages but does not redirect already queued work.
 An explicitly configured Direct pair never silently falls back to an account
 connection when offline. Stopping the listener affects all receiving Direct

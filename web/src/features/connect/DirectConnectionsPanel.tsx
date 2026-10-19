@@ -12,6 +12,7 @@ import {
   type DirectStatus,
 } from "./directConnectionModel";
 
+import { useDirectStatus } from "./useDirectStatus";
 import { prepareDirectInvitation } from "./prepareDirectInvitation";
 
 export function DirectConnectionsPanel({
@@ -22,12 +23,11 @@ export function DirectConnectionsPanel({
   groupTitle?: string;
 }) {
   const { t } = useTranslation("layout");
-  const [status, setStatus] = useState<DirectStatus | null>(null);
   const [error, setError] = useState("");
   const [submittedId, setSubmittedId] = useState<string | null>(null);
-  const [pollFailed, setPollFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
+  const { status, setStatus, pollFailed } = useDirectStatus(groupId, revision);
   const [task, setTask] = useState<"invite" | "join" | "settings" | null>(null);
   const [incoming, setIncoming] = useState("");
   // Invitations stay only in this open panel, never in browser storage or polling.
@@ -57,54 +57,21 @@ export function DirectConnectionsPanel({
     [],
   );
   useEffect(() => {
-    let disposed = false;
-    let controller: AbortController | null = null;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
-      const request = new AbortController();
-      controller = request;
-      const deadline = setTimeout(() => request.abort(), 10000);
-      const result = await apiJson<DirectStatus>(
-        `/api/v1/connect/direct?group_id=${encodeURIComponent(groupId)}`,
-        { signal: request.signal },
-      );
-      clearTimeout(deadline);
-      if (disposed) return;
-      setPollFailed(!result.ok);
-      if (result.ok) {
-        setStatus(result.result);
-        setSubmittedId((id) => (result.result.relations.some((r) => r.id === id) ? null : id));
-        setInvitations((previous) =>
-          Object.fromEntries(
-            Object.entries(previous).filter(([id]) => {
-              const relation = result.result.relations.find((r) => r.id === id);
-              const seen = observedInvitations.current.has(id);
-              if (relation) observedInvitations.current.add(id);
-              return relation
-                ? relation.state === "invited" && relation.current && !relation.expired
-                : !seen;
-            }),
-          ),
-        );
-      } else
-        setStatus((previous) =>
-          previous
-            ? {
-                ...previous,
-                runtime: null,
-                relations: previous.relations.map((r) => ({ ...r, online: false })),
-              }
-            : null,
-        );
-      timer = setTimeout(() => void poll(), 3000);
-    };
-    void poll();
-    return () => {
-      disposed = true;
-      controller?.abort();
-      clearTimeout(timer);
-    };
-  }, [groupId, revision]);
+    if (!status) return;
+    setSubmittedId((id) => (status.relations.some((r) => r.id === id) ? null : id));
+    setInvitations((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([id]) => {
+          const relation = status.relations.find((r) => r.id === id);
+          const seen = observedInvitations.current.has(id);
+          if (relation) observedInvitations.current.add(id);
+          return relation
+            ? relation.state === "invited" && relation.current && !relation.expired
+            : !seen;
+        }),
+      ),
+    );
+  }, [status]);
 
   const act = async (action: string, extra: Record<string, unknown> = {}): Promise<boolean> => {
     if (actionRequest.current) return false;
@@ -177,7 +144,7 @@ export function DirectConnectionsPanel({
       );
       if (task === "settings") setTask(null);
     }
-    if ((action === "remove" || action === "revoke") && typeof extra.id === "string") {
+    if (action === "revoke" && typeof extra.id === "string") {
       setInvitations((previous) => {
         const next = { ...previous };
         delete next[String(extra.id)];
@@ -198,7 +165,6 @@ export function DirectConnectionsPanel({
   };
   const relations = status?.relations || [];
   const current = relations.filter((r) => !directRelationClosed(r));
-  const history = relations.filter((r) => !current.includes(r));
   const rows = (items: typeof relations) => (
     <ul className="space-y-2">
       {items.map((r) => (
@@ -235,14 +201,6 @@ export function DirectConnectionsPanel({
         ))}
       {/* Live relations stay visible in a task: approvals and uncertain outcomes surface here. */}
       {current.length > 0 && rows(current)}
-      {!task && history.length > 0 && (
-        <details>
-          <summary className="cursor-pointer text-[var(--color-text-secondary)]">
-            {t("direct.history", { count: history.length })}
-          </summary>
-          <div className="pt-3">{rows(history)}</div>
-        </details>
-      )}
       {task ? (
         <section
           className={

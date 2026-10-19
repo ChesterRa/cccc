@@ -169,7 +169,6 @@
     "confirm": "确认",
     "cancel": "取消",
     "approve": "允许连接",
-    "remove": "移除",
     "disconnect": "断开连接",
     "states": {
       "invited": "等待对方使用邀请并申请",
@@ -218,7 +217,6 @@
     "connectionTrouble": "尚未确认连接，正在自动重试。请检查邀请方是否运行、接收地址是否可达。若更改了该地址，请取消申请并使用新邀请。",
     "errorDetails": "技术详情",
     "cancelPairHint": "取消此邀请或连接申请吗？之后需要新邀请才能连接。",
-    "history": "已结束的邀请和连接（{{count}}）",
     "cancelInvite": "取消邀请",
     "cancelRequest": "取消申请",
     "suggestedAddress": "已自动选取本机地址，对方需能访问它（如同一局域网或 VPN）。",
