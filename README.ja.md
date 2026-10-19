@@ -429,7 +429,7 @@ cccc im start|stop|status
 | 機能面 | 例 |
 |--------|----|
 | **常時公開の協調コア** | `cccc_bootstrap`、`cccc_help`、機能検索・呼び出し、Inbox、メッセージ、ファイル、`cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state` |
-| **プロジェクト情報と記憶（必要時）** | `cccc_project_info`、`cccc_tracked_send`、`cccc_memory`、`cccc_context_sync` |
+| **プロジェクト情報と記憶（必要時）** | `cccc_tracked_send`、`cccc_memory`、`cccc_context_sync` |
 | **Group と Actor 制御（必要時）** | `cccc_group`、`cccc_actor`、`cccc_runtime_list` |
 | **ワークスペースツール（必要時）** | `cccc_repo`、`cccc_presentation`、`cccc_terminal`、`cccc_debug` |
 | **インスタンス検出** | `cccc_connect`、`cccc_message_send` と `cccc_file_send` の正確なインスタンス間宛先 |

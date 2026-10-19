@@ -1,5 +1,4 @@
 use cccc_contracts::{Actor, ActorRole};
-use std::path::Path;
 
 use crate::actors::{effective_role, visible};
 use crate::group_prompts::{DEFAULT_PREAMBLE_BODY, read_preamble};
@@ -80,7 +79,6 @@ fn render_with_body(group: &GroupDoc, actor: &Actor, body: &str) -> String {
     if runner == "headless" {
         lines.push("runner: headless (MCP-only, no PTY)".into());
     }
-    lines.push(project_line(group));
     let scope_lines = group
         .scopes
         .iter()
@@ -131,44 +129,6 @@ fn render_with_body(group: &GroupDoc, actor: &Actor, body: &str) -> String {
     } else {
         format!("{header}\n\n{body}\n")
     }
-}
-
-fn project_line(group: &GroupDoc) -> String {
-    let root = group
-        .scopes
-        .iter()
-        .find(|scope| scope.scope_key == group.active_scope_key && !scope.url.trim().is_empty())
-        .or_else(|| {
-            group
-                .scopes
-                .iter()
-                .find(|scope| !scope.url.trim().is_empty())
-        })
-        .map(|scope| expanded_path(&scope.url));
-    let Some(root) = root else {
-        return "project: PROJECT.md missing (no scope attached)".into();
-    };
-    let upper = root.join("PROJECT.md");
-    let lower = root.join("project.md");
-    if upper.exists() {
-        format!("project: PROJECT.md found ({})", upper.display())
-    } else if lower.exists() {
-        format!("project: PROJECT.md found ({})", lower.display())
-    } else {
-        format!(
-            "project: PROJECT.md missing (expected at {})",
-            upper.display()
-        )
-    }
-}
-
-fn expanded_path(value: &str) -> std::path::PathBuf {
-    let Some(suffix) = value.strip_prefix("~/") else {
-        return Path::new(value).to_path_buf();
-    };
-    std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .map_or_else(|| Path::new(value).to_path_buf(), |home| home.join(suffix))
 }
 
 fn enum_name(value: impl serde::Serialize) -> String {

@@ -45,26 +45,6 @@
     }
   },
   {
-    "name": "cccc_project_info",
-    "description": "Get PROJECT.md content for the active scope.",
-    "annotations": {
-      "readOnlyHint": true,
-      "destructiveHint": false,
-      "idempotentHint": true,
-      "openWorldHint": false
-    },
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        }
-      },
-      "required": []
-    }
-  },
-  {
     "name": "cccc_inbox_read",
     "description": "Read and consume the next ordered Mail batch. Only mode=mail messages participate in this inbox and its cursor; Send and Send + Reply are delivered directly and are not returned here. Bootstrap previews do not consume Mail.",
     "inputSchema": {

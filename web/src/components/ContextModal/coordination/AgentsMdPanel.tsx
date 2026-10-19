@@ -1,52 +1,52 @@
-import type { ProjectMdInfo } from "../../../types";
+import type { AgentsMdInfo } from "../../../types";
 import { LazyMarkdownRenderer } from "../../LazyMarkdownRenderer";
 import { classNames } from "../../../utils/classNames";
 import type { ContextTranslator } from "../model";
 import type { ContextModalUi } from "../ui";
 
-interface ProjectPanelProps {
+interface AgentsMdPanelProps {
   expanded?: boolean;
   isDark: boolean;
   tr: ContextTranslator;
   ui: ContextModalUi;
-  projectBusy: boolean;
-  projectError: string;
+  agentsMdBusy: boolean;
+  agentsMdError: string;
   notifyError: string;
-  projectNotice: string;
-  projectPathLabel: string;
-  editingProject: boolean;
-  projectMd: ProjectMdInfo | null;
-  projectText: string;
+  agentsMdNotice: string;
+  agentsMdPathLabel: string;
+  editingAgentsMd: boolean;
+  agentsMd: AgentsMdInfo | null;
+  agentsMdText: string;
   notifyAgents: boolean;
   onExpand: () => void;
   onCancelEdit: () => void;
-  onEditProject: () => void;
-  onProjectTextChange: (value: string) => void;
+  onEditAgentsMd: () => void;
+  onAgentsMdTextChange: (value: string) => void;
   onNotifyAgentsChange: (checked: boolean) => void;
-  onSaveProject: () => void;
+  onSaveAgentsMd: () => void;
 }
 
-export function ProjectPanel({
+export function AgentsMdPanel({
   expanded = false,
   isDark,
   tr,
   ui,
-  projectBusy,
-  projectError,
+  agentsMdBusy,
+  agentsMdError,
   notifyError,
-  projectNotice,
-  projectPathLabel,
-  editingProject,
-  projectMd,
-  projectText,
+  agentsMdNotice,
+  agentsMdPathLabel,
+  editingAgentsMd,
+  agentsMd,
+  agentsMdText,
   notifyAgents,
   onExpand,
   onCancelEdit,
-  onEditProject,
-  onProjectTextChange,
+  onEditAgentsMd,
+  onAgentsMdTextChange,
   onNotifyAgentsChange,
-  onSaveProject,
-}: ProjectPanelProps) {
+  onSaveAgentsMd,
+}: AgentsMdPanelProps) {
   const shellClass = expanded
     ? "flex h-full min-h-0 flex-col"
     : classNames("rounded-xl border p-4", "glass-card");
@@ -67,10 +67,10 @@ export function ProjectPanel({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>
-            {tr("context.projectMd", "PROJECT.md")}
+            {tr("context.agentsMd", "AGENTS.md")}
           </div>
-          <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
-            {projectBusy ? tr("common:loading", "Loading…") : projectPathLabel}
+          <div className={classNames("mt-1 break-all text-xs", ui.mutedTextClass)}>
+            {agentsMdBusy ? tr("common:loading", "Loading…") : agentsMdPathLabel}
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -78,39 +78,45 @@ export function ProjectPanel({
             <button
               type="button"
               onClick={onExpand}
-              disabled={projectBusy}
+              disabled={agentsMdBusy}
               className={ui.buttonSecondaryClass}
             >
               {tr("context.expand", "Expand")}
             </button>
           ) : null}
-          {editingProject ? (
+          {editingAgentsMd ? (
             <button
               type="button"
               onClick={onCancelEdit}
-              disabled={projectBusy}
+              disabled={agentsMdBusy}
               className={ui.buttonSecondaryClass}
             >
               {tr("context.cancel", "Cancel")}
             </button>
           ) : null}
-          <button type="button" onClick={onEditProject} className={ui.buttonPrimaryClass}>
-            {editingProject
+          <button type="button" onClick={onEditAgentsMd} className={ui.buttonPrimaryClass}>
+            {editingAgentsMd
               ? tr("context.editing", "Editing")
-              : projectMd?.exists
+              : agentsMd?.exists
                 ? tr("context.editButton", "Edit")
                 : tr("context.createButton", "Create")}
           </button>
         </div>
       </div>
-      {projectError ? (
+      <p className={classNames("mt-3 text-xs", ui.mutedTextClass)}>
+        {tr(
+          "context.agentsMdHint",
+          "Repository instructions in the current workspace. Each runtime controls loading and precedence; saving does not reload running sessions.",
+        )}
+      </p>
+      {agentsMdError ? (
         <div
           className={classNames(
             "mt-3 rounded-lg border px-3 py-2 text-sm",
             "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400",
           )}
         >
-          {projectError}
+          {agentsMdError}
         </div>
       ) : null}
       {notifyError ? (
@@ -123,24 +129,28 @@ export function ProjectPanel({
           {notifyError}
         </div>
       ) : null}
-      {projectNotice ? (
+      {agentsMdNotice ? (
         <div
           className={classNames(
             "mt-3 rounded-lg border px-3 py-2 text-sm",
             "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
           )}
         >
-          {projectNotice}
+          {agentsMdNotice}
         </div>
       ) : null}
       <div className={contentClass}>
-        {editingProject ? (
+        {editingAgentsMd ? (
           <>
             <textarea
-              value={projectText}
-              onChange={(event) => onProjectTextChange(event.target.value)}
+              value={agentsMdText}
+              onChange={(event) => onAgentsMdTextChange(event.target.value)}
               className={textAreaClass}
-              placeholder={tr("context.writePlaceholder", "Write your project constitution here…")}
+              aria-label={tr("context.agentsMd", "AGENTS.md")}
+              placeholder={tr(
+                "context.agentsMdPlaceholder",
+                "Write repository instructions, conventions, and validation commands…",
+              )}
             />
             <label
               className={classNames(
@@ -158,20 +168,20 @@ export function ProjectPanel({
             <div className="mt-3 flex items-center gap-2">
               <button
                 type="button"
-                onClick={onSaveProject}
-                disabled={projectBusy}
+                onClick={onSaveAgentsMd}
+                disabled={agentsMdBusy}
                 className={ui.buttonPrimaryClass}
               >
-                {projectBusy
+                {agentsMdBusy
                   ? tr("context.saving", "Saving…")
-                  : tr("context.saveProject", "Save PROJECT.md")}
+                  : tr("context.saveAgentsMd", "Save AGENTS.md")}
               </button>
             </div>
           </>
-        ) : projectMd?.exists && projectMd.content ? (
+        ) : agentsMd?.exists && agentsMd.content ? (
           <div className={markdownContainerClass}>
             <LazyMarkdownRenderer
-              content={String(projectMd.content)}
+              content={String(agentsMd.content)}
               isDark={isDark}
               className={classNames("text-sm", ui.subtleTextClass)}
               fallback={
@@ -181,7 +191,7 @@ export function ProjectPanel({
                     ui.subtleTextClass,
                   )}
                 >
-                  {String(projectMd.content)}
+                  {String(agentsMd.content)}
                 </div>
               }
             />
@@ -193,7 +203,9 @@ export function ProjectPanel({
               "border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]",
             )}
           >
-            {tr("context.noProjectMd", "No PROJECT.md found")}
+            {agentsMd?.exists
+              ? tr("context.emptyAgentsMd", "AGENTS.md is empty.")
+              : tr("context.noAgentsMd", "No AGENTS.md in this workspace.")}
           </div>
         )}
       </div>

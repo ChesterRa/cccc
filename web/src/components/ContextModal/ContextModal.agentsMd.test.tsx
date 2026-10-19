@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { GroupContext, ProjectMdInfo } from "../../types";
+import type { GroupContext, AgentsMdInfo } from "../../types";
 
 const mocks = vi.hoisted(() => ({
   apiJson: vi.fn(),
@@ -15,7 +15,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (_key: string, opts?: { defaultValue?: string }) => opts?.defaultValue || _key,
+    t: (_key: string, opts?: { defaultValue?: string; [key: string]: unknown }) =>
+      (opts?.defaultValue || _key).replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
+        opts?.[key] === undefined ? match : String(opts[key]),
+      ),
   }),
 }));
 
@@ -85,7 +88,7 @@ const emptyContext: GroupContext = {
   tasks_summary: { total: 0, planned: 0, active: 0, done: 0, archived: 0 },
 };
 
-describe("ContextModal PROJECT.md loading and ownership", () => {
+describe("ContextModal AGENTS.md loading and ownership", () => {
   let host: HTMLDivElement;
   let root: Root;
   const onOpenContext = vi.fn(async () => {});
@@ -130,15 +133,76 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
     host.remove();
   });
 
-  it("reads the existing PROJECT.md using the Web endpoint's exists field", async () => {
+  it("reads the existing AGENTS.md using the Web endpoint's exists field", async () => {
     mocks.apiJson.mockResolvedValue({
       ok: true,
-      result: { exists: true, path: "/a/PROJECT.md", content: "Existing repository charter" },
+      result: { exists: true, path: "/a/AGENTS.md", content: "Existing repository instructions" },
     });
     await renderModal();
-    await clickButton("PROJECT.md");
-    expect(host.textContent).toContain("Existing repository charter");
-    expect(host.textContent).not.toContain("No PROJECT.md found");
+    await clickButton("AGENTS.md");
+    expect(host.textContent).toContain("Existing repository instructions");
+    expect(host.textContent).toContain("/a/AGENTS.md");
+    expect(host.textContent).toContain("saving does not reload running sessions");
+    expect(host.textContent).not.toContain("No AGENTS.md in this workspace.");
+  });
+
+  it.each([false, true])(
+    "edits a missing or empty AGENTS.md without a generated template (exists=%s)",
+    async (exists) => {
+      mocks.apiJson.mockResolvedValue({
+        ok: true,
+        result: { exists, path: "/a/AGENTS.md", content: "" },
+      });
+      await renderModal();
+      await clickButton("AGENTS.md");
+      expect(host.textContent).toContain(
+        exists ? "AGENTS.md is empty." : "No AGENTS.md in this workspace.",
+      );
+      await clickButton(exists ? "Edit" : "Create");
+      const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="AGENTS.md"]')!;
+      expect(editor.value).toBe("");
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+          editor,
+          "# Repository instructions",
+        );
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await clickButton("Save AGENTS.md");
+      const put = mocks.apiJson.mock.calls.find(([, init]) => init?.method === "PUT");
+      expect(put?.[0]).toBe("/api/v1/groups/g_a/agents_md");
+      expect(JSON.parse(put?.[1].body)).toEqual({
+        content: "# Repository instructions",
+        expected_path: "/a/AGENTS.md",
+      });
+      expect(mocks.apiJson.mock.calls.some(([url]) => url.endsWith("/send"))).toBe(false);
+      expect(onSyncContext).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retains the instructions draft and skips notification when the workspace changed", async () => {
+    mocks.apiJson.mockImplementation(async (_url: string, init?: RequestInit) =>
+      init?.method === "PUT"
+        ? {
+            ok: false,
+            error: {
+              code: "workspace_changed",
+              message: "Workspace changed. Reopen AGENTS.md before saving.",
+            },
+          }
+        : { ok: true, result: { exists: true, path: "/a/AGENTS.md", content: "Keep this draft" } },
+    );
+    await renderModal();
+    await clickButton("AGENTS.md");
+    await clickButton("Edit");
+    await act(async () => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await clickButton("Save AGENTS.md");
+    expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="AGENTS.md"]')?.value).toBe(
+      "Keep this draft",
+    );
+    expect(host.textContent).toContain("Workspace changed.");
+    expect(mocks.apiJson.mock.calls.some(([url]) => url.endsWith("/send"))).toBe(false);
+    expect(onSyncContext).not.toHaveBeenCalled();
   });
 
   it("initializes summary edits from the latest snapshot and retains an existing draft", async () => {
@@ -177,7 +241,7 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
     expect(draft!.value).toBe("Unsaved summary edit");
   });
 
-  it("requests PROJECT.md only once when the endpoint returns an error instead of looping infinitely", async () => {
+  it("requests AGENTS.md only once when the endpoint returns an error instead of looping infinitely", async () => {
     let calls = 0;
     mocks.apiJson.mockImplementation(async () => {
       calls += 1;
@@ -186,31 +250,31 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
     });
 
     await renderModal("g_a");
-    await clickButton("PROJECT.md");
+    await clickButton("AGENTS.md");
 
     expect(calls).toBe(1);
     expect(document.body.textContent).toContain("Disk read error");
   });
 
-  it("does not leak Group A PROJECT.md content or edit state into Group B after switching groups", async () => {
-    const readA = deferred<{ ok: true; result: ProjectMdInfo }>();
-    const readB = deferred<{ ok: true; result: ProjectMdInfo }>();
+  it("does not leak Group A AGENTS.md content or edit state into Group B after switching groups", async () => {
+    const readA = deferred<{ ok: true; result: AgentsMdInfo }>();
+    const readB = deferred<{ ok: true; result: AgentsMdInfo }>();
     mocks.apiJson.mockImplementation((url: string) =>
       url.includes("g_a") ? readA.promise : readB.promise,
     );
 
     await renderModal("g_a");
-    await clickButton("PROJECT.md");
+    await clickButton("AGENTS.md");
     await clickButton("Create");
 
-    // Switch to Group B while Group A's handleEditProject loadProjectMd(true) is in flight
+    // Switch to Group B while Group A's handleEditAgentsMd loadAgentsMd(true) is in flight
     await renderModal("g_b");
-    await clickButton("PROJECT.md");
+    await clickButton("AGENTS.md");
 
     await act(async () => {
       readA.resolve({
         ok: true,
-        result: { exists: true, path: "/a/PROJECT.md", content: "Secret Group A Constitution" },
+        result: { exists: true, path: "/a/AGENTS.md", content: "Secret Group A Constitution" },
       });
       await readA.promise;
     });
@@ -221,7 +285,7 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
     await act(async () => {
       readB.resolve({
         ok: true,
-        result: { exists: true, path: "/b/PROJECT.md", content: "Group B Constitution" },
+        result: { exists: true, path: "/b/AGENTS.md", content: "Group B Constitution" },
       });
       await readB.promise;
     });
@@ -229,16 +293,16 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
     expect(document.body.textContent).toContain("Group B Constitution");
   });
 
-  it("completes committed PROJECT.md writeback and team notification after modal closes", async () => {
-    const saveReq = deferred<{ ok: true; result: ProjectMdInfo }>();
+  it("completes a requested team notification after closing without writing Context", async () => {
+    const saveReq = deferred<{ ok: true; result: AgentsMdInfo }>();
     mocks.apiJson.mockImplementation((url: string, init?: RequestInit) => {
-      if (url.endsWith("/project_md") && init?.method === "PUT") {
+      if (url.endsWith("/agents_md") && init?.method === "PUT") {
         return saveReq.promise;
       }
-      if (url.endsWith("/project_md")) {
+      if (url.endsWith("/agents_md")) {
         return Promise.resolve({
           ok: true,
-          result: { exists: true, path: "/a/PROJECT.md", content: "Initial content" },
+          result: { exists: true, path: "/a/AGENTS.md", content: "Initial content" },
         });
       }
       if (url.endsWith("/send")) {
@@ -248,30 +312,37 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
     });
 
     await renderModal("g_a", true);
-    await clickButton("PROJECT.md");
+    await clickButton("AGENTS.md");
     await clickButton("Edit");
 
     const checkbox = document.body.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     await act(async () => {
       checkbox.click();
     });
-    await clickButton("Save PROJECT.md");
+    await clickButton("Save AGENTS.md");
 
-    // Close the modal while PUT /project_md is in flight
+    // Close the modal while PUT /agents_md is in flight
     await renderModal("g_a", false);
 
     await act(async () => {
       saveReq.resolve({
         ok: true,
-        result: { exists: true, path: "/a/PROJECT.md", content: "Updated content" },
+        result: { exists: true, path: "/a/AGENTS.md", content: "Updated content" },
       });
       await saveReq.promise;
     });
 
-    expect(onSyncContext).toHaveBeenCalledTimes(1);
+    expect(onSyncContext).not.toHaveBeenCalled();
     expect(mocks.apiJson).toHaveBeenCalledWith(
       "/api/v1/groups/g_a/send",
       expect.objectContaining({ method: "POST" }),
+    );
+    const sent = mocks.apiJson.mock.calls.find(([url]) => url.endsWith("/send"))!;
+    const sentBody = JSON.parse(sent[1].body);
+    expect(sentBody.message_mode).toBe("send");
+    expect(sentBody.to).toEqual(["@all"]);
+    expect(sentBody.text).toBe(
+      "Repository instructions updated at /a/AGENTS.md. Re-read this file if it applies to your work.",
     );
   });
 });

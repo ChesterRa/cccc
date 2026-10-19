@@ -1,6 +1,6 @@
 use cccc_client::DaemonClient;
 use cccc_contracts::DaemonRequest;
-use cccc_core::{GroupDoc, HomeLayout};
+use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
 use crate::mapping;
@@ -94,7 +94,6 @@ pub(crate) async fn call_with_context(
                 crate::bootstrap::build(home, client, arguments).await?,
             ));
         }
-        "cccc_project_info" => return project_info(client, arguments).await,
         "cccc_runtime_list" => json!({"runtimes": cccc_runtime::detect_runtimes()
             .into_iter()
             .map(|runtime| runtime.name)
@@ -692,42 +691,6 @@ async fn postprocess_actor_notes(
     );
 }
 
-async fn project_info(
-    client: &DaemonClient,
-    args: Map<String, Value>,
-) -> Result<Value, ToolCallError> {
-    let group_id = args
-        .get("group_id")
-        .cloned()
-        .ok_or_else(|| "group_id is required".to_owned())?;
-    let mut daemon_args = Map::new();
-    daemon_args.insert("group_id".into(), group_id);
-    let result = daemon(client, "group_show", daemon_args).await?;
-    let group: GroupDoc =
-        serde_json::from_value(result.get("group").cloned().unwrap_or(Value::Null))
-            .map_err(|error| error.to_string())?;
-    let scope = group
-        .scopes
-        .iter()
-        .find(|scope| scope.scope_key == group.active_scope_key)
-        .or_else(|| group.scopes.first());
-    let Some(scope) = scope else {
-        return Ok(tool_result(json!({"content":"", "scope":null})));
-    };
-    let root = std::path::Path::new(&scope.url);
-    let path = ["PROJECT.md", "README.md"]
-        .iter()
-        .map(|name| root.join(name))
-        .find(|path| path.is_file());
-    let content = path
-        .as_ref()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .unwrap_or_default();
-    Ok(tool_result(
-        json!({"content": content, "path": path, "scope": scope}),
-    ))
-}
-
 pub(crate) async fn daemon(
     client: &DaemonClient,
     op: &str,
@@ -1022,7 +985,7 @@ mod tests {
             &home,
             &client,
             "cccc_capability_use",
-            json!({"tool_name":"cccc_project_info","tool_arguments":{}})
+            json!({"tool_name":"cccc_memory","tool_arguments":{"action":"layout_get"}})
                 .as_object()
                 .cloned()
                 .expect("call args"),
@@ -1036,10 +999,7 @@ mod tests {
             "pack:context-advanced"
         );
         assert_eq!(called["structuredContent"]["tool_called"], true);
-        assert_eq!(
-            called["structuredContent"]["tool_name"],
-            "cccc_project_info"
-        );
+        assert_eq!(called["structuredContent"]["tool_name"], "cccc_memory");
 
         daemon_task.abort();
     }

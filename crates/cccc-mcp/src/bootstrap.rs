@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
 use std::time::Duration;
 
 use crate::ToolCallError;
@@ -91,7 +90,6 @@ fn assemble_payload(
         "memory_recall_gate": memory_recall_gate,
         "next_calls": {
             "help": "cccc_help()  # when a CCCC route or state boundary is unclear",
-            "project_info": "cccc_capability_use(tool_name=\"cccc_project_info\", tool_arguments={})",
             "context_get": "cccc_context_get()",
             "connect": "cccc_connect()  # discover accessible remote Groups/Actors; use both instance_id and target_group_id for an external_groups entry",
             "inbox_read": "cccc_inbox_read()",
@@ -114,12 +112,6 @@ fn build_session(group: &Map<String, Value>, actors: &[Value], actor_id: &str) -
         .filter_map(Value::as_object)
         .find(|actor| actor.get("id").and_then(Value::as_str) == Some(actor_id));
     let scope = selected_scope(group);
-    let project_path = scope
-        .and_then(|scope| scope.get("url"))
-        .and_then(Value::as_str)
-        .map(Path::new)
-        .map(|root| root.join("PROJECT.md"));
-    let project_found = project_path.as_ref().is_some_and(|path| path.is_file());
     let active_scope = scope.map_or_else(
         || json!({}),
         |scope| {
@@ -140,10 +132,6 @@ fn build_session(group: &Map<String, Value>, actors: &[Value], actor_id: &str) -
         "role": actor.and_then(|item| string_value(item.get("role"))).unwrap_or_default(),
         "runner": actor.and_then(|item| string_value(item.get("runner"))).unwrap_or_default(),
         "active_scope": active_scope,
-        "project_md": {
-            "found": project_found,
-            "path": project_path.filter(|_| project_found).map(|path| path.to_string_lossy().into_owned()),
-        },
     })
 }
 

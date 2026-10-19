@@ -426,7 +426,7 @@ cccc im start|stop|status
 | 能力面 | 示例 |
 |--------|------|
 | **始终可见的协作核心** | `cccc_bootstrap`、`cccc_help`、能力搜索与调用、Inbox、消息、文件、`cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state` |
-| **项目上下文与记忆（按需）** | `cccc_project_info`、`cccc_tracked_send`、`cccc_memory`、`cccc_context_sync` |
+| **项目上下文与记忆（按需）** | `cccc_tracked_send`、`cccc_memory`、`cccc_context_sync` |
 | **Group 与 Actor 控制（按需）** | `cccc_group`、`cccc_actor`、`cccc_runtime_list` |
 | **工作区工具（按需）** | `cccc_repo`、`cccc_presentation`、`cccc_terminal`、`cccc_debug` |
 | **实例发现** | `cccc_connect`；在 `cccc_message_send` 和 `cccc_file_send` 中指定准确的跨实例目标 |

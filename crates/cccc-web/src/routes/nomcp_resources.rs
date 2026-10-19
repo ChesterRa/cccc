@@ -108,7 +108,7 @@ fn checked(root: &Path, session: &Session, raw: &str) -> Result<PathBuf, Resourc
 
 fn allowed(session: &Session, raw: &str) -> bool {
     let allowed = if session.allowed_paths.is_empty() {
-        vec!["README.md", "PROJECT.md", "docs", "src", "tests", "web/src"]
+        vec!["README.md", "AGENTS.md", "docs", "src", "tests", "web/src"]
     } else {
         session.allowed_paths.iter().map(String::as_str).collect()
     };

@@ -782,7 +782,7 @@ export type GroupContext = {
   meta?: { project_status?: string | null; [key: string]: unknown };
 };
 
-export type ProjectMdInfo = {
+export type AgentsMdInfo = {
   exists: boolean;
   path?: string | null;
   content?: string | null;

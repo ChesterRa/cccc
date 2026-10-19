@@ -337,9 +337,18 @@ MCP is exposed as an action-oriented surface. Tool count is intentionally not ha
 
 The surface is best understood as capability groups instead of a fixed namespace/tool count. Each group can expose one or more MCP tools, and some groups use action-style wrappers rather than one-tool-per-operation naming.
 
+Repository instruction loading belongs to each runtime. CCCC does not discover,
+merge, or inject `AGENTS.md` into runtime prompts; Actors without local runtime
+file access can read it through the existing `cccc_file` tool. The Web editor
+reads and writes only the active workspace root's file through
+`GET/PUT /api/v1/groups/{group_id}/agents_md`. GET returns `content`, `path`, and
+`exists`; PUT takes `content` and the displayed `expected_path`, rejecting a
+changed workspace with HTTP 409. File saves do not mutate Context state or reload
+runtime sessions. The optional team notification is a separate chat send.
+
 ### Core Collaboration Capability Groups
 
-- Session and guidance: `cccc_bootstrap`, `cccc_help`, `cccc_project_info`
+- Session and guidance: `cccc_bootstrap`, `cccc_help`
 - Messaging and files: `cccc_inbox_read`, `cccc_message_history`, `cccc_message_send`, `cccc_message_reply`, `cccc_file`, `cccc_file_send`
 - Group and actor control: `cccc_group`, `cccc_actor`
 - Coordination and state: `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state`, `cccc_context_sync`

@@ -46,7 +46,7 @@ beforeEach(() => {
     decisionDraft: { summary: "", taskId: "" },
     handoffDraft: { summary: "", taskId: "" },
     activeTaskOptions: [],
-    projectPanel: <div>Project reference</div>,
+    agentsMdPanel: <div>Project reference</div>,
     onOpenSteeringTab: vi.fn(),
     onStartBriefEdit: vi.fn(),
     onCancelBriefEdit: vi.fn(),
@@ -111,11 +111,11 @@ it("shows and retains the editor even when an external warning opens it", () => 
   expect(props.onSaveBrief).toHaveBeenCalledOnce();
 });
 
-it("uses the existing PROJECT.md and log navigation and opens Summary on return", () => {
+it("uses the existing AGENTS.md and log navigation and opens Summary on return", () => {
   render();
-  act(() => button("PROJECT.md").click());
-  expect(props.onOpenSteeringTab).toHaveBeenLastCalledWith("project");
-  props.steeringTab = "project";
+  act(() => button("AGENTS.md").click());
+  expect(props.onOpenSteeringTab).toHaveBeenLastCalledWith("instructions");
+  props.steeringTab = "instructions";
   render();
   expect(host.textContent).toContain("Project reference");
   act(() => button("Summary").click());

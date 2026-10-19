@@ -292,10 +292,10 @@ mod tests {
         let outbound = DiscordOutbound::new(home, &group.group_id, Arc::new(Http::new("token")));
 
         let attachment = outbound
-            .prepare(&json!({"path":blob.path,"title":"PROJECT.md"}))
+            .prepare(&json!({"path":blob.path,"title":"notes.md"}))
             .await
             .expect("attachment");
-        assert_eq!(attachment.title, "PROJECT.md");
+        assert_eq!(attachment.title, "notes.md");
         assert_eq!(attachment.raw, b"file-bytes");
     }
 

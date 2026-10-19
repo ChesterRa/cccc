@@ -790,7 +790,7 @@ create identities nor open listeners or start jobs. Status omits invitation
 secrets and distinguishes configured, listening, pending approval, active but
 offline, online, expired and revoked. A joining `pending` record past its deadline
 stays visible as checking approval, until confirmed or explicitly cancelled; the
-local clock alone does not place it in closed history. Online is bounded-fresh channel evidence,
+local clock alone cannot close or remove it. Online is bounded-fresh channel evidence,
 not proof that a particular message was received. Listener errors and connection
 attempt errors are shown separately. Polling does not reset form drafts.
 
@@ -825,7 +825,9 @@ Administration uses `connect_direct_status`, `connect_direct_configure`,
 `connect_direct_invite`, `connect_direct_join`, `connect_direct_approve`,
 `connect_direct_revoke`, and `connect_direct_remove`. These are user-only daemon
 operations. Web exposes administrator-only GET/POST `/api/v1/connect/direct`;
-restricted, anonymous remote and exhibit sessions cannot manage them. Actor MCP
+restricted, anonymous remote and exhibit sessions cannot manage them. The Direct
+panel hides closed records and automatically removes them through the guarded
+removal operation; offline and unconfirmed pending records remain visible. Actor MCP
 continues using `cccc_connect` discovery and the existing messaging tools;
 it cannot create or approve grants. The CLI exposes `cccc direct`; invitation
 import reads stdin rather than accepting a secret in the command line.

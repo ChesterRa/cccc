@@ -434,7 +434,7 @@ Ordinary Actors always see a compact collaboration core, including `cccc_connect
 | Surface | Examples |
 |---------|----------|
 | **Always-visible protocol core** | `cccc_bootstrap`, `cccc_help`, capability search/use, inbox, messaging, files, `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state` |
-| **Project context & memory (on demand)** | `cccc_project_info`, `cccc_tracked_send`, `cccc_memory`, `cccc_context_sync` |
+| **Project context & memory (on demand)** | `cccc_tracked_send`, `cccc_memory`, `cccc_context_sync` |
 | **Group & actor control (on demand)** | `cccc_group`, `cccc_actor`, `cccc_runtime_list` |
 | **Workspace utilities (on demand)** | `cccc_repo`, `cccc_presentation`, `cccc_terminal`, `cccc_debug` |
 | **Instance discovery** | `cccc_connect`; qualified targets in `cccc_message_send` and `cccc_file_send` |

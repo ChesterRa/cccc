@@ -37,7 +37,7 @@ interface SteeringPanelProps {
   decisionDraft: NoteDraft;
   handoffDraft: NoteDraft;
   activeTaskOptions: Task[];
-  projectPanel: ReactNode;
+  agentsMdPanel: ReactNode;
   onOpenSteeringTab: (tab: SteeringTab) => void;
   onStartBriefEdit: () => void;
   onCancelBriefEdit: () => void;
@@ -66,7 +66,7 @@ export function SteeringPanel({
   decisionDraft,
   handoffDraft,
   activeTaskOptions,
-  projectPanel,
+  agentsMdPanel,
   onOpenSteeringTab,
   onStartBriefEdit,
   onCancelBriefEdit,
@@ -193,11 +193,11 @@ export function SteeringPanel({
             </button>
             <button
               type="button"
-              aria-pressed={steeringTab === "project"}
-              onClick={() => onOpenSteeringTab("project")}
-              className={tabButtonClass(steeringTab === "project")}
+              aria-pressed={steeringTab === "instructions"}
+              onClick={() => onOpenSteeringTab("instructions")}
+              className={tabButtonClass(steeringTab === "instructions")}
             >
-              {tr("context.projectMd", "PROJECT.md")}
+              {tr("context.agentsMd", "AGENTS.md")}
             </button>
             <button
               type="button"
@@ -418,7 +418,7 @@ export function SteeringPanel({
             </section>
           ) : null}
 
-          {steeringTab === "project" ? projectPanel : null}
+          {steeringTab === "instructions" ? agentsMdPanel : null}
 
           {steeringTab === "log" ? (
             <div className="space-y-3">

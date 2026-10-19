@@ -59,7 +59,7 @@ remaining Agents. Return to **Messages** to read replies or continue the discuss
 ## 5. Keep the work organized
 
 - **Project Context** (clipboard button in the header): **Coordination** contains
-  the working summary, `PROJECT.md`, coordination log and task board. **Agent State**
+  the working summary, `AGENTS.md` editor, coordination log and task board. **Agent State**
   shows each Agent's latest saved report; it is not a live process monitor.
   **Self-Evolving Skills** shows this Group's generated skill candidates.
 - **Files**: browse the workspace, preview supported files and inspect changes.

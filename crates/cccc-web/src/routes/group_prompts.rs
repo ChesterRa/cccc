@@ -22,8 +22,8 @@ struct PromptDeleteQuery {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route(
-            "/api/v1/groups/{group_id}/project_md",
-            get(project_get).put(project_put),
+            "/api/v1/groups/{group_id}/agents_md",
+            get(agents_md_get).put(agents_md_put),
         )
         .route("/api/v1/groups/{group_id}/prompts", get(prompts_get))
         .route(
@@ -32,11 +32,11 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-async fn project_get(
+async fn agents_md_get(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let path = scope_path(&state, &group_id, "PROJECT.md").await?;
+    let path = scope_path(&state, &group_id, "AGENTS.md").await?;
     let (content, exists) = match std::fs::read_to_string(&path) {
         Ok(content) => (content, true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (String::new(), false),
@@ -53,15 +53,23 @@ async fn project_get(
     ))
 }
 
-async fn project_put(
+async fn agents_md_put(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let path = scope_path(&state, &group_id, "PROJECT.md").await?;
+    let path = scope_path(&state, &group_id, "AGENTS.md").await?;
     let content = body.get("content").and_then(Value::as_str).ok_or_else(|| {
         ApiError::bad_code("invalid_content", "content must be a string", json!({}))
     })?;
+    let expected_path = body.get("expected_path").and_then(Value::as_str);
+    if expected_path != path.to_str() {
+        return Err(ApiError::conflict(
+            "workspace_changed",
+            "Workspace changed. Reopen AGENTS.md before saving.",
+            json!({"path":path}),
+        ));
+    }
     std::fs::write(&path, content).map_err(|error| ApiError::bad(error.to_string()))?;
     Ok(success(
         json!({"content":content,"path":path,"exists":true}),
@@ -281,5 +289,144 @@ fn remove_override(path: &std::path::Path) -> Result<(), ApiError> {
             format!("Failed to delete {}: {error}", path.display()),
             json!({}),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cccc_core::{HomeLayout, Scope, group_scope, nomcp};
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn agents_md_edits_only_the_displayed_workspace_and_is_available_without_mcp() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("groups");
+        let group = store.create("instructions", "").expect("group");
+        let workspace = temp.path().join("workspace");
+        let other = temp.path().join("other");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::create_dir_all(&other).expect("other workspace");
+        // Retiring built-in support must never migrate or overwrite user files.
+        let legacy_path = workspace.join("PROJECT.md");
+        std::fs::write(&legacy_path, "Existing project reference").expect("reference");
+        let mut group = group_scope::attach(
+            &store,
+            &group.group_id,
+            Scope {
+                scope_key: "workspace".into(),
+                url: workspace.to_string_lossy().into_owned(),
+                label: String::new(),
+                git_remote: String::new(),
+            },
+        )
+        .expect("attach workspace");
+        let daemon_home = home.clone();
+        let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        let client = cccc_client::DaemonClient::new(home.clone());
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if client
+                    .call(&cccc_contracts::DaemonRequest {
+                        v: 1,
+                        op: "group_list".into(),
+                        args: serde_json::Map::new(),
+                    })
+                    .await
+                    .is_ok()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("daemon ready");
+        let shutdown = tokio::sync::broadcast::channel(1).0;
+        let (_, _, _, state) = crate::app_with_shutdown(
+            home.clone(),
+            shutdown.clone(),
+            crate::WebMode::Normal,
+            None,
+            crate::LiveBinding {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            "instructions-test".into(),
+        );
+        let get = || agents_md_get(State(state.clone()), Path(group.group_id.clone()));
+        let Json(missing) = get().await.expect("read missing file");
+        assert_eq!(missing["result"]["exists"], false);
+        assert_eq!(missing["result"]["content"], "");
+        let path = missing["result"]["path"].clone();
+        let Json(created) = agents_md_put(
+            State(state.clone()),
+            Path(group.group_id.clone()),
+            Json(json!({"content":"# Repository instructions", "expected_path":path})),
+        )
+        .await
+        .expect("create instructions");
+        assert_eq!(created["result"]["exists"], true);
+        let Json(loaded) = get().await.expect("read instructions");
+        assert_eq!(loaded["result"]["content"], "# Repository instructions");
+        let _ = agents_md_put(
+            State(state.clone()),
+            Path(group.group_id.clone()),
+            Json(json!({"content":"Updated conventions", "expected_path":path})),
+        )
+        .await
+        .expect("edit instructions");
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("AGENTS.md")).expect("saved"),
+            "Updated conventions"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&legacy_path).expect("original reference"),
+            "Existing project reference"
+        );
+
+        let session = nomcp::Store::new(home.clone())
+            .expect("sessions")
+            .create(nomcp::CreateSpec {
+                group_id: group.group_id.clone(),
+                title: String::new(),
+                brief: String::new(),
+                reply_to_event_id: String::new(),
+                recipient: "user".into(),
+                scope_key: "workspace".into(),
+                allowed_paths: Vec::new(),
+                expires_in_seconds: 60,
+            })
+            .expect("file access session")
+            .session;
+        let read = super::super::nomcp_resources::read(&workspace, &session, "AGENTS.md", 1, 0)
+            .map_err(|error| error.message)
+            .expect("read instructions without MCP");
+        assert_eq!(read["content"], "Updated conventions");
+
+        group.scopes.push(Scope {
+            scope_key: "other".into(),
+            url: other.to_string_lossy().into_owned(),
+            label: String::new(),
+            git_remote: String::new(),
+        });
+        group.active_scope_key = "other".into();
+        store.save(&group).expect("change workspace");
+        let error = agents_md_put(
+            State(state),
+            Path(group.group_id),
+            Json(json!({"content":"Do not write elsewhere", "expected_path":path})),
+        )
+        .await
+        .expect_err("reject stale editor target");
+        assert!(error.to_string().contains("workspace_changed"));
+        assert!(!other.join("AGENTS.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("AGENTS.md")).expect("unchanged"),
+            "Updated conventions"
+        );
+        let _ = shutdown.send(());
+        daemon.abort();
     }
 }

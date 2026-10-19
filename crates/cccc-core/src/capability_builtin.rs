@@ -29,7 +29,6 @@ pub const CORE_TOOL_NAMES: &[&str] = &[
 ];
 
 const WEB_MODEL_EXTRA_TOOL_NAMES: &[&str] = &[
-    "cccc_project_info",
     "cccc_capability_state",
     "cccc_capability_enable",
     "cccc_capability_install",
@@ -133,7 +132,6 @@ pub fn all() -> Vec<Capability> {
             "pack:context-advanced",
             "Extended Context + Delegation",
             &[
-                "cccc_project_info",
                 "cccc_tracked_send",
                 "cccc_context_sync",
                 "cccc_memory",

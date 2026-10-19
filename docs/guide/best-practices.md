@@ -4,29 +4,31 @@ Tips for getting the most out of CCCC.
 
 ## Setting Up for Success
 
-### Write a Good PROJECT.md
+### Keep Repository Instructions in AGENTS.md
 
-Place `PROJECT.md` at your project root. This is your project's "constitution":
+Use `AGENTS.md` for repository instructions shared with your coding tools:
+architecture notes, development conventions, constraints, and build/test commands.
+Keep it concise and link to longer reference documents when needed. Keep the
+team's current focus, task progress, blockers, and handoffs in CCCC's working
+summary and task board.
 
-```markdown
-# Project Name
+The **AGENTS.md** section in Project Context views and edits the file at the
+current workspace root. It does not combine ancestor or nested instruction
+files, change runtime settings, or inject the file into prompts. Each runtime
+controls discovery, precedence, and refresh. For example, Claude Code may prefer
+an existing `CLAUDE.md`; configure its native instruction loading when necessary.
+Saving a file does not prove that running sessions have reloaded it. You can
+optionally notify the team in chat after saving.
 
-## Goal
-One sentence describing what we're building.
+Web Model and Dots Actors can read repository files on demand with the existing
+`cccc_file` tool, for example `cccc_file(path="AGENTS.md")`. Local coding runtimes
+use their own file and instruction-loading facilities.
 
-## Constraints
-- Must use TypeScript
-- Follow existing code patterns
-- No external dependencies without approval
-
-## Architecture
-Brief overview of the codebase structure.
-
-## Current Focus
-What we're working on right now.
-```
-
-Agents read this on demand via `cccc_capability_use(tool_name="cccc_project_info", tool_arguments={})`.
+CCCC no longer gives `PROJECT.md` special behavior, and the dedicated
+`cccc_project_info` tool has been removed. Existing repository documents are left
+untouched. Move reusable instructions into an existing `AGENTS.md` deliberately;
+keep long project references as ordinary Markdown documents rather than
+replacing or duplicating existing instructions.
 
 ### Customize the Protocol Reference
 

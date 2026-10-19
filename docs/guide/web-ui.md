@@ -866,10 +866,17 @@ Click the reply icon on a message to quote and reply.
 Open **Project Context** from the clipboard button in the Group header. The
 header identifies the Group being viewed.
 
-- **Coordination** combines the working summary, `PROJECT.md`, coordination log
-  and task board. The summary is a short steering brief; `PROJECT.md` remains
-  the fuller repository reference. Empty summaries keep an Edit action without
-  filling the page with empty fields.
+- **Coordination** combines the working summary, `AGENTS.md`, coordination log
+  and task board. The summary holds current working context; `AGENTS.md` holds
+  repository instructions. Empty summaries keep an Edit action without filling
+  the page with empty fields.
+- **AGENTS.md** views and edits the file in the current workspace root, showing
+  its actual path. A missing file can be created explicitly; existing documents
+  are not renamed, merged, or overwritten as part of setup. Each runtime controls
+  instruction discovery and precedence. Saving does not reload running sessions;
+  the optional team notification asks relevant Actors to re-read the file.
+  This editor does not represent all instruction files loaded by every Actor.
+  Web Model and Dots Actors can read files through `cccc_file` when needed.
 - **Tasks** retain Planned, Active and Done columns, including empty drop targets.
   Search and attention filters narrow the board. Open a task for requirements,
   steps, handoffs and completion details. Missing requirements or closeout records

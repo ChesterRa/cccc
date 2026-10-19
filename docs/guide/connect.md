@@ -242,21 +242,19 @@ restarts and closed browsers. Do not copy one running `CCCC_HOME` into a second
 simultaneously running instance: that copies its cryptographic identity.
 
 Use **Disconnect** on either side to revoke that Group pair. A revoked grant
-cannot be reopened; create a new invitation. The Direct connection panel automatically
-removes confirmed closed or expired records, including older records, without a
-second **Remove** click. Offline connections and requests still awaiting the remote
-side's decision remain visible. Closed records are no longer shown in a history
-section, and the panel has no separate **Remove** action. Background cleanup
-does not restore closed records to the UI.
-Removing a closed record clears its
-route preference for future messages but does not redirect already queued work.
-An explicitly configured Direct pair never silently falls back to an account
-connection when offline. Stopping the listener affects all receiving Direct
-connections on that instance, while outgoing connections can continue. The
-receiving settings require confirmation before this shared stop. Deleting or
+cannot be reopened; create a new invitation. The Direct panel hides confirmed
+closed records and automatically removes them, including previously closed
+records. Offline connections and requests still awaiting the receiver's decision
+remain visible. No separate **Remove** action is needed.
+
+Removal clears the Direct route preference for future messages, allowing a
+separately authorized account connection to be used. Already queued work remains
+bound to its original connection. An offline Direct connection never silently
+falls back to an account connection. Stopping the listener affects all receiving
+Direct connections on that instance, while outgoing connections can continue.
+The receiving settings require confirmation before this shared stop. Deleting or
 resetting a Group removes its Direct records and frees connection slots, while
-keeping retirement IDs to prevent reuse. Closed
-invitations and connections remain available in the collapsed history section.
+keeping retirement IDs to prevent reuse.
 
 If listening fails, correct the reported bind/port error. If the peer stays
 offline, check that the joining machine can reach the advertised address and port,

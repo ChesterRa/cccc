@@ -20,7 +20,7 @@ import {
 } from "../../services/api";
 import { reloadContextAfterWrite } from "../../features/contextModal/contextWriteback";
 import { useTaskBoardData } from "../../features/contextModal/useTaskBoardData";
-import type { GroupContext, ProjectMdInfo, Task } from "../../types";
+import type { GroupContext, AgentsMdInfo, Task } from "../../types";
 import {
   evaluateTaskWorkflow,
   getTaskDoneTransitionBlockers,
@@ -31,7 +31,7 @@ import { useModalA11y } from "../../hooks/useModalA11y";
 import { ModalFrame } from "../modals/ModalFrame";
 import { settingsDialogBodyClass, settingsDialogPanelClass } from "../modals/settings/types";
 import { AgentsView } from "./agents/AgentsView";
-import { ProjectPanel } from "./coordination/ProjectPanel";
+import { AgentsMdPanel } from "./coordination/AgentsMdPanel";
 import { SteeringPanel } from "./coordination/SteeringPanel";
 import { TaskBoard } from "./coordination/TaskBoard";
 import { TaskEditorPanel } from "./coordination/TaskEditorPanel";
@@ -112,13 +112,13 @@ export function ContextModal({
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState("");
 
-  const [projectMd, setProjectMd] = useState<ProjectMdInfo | null>(null);
-  const [projectBusy, setProjectBusy] = useState(false);
-  const [projectError, setProjectError] = useState("");
-  const [projectNotice, setProjectNotice] = useState("");
-  const [editingProject, setEditingProject] = useState(false);
-  const [projectText, setProjectText] = useState("");
-  const [projectExpanded, setProjectExpanded] = useState(false);
+  const [agentsMd, setAgentsMd] = useState<AgentsMdInfo | null>(null);
+  const [agentsMdBusy, setAgentsMdBusy] = useState(false);
+  const [agentsMdError, setAgentsMdError] = useState("");
+  const [agentsMdNotice, setAgentsMdNotice] = useState("");
+  const [editingAgentsMd, setEditingAgentsMd] = useState(false);
+  const [agentsMdText, setAgentsMdText] = useState("");
+  const [agentsMdExpanded, setAgentsMdExpanded] = useState(false);
   const [notifyAgents, setNotifyAgents] = useState(false);
   const [notifyError, setNotifyError] = useState("");
 
@@ -128,7 +128,7 @@ export function ContextModal({
   const [activityError, setActivityError] = useState("");
   const lastOpenedGroupRef = useRef("");
   const modalVisitRef = useRef({ groupId, isOpen });
-  const projectReadSeqRef = useRef(0);
+  const agentsMdReadSeqRef = useRef(0);
 
   const {
     columns: taskColumnPages,
@@ -206,18 +206,18 @@ export function ContextModal({
         : [],
     [context],
   );
-  const projectPathLabel = useMemo(() => {
-    const path = String(projectMd?.path || "").trim();
-    return path || "PROJECT.md";
-  }, [projectMd?.path]);
+  const agentsMdPathLabel = useMemo(() => {
+    const path = String(agentsMd?.path || "").trim();
+    return path || "AGENTS.md";
+  }, [agentsMd?.path]);
   const notifyMessage = useMemo(
     () =>
       tr(
-        "context.projectUpdatedNotify",
-        "PROJECT.md updated. Please re-read and realign. ({{path}})",
-        { path: projectPathLabel },
+        "context.agentsMdUpdatedNotify",
+        "Repository instructions updated at {{path}}. Re-read this file if it applies to your work.",
+        { path: agentsMdPathLabel },
       ),
-    [projectPathLabel, tr],
+    [agentsMdPathLabel, tr],
   );
 
   const assigneeOptions = taskFacets.assignees;
@@ -230,11 +230,11 @@ export function ContextModal({
     () => editingBrief && !briefDraftMatches(brief, briefDraft),
     [brief, briefDraft, editingBrief],
   );
-  const hasProjectUnsaved = useMemo(
-    () => editingProject && projectText !== String(projectMd?.content || ""),
-    [editingProject, projectMd?.content, projectText],
+  const hasAgentsMdUnsaved = useMemo(
+    () => editingAgentsMd && agentsMdText !== String(agentsMd?.content || ""),
+    [editingAgentsMd, agentsMd?.content, agentsMdText],
   );
-  const hasSteeringUnsaved = hasBriefUnsaved || hasProjectUnsaved;
+  const hasSteeringUnsaved = hasBriefUnsaved || hasAgentsMdUnsaved;
   const hasTaskUnsaved = useMemo(() => {
     if (!taskDraft || taskEditorMode === "none") return false;
     if (taskEditorMode === "create") return taskDraftDirty(taskDraft);
@@ -251,45 +251,45 @@ export function ContextModal({
   }, [deleteInfoById, selectedTask]);
   const taskEditorVisible = taskEditorMode !== "none" && !!taskDraft;
 
-  const loadProjectMd = useCallback(
-    async (force: boolean = false): Promise<ProjectMdInfo | null> => {
+  const loadAgentsMd = useCallback(
+    async (force: boolean = false): Promise<AgentsMdInfo | null> => {
       if (!groupId) return null;
-      if (!force && projectMd !== null) return projectMd;
+      if (!force && agentsMd !== null) return agentsMd;
       const visit = modalVisitRef.current;
-      const seq = ++projectReadSeqRef.current;
-      const isCurrent = () => modalVisitRef.current === visit && projectReadSeqRef.current === seq;
-      setProjectBusy(true);
-      setProjectError("");
+      const seq = ++agentsMdReadSeqRef.current;
+      const isCurrent = () => modalVisitRef.current === visit && agentsMdReadSeqRef.current === seq;
+      setAgentsMdBusy(true);
+      setAgentsMdError("");
       try {
-        const resp = await apiJson<ProjectMdInfo>(
-          `/api/v1/groups/${encodeURIComponent(groupId)}/project_md`,
+        const resp = await apiJson<AgentsMdInfo>(
+          `/api/v1/groups/${encodeURIComponent(groupId)}/agents_md`,
         );
         if (!isCurrent()) return null;
         if (!resp.ok) {
-          setProjectMd(null);
-          setProjectError(
-            resp.error?.message || tr("context.failedToLoadProject", "Failed to load PROJECT.md"),
+          setAgentsMd(null);
+          setAgentsMdError(
+            resp.error?.message || tr("context.failedToLoadAgentsMd", "Failed to load AGENTS.md"),
           );
           return null;
         }
-        setProjectMd(resp.result);
+        setAgentsMd(resp.result);
         return resp.result ?? null;
       } catch {
         if (isCurrent()) {
-          setProjectMd(null);
-          setProjectError(tr("context.failedToLoadProject", "Failed to load PROJECT.md"));
+          setAgentsMd(null);
+          setAgentsMdError(tr("context.failedToLoadAgentsMd", "Failed to load AGENTS.md"));
         }
         return null;
       } finally {
-        if (isCurrent()) setProjectBusy(false);
+        if (isCurrent()) setAgentsMdBusy(false);
       }
     },
-    [groupId, projectMd, tr],
+    [groupId, agentsMd, tr],
   );
 
   useEffect(() => {
     modalVisitRef.current = { groupId, isOpen };
-    projectReadSeqRef.current += 1;
+    agentsMdReadSeqRef.current += 1;
     if (!isOpen || !groupId) return;
 
     setActiveView("coordination");
@@ -306,13 +306,13 @@ export function ContextModal({
     setSyncBusy(false);
     setSyncError("");
     setEditingBrief(false);
-    setProjectMd(null);
-    setProjectBusy(false);
-    setProjectError("");
-    setProjectNotice("");
-    setEditingProject(false);
-    setProjectText("");
-    setProjectExpanded(false);
+    setAgentsMd(null);
+    setAgentsMdBusy(false);
+    setAgentsMdError("");
+    setAgentsMdNotice("");
+    setEditingAgentsMd(false);
+    setAgentsMdText("");
+    setAgentsMdExpanded(false);
     setNotifyError("");
     setNotifyAgents(false);
     setDecisionDraft(emptyNoteDraft());
@@ -321,7 +321,7 @@ export function ContextModal({
     setActivityError("");
     return () => {
       modalVisitRef.current = { groupId, isOpen };
-      projectReadSeqRef.current += 1;
+      agentsMdReadSeqRef.current += 1;
     };
   }, [groupId, isOpen]);
 
@@ -343,21 +343,21 @@ export function ContextModal({
   useEffect(() => {
     if (!isOpen || !groupId) return;
     if (
-      (steeringTab === "project" || editingProject) &&
-      projectMd === null &&
-      !projectBusy &&
-      !projectError
+      (steeringTab === "instructions" || editingAgentsMd) &&
+      agentsMd === null &&
+      !agentsMdBusy &&
+      !agentsMdError
     ) {
-      void loadProjectMd();
+      void loadAgentsMd();
     }
   }, [
-    editingProject,
+    editingAgentsMd,
     groupId,
     isOpen,
-    loadProjectMd,
-    projectBusy,
-    projectError,
-    projectMd,
+    loadAgentsMd,
+    agentsMdBusy,
+    agentsMdError,
+    agentsMd,
     steeringTab,
   ]);
 
@@ -637,15 +637,15 @@ export function ContextModal({
       setSelectedTaskId("");
       setTaskDraft(null);
       setSyncError("");
-      setProjectNotice("");
-      setProjectError("");
+      setAgentsMdNotice("");
+      setAgentsMdError("");
       setNotifyError("");
       setActivityError("");
-      if (tab === "project") {
-        void loadProjectMd();
+      if (tab === "instructions") {
+        void loadAgentsMd();
       }
     },
-    [confirmDiscardTaskChanges, loadProjectMd],
+    [confirmDiscardTaskChanges, loadAgentsMd],
   );
 
   const handleSwitchActiveView = useCallback(
@@ -694,8 +694,8 @@ export function ContextModal({
   }, [hasSteeringUnsaved, hasTaskUnsaved, onClose, tr]);
 
   const { modalRef } = useModalA11y(isOpen, handleModalClose);
-  const closeProjectExpanded = useCallback(() => setProjectExpanded(false), []);
-  const { modalRef: projectExpandedRef } = useModalA11y(projectExpanded, closeProjectExpanded);
+  const closeAgentsMdExpanded = useCallback(() => setAgentsMdExpanded(false), []);
+  const { modalRef: agentsMdExpandedRef } = useModalA11y(agentsMdExpanded, closeAgentsMdExpanded);
 
   const handleSaveBrief = useCallback(async () => {
     if (!groupId) return;
@@ -933,50 +933,56 @@ export function ContextModal({
     [confirmDiscardTaskChanges],
   );
 
-  const handleEditProject = useCallback(async () => {
+  const handleEditAgentsMd = useCallback(async () => {
     const visit = modalVisitRef.current;
-    openSteeringTab("project");
-    const loaded = await loadProjectMd(true);
+    openSteeringTab("instructions");
+    const loaded = await loadAgentsMd(true);
     if (modalVisitRef.current !== visit || !loaded) return;
-    setProjectText(String(loaded.content || ""));
-    setEditingProject(true);
-  }, [loadProjectMd, openSteeringTab]);
+    setAgentsMdText(String(loaded.content || ""));
+    setEditingAgentsMd(true);
+  }, [loadAgentsMd, openSteeringTab]);
 
-  const handleSaveProject = useCallback(async () => {
-    if (!groupId) return;
+  const handleSaveAgentsMd = useCallback(async () => {
+    if (!groupId || !agentsMd?.path) return;
     const visit = modalVisitRef.current;
     const isCurrent = () => modalVisitRef.current === visit;
-    projectReadSeqRef.current += 1;
-    setProjectBusy(true);
-    setProjectError("");
-    setProjectNotice("");
+    agentsMdReadSeqRef.current += 1;
+    setAgentsMdBusy(true);
+    setAgentsMdError("");
+    setAgentsMdNotice("");
     setNotifyError("");
     try {
-      const resp = await apiJson<ProjectMdInfo>(
-        `/api/v1/groups/${encodeURIComponent(groupId)}/project_md`,
-        { method: "PUT", body: JSON.stringify({ content: projectText, by: "user" }) },
+      const resp = await apiJson<AgentsMdInfo>(
+        `/api/v1/groups/${encodeURIComponent(groupId)}/agents_md`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ content: agentsMdText, expected_path: agentsMd.path }),
+        },
       );
-      const nextResp = await applyContextWriteback(resp);
-      if (!nextResp.ok) {
+      if (!resp.ok) {
         if (isCurrent()) {
-          setProjectError(
-            nextResp.error?.message ||
-              resp.error?.message ||
-              tr("context.failedToSaveProject", "Failed to save PROJECT.md"),
+          setAgentsMdError(
+            resp.error?.message || tr("context.failedToSaveAgentsMd", "Failed to save AGENTS.md"),
           );
         }
         return;
       }
       if (isCurrent()) {
-        setProjectMd(nextResp.result);
-        setEditingProject(false);
+        setAgentsMd(resp.result);
+        setEditingAgentsMd(false);
       }
 
-      let notice = tr("context.projectSaved", "PROJECT.md saved.");
+      let notice = tr("context.agentsMdSaved", "AGENTS.md saved.");
       if (notifyAgents) {
         const notifyResp = await apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/send`, {
           method: "POST",
-          body: JSON.stringify({ text: notifyMessage, by: "user", to: ["@all"], path: "" }),
+          body: JSON.stringify({
+            text: notifyMessage,
+            by: "user",
+            to: ["@all"],
+            message_mode: "send",
+            path: "",
+          }),
         });
         if (!notifyResp.ok) {
           if (isCurrent()) {
@@ -985,24 +991,24 @@ export function ContextModal({
             );
           }
           notice = tr(
-            "context.projectSavedNotifyFailed",
-            "PROJECT.md saved, but chat notification failed.",
+            "context.agentsMdSavedNotifyFailed",
+            "AGENTS.md saved, but chat notification failed.",
           );
         } else {
           notice = tr(
-            "context.projectSavedAndNotified",
-            "PROJECT.md saved and the team was notified in chat.",
+            "context.agentsMdSavedAndNotified",
+            "AGENTS.md saved and the team was notified in chat.",
           );
         }
       }
       if (isCurrent()) {
-        setProjectNotice(notice);
+        setAgentsMdNotice(notice);
         setNotifyAgents(false);
       }
     } finally {
-      if (isCurrent()) setProjectBusy(false);
+      if (isCurrent()) setAgentsMdBusy(false);
     }
-  }, [applyContextWriteback, groupId, notifyAgents, notifyMessage, projectText, tr]);
+  }, [agentsMd?.path, groupId, notifyAgents, notifyMessage, agentsMdText, tr]);
 
   const handleAddCoordinationNote = useCallback(
     async (kind: "decision" | "handoff") => {
@@ -1059,31 +1065,31 @@ export function ContextModal({
     setBriefDraft(briefToDraft(brief));
   }, [brief]);
 
-  const projectPanel = (
-    <ProjectPanel
+  const agentsMdPanel = (
+    <AgentsMdPanel
       expanded={false}
       isDark={isDark}
       tr={tr}
       ui={ui}
-      projectBusy={projectBusy}
-      projectError={projectError}
+      agentsMdBusy={agentsMdBusy}
+      agentsMdError={agentsMdError}
       notifyError={notifyError}
-      projectNotice={projectNotice}
-      projectPathLabel={projectPathLabel}
-      editingProject={editingProject}
-      projectMd={projectMd}
-      projectText={projectText}
+      agentsMdNotice={agentsMdNotice}
+      agentsMdPathLabel={agentsMdPathLabel}
+      editingAgentsMd={editingAgentsMd}
+      agentsMd={agentsMd}
+      agentsMdText={agentsMdText}
       notifyAgents={notifyAgents}
-      onExpand={() => setProjectExpanded(true)}
+      onExpand={() => setAgentsMdExpanded(true)}
       onCancelEdit={() => {
-        setEditingProject(false);
-        setProjectText(String(projectMd?.content || ""));
+        setEditingAgentsMd(false);
+        setAgentsMdText(String(agentsMd?.content || ""));
         setNotifyAgents(false);
       }}
-      onEditProject={() => void handleEditProject()}
-      onProjectTextChange={setProjectText}
+      onEditAgentsMd={() => void handleEditAgentsMd()}
+      onAgentsMdTextChange={setAgentsMdText}
       onNotifyAgentsChange={setNotifyAgents}
-      onSaveProject={() => void handleSaveProject()}
+      onSaveAgentsMd={() => void handleSaveAgentsMd()}
     />
   );
 
@@ -1181,7 +1187,7 @@ export function ContextModal({
                   decisionDraft={decisionDraft}
                   handoffDraft={handoffDraft}
                   activeTaskOptions={activeTaskOptions}
-                  projectPanel={projectPanel}
+                  agentsMdPanel={agentsMdPanel}
                   onOpenSteeringTab={openSteeringTab}
                   onStartBriefEdit={startBriefEdit}
                   onCancelBriefEdit={cancelBriefEdit}
@@ -1301,52 +1307,53 @@ export function ContextModal({
           )
         : null}
 
-      {projectExpanded && typeof document !== "undefined"
+      {agentsMdExpanded && typeof document !== "undefined"
         ? createPortal(
             <div
               className="fixed inset-0 z-[70] animate-fade-in"
               role="dialog"
               aria-modal="true"
+              aria-label={tr("context.agentsMd", "AGENTS.md")}
               onPointerDown={(event) => {
-                if (event.target === event.currentTarget) setProjectExpanded(false);
+                if (event.target === event.currentTarget) setAgentsMdExpanded(false);
               }}
             >
               <div className="absolute inset-0 glass-overlay" />
-              <div ref={projectExpandedRef} className={settingsDialogPanelClass("xl")}>
+              <div ref={agentsMdExpandedRef} className={settingsDialogPanelClass("xl")}>
                 <div className="flex shrink-0 justify-end border-b border-[var(--glass-border-subtle)] px-3 py-2 sm:px-4 sm:py-3">
                   <button
                     type="button"
                     className={ui.buttonSecondaryClass}
-                    onClick={() => setProjectExpanded(false)}
+                    onClick={() => setAgentsMdExpanded(false)}
                   >
                     {tr("common:close", "Close")}
                   </button>
                 </div>
                 <div className={settingsDialogBodyClass}>
-                  <ProjectPanel
+                  <AgentsMdPanel
                     expanded
                     isDark={isDark}
                     tr={tr}
                     ui={ui}
-                    projectBusy={projectBusy}
-                    projectError={projectError}
+                    agentsMdBusy={agentsMdBusy}
+                    agentsMdError={agentsMdError}
                     notifyError={notifyError}
-                    projectNotice={projectNotice}
-                    projectPathLabel={projectPathLabel}
-                    editingProject={editingProject}
-                    projectMd={projectMd}
-                    projectText={projectText}
+                    agentsMdNotice={agentsMdNotice}
+                    agentsMdPathLabel={agentsMdPathLabel}
+                    editingAgentsMd={editingAgentsMd}
+                    agentsMd={agentsMd}
+                    agentsMdText={agentsMdText}
                     notifyAgents={notifyAgents}
                     onExpand={() => {}}
                     onCancelEdit={() => {
-                      setEditingProject(false);
-                      setProjectText(String(projectMd?.content || ""));
+                      setEditingAgentsMd(false);
+                      setAgentsMdText(String(agentsMd?.content || ""));
                       setNotifyAgents(false);
                     }}
-                    onEditProject={() => void handleEditProject()}
-                    onProjectTextChange={setProjectText}
+                    onEditAgentsMd={() => void handleEditAgentsMd()}
+                    onAgentsMdTextChange={setAgentsMdText}
                     onNotifyAgentsChange={setNotifyAgents}
-                    onSaveProject={() => void handleSaveProject()}
+                    onSaveAgentsMd={() => void handleSaveAgentsMd()}
                   />
                 </div>
               </div>

@@ -75,7 +75,7 @@ mod tests {
             .filter_map(|tool| tool["name"].as_str())
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(catalog.len(), 52);
+        assert_eq!(catalog.len(), 51);
         assert!(names.contains("cccc_voice_secretary_task"));
         for retired in [
             "cccc_voice_secretary_document",
