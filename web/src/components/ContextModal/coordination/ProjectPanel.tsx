@@ -97,7 +97,7 @@ export function ProjectPanel({
           <button type="button" onClick={onEditProject} className={ui.buttonPrimaryClass}>
             {editingProject
               ? tr("context.editing", "Editing")
-              : projectMd?.found
+              : projectMd?.exists
                 ? tr("context.editButton", "Edit")
                 : tr("context.createButton", "Create")}
           </button>
@@ -168,7 +168,7 @@ export function ProjectPanel({
               </button>
             </div>
           </>
-        ) : projectMd?.found && projectMd.content ? (
+        ) : projectMd?.exists && projectMd.content ? (
           <div className={markdownContainerClass}>
             <LazyMarkdownRenderer
               content={String(projectMd.content)}

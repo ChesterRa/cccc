@@ -16,7 +16,7 @@ export function CodexVoiceAudioSettings({
   return (
     <SettingsCard
       title={t("codexVoiceSettingsVoiceAudio")}
-      description={t("codexVoiceAudioPreferencesHint")}
+      description={`${t("codexVoiceExperimental")} · ${t("codexVoiceAudioPreferencesHint")}`}
     >
       <SettingsRow label={t("codexVoiceProviderLabel")}>
         <VoiceProviderSelect controller={controller} className={inputClass()} />

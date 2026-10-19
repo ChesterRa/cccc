@@ -85,24 +85,27 @@ export function TaskBoard({
   onRetryLoad,
 }: TaskBoardProps) {
   return (
-    <section className={classNames(ui.surfaceClass, "p-4")}>
+    <section className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-4">
       <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <div className="text-lg font-semibold text-[var(--color-text-primary)]">
-              {tr("context.tasks", "Tasks")}
-            </div>
-            <div className={classNames("mt-1 text-sm", ui.subtleTextClass)}>
-              {tr(
-                "context.taskBoardHint",
-                "Plan shared work here. Open a card only when you need blockers, handoffs, notes, or checklist detail.",
-              )}
-            </div>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1">
+          <div className="text-lg font-semibold text-[var(--color-text-primary)]">
+            {tr("context.tasks", "Tasks")}
+          </div>
+          <div
+            className={classNames(
+              "col-span-2 row-start-2 text-sm lg:col-span-1",
+              ui.subtleTextClass,
+            )}
+          >
+            {tr(
+              "context.taskBoardHint",
+              "Plan shared work here. Open a card only when you need blockers, handoffs, notes, or checklist detail.",
+            )}
           </div>
           <button
             type="button"
             onClick={() => onOpenCreate("planned")}
-            className={ui.buttonPrimaryClass}
+            className={classNames(ui.buttonPrimaryClass, "col-start-2 row-start-1 lg:row-span-2")}
           >
             {tr("context.newTask", "New task")}
           </button>

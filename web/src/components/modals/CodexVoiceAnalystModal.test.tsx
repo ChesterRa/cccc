@@ -72,6 +72,38 @@ const readyAnalyst = {
 };
 
 describe("CodexVoiceAnalystModal", () => {
+  it("identifies the live provider and voice instead of the next-call preferences", () => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceAnalystModal
+        isOpen
+        isDark={false}
+        isSmallScreen={false}
+        controller={controller({
+          phase: "listening",
+          isEngaged: true,
+          owned: true,
+          call: {
+            provider: "grok",
+            generation: "call-1",
+            analyst_generation: null,
+            mode: "assistant",
+            voice: "aurora",
+            connected: true,
+          },
+          preferences: { provider: "codex", voice: "cove", inputDeviceId: "", outputDeviceId: "" },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    const heading = html.match(/<h2[^>]*>(.*?)<\/h2>/)?.[1];
+    expect(heading).toContain("codexVoiceProviders.grok");
+    expect(heading).toContain("Aurora");
+    expect(heading).not.toContain("Cove");
+    expect(html).not.toContain('aria-label="codexVoiceProviderLabel"');
+    expect(html).toContain('aria-label="codexVoiceMute"');
+    expect(html).toContain('aria-label="codexVoiceStop"');
+  });
+
   it("shows ACP setup guidance for first use instead of a missing native runtime", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal

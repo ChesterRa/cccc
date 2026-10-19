@@ -1050,8 +1050,9 @@ export function ContextModal({
 
   const startBriefEdit = useCallback(() => {
     openSteeringTab("summary");
+    if (!editingBrief) setBriefDraft(briefToDraft(brief));
     setEditingBrief(true);
-  }, [openSteeringTab]);
+  }, [brief, editingBrief, openSteeringTab]);
 
   const cancelBriefEdit = useCallback(() => {
     setEditingBrief(false);

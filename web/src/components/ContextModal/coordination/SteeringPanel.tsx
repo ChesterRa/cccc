@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
+import { ChevronDownIcon } from "../../Icons";
 import type { CoordinationBrief, CoordinationNote, Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
 import { SelectCombobox } from "../../SelectCombobox";
@@ -75,6 +76,13 @@ export function SteeringPanel({
   onHandoffDraftChange,
   onAddCoordinationNote,
 }: SteeringPanelProps) {
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const summaryId = useId();
+  const summaryOpen = steeringTab === "summary" && (summaryExpanded || editingBrief);
+  const editBrief = () => {
+    setSummaryExpanded(true);
+    onStartBriefEdit();
+  };
   const tabButtonClass = (active: boolean) =>
     classNames(
       "min-h-11 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]",
@@ -95,7 +103,7 @@ export function SteeringPanel({
   const notesCardClass = classNames("rounded-xl border p-3 text-sm", "glass-card");
 
   return (
-    <section className={classNames(ui.surfaceClass, "flex min-h-0 flex-1 flex-col p-4")}>
+    <section className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         {hasOverview ? (
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -114,7 +122,7 @@ export function SteeringPanel({
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   <button
                     type="button"
-                    onClick={onStartBriefEdit}
+                    onClick={editBrief}
                     className={classNames(
                       "rounded-full px-2 py-1 text-xs transition-colors",
                       "bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25",
@@ -161,10 +169,27 @@ export function SteeringPanel({
             <button
               type="button"
               aria-pressed={steeringTab === "summary"}
-              onClick={() => onOpenSteeringTab("summary")}
-              className={tabButtonClass(steeringTab === "summary")}
+              aria-expanded={summaryOpen}
+              aria-controls={summaryId}
+              onClick={() => {
+                if (steeringTab !== "summary") {
+                  setSummaryExpanded(true);
+                  onOpenSteeringTab("summary");
+                } else if (!editingBrief) {
+                  setSummaryExpanded((expanded) => !expanded);
+                }
+              }}
+              className={classNames(
+                tabButtonClass(steeringTab === "summary"),
+                "inline-flex items-center gap-1.5",
+              )}
             >
               {tr("context.brief", "Summary")}
+              <ChevronDownIcon
+                size={14}
+                aria-hidden="true"
+                className={summaryOpen ? "rotate-180" : ""}
+              />
             </button>
             <button
               type="button"
@@ -182,10 +207,17 @@ export function SteeringPanel({
             >
               {tr("context.activityLog", "Activity")}
             </button>
+            {steeringTab === "summary" && !summaryOpen && brief?.updated_at ? (
+              <span className={classNames("ml-auto self-center text-xs", ui.mutedTextClass)}>
+                {tr("context.updated", "Updated {{time}}", {
+                  time: noteTimestamp({ at: brief.updated_at }),
+                })}
+              </span>
+            ) : null}
           </div>
 
-          {steeringTab === "summary" ? (
-            <section className="min-w-0">
+          {summaryOpen ? (
+            <section id={summaryId} className="min-w-0">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   {!editingBrief && !hasSummary ? (
@@ -236,11 +268,7 @@ export function SteeringPanel({
                       </button>
                     </>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={onStartBriefEdit}
-                      className={ui.buttonPrimaryClass}
-                    >
+                    <button type="button" onClick={editBrief} className={ui.buttonPrimaryClass}>
                       {tr("context.editButton", "Edit")}
                     </button>
                   )}

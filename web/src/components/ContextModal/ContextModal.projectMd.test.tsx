@@ -91,7 +91,7 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
   const onOpenContext = vi.fn(async () => {});
   const onSyncContext = vi.fn(async () => {});
 
-  const renderModal = async (groupId = "g_a", isOpen = true) => {
+  const renderModal = async (groupId = "g_a", isOpen = true, context = emptyContext) => {
     await act(async () => {
       root.render(
         <ContextModal
@@ -99,7 +99,7 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
           onClose={() => {}}
           groupId={groupId}
           groupTitle={groupId}
-          context={emptyContext}
+          context={context}
           onOpenContext={onOpenContext}
           onSyncContext={onSyncContext}
           isDark={false}
@@ -128,6 +128,53 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
+  });
+
+  it("reads the existing PROJECT.md using the Web endpoint's exists field", async () => {
+    mocks.apiJson.mockResolvedValue({
+      ok: true,
+      result: { exists: true, path: "/a/PROJECT.md", content: "Existing repository charter" },
+    });
+    await renderModal();
+    await clickButton("PROJECT.md");
+    expect(host.textContent).toContain("Existing repository charter");
+    expect(host.textContent).not.toContain("No PROJECT.md found");
+  });
+
+  it("initializes summary edits from the latest snapshot and retains an existing draft", async () => {
+    const context: GroupContext = {
+      ...emptyContext,
+      coordination: {
+        ...emptyContext.coordination,
+        brief: {
+          objective: "Current objective",
+          current_focus: "Current focus",
+          constraints: ["Keep existing behavior"],
+          project_brief: "Current summary",
+          project_brief_stale: true,
+        },
+      },
+    };
+    await renderModal();
+    await renderModal("g_a", true, context);
+    await clickButton("Summary needs refresh");
+    expect([...host.querySelectorAll("input")].map((el) => el.value)).toContain(
+      "Current objective",
+    );
+    const draft = [...host.querySelectorAll("textarea")].find(
+      (el) => el.value === "Current summary",
+    );
+    expect(draft).toBeDefined();
+    expect([...host.querySelectorAll("textarea")].map((el) => el.value)).toContain(
+      "Keep existing behavior",
+    );
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(draft, "Unsaved summary edit");
+      draft!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButton("Summary needs refresh");
+    expect(draft!.value).toBe("Unsaved summary edit");
   });
 
   it("requests PROJECT.md only once when the endpoint returns an error instead of looping infinitely", async () => {
@@ -163,7 +210,7 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
     await act(async () => {
       readA.resolve({
         ok: true,
-        result: { found: true, path: "/a/PROJECT.md", content: "Secret Group A Constitution" },
+        result: { exists: true, path: "/a/PROJECT.md", content: "Secret Group A Constitution" },
       });
       await readA.promise;
     });
@@ -174,7 +221,7 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
     await act(async () => {
       readB.resolve({
         ok: true,
-        result: { found: true, path: "/b/PROJECT.md", content: "Group B Constitution" },
+        result: { exists: true, path: "/b/PROJECT.md", content: "Group B Constitution" },
       });
       await readB.promise;
     });
@@ -191,7 +238,7 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
       if (url.endsWith("/project_md")) {
         return Promise.resolve({
           ok: true,
-          result: { found: true, path: "/a/PROJECT.md", content: "Initial content" },
+          result: { exists: true, path: "/a/PROJECT.md", content: "Initial content" },
         });
       }
       if (url.endsWith("/send")) {
@@ -216,7 +263,7 @@ describe("ContextModal PROJECT.md loading and ownership", () => {
     await act(async () => {
       saveReq.resolve({
         ok: true,
-        result: { found: true, path: "/a/PROJECT.md", content: "Updated content" },
+        result: { exists: true, path: "/a/PROJECT.md", content: "Updated content" },
       });
       await saveReq.promise;
     });

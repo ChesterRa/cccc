@@ -76,14 +76,11 @@ export function TaskBoardToolbar({
           className={classNames(ui.inputClass, "w-full lg:w-[14rem]")}
           searchable
         />
-        <button
-          type="button"
-          disabled={!taskQuery && assigneeFilter === "__all__" && taskFilter === "all"}
-          onClick={onClearFilters}
-          className={ui.buttonSecondaryClass}
-        >
-          {tr("context.clearFilters", "Clear filters")}
-        </button>
+        {taskQuery || assigneeFilter !== "__all__" || taskFilter !== "all" ? (
+          <button type="button" onClick={onClearFilters} className={ui.buttonSecondaryClass}>
+            {tr("context.clearFilters", "Clear filters")}
+          </button>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

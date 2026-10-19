@@ -783,7 +783,7 @@ export type GroupContext = {
 };
 
 export type ProjectMdInfo = {
-  found: boolean;
+  exists: boolean;
   path?: string | null;
   content?: string | null;
   error?: string | null;
