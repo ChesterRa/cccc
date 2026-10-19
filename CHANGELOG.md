@@ -6,6 +6,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.44]
+
+### Added
+
+- Multi-sender conversation filters with per-Group browser preferences, independent older-history pagination, and context navigation. Filters combine with message types and remain selected after sending; hidden outgoing messages offer a link back to their originating Group.
+- Experimental subscription-backed Grok Voice alongside Codex Voice, using the host's Grok Build login without a separate API key. Select the next call's service and voice directly in the console header; provider-specific choices share Settings preferences and the independent Analyst.
+- Expanded Codex subscription voice catalog with searchable primary-language hints for newly documented profiles.
+- Video attachment previews and focused playback with authenticated byte ranges, pause-on-other-video behavior and download fallback for unsupported formats.
+
+### Changed
+
+- Project Context edits the active workspace's `AGENTS.md`, leaving instruction loading to each runtime. Remove special `PROJECT.md` startup handling, the dedicated `cccc_project_info` MCP tool, bootstrap metadata and `/project_md` endpoint. Existing files remain untouched; custom integrations and reusable instructions need deliberate migration.
+- Terminal pages adapt to available width and height with up to four panes in a 2×2 grid. Shared dividers, compact controls and Actor avatars recover space in tiled native, Web Model, Dots and managed-output views.
+- Project Context uses one navigation row with separate task, repository-instruction, Agent State, coordination-log and skill views, retaining drafts and task filters across sections. Voice sidebar entries and compact headers keep the service and voice visible, using current preferences when idle and actual call metadata during calls. Task-board summaries preserve status, actions and full-content expansion without adding global density settings.
+- Confirmed closed Direct connections are cleaned up automatically; active, offline and uncertain records remain visible. Queued messages retain their route; removal releases the Direct preference for future independently authorized routing.
+- Website installers resolve the latest stable release at execution time while retaining explicit version selection. Reduce repeated ledger/status scans, blocking SSE polling and unrelated Web rendering; consolidate IM and settings helpers.
+
+### Fixed
+
+- Keep sender-filtered history complete and in ledger order across delayed hydration, clock changes, replay and reconnect catch-up. Project live read, reply, cancellation and cross-Group receipts into older filtered pages.
+- Preserve Group selection on refresh by synchronizing real switches with the URL. Restore valid last selection before falling back to the first unarchived Group in sidebar order; explicit Group/message links retain priority.
+- Keep Voice Analyst requests actionable with bounded recent conversation and the user's request language. Sequence complete Grok reports, including manual investigations, and keep unrelated acknowledgements from blocking later ready work. Settle missing native input echoes, lost admission owners and ACP disconnects without indefinitely blocking the queue.
+- Close Codex turns with no final transcript, retain new Grok speech demand during response startup, handle pending VAD replies and completion-only updates, and buffer Grok playback while rejecting stale response audio. Reported Grok pitch/timbre drift remains unresolved.
+- Capture the original Group's composer draft before asynchronous recording startup; metadata-only document refreshes no longer create false remote-edit conflicts. Blank voice-flush session IDs receive a fresh ID.
+- Preserve settings drafts and valid Profile credential-metadata reads across failed saves and navigation. Reconcile independent completed writes, retain pending exports after closing Settings, preserve skill assignment drafts during content saves and prevent assignment saves from undoing skill blocks.
+- Prevent automatic Context retry loops and stale in-flight reads from overwriting accepted Actor, Context, capability, Prompt or Web Access changes. Retain task summary fields during editing and current managed Actor status after recovery.
+
 ## [0.4.43]
 
 ### Added

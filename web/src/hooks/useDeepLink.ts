@@ -35,6 +35,7 @@ export function useDeepLink({
   openChatWindow,
   showError,
 }: UseDeepLinkOptions): UseDeepLinkResult {
+  const urlParsedRef = useRef(false);
   const deepLinkRef = useRef<{ groupId: string; eventId: string } | null>(null);
 
   // Parse URL params on mount
@@ -42,9 +43,8 @@ export function useDeepLink({
     const params = new URLSearchParams(window.location.search);
     const gid = String(params.get("group") || "").trim();
     const eid = String(params.get("event") || "").trim();
-    if (gid) {
-      deepLinkRef.current = { groupId: gid, eventId: eid };
-    }
+    deepLinkRef.current = gid ? { groupId: gid, eventId: eid } : null;
+    urlParsedRef.current = true;
   }, []);
 
   // Apply deep link after groups are loaded
@@ -74,6 +74,19 @@ export function useDeepLink({
     if (eid) void openChatWindow(gid, eid);
     deepLinkRef.current = null;
   }, [groups, openChatWindow, selectedGroupId, setActiveTab, setSelectedGroupId, showError]);
+
+  // Once the incoming link is resolved, refresh should keep this tab's Group.
+  useEffect(() => {
+    if (!urlParsedRef.current || deepLinkRef.current) return;
+    const gid = String(selectedGroupId || "").trim();
+    if (!gid || !groups.some((group) => group.group_id === gid)) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("group") === gid) return;
+    url.searchParams.set("group", gid);
+    url.searchParams.delete("event");
+    url.searchParams.delete("tab");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+  }, [groups, selectedGroupId]);
 
   // Open message window function
   const openMessageWindow = useCallback(

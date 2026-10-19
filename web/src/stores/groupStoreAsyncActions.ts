@@ -150,7 +150,11 @@ export function createGroupStoreAsyncActions(
               const persisted = loadSelectedGroupId();
               const persistedExists =
                 !!persisted && next.some((g) => String(g.group_id || "") === persisted);
-              const nextGroupId = persistedExists ? persisted : String(next[0].group_id || "");
+              const ordered = get().getOrderedGroups();
+              const archived = get().archivedGroupIds;
+              const fallback =
+                ordered.find((group) => !archived.includes(group.group_id)) ?? ordered[0];
+              const nextGroupId = persistedExists ? persisted : String(fallback?.group_id || "");
               get().setSelectedGroupId(nextGroupId);
             } else {
               groupViewCache.clear();

@@ -58,10 +58,11 @@ remaining Agents. Return to **Messages** to read replies or continue the discuss
 
 ## 5. Keep the work organized
 
-- **Project Context** (clipboard button in the header): **Coordination** contains
-  the working summary, `AGENTS.md` editor, coordination log and task board. **Agent State**
-  shows each Agent's latest saved report; it is not a live process monitor.
-  **Self-Evolving Skills** shows this Group's generated skill candidates.
+- **Project Context** (clipboard button in the header): **Tasks** opens the board
+  with an expandable working summary. **AGENTS.md** edits repository instructions,
+  and **Coordination log** records decisions and handoffs. **Agent State** shows
+  each Agent's latest saved report; it is not a live process monitor. **Skills**
+  shows this Group's generated skill candidates.
 - **Files**: browse the workspace, preview supported files and inspect changes.
   Desktop editing and file operations are available subject to your access.
 - **Presentation**: pin up to four resources for quick access and reading.

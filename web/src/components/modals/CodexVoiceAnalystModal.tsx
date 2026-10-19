@@ -9,11 +9,11 @@ import { CodexVoiceSplitLayout } from "../../features/codexVoice/CodexVoiceSplit
 import { useModalStore } from "../../stores";
 import { CodexVoiceMessageSources } from "../../features/codexVoice/CodexVoiceMessageSources";
 import { voicePhaseDotClass } from "../../features/codexVoice/codexVoicePhase";
-import { formatCodexVoiceName } from "../../features/codexVoice/codexVoicePreferences";
 import {
   codexVoiceAnalystReadinessProblem,
   codexVoiceCallReadinessProblem,
   codexVoiceCallStatus,
+  codexVoiceDisplayIdentity,
 } from "../../features/codexVoice/codexVoiceControllerText";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
 import { useModalA11y } from "../../hooks/useModalA11y";
@@ -30,6 +30,7 @@ import { Button } from "../ui/button";
 import { IconButton } from "../ui/icon-button";
 import { ModalFrame } from "./ModalFrame";
 import { VoiceProviderSelect } from "../../features/codexVoice/VoiceProviderSelect";
+import { SpeakingVoiceSelect } from "../../features/codexVoice/SpeakingVoiceSelect";
 
 type Props = {
   isOpen: boolean;
@@ -73,10 +74,8 @@ export function CodexVoiceAnalystModal({
   const analyst = controller.analyst;
   const callStatus = codexVoiceCallStatus(controller);
   const phaseLabel = t(callStatus.labelKey);
-  const providerLabel = t(
-    `codexVoiceProviders.${controller.call?.provider || controller.preferences.provider || "codex"}`,
-  );
-  const callVoice = controller.call?.voice ? formatCodexVoiceName(controller.call.voice) : "";
+  const identity = codexVoiceDisplayIdentity(controller);
+  const providerLabel = t(`codexVoiceProviders.${identity.provider}`);
   const analystPhase = analyst ? t(`codexVoiceAnalystPhase.${analyst.phase}`) : "";
   const analystVisible = isOpen && (splitLayout ? analystExpanded : mobilePane === "analyst");
   const terminalVisible = analystVisible && Boolean(analyst?.structured || analyst?.tui_ready);
@@ -146,12 +145,9 @@ export function CodexVoiceAnalystModal({
             {controller.isEngaged ? (
               <span
                 className="block truncate"
-                title={callVoice ? `${providerLabel} · ${callVoice}` : providerLabel}
+                title={[providerLabel, identity.voice].filter(Boolean).join(" · ")}
               >
                 {providerLabel}
-                {callVoice ? (
-                  <span className="font-normal text-[var(--color-text-muted)]"> · {callVoice}</span>
-                ) : null}
               </span>
             ) : (
               <VoiceProviderSelect
@@ -160,18 +156,32 @@ export function CodexVoiceAnalystModal({
               />
             )}
           </h2>
-          <div className="flex min-w-0 items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-            <span
-              className={`h-2 w-2 flex-none rounded-full ${
-                callBlocked
-                  ? "bg-amber-500"
-                  : voicePhaseDotClass(controller.phase, controller.externalCall)
-              }`}
-              aria-hidden="true"
-            />
-            <span className={`truncate ${callBlocked ? "text-amber-700 dark:text-amber-300" : ""}`}>
-              {phaseLabel}
-            </span>
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--color-text-muted)]">
+            {!controller.isEngaged ? (
+              <SpeakingVoiceSelect
+                controller={controller}
+                className="min-h-9 max-w-full rounded-lg border border-[var(--color-border-secondary)] bg-[var(--color-bg-primary)] px-2 text-sm text-[var(--color-text-primary)] max-sm:min-h-11 pointer-coarse:min-h-11"
+              />
+            ) : identity.voice ? (
+              <span className="max-w-full truncate" title={identity.voice}>
+                {identity.voice}
+              </span>
+            ) : null}
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span
+                className={`h-2 w-2 flex-none rounded-full ${
+                  callBlocked
+                    ? "bg-amber-500"
+                    : voicePhaseDotClass(controller.phase, controller.externalCall)
+                }`}
+                aria-hidden="true"
+              />
+              <span
+                className={`truncate ${callBlocked ? "text-amber-700 dark:text-amber-300" : ""}`}
+              >
+                {phaseLabel}
+              </span>
+            </div>
           </div>
           <span className="sr-only" aria-live="polite" aria-atomic="true">
             {isOpen ? callAnnouncement : ""}

@@ -3,13 +3,13 @@ import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { createContextModalUi } from "../ui";
-import { SteeringPanel } from "./SteeringPanel";
+import { WorkingSummaryPanel } from "./WorkingSummaryPanel";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 let host: HTMLDivElement;
 let root: Root;
-let props: ComponentProps<typeof SteeringPanel>;
+let props: ComponentProps<typeof WorkingSummaryPanel>;
 
 beforeEach(() => {
   host = document.createElement("div");
@@ -29,7 +29,6 @@ beforeEach(() => {
     tasksSummary: { active: 2 },
     attentionCounts: { blocked: 1, waitingUser: 1, pendingHandoffs: 0 },
     unassignedCount: 0,
-    steeringTab: "summary",
     editingBrief: false,
     briefDraft: {
       objective: "Draft objective",
@@ -39,22 +38,10 @@ beforeEach(() => {
       projectBriefStale: false,
     },
     syncBusy: false,
-    activityBusyKind: null,
-    activityError: "",
-    recentDecisions: [],
-    recentHandoffs: [],
-    decisionDraft: { summary: "", taskId: "" },
-    handoffDraft: { summary: "", taskId: "" },
-    activeTaskOptions: [],
-    agentsMdPanel: <div>Project reference</div>,
-    onOpenSteeringTab: vi.fn(),
     onStartBriefEdit: vi.fn(),
     onCancelBriefEdit: vi.fn(),
     onSaveBrief: vi.fn(),
     onBriefDraftChange: vi.fn(),
-    onDecisionDraftChange: vi.fn(),
-    onHandoffDraftChange: vi.fn(),
-    onAddCoordinationNote: vi.fn(),
   };
 });
 
@@ -64,7 +51,7 @@ afterEach(() => {
 });
 
 function render() {
-  act(() => root.render(<SteeringPanel {...props} />));
+  act(() => root.render(<WorkingSummaryPanel {...props} />));
 }
 
 function button(label: string) {
@@ -81,18 +68,17 @@ it("keeps orientation and warnings visible while the summary opens on demand", (
   expect(host.textContent).toContain("Waiting user");
   expect(host.textContent).toContain("Summary needs refresh");
   expect(host.textContent).toContain("Updated");
-  expect(button("Summary").getAttribute("aria-expanded")).toBe("false");
+  expect(button("Working summary").getAttribute("aria-expanded")).toBe("false");
   expect(host.textContent).not.toContain("Full working summary");
 
-  act(() => button("Summary").click());
-  expect(button("Summary").getAttribute("aria-expanded")).toBe("true");
+  act(() => button("Working summary").click());
+  expect(button("Working summary").getAttribute("aria-expanded")).toBe("true");
   expect(host.textContent).toContain("Full working summary");
   expect(host.textContent).toContain("Preserve runtime history");
-  const controlled = button("Summary").getAttribute("aria-controls");
+  const controlled = button("Working summary").getAttribute("aria-controls");
   expect(document.getElementById(controlled!)?.textContent).toContain("Full working summary");
-  act(() => button("Summary").click());
+  act(() => button("Working summary").click());
   expect(host.textContent).not.toContain("Full working summary");
-  expect(props.onOpenSteeringTab).not.toHaveBeenCalled();
   expect(props.onSaveBrief).not.toHaveBeenCalled();
 });
 
@@ -104,25 +90,22 @@ it("shows and retains the editor even when an external warning opens it", () => 
   render();
   const draft = [...host.querySelectorAll("textarea")].find((el) => el.value === "Unsaved summary");
   expect(draft).toBeDefined();
-  act(() => button("Summary").click());
+  act(() => button("Working summary").click());
   expect(host.contains(draft!)).toBe(true);
-  expect(button("Summary").getAttribute("aria-expanded")).toBe("true");
+  expect(button("Working summary").getAttribute("aria-expanded")).toBe("true");
   act(() => button("Save summary").click());
   expect(props.onSaveBrief).toHaveBeenCalledOnce();
 });
 
-it("uses the existing AGENTS.md and log navigation and opens Summary on return", () => {
+it("offers editing for an empty collapsed summary without becoming navigation", () => {
+  props.brief = null;
+  props.tasksSummary = {};
+  props.attentionCounts = { blocked: 0, waitingUser: 0, pendingHandoffs: 0 };
   render();
-  act(() => button("AGENTS.md").click());
-  expect(props.onOpenSteeringTab).toHaveBeenLastCalledWith("instructions");
-  props.steeringTab = "instructions";
-  render();
-  expect(host.textContent).toContain("Project reference");
-  act(() => button("Summary").click());
-  expect(props.onOpenSteeringTab).toHaveBeenLastCalledWith("summary");
-  props.steeringTab = "summary";
-  render();
-  expect(host.textContent).toContain("Full working summary");
-  act(() => button("Activity").click());
-  expect(props.onOpenSteeringTab).toHaveBeenLastCalledWith("log");
+  expect(host.querySelector('[role="tab"]')).toBeNull();
+  act(() => button("Edit").click());
+  expect(props.onStartBriefEdit).toHaveBeenCalledOnce();
+  expect(button("Working summary").getAttribute("aria-expanded")).toBe("true");
+  expect(host.textContent).toContain("Add a working summary");
+  expect(props.onSaveBrief).not.toHaveBeenCalled();
 });

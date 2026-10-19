@@ -72,6 +72,29 @@ const readyAnalyst = {
 };
 
 describe("CodexVoiceAnalystModal", () => {
+  it.each([
+    { provider: "grok" as const, voice: "eve", name: "Eve" },
+    { provider: "codex" as const, voice: "himari", name: "Himari" },
+  ])("shows the selected $provider voice before starting a call", ({ provider, voice, name }) => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceAnalystModal
+        isOpen
+        isDark={false}
+        isSmallScreen={false}
+        controller={controller({
+          preferences: { provider, voice, inputDeviceId: "", outputDeviceId: "" },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(html).toContain(`codexVoiceProviders.${provider}`);
+    expect(html).toMatch(new RegExp(`<span[^>]*>${name}</span>`));
+    expect(html).toContain('aria-label="codexVoiceProviderLabel"');
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('aria-label="codexVoiceVoiceLabel"');
+    expect(html).toContain("codexVoicePhase.idle");
+  });
+
   it("identifies the live provider and voice instead of the next-call preferences", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
@@ -97,9 +120,10 @@ describe("CodexVoiceAnalystModal", () => {
     );
     const heading = html.match(/<h2[^>]*>(.*?)<\/h2>/)?.[1];
     expect(heading).toContain("codexVoiceProviders.grok");
-    expect(heading).toContain("Aurora");
-    expect(heading).not.toContain("Cove");
+    expect(html).toMatch(/<span[^>]*>Aurora<\/span>/);
+    expect(html).not.toContain("Cove");
     expect(html).not.toContain('aria-label="codexVoiceProviderLabel"');
+    expect(html).not.toContain('aria-label="codexVoiceVoiceLabel"');
     expect(html).toContain('aria-label="codexVoiceMute"');
     expect(html).toContain('aria-label="codexVoiceStop"');
   });

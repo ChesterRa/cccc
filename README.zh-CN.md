@@ -57,19 +57,19 @@ CCCC 只需一条安装命令，无需单独运维数据库、消息队列或 Do
 | **多运行时编排** | 同一 Group 可混用受支持的编码智能体运行时；其它命令行智能体可使用 `custom` |
 | **CCCC Connect** | 连接自己的实例、不同会员的指定 Group，或免账号直连两个 Group |
 | **工作区工具** | 浏览和编辑文件、查看 Git 变更、在 Presentation 固定文档，并操作平铺原生终端 |
-| **语音工作流** | 全局语音秘书在共享会话中处理各 Group 的语音、文档和输入框草稿；实验性 Codex Voice 使用 ChatGPT 通话后端与独立 Analyst |
+| **语音工作流** | 全局语音秘书在共享会话中处理各 Group 的语音、文档和输入框草稿；实验性 Codex Voice 与 Grok Voice 使用独立 Analyst |
 | **角色化协调** | Foreman + Peer 角色模型，权限边界清晰，收件人路由精确（`@all`、`@peers`、`@foreman`） |
 | **本地优先的运行时状态** | 运行时数据保存在 `CCCC_HOME` 而不是代码仓库里，同时仍可通过 Web Access 与 IM 做远程运维 |
 
-## 0.4.43 要点
+## 0.4.44 要点
 
-- **全局唯一语音秘书**：常驻会话处理各 Group 的固定目标任务。Prompt 默认直接听写，可选润色；文档、提问和结果保持原归属。支持原生终端的 Runtime 可用键鼠交互。
-- **统一语音操作**：共用麦克风／扬声器偏好，按 Group 记住采集选择，统一 Runtime／Profile 配置方式，Codex Voice Analyst 默认收起。
-- **ChatGPT Dots 原生事件接入**：显式配对会话和持久 ChatGPT 任务复用共享 MCP 插件，无需浏览器投递。Actor 面板提供设置、异步投递阶段和恢复入口。
-- **更多受控 Runtime**：新增 Pi 官方 RPC，以及 Kimi Code、Auggie、Kiro V3、Hermes、Droid 可选 ACP。ACP／RPC 工作区不代表附带原生终端；既有原生 TUI 默认方式仍可使用。
-- **更可靠的日常协作**：及时通知空闲 Actor 的 Mail、本地跨组文件／图片与正确路由的回复、统一 IM 转发模式，更稳健的会话恢复、Group 进程清理、Context 关系与共享设置。
+- **关注所需发送者**：在同一菜单勾选领班、同伴或用户，与消息类型组合筛选，翻阅更早的匹配消息并同步回执。发送保留筛选，被隐藏的新消息提供直达链接。
+- **实验性 Grok Voice**：复用本机 Grok Build 订阅登录，无需额外 API Key。Codex Voice 扩充声线并提示主要语言；两者均独立选择 Analyst Runtime。Grok 按顺序播报完整调查结果。
+- **给工作内容更多空间**：终端按可用宽高显示最多四个 2×2 窗格，采用紧凑标题栏、Actor 头像和分隔线。Voice 与任务工作区减少留白，同时保留完整操作。
+- **使用仓库原生指引**：Context 编辑当前工作区的 `AGENTS.md`，由 Runtime 负责加载。移除 `PROJECT.md` 专属行为和 `cccc_project_info`，不改动已有文件。
+- **日常流程更可靠**：视频附件播放、刷新后保持 Group 选择、保留设置草稿并完成已接受操作、自动清理已关闭直连，以及运行时获取最新稳定版的网站安装器。
 
-设置、升级步骤与验证边界见 [0.4.43 英文发布说明](docs/release/v0.4.43_release_notes.md)。全局秘书共享各 Group 的模型历史，固定任务目标不构成保密隔离。旧 Dots 任务需更新为当前无凭据 handler；更早的 Actor 专属 ChatGPT 连接器仍按 [0.4.41 说明](docs/release/v0.4.41_release_notes.md)迁移。
+升级步骤与功能边界见 [0.4.44 英文发布说明](docs/release/v0.4.44_release_notes.md)。请检查旧 `PROJECT.md`，再将需要的指引合并到 `AGENTS.md`。实时语音仍属实验功能，Grok 声调／音色漂移尚未确认修复。全局秘书仍共享各 Group 的模型历史。
 
 ## 快速上手
 
@@ -332,7 +332,7 @@ CCCC 实现的是 IM 级消息语义，而不是"往终端里粘贴一段文字"
 - **Project Context** — 共享协调、任务、Agent 状态与自演化技能
 - **Group Space** — NotebookLM 集成，共享知识管理
 - **ChatGPT Web Model 设置** — 将一个 ChatGPT Web 对话接入为 CCCC Actor
-- **Voice Secretary 与 Codex Voice** — 全局秘书可直接配置 Runtime 或关联 Profile，在共享会话中串行处理任务，并保持每个任务原有的 Group 归属。实验性 Codex Voice 使用 ChatGPT 通话后端与独立 Analyst。两套功能共用语音设置入口和音频设备偏好；各组保留文档、请求和采集偏好，不再创建秘书 Actor。详见[语音配置与供应商接线](https://chesterra.github.io/cccc/guide/voice-secretary#codex-voice-provider-connection)。
+- **Voice Secretary 与 Codex Voice** — 全局秘书可直接配置 Runtime 或关联 Profile，在共享会话中串行处理任务，并保持每个任务原有的 Group 归属。实验性 Codex Voice 与 Grok Voice 使用独立 Analyst。两套功能共用语音设置入口和音频设备偏好；各组保留文档、请求和采集偏好，不再创建秘书 Actor。详见[语音配置与供应商接线](https://chesterra.github.io/cccc/guide/voice-secretary#codex-voice-provider-connection)。
 - **CCCC Connect 设置** — 账户发现、指定 Group 连接与 Direct 配对
 - **IM 桥接配置** — Telegram、Slack、Discord、Mattermost、飞书、钉钉、企业微信和微信
 - **设置** — 消息策略、投递调优、终端日志控制

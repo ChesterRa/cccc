@@ -47,18 +47,14 @@ export function AgentsMdPanel({
   onNotifyAgentsChange,
   onSaveAgentsMd,
 }: AgentsMdPanelProps) {
-  const shellClass = expanded
-    ? "flex h-full min-h-0 flex-col"
-    : classNames("rounded-xl border p-4", "glass-card");
+  const shellClass = expanded ? "flex h-full min-h-0 flex-col" : "min-w-0";
   const contentClass = expanded ? "mt-4 min-h-0 flex flex-1 flex-col" : "mt-4";
   const textAreaClass = classNames(
     ui.textareaClass,
     expanded ? "min-h-[520px] flex-1" : "min-h-[320px]",
   );
   const markdownContainerClass = classNames(
-    expanded
-      ? "min-h-0 flex-1 overflow-y-auto rounded-xl border p-4"
-      : "max-h-[36rem] overflow-y-auto rounded-xl border p-3",
+    expanded ? "min-h-0 flex-1 overflow-y-auto rounded-xl border p-4" : "rounded-xl border p-3",
     "glass-card",
   );
 

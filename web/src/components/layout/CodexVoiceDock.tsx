@@ -1,6 +1,9 @@
 import { useTranslation } from "react-i18next";
 import { VoiceStatusDot } from "../../features/codexVoice/CodexVoiceStatus";
-import { codexVoiceCallStatus } from "../../features/codexVoice/codexVoiceControllerText";
+import {
+  codexVoiceCallStatus,
+  codexVoiceDisplayIdentity,
+} from "../../features/codexVoice/codexVoiceControllerText";
 import { classNames } from "../../utils/classNames";
 import { AlertIcon, HeadphonesIcon, StopIcon, VoiceWaveformIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
@@ -14,6 +17,8 @@ export function CodexVoiceDock({
   onStart,
 }: CodexVoiceDockProps) {
   const { t } = useTranslation(["layout", "modals"]);
+  const identity = codexVoiceDisplayIdentity(controller);
+  const providerLabel = t(`modals:codexVoiceProviders.${identity.provider}`);
   const callStatus = codexVoiceCallStatus(controller);
   const attention = Boolean(
     controller.error ||
@@ -37,6 +42,7 @@ export function CodexVoiceDock({
     controller.externalCall ? "modals:codexVoiceStopExisting" : "modals:codexVoiceStop",
   );
   const startDisabled = controller.checking || controller.isStarting;
+  const identityTitle = [providerLabel, identity.voice, statusLabel].filter(Boolean).join(" · ");
 
   const callControl = controller.isEngaged ? (
     <IconButton
@@ -72,6 +78,8 @@ export function CodexVoiceDock({
           attention={attention || callStatus.blocked}
           active={controller.isEngaged}
           status={statusLabel}
+          provider={providerLabel}
+          voice={identity.voice}
           label={t("layout:codexVoiceOpenConsole")}
         />
         {callControl}
@@ -92,6 +100,7 @@ export function CodexVoiceDock({
           )}
           onClick={onOpen}
           label={t("layout:codexVoiceOpenConsole")}
+          title={identityTitle}
         >
           {attention ? <AlertIcon size={18} /> : <HeadphonesIcon size={18} />}
           <span className="absolute bottom-1.5 right-1.5">
@@ -114,6 +123,8 @@ export function CodexVoiceDock({
           attention={attention || callStatus.blocked}
           active={controller.isEngaged}
           status={statusLabel}
+          provider={providerLabel}
+          voice={identity.voice}
           label={t("layout:codexVoiceOpenConsole")}
         />
         {callControl}
@@ -127,21 +138,25 @@ function ConsoleButton({
   attention,
   active,
   status,
+  provider,
+  voice,
   label,
 }: {
   onOpen: () => void;
   attention: boolean;
   active: boolean;
   status: string;
+  provider: string;
+  voice: string;
   label: string;
 }) {
-  const { t } = useTranslation("layout");
   return (
     <button
       type="button"
       onClick={onOpen}
       className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl px-2 py-2 text-left outline-none transition-colors hover:bg-[var(--glass-tab-bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent-primary)]"
       aria-label={label}
+      title={[provider, voice, status].filter(Boolean).join(" · ")}
     >
       <span className="relative flex h-8 w-8 flex-none items-center justify-center rounded-xl bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
         {attention ? <AlertIcon size={17} /> : <HeadphonesIcon size={17} />}
@@ -151,10 +166,10 @@ function ConsoleButton({
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-semibold text-[var(--color-text-primary)]">
-          {t("codexVoice")}
+          {provider}
         </span>
         <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">
-          {status}
+          {voice ? `${voice} · ${status}` : status}
         </span>
       </span>
     </button>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   type DragEndEvent,
@@ -32,7 +32,8 @@ import { ModalFrame } from "../modals/ModalFrame";
 import { settingsDialogBodyClass, settingsDialogPanelClass } from "../modals/settings/types";
 import { AgentsView } from "./agents/AgentsView";
 import { AgentsMdPanel } from "./coordination/AgentsMdPanel";
-import { SteeringPanel } from "./coordination/SteeringPanel";
+import { WorkingSummaryPanel } from "./coordination/WorkingSummaryPanel";
+import { CoordinationLogPanel } from "./coordination/CoordinationLogPanel";
 import { TaskBoard } from "./coordination/TaskBoard";
 import { TaskEditorPanel } from "./coordination/TaskEditorPanel";
 import { CapabilitiesTab } from "../modals/settings/CapabilitiesTab";
@@ -52,7 +53,6 @@ import {
   type BriefDraft,
   type ContextModalView,
   type NoteDraft,
-  type SteeringTab,
   type TaskDraft,
   type TaskDeleteInfo,
   type TaskFilterValue,
@@ -93,8 +93,10 @@ export function ContextModal({
 
   const ui = useMemo(() => createContextModalUi(isDark), [isDark]);
 
-  const [activeView, setActiveView] = useState<ContextModalView>("coordination");
-  const [steeringTab, setSteeringTab] = useState<SteeringTab>("summary");
+  const [activeView, setActiveView] = useState<ContextModalView>("tasks");
+  const navigationId = useId();
+  const navigationRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const [taskFilter, setTaskFilter] = useState<TaskFilterValue>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("__all__");
   const [taskQuery, setTaskQuery] = useState("");
@@ -292,8 +294,7 @@ export function ContextModal({
     agentsMdReadSeqRef.current += 1;
     if (!isOpen || !groupId) return;
 
-    setActiveView("coordination");
-    setSteeringTab("summary");
+    setActiveView("tasks");
     setTaskFilter("all");
     setAssigneeFilter("__all__");
     setTaskQuery("");
@@ -343,7 +344,7 @@ export function ContextModal({
   useEffect(() => {
     if (!isOpen || !groupId) return;
     if (
-      (steeringTab === "instructions" || editingAgentsMd) &&
+      (activeView === "instructions" || editingAgentsMd) &&
       agentsMd === null &&
       !agentsMdBusy &&
       !agentsMdError
@@ -358,8 +359,17 @@ export function ContextModal({
     agentsMdBusy,
     agentsMdError,
     agentsMd,
-    steeringTab,
+    activeView,
   ]);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (contentRef.current) contentRef.current.scrollTop = 0;
+      navigationRef.current
+        ?.querySelector('[aria-selected="true"]')
+        ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    }
+  }, [activeView, isOpen]);
 
   const filteredBoard = board;
   const hasTaskFilters =
@@ -470,7 +480,7 @@ export function ContextModal({
       setTaskDraft(nextDraft);
       setTaskEditorMode("edit");
       setSyncError(options?.error || "");
-      setActiveView("coordination");
+      setActiveView("tasks");
       return true;
     },
     [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode],
@@ -583,7 +593,7 @@ export function ContextModal({
       setTaskDraft(nextDraft);
       setTaskEditorMode("edit");
       setSyncError("");
-      setActiveView("coordination");
+      setActiveView("tasks");
     },
     [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode],
   );
@@ -627,30 +637,9 @@ export function ContextModal({
     setSyncError("");
   }, [confirmDiscardTaskChanges]);
 
-  const openSteeringTab = useCallback(
-    (tab: SteeringTab) => {
-      if (!confirmDiscardTaskChanges()) return;
-      setPendingTaskReadback(null);
-      setTaskEditorMode("none");
-      setActiveView("coordination");
-      setSteeringTab(tab);
-      setSelectedTaskId("");
-      setTaskDraft(null);
-      setSyncError("");
-      setAgentsMdNotice("");
-      setAgentsMdError("");
-      setNotifyError("");
-      setActivityError("");
-      if (tab === "instructions") {
-        void loadAgentsMd();
-      }
-    },
-    [confirmDiscardTaskChanges, loadAgentsMd],
-  );
-
   const handleSwitchActiveView = useCallback(
     (next: ContextModalView) => {
-      if (next !== "coordination") {
+      if (next !== "tasks") {
         if (!confirmDiscardTaskChanges()) return;
         setPendingTaskReadback(null);
         setTaskEditorMode("none");
@@ -658,8 +647,9 @@ export function ContextModal({
         setTaskDraft(null);
       }
       setActiveView(next);
+      if (next === "instructions" && !agentsMdBusy && !editingAgentsMd) void loadAgentsMd();
     },
-    [confirmDiscardTaskChanges],
+    [confirmDiscardTaskChanges, agentsMdBusy, editingAgentsMd, loadAgentsMd],
   );
 
   const handleModalClose = useCallback(() => {
@@ -928,19 +918,18 @@ export function ContextModal({
       setSelectedTaskId("");
       setTaskDraft(emptyTaskDraft(status));
       setSyncError("");
-      setActiveView("coordination");
+      setActiveView("tasks");
     },
     [confirmDiscardTaskChanges],
   );
 
   const handleEditAgentsMd = useCallback(async () => {
     const visit = modalVisitRef.current;
-    openSteeringTab("instructions");
     const loaded = await loadAgentsMd(true);
     if (modalVisitRef.current !== visit || !loaded) return;
     setAgentsMdText(String(loaded.content || ""));
     setEditingAgentsMd(true);
-  }, [loadAgentsMd, openSteeringTab]);
+  }, [loadAgentsMd]);
 
   const handleSaveAgentsMd = useCallback(async () => {
     if (!groupId || !agentsMd?.path) return;
@@ -1055,10 +1044,9 @@ export function ContextModal({
   );
 
   const startBriefEdit = useCallback(() => {
-    openSteeringTab("summary");
     if (!editingBrief) setBriefDraft(briefToDraft(brief));
     setEditingBrief(true);
-  }, [brief, editingBrief, openSteeringTab]);
+  }, [brief, editingBrief]);
 
   const cancelBriefEdit = useCallback(() => {
     setEditingBrief(false);
@@ -1095,13 +1083,13 @@ export function ContextModal({
 
   if (!isOpen) return null;
 
-  const viewButtonClass = (active: boolean) =>
-    classNames(
-      "min-h-11 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]",
-      active
-        ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-        : "text-[var(--color-text-secondary)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06]",
-    );
+  const views: { value: ContextModalView; label: string }[] = [
+    { value: "tasks", label: tr("context.tasks", "Tasks") },
+    { value: "instructions", label: tr("context.agentsMd", "AGENTS.md") },
+    { value: "agents", label: tr("context.agents", "Agent State") },
+    { value: "log", label: tr("context.activityLog", "Coordination log") },
+    { value: "self_evolving_skills", label: tr("context.skillsTab", "Skills") },
+  ];
 
   return (
     <>
@@ -1110,18 +1098,73 @@ export function ContextModal({
         onClose={handleModalClose}
         titleId="context-modal-title"
         title={
-          <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="font-semibold">{tr("context.title", "Project Context")}</span>
-            <span className="text-sm font-normal text-[var(--color-text-secondary)] break-all">
+          <span className="flex min-w-0 items-baseline gap-x-3">
+            <span className="shrink-0 font-semibold">{tr("context.title", "Project Context")}</span>
+            <span
+              title={groupTitle || groupId}
+              className="min-w-0 truncate text-sm font-normal text-[var(--color-text-secondary)]"
+            >
               {groupTitle || groupId}
             </span>
           </span>
         }
         closeAriaLabel={tr("context.closeAria", "Close context modal")}
         panelClassName="h-full w-full overflow-hidden rounded-none sm:h-[94vh] sm:max-w-[96vw]"
+        headerClassName="!px-4 !pb-2 sm:!px-5"
         modalRef={modalRef}
       >
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]">
+        <div
+          ref={navigationRef}
+          role="tablist"
+          aria-label={tr("context.tabsAria", "Context sections")}
+          className="flex shrink-0 gap-5 overflow-x-auto scroll-px-4 sm:scroll-px-5 border-b border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-4 sm:px-5"
+          onKeyDown={(event) => {
+            const tabs = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+            );
+            const current = tabs.indexOf(document.activeElement as HTMLButtonElement);
+            if (current < 0) return;
+            const next =
+              event.key === "ArrowRight"
+                ? (current + 1) % tabs.length
+                : event.key === "ArrowLeft"
+                  ? (current + tabs.length - 1) % tabs.length
+                  : event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? tabs.length - 1
+                      : -1;
+            if (next < 0) return;
+            event.preventDefault();
+            tabs[next].focus();
+            tabs[next].scrollIntoView?.({ block: "nearest", inline: "nearest" });
+          }}
+        >
+          {views.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              id={`${navigationId}-tab-${value}`}
+              aria-controls={`${navigationId}-panel-${value}`}
+              aria-selected={activeView === value}
+              tabIndex={activeView === value ? 0 : -1}
+              onClick={() => handleSwitchActiveView(value)}
+              className={classNames(
+                "min-h-11 shrink-0 whitespace-nowrap border-b-2 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-[-2px]",
+                activeView === value
+                  ? "border-[var(--color-text-primary)] text-[var(--color-text-primary)]"
+                  : "border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div
+          ref={contentRef}
+          className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]"
+        >
           <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5">
             {syncError ? (
               <div
@@ -1134,122 +1177,108 @@ export function ContextModal({
               </div>
             ) : null}
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            {views.map(({ value }) => (
               <div
-                className="flex flex-wrap gap-1"
-                role="group"
-                aria-label={tr("context.title", "Project Context")}
+                key={value}
+                role="tabpanel"
+                id={`${navigationId}-panel-${value}`}
+                aria-labelledby={`${navigationId}-tab-${value}`}
+                hidden={activeView !== value}
+                tabIndex={0}
+                className="min-w-0 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
               >
-                <button
-                  type="button"
-                  aria-pressed={activeView === "coordination"}
-                  onClick={() => handleSwitchActiveView("coordination")}
-                  className={viewButtonClass(activeView === "coordination")}
-                >
-                  {tr("context.coordination", "Coordination")}
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={activeView === "agents"}
-                  onClick={() => handleSwitchActiveView("agents")}
-                  className={viewButtonClass(activeView === "agents")}
-                >
-                  {tr("context.agents", "Agents")}
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={activeView === "self_evolving_skills"}
-                  onClick={() => handleSwitchActiveView("self_evolving_skills")}
-                  className={viewButtonClass(activeView === "self_evolving_skills")}
-                >
-                  {tr("context.selfEvolvingSkillsTab", "Self-Evolving Skills")}
-                </button>
-              </div>
-            </div>
+                {activeView === value &&
+                  (value === "tasks" ? (
+                    <div className="space-y-4">
+                      <WorkingSummaryPanel
+                        tr={tr}
+                        ui={ui}
+                        brief={brief}
+                        tasksSummary={tasksSummary}
+                        attentionCounts={attentionCounts}
+                        unassignedCount={unassignedCount}
+                        editingBrief={editingBrief}
+                        briefDraft={briefDraft}
+                        syncBusy={syncBusy}
+                        onStartBriefEdit={startBriefEdit}
+                        onCancelBriefEdit={cancelBriefEdit}
+                        onSaveBrief={() => void handleSaveBrief()}
+                        onBriefDraftChange={(updater) => setBriefDraft((prev) => updater(prev))}
+                      />
 
-            {activeView === "coordination" ? (
-              <div className="space-y-4">
-                <SteeringPanel
-                  tr={tr}
-                  ui={ui}
-                  brief={brief}
-                  tasksSummary={tasksSummary}
-                  attentionCounts={attentionCounts}
-                  unassignedCount={unassignedCount}
-                  steeringTab={steeringTab}
-                  editingBrief={editingBrief}
-                  briefDraft={briefDraft}
-                  syncBusy={syncBusy}
-                  activityBusyKind={activityBusyKind}
-                  activityError={activityError}
-                  recentDecisions={recentDecisions}
-                  recentHandoffs={recentHandoffs}
-                  decisionDraft={decisionDraft}
-                  handoffDraft={handoffDraft}
-                  activeTaskOptions={activeTaskOptions}
-                  agentsMdPanel={agentsMdPanel}
-                  onOpenSteeringTab={openSteeringTab}
-                  onStartBriefEdit={startBriefEdit}
-                  onCancelBriefEdit={cancelBriefEdit}
-                  onSaveBrief={() => void handleSaveBrief()}
-                  onBriefDraftChange={(updater) => setBriefDraft((prev) => updater(prev))}
-                  onDecisionDraftChange={(updater) => setDecisionDraft((prev) => updater(prev))}
-                  onHandoffDraftChange={(updater) => setHandoffDraft((prev) => updater(prev))}
-                  onAddCoordinationNote={(kind) => void handleAddCoordinationNote(kind)}
-                />
-
-                <TaskBoard
-                  tr={tr}
-                  ui={ui}
-                  syncBusy={syncBusy}
-                  taskQuery={taskQuery}
-                  assigneeFilter={assigneeFilter}
-                  assigneeOptions={assigneeOptions}
-                  taskFilter={taskFilter}
-                  tasksSummary={tasksSummary}
-                  attentionCounts={attentionCounts}
-                  unassignedCount={unassignedCount}
-                  hasArchivedTasks={hasArchivedTasks}
-                  archivedExpanded={archivedExpanded}
-                  hasVisibleTasks={hasVisibleTasks}
-                  hiddenArchivedMatches={hiddenArchivedMatches}
-                  filteredBoard={filteredBoard}
-                  columnPages={taskColumnPages}
-                  taskLoading={taskLoading}
-                  taskLoadError={taskLoadError}
-                  taskMap={taskMap}
-                  selectedTaskId={selectedTaskId}
-                  dragTaskId={dragTaskId}
-                  sensors={sensors}
-                  onTaskQueryChange={setTaskQuery}
-                  onAssigneeFilterChange={setAssigneeFilter}
-                  onTaskFilterChange={setTaskFilter}
-                  onClearFilters={() => {
-                    setTaskQuery("");
-                    setTaskFilter("all");
-                    setAssigneeFilter("__all__");
-                  }}
-                  onArchivedExpandedChange={setArchivedExpanded}
-                  onOpenCreate={handleOpenCreate}
-                  onDragStart={handleDragStart}
-                  onDragEnd={handleDragEnd}
-                  onDragCancel={() => setDragTaskId("")}
-                  onSelectTask={selectTask}
-                  onMoveTaskToStatus={(task, nextStatus) => void moveTaskToStatus(task, nextStatus)}
-                  onLoadMore={(status) => void loadMoreTasks(status)}
-                  onRetryLoad={() => void refreshTasks()}
-                />
+                      <TaskBoard
+                        tr={tr}
+                        ui={ui}
+                        syncBusy={syncBusy}
+                        taskQuery={taskQuery}
+                        assigneeFilter={assigneeFilter}
+                        assigneeOptions={assigneeOptions}
+                        taskFilter={taskFilter}
+                        tasksSummary={tasksSummary}
+                        attentionCounts={attentionCounts}
+                        unassignedCount={unassignedCount}
+                        hasArchivedTasks={hasArchivedTasks}
+                        archivedExpanded={archivedExpanded}
+                        hasVisibleTasks={hasVisibleTasks}
+                        hiddenArchivedMatches={hiddenArchivedMatches}
+                        filteredBoard={filteredBoard}
+                        columnPages={taskColumnPages}
+                        taskLoading={taskLoading}
+                        taskLoadError={taskLoadError}
+                        taskMap={taskMap}
+                        selectedTaskId={selectedTaskId}
+                        dragTaskId={dragTaskId}
+                        sensors={sensors}
+                        onTaskQueryChange={setTaskQuery}
+                        onAssigneeFilterChange={setAssigneeFilter}
+                        onTaskFilterChange={setTaskFilter}
+                        onClearFilters={() => {
+                          setTaskQuery("");
+                          setTaskFilter("all");
+                          setAssigneeFilter("__all__");
+                        }}
+                        onArchivedExpandedChange={setArchivedExpanded}
+                        onOpenCreate={handleOpenCreate}
+                        onDragStart={handleDragStart}
+                        onDragEnd={handleDragEnd}
+                        onDragCancel={() => setDragTaskId("")}
+                        onSelectTask={selectTask}
+                        onMoveTaskToStatus={(task, nextStatus) =>
+                          void moveTaskToStatus(task, nextStatus)
+                        }
+                        onLoadMore={(status) => void loadMoreTasks(status)}
+                        onRetryLoad={() => void refreshTasks()}
+                      />
+                    </div>
+                  ) : value === "instructions" ? (
+                    agentsMdPanel
+                  ) : value === "log" ? (
+                    <CoordinationLogPanel
+                      tr={tr}
+                      ui={ui}
+                      activityBusyKind={activityBusyKind}
+                      activityError={activityError}
+                      recentDecisions={recentDecisions}
+                      recentHandoffs={recentHandoffs}
+                      decisionDraft={decisionDraft}
+                      handoffDraft={handoffDraft}
+                      activeTaskOptions={activeTaskOptions}
+                      onDecisionDraftChange={setDecisionDraft}
+                      onHandoffDraftChange={setHandoffDraft}
+                      onAddCoordinationNote={(kind) => void handleAddCoordinationNote(kind)}
+                    />
+                  ) : value === "agents" ? (
+                    <AgentsView agents={agents} tr={tr} ui={ui} />
+                  ) : (
+                    <CapabilitiesTab
+                      isDark={isDark}
+                      isActive={isOpen && activeView === "self_evolving_skills"}
+                      groupId={groupId}
+                      surface="selfEvolving"
+                    />
+                  ))}
               </div>
-            ) : activeView === "agents" ? (
-              <AgentsView agents={agents} tr={tr} ui={ui} />
-            ) : (
-              <CapabilitiesTab
-                isDark={isDark}
-                isActive={isOpen && activeView === "self_evolving_skills"}
-                groupId={groupId}
-                surface="selfEvolving"
-              />
-            )}
+            ))}
           </div>
         </div>
       </ModalFrame>

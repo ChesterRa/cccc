@@ -54,7 +54,9 @@ vi.mock("../../features/contextModal/useTaskBoardData", () => ({
   }),
 }));
 
-vi.mock("../modals/settings/CapabilitiesTab", () => ({ CapabilitiesTab: () => null }));
+vi.mock("../modals/settings/CapabilitiesTab", () => ({
+  CapabilitiesTab: () => <div>Group skill candidates</div>,
+}));
 
 import { ContextModal } from "./index";
 
@@ -91,6 +93,7 @@ const emptyContext: GroupContext = {
 describe("ContextModal AGENTS.md loading and ownership", () => {
   let host: HTMLDivElement;
   let root: Root;
+  const onClose = vi.fn();
   const onOpenContext = vi.fn(async () => {});
   const onSyncContext = vi.fn(async () => {});
 
@@ -99,7 +102,7 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
       root.render(
         <ContextModal
           isOpen={isOpen}
-          onClose={() => {}}
+          onClose={onClose}
           groupId={groupId}
           groupTitle={groupId}
           context={context}
@@ -131,6 +134,157 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
+  });
+
+  const clickTab = async (label: string) => {
+    const tab = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+      (el) => el.textContent === label,
+    );
+    expect(tab, `tab ${label}`).toBeDefined();
+    await act(async () => tab!.click());
+    return tab!;
+  };
+  const changeText = async (element: HTMLInputElement | HTMLTextAreaElement, text: string) => {
+    await act(async () => {
+      const proto =
+        element instanceof HTMLInputElement
+          ? HTMLInputElement.prototype
+          : HTMLTextAreaElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(element, text);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  it("gives each section its own content area and keeps task filters on return", async () => {
+    mocks.apiJson.mockResolvedValue({
+      ok: true,
+      result: { exists: true, path: "/a/AGENTS.md", content: "Repository rules" },
+    });
+    await renderModal();
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(host.querySelectorAll('[role="tablist"]')).toHaveLength(1);
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "Tasks",
+      "AGENTS.md",
+      "Agent State",
+      "Coordination log",
+      "Skills",
+    ]);
+    for (const tab of tabs) {
+      expect(
+        document
+          .getElementById(tab.getAttribute("aria-controls")!)
+          ?.getAttribute("aria-labelledby"),
+      ).toBe(tab.id);
+    }
+    await changeText(
+      host.querySelector<HTMLInputElement>(
+        'input[aria-label="Search tasks by title, id, assignee, or outcome"]',
+      )!,
+      "Keep this task filter",
+    );
+    for (const [tab, content] of [
+      ["AGENTS.md", "Repository rules"],
+      ["Coordination log", "Recent decisions"],
+      ["Agent State", "No agent state"],
+      ["Skills", "Group skill candidates"],
+    ]) {
+      await clickTab(tab);
+      expect(host.querySelectorAll('[role="tabpanel"]:not([hidden])')).toHaveLength(1);
+      expect(host.textContent).toContain(content);
+      expect(
+        host.querySelector('input[aria-label="Search tasks by title, id, assignee, or outcome"]'),
+      ).toBeNull();
+      expect(host.textContent).not.toContain("New task");
+    }
+    await clickTab("Tasks");
+    expect(
+      host.querySelector<HTMLInputElement>(
+        'input[aria-label="Search tasks by title, id, assignee, or outcome"]',
+      )?.value,
+    ).toBe("Keep this task filter");
+    expect(mocks.updateCoordinationTask).not.toHaveBeenCalled();
+    expect(mocks.updateCoordinationBrief).not.toHaveBeenCalled();
+    expect(mocks.addCoordinationNote).not.toHaveBeenCalled();
+  });
+
+  it("moves focus with arrows without activating or fetching another section", async () => {
+    await renderModal();
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    tabs[0].focus();
+    await act(async () =>
+      tabs[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })),
+    );
+    expect(document.activeElement).toBe(tabs[1]);
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect(mocks.apiJson).not.toHaveBeenCalled();
+    await act(async () =>
+      tabs[1].dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })),
+    );
+    expect(document.activeElement).toBe(tabs[4]);
+    await act(async () =>
+      tabs[4].dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })),
+    );
+    expect(document.activeElement).toBe(tabs[0]);
+  });
+
+  it("retains file and summary drafts across sections and still guards closing", async () => {
+    mocks.apiJson.mockResolvedValue({
+      ok: true,
+      result: { exists: true, path: "/a/AGENTS.md", content: "Saved rules" },
+    });
+    await renderModal();
+    await clickButton("Edit");
+    await changeText(
+      host.querySelector<HTMLTextAreaElement>("textarea")!,
+      "Unsaved summary constraint",
+    );
+    await clickTab("AGENTS.md");
+    await clickButton("Edit");
+    await changeText(
+      host.querySelector<HTMLTextAreaElement>('textarea[aria-label="AGENTS.md"]')!,
+      "Unsaved repository rules",
+    );
+    await clickTab("Tasks");
+    expect([...host.querySelectorAll("textarea")].map((el) => el.value)).toContain(
+      "Unsaved summary constraint",
+    );
+    expect(host.querySelector('button[aria-expanded="true"]')).not.toBeNull();
+    await clickTab("AGENTS.md");
+    expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="AGENTS.md"]')?.value).toBe(
+      "Unsaved repository rules",
+    );
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    try {
+      await act(async () =>
+        host.querySelector<HTMLButtonElement>('button[aria-label="Close context modal"]')!.click(),
+      );
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(mocks.apiJson.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps note drafts across sections and submits only on request", async () => {
+    mocks.addCoordinationNote.mockResolvedValue({ ok: true, result: {} });
+    await renderModal();
+    await clickTab("Coordination log");
+    await changeText(host.querySelector<HTMLTextAreaElement>("textarea")!, "Keep this decision");
+    await clickTab("Tasks");
+    expect(mocks.addCoordinationNote).not.toHaveBeenCalled();
+    await clickTab("Coordination log");
+    expect(host.querySelector("textarea")?.value).toBe("Keep this decision");
+    await clickButton("Add decision");
+    expect(mocks.addCoordinationNote).toHaveBeenCalledOnce();
+    expect(mocks.addCoordinationNote.mock.calls[0]).toEqual([
+      "g_a",
+      "decision",
+      "Keep this decision",
+      null,
+    ]);
   });
 
   it("reads the existing AGENTS.md using the Web endpoint's exists field", async () => {
@@ -254,6 +408,9 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
 
     expect(calls).toBe(1);
     expect(document.body.textContent).toContain("Disk read error");
+    await clickTab("Tasks");
+    await clickTab("AGENTS.md");
+    expect(calls).toBe(2);
   });
 
   it("does not leak Group A AGENTS.md content or edit state into Group B after switching groups", async () => {

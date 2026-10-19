@@ -52,6 +52,56 @@ function controller(
 }
 
 describe("CodexVoiceDock", () => {
+  it.each(["sidebar", "mobile", "collapsed"] as const)(
+    "identifies the selected service and voice in the %s dock before a call",
+    (surface) => {
+      const html = renderToStaticMarkup(
+        <CodexVoiceDock
+          controller={controller({
+            preferences: { provider: "grok", voice: "eve", inputDeviceId: "", outputDeviceId: "" },
+          })}
+          variant={surface === "mobile" ? "mobile" : "sidebar"}
+          collapsed={surface === "collapsed"}
+          onOpen={vi.fn()}
+          onStart={vi.fn()}
+        />,
+      );
+      expect(html).toContain("modals:codexVoiceProviders.grok");
+      expect(html).toContain("Eve");
+      expect(html).toContain("modals:codexVoicePhase.idle");
+      if (surface !== "collapsed")
+        expect(html).toMatch(/>Eve · modals:codexVoicePhase.idle<\/span>/);
+      expect(html).not.toContain("Cove");
+    },
+  );
+
+  it("keeps the live call identity when next-call preferences differ", () => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceDock
+        controller={controller({
+          phase: "idle",
+          isEngaged: true,
+          externalCall: true,
+          call: {
+            provider: "grok",
+            voice: "aurora",
+            generation: "call-1",
+            analyst_generation: null,
+            mode: "assistant",
+            connected: true,
+          },
+          preferences: { provider: "codex", voice: "cove", inputDeviceId: "", outputDeviceId: "" },
+        })}
+        onOpen={vi.fn()}
+        onStart={vi.fn()}
+      />,
+    );
+    expect(html).toContain("modals:codexVoiceProviders.grok");
+    expect(html).toContain("Aurora");
+    expect(html).toContain("modals:codexVoiceActiveElsewhere");
+    expect(html).not.toContain("Cove");
+  });
+
   it("shows stale status instead of advertising ready after a failed snapshot read", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceDock

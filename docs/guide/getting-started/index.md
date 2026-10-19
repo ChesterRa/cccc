@@ -124,7 +124,7 @@ select prereleases. To install a specific version, set `CCCC_VERSION` on the
 installer process, for example:
 
 ```bash
-curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.43 sh
+curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.44 sh
 ```
 
 On Windows, set `$env:CCCC_VERSION` before running the installer. If latest-release

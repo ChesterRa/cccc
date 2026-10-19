@@ -57,19 +57,19 @@ CCCC はコマンド一つで導入でき、データベースやメッセージ
 | **マルチランタイム編成** | 対応するランタイムを同じ Group で混在利用し、その他の CLI エージェントには `custom` を使用 |
 | **CCCC Connect** | 自分のインスタンス、異なる会員の指定 Group、またはアカウントなしで二つの Group を直接接続 |
 | **ワークスペースツール** | ファイルの閲覧・編集、Git 差分確認、Presentation への文書固定、タイル表示の純正ターミナル操作 |
-| **音声ワークフロー** | グローバルな Voice Secretary が共有会話で各 Group の音声・文書・入力欄の下書きを処理。実験的な Codex Voice は ChatGPT の通話バックエンドと独立した Analyst を使用 |
+| **音声ワークフロー** | グローバルな Voice Secretary が共有会話で各 Group の音声・文書・入力欄の下書きを処理。実験的な Codex Voice と Grok Voice は独立した Analyst を使用 |
 | **ロールベース協調** | Foreman + Peer ロールモデル、権限境界と宛先ルーティング（`@all`、`@peers`、`@foreman`） |
 | **ローカルファーストなランタイム状態** | ランタイムデータはリポジトリではなく `CCCC_HOME` に保持しつつ、Web Access と IM ブリッジで遠隔運用も可能 |
 
-## 0.4.43 の主な変更
+## 0.4.44 の主な変更
 
-- **グローバルな Voice Secretary**：常駐会話で各 Group の固定対象タスクを処理。Prompt は直接の音声入力が既定で、任意で推敲できます。文書・質問・結果の宛先は保持され、対応する純正ターミナルはキーボードとマウスで操作できます。
-- **統一された音声操作**：マイク／スピーカーの設定を共有し、入力方式は Group ごとに記憶。Runtime／Profile の設定方式を統一し、Codex Voice Analyst は既定で折りたたみます。
-- **ChatGPT Dots の純正イベント連携**：明示的に会話を紐づけ、永続的な ChatGPT タスクと共有 MCP プラグインを利用。ブラウザへのメッセージ投下は不要です。Actor 画面で設定、非同期配信の段階、復旧操作を確認できます。
-- **構造化制御の拡充**：Pi の公式 RPC と、Kimi Code、Auggie、Kiro V3、Hermes、Droid の任意の ACP モードを追加。ACP／RPC の画面に純正ターミナルが付くわけではなく、既存の TUI の既定動作も維持します。
-- **日常の協調をより確実に**：待機中 Actor への Mail 通知、同じインスタンス内の Group 間でのファイル・画像送信と返信、IM の転送方式を整え、会話復旧、Group のプロセス終了、Context の関係、共有設定を改善しました。
+- **必要な送信者に絞る**：Foreman、Peer、ユーザーを複数選択し、メッセージ種別と組み合わせて表示。過去の一致メッセージにも最新の受領状態を反映し、送信後も絞り込みを維持します。隠れた送信メッセージには直接開くリンクを表示します。
+- **実験的な Grok Voice**：ホストの Grok Build サブスクリプションのログインを利用し、追加の API キーは不要です。Codex Voice の音声と主要言語のヒントを拡充。Analyst の Runtime は独立して選択でき、Grok は完了した調査結果を順番に読み上げます。
+- **作業内容の表示領域を拡大**：利用可能な幅と高さに応じ、最大四つのターミナルを 2×2 で表示。コンパクトなヘッダー、Actor のアイコン、区切り線を採用し、Voice とタスク画面も必要な操作を残して余白を削減しました。
+- **リポジトリ標準の指示ファイルへ**：Context で現在のワークスペースの `AGENTS.md` を編集し、読み込みは Runtime に委ねます。`PROJECT.md` の専用処理と `cccc_project_info` を削除しますが、既存ファイルは変更しません。
+- **日常の操作をより確実に**：動画添付の再生、再読み込み後の Group 選択維持、設定の下書き保持と受理済み操作の完了、終了済み Direct 接続の自動整理、最新安定版を取得する Web サイトのインストーラーを改善しました。
 
-設定、更新手順、検証範囲は [0.4.43 英語リリースノート](docs/release/v0.4.43_release_notes.md)をご覧ください。グローバル Secretary は Group 間でモデルの会話履歴を共有し、固定されたタスク宛先は機密性の境界にはなりません。以前の Dots タスクは現在の資格情報を含まない handler に更新してください。古い Actor 専用 ChatGPT コネクターは引き続き [0.4.41 の移行手順](docs/release/v0.4.41_release_notes.md)に従います。
+更新手順と機能の範囲は [0.4.44 英語リリースノート](docs/release/v0.4.44_release_notes.md)をご覧ください。旧 `PROJECT.md` を確認してから、必要な指示を `AGENTS.md` に統合してください。ライブ音声は実験的な機能で、Grok の音高・声質の変動は修正を確認できていません。グローバル Secretary は引き続き Group 間でモデルの会話履歴を共有します。
 
 ## クイックスタート
 
@@ -335,7 +335,7 @@ CCCC は IM グレードのメッセージングセマンティクスを実装 �
 - **Project Context** — 共有の協調情報、タスク、Agent 状態、自己進化スキル
 - **Group Space** — NotebookLM による共有ナレッジ管理
 - **ChatGPT Web Model 設定** — 共有ログインと各 Actor の ChatGPT 会話を接続
-- **Voice Secretary と Codex Voice** — Runtime の直接設定または Profile を使うグローバルな Secretary が、共有会話でタスクを順番に処理し、各タスクの元の Group を保持します。実験的な Codex Voice は ChatGPT の通話バックエンドと独立した Analyst を使用。音声設定と音声デバイスの選択を共通化し、各 Group の文書・依頼・録音設定を保持します。Group ごとの秘書 Actor は作成しません。[音声の設定とプロバイダー接続](https://chesterra.github.io/cccc/guide/voice-secretary#codex-voice-provider-connection)を参照してください。
+- **Voice Secretary と Codex Voice** — Runtime の直接設定または Profile を使うグローバルな Secretary が、共有会話でタスクを順番に処理し、各タスクの元の Group を保持します。実験的な Codex Voice と Grok Voice は独立した Analyst を使用。音声設定と音声デバイスの選択を共通化し、各 Group の文書・依頼・録音設定を保持します。Group ごとの秘書 Actor は作成しません。[音声の設定とプロバイダー接続](https://chesterra.github.io/cccc/guide/voice-secretary#codex-voice-provider-connection)を参照してください。
 - **CCCC Connect 設定** — アカウント経由の検出、指定 Group の接続、Direct ペアリング
 - **IM ブリッジ設定** — Telegram、Slack、Discord、Mattermost、Feishu、DingTalk、WeCom、Weixin
 - **設定** — メッセージポリシー、配信調整、ターミナル履歴

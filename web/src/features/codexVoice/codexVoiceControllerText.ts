@@ -1,5 +1,14 @@
 import type { CodexVoiceReadiness } from "../../services/api";
 import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
+import { formatCodexVoiceName } from "./codexVoicePreferences";
+
+/** Active-call metadata takes precedence over the next-call selection. */
+export function codexVoiceDisplayIdentity(
+  controller: Pick<CodexVoiceSessionController, "call" | "preferences">,
+) {
+  const selection = controller.call || controller.preferences;
+  return { provider: selection.provider || "codex", voice: formatCodexVoiceName(selection.voice) };
+}
 
 /** One call-status projection for the dock, visible header and accessibility announcement. */
 export function codexVoiceCallStatus(

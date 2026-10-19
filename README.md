@@ -57,20 +57,20 @@ CCCC installs with one command and needs no separately operated database, messag
 | **Multi-runtime orchestration** | Mix supported coding-agent runtimes in one Group, with `custom` for other command-line agents |
 | **CCCC Connect** | Connect your own instances, selected Groups across member accounts, or two Groups directly without an account |
 | **Workspace tools** | Browse and edit files, inspect Git changes, pin documents in Presentation, and operate tiled native terminals |
-| **Voice workflows** | One global Voice Secretary handles speech, documents and composer drafts for all Groups in a shared conversation; experimental ChatGPT-backed Codex Voice uses a separate Analyst |
+| **Voice workflows** | One global Voice Secretary handles speech, documents and composer drafts for all Groups in a shared conversation; experimental Codex Voice and Grok Voice use a separate Analyst |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
 
-## 0.4.43 Highlights
+## 0.4.44 Highlights
 
-- **One global Voice Secretary:** a resident conversation handles fixed-target tasks from all Groups. Prompt defaults to dictation with optional polishing; documents, questions and results keep their original destinations. Supported native terminals are interactive.
-- **Unified Voice controls:** shared microphone/speaker preferences, per-Group capture choices, consistent runtime/Profile forms, and a Codex Voice Analyst that starts collapsed.
-- **ChatGPT Dots through native events:** explicit conversation pairing and a persistent ChatGPT task use the shared MCP plugin without browser message delivery. Setup, asynchronous delivery stages and recovery are visible in the Actor pane.
-- **More structured runtimes:** Pi official RPC and optional ACP for Kimi Code, Auggie, Kiro V3, Hermes and Droid. ACP/RPC workspaces do not imply a native terminal; existing native TUI defaults remain available.
-- **Reliable everyday collaboration:** prompt idle Mail notices, local cross-Group files/images and correctly routed replies, consistent IM relay modes, safer session recovery and Group process cleanup, stable Context relationships, and clearer shared settings.
+- **Follow selected senders:** check the Foreman, peers or user in one menu, combine with message types, and browse older matching messages with live receipts. Sending keeps your filters and links to hidden outgoing messages.
+- **Experimental Grok Voice:** use the host's Grok Build subscription login without a separate API key. Codex Voice gains more voices and language hints; both keep the Analyst runtime independent. Grok announces complete investigation results in order.
+- **Room for the work:** responsive terminal pages show up to four panes in a 2×2 grid, with compact headers, Actor avatars and shared dividers. Voice and task workspaces recover space while retaining their full controls.
+- **Repository-native instructions:** Context edits the active workspace's `AGENTS.md`; runtimes own its loading. Special `PROJECT.md` handling and `cccc_project_info` are removed, leaving existing files untouched.
+- **More reliable daily use:** playable video attachments, Group selection that survives refresh, settings that preserve drafts and complete accepted actions, cleaner Direct connections, and website installers that follow the latest stable release.
 
-See the [0.4.43 release notes](docs/release/v0.4.43_release_notes.md) for setup, upgrade steps and validation limits. The global Secretary shares model history across Groups; its fixed task destinations are not a confidentiality boundary. Older Dots tasks need the current credential-free handler. Very old Actor-specific ChatGPT connectors still follow the [0.4.41 migration](docs/release/v0.4.41_release_notes.md).
+See the [0.4.44 release notes](docs/release/v0.4.44_release_notes.md) for upgrade steps and feature boundaries. Review old `PROJECT.md` instructions before merging them into `AGENTS.md`. Live voice remains experimental; Grok's reported pitch/timbre drift is not confirmed fixed. The global Secretary still shares model history across Groups.
 
 ## Quick Start
 

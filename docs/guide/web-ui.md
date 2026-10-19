@@ -29,6 +29,13 @@ the normal Group lifecycle color. The badge text still describes the Group's
 runtime state (for example, Idle); hover or focus exposes connection details.
 No separate connection subtitle or extra dot is shown on desktop or mobile.
 
+Opening a Group or message link selects that Group. Otherwise, the browser
+restores its last selected Group. If that Group is no longer available, the UI
+opens the first unarchived Group in sidebar order, or the first Group in that
+order when all are archived. Switching Groups updates the current tab's URL and
+clears the previous message link, so refreshing stays in the Group you selected.
+Reordering or archiving Groups does not move an existing selection.
+
 ### Group message and terminal views
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
@@ -866,10 +873,18 @@ Click the reply icon on a message to quote and reply.
 Open **Project Context** from the clipboard button in the Group header. The
 header identifies the Group being viewed.
 
-- **Coordination** combines the working summary, `AGENTS.md`, coordination log
-  and task board. The summary holds current working context; `AGENTS.md` holds
-  repository instructions. Empty summaries keep an Edit action without filling
-  the page with empty fields.
+A single navigation row opens **Tasks**, **AGENTS.md**, **Agent State**,
+**Coordination log**, or **Skills**. On narrow screens, scroll the row horizontally;
+keyboard users can move focus with Left/Right or Home/End and activate with
+Enter/Space. Switching sections retains summary/file drafts and task filters.
+
+- **Tasks** is the default section. The goal, current focus and warnings stay
+  visible above the board. Expand **Working summary** for background and
+  constraints, or use Edit directly. The disclosure stays open while editing.
+  The board retains Planned, Active and Done columns, including empty drop targets.
+  Search and attention filters narrow the board. Open a task for requirements,
+  steps, handoffs and completion details. Missing requirements or closeout records
+  describe record completeness; they do not change an existing task's status.
 - **AGENTS.md** views and edits the file in the current workspace root, showing
   its actual path. A missing file can be created explicitly; existing documents
   are not renamed, merged, or overwritten as part of setup. Each runtime controls
@@ -877,15 +892,13 @@ header identifies the Group being viewed.
   the optional team notification asks relevant Actors to re-read the file.
   This editor does not represent all instruction files loaded by every Actor.
   Web Model and Dots Actors can read files through `cccc_file` when needed.
-- **Tasks** retain Planned, Active and Done columns, including empty drop targets.
-  Search and attention filters narrow the board. Open a task for requirements,
-  steps, handoffs and completion details. Missing requirements or closeout records
-  describe record completeness; they do not change an existing task's status.
 - **Agent State** shows the latest saved reports, including their timestamps and
   staleness. Focus, next action and blockers remain visible. Expand working context
   or recovery cues when needed. A task named in a report does not prove that its
   Runtime is currently working on it.
-- **Self-Evolving Skills** shows candidates originating in this Group. Instance
+- **Coordination log** has a dedicated page for recent decisions and handoffs.
+  Viewing repository instructions or records does not keep a task board beneath them.
+- **Skills** shows self-evolving candidates originating in this Group. Instance
   capability governance has a wider scope; the two views do not replace each other.
 
 ## Settings Panel

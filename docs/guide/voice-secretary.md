@@ -242,8 +242,14 @@ Realtime API integration.
 
 The subscription connection offers the 25 v3 voices listed by Codex 0.163.0's
 `thread/realtime/listVoices`, including Himari, Miko, Rindo and Rivage. Cove
-remains the default. Choose a voice in **Call preferences**; type a name to filter
-the list. The selection is saved in this browser and applies to the next call.
+remains the default. Choose the service and speaking voice directly in the
+voice-console header or in **Call preferences**; type a name or language to filter
+the voice list. Each service's voice selection is remembered in this browser and
+applies to the next call. End the active call before switching service or voice.
+The sidebar and voice-console header keep the service and speaking voice visible
+before, during and after calls. With no active call they show the browser's current
+selection; during a call they show its actual service and voice, including a call
+owned by another browser. Changing next-call preferences does not relabel that call.
 Web uses the host's advertised catalog, so a newly supported voice survives a page reload. Microphone and
 speaker preferences remain shared with Voice Secretary.
 
