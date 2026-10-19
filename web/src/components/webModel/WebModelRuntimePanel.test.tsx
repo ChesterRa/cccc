@@ -117,3 +117,47 @@ it("does not attach when the surface disappeared before the open response", asyn
   await mount();
   expect(Socket.instances).toHaveLength(0);
 });
+it("keeps conversation settings reachable from the compact toolbar without opening another surface", async () => {
+  await act(async () =>
+    root.render(
+      <WebModelRuntimePanel
+        groupId="g_a"
+        actor={actor}
+        isRunning
+        isVisible
+        isDark={false}
+        compact
+      />,
+    ),
+  );
+  const opened = mocks.open.mock.calls.length;
+  expect(host.textContent).not.toContain("settings:grokActor.title");
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>('[aria-label="settings:title"]')!.click(),
+  );
+  const edit = [...document.querySelectorAll("button")].find((b) =>
+    b.textContent?.includes("settings:grokActor.title"),
+  );
+  expect(edit).toBeTruthy();
+  await act(async () => edit!.click());
+  expect(mocks.edit).toHaveBeenCalledWith(actor, "chatgpt");
+  expect(mocks.open).toHaveBeenCalledTimes(opened);
+});
+
+it("does not offer an empty settings menu for read-only Grok panes", async () => {
+  await act(async () =>
+    root.render(
+      <WebModelRuntimePanel
+        groupId="g_a"
+        actor={actor}
+        isRunning
+        isVisible
+        isDark={false}
+        compact
+        readOnly
+      />,
+    ),
+  );
+  expect(host.querySelector('[aria-label="settings:title"]')).toBeNull();
+  expect(mocks.open).not.toHaveBeenCalled();
+});

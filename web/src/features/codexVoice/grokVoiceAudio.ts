@@ -2,6 +2,7 @@ import { failure } from "./codexVoiceProtocol";
 
 const SAMPLE_RATE = 24_000;
 const MAX_QUEUED_SECONDS = 120;
+const PLAYBACK_BUFFER_SECONDS = 0.06;
 
 /** Browser-owned capture and playback. Generated audio is never sent to CCCC. */
 export class GrokVoiceAudio {
@@ -55,8 +56,11 @@ export class GrokVoiceAudio {
     if (this.closed) return;
     const raw = atob(encoded);
     if (!raw.length || raw.length % 2 !== 0) throw failure("provider_audio_invalid");
-    const start = Math.max(this.context.currentTime, this.nextPlaybackTime);
-    if (start - this.context.currentTime + raw.length / 2 / SAMPLE_RATE > MAX_QUEUED_SECONDS)
+    const now = this.context.currentTime;
+    // Buffer only at startup or after an underrun; queued frames remain consecutive.
+    const start =
+      this.nextPlaybackTime > now ? this.nextPlaybackTime : now + PLAYBACK_BUFFER_SECONDS;
+    if (start - now + raw.length / 2 / SAMPLE_RATE > MAX_QUEUED_SECONDS)
       throw failure("provider_audio_overflow");
     const buffer = this.context.createBuffer(1, raw.length / 2, SAMPLE_RATE);
     const samples = buffer.getChannelData(0);

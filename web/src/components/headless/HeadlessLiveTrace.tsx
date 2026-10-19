@@ -212,11 +212,10 @@ function getActivityRowClassName(
   isDark: boolean,
   live: boolean,
 ): string {
+  if (density === "compact") return "min-w-0 border-b border-[var(--glass-border-subtle)] py-1.5";
   return classNames(
     "min-w-0 border backdrop-blur-sm transition-colors",
-    density === "expanded"
-      ? "min-h-[32px] rounded-2xl px-3 py-2"
-      : "min-h-[26px] rounded-xl px-2.5 py-1.5",
+    "min-h-[32px] rounded-2xl px-3 py-2",
     live
       ? isDark
         ? "border-white/12 bg-white/[0.06] shadow-[0_12px_28px_rgba(0,0,0,0.18)]"
@@ -470,6 +469,18 @@ export function HeadlessLiveTrace({
   }, [latestTimelineSignal, timelineEntries.length]);
 
   if (timelineGroups.length <= 0) {
+    if (density === "compact")
+      return (
+        <div
+          className={classNames(
+            "flex min-h-0 items-center justify-center px-3 py-4 text-sm text-[var(--color-text-muted)]",
+            className,
+          )}
+          role="status"
+        >
+          {emptyLabel}
+        </div>
+      );
     return (
       <div
         className={classNames(
@@ -518,16 +529,19 @@ export function HeadlessLiveTrace({
           node.scrollTop + node.clientHeight >= node.scrollHeight - 24;
       }}
       className={classNames(
-        "rounded-[26px] border backdrop-blur-xl",
-        isDark
-          ? "border-white/10 bg-[linear-gradient(180deg,rgba(15,16,20,0.94),rgba(9,10,14,0.98))] shadow-[0_28px_80px_rgba(0,0,0,0.26)]"
-          : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(248,250,252,0.95))] shadow-[0_24px_70px_rgba(15,23,42,0.08)]",
+        density === "compact" ? "min-h-0" : "rounded-[26px] border backdrop-blur-xl",
+        density === "expanded" &&
+          (isDark
+            ? "border-white/10 bg-[linear-gradient(180deg,rgba(15,16,20,0.94),rgba(9,10,14,0.98))] shadow-[0_28px_80px_rgba(0,0,0,0.26)]"
+            : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(248,250,252,0.95))] shadow-[0_24px_70px_rgba(15,23,42,0.08)]"),
         className,
       )}
     >
       <div
         className={classNames(
-          "sticky top-0 z-[1] border-b px-4 py-3 backdrop-blur-xl sm:px-5",
+          density === "compact"
+            ? "hidden"
+            : "sticky top-0 z-[1] border-b px-4 py-3 backdrop-blur-xl sm:px-5",
           isDark
             ? "border-white/8 bg-[rgba(10,11,14,0.78)]"
             : "border-black/6 bg-[rgba(255,255,255,0.78)]",
@@ -567,7 +581,7 @@ export function HeadlessLiveTrace({
 
       <div
         className={classNames(
-          density === "expanded" ? "space-y-4 px-4 py-4 sm:px-5 sm:py-5" : "space-y-3 px-4 py-4",
+          density === "expanded" ? "space-y-4 px-4 py-4 sm:px-5 sm:py-5" : "px-2 py-1",
         )}
       >
         {timelineGroups.map((group, index) => {
@@ -577,7 +591,7 @@ export function HeadlessLiveTrace({
           return (
             <div
               key={group.id}
-              className={classNames(density === "expanded" ? "space-y-3" : "space-y-2.5")}
+              className={classNames(density === "expanded" ? "space-y-3" : "space-y-1")}
             >
               {showSessionDivider ? (
                 <div className="flex items-center gap-3 py-1">
@@ -603,13 +617,11 @@ export function HeadlessLiveTrace({
               {group.kind === "message" ? (
                 <div
                   className={classNames(
-                    "grid gap-3",
-                    density === "expanded"
-                      ? "grid-cols-[12px_minmax(0,1fr)]"
-                      : "grid-cols-[10px_minmax(0,1fr)]",
+                    density === "expanded" ? "grid gap-3" : "grid gap-0",
+                    density === "expanded" ? "grid-cols-[12px_minmax(0,1fr)]" : "grid-cols-1",
                   )}
                 >
-                  <div className={classNames(density === "expanded" ? "pt-[0.75rem]" : "pt-2.5")}>
+                  <div className={classNames(density === "expanded" ? "pt-[0.75rem]" : "hidden")}>
                     <span
                       className={classNames(
                         "block rounded-full",
@@ -634,14 +646,17 @@ export function HeadlessLiveTrace({
                   </div>
                   <div
                     className={classNames(
-                      "min-w-0 rounded-[22px] border px-4 py-3 sm:px-4.5",
-                      group.entry.streamPhase === "final_answer"
-                        ? isDark
-                          ? "border-white/12 bg-white/[0.05]"
-                          : "border-black/10 bg-white shadow-[0_10px_26px_rgba(15,23,42,0.06)]"
-                        : isDark
-                          ? "border-white/10 bg-white/[0.03]"
-                          : "border-slate-200/90 bg-slate-50/88",
+                      density === "compact"
+                        ? "min-w-0 border-b border-[var(--glass-border-subtle)] py-2"
+                        : "min-w-0 rounded-[22px] border px-4 py-3 sm:px-4.5",
+                      density === "expanded" &&
+                        (group.entry.streamPhase === "final_answer"
+                          ? isDark
+                            ? "border-white/12 bg-white/[0.05]"
+                            : "border-black/10 bg-white shadow-[0_10px_26px_rgba(15,23,42,0.06)]"
+                          : isDark
+                            ? "border-white/10 bg-white/[0.03]"
+                            : "border-slate-200/90 bg-slate-50/88"),
                     )}
                   >
                     {getTracePhaseLabel(group.entry.streamPhase, labels) ? (

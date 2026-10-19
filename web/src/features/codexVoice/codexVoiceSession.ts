@@ -411,6 +411,18 @@ export class CodexVoiceBrowserSession {
         this.callbacks.onPhase("responding");
     }
     const transcript = realtimeTranscriptUpdate(event, provider);
+    if (!transcript && provider === "codex") {
+      const value = asRecord(event);
+      const turn = asRecord(value?.turn);
+      if (value?.type === "turn.done" && turn?.role === "assistant") {
+        const current = this.transcripts.completeTurn(
+          typeof turn.id === "string" ? turn.id : undefined,
+          "assistant",
+        );
+        this.callbacks.onConversation?.(this.transcripts.history());
+        if (current) this.callbacks.onPhase("listening");
+      }
+    }
     if (transcript) {
       const accumulatedText = this.transcripts.apply(transcript);
       this.callbacks.onConversation?.(this.transcripts.history());

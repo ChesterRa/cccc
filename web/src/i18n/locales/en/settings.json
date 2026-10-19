@@ -1840,6 +1840,7 @@
     "storageUnavailable": "Browser storage is unavailable. These devices are kept for this page only; they may reset when you reopen it."
   },
   "dotsActor": {
+    "openDetails": "View details",
     "title": "ChatGPT Dots",
     "hint": "Tasks arrive through native ChatGPT events. Pausing CCCC access does not stop a task that is already running in ChatGPT. Replies return to this Group.",
     "createHint": "After saving, continue in this Actor’s pane to connect a native Dots event task. Reuse the CCCC plugin in the same ChatGPT account; no CCCC browser login window is needed. One Dot connects to one Actor.",

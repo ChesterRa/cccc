@@ -15,11 +15,13 @@ export function DotsStatusSummary({
   t,
   subscription,
   lastTask,
+  compact = false,
 }: {
   state: DotsActorState | null;
   t: T;
   subscription: string;
   lastTask: string;
+  compact?: boolean;
 }) {
   const cells: Array<[string, string]> = [
     [t("dotsActor.status.subscription"), subscription],
@@ -30,11 +32,21 @@ export function DotsStatusSummary({
     [t("dotsActor.status.lastTask"), lastTask],
   ];
   return (
-    <dl className={`${dotsCard} grid shrink-0 grid-cols-1 overflow-hidden @xl/dots:grid-cols-3`}>
+    <dl
+      className={
+        compact
+          ? "flex shrink-0 flex-wrap gap-x-4 gap-y-2 border-b border-[var(--glass-border-subtle)] pb-2 text-xs"
+          : `${dotsCard} grid shrink-0 grid-cols-1 overflow-hidden @xl/dots:grid-cols-3`
+      }
+    >
       {cells.map(([label, value], index) => (
         <div
           key={label}
-          className={`px-4 py-3 ${index ? "border-t border-[var(--glass-border-subtle)] @xl/dots:border-t-0 @xl/dots:border-l" : ""}`}
+          className={
+            compact
+              ? "min-w-0"
+              : `px-4 py-3 ${index ? "border-t border-[var(--glass-border-subtle)] @xl/dots:border-t-0 @xl/dots:border-l" : ""}`
+          }
         >
           <dt className="text-xs text-[var(--color-text-muted)]">{label}</dt>
           <dd className="mt-1 font-semibold">{value}</dd>
@@ -51,7 +63,15 @@ const stepDot: Record<StepState, string> = {
   todo: "border border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]",
 };
 
-export function DotsDeliverySteps({ state, t }: { state: DotsActorState; t: T }) {
+export function DotsDeliverySteps({
+  state,
+  t,
+  compact = false,
+}: {
+  state: DotsActorState;
+  t: T;
+  compact?: boolean;
+}) {
   const progress = deliveryProgress(state);
   const historical = progress?.finished === DELIVERY_STEPS.length;
   const title = t(historical ? "dotsActor.delivery.lastCompleted" : "dotsActor.delivery.title");
@@ -60,17 +80,27 @@ export function DotsDeliverySteps({ state, t }: { state: DotsActorState; t: T })
       ? formatMessageTimestamp(state.last_execution.completed_at)
       : ""
     : t("dotsActor.delivery.hint");
+  if (compact && historical)
+    return (
+      <p className="flex items-center gap-2 py-1 text-xs text-[var(--color-text-secondary)]">
+        <CheckIcon className="size-4 shrink-0 text-emerald-600 dark:text-emerald-300" />
+        {t("dotsActor.steps.completedHint")}
+      </p>
+    );
   return (
-    <section className={`${dotsCard} flex flex-col`} aria-label={title}>
-      <div className="border-b border-[var(--glass-border-subtle)] px-4 py-3">
+    <section className={compact ? "flex flex-col" : `${dotsCard} flex flex-col`} aria-label={title}>
+      <div
+        className={compact ? "hidden" : "border-b border-[var(--glass-border-subtle)] px-4 py-3"}
+      >
         <h3 className="font-semibold">{title}</h3>
         {description ? (
           <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{description}</p>
         ) : null}
       </div>
       {progress ? (
-        <ol className="flex-1 px-4">
+        <ol className={compact ? "" : "flex-1 px-4"}>
           {DELIVERY_STEPS.map((step, index) => {
+            if (compact && index !== progress.finished) return null;
             const stepState: StepState =
               index < progress.finished
                 ? "done"
@@ -98,7 +128,11 @@ export function DotsDeliverySteps({ state, t }: { state: DotsActorState; t: T })
                 data-step={step}
                 data-state={stepState}
                 aria-current={stepState === "current" || stepState === "error" ? "step" : undefined}
-                className="flex items-start gap-3 border-b border-[var(--glass-border-subtle)] py-3 last:border-b-0"
+                className={
+                  compact
+                    ? "flex items-start gap-2 py-1"
+                    : "flex items-start gap-3 border-b border-[var(--glass-border-subtle)] py-3 last:border-b-0"
+                }
               >
                 <span
                   className={`inline-flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${stepDot[stepState]}`}

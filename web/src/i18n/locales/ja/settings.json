@@ -1840,6 +1840,7 @@
     "storageUnavailable": "ブラウザーの保存領域を利用できません。デバイスの選択はこのページ内でのみ保持し、開き直すと元の設定に戻ることがあります。"
   },
   "dotsActor": {
+    "openDetails": "詳細を表示",
     "title": "ChatGPT Dots",
     "hint": "タスクは ChatGPT のネイティブイベントで配信されます。CCCC アクセスを一時停止しても、ChatGPT で実行中のタスクは停止しません。返信はこの Group に戻ります。",
     "createHint": "保存後、この Actor のパネルで Dots のネイティブイベントタスクに接続します。同じ ChatGPT アカウントの CCCC プラグインを使用し、CCCC のブラウザーログイン画面は不要です。1 つの Dot は 1 つの Actor に接続します。",

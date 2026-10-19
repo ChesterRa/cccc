@@ -54,14 +54,16 @@ export function GroupWorkArea({
   const setView = useUIStore((state) => state.setGroupWorkView);
   const setPage = useUIStore((state) => state.setGroupTerminalPage);
   const root = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
+  const [size, setSize] = useState({ width: 0, height: 0 });
   const tiled = session.workView === "terminals";
   const { page, pageCount, pageSize, start } = terminalPageLayout(
     actors.length,
     session.terminalPage,
-    width,
+    size.width,
+    size.height,
   );
-  const pageActors = actors.slice(start, start + pageSize);
+  // Do not attach PTYs to a provisional grid before its available size is known.
+  const pageActors = size.width > 0 && size.height > 0 ? actors.slice(start, start + pageSize) : [];
   const pageIds = new Set(pageActors.map((actor) => actor.id));
   const entries = useRetainedRuntimeActors({
     groupId,
@@ -80,9 +82,16 @@ export function GroupWorkArea({
           ]
         : [],
   });
+  // Retention order changes when Web Models unmount; placement follows the Group.
+  const actorOrder = new Map(actors.map((actor, index) => [actor.id, index]));
+  const entryPosition = (entry: (typeof entries)[number]) =>
+    entry.groupId === groupId ? (actorOrder.get(entry.actorId) ?? actors.length) : actors.length;
+  const orderedEntries = [...entries].sort(
+    (left, right) => entryPosition(left) - entryPosition(right),
+  );
 
   const layoutRef = useRef({ actors, pageSize, start, loading });
-  const measuredWidth = useRef(0);
+  const measured = useRef(false);
   useEffect(() => {
     layoutRef.current = { actors, pageSize, start, loading };
   }, [actors, pageSize, start, loading]);
@@ -92,11 +101,17 @@ export function GroupWorkArea({
     if (!element) return;
     const update = () => {
       const nextWidth = element.clientWidth;
-      if (nextWidth <= 0) return;
+      const nextHeight = element.clientHeight;
+      if (nextWidth <= 0 || nextHeight <= 0) return;
       const previous = layoutRef.current;
-      const nextSize = terminalPageLayout(previous.actors.length, 0, nextWidth).pageSize;
+      const nextSize = terminalPageLayout(
+        previous.actors.length,
+        0,
+        nextWidth,
+        nextHeight,
+      ).pageSize;
       if (
-        measuredWidth.current > 0 &&
+        measured.current &&
         nextSize !== previous.pageSize &&
         !previous.loading &&
         previous.actors.length
@@ -108,8 +123,12 @@ export function GroupWorkArea({
             : -1;
         setPage(groupId, Math.floor((index >= 0 ? index : previous.start) / nextSize));
       }
-      measuredWidth.current = nextWidth;
-      setWidth(nextWidth);
+      measured.current = true;
+      setSize((current) =>
+        current.width === nextWidth && current.height === nextHeight
+          ? current
+          : { width: nextWidth, height: nextHeight },
+      );
     };
     update();
     const observer = new ResizeObserver(update);
@@ -255,29 +274,31 @@ export function GroupWorkArea({
         {children}
       </div>
       <div
-        className={tiled ? "grid min-h-0 min-w-0 flex-1 gap-2 p-2" : "contents"}
+        className={tiled ? "grid min-h-0 min-w-0 flex-1" : "contents"}
         style={
           tiled
             ? {
-                gridTemplateColumns: `repeat(${Math.max(1, pageActors.length)},minmax(0,1fr))`,
-                gridTemplateRows: "minmax(0,1fr)",
+                gridTemplateColumns: `repeat(${Math.min(2, Math.max(1, pageActors.length))},minmax(0,1fr))`,
+                gridTemplateRows:
+                  pageActors.length > 2 ? "repeat(2,minmax(0,1fr))" : "minmax(0,1fr)",
               }
             : undefined
         }
         data-group-terminal-view={tiled ? "visible" : "hidden"}
       >
-        {entries.map((entry) => {
+        {orderedEntries.map((entry) => {
           const { actorId } = entry;
           const currentGroup = entry.groupId === groupId;
           const expanded = currentGroup && activeActorId === actorId;
           const inPage = currentGroup && tiled && pageIds.has(actorId);
+          const paneIndex = pageActors.findIndex((actor) => actor.id === actorId);
           const visible = isVisible && !covered && (inPage || expanded);
           return (
             <div
               key={entry.key}
               className={
                 inPage
-                  ? "min-h-0 min-w-0 overflow-hidden rounded-lg border border-[var(--glass-panel-border)] focus-within:border-[var(--color-text-secondary)] focus-within:ring-1 focus-within:ring-[var(--color-text-secondary)]"
+                  ? `group/runtime-pane min-h-0 min-w-0 overflow-hidden border-[var(--glass-border-subtle)] ${paneIndex % 2 === 1 ? "border-l" : ""} ${paneIndex >= 2 ? "border-t" : ""}`
                   : expanded
                     ? "contents"
                     : "hidden"

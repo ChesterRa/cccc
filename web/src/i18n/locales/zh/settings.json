@@ -1824,6 +1824,7 @@
     "storageUnavailable": "浏览器存储不可用，设备选择仅在当前页面保留，重新打开时可能恢复原设置。"
   },
   "dotsActor": {
+    "openDetails": "查看详情",
     "title": "ChatGPT Dots",
     "hint": "任务通过 ChatGPT 原生事件投递。暂停 CCCC 访问不会停止已经在 ChatGPT 中执行的任务。回复返回本工作组。",
     "createHint": "保存后，在此 Actor 的主面板中连接 Dots 原生事件任务。同一 ChatGPT 账号复用现有 CCCC 插件，无需打开 CCCC 浏览器登录窗口。一个 Dot 只连接一个 Actor。",

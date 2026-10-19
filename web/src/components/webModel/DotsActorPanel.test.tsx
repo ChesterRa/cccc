@@ -875,3 +875,50 @@ it.each(["network", "api"])(
     expect(mocks.create).not.toHaveBeenCalled();
   },
 );
+
+it("opens full details from a compact completed task without mutating its connection", async () => {
+  mocks.load.mockResolvedValue(
+    state({
+      connected: true,
+      paired: true,
+      subscribed: true,
+      phase: "ready",
+      last_execution: {
+        turn_id: "finished",
+        event_ids: ["event"],
+        status: "done",
+        completed_at: "2026-10-19T00:00:00Z",
+      },
+    }),
+  );
+  const onExpand = vi.fn();
+  await render({ compact: true, onExpand });
+  expect(host.querySelectorAll("[data-step]")).toHaveLength(0);
+  expect(host.textContent).toContain("dotsActor.lastExecution.done");
+  expect(host.textContent).not.toContain("dotsActor.settings.instructionsHint");
+  await act(async () => button("dotsActor.openDetails").click());
+  expect(onExpand).toHaveBeenCalledOnce();
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+it("keeps compact setup and interrupted task recovery reachable without automatic writes", async () => {
+  const onExpand = vi.fn();
+  await render({ compact: true, onExpand });
+  await act(async () => button("dotsActor.openDetails").click());
+  expect(onExpand).toHaveBeenCalledOnce();
+  expect(mocks.update).not.toHaveBeenCalled();
+  mocks.load.mockResolvedValue(
+    state({
+      connected: true,
+      paired: true,
+      subscribed: true,
+      phase: "interrupted",
+      active_turn_id: "unfinished",
+      error_code: "dots_execution_interrupted",
+    }),
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(host.textContent).toContain("dotsActor.errors.executionInterrupted");
+  expect(button("dotsActor.resolve")).not.toBeUndefined();
+  await act(async () => button("dotsActor.resolve").click());
+  expect(mocks.update).toHaveBeenCalledWith("g_a", "dot", "resolve", "unfinished");
+});

@@ -25,6 +25,7 @@ interface WebModelRuntimePanelProps {
   isDark: boolean;
   isVisible: boolean;
   readOnly?: boolean;
+  compact?: boolean;
 }
 
 function iconButtonClass(primary = false): string {
@@ -50,6 +51,7 @@ function RuntimePanel({
   isDark,
   isVisible,
   readOnly,
+  compact = false,
 }: WebModelRuntimePanelProps) {
   const { t } = useTranslation("chat");
   const grok = actor.runtime === "grok_web_model";
@@ -239,22 +241,171 @@ function RuntimePanel({
     session?.delivery_mode === "image_compat" ? "image_compat" : "standard";
   const deliveryModeDisabled = Boolean(readOnly || busyAction);
 
+  const configurationControls = (
+    <>
+      {!grok && (
+        <>
+          <fieldset
+            className={classNames(
+              "flex min-w-0 items-center",
+              deliveryModeDisabled && "opacity-55",
+            )}
+            disabled={deliveryModeDisabled}
+          >
+            <legend className="sr-only">{t("webModelDelivery.modeTitle")}</legend>
+            <span id="web-model-delivery-mode-scope" className="sr-only">
+              {t("webModelDelivery.modeDescription")}
+            </span>
+            <div className="inline-flex h-10 min-w-0 items-center rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-1">
+              {(
+                [
+                  {
+                    mode: "standard" as const,
+                    label: t("webModelDelivery.modeStandard"),
+                    detail: t("webModelDelivery.modeStandardDescription"),
+                  },
+                  {
+                    mode: "image_compat" as const,
+                    label: t("webModelDelivery.modeImageCompat"),
+                    detail: t("webModelDelivery.modeImageCompatDescription"),
+                  },
+                ] satisfies Array<{ mode: WebModelDeliveryMode; label: string; detail: string }>
+              ).map((option) => {
+                const descriptionId = `web-model-delivery-mode-${option.mode}-description`;
+                return (
+                  <HoverTooltip
+                    key={option.mode}
+                    label={<span className="block max-w-[220px] leading-4">{option.detail}</span>}
+                  >
+                    {(getReferenceProps, setReference) => (
+                      <label
+                        ref={setReference}
+                        {...getReferenceProps({
+                          className: classNames(
+                            "relative min-w-0",
+                            deliveryModeDisabled ? "cursor-not-allowed" : "cursor-pointer",
+                          ),
+                        })}
+                      >
+                        <input
+                          type="radio"
+                          name={`web-model-delivery-mode-${groupId}-${actorId}`}
+                          value={option.mode}
+                          checked={deliveryMode === option.mode}
+                          onChange={() => void updateDeliveryMode(option.mode)}
+                          aria-describedby={`${descriptionId} web-model-delivery-mode-scope`}
+                          className="peer sr-only"
+                        />
+                        <span
+                          className={classNames(
+                            "inline-flex h-8 min-w-0 select-none items-center justify-center gap-1 rounded-lg border px-2.5 text-[11px] font-semibold transition-colors",
+                            "peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-[rgb(143,163,187)]/55 peer-focus-visible:ring-offset-1",
+                            deliveryMode === option.mode
+                              ? "border-[var(--glass-tab-border-active)] bg-[var(--glass-tab-bg-active)] text-[var(--color-text-primary)] shadow-[var(--glass-tab-shadow-active)]"
+                              : "border-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
+                          )}
+                        >
+                          <span className="truncate">{option.label}</span>
+                          {option.mode === "image_compat" ? (
+                            <span className="shrink-0 rounded-full bg-amber-500/15 px-1 py-px text-[8px] font-bold uppercase leading-3 tracking-wide text-amber-700 dark:text-amber-300">
+                              {t("webModelDelivery.modeImageCompatBadge")}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span id={descriptionId} className="sr-only">
+                          {option.detail}
+                        </span>
+                      </label>
+                    )}
+                  </HoverTooltip>
+                );
+              })}
+            </div>
+            <span className="sr-only" aria-live="polite">
+              {busyAction === "delivery-mode" ? t("webModelDelivery.modeSaving") : ""}
+            </span>
+          </fieldset>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/45"
+                aria-label={t("webModelDelivery.modeHelp")}
+                title={t("webModelDelivery.modeHelp")}
+              >
+                <InfoIcon size={15} aria-hidden="true" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="w-[min(20rem,calc(100vw-1rem))] space-y-2 p-3 text-xs leading-5"
+            >
+              <div className="font-semibold text-[var(--color-text-primary)]">
+                {t("webModelDelivery.modeTitle")}
+              </div>
+              <p className="text-[var(--color-text-tertiary)]">
+                {t("webModelDelivery.modeDescription")}
+              </p>
+              <dl className="space-y-1.5 border-t border-[var(--glass-border-subtle)] pt-2">
+                <div>
+                  <dt className="font-semibold text-[var(--color-text-secondary)]">
+                    {t("webModelDelivery.modeStandard")}
+                  </dt>
+                  <dd className="text-[var(--color-text-tertiary)]">
+                    {t("webModelDelivery.modeStandardDescription")}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-semibold text-[var(--color-text-secondary)]">
+                    {t("webModelDelivery.modeImageCompat")}
+                  </dt>
+                  <dd className="text-[var(--color-text-tertiary)]">
+                    {t("webModelDelivery.modeImageCompatDescription")}
+                  </dd>
+                </div>
+              </dl>
+            </PopoverContent>
+          </Popover>
+        </>
+      )}
+      {!readOnly && (
+        <button
+          type="button"
+          className="glass-btn px-3 py-2 inline-flex items-center gap-2"
+          onClick={openSettings}
+        >
+          <SettingsIcon size={17} aria-hidden="true" />
+          {t(grok ? "settings:grokActor.title" : "settings:webModelActor.title")}
+        </button>
+      )}
+    </>
+  );
+
   return (
     <section
       className={classNames(
-        "flex min-h-0 flex-1 flex-col gap-3",
+        "@container/web-model flex min-h-0 min-w-0 flex-1 flex-col",
+        compact ? "gap-0" : "gap-3",
         isDark ? "text-slate-100" : "text-[rgb(35,36,37)]",
       )}
       aria-label={grok ? "Grok Bot Web Model runtime" : "ChatGPT Web Model runtime"}
     >
       <div
         className={classNames(
-          "shrink-0 rounded-2xl border px-2 py-2 shadow-[0_14px_42px_-38px_rgba(15,23,42,0.65)]",
+          compact
+            ? "shrink-0 border-b border-[var(--glass-border-subtle)] px-2 py-1"
+            : "shrink-0 rounded-2xl border px-2 py-2 shadow-[0_14px_42px_-38px_rgba(15,23,42,0.65)]",
           isDark ? "border-white/10 bg-white/[0.035]" : "border-black/[0.07] bg-white/[0.78]",
         )}
       >
-        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 flex-wrap items-center gap-2 px-1">
+        <div
+          className={
+            compact
+              ? "flex min-w-0 flex-wrap items-center justify-between gap-1"
+              : "flex min-w-0 flex-col gap-2 @min-[880px]/web-model:flex-row @min-[880px]/web-model:items-center @min-[880px]/web-model:justify-between"
+          }
+        >
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 px-1">
             <WebModelConnectionStatus
               pairing={pairing}
               session={session}
@@ -273,147 +424,30 @@ function RuntimePanel({
               </span>
             )}
           </div>
-          <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-1.5">
-            {!grok && (
-              <>
-                <fieldset
-                  className={classNames(
-                    "flex min-w-0 items-center",
-                    deliveryModeDisabled && "opacity-55",
-                  )}
-                  disabled={deliveryModeDisabled}
-                >
-                  <legend className="sr-only">{t("webModelDelivery.modeTitle")}</legend>
-                  <span id="web-model-delivery-mode-scope" className="sr-only">
-                    {t("webModelDelivery.modeDescription")}
-                  </span>
-                  <div className="inline-flex h-10 min-w-0 items-center rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-1">
-                    {(
-                      [
-                        {
-                          mode: "standard" as const,
-                          label: t("webModelDelivery.modeStandard"),
-                          detail: t("webModelDelivery.modeStandardDescription"),
-                        },
-                        {
-                          mode: "image_compat" as const,
-                          label: t("webModelDelivery.modeImageCompat"),
-                          detail: t("webModelDelivery.modeImageCompatDescription"),
-                        },
-                      ] satisfies Array<{
-                        mode: WebModelDeliveryMode;
-                        label: string;
-                        detail: string;
-                      }>
-                    ).map((option) => {
-                      const descriptionId = `web-model-delivery-mode-${option.mode}-description`;
-                      return (
-                        <HoverTooltip
-                          key={option.mode}
-                          label={
-                            <span className="block max-w-[220px] leading-4">{option.detail}</span>
-                          }
-                        >
-                          {(getReferenceProps, setReference) => (
-                            <label
-                              ref={setReference}
-                              {...getReferenceProps({
-                                className: classNames(
-                                  "relative min-w-0",
-                                  deliveryModeDisabled ? "cursor-not-allowed" : "cursor-pointer",
-                                ),
-                              })}
-                            >
-                              <input
-                                type="radio"
-                                name={`web-model-delivery-mode-${groupId}-${actorId}`}
-                                value={option.mode}
-                                checked={deliveryMode === option.mode}
-                                onChange={() => void updateDeliveryMode(option.mode)}
-                                aria-describedby={`${descriptionId} web-model-delivery-mode-scope`}
-                                className="peer sr-only"
-                              />
-                              <span
-                                className={classNames(
-                                  "inline-flex h-8 min-w-0 select-none items-center justify-center gap-1 rounded-lg border px-2.5 text-[11px] font-semibold transition-colors",
-                                  "peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-[rgb(143,163,187)]/55 peer-focus-visible:ring-offset-1",
-                                  deliveryMode === option.mode
-                                    ? "border-[var(--glass-tab-border-active)] bg-[var(--glass-tab-bg-active)] text-[var(--color-text-primary)] shadow-[var(--glass-tab-shadow-active)]"
-                                    : "border-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
-                                )}
-                              >
-                                <span className="truncate">{option.label}</span>
-                                {option.mode === "image_compat" ? (
-                                  <span className="shrink-0 rounded-full bg-amber-500/15 px-1 py-px text-[8px] font-bold uppercase leading-3 tracking-wide text-amber-700 dark:text-amber-300">
-                                    {t("webModelDelivery.modeImageCompatBadge")}
-                                  </span>
-                                ) : null}
-                              </span>
-                              <span id={descriptionId} className="sr-only">
-                                {option.detail}
-                              </span>
-                            </label>
-                          )}
-                        </HoverTooltip>
-                      );
-                    })}
-                  </div>
-                  <span className="sr-only" aria-live="polite">
-                    {busyAction === "delivery-mode" ? t("webModelDelivery.modeSaving") : ""}
-                  </span>
-                </fieldset>
+          <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-1.5 @min-[880px]/web-model:justify-end">
+            {compact ? (
+              !grok || !readOnly ? (
                 <Popover>
                   <PopoverTrigger asChild>
                     <button
                       type="button"
-                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/45"
-                      aria-label={t("webModelDelivery.modeHelp")}
-                      title={t("webModelDelivery.modeHelp")}
+                      className={iconButtonClass()}
+                      aria-label={t("settings:title")}
+                      title={t("settings:title")}
                     >
-                      <InfoIcon size={15} aria-hidden="true" />
+                      <SettingsIcon size={17} aria-hidden="true" />
                     </button>
                   </PopoverTrigger>
                   <PopoverContent
                     align="end"
-                    className="w-[min(20rem,calc(100vw-1rem))] space-y-2 p-3 text-xs leading-5"
+                    className="flex w-[min(22rem,calc(100vw-1rem))] flex-wrap items-center gap-2 p-3"
                   >
-                    <div className="font-semibold text-[var(--color-text-primary)]">
-                      {t("webModelDelivery.modeTitle")}
-                    </div>
-                    <p className="text-[var(--color-text-tertiary)]">
-                      {t("webModelDelivery.modeDescription")}
-                    </p>
-                    <dl className="space-y-1.5 border-t border-[var(--glass-border-subtle)] pt-2">
-                      <div>
-                        <dt className="font-semibold text-[var(--color-text-secondary)]">
-                          {t("webModelDelivery.modeStandard")}
-                        </dt>
-                        <dd className="text-[var(--color-text-tertiary)]">
-                          {t("webModelDelivery.modeStandardDescription")}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="font-semibold text-[var(--color-text-secondary)]">
-                          {t("webModelDelivery.modeImageCompat")}
-                        </dt>
-                        <dd className="text-[var(--color-text-tertiary)]">
-                          {t("webModelDelivery.modeImageCompatDescription")}
-                        </dd>
-                      </div>
-                    </dl>
+                    {configurationControls}
                   </PopoverContent>
                 </Popover>
-              </>
-            )}
-            {!readOnly && (
-              <button
-                type="button"
-                className="glass-btn px-3 py-2 inline-flex items-center gap-2"
-                onClick={openSettings}
-              >
-                <SettingsIcon size={17} aria-hidden="true" />
-                {t(grok ? "settings:grokActor.title" : "settings:webModelActor.title")}
-              </button>
+              ) : null
+            ) : (
+              configurationControls
             )}
             <button
               type="button"
@@ -447,7 +481,14 @@ function RuntimePanel({
           />
         </div>
       ) : surfaceDisabledMessage ? (
-        <div className="flex min-h-[240px] flex-1 items-center justify-center rounded-[18px] border border-dashed border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3 text-center text-xs leading-5 text-[var(--color-text-tertiary)]">
+        <div
+          className={classNames(
+            "flex flex-1 items-center justify-center px-3 py-3 text-center text-xs leading-5 text-[var(--color-text-tertiary)]",
+            compact
+              ? "min-h-0"
+              : "min-h-[240px] rounded-[18px] border border-dashed border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]",
+          )}
+        >
           {surfaceDisabledMessage}
         </div>
       ) : null}
@@ -455,7 +496,10 @@ function RuntimePanel({
       {error ? (
         <div
           role="alert"
-          className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs leading-5 text-rose-700 dark:text-rose-300"
+          className={classNames(
+            "shrink-0 border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs leading-5 text-rose-700 dark:text-rose-300",
+            compact ? "border-t" : "rounded-xl border",
+          )}
         >
           {error}
         </div>

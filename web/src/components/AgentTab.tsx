@@ -725,6 +725,13 @@ export function AgentTab({
             ? t("readOnlyConnection")
             : "";
 
+  const compactIdentityTitle = [
+    actor.title || actor.id,
+    [rtInfo.label, isHeadless ? (actor.runtime_mode === "acp" ? "ACP" : "") : "TUI"]
+      .filter(Boolean)
+      .join(" · "),
+  ].join("\n");
+
   return (
     <div className="@container/actor-view flex min-h-0 min-w-0 flex-col h-full">
       {compact ? (
@@ -733,7 +740,7 @@ export function AgentTab({
           data-terminal-title-bar
           style={onPage ? { touchAction: "pan-y pinch-zoom" } : undefined}
           className={classNames(
-            "flex min-h-9 shrink-0 items-center border-b border-[var(--glass-border-subtle)] px-2 text-xs [@media(pointer:coarse)]:min-h-11",
+            "flex min-h-9 shrink-0 items-center border-b border-[var(--glass-border-subtle)] px-2 text-xs group-focus-within/runtime-pane:bg-[var(--glass-tab-bg-active)] [@media(pointer:coarse)]:min-h-11",
             navigation
               ? "flex-wrap @min-[480px]/actor-view:flex-nowrap @min-[480px]/actor-view:gap-2"
               : "gap-2",
@@ -745,18 +752,31 @@ export function AgentTab({
               Boolean(navigation) && "basis-full min-h-8 @min-[480px]/actor-view:basis-auto",
             )}
           >
-            <span
-              className={`h-2 w-2 shrink-0 rounded-full ${statusTone.dotClass}`}
-              role="img"
-              aria-label={runtimeStatusText}
-              title={[runtimeStatusText, !isDots && actor.effective_working_reason]
-                .filter(Boolean)
-                .join("\n")}
-            />
+            <div className="relative h-5 w-5 shrink-0" title={compactIdentityTitle}>
+              <span aria-hidden="true">
+                <ActorAvatar
+                  avatarUrl={actor.avatar_url || undefined}
+                  runtime={actor.runtime}
+                  title={actor.title || actor.id}
+                  isDark={isDark}
+                  sizeClassName="h-5 w-5"
+                  textClassName="text-[10px]"
+                  className="!border-0 !shadow-none"
+                />
+              </span>
+              <span
+                className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-[var(--color-bg-secondary)] ${statusTone.dotClass}`}
+                role="img"
+                aria-label={runtimeStatusText}
+                title={[runtimeStatusText, !isDots && actor.effective_working_reason]
+                  .filter(Boolean)
+                  .join("\n")}
+              />
+            </div>
             <span
               id={`runtime-inspector-${groupId}-${actor.id}`}
               className="min-w-0 flex-1 truncate font-semibold"
-              title={actor.title || actor.id}
+              title={compactIdentityTitle}
             >
               {actor.title || actor.id}
             </span>
@@ -974,7 +994,7 @@ export function AgentTab({
             className={classNames(
               "flex h-full min-h-0 flex-col",
               compact
-                ? "p-2"
+                ? "p-0"
                 : isWebModel
                   ? "px-3 pb-3 pt-2 sm:px-4 sm:pb-4"
                   : "px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3",
@@ -983,7 +1003,7 @@ export function AgentTab({
             <div
               className={classNames(
                 "mx-auto flex w-full min-h-0 flex-1 flex-col",
-                isWebModel ? "max-w-none gap-3" : "max-w-6xl gap-4",
+                compact ? "max-w-none gap-0" : isWebModel ? "max-w-none gap-3" : "max-w-6xl gap-4",
               )}
             >
               {isDots ? (
@@ -993,6 +1013,8 @@ export function AgentTab({
                   isRunning={isRunning}
                   isVisible={isVisible && !settingsOpen}
                   readOnly={readOnly}
+                  compact={compact}
+                  onExpand={onExpand}
                   canAccessConnection={canAccessGlobalSettings}
                   onStateChange={receiveDotsState}
                   onOpenSharedSettings={
@@ -1014,6 +1036,7 @@ export function AgentTab({
                   isDark={isDark}
                   isVisible={isVisible}
                   readOnly={readOnly}
+                  compact={compact}
                 />
               ) : null}
               {hasManagedRuntimeControls(actor) && (

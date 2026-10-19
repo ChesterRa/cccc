@@ -24,6 +24,8 @@ type DotsActorPanelProps = {
   canAccessConnection?: boolean;
   setup?: boolean;
   saving?: boolean;
+  compact?: boolean;
+  onExpand?: () => void;
   onOpenSharedSettings?: () => void;
   onStateChange?: (state: DotsActorState | null) => void;
   onBusyChange?: (busy: boolean) => void;
@@ -56,6 +58,8 @@ function ActorPanel({
   readOnly = false,
   canAccessConnection = true,
   saving = false,
+  compact = false,
+  onExpand,
   onOpenSharedSettings,
   onStateChange,
   onBusyChange,
@@ -290,6 +294,88 @@ function ActorPanel({
     </>
   ) : null;
 
+  const notices = (
+    <>
+      {state?.error_code ? (
+        <p className="text-xs text-rose-600 dark:text-rose-400">
+          {t(deliveryErrorKeys[state.error_code] || "dotsActor.executionError")}
+        </p>
+      ) : null}
+      {state?.phase === "failed" && !unresolved ? (
+        <p className="text-xs text-[var(--color-text-muted)]">{t("dotsActor.notifyAgain")}</p>
+      ) : null}
+      {readError ? (
+        <p className="text-xs text-amber-700 dark:text-amber-300" role="status">
+          {readError}
+        </p>
+      ) : null}
+      {actionError ? (
+        <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+    </>
+  );
+  const recovery = (
+    <>
+      {canResolve && !readOnly ? (
+        <div
+          className={`${compact ? "border-y border-[var(--glass-border-subtle)] py-2" : `${dotsCard} px-4 py-3`} flex flex-wrap items-center justify-between gap-3`}
+        >
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {t("dotsActor.reviewUnfinished")}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={locked}
+            onClick={() => void update("resolve")}
+          >
+            {t("dotsActor.resolve")}
+          </Button>
+        </div>
+      ) : null}
+    </>
+  );
+  if (compact && onExpand)
+    return (
+      <section
+        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 text-sm"
+        aria-label={t("dotsActor.title")}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <p
+            role="status"
+            className={`rounded-full px-2 py-1 text-xs font-semibold ${phaseTone(state?.phase || "unconfigured")}`}
+          >
+            {state
+              ? t(`dotsActor.phases.${state.phase}`)
+              : t(readError ? "dotsActor.unavailable" : "common:loading")}
+          </p>
+          <Button type="button" variant="outline" className="ml-auto" onClick={onExpand}>
+            {t("dotsActor.openDetails")}
+          </Button>
+          {dotsLink}
+        </div>
+        {notices}
+        <DotsStatusSummary
+          state={state}
+          t={t}
+          subscription={subscription}
+          lastTask={lastTask}
+          compact
+        />
+        {recovery}
+        {hasDelivery && state ? (
+          <DotsDeliverySteps state={state} t={t} compact />
+        ) : (
+          <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+            {t(readOnly ? "dotsActor.adminSetup" : "dotsActor.nativeStepObserve")}
+          </p>
+        )}
+      </section>
+    );
+
   return (
     <section
       className="@container/dots flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto text-sm"
@@ -319,40 +405,9 @@ function ActorPanel({
         </div>
         {dotsLink}
       </div>
-      {state?.error_code ? (
-        <p className="text-xs text-rose-600 dark:text-rose-400">
-          {t(deliveryErrorKeys[state.error_code] || "dotsActor.executionError")}
-        </p>
-      ) : null}
-      {state?.phase === "failed" && !unresolved ? (
-        <p className="text-xs text-[var(--color-text-muted)]">{t("dotsActor.notifyAgain")}</p>
-      ) : null}
-      {readError ? (
-        <p className="text-xs text-amber-700 dark:text-amber-300" role="status">
-          {readError}
-        </p>
-      ) : null}
-      {actionError ? (
-        <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
-          {actionError}
-        </p>
-      ) : null}
+      {notices}
       <DotsStatusSummary state={state} t={t} subscription={subscription} lastTask={lastTask} />
-      {canResolve && !readOnly ? (
-        <div className={`${dotsCard} flex flex-wrap items-center justify-between gap-3 px-4 py-3`}>
-          <p className="text-xs text-[var(--color-text-muted)]">
-            {t("dotsActor.reviewUnfinished")}
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={locked}
-            onClick={() => void update("resolve")}
-          >
-            {t("dotsActor.resolve")}
-          </Button>
-        </div>
-      ) : null}
+      {recovery}
       {readOnly && state && !hasDelivery ? (
         <p className="text-xs text-[var(--color-text-secondary)]">{t("dotsActor.adminSetup")}</p>
       ) : hasDelivery || readOnly ? (

@@ -190,10 +190,13 @@ export function useCodexVoiceAnalystSettings(
       if (profileSaveRef.current) profileSaveRef.current.copied = false;
       if (settingsLoadFailed) {
         const nextSettings = normalizeVoiceAnalystSettings(response.result.settings);
-        setSettings(nextSettings);
         setLoadedSettings(nextSettings);
-        setMode(nextSettings.profile_id ? "profile" : "custom");
-        setEnvironmentChangesState(emptyActorSecretChanges());
+        // Recover the saved baseline without replacing edits made during the failed read.
+        if (!dirty.current) {
+          setSettings(nextSettings);
+          setMode(nextSettings.profile_id ? "profile" : "custom");
+          setEnvironmentChangesState(emptyActorSecretChanges());
+        }
         setSettingsLoadFailed(false);
       }
       setEnvironmentKeys(response.result.environment_keys);

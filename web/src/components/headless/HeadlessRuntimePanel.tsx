@@ -39,6 +39,7 @@ export function HeadlessRuntimePanel({
           events={rawEvents}
           emptyLabel={emptyLabel}
           isDark={isDark}
+          compact={compact}
           className={`h-full ${minHeight} text-left text-[var(--color-text-secondary)]`}
         />
       </div>

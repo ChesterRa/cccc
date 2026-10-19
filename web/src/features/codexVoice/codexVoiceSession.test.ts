@@ -12,6 +12,104 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("Codex turn completion without final text", () => {
+  function fixture() {
+    const onPhase = vi.fn();
+    const onConversation = vi.fn();
+    const onAssistantTranscript = vi.fn();
+    const session = new CodexVoiceBrowserSession({
+      audio: { pause: vi.fn() } as unknown as HTMLAudioElement,
+      preferences: { voice: "cove", inputDeviceId: "", outputDeviceId: "" },
+      callbacks: {
+        onPhase,
+        onConversation,
+        onAssistantTranscript,
+        onCall: vi.fn(),
+        onAnalyst: vi.fn(),
+        onUserTranscript: vi.fn(),
+        onAnalystProgress: vi.fn(),
+        onAnalystResult: vi.fn(),
+        onPlaybackBlocked: vi.fn(),
+        onError: vi.fn(),
+      },
+    });
+    const transport = session as unknown as { handleProviderMessage(value: string): Promise<void> };
+    const emit = (event: unknown) => transport.handleProviderMessage(JSON.stringify(event));
+    return { session, emit, onPhase, onConversation, onAssistantTranscript };
+  }
+
+  it.each([undefined, null])(
+    "finishes partial speech when transcript is %s",
+    async (transcript) => {
+      const { session, emit, onPhase, onConversation, onAssistantTranscript } = fixture();
+      try {
+        await emit({ type: "turn.created", turn: { id: "a1", role: "assistant" } });
+        await emit({ type: "output_transcript.added", item: { text: "Partial answer" } });
+        await emit({ type: "turn.done", turn: { id: "a1", role: "assistant", transcript } });
+        expect(onPhase).toHaveBeenLastCalledWith("listening");
+        expect(onConversation).toHaveBeenLastCalledWith([
+          { id: "a1", role: "assistant", text: "Partial answer", final: true },
+        ]);
+        await emit({ type: "output_transcript.added", item: { text: "Next answer" } });
+        expect(onAssistantTranscript).toHaveBeenLastCalledWith("Next answer");
+      } finally {
+        await session.stop();
+      }
+    },
+  );
+
+  it("finishes a late-identified partial turn without duplicating or clearing its text", async () => {
+    const { session, emit, onPhase, onConversation } = fixture();
+    try {
+      await emit({ type: "output_transcript.added", item: { text: "Partial answer" } });
+      await emit({ type: "turn.done", turn: { id: "a1", role: "assistant" } });
+      expect(onPhase).toHaveBeenLastCalledWith("listening");
+      expect(onConversation).toHaveBeenLastCalledWith([
+        { id: "a1", role: "assistant", text: "Partial answer", final: true },
+      ]);
+    } finally {
+      await session.stop();
+    }
+  });
+
+  it("finishes a textless response without adding an empty conversation row", async () => {
+    const { session, emit, onPhase, onConversation } = fixture();
+    try {
+      await emit({ type: "turn.done", turn: { id: "u1", role: "user", transcript: "Check it" } });
+      expect(onPhase).toHaveBeenLastCalledWith("responding");
+      await emit({ type: "turn.done", turn: { id: "a1", role: "assistant" } });
+      expect(onPhase).toHaveBeenLastCalledWith("listening");
+      expect(onConversation).toHaveBeenLastCalledWith([
+        { id: "u1", role: "user", text: "Check it", final: true },
+      ]);
+    } finally {
+      await session.stop();
+    }
+  });
+
+  it("keeps a newer assistant turn active when an older textless completion arrives", async () => {
+    const { session, emit, onPhase, onConversation, onAssistantTranscript } = fixture();
+    try {
+      await emit({ type: "turn.created", turn: { id: "a1", role: "assistant" } });
+      await emit({ type: "output_transcript.added", item: { text: "Old answer" } });
+      await emit({ type: "turn.created", turn: { id: "a2", role: "assistant" } });
+      await emit({ type: "output_transcript.added", item: { text: "New answer" } });
+      onPhase.mockClear();
+      await emit({ type: "turn.done", turn: { id: "a1", role: "assistant" } });
+      expect(onPhase).not.toHaveBeenCalled();
+      expect(onConversation).toHaveBeenLastCalledWith([
+        { id: "a1", role: "assistant", text: "Old answer", final: true },
+        { id: "a2", role: "assistant", text: "New answer", final: false },
+      ]);
+      await emit({ type: "output_transcript.added", item: { text: " continues" } });
+      // The completion must not reset the newer turn's transcript accumulator.
+      expect(onAssistantTranscript.mock.calls.at(-1)?.[0]).toContain("New answer continues");
+    } finally {
+      await session.stop();
+    }
+  });
+});
+
 describe("Codex Voice realtime event model", () => {
   it("publishes one conversation row per late-identified turn without forwarding transcript drafts", async () => {
     const onConversation = vi.fn();

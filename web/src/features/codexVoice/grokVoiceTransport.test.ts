@@ -9,6 +9,7 @@ import type { GrokVoiceConnection } from "../../services/api";
 
 const state = vi.hoisted(() => ({
   playing: new Set<string>(),
+  chunks: [] as string[],
   capture: null as ((buffer: ArrayBuffer) => void) | null,
   drained: null as ((id: string) => void) | null,
   closed: false,
@@ -26,6 +27,7 @@ vi.mock("./grokVoiceAudio", () => ({
       state.capture = capture;
     }
     append(_bytes: string, id: string) {
+      state.chunks.push(id);
       state.playing.add(id);
       this.speaking(true);
     }
@@ -87,8 +89,23 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("WebSocket", FakeSocket);
   state.playing.clear();
+  state.chunks.length = 0;
   state.capture = null;
   state.closed = false;
+});
+
+it("retains buffered answers but ignores audio from a superseded response", async () => {
+  const { transport } = fixture();
+  const socket = await connect(transport);
+  socket.emit({ type: "response.created", response: { id: "first" } });
+  socket.emit({ type: "response.output_audio.delta", response_id: "first", delta: "AAAA" });
+  socket.emit({ type: "response.done", response: { id: "first", status: "completed" } });
+  socket.emit({ type: "response.created", response: { id: "second" } });
+  socket.emit({ type: "response.output_audio.delta", response_id: "second", delta: "AAAA" });
+  socket.emit({ type: "response.output_audio.delta", response_id: "first", delta: "AAAA" });
+  expect(state.chunks).toEqual(["first", "second"]);
+  // A new response must not discard audio that was already accepted for playback.
+  expect([...state.playing]).toEqual(["first", "second"]);
 });
 afterEach(() => {
   for (const transport of live.splice(0)) transport.close();

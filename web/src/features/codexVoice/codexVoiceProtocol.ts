@@ -93,13 +93,27 @@ export class RealtimeTranscriptAccumulator {
     return context;
   }
 
-  completeTurn(id: string): void {
-    const turn = this.turns.find((candidate) => candidate.id === id);
-    if (!turn) return;
+  completeTurn(id?: string, role?: RealtimeTranscriptUpdate["role"]): boolean {
+    const turnId = id || (role ? this.activeIds[role] : undefined);
+    if (!turnId) return role !== undefined && this.activeRole === null;
+    const turn =
+      this.turns.find((candidate) => candidate.id === turnId) ||
+      (role ? this.ensureTurn(turnId, role, true) : undefined);
+    if (!turn || (role && turn.role !== role)) return false;
+    const activeId = this.activeIds[turn.role];
+    const current =
+      !turn.final &&
+      (!activeId || activeId === turnId) &&
+      (this.activeRole === null || this.activeRole === turn.role);
     turn.final = true;
-    if (this.activeIds[turn.role] === id) delete this.activeIds[turn.role];
-    if (this.provisionalIds[turn.role] === id) delete this.provisionalIds[turn.role];
-    this.final[turn.role] = true;
+    if (activeId === turnId) delete this.activeIds[turn.role];
+    if (this.provisionalIds[turn.role] === turnId) delete this.provisionalIds[turn.role];
+    // A delayed completion closes its own row without resetting a newer turn.
+    if (current) {
+      this.final[turn.role] = true;
+      if (this.activeRole === turn.role) this.activeRole = null;
+    }
+    return current;
   }
 
   private ensureTurn(

@@ -16,6 +16,7 @@ type HeadlessRawTraceProps = {
   emptyLabel: string;
   isDark: boolean;
   className?: string;
+  compact?: boolean;
 };
 
 type EventTraceEntry = Extract<HeadlessRawTraceEntry, { kind: "event" }>;
@@ -146,7 +147,13 @@ function getEventStepLabel(entry: EventTraceEntry): string {
   return entry.eventType.replace(/^headless\./, "");
 }
 
-export function HeadlessRawTrace({ events, emptyLabel, isDark, className }: HeadlessRawTraceProps) {
+export function HeadlessRawTrace({
+  events,
+  emptyLabel,
+  isDark,
+  className,
+  compact = false,
+}: HeadlessRawTraceProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const entries = useMemo(() => buildHeadlessRawTraceEntries(events), [events]);
@@ -171,7 +178,9 @@ export function HeadlessRawTrace({ events, emptyLabel, isDark, className }: Head
     return (
       <div
         className={classNames(
-          "flex h-full min-h-[420px] items-center justify-center rounded-[28px] border border-dashed text-sm",
+          compact
+            ? "flex h-full min-h-0 items-center justify-center px-2 text-sm"
+            : "flex h-full min-h-[420px] items-center justify-center rounded-[28px] border border-dashed text-sm",
           isDark ? "border-white/10 text-slate-400" : "border-slate-200 text-slate-500",
           className,
         )}
@@ -191,12 +200,14 @@ export function HeadlessRawTrace({ events, emptyLabel, isDark, className }: Head
           node.scrollTop + node.clientHeight >= node.scrollHeight - 24;
       }}
       className={classNames(
-        "h-full min-h-[420px] overflow-y-auto scrollbar-hide rounded-[28px] border px-4 py-4 sm:px-5",
+        compact
+          ? "h-full min-h-0 overflow-y-auto scrollbar-hide px-2"
+          : "h-full min-h-[420px] overflow-y-auto scrollbar-hide rounded-[28px] border px-4 py-4 sm:px-5",
         isDark ? "border-white/10 bg-slate-950/55" : "border-slate-200 bg-white",
         className,
       )}
     >
-      <div className="flex flex-col gap-3">
+      <div className={compact ? "flex flex-col" : "flex flex-col gap-3"}>
         {renderGroups.map((group) => {
           if (group.kind === "message") {
             const entry = group.entry;
@@ -204,8 +215,10 @@ export function HeadlessRawTrace({ events, emptyLabel, isDark, className }: Head
               <section
                 key={group.id}
                 className={classNames(
-                  "rounded-[24px] border px-4 py-3 shadow-[0_14px_34px_-30px_rgba(15,23,42,0.35)] transition-all",
-                  messageCardClassName(entry.live, isDark),
+                  compact
+                    ? "border-b border-[var(--glass-border-subtle)] py-2"
+                    : "rounded-[24px] border px-4 py-3 shadow-[0_14px_34px_-30px_rgba(15,23,42,0.35)] transition-all",
+                  !compact && messageCardClassName(entry.live, isDark),
                 )}
               >
                 <div className="mb-3 flex items-center gap-2 text-[11px]">
@@ -262,11 +275,19 @@ export function HeadlessRawTrace({ events, emptyLabel, isDark, className }: Head
               <section
                 key={group.id}
                 className={classNames(
-                  "overflow-hidden rounded-[22px] border transition-all",
+                  compact
+                    ? "overflow-hidden border-b border-[var(--glass-border-subtle)]"
+                    : "overflow-hidden rounded-[22px] border transition-all",
                   isDark ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-white",
                 )}
               >
-                <div className="flex w-full items-start gap-3 px-4 py-3 text-left">
+                <div
+                  className={
+                    compact
+                      ? "flex w-full items-start gap-2 py-2 text-left"
+                      : "flex w-full items-start gap-3 px-4 py-3 text-left"
+                  }
+                >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
@@ -304,14 +325,20 @@ export function HeadlessRawTrace({ events, emptyLabel, isDark, className }: Head
                         {group.ts ? <span>{formatTime(group.ts)}</span> : null}
                       </div>
                     </div>
-                    <div className="mt-3 overflow-hidden rounded-[18px] border border-black/5 dark:border-white/8">
+                    <div
+                      className={
+                        compact
+                          ? "mt-1"
+                          : "mt-3 overflow-hidden rounded-[18px] border border-black/5 dark:border-white/8"
+                      }
+                    >
                       {group.entries.map((entry, index) => {
                         const detailLines = compactDetailLines(entry.detailLines);
                         return (
                           <div
                             key={entry.id}
                             className={classNames(
-                              "px-3 py-2.5",
+                              compact ? "py-1.5" : "px-3 py-2.5",
                               index > 0
                                 ? isDark
                                   ? "border-t border-white/8"
@@ -381,11 +408,19 @@ export function HeadlessRawTrace({ events, emptyLabel, isDark, className }: Head
             <section
               key={group.id}
               className={classNames(
-                "overflow-hidden rounded-[22px] border transition-all",
-                eventCardClassName(entry.tone, entry.live, isDark),
+                compact
+                  ? "overflow-hidden border-b border-[var(--glass-border-subtle)]"
+                  : "overflow-hidden rounded-[22px] border transition-all",
+                !compact && eventCardClassName(entry.tone, entry.live, isDark),
               )}
             >
-              <div className="flex w-full items-start gap-3 px-4 py-3 text-left">
+              <div
+                className={
+                  compact
+                    ? "flex w-full items-start gap-2 py-2 text-left"
+                    : "flex w-full items-start gap-3 px-4 py-3 text-left"
+                }
+              >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
@@ -446,7 +481,9 @@ export function HeadlessRawTrace({ events, emptyLabel, isDark, className }: Head
                   {hasDetails ? (
                     <div
                       className={classNames(
-                        "mt-2 whitespace-pre-wrap break-words rounded-2xl border px-3 py-2 font-mono text-[11px] leading-6",
+                        compact
+                          ? "mt-1 whitespace-pre-wrap break-words font-mono text-xs leading-5"
+                          : "mt-2 whitespace-pre-wrap break-words rounded-2xl border px-3 py-2 font-mono text-[11px] leading-6",
                         entry.tone === "error"
                           ? isDark
                             ? "border-rose-400/20 bg-rose-400/[0.05] text-rose-200/90"

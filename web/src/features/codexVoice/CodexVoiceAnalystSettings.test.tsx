@@ -677,3 +677,78 @@ it("keeps a Custom credential draft when choosing a Profile and returning before
     host.remove();
   }
 });
+
+it.each(["clean", "before refresh", "during refresh"])(
+  "recovers environment metadata without discarding a %s draft",
+  async (when) => {
+    api.fetchSettings.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "fixture", message: "Initial settings read failed" },
+    });
+    api.listProfiles.mockResolvedValue({ ok: true, result: { profiles: [] } });
+    let release!: (value: unknown) => void;
+    api.fetchSettings.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const sessionController = controller();
+    let form!: ReturnType<typeof useCodexVoiceAnalystSettings>;
+    function Harness() {
+      form = useCodexVoiceAnalystSettings(true, sessionController);
+      return null;
+    }
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const edit = () =>
+      act(async () => {
+        form.setCommand("keep-this-draft");
+        form.setEnvironmentChanges({
+          setVars: { FIXTURE_SETTING: "synthetic" },
+          unsetKeys: [],
+          clearAll: false,
+        });
+      });
+    try {
+      await act(async () => root.render(<Harness />));
+      expect(form.settingsLoadFailed).toBe(true);
+      if (when === "before refresh") await edit();
+      let pending!: Promise<void>;
+      await act(async () => {
+        pending = form.refreshEnvironment();
+      });
+      if (when === "during refresh") await edit();
+      await act(async () => {
+        release({
+          ok: true,
+          result: {
+            settings: { ...customSettings, command: ["saved-command"] },
+            environment_keys: ["EXISTING_FIXTURE_SETTING"],
+          },
+        });
+        await pending;
+      });
+      expect(form.environmentRefreshing).toBe(false);
+      expect(form.settingsLoadFailed).toBe(false);
+      expect(form.environmentKeys).toEqual(["EXISTING_FIXTURE_SETTING"]);
+      if (when === "clean") {
+        expect(form.settings.command).toBe("saved-command");
+        expect(form.hasChanges).toBe(false);
+      } else {
+        expect(form.settings.command).toBe("keep-this-draft");
+        expect(form.environmentChanges.setVars).toEqual({ FIXTURE_SETTING: "synthetic" });
+        expect(form.saveDisabled).toBe(false);
+        // Discard must restore the newly read baseline, rather than the failed initial read.
+        await act(async () => form.discard());
+        expect(form.settings.command).toBe("saved-command");
+        expect(form.environmentChanges.setVars).toEqual({});
+        expect(form.hasChanges).toBe(false);
+      }
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+    }
+  },
+);

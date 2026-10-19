@@ -255,6 +255,7 @@ export class GrokVoiceTransport {
       case "response.output_audio.delta":
         if (
           id &&
+          id === this.responseId &&
           !this.userSpeaking &&
           !this.interrupted.has(id) &&
           typeof value.delta === "string"

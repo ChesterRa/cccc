@@ -63,7 +63,7 @@ export function ActorAcpControls({
       setBusy(false);
     }
   }
-  if (readOnly || !state) return null;
+  if (readOnly || !state || (!state.working && !state.permissions.length && !error)) return null;
   return (
     <div className="flex-none space-y-2 border-t border-[var(--glass-border-subtle)] p-3">
       <AcpPermissionList
