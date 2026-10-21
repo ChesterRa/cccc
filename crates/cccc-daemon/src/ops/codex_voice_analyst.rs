@@ -35,6 +35,8 @@ pub(crate) mod lifecycle_timing;
 mod native_input;
 mod opencode;
 mod pi_rpc;
+#[cfg(test)]
+pub(crate) use pi_rpc::replay_captured_tool_turn as replay_captured_pi_tool_turn;
 mod process;
 mod protocol;
 #[cfg(test)]
