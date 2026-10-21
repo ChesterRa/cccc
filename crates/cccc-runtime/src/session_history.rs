@@ -3,6 +3,7 @@ use crate::output::{HistoryPage, OutputBuffer};
 use crate::terminal_snapshot::TerminalStateMirror;
 use crate::transcript_archive::{HistoryConfig, TranscriptArchive};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
 mod subscription;
@@ -14,6 +15,7 @@ struct SessionHistoryState {
     archive_writable: bool,
     accepting_output: bool,
     terminal: TerminalStateMirror,
+    last_output_at: Option<Instant>,
 }
 
 #[derive(Clone)]
@@ -77,6 +79,7 @@ impl SessionHistory {
                 archive_writable,
                 accepting_output: true,
                 terminal: TerminalStateMirror::new(cols, rows),
+                last_output_at: None,
             })),
             changes,
         })
@@ -108,6 +111,9 @@ impl SessionHistory {
                 terminal_responses: Vec::new(),
                 archive_error: None,
             });
+        }
+        if !data.is_empty() {
+            state.last_output_at = Some(Instant::now());
         }
         let responses = state.terminal.process(data);
         state.output.push(data);
@@ -255,6 +261,15 @@ impl SessionHistory {
             closed: true,
         });
         Ok(())
+    }
+
+    /// Time since the process last wrote to its terminal, or `None` before its
+    /// first output.
+    pub(crate) fn since_last_output(&self) -> Result<Option<Duration>, RuntimeError> {
+        self.state
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)
+            .map(|state| state.last_output_at.map(|at| at.elapsed()))
     }
 
     pub(crate) fn bracketed_paste_enabled(&self) -> Result<bool, RuntimeError> {

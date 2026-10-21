@@ -123,20 +123,31 @@ fn actor_lifecycle_controls_terminal_process() {
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     );
     assert_eq!(restarted.result["event"]["kind"], "actor.restart");
-    let working = call(
-        &home,
-        "actor_list",
-        json!({"group_id":group_id,"by":"user"}),
-    );
+    // The restarted process prints, and its own terminal output marks it working.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let working = loop {
+        let listed = call(
+            &home,
+            "actor_list",
+            json!({"group_id":group_id,"by":"user"}),
+        );
+        if listed.result["actors"][0]["effective_working_state"] != "waiting"
+            || std::time::Instant::now() >= deadline
+        {
+            break listed;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
     assert_eq!(working.result["actors"][0]["running"], true);
     assert_eq!(
         working.result["actors"][0]["effective_working_state"],
-        "waiting"
+        "working"
     );
     assert_eq!(
         working.result["actors"][0]["effective_working_reason"],
-        "pty_running_state_unknown"
+        "pty_output_recent"
     );
+    assert!(working.result["actors"][0]["idle_seconds"].is_u64());
     let stopped = call(
         &home,
         "actor_stop",

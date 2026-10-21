@@ -101,3 +101,78 @@ fn pending_managed_session_and_structured_runtime_have_distinct_states() {
     assert_eq!(state["effective_working_state"], "idle");
     assert_eq!(state["effective_working_reason"], "headless_running");
 }
+
+#[cfg(unix)]
+#[test]
+fn terminal_actor_is_working_while_it_prints_and_idle_once_quiet() {
+    use std::time::{Duration, Instant};
+
+    struct StopOnDrop(&'static str);
+    impl Drop for StopOnDrop {
+        fn drop(&mut self) {
+            let _ = cccc_runtime::stop(self.0, "peer1");
+        }
+    }
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let group_id = "g_pty_output_activity";
+    let mut actor = Actor::new("peer1");
+    actor.runtime = ActorRuntime::Custom;
+    cccc_runtime::start(cccc_runtime::LaunchSpec {
+        group_id: group_id.into(),
+        actor_id: "peer1".into(),
+        runner: RunnerKind::Pty,
+        command: vec![
+            "sh".into(),
+            "-c".into(),
+            "printf 'pty-activity-probe\\n'; exec sleep 30".into(),
+        ],
+        cwd: temp.path().into(),
+        env: Default::default(),
+        cols: 80,
+        rows: 24,
+    })
+    .expect("start terminal process");
+    let _stop = StopOnDrop(group_id);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let printed = loop {
+        let state = fields(&home, &actor, group_id, true, "pty");
+        if state["effective_working_reason"] != "pty_running_state_unknown"
+            || Instant::now() >= deadline
+        {
+            break state;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(printed["effective_working_state"], "working", "{printed:?}");
+    assert_eq!(printed["effective_working_reason"], "pty_output_recent");
+    assert!(
+        printed["idle_seconds"]
+            .as_u64()
+            .is_some_and(|seconds| seconds <= 10)
+    );
+    assert!(printed["effective_working_updated_at"].is_string());
+
+    // The process keeps running but writes nothing more. A one-second window
+    // keeps the test short; the default window applies the same rule.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let quiet = loop {
+        let activity =
+            super::working_state::pty_output_activity(group_id, "peer1", Duration::from_secs(1));
+        if activity.state != "working" || Instant::now() >= deadline {
+            break activity;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(quiet.state, "idle");
+    assert_eq!(quiet.reason, "pty_output_quiet");
+    assert!(quiet.idle_seconds.is_some_and(|seconds| seconds >= 1));
+    assert!(
+        cccc_runtime::status(group_id, "peer1")
+            .expect("status")
+            .running,
+        "a quiet process is idle, not stopped"
+    );
+}

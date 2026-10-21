@@ -53,7 +53,7 @@ pub use command_session::CommandSession;
 pub use executable::{prepare_pty_command, resolve_command_executable, resolve_executable_in_path};
 pub use history_access::{
     active_history_replay, active_history_since, bracketed_paste_enabled, clear, history,
-    history_since, retained_history, retained_history_tail,
+    history_since, retained_history, retained_history_tail, since_last_output,
 };
 pub use manager::{
     reap, resize, start, start_with_history, status, stop, stop_all, stop_if_started_at, submit,
