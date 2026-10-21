@@ -241,10 +241,12 @@ async fn declared_context_tools_preserve_authority_recovery_and_query_semantics(
     outcome.expect("context workflow assertions");
 }
 
+const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+
 /// Every bullet of this repository's own changelog becomes one task, so the
 /// board is large with real text rather than generated filler.
 fn changelog_tasks() -> Vec<Value> {
-    include_str!("../../../CHANGELOG.md")
+    CHANGELOG
         .lines()
         .filter_map(|line| line.strip_prefix("- "))
         .map(|entry| {
@@ -281,7 +283,10 @@ async fn context_get_answers_a_large_board_in_bounded_pages() {
     }
     let outcome = tokio::spawn(async move {
         let id = group.group_id.as_str();
-        let operations = changelog_tasks();
+        let mut operations = changelog_tasks();
+        // One task larger than a page on its own: the whole changelog as notes.
+        let heading = CHANGELOG.lines().next().unwrap_or_default();
+        operations.push(json!({"op":"task.create","title":heading,"notes":CHANGELOG}));
         let created = operations.len();
         payload(
             &tool(
@@ -299,7 +304,9 @@ async fn context_get_answers_a_large_board_in_bounded_pages() {
             .collect::<Vec<_>>();
         // The default bound, then a caller asking for smaller answers.
         let mut page_counts = Vec::new();
+        let mut clipped = Vec::new();
         for (max_bytes, cap) in [(Value::Null, CAP), (json!(16 * 1024), 16 * 1024)] {
+            let mut clips = 0;
             let mut seen = Vec::new();
             let mut cursor = Value::Null;
             let mut pages = 0;
@@ -324,6 +331,16 @@ async fn context_get_answers_a_large_board_in_bounded_pages() {
                 assert!(!tasks.is_empty(), "every page makes progress");
                 assert!(tasks.len() <= 100);
                 seen.extend(tasks.iter().map(|task| task["id"].clone()));
+                for task in tasks.iter().filter(|task| task["title"] == heading) {
+                    let notes = task["notes"].as_str().expect("notes");
+                    match notes.strip_suffix(" … [clipped to fit the page]") {
+                        Some(kept) => {
+                            assert!(CHANGELOG.starts_with(kept), "clipped, not rewritten");
+                            clips += 1;
+                        }
+                        None => assert_eq!(notes, CHANGELOG),
+                    }
+                }
                 pages += 1;
                 if page["truncated"] == false {
                     assert_eq!(page["next_cursor"], Value::Null);
@@ -334,7 +351,12 @@ async fn context_get_answers_a_large_board_in_bounded_pages() {
             }
             assert_eq!(seen, expected, "pages return each task once, in order");
             page_counts.push(pages);
+            clipped.push(clips);
         }
+        assert_eq!(
+            clipped[1], 1,
+            "the changelog task is clipped to the smaller bound"
+        );
         assert!(page_counts[0] > 1, "the board did not need paging");
         assert!(
             page_counts[1] > page_counts[0],

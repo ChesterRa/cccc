@@ -37,9 +37,11 @@ pub(super) struct Page {
 
 /// `coordination.tasks` (and, in `full`, `board`) hold at most `limit` tasks
 /// after the cursor, halved until the whole answer fits `max_bytes`; at least
-/// one task is always returned so paging makes progress. `attention` and
-/// `tasks_summary` still cover every task, as counts; `task_list` pages the
-/// attention tasks themselves. `truncated` and `next_cursor` say how to go on.
+/// one task is always returned so paging makes progress, its longest text
+/// fields clipped (and marked) when it alone is over the bound. `attention`
+/// and `tasks_summary` still cover every task, as counts; `task_list` pages
+/// the attention tasks themselves. `truncated` and `next_cursor` say how to go
+/// on.
 pub(super) fn project_page(
     mut document: ContextDoc,
     version: String,
@@ -75,14 +77,50 @@ pub(super) fn project_page(
             object.insert("next_cursor".into(), next_cursor.unwrap_or(Value::Null));
         }
         // Measured as tools render it (pretty JSON), the larger of the two forms.
-        let fits = page.max_bytes.is_none_or(|limit| {
-            serde_json::to_vec_pretty(&value).map_or(usize::MAX, |bytes| bytes.len()) <= limit
+        let over = page.max_bytes.map_or(0, |limit| {
+            serde_json::to_vec_pretty(&value)
+                .map_or(usize::MAX, |bytes| bytes.len())
+                .saturating_sub(limit)
         });
-        if fits || take <= 1 {
+        if over == 0 || take == 0 {
             return value;
         }
-        take /= 2;
+        if take > 1 {
+            take /= 2;
+        } else if !clip_longest_text(&mut candidates[0], over) {
+            return value;
+        }
     }
+}
+
+/// Shorten the task's longest free-text field by at least `over` bytes and mark
+/// the cut; `task_list` still returns the whole task. False when that would
+/// not make the task any smaller.
+fn clip_longest_text(task: &mut Map<String, Value>, over: usize) -> bool {
+    const MARK: &str = " … [clipped to fit the page]";
+    let Some((key, text)) = ["notes", "outcome", "title"]
+        .into_iter()
+        .filter_map(|key| {
+            task.get(key)
+                .and_then(Value::as_str)
+                .map(|text| (key, text))
+        })
+        .max_by_key(|(_, text)| text.len())
+    else {
+        return false;
+    };
+    // Every character dropped is at least one byte, so this drops `over` more
+    // bytes than the mark adds.
+    let keep = text
+        .chars()
+        .count()
+        .saturating_sub(over.saturating_add(MARK.len()));
+    let clipped = text.chars().take(keep).collect::<String>() + MARK;
+    if clipped.len() >= text.len() {
+        return false;
+    }
+    task.insert(key.into(), Value::String(clipped));
+    true
 }
 
 fn coordination(
