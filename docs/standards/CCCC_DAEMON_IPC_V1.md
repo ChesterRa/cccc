@@ -4732,7 +4732,8 @@ Args:
   detail?: "overview" | "summary" | "full"
   limit?: number          // 1..500 tasks per page; default 100 once paging
   cursor?: string         // next_cursor of the previous page
-  max_bytes?: number      // >= 4096; the page shrinks until the answer fits
+  max_bytes?: number      // >= 4096; the page shrinks until the answer,
+                          // rendered as pretty JSON, fits
   include_archived?: boolean // paging only; default true
 }
 ```

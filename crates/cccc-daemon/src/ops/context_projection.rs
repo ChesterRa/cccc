@@ -74,8 +74,9 @@ pub(super) fn project_page(
             object.insert("truncated".into(), Value::Bool(truncated));
             object.insert("next_cursor".into(), next_cursor.unwrap_or(Value::Null));
         }
+        // Measured as tools render it (pretty JSON), the larger of the two forms.
         let fits = page.max_bytes.is_none_or(|limit| {
-            serde_json::to_vec(&value).map_or(usize::MAX, |bytes| bytes.len()) <= limit
+            serde_json::to_vec_pretty(&value).map_or(usize::MAX, |bytes| bytes.len()) <= limit
         });
         if fits || take <= 1 {
             return value;

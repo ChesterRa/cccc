@@ -313,7 +313,8 @@ async fn context_get_answers_a_large_board_in_bounded_pages() {
                 )
                 .await;
                 let page = payload(&response);
-                let bytes = serde_json::to_vec(page).expect("page JSON").len();
+                // The text an Actor reads is the pretty-printed payload.
+                let bytes = serde_json::to_vec_pretty(page).expect("page JSON").len();
                 assert!(bytes <= cap, "page {pages} is {bytes} bytes, over {cap}");
                 assert_eq!(
                     page["tasks_summary"]["planned"], created,
