@@ -37,6 +37,7 @@ def rss_kib(pid: int) -> int:
 
 def copy_groups(source: Path, target: Path) -> tuple[list[tuple[str, list[str]]], dict]:
     groups = []
+    registry = {}
     mail = None
     for directory in sorted((source / "groups").iterdir()):
         if not (directory / "group.yaml").is_file():
@@ -55,6 +56,12 @@ def copy_groups(source: Path, target: Path) -> tuple[list[tuple[str, list[str]]]
         destination = target / "groups" / directory.name
         destination.mkdir(parents=True)
         (destination / "group.yaml").write_text(yaml.safe_dump(doc, sort_keys=False))
+        registry[directory.name] = {
+            "group_id": directory.name, "title": doc["title"],
+            "topic": doc.get("topic", ""), "path": str(destination),
+            "default_scope_key": "", "created_at": doc["created_at"],
+            "updated_at": doc["updated_at"],
+        }
         for relative in ("ledger.jsonl", "state/read_cursors.json"):
             src = directory / relative
             if src.is_file():
@@ -80,6 +87,13 @@ def copy_groups(source: Path, target: Path) -> tuple[list[tuple[str, list[str]]]
                         break
     if not groups or mail is None:
         raise ValueError("provide real groups with an addressed Mail message")
+    # The daemon discovers automation groups through this registry. Merely
+    # loading group.yaml by ID can pass actor_list while every tick skips it.
+    target.joinpath("registry.json").write_text(json.dumps({
+        "v": 1, "created_at": min(doc["created_at"] for doc in registry.values()),
+        "updated_at": max(doc["updated_at"] for doc in registry.values()),
+        "groups": registry, "defaults": {},
+    }, default=str))
     return groups, mail
 
 
@@ -130,6 +144,9 @@ def replay(args: argparse.Namespace) -> dict:
                     raise RuntimeError("daemon failed to start")
                 time.sleep(0.1)
             measure()
+            discovered = {group["group_id"] for group in call("group_list")["groups"]}
+            if discovered != {group_id for group_id, _ in groups}:
+                raise RuntimeError("automation registry does not discover every copied group")
             enabled = 0
             for group_id, actors in groups:
                 status = call("actor_list", group_id=group_id, include_unread=False)
