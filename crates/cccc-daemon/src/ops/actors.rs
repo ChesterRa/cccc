@@ -2,7 +2,7 @@ use super::operation::{
     Operation,
     Policy::{Read, Write},
 };
-use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, Event};
+use cccc_contracts::{Actor, ActorRole, ActorRuntime, DaemonRequest, Event};
 use cccc_core::actors;
 use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
@@ -491,6 +491,13 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let actor_id = required_arg(request, "actor_id")?;
     let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
     authorize(&group, request, ActorAction::Remove, &actor_id)?;
+    // The Foreman is the first visible Actor: removing it hands the role on.
+    let succession =
+        (actors::effective_role(&group, &actor_id) == Some(ActorRole::Foreman)).then(|| {
+            actors::visible(&group)
+                .find(|actor| actor.id != actor_id)
+                .map(|actor| actor.id.clone())
+        });
     let index = group
         .actors
         .iter()
@@ -593,6 +600,18 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             ));
         }
     };
+    if let Some(successor) = succession
+        && let Err(error) = append_event(
+            home,
+            &group_id,
+            "group.foreman_change",
+            request,
+            json!({"from": actor_id, "to": successor}),
+        )
+    {
+        // The removal is committed; a missing record is not worth undoing it.
+        tracing::warn!(error = %error.message, %group_id, %actor_id, "foreman change not recorded");
+    }
     if let Err(error) = remove_persisted_headless_state(home, &group_id, &actor_id) {
         tracing::warn!(%error, %group_id, %actor_id, "post-commit headless state cleanup failed");
     }
