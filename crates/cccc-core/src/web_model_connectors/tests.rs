@@ -365,74 +365,44 @@ fn automatic_attempt_fences_survive_expiry_cancellation_and_other_actor_setup() 
 }
 
 #[test]
-fn grok_credentials_scope_routes_and_survive_restart_but_not_rebinding() {
+fn grok_bindings_are_native_and_isolate_provider_routes() {
     let (_temp, home, chatgpt) = fixture();
     let cid = chatgpt["connector"]["connector_id"]
         .as_str()
-        .expect("valid test fixture");
+        .expect("connector");
     let chat_binding = bound(&home, cid, "chat", "host-chat");
-    let g = configure_provider(&home, "grok_web").expect("valid test fixture");
-    let id = g["connector"]["connector_id"]
+    let configured = configure_provider(&home, "grok_web").expect("Grok connector");
+    let id = configured["connector"]["connector_id"]
         .as_str()
-        .expect("valid test fixture");
-    let url_a = "https://grok.com/bot/1373170d-9cf2-408c-b597-e243e5884f4a";
-    let url_b = "https://grok.com/bot/958f2446-013f-4225-8dd3-f146295992d7";
-    let a = bind_grok(&home, id, "g_fixture", "a", "gen-a", url_a).expect("valid test fixture");
-    let b = bind_grok(&home, id, "g_fixture", "b", "gen-b", url_b).expect("valid test fixture");
-    let reload = || {
-        load(&home)
-            .expect("valid test fixture")
-            .into_iter()
-            .find(|c| c["connector_id"] == id)
-            .expect("valid test fixture")
-    };
-    let token_a = grok_token(&reload(), &a).expect("valid test fixture");
-    let token_b = grok_token(&reload(), &b).expect("valid test fixture");
-    assert_ne!(token_a, token_b);
-    assert_eq!(binding_for_token(&reload(), &token_a), Some(a.clone()));
-    assert_eq!(binding_for_token(&reload(), &token_b), Some(b.clone()));
-    assert!(binding_for_token(&chatgpt["connector"], &token_a).is_none());
-    assert!(binding_for_token(&reload(), "bad").is_none());
-    assert!(session_key(&reload(), &json!({"openai/session":"spoof"})).is_err());
-    assert!(begin_pairing(&home, id, "g_fixture", "a", "gen-a", false).is_err());
-    assert!(bind_grok(&home, id, "g_fixture", "c", "gen-c", url_a).is_err());
+        .expect("Grok ID");
+    let url = "https://grok.com/bot/00000000-0000-4000-8000-000000000001";
+    let original = bind_grok(&home, id, "g_fixture", "bot", "generation", url).expect("bind");
+    assert_eq!(original["transport"], "grok_webhook");
     assert_eq!(
-        bind_grok(&home, id, "g_fixture", "a", "gen-a", url_a).expect("valid test fixture"),
-        a
+        bind_grok(&home, id, "g_fixture", "bot", "generation", url).expect("same binding"),
+        original
     );
-    let rotated = configure_provider(&home, "grok_web").expect("valid test fixture");
-    assert_eq!(
-        grok_token(&rotated["connector"], &a).expect("valid test fixture"),
-        token_a
-    );
-    let snapshots = retire_actor(&home, "g_fixture", "a").expect("valid test fixture");
-    assert!(binding_for_token(&reload(), &token_a).is_none());
-    assert!(
-        !serde_json::to_string(&snapshots)
-            .expect("valid test fixture")
-            .contains(&token_a)
-    );
-    restore(&home, &snapshots).expect("valid test fixture");
-    assert_eq!(binding_for_token(&reload(), &token_a), Some(a));
-    let replacement =
-        bind_grok(&home, id, "g_fixture", "a", "gen-new", url_a).expect("valid test fixture");
-    assert_ne!(
-        grok_token(&reload(), &replacement).expect("valid test fixture"),
-        token_a
-    );
-    assert!(binding_for_token(&reload(), &token_a).is_none());
-    let chat = load(&home)
-        .expect("valid test fixture")
-        .into_iter()
+    assert!(bind_grok(&home, id, "g_fixture", "other", "generation", url).is_err());
+    assert!(begin_pairing(&home, id, "g_fixture", "bot", "generation", false).is_err());
+    let snapshot = retire_actor(&home, "g_fixture", "bot").expect("retire");
+    restore(&home, &snapshot).expect("restore");
+    let connectors = load(&home).expect("connectors");
+    let chat = connectors
+        .iter()
         .find(|c| c["connector_id"] == cid)
-        .expect("valid test fixture");
-    assert_eq!(binding_for_session(&chat, "host-chat"), Some(chat_binding));
-    assert!(secret_matches(
-        &chat,
-        chatgpt["secret"].as_str().expect("valid test fixture")
-    ));
-    revoke(&home, id).expect("valid test fixture");
-    assert!(binding_for_token(&reload(), &token_b).is_none());
+        .expect("ChatGPT");
+    assert_eq!(binding_for_session(chat, "host-chat"), Some(chat_binding));
+    let grok = connectors
+        .iter()
+        .find(|c| c["connector_id"] == id)
+        .expect("Grok");
+    assert_eq!(
+        binding_for_actor(grok, "g_fixture", "bot", "generation"),
+        Some(original.clone())
+    );
+    let replacement =
+        bind_grok(&home, id, "g_fixture", "bot", "new-generation", url).expect("replace");
+    assert_ne!(replacement["revision"], original["revision"]);
 }
 
 #[test]

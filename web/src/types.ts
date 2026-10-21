@@ -1595,11 +1595,13 @@ export const SUPPORTED_RUNTIMES = [
 export type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
 
 export function isWebModelRuntime(runtime: string | undefined): boolean {
-  return runtime === "chatgpt_dots" || isBrowserWebModelRuntime(runtime);
+  return (
+    runtime === "chatgpt_dots" || runtime === "grok_web_model" || isBrowserWebModelRuntime(runtime)
+  );
 }
 
 export function isBrowserWebModelRuntime(runtime: string | undefined): boolean {
-  return runtime === "web_model" || runtime === "grok_web_model";
+  return runtime === "web_model";
 }
 
 export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
@@ -1640,7 +1642,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   },
   grok_web_model: {
     label: "Grok Bot Web Model",
-    desc: "Grok Bot browser delivery + remote MCP connector",
+    desc: "Grok Bot native Webhook + remote MCP connector",
   },
   custom: { label: "Custom", desc: "Manual MCP installation needed" },
 };

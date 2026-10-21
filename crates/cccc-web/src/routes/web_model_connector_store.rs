@@ -67,8 +67,8 @@ pub(super) fn resolve(
         let token = request["params"]["arguments"]["actor_token"]
             .as_str()
             .unwrap_or_default();
-        web_model_connectors::binding_for_token(connector, token).ok_or_else(|| {
-            ApiError::forbidden("actor_token_invalid: use the Actor credential from this Bot's current CCCC task message")
+        web_model_connectors::grok_webhook::resolve(connector, token, request["params"]["name"].as_str().unwrap_or("")).ok_or_else(|| {
+            ApiError::forbidden("actor_token_invalid: Use this Bot's current Webhook event claim credential. Native business tools need the execution credential returned by the current claim. Never recover credentials from chat history")
         })?
     } else if request["params"]["arguments"].get("actor_token").is_some() {
         let token = request["params"]["arguments"]["actor_token"]

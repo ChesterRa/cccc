@@ -54,7 +54,6 @@ function RuntimePanel({
   compact = false,
 }: WebModelRuntimePanelProps) {
   const { t } = useTranslation("chat");
-  const grok = actor.runtime === "grok_web_model";
   const openActorEditor = useModalStore((state) => state.openActorEditor);
   const [pairing, setPairing] = useState<WebModelPairing>();
   const [session, setSession] = useState<WebModelBrowserSession | null>(null);
@@ -65,9 +64,7 @@ function RuntimePanel({
   const actorId = String(actor.id || "").trim();
   currentSelectionRef.current = { groupId, actorId };
   const queuedCount = Math.max(0, Number(actor.web_model_queued_count || 0));
-  const canControlSurface = Boolean(
-    isVisible && isRunning && !readOnly && groupId && actorId && (!grok || pairing?.url),
-  );
+  const canControlSurface = Boolean(isVisible && isRunning && !readOnly && groupId && actorId);
 
   useEffect(() => {
     if (!isVisible || !groupId || !actorId) {
@@ -234,16 +231,14 @@ function RuntimePanel({
       ? t("webModelDelivery.browserReadOnly")
       : !isRunning
         ? t("webModelDelivery.actorStoppedSurface")
-        : grok && !pairing?.url
-          ? t(pairing ? "settings:grokActor.urlRequired" : "settings:webModelActor.states.loading")
-          : "";
+        : "";
   const deliveryMode: WebModelDeliveryMode =
     session?.delivery_mode === "image_compat" ? "image_compat" : "standard";
   const deliveryModeDisabled = Boolean(readOnly || busyAction);
 
   const configurationControls = (
     <>
-      {!grok && (
+      {
         <>
           <fieldset
             className={classNames(
@@ -367,7 +362,7 @@ function RuntimePanel({
             </PopoverContent>
           </Popover>
         </>
-      )}
+      }
       {!readOnly && (
         <button
           type="button"
@@ -375,7 +370,7 @@ function RuntimePanel({
           onClick={openSettings}
         >
           <SettingsIcon size={17} aria-hidden="true" />
-          {t(grok ? "settings:grokActor.title" : "settings:webModelActor.title")}
+          {t("settings:webModelActor.title")}
         </button>
       )}
     </>
@@ -388,7 +383,7 @@ function RuntimePanel({
         compact ? "gap-0" : "gap-3",
         isDark ? "text-slate-100" : "text-[rgb(35,36,37)]",
       )}
-      aria-label={grok ? "Grok Bot Web Model runtime" : "ChatGPT Web Model runtime"}
+      aria-label="ChatGPT Web Model runtime"
     >
       <div
         className={classNames(
@@ -406,11 +401,7 @@ function RuntimePanel({
           }
         >
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 px-1">
-            <WebModelConnectionStatus
-              pairing={pairing}
-              session={session}
-              provider={grok ? "grok_web" : "chatgpt_web"}
-            />
+            <WebModelConnectionStatus pairing={pairing} session={session} />
             {activity && (
               <span
                 className={classNames(
@@ -426,7 +417,7 @@ function RuntimePanel({
           </div>
           <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-1.5 @min-[880px]/web-model:justify-end">
             {compact ? (
-              !grok || !readOnly ? (
+              !readOnly ? (
                 <Popover>
                   <PopoverTrigger asChild>
                     <button
@@ -477,7 +468,7 @@ function RuntimePanel({
             loadSession={loadBrowserSurfaceSession}
             startSession={startBrowserSurfaceSession}
             webSocketUrl={api.getWebModelBrowserSurfaceWebSocketUrl(groupId, actorId)}
-            fallbackUrl={grok ? pairing?.url : "https://chatgpt.com/"}
+            fallbackUrl="https://chatgpt.com/"
           />
         </div>
       ) : surfaceDisabledMessage ? (

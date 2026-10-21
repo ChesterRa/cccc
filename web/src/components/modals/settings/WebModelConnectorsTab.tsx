@@ -84,8 +84,6 @@ function ProviderSettings({
         [
           "title",
           "description",
-          "login",
-          "loginHint",
           "connectorHint",
           "actorHint",
           "rotateHint",
@@ -122,7 +120,9 @@ function ProviderSettings({
     setConfirm(null);
     void Promise.all([
       api.fetchWebModelConnectors(),
-      api.sharedWebModelBrowser("status", false, provider),
+      provider === "chatgpt_web"
+        ? api.sharedWebModelBrowser("status", false, provider)
+        : Promise.resolve(null),
     ])
       .then(([c, b]) => {
         if (cancelled) return;
@@ -143,8 +143,8 @@ function ProviderSettings({
           setLoadState("error");
           setError(c.error.message);
         }
-        if (b.ok) setBrowser(b.result.browser_session);
-        else setError(b.error.message);
+        if (b?.ok) setBrowser(b.result.browser_session);
+        else if (b && !b.ok) setError(b.error.message);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -238,77 +238,79 @@ function ProviderSettings({
         </SettingsNotice>
       )}
       {needsSetup && <SettingsNotice tone="warning">{label("upgrade")}</SettingsNotice>}
-      <SettingsCard
-        title={label("login")}
-        description={label("loginHint")}
-        actions={
-          <>
-            <button
-              type="button"
-              className={primaryButtonClass()}
-              disabled={actionsDisabled}
-              onClick={() => void action("open")}
-            >
-              {label("open")}
-            </button>
-            <button
-              type="button"
-              className={secondaryButtonClass()}
-              disabled={actionsDisabled || !browser.active}
-              onClick={() => void action("check")}
-            >
-              {label("check")}
-            </button>
-            <button
-              type="button"
-              className={secondaryButtonClass()}
-              disabled={actionsDisabled || !browser.active}
-              onClick={() => void action("close")}
-            >
-              {label("close")}
-            </button>
-          </>
-        }
-      >
-        {(loadState === "ready" || (browser.active && isActive)) && (
-          <CardBlock>
-            {loadState === "ready" && (
-              <span
-                className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-primary)]"
-                data-login-state={browserState}
+      {provider === "chatgpt_web" && (
+        <SettingsCard
+          title={label("login")}
+          description={label("loginHint")}
+          actions={
+            <>
+              <button
+                type="button"
+                className={primaryButtonClass()}
+                disabled={actionsDisabled}
+                onClick={() => void action("open")}
               >
+                {label("open")}
+              </button>
+              <button
+                type="button"
+                className={secondaryButtonClass()}
+                disabled={actionsDisabled || !browser.active}
+                onClick={() => void action("check")}
+              >
+                {label("check")}
+              </button>
+              <button
+                type="button"
+                className={secondaryButtonClass()}
+                disabled={actionsDisabled || !browser.active}
+                onClick={() => void action("close")}
+              >
+                {label("close")}
+              </button>
+            </>
+          }
+        >
+          {(loadState === "ready" || (browser.active && isActive)) && (
+            <CardBlock>
+              {loadState === "ready" && (
                 <span
-                  aria-hidden
-                  className={classNames(
-                    "size-2 shrink-0 rounded-full",
-                    browserState === "ready"
-                      ? "bg-emerald-500"
-                      : browserState === "verification"
-                        ? "bg-amber-500"
-                        : browserState === "openState"
-                          ? "bg-sky-500"
-                          : "bg-[var(--color-text-muted)]",
-                  )}
+                  className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-primary)]"
+                  data-login-state={browserState}
+                >
+                  <span
+                    aria-hidden
+                    className={classNames(
+                      "size-2 shrink-0 rounded-full",
+                      browserState === "ready"
+                        ? "bg-emerald-500"
+                        : browserState === "verification"
+                          ? "bg-amber-500"
+                          : browserState === "openState"
+                            ? "bg-sky-500"
+                            : "bg-[var(--color-text-muted)]",
+                    )}
+                  />
+                  {label(browserState)}
+                </span>
+              )}
+              {browser.active && isActive && (
+                <ProjectedBrowserSurfacePanel
+                  isDark={isDark}
+                  key={nonce}
+                  refreshNonce={0}
+                  viewportClassName="h-[min(70dvh,720px)] min-h-[320px] w-full"
+                  reuseActiveSession
+                  sessionIdentity={`web-model-login:${provider}`}
+                  defaultViewerMode="browser"
+                  loadSession={loadBrowser}
+                  webSocketUrl={api.sharedWebModelBrowserWebSocketUrl(provider)}
                 />
-                {label(browserState)}
-              </span>
-            )}
-            {browser.active && isActive && (
-              <ProjectedBrowserSurfacePanel
-                isDark={isDark}
-                key={nonce}
-                refreshNonce={0}
-                viewportClassName="h-[min(70dvh,720px)] min-h-[320px] w-full"
-                reuseActiveSession
-                sessionIdentity={`web-model-login:${provider}`}
-                defaultViewerMode="browser"
-                loadSession={loadBrowser}
-                webSocketUrl={api.sharedWebModelBrowserWebSocketUrl(provider)}
-              />
-            )}
-          </CardBlock>
-        )}
-      </SettingsCard>
+              )}
+            </CardBlock>
+          )}
+        </SettingsCard>
+      )}
       <SettingsCard
         title={label("connector")}
         description={label("connectorHint")}

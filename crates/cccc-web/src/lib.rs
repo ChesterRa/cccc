@@ -484,6 +484,7 @@ where
         tracing::warn!(%error, "failed to record live Web binding");
     }
     routes::spawn_web_model_supervisor(app_state.clone());
+    routes::spawn_grok_webhooks(app_state.clone());
     routes::spawn_dots_events(app_state);
     let server = async move {
         axum::serve(

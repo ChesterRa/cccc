@@ -5,8 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 const mocks = vi.hoisted(() => ({ load: vi.fn(), remove: vi.fn(), stop: vi.fn() }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("../../services/api", () => ({
-  fetchWebModelBrowserSurfaceSession: (...a: unknown[]) => mocks.load(...a),
-  changeWebModelPairing: (...a: unknown[]) => mocks.remove(...a),
+  fetchGrokActorState: (...a: unknown[]) => mocks.load(...a),
+  changeGrokWebhook: (...a: unknown[]) => mocks.remove(...a),
   stopActor: (...a: unknown[]) => mocks.stop(...a),
 }));
 vi.mock("../browser/ProjectedBrowserSurfacePanel", () => ({
@@ -18,9 +18,15 @@ const next = "https://grok.com/bot/958f2446-013f-4225-8dd3-f146295992d7";
 const response = (enabled = false, url = "") => ({
   ok: true,
   result: {
-    pairing: { state: url ? "bound" : "unpaired", actor_enabled: enabled, url },
-    browser_session: {},
-    browser_surface: {},
+    group_id: "g_a",
+    actor_id: "A",
+    connected: true,
+    bound: Boolean(url),
+    configured: false,
+    enabled,
+    bot_url: url,
+    phase: "unconfigured",
+    pending_count: 0,
   },
 });
 let host: HTMLDivElement, root: ReturnType<typeof createRoot>;
@@ -90,35 +96,21 @@ it("waits for initial status, then permits running-Actor editing", async () => {
   await act(async () => finish(response(true)));
   expect(host.querySelector("input")!.disabled).toBe(false);
 });
-it("confirms disconnect in place, stops only this Actor and ignores a stale poll", async () => {
-  await mount();
-  let finish!: (v: ReturnType<typeof response>) => void;
-  mocks.load.mockReturnValueOnce(
-    new Promise((r) => {
-      finish = r;
-    }),
+it("keeps shared settings reachable without exposing browser controls", async () => {
+  const open = vi.fn();
+  await act(async () =>
+    root.render(
+      <GrokActorSetup
+        groupId="g_a"
+        actorId="A"
+        isDark={false}
+        onDraftChange={() => {}}
+        onOpenSharedSettings={open}
+      />,
+    ),
   );
-  await act(async () => vi.advanceTimersByTime(2000));
-  await act(async () => button("grokActor.remove").click());
-  expect(mocks.stop).not.toHaveBeenCalled();
-  mocks.load.mockResolvedValue(response(false));
-  await act(async () => button("grokActor.confirmRemove").click());
-  expect(mocks.stop).toHaveBeenCalledExactlyOnceWith("g_a", "A");
-  expect(mocks.remove).toHaveBeenCalledExactlyOnceWith("g_a", "A", "remove");
-  expect(mocks.stop.mock.invocationCallOrder[0]).toBeLessThan(
-    mocks.remove.mock.invocationCallOrder[0],
-  );
-  await act(async () => finish(response(true, bot)));
-  expect(host.textContent).not.toContain(bot);
-});
-it("keeps the binding and draft when stopping fails", async () => {
-  await mount();
-  await act(async () => button("grokActor.change").click());
-  await fill(next);
-  mocks.stop.mockResolvedValue({ ok: false, error: { message: "stop failed" } });
-  await act(async () => button("grokActor.remove").click());
-  await act(async () => button("grokActor.confirmRemove").click());
+  await act(async () => button("grokActor.shared").click());
+  expect(open).toHaveBeenCalledOnce();
+  expect(host.querySelector("select")).toBeNull();
   expect(mocks.remove).not.toHaveBeenCalled();
-  expect(host.querySelector("input")!.value).toBe(next);
-  expect(host.textContent).toContain("stop failed");
 });

@@ -125,6 +125,7 @@ function statusFromMessageEvent(event: LedgerEvent): WebModelDeliveryStatus | nu
 
 export function buildWebModelDeliveryStatusByEventId(
   events: LedgerEvent[] | undefined,
+  browserActorIds?: ReadonlySet<string>,
 ): Record<string, WebModelDeliveryStatus> {
   const statuses: Record<string, WebModelDeliveryStatus> = {};
   for (const event of Array.isArray(events) ? events : []) {
@@ -148,6 +149,13 @@ export function buildWebModelDeliveryStatusByEventId(
     };
     for (const id of ids) {
       statuses[id] = status;
+    }
+  }
+  // Historical browser receipts do not offer controls or app-permission hints
+  // for Actors that now use native event delivery (or no longer exist).
+  if (browserActorIds) {
+    for (const [eventId, status] of Object.entries(statuses)) {
+      if (!browserActorIds.has(status.actorId)) delete statuses[eventId];
     }
   }
   return statuses;

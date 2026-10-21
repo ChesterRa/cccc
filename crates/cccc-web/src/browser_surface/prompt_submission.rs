@@ -114,9 +114,7 @@ impl BrowserSurfaces {
             .evaluate(format!("({INSPECT_SUBMISSION_SCRIPT})({payload})"))
             .await?
             .into_value::<SubmissionSnapshot>()?;
-        let same_target = if is_chatgpt_url(target_url)
-            || cccc_core::web_model_connectors::grok_bot_url(target_url).is_ok()
-        {
+        let same_target = if is_chatgpt_url(target_url) {
             conversation_target_matches(target_url, &observed.url)
         } else {
             target_url == observed.url
@@ -1160,10 +1158,6 @@ pub(crate) fn normalized_chatgpt_conversation_url(value: &str) -> Option<String>
 }
 
 pub(crate) fn conversation_target_matches(expected: &str, observed: &str) -> bool {
-    if let Ok(expected) = cccc_core::web_model_connectors::grok_bot_url(expected) {
-        return cccc_core::web_model_connectors::grok_bot_url(observed)
-            .is_ok_and(|observed| expected == observed);
-    }
     normalized_chatgpt_conversation_url(expected)
         .zip(normalized_chatgpt_conversation_url(observed))
         .is_some_and(|(expected, observed)| expected == observed)
@@ -1307,7 +1301,7 @@ const SELECT_COMPOSER_SCRIPT: &str = r#"() => {
     // conversation composer is a delivery target; generic inputs are not.
     const chatGptHost = /(^|\.)chatgpt\.com$/.test(location.hostname)
         || ['chat.openai.com', 'auth.openai.com'].includes(location.hostname);
-    const selectors = chatGptHost ? ['#prompt-textarea'] : location.hostname === 'grok.com' ? ['[data-testid="chat-input"] [role="textbox"][contenteditable="true"]'] : [
+    const selectors = chatGptHost ? ['#prompt-textarea'] : [
         '.ProseMirror', '#prompt-textarea', '[contenteditable="true"][data-virtualkeyboard="true"]',
         '[role="textbox"][contenteditable="true"]', 'textarea[data-id="prompt-textarea"]',
         'textarea[name="prompt-textarea"]', 'textarea[placeholder*="Send a message"]',
@@ -1371,15 +1365,14 @@ const SELECT_SEND_CONTROL_SCRIPT: &str = r#"() => {
             || /\bsend\b|\bsubmit\b|发送|送信/.test(text);
     };
     const allButtons = Array.from(document.querySelectorAll('button, [role="button"]')).filter(visible);
-    const working = document.querySelector('[data-testid="bot-working-slot"]');
-    const running = allButtons.some(stop) || !!working && Array.from(working.children).some(visible);
+    const running = allButtons.some(stop);
     let root = input?.closest('form')
         || input?.closest('[data-testid*="composer" i], [class*="composer" i]')
         || null;
     if (!root && input) {
         let parent = input.parentElement;
         for (let depth = 0; parent && depth < 6; depth += 1, parent = parent.parentElement) {
-            if (parent.querySelector(input.closest('[data-testid="chat-input"]') ? '[data-testid="chat-submit"]' : 'button, [role="button"]')) { root = parent; break; }
+            if (parent.querySelector('button, [role="button"]')) { root = parent; break; }
         }
     }
     const buttons = root ? Array.from(root.querySelectorAll('button, [role="button"]')).filter(visible) : [];
@@ -1485,7 +1478,7 @@ const INSPECT_SUBMISSION_SCRIPT: &str = r#"payload => {
     const composerTexts = composers.map(read).filter(Boolean);
     // Virtualized history can grow without a send, and assistants may quote a
     // pending batch. Only the exact receipt inside a user message proves it.
-    const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role="user"], [data-testid="bot-transcript-scroller"] [data-testid="user-message"][role="article"]'));
+    const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role="user"]'));
     const needles = Array.isArray(payload.needles) ? payload.needles.map(normalize).filter(Boolean) : [];
     const echoFound = messageNodes.some(node => {
         const text = read(node);
@@ -1503,8 +1496,7 @@ const INSPECT_SUBMISSION_SCRIPT: &str = r#"payload => {
     const label = node => [node.getAttribute('aria-label') || '', node.getAttribute('title') || '',
         node.getAttribute('data-testid') || '', node.id || '', node.innerText || node.textContent || '']
         .join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
-    const working = document.querySelector('[data-testid="bot-working-slot"]');
-    const stopVisible = !!working && Array.from(working.children).some(visible) || controls.some(node => /\bstop\b|停止|中止|cancel generation|interrupt/.test(label(node)));
+    const stopVisible = controls.some(node => /\bstop\b|停止|中止|cancel generation|interrupt/.test(label(node)));
     const safeSend = controls.filter(node => {
         const text = label(node);
         if (/\bstop\b|停止|中止|cancel|retry|signin|sign in|log in|login|voice|microphone|attach|upload/.test(text)) return false;
@@ -1608,11 +1600,6 @@ pub(super) async fn composer_has_attachments(page: &Page) -> Result<bool> {
             if ([...document.querySelectorAll('input[type=file]')].some(e => e.files?.length)) return true;
             const composer = document.querySelector('#prompt-textarea, [data-cccc-web-model-composer]');
             let root = composer?.closest('form, [data-testid*="composer" i], [class*="composer" i]');
-            if (!root && composer?.closest('[data-testid="chat-input"]')) {
-                for (let parent = composer.parentElement, depth = 0; parent && depth < 6; parent = parent.parentElement, depth++) {
-                    if (parent.querySelector('[data-testid="chat-submit"]')) { root = parent; break; }
-                }
-            }
             return !!root && [...root.querySelectorAll('[data-testid*="file-preview" i], [data-testid="attachment" i], [data-testid*="attachment-preview" i], [data-testid*="upload-preview" i], [class*="file-preview" i], [class*="attachment-preview" i], [class*="upload-preview" i], img[src^="blob:"]')]
                 .some(e => e.getClientRects().length > 0);
         }"#).await?.into_value::<bool>().map_err(Into::into)
@@ -2143,7 +2130,3 @@ mod readiness_tests {
         server.abort();
     }
 }
-
-#[cfg(test)]
-#[path = "grok_tests.rs"]
-mod grok_tests;

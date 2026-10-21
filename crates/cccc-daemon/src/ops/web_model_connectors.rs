@@ -112,6 +112,43 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "Connector provider does not match this Actor",
         ));
     }
+    if connector["provider"] == "grok_web" {
+        if actor.enabled && request.op != "web_model_grok_bind" {
+            return Err(OpError::new(
+                "actor_must_be_stopped",
+                "Stop CCCC access before changing the Grok connection",
+            ));
+        }
+        if super::runtime_state::actor_state(home, &group_id, &actor_id)?["active_turn_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+        {
+            return Err(OpError::new(
+                "delivery_unresolved",
+                "Resolve the unfinished turn before changing the Grok connection",
+            ));
+        }
+        return if request.op == "web_model_grok_bind" {
+            let binding = store::bind_grok(
+                home,
+                &id,
+                &group_id,
+                &actor_id,
+                &cccc_core::actors::generation_identity(actor),
+                &required_arg(request, "url")?,
+            )
+            .map_err(OpError::io)?;
+            object(json!({"state":"bound","url":binding["url"]}))
+        } else if request.op == "web_model_binding_remove" {
+            store::retire_actor(home, &group_id, &actor_id).map_err(OpError::io)?;
+            object(json!({"removed":true}))
+        } else {
+            Err(OpError::new(
+                "invalid_operation",
+                "Grok uses native Webhook setup",
+            ))
+        };
+    }
     if request.op == "web_model_pairing_cancel" {
         let pairing_id = required_arg(request, "pairing_id")?;
         store::cancel_pairing(home, &id, &group_id, &actor_id, &pairing_id).map_err(OpError::io)?;
@@ -179,7 +216,10 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let status = targets[&actor_id]["last_delivery_status"]
         .as_str()
         .unwrap_or("");
-    let unresolved = runtime["status"] == "working"
+    let unresolved = runtime["active_turn_id"]
+        .as_str()
+        .is_some_and(|s| !s.is_empty())
+        || runtime["status"] == "working"
         || matches!(
             status,
             "submitting"
@@ -193,13 +233,7 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 | "completion_conflict"
                 | "legacy_submission_unverified"
         );
-    let normalize_url = |u: &str| {
-        if connector["provider"] == "grok_web" {
-            store::grok_bot_url(u)
-        } else {
-            store::conversation_url(u)
-        }
-    };
+    let normalize_url = store::conversation_url;
     let old_url = targets[&actor_id]["url"]
         .as_str()
         .and_then(|u| normalize_url(u).ok());
@@ -211,8 +245,7 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if unresolved
         && (automatic
             || !(request.op == "web_model_pairing_begin" && old_url.is_some()
-                || request.op == "web_model_pairing_confirm" && same_url
-                || request.op == "web_model_grok_bind" && same_url))
+                || request.op == "web_model_pairing_confirm" && same_url))
     {
         return Err(OpError::new(
             "delivery_unresolved",
@@ -225,12 +258,6 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let generation = cccc_core::actors::generation_identity(actor);
     match request.op.as_str() {
-        "web_model_grok_bind" => {
-            let url = required_arg(request, "url")?;
-            let binding = store::bind_grok(home, &id, &group_id, &actor_id, &generation, &url)
-                .map_err(OpError::io)?;
-            object(json!({"state":"bound","url":binding["url"],"revision":binding["revision"]}))
-        }
         "web_model_pairing_begin" => object(
             store::begin_pairing(home, &id, &group_id, &actor_id, &generation, automatic)
                 .map_err(OpError::io)?,

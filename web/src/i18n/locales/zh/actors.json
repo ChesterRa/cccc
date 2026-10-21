@@ -303,7 +303,7 @@
   "webModelActorBoundConnectorHint": "全局 Web Model 设置管理共享登录和一个连接器。保存后正常启动此 Actor，CCCC 会先自动连接对话，再投递任务。",
   "webModelProfileHint": "Web 模型配置共享运行时与能力设置，每个 Actor 独立配置自己的连接。",
   "saveAndApply": "保存并应用",
-  "applyWebModelTargetConfirm": "要为“{{label}}”应用新对话吗？CCCC 将只停止此 Actor，保存设置，待新连接保存成功后再启动。应用失败时会保持停止，并保留这里的草稿。",
+  "applyWebModelTargetConfirm": "要为“{{label}}”应用新的 Bot 吗？未完成的任务需先完成或明确处理。更换 Bot 会清除旧 Routine 凭据；应用失败时保留草稿。",
   "antigravityMode": {
     "label": "Antigravity 模式",
     "tui": "TUI · 原生终端",

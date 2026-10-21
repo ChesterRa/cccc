@@ -1,8 +1,6 @@
 //! Grok does not supply a per-Bot MCP identity. An opaque binding credential
 //! proves possession of the selected Actor's authority, not the caller's Bot.
 use super::*;
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use hmac::{Hmac, Mac};
 
 pub fn grok_bot_url(value: &str) -> io::Result<String> {
     let url = url::Url::parse(value.trim()).map_err(|_| error("invalid_bot_url"))?;
@@ -49,41 +47,17 @@ pub fn bind_grok(
         {
             return Err(error("binding_conflict"));
         }
-        if let Some(bound) =
-            binding_for_actor(c, group, actor, generation).filter(|b| b["url"] == url)
+        if let Some(bound) = binding_for_actor(c, group, actor, generation)
+            .filter(|b| b["url"] == url && b["transport"] == "grok_webhook")
         {
             return Ok(bound);
         }
         let bound = json!({"group_id":group,"actor_id":actor,"generation":generation,
-            "revision":Uuid::new_v4().to_string(),"url":url,"state":"bound","updated_at":cccc_contracts::utc_now()});
+            "revision":Uuid::new_v4().to_string(),"transport":"grok_webhook","url":url,"state":"bound","updated_at":cccc_contracts::utc_now()});
+        if let Some(all) = c["grok_webhooks"].as_object_mut() {
+            all.remove(&key);
+        }
         c["bindings"][key] = bound.clone();
         Ok(bound)
     })
-}
-
-fn token_mac(connector: &Value, binding: &Value) -> io::Result<Hmac<Sha256>> {
-    if connector["provider"] != "grok_web"
-        || connector["revoked"] == true
-        || binding["state"] != "bound"
-    {
-        return Err(error("binding_unavailable"));
-    }
-    binding_mac(connector, binding, "cccc-grok-binding-v1", &[])
-}
-
-/// Reconstruct only for browser delivery. Never persist this in turns or ledgers.
-pub fn grok_token(connector: &Value, binding: &Value) -> io::Result<String> {
-    Ok(URL_SAFE_NO_PAD.encode(token_mac(connector, binding)?.finalize().into_bytes()))
-}
-
-pub fn binding_for_token(connector: &Value, token: &str) -> Option<Value> {
-    if token.len() != 43 {
-        return None;
-    }
-    let bytes = URL_SAFE_NO_PAD.decode(token).ok()?;
-    connector["bindings"]
-        .as_object()?
-        .values()
-        .find(|b| token_mac(connector, b).is_ok_and(|mac| mac.verify_slice(&bytes).is_ok()))
-        .cloned()
 }

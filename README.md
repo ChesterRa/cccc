@@ -185,7 +185,7 @@ The SDK does not include a daemon. It connects to a running `cccc` core instance
 ```mermaid
 graph TB
     A1["CLI runtimes + custom<br/>Codex · Claude · Grok · ..."]
-    A3["Browser runtimes<br/>ChatGPT Web · Grok Bot"]
+    A3["Web runtimes<br/>ChatGPT Web · Grok Bot"]
     A6["ChatGPT Dots"]
     Daemon["CCCC daemon · single writer<br/>Ledger · tasks · context · Actor lifecycle"]
     Ports["CCCC Web UI · CLI · MCP"]
@@ -226,7 +226,7 @@ CCCC provides the following runtime integrations, plus `custom` for other comman
 | Antigravity CLI | Auto MCP setup | `agy` |
 | ChatGPT Web | Browser UI delivery + remote MCP | `chatgpt.com` conversation |
 | ChatGPT Dots | MCP Events + task-scoped remote MCP; no browser message delivery | One explicitly paired Dot |
-| Grok Bot Web Model | Remote MCP + Browser Delivery; per-Actor routing credential | Required `grok.com/bot/<UUID>` URL |
+| Grok Bot Web Model | Remote MCP + native Webhook; per-Actor task authority | Required `grok.com/bot/<UUID>` URL |
 | Grok Build | Managed ACP session + native TUI; automatic native MCP setup | `grok` |
 | Hermes Agent | Native TUI or official ACP; session MCP | `hermes` |
 | Droid | Native TUI or official ACP; session MCP | `droid` |
@@ -255,7 +255,7 @@ GitHub Copilot, Devin CLI, Cursor, Kimi Code, Auggie, Kiro V3, Hermes and Droid 
 
 Antigravity also supports an optional **official ACP mode** for Actors and Voice Analyst, with a structured workspace instead of a terminal. Select ACP in Actor/Profile settings and run `cccc setup --runtime antigravity --runtime-mode acp --login` once for its separate CCCC login. Busy inputs and one-time permission requests are visible in the workspace. See the [runtime guide](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp).
 
-Choose a Runtime; CCCC derives its interaction surface automatically. Claude Code, Codex CLI, Grok Build, OpenCode and Kilo pair a native writable terminal with a structured background protocol on the same provider session. Messages enter that terminal, leaving queue-versus-steer behavior to the receiving Runtime. Pi uses official RPC without a native terminal attachment and requires Pi 1.1.0 or newer (`@earendil-works/pi-coding-agent`). DeepSeek Harness uses structured ACP without a native terminal; ChatGPT Web and Grok Bot Web Model use browser delivery and remote MCP.
+Choose a Runtime; CCCC derives its interaction surface automatically. Claude Code, Codex CLI, Grok Build, OpenCode and Kilo pair a native writable terminal with a structured background protocol on the same provider session. Messages enter that terminal, leaving queue-versus-steer behavior to the receiving Runtime. Pi uses official RPC without a native terminal attachment and requires Pi 1.1.0 or newer (`@earendil-works/pi-coding-agent`). DeepSeek Harness uses structured ACP without a native terminal; ChatGPT Web uses browser delivery and remote MCP; Grok Bot Web Model uses native Webhook Routines and remote MCP.
 
 For setup commands, interaction details, and troubleshooting for every supported Runtime, see the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes).
 
@@ -271,7 +271,7 @@ Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (C
 
 ### Grok Bot Web Model
 
-**Grok Bot Web Model** (`grok_web_model`) uses the same CCCC workspace tools and delivery queue, with a shared Grok login, one MCP connector, and a dedicated Bot URL per Actor. An existing `https://grok.com/bot/<UUID>` URL is required; CCCC does not create Bots. Configure shared login and the connector in global Web Model settings, then save the Bot URL in Actor settings and start the Actor. CCCC supplies its routing credential with each task, without a separate pairing message. This browser runtime is separate from the Grok Build CLI (`grok`). See [Grok Bot setup and current validation boundaries](https://chesterra.github.io/cccc/guide/grok-web-model-runtime).
+**Grok Bot Web Model** (`grok_web_model`) connects an existing `https://grok.com/bot/<UUID>` per Actor through a native Webhook Routine and the CCCC remote MCP connector. It uses your Grok subscription without browser delivery or a separate model API key. Setup requires copying the Routine URL and Key from the Grok desktop app. CCCC owns task ordering, single admission and exact completion; provider approvals, limits and cloud execution remain with Grok. This is separate from Grok Build CLI (`grok`). See [setup, recovery and validation boundaries](https://chesterra.github.io/cccc/guide/grok-web-model-runtime).
 
 ## CCCC Connect: across instances and teams
 

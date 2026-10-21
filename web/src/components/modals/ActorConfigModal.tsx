@@ -864,6 +864,7 @@ function EditActorConfigModal({
   const [grokBotUrl, setGrokBotUrl] = useState<string | undefined>();
   const [connectionBusy, setConnectionBusy] = useState(false);
   const [connectionEnabled, setConnectionEnabled] = useState<boolean | undefined>();
+  const [connectionUnresolved, setConnectionUnresolved] = useState(false);
   const baseline = useRef({
     identity: "",
     title,
@@ -904,6 +905,7 @@ function EditActorConfigModal({
     setGrokBotUrl(undefined);
     setConnectionBusy(false);
     setConnectionEnabled(undefined);
+    setConnectionUnresolved(false);
   }, [groupId, actorId, isOpen]);
   const [localNotice, setLocalNotice] = useState("");
   const [avatarBusy, setAvatarBusy] = useState<"" | "upload" | "clear">("");
@@ -1269,6 +1271,13 @@ function EditActorConfigModal({
       setSecretsError(t("settings:grokActor.invalidUrl"));
       return;
     }
+    if (
+      applyRunningTarget &&
+      !stagingGrok &&
+      !restart &&
+      !window.confirm(t("applyWebModelTargetConfirm", { label: actorId }))
+    )
+      return;
 
     if (editMode === "profile") {
       const profileId = String(attachProfileId || "").trim();
@@ -1350,6 +1359,7 @@ function EditActorConfigModal({
     secretsRefreshing ||
     actorNotesBusy ||
     (grokTargetChanged && !grokBotUrl?.trim()) ||
+    (grokTargetChanged && connectionUnresolved) ||
     (editMode === "custom" && effectiveLinked) ||
     (editMode === "custom" && requireCommand && !command.trim()) ||
     (editMode === "profile" && !String(attachProfileId || "").trim());
@@ -1426,7 +1436,9 @@ function EditActorConfigModal({
             <Button
               type="button"
               className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
-              onClick={() => (hasChanges ? void submit(applyRunningTarget) : closeEdit())}
+              onClick={() =>
+                hasChanges ? void submit(applyRunningTarget && stagingGrok) : closeEdit()
+              }
               disabled={
                 hasChanges ? saveDisabled : busy === "actor-update" || secretsBusy || connectionBusy
               }
@@ -1726,6 +1738,7 @@ function EditActorConfigModal({
               ) : conversationRuntime === "grok_web_model" ? (
                 <GrokActorSetup
                   key={`${groupId}/${actorId}/grok`}
+                  canAccessConnection={canAccessGlobalSettings}
                   groupId={groupId}
                   actorId={actorId}
                   isDark={isDark}
@@ -1734,6 +1747,7 @@ function EditActorConfigModal({
                   draftUrl={grokBotUrl}
                   onDraftChange={setGrokBotUrl}
                   onEnabledChange={setConnectionEnabled}
+                  onUnresolvedChange={setConnectionUnresolved}
                   onBusyChange={setConnectionBusy}
                   saving={secretsBusy || busy === "actor-update"}
                 />

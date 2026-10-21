@@ -28,7 +28,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Pi | `pi` | Official RPC (headless; no native terminal attachment) | Injected per managed session |
 | ChatGPT Web Model | `web_model` | Bound ChatGPT Web conversation | Browser delivery + remote MCP connector |
 | ChatGPT Dots | `chatgpt_dots` | One explicitly bound Dot | MCP Events + task-scoped remote MCP; no browser message delivery |
-| Grok Bot Web Model | `grok_web_model` | Dedicated Grok Bot URL | Browser delivery + credential-routed remote MCP connector |
+| Grok Bot Web Model | `grok_web_model` | Dedicated Grok Bot URL | Native Webhook Routine + task-scoped remote MCP connector |
 
 `custom` is also supported as a manual fallback for any command-line agent that can be launched by CCCC.
 
@@ -521,7 +521,7 @@ Voice Analyst accepts Antigravity only in ACP mode, using the same adapter, logi
 
 ## Grok Bot Web Model
 
-`grok_web_model` uses one shared Grok login and connector, with a required existing Bot URL per Actor. Save the URL in Actor settings, then start it; CCCC does not create Bots. You can edit the URL while the Actor runs. Applying a changed URL asks for confirmation, stops only that Actor, saves the route and restarts it after success. No separate handshake is needed; each MCP call uses a CCCC-issued Actor credential supplied with its task. See [Grok Bot Web Model](/guide/grok-web-model-runtime) for setup, authority boundaries and validation status.
+`grok_web_model` connects an existing Bot URL per Actor through a native Webhook Routine and one shared remote MCP connector. Save the URL in Actor settings, copy the credential-free Routine setup instructions, then enter its desktop-provided POST to URL and Key. CCCC does not create Bots, manage Grok browser login or deliver through a browser. Each event grants only a task claim; the claim returns a separate execution credential. CCCC owns sequencing, completion and explicit unfinished-task recovery. See [Grok Bot Web Model](/guide/grok-web-model-runtime) for setup, authority boundaries and validation status.
 
 ## ChatGPT Web Model
 

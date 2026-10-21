@@ -34,9 +34,17 @@ impl Operation {
 
     pub(crate) fn execute(&self, home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         if let Some(binding) = request.args.get("_cccc_web_binding") {
-            let stage = binding["dots_stage"].as_str();
+            let stage = binding["grok_stage"]
+                .as_str()
+                .or_else(|| binding["dots_stage"].as_str());
             let allowed = match stage {
-                Some("claim") => request.op == "dots_work_claim",
+                Some("claim") => {
+                    if binding["transport"] == "grok_webhook" {
+                        request.op == "grok_work_claim"
+                    } else {
+                        request.op == "dots_work_claim"
+                    }
+                }
                 Some("completion") => request.op == "runtime_complete_turn",
                 _ => true,
             };

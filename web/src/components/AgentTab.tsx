@@ -33,7 +33,8 @@ import { ActorAcpControls } from "./headless/ActorAcpControls";
 import { HeadlessRuntimePanel } from "./headless/HeadlessRuntimePanel";
 import { WebModelRuntimePanel } from "./webModel/WebModelRuntimePanel";
 import { DotsActorPanel } from "./webModel/DotsActorPanel";
-import type { DotsActorState } from "../services/api";
+import { GrokActorPanel } from "./webModel/GrokActorPanel";
+import type { DotsActorState, GrokActorState } from "../services/api";
 import { useModalStore } from "../stores";
 import {
   AlertIcon,
@@ -169,33 +170,42 @@ export function AgentTab({
   const isHeadless = effectiveRunner === "headless";
   const isWebModel = isWebModelRuntime(actor.runtime);
   const isDots = actor.runtime === "chatgpt_dots";
-  const lifecycleActive = isDots ? Boolean(actor.enabled) : isRunning;
+  const isGrok = actor.runtime === "grok_web_model";
+  const isEventActor = isDots || isGrok;
+  const lifecycleActive = isEventActor ? Boolean(actor.enabled) : isRunning;
+  const openActorEditor = useModalStore((state) => state.openActorEditor);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const settingsOpen = useModalStore((state) => state.modals.settings);
   const canAccessGlobalSettings = useUIStore((state) => state.canAccessGlobalSettings !== false);
-  const [dotsSnapshot, setDotsSnapshot] = useState<{
+  const [eventSnapshot, setEventSnapshot] = useState<{
     groupId: string;
     actorId: string;
-    state: DotsActorState | null;
+    runtime: Actor["runtime"];
+    state: DotsActorState | GrokActorState | null;
   } | null>(null);
-  const currentActorRef = useRef({ groupId, actorId: actor.id });
-  currentActorRef.current = { groupId, actorId: actor.id };
-  const receiveDotsState = useCallback(
-    (state: DotsActorState | null) => {
+  const currentActorRef = useRef({ groupId, actorId: actor.id, runtime: actor.runtime });
+  currentActorRef.current = { groupId, actorId: actor.id, runtime: actor.runtime };
+  const receiveEventState = useCallback(
+    (state: DotsActorState | GrokActorState | null) => {
       if (
         currentActorRef.current.groupId !== groupId ||
-        currentActorRef.current.actorId !== actor.id
+        currentActorRef.current.actorId !== actor.id ||
+        currentActorRef.current.runtime !== actor.runtime
       )
         return;
       if (state && (state.group_id !== groupId || state.actor_id !== actor.id)) return;
-      setDotsSnapshot({ groupId, actorId: actor.id, state });
+      setEventSnapshot({ groupId, actorId: actor.id, runtime: actor.runtime, state });
     },
-    [groupId, actor.id],
+    [groupId, actor.id, actor.runtime],
   );
-  const dotsVisit = dotsSnapshot?.groupId === groupId && dotsSnapshot.actorId === actor.id;
-  const dotsState = dotsVisit && canAccessGlobalSettings ? dotsSnapshot.state : null;
-  const dotsStartKey = dotsState?.connected ? "dotsResume" : "dotsEnable";
-  const canStartNewSession = !isDots && actorSupportsNewSession(actor.runtime, actor.runtime_mode);
+  const eventVisit =
+    eventSnapshot?.groupId === groupId &&
+    eventSnapshot.actorId === actor.id &&
+    eventSnapshot.runtime === actor.runtime;
+  const eventState = eventVisit && canAccessGlobalSettings ? eventSnapshot.state : null;
+  const eventStartKey = eventState?.connected ? "dotsResume" : "dotsEnable";
+  const canStartNewSession =
+    !isEventActor && actorSupportsNewSession(actor.runtime, actor.runtime_mode);
   const hasRuntimeResumeFailure = actorHasRuntimeResumeFailure(actor);
   const runtimeResumeError = String(actor.runtime_session_last_resume_error || "").trim();
   const canControl = !readOnly;
@@ -367,13 +377,13 @@ export function AgentTab({
   };
 
   const runtimeIndicator = getRuntimeIndicatorState({
-    isRunning: isDots
-      ? ["ready", "pending", "delivering", "delivered", "working"].includes(dotsState?.phase || "")
+    isRunning: isEventActor
+      ? ["ready", "pending", "delivering", "delivered", "working"].includes(eventState?.phase || "")
       : Boolean(isRunning),
-    workingState: isDots
-      ? dotsState?.phase === "working"
+    workingState: isEventActor
+      ? eventState?.phase === "working"
         ? "working"
-        : dotsState?.phase === "failed" || dotsState?.phase === "interrupted"
+        : eventState?.phase === "failed" || eventState?.phase === "interrupted"
           ? "stuck"
           : "waiting"
       : workingState,
@@ -406,13 +416,17 @@ export function AgentTab({
   })();
 
   const runtimeStatusText = (() => {
-    if (isDots)
+    if (isEventActor)
       return t(
         !canAccessGlobalSettings
-          ? "settings:dotsActor.adminStatus"
-          : dotsState
-            ? `settings:dotsActor.phases.${dotsState.phase}`
-            : dotsVisit
+          ? isDots
+            ? "settings:dotsActor.adminStatus"
+            : "settings:grokActor.adminManaged"
+          : eventState
+            ? isDots
+              ? `settings:dotsActor.phases.${eventState.phase}`
+              : `settings:grokWebhook.phase.${eventState.phase}`
+            : eventVisit
               ? "settings:dotsActor.unavailable"
               : "common:loading",
       );
@@ -713,7 +727,7 @@ export function AgentTab({
   const actorGroupRole = normalizeActorGroupRole(actor.role);
   const titlePaging = useTerminalTitlePaging(isVisible && compact ? onPage : undefined);
 
-  const compactStatusText = isDots
+  const compactStatusText = isEventActor
     ? runtimeStatusText
     : !isRunning
       ? runtimeStatusText
@@ -768,7 +782,7 @@ export function AgentTab({
                 className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-[var(--color-bg-secondary)] ${statusTone.dotClass}`}
                 role="img"
                 aria-label={runtimeStatusText}
-                title={[runtimeStatusText, !isDots && actor.effective_working_reason]
+                title={[runtimeStatusText, !isEventActor && actor.effective_working_reason]
                   .filter(Boolean)
                   .join("\n")}
               />
@@ -783,7 +797,7 @@ export function AgentTab({
             {compactStatusText ? (
               <span
                 className="max-w-[40%] shrink-0 truncate text-[var(--color-text-secondary)]"
-                title={[compactStatusText, !isDots && actor.effective_working_reason]
+                title={[compactStatusText, !isEventActor && actor.effective_working_reason]
                   .filter(Boolean)
                   .join("\n")}
               >
@@ -803,8 +817,8 @@ export function AgentTab({
             connected={terminalReady && connectionStatus === "connected"}
             connectionFailed={connectionFailed}
             canStartNewSession={canStartNewSession}
-            pauseCcccAccess={isDots}
-            dotsConnected={Boolean(dotsState?.connected)}
+            pauseCcccAccess={isEventActor}
+            dotsConnected={Boolean(eventState?.connected)}
             unreadCount={unreadCount}
             onInterrupt={sendInterrupt}
             onLaunch={onLaunch}
@@ -825,7 +839,7 @@ export function AgentTab({
       <div
         className={classNames(
           compact ? "hidden" : "border-b px-4 py-2 sm:px-5",
-          isDots && "max-sm:pr-16",
+          isEventActor && "max-sm:pr-16",
           isDark
             ? "border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))]"
             : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.88))]",
@@ -870,7 +884,7 @@ export function AgentTab({
             </div>
 
             <div className="flex min-w-0 items-center gap-3">
-              <div className={classNames("min-w-0", !isDots && "shrink-0")}>
+              <div className={classNames("min-w-0", !isEventActor && "shrink-0")}>
                 <div className="flex items-center gap-2 min-w-0">
                   <span
                     id={compact ? undefined : `runtime-inspector-${groupId}-${actor.id}`}
@@ -893,7 +907,7 @@ export function AgentTab({
                   {rtInfo?.label || t("custom")} • {runtimeStatusText}
                 </div>
                 {/* Mobile-only: condensed single-line agent state */}
-                {(!isDots || agentState) && (
+                {(!isEventActor || agentState) && (
                   <div
                     className={classNames(
                       "sm:hidden mt-1 text-xs truncate leading-tight",
@@ -908,7 +922,7 @@ export function AgentTab({
                 )}
               </div>
 
-              {(!isDots || agentState) && (
+              {(!isEventActor || agentState) && (
                 <div
                   className={classNames(
                     "hidden sm:grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 rounded-xl border px-3 py-1.5 backdrop-blur-sm",
@@ -1016,7 +1030,7 @@ export function AgentTab({
                   compact={compact}
                   onExpand={onExpand}
                   canAccessConnection={canAccessGlobalSettings}
-                  onStateChange={receiveDotsState}
+                  onStateChange={receiveEventState}
                   onOpenSharedSettings={
                     canControl && canAccessGlobalSettings
                       ? () =>
@@ -1024,6 +1038,28 @@ export function AgentTab({
                             scope: "global",
                             tab: "webModels",
                             webModelProvider: "dots",
+                          })
+                      : undefined
+                  }
+                />
+              ) : isGrok ? (
+                <GrokActorPanel
+                  groupId={groupId}
+                  actorId={actor.id}
+                  isVisible={isVisible && !settingsOpen}
+                  compact={compact}
+                  onExpand={onExpand}
+                  readOnly={readOnly}
+                  onStateChange={receiveEventState}
+                  canAccessConnection={canAccessGlobalSettings}
+                  onSettings={() => openActorEditor(actor, "chatgpt")}
+                  onOpenSharedSettings={
+                    canControl && canAccessGlobalSettings
+                      ? () =>
+                          openSettingsTarget({
+                            scope: "global",
+                            tab: "webModels",
+                            webModelProvider: "grok_web",
                           })
                       : undefined
                   }
@@ -1197,13 +1233,13 @@ export function AgentTab({
                 onClick={onQuit}
                 disabled={isBusy}
                 className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                aria-label={t(isDots ? "dotsPause" : "quitAgent")}
-                title={isDots ? t("dotsPauseHint") : undefined}
+                aria-label={t(isEventActor ? "dotsPause" : "quitAgent")}
+                title={isEventActor ? t("dotsPauseHint") : undefined}
               >
                 <StopIcon size={16} />
-                {!isSmallScreen && t(isDots ? "dotsPause" : "quit")}
+                {!isSmallScreen && t(isEventActor ? "dotsPause" : "quit")}
               </button>
-              {!isDots ? (
+              {!isEventActor ? (
                 <button
                   onClick={sendInterrupt}
                   disabled={connectionStatus !== "connected" || !terminalWritable}
@@ -1214,7 +1250,7 @@ export function AgentTab({
                   ⌃C
                 </button>
               ) : null}
-              {!isDots ? (
+              {!isEventActor ? (
                 <button
                   onClick={onRelaunch}
                   disabled={isBusy}
@@ -1252,10 +1288,10 @@ export function AgentTab({
                 onClick={onLaunch}
                 disabled={isBusy}
                 className={`${primaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                aria-label={t(isDots ? dotsStartKey : "launchAgentLabel")}
+                aria-label={t(isEventActor ? eventStartKey : "launchAgentLabel")}
               >
                 <PlayIcon size={16} />
-                {isBusy ? t("common:loading") : t(isDots ? dotsStartKey : "launch")}
+                {isBusy ? t("common:loading") : t(isEventActor ? eventStartKey : "launch")}
               </button>
               {canStartNewSession ? (
                 <button

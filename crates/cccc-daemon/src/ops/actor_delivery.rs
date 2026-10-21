@@ -512,8 +512,9 @@ fn web_model_delivery_transport(
             .unwrap_or_default()
     };
     if actor.runtime == ActorRuntime::GrokWebModel {
-        return "web_model_browser";
+        return "web_model_pull";
     }
+
     let mode = setting(&["CCCC_WEB_MODEL_DELIVERY_MODE", "CCCC_WEB_MODEL_DELIVERY"]);
     if matches!(
         mode.as_str(),

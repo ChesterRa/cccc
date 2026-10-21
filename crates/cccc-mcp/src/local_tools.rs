@@ -113,7 +113,9 @@ pub(crate) fn revalidate_binding(home: &HomeLayout, binding: Option<&Value>) -> 
     let Some(binding) = binding else {
         return Ok(());
     };
-    if binding["transport"] == "mcp_events" && binding["dots_stage"] != "execution" {
+    if (binding["transport"] == "mcp_events" && binding["dots_stage"] != "execution")
+        || (binding["transport"] == "grok_webhook" && binding["grok_stage"] != "execution")
+    {
         return Err(retired_authority());
     }
     cccc_core::web_model_connectors::validate_binding(home, binding)

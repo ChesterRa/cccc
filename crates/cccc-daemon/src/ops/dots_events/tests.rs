@@ -601,6 +601,74 @@ fn dots_claim_without_a_wake_is_idle_and_cannot_borrow_a_later_wake() {
 }
 
 #[test]
+fn previous_completion_credential_cannot_complete_a_new_turn() {
+    let f = Fixture::new();
+    f.start();
+    f.source("first task");
+    let d = f.delivery();
+    let first = f.claim(&f.captured(&d, "cccc_runtime_wait_next_turn"))["turn"].clone();
+    f.complete(&first, &f.captured(&d, "cccc_runtime_complete_turn"));
+    let previous = f.captured(&d, "cccc_runtime_complete_turn");
+    assert_eq!(previous["dots_stage"], "completion");
+    f.source("second task");
+    let next = f.delivery();
+    let second = f.claim(&f.captured(&next, "cccc_runtime_wait_next_turn"))["turn"].clone();
+    let before = f.private();
+    let path = GroupStore::new(f.home.clone())
+        .expect("store")
+        .ledger_path(&f.group.group_id)
+        .expect("ledger");
+    let ledger_before = std::fs::read(&path).expect("ledger");
+    for (mut args, code) in [
+        (
+            json!({"turn_id":second["turn_id"],"event_ids":second["event_ids"]}),
+            "permission_denied",
+        ),
+        (
+            json!({"turn_id":first["turn_id"],"event_ids":second["event_ids"]}),
+            "completion_conflict",
+        ),
+        (
+            json!({"turn_id":second["turn_id"],"event_ids":first["event_ids"]}),
+            "permission_denied",
+        ),
+        (
+            json!({"event_ids":second["event_ids"]}),
+            "permission_denied",
+        ),
+    ] {
+        args["by"] = json!("dot");
+        args["_cccc_web_binding"] = previous.clone();
+        let r = f.response("runtime_complete_turn", args);
+        assert!(
+            !r.ok,
+            "A previous task credential must not complete newer work"
+        );
+        assert_eq!(r.error.expect("scope rejection").code, code);
+    }
+    let r = f.response("runtime_complete_turn", json!({"by":"dot","turn_id":first["turn_id"],"event_ids":first["event_ids"],"_cccc_web_binding":f.captured(&next,"cccc_runtime_complete_turn")}));
+    assert_eq!(
+        r.error
+            .expect("current credential cannot acknowledge an older turn")
+            .code,
+        "permission_denied"
+    );
+    assert_eq!(std::fs::read(&path).expect("ledger"), ledger_before);
+    assert_eq!(f.private(), before);
+    assert_eq!(
+        f.call("dots_events_status", json!({}))["active_turn_id"],
+        second["turn_id"]
+    );
+    f.complete(&first, &previous);
+    assert_eq!(std::fs::read(&path).expect("ledger"), ledger_before);
+    assert_eq!(
+        f.call("dots_events_status", json!({}))["active_turn_id"],
+        second["turn_id"]
+    );
+    f.complete(&second, &f.captured(&next, "cccc_runtime_complete_turn"));
+}
+
+#[test]
 fn dots_callback_receipt_first_claim_duplicates_completion_and_backlog_are_distinct() {
     let f = Fixture::new();
     f.start();

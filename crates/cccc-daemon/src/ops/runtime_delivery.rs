@@ -202,6 +202,36 @@ pub fn claim_deliveries(
 }
 
 pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usize, OpError> {
+    settle_claims(
+        home,
+        group,
+        None,
+        "daemon restarted before the claimed handoff recorded an outcome",
+    )
+}
+
+/// The caller has retired the previous transport and verified no active turn.
+/// A preclaimed handoff is uncertain, never proof that it is safe to resubmit.
+pub(super) fn settle_replaced_transport_claims(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    transport: &str,
+) -> Result<usize, OpError> {
+    settle_claims(
+        home,
+        group,
+        Some((actor_id, transport)),
+        "delivery mode changed before the claimed handoff recorded an outcome",
+    )
+}
+
+fn settle_claims(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    replacement: Option<(&str, &str)>,
+    reason: &str,
+) -> Result<usize, OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
     with_exclusive_lock(&delivery_lock_path(&ledger_path), || {
@@ -262,7 +292,9 @@ pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usi
             let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
                 continue;
             };
-            if state != "claimed" {
+            if state != "claimed"
+                || replacement.is_some_and(|(id, current)| actor_id != id || transport == current)
+            {
                 continue;
             }
             append_state(
@@ -272,9 +304,7 @@ pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usi
                 &actor.created_at,
                 &source_event_id,
                 &transport,
-                DeliveryOutcome::Ambiguous(
-                    "daemon restarted before the claimed handoff recorded an outcome",
-                ),
+                DeliveryOutcome::Ambiguous(reason),
             )
             .map_err(|error| std::io::Error::other(error.message))?;
             settled += 1;

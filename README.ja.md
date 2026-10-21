@@ -180,7 +180,7 @@ SDK には daemon は含まれません。実行中の `cccc` 本体に接続し
 ```mermaid
 graph TB
     A1["CLI ランタイム + custom<br/>Codex · Claude · Grok · ..."]
-    A3["ブラウザランタイム<br/>ChatGPT Web · Grok Bot"]
+    A3["リモートランタイム<br/>ChatGPT Web · Grok Bot"]
     A6["ChatGPT Dots"]
     Daemon["CCCC daemon · 単一ライター<br/>Ledger · tasks · context · Actor lifecycle"]
     Ports["CCCC Web UI · CLI · MCP"]
@@ -221,7 +221,7 @@ CCCC は以下の Runtime 連携と、その他の CLI エージェント向け�
 | Antigravity CLI | MCP 自動設定 | `agy` |
 | ChatGPT Web | ブラウザ UI 配信 + Remote MCP | `chatgpt.com` の会話 |
 | ChatGPT Dots | MCP Events + タスクに限定した Remote MCP、ブラウザでのメッセージ配信なし | 明示的にペアリングした 1 つの Dot |
-| Grok Bot Web Model | Remote MCP + ブラウザ配信、Actor ごとの認証情報でルーティング | 必須の `grok.com/bot/<UUID>` URL |
+| Grok Bot Web Model | Remote MCP + ネイティブ Webhook、Actor ごとのタスク権限 | 必須の `grok.com/bot/<UUID>` URL |
 | Grok Build | 管理 ACP セッション + 純正 TUI、自動 MCP 設定 | `grok` |
 | Hermes Agent | 純正 TUI または公式 ACP、ACP はセッション単位 MCP | `hermes` |
 | Droid | 純正 TUI または公式 ACP、ACP はセッション単位 MCP | `droid` |
@@ -250,7 +250,7 @@ GitHub Copilot、Devin CLI、Cursor、Kimi Code、Auggie、Kiro V3、Hermes、Dr
 
 Antigravity は Actor と Voice Analyst 向けの任意の**公式 ACP モード**にも対応し、端末の代わりに構造化ワークスペースを使います。Actor／Profile 設定で ACP を選び、`cccc setup --runtime antigravity --runtime-mode acp --login` を一度実行して CCCC 専用ログインを完了してください。待機中の入力と今回のみの権限確認を画面で確認できます。[ランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp)をご覧ください。
 
-Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Claude Code、Codex CLI、Grok Build、OpenCode、Kilo は、同じ provider session で純正の書き込み可能なターミナルと構造化プロトコルを併用します。メッセージはそのターミナルへ渡され、steer と queue は受信 Runtime が判断します。Pi は公式 RPC を使い、純正ターミナルへの接続はありません。Pi 1.1.0 以降（`@earendil-works/pi-coding-agent`）が必要です。DeepSeek Harness は純正ターミナルなしの ACP、ChatGPT Web と Grok Bot Web Model はブラウザ配信と Remote MCP を使用します。
+Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Claude Code、Codex CLI、Grok Build、OpenCode、Kilo は、同じ provider session で純正の書き込み可能なターミナルと構造化プロトコルを併用します。メッセージはそのターミナルへ渡され、steer と queue は受信 Runtime が判断します。Pi は公式 RPC を使い、純正ターミナルへの接続はありません。Pi 1.1.0 以降（`@earendil-works/pi-coding-agent`）が必要です。DeepSeek Harness は純正ターミナルなしの ACP、ChatGPT Web はブラウザー配信と Remote MCP を使います。Grok Bot Web Model はネイティブ Webhook Routine と Remote MCP を使います。
 
 各サポート Runtime の setup コマンド、操作方式、トラブルシュートは [サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) を参照してください。
 
@@ -266,7 +266,7 @@ CCCC はブラウザ UI の自動操作で Group メッセージをペアリン�
 
 ### Grok Bot Web Model
 
-**Grok Bot Web Model**（`grok_web_model`）は、同じ CCCC ワークスペースツールと配信キューを利用します。Grok Actor はログインと一つの MCP コネクターを共有し、それぞれ独立した Bot URL とウィンドウを持ちます。既存の `https://grok.com/bot/<UUID>` URL が必須で、CCCC は Bot を自動作成しません。全体の Web Model 設定で共有ログインとコネクターを設定し、Actor 設定で Bot URL を保存して起動します。CCCC が各タスクに Actor のルーティング用認証情報を付けるため、別途ペアリングメッセージを送る必要はありません。Grok Build CLI（`grok`）とは別のランタイムです。設定手順と現在の検証範囲は [Grok Bot ガイド](https://chesterra.github.io/cccc/guide/grok-web-model-runtime)を参照してください。
+**Grok Bot Web Model**（`grok_web_model`）は、Actor ごとの既存の `https://grok.com/bot/<UUID>`、ネイティブ Webhook Routine、CCCC Remote MCP コネクターで接続します。Grok のサブスクリプションを使い、ブラウザー配信や別のモデル API key は不要です。初回は Grok デスクトップアプリから Routine URL と Key をコピーします。タスクの順序・単一受付・正確な完了確認は CCCC、承認・利用上限・クラウド実行は Grok が管理します。Grok Build CLI（`grok`）とは別です。[設定・復旧・検証範囲](https://chesterra.github.io/cccc/guide/grok-web-model-runtime)を参照してください。
 
 ## CCCC Connect：インスタンスとチームをつなぐ
 

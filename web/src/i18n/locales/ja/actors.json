@@ -303,7 +303,7 @@
   "webModelActorBoundConnectorHint": "共通 Web モデル設定で共有ログインとコネクターを管理します。この Actor を保存して通常どおり起動すると、会話に自動接続してからタスクを配信します。",
   "webModelProfileHint": "Web モデルのプロファイルは実行環境と機能設定を共有します。各 Actor は接続を個別に設定します。",
   "saveAndApply": "保存して適用",
-  "applyWebModelTargetConfirm": "「{{label}}」に新しい会話を適用しますか？この Actor のみ停止して設定を保存し、新しい接続の保存に成功してから再起動します。失敗した場合は停止したまま、入力内容を保持します。",
+  "applyWebModelTargetConfirm": "「{{label}}」に新しい Bot を適用しますか？未完了のタスクは先に完了するか明示的に解決してください。Bot を変更すると古い Routine の認証情報は消去されます。適用に失敗しても入力内容は保持されます。",
   "antigravityMode": {
     "label": "Antigravity モード",
     "tui": "TUI · ネイティブ端末",

@@ -602,6 +602,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     if matches!(state, GroupState::Paused | GroupState::Stopped) {
         super::dots_events::invalidate_group(home, &group)?;
+        super::grok_webhook::invalidate_group(home, &group)?;
         if group.actors.iter().any(|a| a.runtime.is_web_model()) {
             cccc_core::web_model_connectors::interrupt_automatic_pairings(
                 home,

@@ -621,6 +621,7 @@ async fn paired_dot_claims_successive_turns_without_saved_credentials_or_event_p
         assert!(rejected["result"]["structuredContent"]["turn"].is_null());
     }
     let mut tokens = Vec::new();
+    let mut previous_completion = None;
     for text in ["first Dots packet", "second Dots packet"] {
         let mut event = Event::new("chat.message", &fixture.group_id);
         event.by = "user".into();
@@ -741,6 +742,26 @@ async fn paired_dot_claims_successive_turns_without_saved_credentials_or_event_p
         assert!(duplicate["result"]["structuredContent"]["turn"].is_null());
         assert!(duplicate["result"]["structuredContent"]["actor_token"].is_null());
         if let Some(old) = tokens.last() {
+            let path = store.ledger_path(&fixture.group_id).expect("ledger");
+            let (_, forged) = fixture.mcp("tools/call", json!({"name":"cccc_runtime_complete_turn","arguments":{"actor_token":old,"turn_id":packet["turn"]["turn_id"],"event_ids":packet["turn"]["event_ids"]}}), true).await;
+            assert_eq!(forged["result"]["isError"], true);
+            assert!(
+                !ledger::read_all(&path)
+                    .expect("ledger")
+                    .iter()
+                    .any(|event| {
+                        event.kind == "runtime.turn.completed"
+                            && event.data["turn_id"] == packet["turn"]["turn_id"]
+                    })
+            );
+            let (_, retried) = fixture
+                .mcp(
+                    "tools/call",
+                    json!({"name":"cccc_runtime_complete_turn","arguments":previous_completion}),
+                    true,
+                )
+                .await;
+            assert_ne!(retried["result"]["isError"], true);
             let (_, stale) = fixture
                 .mcp(
                     "tools/call",
@@ -761,6 +782,9 @@ async fn paired_dot_claims_successive_turns_without_saved_credentials_or_event_p
             )
             .await;
         assert_ne!(completed["result"]["isError"], true);
+        previous_completion = Some(
+            json!({"actor_token":token,"turn_id":packet["turn"]["turn_id"],"event_ids":packet["turn"]["event_ids"],"status":"done"}),
+        );
         tokens.push(token);
     }
     assert!(

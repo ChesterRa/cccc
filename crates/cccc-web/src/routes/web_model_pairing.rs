@@ -66,11 +66,6 @@ async fn change(State(state): State<AppState>, Json(body): Json<Value>) -> ApiRe
         .find(|a| a.id == actor && a.runtime.is_browser_web_model())
         .and_then(|a| a.runtime.web_model_provider())
         .ok_or_else(|| ApiError::bad("Web Model Actor not found"))?;
-    if provider != "chatgpt_web" && action != "remove" {
-        return Err(ApiError::bad(
-            "Grok Bot connections use the saved Bot URL, not pairing",
-        ));
-    }
     let connector = store::load(&state)?
         .into_iter()
         .find(|c| c["revoked"] != true && c["provider"] == provider)

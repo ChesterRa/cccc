@@ -145,7 +145,7 @@ impl ActorRuntime {
 
     #[must_use]
     pub const fn is_browser_web_model(self) -> bool {
-        matches!(self, Self::WebModel | Self::GrokWebModel)
+        matches!(self, Self::WebModel)
     }
 
     /// The runner is an implementation detail derived from the Runtime, not a
@@ -311,7 +311,15 @@ mod tests {
         assert_eq!(actor.runner, RunnerKind::Headless);
         assert!(actor.command.is_empty());
         assert!(ActorRuntime::WebModel.is_browser_web_model());
-        assert!(ActorRuntime::GrokWebModel.is_browser_web_model());
+    }
+
+    #[test]
+    fn grok_bot_uses_native_delivery_with_its_own_connector() {
+        let runtime = ActorRuntime::GrokWebModel;
+        assert!(runtime.is_web_model());
+        assert!(!runtime.is_browser_web_model());
+        assert_eq!(runtime.web_model_provider(), Some("grok_web"));
+        assert_eq!(runtime.runner(), RunnerKind::Headless);
     }
 
     #[test]

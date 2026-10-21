@@ -33,16 +33,11 @@ pub fn routes() -> Router<AppState> {
 pub(super) fn provider(value: &str) -> Result<&'static str, ApiError> {
     match value {
         "" | "chatgpt_web" => Ok("chatgpt_web"),
-        "grok_web" => Ok("grok_web"),
         _ => Err(ApiError::bad("Unsupported Web Model provider")),
     }
 }
-fn key(provider: &str) -> &'static str {
-    if provider == "grok_web" {
-        "web-model-login:grok_web"
-    } else {
-        "web-model-login"
-    }
+fn key(_provider: &str) -> &'static str {
+    "web-model-login"
 }
 pub(super) fn profile(state: &AppState, provider: &str) -> std::path::PathBuf {
     state
@@ -84,11 +79,7 @@ async fn open(
         .ensure_open_shared_system(
             key(provider),
             &profile(&state, provider),
-            if provider == "grok_web" {
-                "https://grok.com/"
-            } else {
-                "https://chatgpt.com/"
-            },
+            "https://chatgpt.com/",
             1366,
             900,
         )
@@ -176,73 +167,72 @@ mod tests {
             )
             .await
         });
-        for provider in ["chatgpt_web", "grok_web"] {
-            let profile = profile(&state, provider);
-            state
-                .browser_surfaces
-                .ensure_open_shared_system(key(provider), &profile, &url, 800, 600)
-                .await
-                .expect("login");
-            state
-                .browser_surfaces
-                .ensure_open_shared_actor("actor", &profile, &url, (800, 600), "gen")
-                .await
-                .expect("actor");
-            let page = state
-                .browser_surfaces
-                .sessions
-                .lock()
-                .await
-                .get("actor")
-                .expect("actor")
-                .page
-                .clone();
-            tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                loop {
-                    if page
-                        .evaluate("Boolean(document.querySelector('textarea'))")
-                        .await
-                        .ok()
-                        .and_then(|r| r.into_value::<bool>().ok())
-                        == Some(true)
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let provider = "chatgpt_web";
+        let profile = profile(&state, provider);
+        state
+            .browser_surfaces
+            .ensure_open_shared_system(key(provider), &profile, &url, 800, 600)
+            .await
+            .expect("login");
+        state
+            .browser_surfaces
+            .ensure_open_shared_actor("actor", &profile, &url, (800, 600), "gen")
+            .await
+            .expect("actor");
+        let page = state
+            .browser_surfaces
+            .sessions
+            .lock()
+            .await
+            .get("actor")
+            .expect("actor")
+            .page
+            .clone();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if page
+                    .evaluate("Boolean(document.querySelector('textarea'))")
+                    .await
+                    .ok()
+                    .and_then(|r| r.into_value::<bool>().ok())
+                    == Some(true)
+                {
+                    break;
                 }
-            })
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("fixture ready");
+        page.evaluate("document.cookie='fixture_login=shared;Path=/';document.querySelector('textarea').value='keep Actor draft'").await.expect("fixture login and draft");
+        let before = state.browser_surfaces.info("actor").await;
+        let result = close(
+            State(state.clone()),
+            Query(QueryArgs {
+                provider: provider.into(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("close login route");
+        assert_eq!(result.0["result"]["browser_surface"]["active"], false);
+        let after = state.browser_surfaces.info("actor").await;
+        assert_eq!(after["active"], true);
+        assert_eq!(after["metadata"]["pid"], before["metadata"]["pid"]);
+        assert!(page.evaluate("document.cookie.includes('fixture_login=shared') && document.querySelector('textarea').value==='keep Actor draft'").await.expect("Actor survives close").into_value::<bool>().expect("bool"));
+        // Reopening the settings window must reuse the authenticated owner.
+        let reopened = state
+            .browser_surfaces
+            .ensure_open_shared_system(key(provider), &profile, &url, 800, 600)
             .await
-            .expect("fixture ready");
-            page.evaluate("document.cookie='fixture_login=shared;Path=/';document.querySelector('textarea').value='keep Actor draft'").await.expect("fixture login and draft");
-            let before = state.browser_surfaces.info("actor").await;
-            let result = close(
-                State(state.clone()),
-                Query(QueryArgs {
-                    provider: provider.into(),
-                    ..Default::default()
-                }),
-            )
+            .expect("reopen login");
+        assert_eq!(reopened["metadata"]["pid"], before["metadata"]["pid"]);
+        assert!(state.browser_surfaces.page_available("actor").await);
+        state
+            .browser_surfaces
+            .close("actor")
             .await
-            .expect("close login route");
-            assert_eq!(result.0["result"]["browser_surface"]["active"], false);
-            let after = state.browser_surfaces.info("actor").await;
-            assert_eq!(after["active"], true);
-            assert_eq!(after["metadata"]["pid"], before["metadata"]["pid"]);
-            assert!(page.evaluate("document.cookie.includes('fixture_login=shared') && document.querySelector('textarea').value==='keep Actor draft'").await.expect("Actor survives close").into_value::<bool>().expect("bool"));
-            // Reopening the settings window must reuse the authenticated owner.
-            let reopened = state
-                .browser_surfaces
-                .ensure_open_shared_system(key(provider), &profile, &url, 800, 600)
-                .await
-                .expect("reopen login");
-            assert_eq!(reopened["metadata"]["pid"], before["metadata"]["pid"]);
-            assert!(state.browser_surfaces.page_available("actor").await);
-            state
-                .browser_surfaces
-                .close("actor")
-                .await
-                .expect("close fixture Actor");
-        }
+            .expect("close fixture Actor");
         state
             .browser_surfaces
             .shutdown_all()

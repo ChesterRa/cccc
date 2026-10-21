@@ -9,6 +9,8 @@ pub(super) fn normalize(
     group: &GroupDoc,
     data: &mut Map<String, Value>,
 ) -> Result<(), OpError> {
+    // Captured port authority is checked before dispatch, never message content.
+    data.remove("_cccc_web_binding");
     normalize_scope(group, data)?;
     normalize_attachments(home, group, data)?;
     super::install_command::prepare(data);

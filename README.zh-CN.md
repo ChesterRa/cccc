@@ -177,7 +177,7 @@ SDK 不包含 daemon，需要连接已运行的 `cccc` 本体实例。
 ```mermaid
 graph TB
     A1["CLI 运行时 + custom<br/>Codex · Claude · Grok · ..."]
-    A3["浏览器运行时<br/>ChatGPT Web · Grok Bot"]
+    A3["Web 运行时<br/>ChatGPT Web · Grok Bot"]
     A6["ChatGPT Dots"]
     Daemon["CCCC daemon · 单写者<br/>账本 · 任务 · 上下文 · Actor 生命周期"]
     Ports["CCCC Web UI · CLI · MCP"]
@@ -218,7 +218,7 @@ CCCC 提供以下运行时接入，另支持通过 `custom` 启动其它命令�
 | Antigravity CLI | 自动 MCP 配置 | `agy` |
 | ChatGPT Web | 浏览器界面投递 + 远程 MCP | `chatgpt.com` 对话 |
 | ChatGPT Dots | MCP Events + 任务范围内的远程 MCP；无浏览器消息投递 | 一个明确配对的 Dot |
-| Grok Bot Web Model | 远程 MCP + 浏览器投递；按 Actor 凭据路由 | 必填 `grok.com/bot/<UUID>` URL |
+| Grok Bot Web Model | 远程 MCP + 原生 Webhook；每 Actor 独立任务权限 | 必填 `grok.com/bot/<UUID>` URL |
 | Grok Build | 托管 ACP 会话 + 原生 TUI；自动配置原生 MCP | `grok` |
 | Hermes Agent | 原生 TUI 或官方 ACP；ACP 按会话注入 MCP | `hermes` |
 | Droid | 原生 TUI 或官方 ACP；ACP 按会话注入 MCP | `droid` |
@@ -247,7 +247,7 @@ GitHub Copilot、Devin CLI、Cursor、Kimi Code、Auggie、Kiro V3、Hermes、Dr
 
 Antigravity 还支持可选的**官方 ACP 模式**，可用于 Actor 与 Voice Analyst，以结构化工作区代替终端。在 Actor／Profile 设置中选择 ACP，并运行一次 `cccc setup --runtime antigravity --runtime-mode acp --login`，完成独立的 CCCC 登录。忙时输入排队和单次权限确认均在工作区中显示。详情见[运行时指南](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp)。
 
-用户只需选择 Runtime，CCCC 会自动确定交互方式。Claude Code、Codex CLI、Grok Build、OpenCode 和 Kilo 在同一个 provider session 上配对原生可写终端与后台结构化协议。消息进入原生终端后，由接收 Runtime 决定是 steer 还是 queue。Pi 使用官方 RPC，没有原生终端附件，要求 Pi 1.1.0 或更新版本（`@earendil-works/pi-coding-agent`）。DeepSeek Harness 使用结构化 ACP，不提供原生终端；ChatGPT Web 和 Grok Bot Web Model 使用浏览器投递和远程 MCP。
+用户只需选择 Runtime，CCCC 会自动确定交互方式。Claude Code、Codex CLI、Grok Build、OpenCode 和 Kilo 在同一个 provider session 上配对原生可写终端与后台结构化协议。消息进入原生终端后，由接收 Runtime 决定是 steer 还是 queue。Pi 使用官方 RPC，没有原生终端附件，要求 Pi 1.1.0 或更新版本（`@earendil-works/pi-coding-agent`）。DeepSeek Harness 使用结构化 ACP，不提供原生终端；ChatGPT Web 使用浏览器投递和远程 MCP；Grok Bot Web Model 使用原生 Webhook Routine 和远程 MCP。
 
 每个支持 Runtime 的 setup 命令、交互说明和排障方式，见[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)。
 
@@ -263,7 +263,7 @@ CCCC 通过浏览器界面自动操作，把 Group 消息送入配对的 ChatGPT
 
 ### Grok Bot Web Model
 
-**Grok Bot Web Model**（`grok_web_model`）使用同一套 CCCC 工作区工具和投递队列。Grok Actor 共享登录和一个 MCP 连接器，各自使用独立的 Bot URL 与窗口。必须提供已有的 `https://grok.com/bot/<UUID>` URL，CCCC 不会自动创建 Bot。在全局 Web Model 设置中配置共享登录和连接器，再到 Actor 设置中保存 Bot URL 并启动。CCCC 会随每条任务提供该 Actor 的路由凭据，无需额外发送配对消息。这与 Grok Build CLI（`grok`）是两种不同的运行时。完整配置与当前验证范围见 [Grok Bot 使用指南](https://chesterra.github.io/cccc/guide/grok-web-model-runtime)。
+**Grok Bot Web Model**（`grok_web_model`）通过每个 Actor 已有的 `https://grok.com/bot/<UUID>`、原生 Webhook Routine 和 CCCC 远程 MCP 连接器接入。使用 Grok 订阅，无需画面投递或单独的模型 API key；首次设置需从 Grok 桌面应用复制 Routine URL 和 Key。CCCC 负责任务顺序、单次领取和精确完成回执，供应商审批、额度及云端执行仍由 Grok 管理。这与 Grok Build CLI（`grok`）不同。详见[配置、恢复与验证边界](https://chesterra.github.io/cccc/guide/grok-web-model-runtime)。
 
 ## CCCC Connect：跨实例与团队协作
 

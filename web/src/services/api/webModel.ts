@@ -270,6 +270,45 @@ export type WebModelBrowserSurfaceResult = {
   pairing?: WebModelPairing;
 };
 
+export type GrokActorState = {
+  group_id: string;
+  actor_id: string;
+  connected: boolean;
+  bound: boolean;
+  configured: boolean;
+  enabled: boolean;
+  phase: string;
+  pending_count: number;
+  bot_url?: string | null;
+  active_turn_id?: string;
+  active_event_ids?: string[];
+  error_code?: string | null;
+  http_status?: number | null;
+  last_execution?: { status: string; completed_at?: string } | null;
+};
+
+export function fetchGrokActorState(groupId: string, actorId: string) {
+  const query = new URLSearchParams({ group_id: groupId, actor_id: actorId });
+  return apiJson<GrokActorState>(`/api/v1/web-model/grok-webhook?${query}`);
+}
+
+export function changeGrokWebhook(
+  groupId: string,
+  actorId: string,
+  args: {
+    action: "configure" | "retry" | "resolve" | "instructions" | "bind" | "disconnect";
+    url?: string;
+    key?: string;
+    turn_id?: string;
+    event_ids?: string[];
+  },
+) {
+  return apiJson<GrokActorState & { instructions?: string }>("/api/v1/web-model/grok-webhook", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId, actor_id: actorId, ...args }),
+  });
+}
+
 export type WebModelPairing = {
   state: string;
   pairing_id?: string;
@@ -620,8 +659,5 @@ export function getWebModelBrowserSurfaceWebSocketUrl(groupId: string, actorId: 
 }
 
 export async function bindGrokBot(groupId: string, actorId: string, url: string) {
-  return apiJson<WebModelBrowserSurfaceResult>("/api/v1/web-model/browser-session/grok-bind", {
-    method: "POST",
-    body: JSON.stringify({ group_id: groupId, actor_id: actorId, url }),
-  });
+  return changeGrokWebhook(groupId, actorId, { action: "bind", url });
 }

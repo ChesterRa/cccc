@@ -20,8 +20,8 @@ vi.mock("../../services/api", () => ({
 }));
 import { WebModelRuntimePanel } from "./WebModelRuntimePanel";
 
-const bot = "https://grok.com/bot/1373170d-9cf2-408c-b597-e243e5884f4a";
-const actor = { id: "a", runtime: "grok_web_model" } as Actor;
+const bot = "https://chatgpt.com/c/fixture";
+const actor = { id: "a", runtime: "web_model" } as Actor;
 const response = (url = bot, active = true) => ({
   ok: true as const,
   result: {
@@ -68,20 +68,7 @@ async function mount(current = actor) {
     ),
   );
 }
-it("requires a saved Grok Bot URL before opening any browser", async () => {
-  mocks.load.mockResolvedValue(response("", false));
-  await mount();
-  expect(mocks.open).not.toHaveBeenCalled();
-  expect(Socket.instances).toHaveLength(0);
-  expect(host.textContent).toContain("settings:grokActor.urlRequired");
-  expect(host.textContent).not.toContain("https://grok.com/");
-  await act(async () =>
-    [...host.querySelectorAll("button")]
-      .find((b) => b.textContent?.includes("settings:grokActor.title"))!
-      .click(),
-  );
-  expect(mocks.edit).toHaveBeenCalledWith(actor, "chatgpt");
-});
+
 it("waits for the owned window's open operation before attaching to a warmup surface", async () => {
   let finish!: (r: ReturnType<typeof response>) => void;
   mocks.open.mockImplementation(
@@ -97,9 +84,9 @@ it("waits for the owned window's open operation before attaching to a warmup sur
   expect(Socket.instances).toHaveLength(1);
   expect(host.textContent).toContain(bot);
 });
-it("rechecks the browser when the same Actor changes provider", async () => {
+it("rechecks the browser when the selected Actor changes", async () => {
   await mount();
-  await mount({ ...actor, runtime: "web_model" });
+  await mount({ ...actor, id: "other" });
   expect(mocks.open).toHaveBeenCalledTimes(2);
   expect(Socket.instances[0].readyState).toBe(3);
 });
@@ -131,12 +118,12 @@ it("keeps conversation settings reachable from the compact toolbar without openi
     ),
   );
   const opened = mocks.open.mock.calls.length;
-  expect(host.textContent).not.toContain("settings:grokActor.title");
+  expect(host.textContent).not.toContain("settings:webModelActor.title");
   await act(async () =>
     host.querySelector<HTMLButtonElement>('[aria-label="settings:title"]')!.click(),
   );
   const edit = [...document.querySelectorAll("button")].find((b) =>
-    b.textContent?.includes("settings:grokActor.title"),
+    b.textContent?.includes("settings:webModelActor.title"),
   );
   expect(edit).toBeTruthy();
   await act(async () => edit!.click());
@@ -144,7 +131,7 @@ it("keeps conversation settings reachable from the compact toolbar without openi
   expect(mocks.open).toHaveBeenCalledTimes(opened);
 });
 
-it("does not offer an empty settings menu for read-only Grok panes", async () => {
+it("does not offer an empty settings menu for read-only panes", async () => {
   await act(async () =>
     root.render(
       <WebModelRuntimePanel

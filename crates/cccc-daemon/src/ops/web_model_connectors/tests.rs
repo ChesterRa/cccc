@@ -234,10 +234,11 @@ fn stopping_a_cli_actor_does_not_depend_on_the_web_connector_store() {
     )
     .expect("unreadable Web connector");
     assert!(super::super::actor_runtime::apply(&home, &group, "cli", "actor.stop").is_ok());
+    assert!(super::super::actor_runtime::stop_group(&home, &group).is_ok());
 }
 
 #[test]
-fn grok_binding_requires_stopped_actor_preserves_pending_work_and_retires_on_runtime_change() {
+fn grok_binding_preserves_enabled_state_and_retires_on_runtime_change() {
     let temp = tempfile::tempdir().expect("valid test fixture");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("valid test fixture");
     home.initialize().expect("valid test fixture");
@@ -269,7 +270,9 @@ fn grok_binding_requires_stopped_actor_preserves_pending_work_and_retires_on_run
     );
     let id = &configured["connector"]["connector_id"];
     let mut args = json!({"by":"user","connector_id":id,"group_id":group.group_id,"actor_id":"bot","url":"https://grok.com/bot/1373170d-9cf2-408c-b597-e243e5884f4a"});
-    assert!(execute(&home, &request("web_model_grok_bind", args.clone())).is_err());
+    execute(&home, &request("web_model_grok_bind", args.clone())).expect("idle native Actor");
+    assert!(groups.load(&group.group_id).expect("group").actors[0].enabled);
+    assert!(execute(&home, &request("web_model_binding_remove", args.clone())).is_err());
     groups
         .mutate(&group.group_id, |g| {
             g.actors[0].enabled = false;
@@ -284,38 +287,32 @@ fn grok_binding_requires_stopped_actor_preserves_pending_work_and_retires_on_run
             .find(|c| &c["connector_id"] == id)
             .expect("valid test fixture")
     };
-    let token = store::grok_token(
-        &connector(),
-        &connector()["bindings"]
+    let binding = connector()["bindings"]
+        .as_object()
+        .expect("bindings")
+        .values()
+        .next()
+        .expect("binding")
+        .clone();
+    // Browser integration leftovers must not obstruct native setup. Canonical
+    // unfinished turns, rather than browser UI metadata, protect active work.
+    integration_state::group_update(&groups, &group.group_id, "web_model_browser_targets", |v| {
+        *v = json!({"bot":{"last_delivery_status":"submission_ambiguous","last_delivery_id":"legacy"}});
+        Ok(())
+    }).expect("legacy metadata");
+    execute(&home, &request("web_model_grok_bind", args.clone())).expect("same native route");
+    assert_eq!(
+        connector()["bindings"]
             .as_object()
-            .expect("valid test fixture")
+            .expect("bindings")
             .values()
             .next()
-            .expect("valid test fixture")
-            .clone(),
-    )
-    .expect("valid test fixture");
-    for status in ["submission_ambiguous", "ambiguous", "completion_conflict"] {
-        integration_state::group_update(&groups, &group.group_id, "web_model_browser_targets", |v| {
-            *v = json!({"bot":{"url":args["url"],"last_delivery_status":status,"last_delivery_id":"pending"}}); Ok(())
-        }).expect("valid test fixture");
-        execute(&home, &request("web_model_grok_bind", args.clone())).expect("valid test fixture");
-        assert!(store::binding_for_token(&connector(), &token).is_some());
-        assert!(execute(&home, &request("web_model_binding_remove", args.clone())).is_err());
-        let mut changed = args.clone();
-        changed["url"] = json!("https://grok.com/bot/958f2446-013f-4225-8dd3-f146295992d7");
-        assert!(execute(&home, &request("web_model_grok_bind", changed)).is_err());
-        assert_eq!(
-            integration_state::group_get(&groups, &group.group_id, "web_model_browser_targets")
-                .expect("valid test fixture")["bot"]["last_delivery_id"],
-            "pending"
-        );
-    }
-    integration_state::group_update(&groups, &group.group_id, "web_model_browser_targets", |v| {
-        *v = json!({});
-        Ok(())
-    })
-    .expect("valid test fixture");
+            .expect("binding")["revision"],
+        binding["revision"]
+    );
+    execute(&home, &request("web_model_binding_remove", args.clone()))
+        .expect("remove native route");
+    execute(&home, &request("web_model_grok_bind", args.clone())).expect("rebind native route");
     for runtime in ["web_model", "grok_web_model"] {
         let r = request(
             "actor_update",
@@ -327,8 +324,16 @@ fn grok_binding_requires_stopped_actor_preserves_pending_work_and_retires_on_run
             .expect("valid test fixture");
     }
     assert!(
-        store::binding_for_token(&connector(), &token).is_none(),
-        "switching back cannot resurrect a retired credential"
+        store::binding_for_actor(
+            &connector(),
+            &group.group_id,
+            "bot",
+            &cccc_core::actors::generation_identity(
+                &groups.load(&group.group_id).expect("group").actors[0]
+            )
+        )
+        .is_none(),
+        "runtime replacement retires the binding"
     );
     args["connector_id"] = chatgpt["connector"]["connector_id"].clone();
     assert!(execute(&home, &request("web_model_grok_bind", args)).is_err());

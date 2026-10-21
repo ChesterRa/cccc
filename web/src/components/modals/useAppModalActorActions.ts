@@ -344,9 +344,9 @@ export function useAppModalActorActions(args: {
     try {
       let actorSnapshot: Record<string, unknown> = savedActor as unknown as Record<string, unknown>;
 
-      // A new Grok route must be configured while stopped. Do this before
-      // changing runtime so an enabled Actor cannot start without its Bot URL.
-      if (grokBotUrl !== undefined) {
+      // Runtime conversion still requires stopping the old backend. An existing
+      // native Grok Actor applies its route under the daemon's admission lock.
+      if (grokBotUrl !== undefined && currentRuntime !== "grok_web_model") {
         const stopResp = await api.stopActor(targetGroupId, actorId);
         if (!stopResp.ok) throw new Error(`${stopResp.error.code}: ${stopResp.error.message}`);
         actorSnapshot = { ...actorSnapshot, enabled: false, running: false };
@@ -474,7 +474,10 @@ export function useAppModalActorActions(args: {
       }
 
       if (options.restart) {
-        const restartResp = await api.restartActor(targetGroupId, actorId);
+        const restartResp =
+          grokBotUrl !== undefined
+            ? await api.startActor(targetGroupId, actorId)
+            : await api.restartActor(targetGroupId, actorId);
         if (!restartResp.ok) {
           throw new Error(`${restartResp.error.code}: ${restartResp.error.message}`);
         }

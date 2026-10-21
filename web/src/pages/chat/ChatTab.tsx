@@ -20,6 +20,7 @@ import {
   PresentationMessageRef,
   TaskMessageRef,
   VoiceDocumentMessageRef,
+  isBrowserWebModelRuntime,
 } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
@@ -367,11 +368,15 @@ export function ChatTab({
   );
   const webModelDeliveryStatusByEventId = useMemo(
     () =>
-      buildWebModelDeliveryStatusByEventId([
-        ...(liveWorkBucket?.events || []),
-        ...(liveWorkBucket?.chatWindow?.events || []),
-      ]),
-    [liveWorkBucket?.chatWindow?.events, liveWorkBucket?.events],
+      buildWebModelDeliveryStatusByEventId(
+        [...(liveWorkBucket?.events || []), ...(liveWorkBucket?.chatWindow?.events || [])],
+        new Set(
+          actors
+            .filter((actor) => isBrowserWebModelRuntime(actor.runtime))
+            .map((actor) => actor.id),
+        ),
+      ),
+    [actors, liveWorkBucket?.chatWindow?.events, liveWorkBucket?.events],
   );
   const [appPermissionHintDismissed, setAppPermissionHintDismissed] = useState(
     readChatGptAppPermissionHintDismissed,

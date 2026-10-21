@@ -1134,7 +1134,7 @@
     "downloaded": "已下载",
     "working": "处理中…",
     "pickFileFirst": "请先选择文件进行预览",
-    "reconnectGrok": "导入后请重新保存各 Grok Actor 的 Bot URL。"
+    "reconnectGrok": "导入后请重新保存各 Grok Actor 的 Bot URL，并配置其 Webhook Routine 凭据。"
   },
   "developer": {
     "title": "开发者模式（全局）",
@@ -1608,11 +1608,9 @@
   },
   "grokShared": {
     "title": "Grok Bot 共享设置",
-    "description": "在 CCCC 专用浏览器中登录一次，每个 Actor 保持自己的 Bot 窗口。",
-    "login": "共享 Grok 登录",
-    "loginHint": "Grok Actor 共享此登录。退出登录会影响全部 Grok Actor；关闭登录窗口不影响 Actor 窗口和已保存的登录。",
+    "description": "通过原生 Webhook Routine 与共享 MCP 连接器接入 Grok Bot，CCCC 无需登录 Grok 浏览器。",
     "connectorHint": "在 Grok Connectors 中添加此连接器一次。每个 Actor 使用自己的 Bot URL，并随任务获得对应的 CCCC 凭据。",
-    "actorHint": "创建 Grok Bot Web Model Actor，在 Actor 设置中保存 Bot URL，然后正常启动，无需发送配对消息。",
+    "actorHint": "请在每个 Actor 的连接设置中保存 Bot 地址并配置 Webhook Routine。",
     "rotateHint": "旧地址将对所有 Grok Actor 失效。请用新地址更新 Grok 连接器，已有 Bot 绑定会保留。",
     "revokeHint": "所有 Grok Actor 将失去工具访问权限。重新创建连接器后，需要再次保存各自的 Bot URL。",
     "upgrade": "配置 Grok 连接器，并保存每个 Actor 的 Bot URL。",
@@ -1622,24 +1620,44 @@
     "notSeen": "尚未收到连接器请求，请在 Grok 中添加此连接器。"
   },
   "grokActor": {
-    "title": "Grok Bot 对话",
-    "hint": "配置共享 Grok 登录与连接器，并为此 Actor 指定已有的 Bot URL。CCCC 不会自动创建 Grok Bot，也无需发送配对消息。",
-    "shared": "共享登录与连接器",
+    "title": "Grok Bot",
+    "hint": "任务通过原生 Webhook Routine 与 CCCC MCP 连接器到达，不使用浏览器画面投递。",
+    "shared": "MCP 连接器设置",
     "url": "Grok Bot URL（必填）",
     "change": "更换 Bot",
     "remove": "解除连接",
     "confirmRemove": "确认解除",
-    "login_required": "需要登录 Grok",
-    "verification_required": "请完成 Grok 网页验证",
-    "urlRequired": "请先在此 Actor 的“Grok Bot 对话”设置中保存已有的 Bot URL，再打开窗口。CCCC 不会自动创建 Bot。",
-    "open": "打开 Bot 窗口",
-    "bound": "Bot 已配置",
-    "bound_stopped": "Bot 已配置 · Actor 已停止",
-    "unpaired": "请填写 Bot URL",
-    "browser_closed": "Bot 已配置 · 浏览器已关闭",
     "runtimeSaveHint": "在这里填写已有 Bot URL，与底部的 Actor 设置一起保存。只有确认应用更改时，才会停止并重新启动正在运行的 Actor。",
     "invalidUrl": "请输入完整的 Grok Bot 地址：https://grok.com/bot/…",
-    "draftHint": "运行时也可以编辑。使用底部“保存”一并保存 URL 和其他设置；对运行中的 Actor 应用更改时，会先请你确认，再只重启此 Actor。"
+    "draftHint": "运行时也可以编辑。使用底部“保存”一并应用 Bot URL 和其他设置；未完成的任务需先完成或明确处理。更换 Bot 会清除旧 Routine 凭据。",
+    "routine": "Webhook Routine",
+    "configured": "已配置",
+    "setupRequired": "需要设置",
+    "queued": "待处理消息",
+    "lastTask": "最近任务",
+    "noTask": "暂无已完成任务",
+    "taskProgress": "任务投递",
+    "connectorStep": "1. 连接 CCCC",
+    "connectorHint": "为此 Bot 添加共享的 CCCC MCP 连接器。地址与凭据在全局设置中管理。",
+    "botStep": "2. 选择 Bot",
+    "routineStep": "3. 设置 Webhook Routine",
+    "connectionSettings": "连接设置",
+    "readFailed": "无法读取 Grok Bot 状态。",
+    "unavailable": "暂不可用",
+    "adminManaged": "此 Bot 的连接由实例管理员管理，你仍可正常使用 Group。",
+    "setupHint": "打开连接设置，为此 Bot 连接 CCCC 并保存原生 Webhook Routine。",
+    "disconnectHint": "断开前请停止 CCCC 访问。不再使用时，也请在 Grok 停用 Routine。",
+    "outcomes": {
+      "done": "最近任务已完成",
+      "failed": "最近任务失败",
+      "cancelled": "最近任务已结束"
+    },
+    "steps": {
+      "notify": "排队／发送",
+      "waiting": "等待 Bot 领取",
+      "working": "工作中",
+      "completed": "已完成"
+    }
   },
   "voiceSettings": {
     "claudeTrustHint": "首次使用 Claude 前，请用对应的 CLAUDE_CONFIG_DIR 信任一次 $CCCC_HOME/voice-secretary/jobs。后续任务沿用父目录信任；设置时无需发送模型任务。",
@@ -1965,5 +1983,39 @@
       "refreshTools": "在 ChatGPT 中刷新 CCCC 插件工具，并核对最新设置说明。",
       "callFailed": "重试前查看 ChatGPT 报告的具体失败调用；仅凭此记录不能判断任务是否已经完成。"
     }
+  },
+  "grokWebhook": {
+    "pause": "停止 CCCC 访问",
+    "setupHint": "使用下方指令在此 Bot 保存一个 Webhook Routine，再填写桌面端提供的凭据。Routine 使用你的 Grok 订阅额度。",
+    "instructions": "获取 Routine 设置指令",
+    "copyFailed": "复制失败，请手动选择并复制指令。",
+    "saved": "Webhook 已配置。留空保留现有配置；同时填写两项以更换凭据。",
+    "desktop": "在 Grok 桌面应用打开已保存的 Routine，复制 POST to 和 Key。网页不显示这两项。",
+    "url": "POST to 地址",
+    "key": "Routine Key",
+    "save": "保存 Routine 凭据",
+    "pending": "{{count}} 条待处理消息",
+    "openBot": "打开 Grok Bot",
+    "runtimeHint": "CCCC 每次领取并完成一个任务。停止访问会撤销 CCCC 权限，但不会停止 Grok 已在云端运行的工作。",
+    "deliveryError": "Webhook 投递需要处理（HTTP {{status}}）。请检查桌面端 Routine、Key、额度及 CCCC 连接器。",
+    "retry": "重试唤醒",
+    "resolveHint": "请先检查 Bot。结束此未完成任务后不会重新投递其消息，后续排队工作可以继续。这不会取消 Grok 云端工作。",
+    "resolve": "结束未完成任务",
+    "confirmResolve": "确认结束",
+    "phase": {
+      "ready": "已就绪，等待任务",
+      "stopped": "CCCC 访问已停止",
+      "pending": "等待发送唤醒",
+      "delivering": "正在发送唤醒",
+      "delivered": "唤醒已接受，等待领取",
+      "unclaimed": "唤醒已接受但未领取，请检查 Routine 和连接器",
+      "working": "正在处理已领取任务",
+      "interrupted": "存在未完成任务，请先检查",
+      "failed": "唤醒失败，排队消息已保留",
+      "unconfigured": "需要完成原生设置"
+    },
+    "saveAndApply": "保存并应用凭据",
+    "applyHint": "编辑内容仅保留在本地，保存后才生效。空闲时应用会保持当前的 CCCC 访问启用状态。",
+    "waitForTask": "当前连接有未完成的任务。可以先编辑，待任务完成或明确处理后再应用。"
   }
 }

@@ -63,6 +63,7 @@ vi.mock("../services/api", () => ({
       connector_base_url: "https://cccc.example.test",
     },
   }),
+  fetchGrokActorState: (...args: unknown[]) => mocks.load(...args),
   fetchDotsActorState: (...args: unknown[]) => mocks.load(...args),
   updateDotsActorConnection: (...args: unknown[]) => mocks.update(...args),
 }));
@@ -297,4 +298,73 @@ it("shows an administrator-managed connection for a Group writer without fetchin
   expect(host.textContent).not.toContain(" • waiting");
   await act(async () => vi.advanceTimersByTimeAsync(4_000));
   expect(mocks.load).not.toHaveBeenCalled();
+});
+
+it("renders a Grok native pane and task status without a terminal or browser", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: {
+      group_id: "g_dot",
+      actor_id: "bot",
+      connected: true,
+      bound: true,
+      configured: true,
+      enabled: true,
+      phase: "working",
+      pending_count: 2,
+    },
+  });
+  const grok = { ...actor, id: "bot", runtime: "grok_web_model" } as Actor;
+  await render(true, grok);
+  expect(mocks.browser).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("settings:grokWebhook.phase.working");
+  expect(host.textContent).toContain("grokActor.configured");
+  expect(host.querySelector("select")).toBeNull();
+  await act(async () =>
+    [...host.querySelectorAll("button")]
+      .find((b) => b.textContent === "grokActor.connectionSettings")!
+      .click(),
+  );
+  expect(mocks.edit).toHaveBeenCalledWith(grok, "chatgpt");
+});
+it("does not fetch restricted Grok state for a Group writer", async () => {
+  mocks.access = false;
+  await render(false, { ...actor, runtime: "grok_web_model", running: true } as Actor);
+  expect(mocks.load).not.toHaveBeenCalled();
+  expect(mocks.browser).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("grokActor.adminManaged");
+  expect(host.querySelector('button[aria-label="dotsPause"]')).not.toBeNull();
+});
+
+it("does not carry a Dot's state into Grok after a runtime change", async () => {
+  mocks.load.mockResolvedValue(dotsState({ connected: true, subscribed: true, phase: "ready" }));
+  await render(true);
+  let finish!: (value: unknown) => void;
+  mocks.load.mockReturnValueOnce(
+    new Promise((r) => {
+      finish = r;
+    }),
+  );
+  await render(true, { ...actor, runtime: "grok_web_model" } as Actor);
+  expect(host.querySelector("[data-terminal-title-bar]")?.textContent).not.toContain(
+    "settings:grokWebhook.phase.ready",
+  );
+  await act(async () =>
+    finish({
+      ok: true,
+      result: {
+        group_id: "g_dot",
+        actor_id: "dot",
+        connected: true,
+        bound: false,
+        configured: false,
+        enabled: true,
+        phase: "unconfigured",
+        pending_count: 0,
+      },
+    }),
+  );
+  expect(host.querySelector("[data-terminal-title-bar]")?.textContent).toContain(
+    "settings:grokWebhook.phase.unconfigured",
+  );
 });

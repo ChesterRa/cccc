@@ -43,10 +43,11 @@ describe("host Runtime detection", () => {
       expect(runtimeDetectionKey(runtime, undefined, "ready")).toBe("web");
     expect(runtimeDetectionKey("custom", undefined, "ready")).toBe("custom");
   });
-  it("treats Dots as a Web runtime without enabling browser delivery", () => {
+  it("keeps event Runtimes outside browser delivery", () => {
     expect(isWebModelRuntime("chatgpt_dots")).toBe(true);
     expect(isBrowserWebModelRuntime("chatgpt_dots")).toBe(false);
     expect(isBrowserWebModelRuntime("web_model")).toBe(true);
-    expect(isBrowserWebModelRuntime("grok_web_model")).toBe(true);
+    expect(isWebModelRuntime("grok_web_model")).toBe(true);
+    expect(isBrowserWebModelRuntime("grok_web_model")).toBe(false);
   });
 });

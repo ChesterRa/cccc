@@ -96,13 +96,6 @@ fn control(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn delivery_preference(group: &GroupDoc, actor_id: &str) -> Value {
-    if group
-        .actors
-        .iter()
-        .any(|a| a.id == actor_id && a.runtime == cccc_contracts::ActorRuntime::GrokWebModel)
-    {
-        return json!({"mode":"standard"});
-    }
     let stored = group
         .extra
         .get(DELIVERY_PREFERENCES_KEY)
@@ -135,7 +128,15 @@ fn require_web_model_actor<'a>(
 
 fn delivery_preferences_get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
-    require_web_model_actor(&group, &actor_id)?;
+    if !require_web_model_actor(&group, &actor_id)?
+        .runtime
+        .is_browser_web_model()
+    {
+        return Err(OpError::new(
+            "invalid_actor_runtime",
+            "Delivery preferences apply to ChatGPT browser Actors only",
+        ));
+    }
     object(json!({
         "group_id":group.group_id,
         "actor_id":actor_id,
@@ -145,7 +146,15 @@ fn delivery_preferences_get(home: &HomeLayout, request: &DaemonRequest) -> OpRes
 
 fn delivery_preferences_update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
-    require_web_model_actor(&group, &actor_id)?;
+    if !require_web_model_actor(&group, &actor_id)?
+        .runtime
+        .is_browser_web_model()
+    {
+        return Err(OpError::new(
+            "invalid_actor_runtime",
+            "Delivery preferences apply to ChatGPT browser Actors only",
+        ));
+    }
     let by = string_arg(request, "by").unwrap_or_default();
     if by != "user" {
         return Err(OpError::new(
@@ -266,6 +275,15 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
             "Dots work requires its explicitly paired session through the connector",
         ));
     }
+    if actor.runtime == cccc_contracts::ActorRuntime::GrokWebModel
+        && request.op != "grok_work_claim"
+    {
+        return Err(OpError::new(
+            "grok_event_required",
+            "Grok work requires the current Webhook claim",
+        ));
+    }
+
     if super::local_headless::supports(actor) {
         return Err(OpError::new(
             "provider_managed_headless",
@@ -428,6 +446,12 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
 fn recover_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let actor = require_web_model_actor(&group, &actor_id)?;
+    if actor.runtime == cccc_contracts::ActorRuntime::GrokWebModel {
+        return Err(OpError::new(
+            "grok_event_required",
+            "Grok unfinished work requires explicit user resolution; it is not replayed",
+        ));
+    }
     if actor.runtime == cccc_contracts::ActorRuntime::ChatgptDots {
         return Err(OpError::new(
             "dots_explicit_resolution_required",
@@ -608,6 +632,23 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             format!("event_ids cannot contain more than {MAX_TURN_EVENTS} entries"),
         ));
     }
+    // Native credentials authorize one turn, including completion retries. Check
+    // this before reading or appending a receipt. The existing receipt/active-turn
+    // checks below enforce that turn's exact event IDs and their order.
+    if request
+        .args
+        .get("_cccc_web_binding")
+        .is_some_and(|binding| match binding["transport"].as_str() {
+            Some("grok_webhook") => binding["grok_turn_id"].as_str() != Some(turn_id.as_str()),
+            Some("mcp_events") => binding["dots_turn_id"].as_str() != Some(turn_id.as_str()),
+            _ => false,
+        })
+    {
+        return Err(OpError::new(
+            "permission_denied",
+            "The completion must belong to the credential's original turn",
+        ));
+    }
     let delivery_id = string_arg(request, "delivery_id")
         .filter(|value| !value.is_empty())
         .or_else(|| (request.op == "runtime_complete_turn").then(|| format!("runtime:{turn_id}")))
@@ -678,6 +719,7 @@ pub(super) fn finish_completion(
                 && string_arg(request, "by").as_deref() == Some("user"),
         )?;
     }
+    super::grok_webhook::completed(home, group, actor_id, completion)?;
     let runtime = actor_state(home, &group.group_id, actor_id)?;
     let owns_active_projection =
         runtime["active_turn_id"].as_str() == Some(completion.turn_id.as_str());
@@ -698,6 +740,12 @@ pub(super) fn finish_completion(
 fn record_browser_delivery(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let actor = require_web_model_actor(&group, &actor_id)?;
+    if actor.runtime == cccc_contracts::ActorRuntime::GrokWebModel {
+        return Err(OpError::new(
+            "grok_event_required",
+            "Grok has no browser delivery",
+        ));
+    }
     if actor.runtime == cccc_contracts::ActorRuntime::ChatgptDots {
         return Err(OpError::new(
             "dots_requires_events",

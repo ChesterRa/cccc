@@ -1142,7 +1142,7 @@
     "downloaded": "Downloaded",
     "working": "Working…",
     "pickFileFirst": "Pick a file to preview first",
-    "reconnectGrok": "Save each Grok Actor’s Bot URL again after import."
+    "reconnectGrok": "After import, save each Grok Actor’s Bot URL and configure its Webhook Routine credentials again."
   },
   "developer": {
     "title": "Developer Mode (Global)",
@@ -1616,11 +1616,9 @@
   },
   "grokShared": {
     "title": "Grok Bot shared setup",
-    "description": "Sign in once in the CCCC browser. Each Actor keeps its own Bot window.",
-    "login": "Shared Grok login",
-    "loginHint": "Grok Actors share this login. Signing out affects every Grok Actor. Closing the login window leaves Actor windows and the saved login intact.",
+    "description": "Connect Grok Bots with native Webhook Routines and one shared MCP connector. CCCC does not need a Grok browser login.",
     "connectorHint": "Add this connector once in Grok Connectors. Each Actor uses its saved Bot URL and receives its own CCCC credential with tasks.",
-    "actorHint": "Create a Grok Bot Web Model Actor, save its Bot URL in Actor settings, then start it normally. No pairing message is needed.",
+    "actorHint": "For each Actor, save its Bot URL and set up its Webhook Routine in Actor connection settings.",
     "rotateHint": "The old URL will stop working for Grok Actors. Update the Grok connector with the new URL. Existing Bot bindings remain.",
     "revokeHint": "All Grok Actors will lose tool access. After creating a new connector, save their Bot URLs again.",
     "upgrade": "Configure the Grok connector and save each Actor’s Bot URL.",
@@ -1630,24 +1628,44 @@
     "notSeen": "No connector request recorded yet. Add this connector in Grok to finish setup."
   },
   "grokActor": {
-    "title": "Grok Bot conversation",
-    "hint": "Configure shared Grok login and the connector, then assign an existing Bot URL to this Actor. CCCC does not create Grok Bots or send pairing messages.",
-    "shared": "Shared login & connector",
+    "title": "Grok Bot",
+    "hint": "Tasks arrive through a native Webhook Routine and the CCCC MCP connector. No browser delivery is used.",
+    "shared": "MCP connector settings",
     "url": "Grok Bot URL (required)",
     "change": "Change Bot",
     "remove": "Disconnect Bot",
     "confirmRemove": "Confirm disconnect",
-    "login_required": "Grok sign-in required",
-    "verification_required": "Complete Grok verification",
-    "urlRequired": "Save an existing Grok Bot URL in this Actor’s Grok Bot conversation settings before opening its window. CCCC does not create a new Bot.",
-    "open": "Open Bot window",
-    "bound": "Bot configured",
-    "bound_stopped": "Bot configured · Actor stopped",
-    "unpaired": "Bot URL required",
-    "browser_closed": "Bot configured · browser closed",
     "runtimeSaveHint": "Enter an existing Bot URL here and save it with the Actor settings below. A running Actor is stopped and restarted only when you confirm applying the change.",
     "invalidUrl": "Enter a complete Grok Bot URL: https://grok.com/bot/…",
-    "draftHint": "Edit freely while the Actor runs. Use Save below to apply this URL with the other settings; applying to a running Actor requires confirmation and restarts only this Actor."
+    "draftHint": "Edit freely while the Actor runs. Use Save below to apply this Bot URL with the other settings. An unfinished task must complete or be explicitly resolved first. Changing Bots clears the old Routine credentials.",
+    "routine": "Webhook Routine",
+    "configured": "Configured",
+    "setupRequired": "Setup required",
+    "queued": "Pending messages",
+    "lastTask": "Last task",
+    "noTask": "No completed task yet",
+    "taskProgress": "Task delivery",
+    "connectorStep": "1. Connect CCCC",
+    "connectorHint": "Add the shared CCCC MCP connector to this Bot. Manage its address and credentials in global settings.",
+    "botStep": "2. Select the Bot",
+    "routineStep": "3. Set up its Webhook Routine",
+    "connectionSettings": "Connection settings",
+    "readFailed": "Could not read Grok Bot status.",
+    "unavailable": "Unavailable",
+    "adminManaged": "An instance administrator manages this Bot connection. You can still use the Group normally.",
+    "setupHint": "Open connection settings to connect this Bot and save its native Webhook Routine.",
+    "disconnectHint": "Stop CCCC access before disconnecting. Disable the Routine in Grok if it is no longer needed.",
+    "outcomes": {
+      "done": "Last task completed",
+      "failed": "Last task failed",
+      "cancelled": "Last task ended"
+    },
+    "steps": {
+      "notify": "Queued / Sending",
+      "waiting": "Waiting for Bot",
+      "working": "Working",
+      "completed": "Completed"
+    }
   },
   "voiceSettings": {
     "claudeTrustHint": "Before using Claude, trust $CCCC_HOME/voice-secretary/jobs once with the configured CLAUDE_CONFIG_DIR. New tasks then share that parent trust; no model prompt is needed for setup.",
@@ -1981,5 +1999,39 @@
       "refreshTools": "Refresh the CCCC plugin tools in ChatGPT and check the latest setup instructions.",
       "callFailed": "Check the failed call reported in ChatGPT before retrying; this record alone does not establish whether a turn completed."
     }
+  },
+  "grokWebhook": {
+    "pause": "Stop CCCC access",
+    "setupHint": "Save one Webhook Routine in this Bot using these instructions, then add its desktop credentials below. Routine runs use your Grok subscription.",
+    "instructions": "Get Routine setup instructions",
+    "copyFailed": "Copy failed. Select and copy the instructions manually.",
+    "saved": "Webhook configured. Leave fields blank to keep it; enter both to replace its credentials.",
+    "desktop": "Open the saved Routine in the Grok desktop app and copy POST to and Key. These fields are not available on the webpage.",
+    "url": "POST to URL",
+    "key": "Routine Key",
+    "save": "Save Routine credentials",
+    "pending": "{{count}} queued messages",
+    "openBot": "Open Grok Bot",
+    "runtimeHint": "CCCC claims and completes one turn at a time. Stopping access revokes CCCC authority; it does not stop cloud work already running in Grok.",
+    "deliveryError": "Webhook delivery needs attention (HTTP {{status}}). Check the desktop Routine, key, limits and CCCC connector.",
+    "retry": "Retry wake",
+    "resolveHint": "Review the Bot first. Resolving retires the unfinished turn without replaying its messages; later queued work can continue. This does not cancel Grok cloud work.",
+    "resolve": "Resolve unfinished turn",
+    "confirmResolve": "Confirm resolution",
+    "phase": {
+      "ready": "Ready for tasks",
+      "stopped": "CCCC access stopped",
+      "pending": "Waiting to send wake",
+      "delivering": "Sending wake",
+      "delivered": "Wake accepted · waiting for claim",
+      "unclaimed": "Wake accepted but not claimed · check Routine and connector",
+      "working": "Processing a claimed turn",
+      "interrupted": "Unfinished turn · review before continuing",
+      "failed": "Wake failed · queued messages retained",
+      "unconfigured": "Setup required"
+    },
+    "saveAndApply": "Save & apply credentials",
+    "applyHint": "Edits stay local until saved. Applying while idle keeps the current CCCC access state.",
+    "waitForTask": "An unfinished task is using this connection. You can edit now; apply after it completes or is explicitly resolved."
   }
 }

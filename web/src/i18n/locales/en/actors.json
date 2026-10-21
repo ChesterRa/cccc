@@ -303,7 +303,7 @@
   "webModelActorBoundConnectorHint": "Global Web Model settings manage shared login and one connector. Save this Actor and start it normally; its conversation connects automatically before task delivery.",
   "webModelProfileHint": "Web Model profiles share runtime and capability settings. Each Actor configures its own connection.",
   "saveAndApply": "Save & apply",
-  "applyWebModelTargetConfirm": "Apply the new conversation for \"{{label}}\"? CCCC will stop only this Actor, save its settings, then restart it after the new connection is saved. If applying fails, it stays stopped and your draft remains here.",
+  "applyWebModelTargetConfirm": "Apply the new Bot for \"{{label}}\"? An unfinished task must complete or be explicitly resolved first. Changing Bots clears the old Routine credentials. Failed changes retain your draft.",
   "antigravityMode": {
     "label": "Antigravity mode",
     "tui": "TUI · native terminal",

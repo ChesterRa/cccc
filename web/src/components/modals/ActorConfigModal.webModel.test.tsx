@@ -4,9 +4,10 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { useModalStore } from "../../stores";
 import type { ActorSecretChanges } from "./actorSecretManagerModel";
-const mocks = vi.hoisted(() => ({ env: vi.fn(), status: vi.fn() }));
+const mocks = vi.hoisted(() => ({ env: vi.fn(), status: vi.fn(), native: vi.fn() }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("../../services/api", () => ({
+  fetchGrokActorState: (...a: unknown[]) => mocks.native(...a),
   fetchWebModelBrowserSurfaceSession: (...a: unknown[]) => mocks.status(...a),
   fetchActorPrivateEnvKeys: (...a: unknown[]) => mocks.env(...a),
   fetchActorProfilePrivateEnvKeys: (...a: unknown[]) => mocks.env(...a),
@@ -98,6 +99,19 @@ describe("Web Model effective Actor configuration", () => {
     onCancel: vi.fn(),
   });
   beforeEach(() => {
+    mocks.native.mockImplementation(async (g: string, a: string) => ({
+      ok: true,
+      result: {
+        group_id: g,
+        actor_id: a,
+        connected: true,
+        bound: false,
+        configured: false,
+        enabled: false,
+        phase: "unconfigured",
+        pending_count: 0,
+      },
+    }));
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     vi.clearAllMocks();
     useModalStore.getState().closeModal("settings");
@@ -108,6 +122,7 @@ describe("Web Model effective Actor configuration", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
+    vi.unstubAllGlobals();
   });
   const button = (label: string) =>
     [...host.querySelectorAll("button")].find((b) => b.textContent === label)!;
@@ -316,11 +331,18 @@ describe("Web Model effective Actor configuration", () => {
     p.isRunning = true;
     const oldUrl = "https://grok.com/bot/1373170d-9cf2-408c-b597-e243e5884f4a";
     const url = "https://grok.com/bot/958f2446-013f-4225-8dd3-f146295992d7";
-    mocks.status.mockResolvedValue({
+    mocks.native.mockResolvedValue({
       ok: true,
       result: {
-        pairing: { state: "bound", url: oldUrl, actor_enabled: true },
-        browser_session: {},
+        group_id: "g_fixture",
+        actor_id: "alpha",
+        connected: true,
+        bound: true,
+        configured: true,
+        enabled: true,
+        bot_url: oldUrl,
+        phase: "ready",
+        pending_count: 0,
       },
     });
     await act(async () => root.render(<ActorConfigModal {...p} />));
@@ -336,12 +358,68 @@ describe("Web Model effective Actor configuration", () => {
     expect(p.onSaveAndRestart).not.toHaveBeenCalled();
     expect(button("grokActor.save")).toBeUndefined();
     expect(button("saveAndRestart")).toBeUndefined();
-    p.onSaveAndRestart = vi.fn().mockRejectedValueOnce(new Error("delivery_unresolved"));
+    vi.stubGlobal("confirm", vi.fn().mockReturnValueOnce(false).mockReturnValue(true));
+    await act(async () => button("saveAndApply").click());
+    expect(p.onSave).not.toHaveBeenCalled();
+    expect(input.value).toBe(url);
+    p.onSave = vi.fn().mockRejectedValueOnce(new Error("delivery_unresolved"));
     await act(async () => root.render(<ActorConfigModal {...p} />));
     await act(async () => button("saveAndApply").click());
-    expect(p.onSaveAndRestart).toHaveBeenCalledWith(expect.objectContaining({ grokBotUrl: url }));
+    expect(p.onSave).toHaveBeenCalledWith(expect.objectContaining({ grokBotUrl: url }));
+    expect(p.onSaveAndRestart).not.toHaveBeenCalled();
     expect(input.value).toBe(url);
     expect(host.textContent).toContain("delivery_unresolved");
+  });
+
+  it("keeps Bot URL drafts editable but defers the footer apply until the task completes", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+    try {
+      const p = props();
+      p.runtime = "grok_web_model";
+      p.savedRuntime = "grok_web_model";
+      p.isRunning = true;
+      const result = {
+        group_id: "g_fixture",
+        actor_id: "alpha",
+        connected: true,
+        bound: true,
+        configured: true,
+        enabled: true,
+        phase: "working",
+        pending_count: 0,
+        bot_url: "https://grok.com/bot/00000000-0000-4000-8000-000000000001",
+        active_turn_id: "task",
+      };
+      mocks.native.mockResolvedValue({ ok: true, result });
+      await act(async () => root.render(<ActorConfigModal {...p} />));
+      await act(async () => button("grokActor.change").click());
+      const input = host.querySelector<HTMLInputElement>('input[type="url"]')!;
+      const next = "https://grok.com/bot/00000000-0000-4000-8000-000000000002";
+      expect(input.disabled).toBe(false);
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+          input,
+          next,
+        );
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(button("saveAndApply").disabled).toBe(true);
+      expect(host.textContent).toContain("grokWebhook.waitForTask");
+      expect(p.onSaveAndRestart).not.toHaveBeenCalled();
+      mocks.native.mockResolvedValue({
+        ok: true,
+        result: { ...result, active_turn_id: null, phase: "ready" },
+      });
+      await act(async () => vi.advanceTimersByTime(2000));
+      expect(input.value).toBe(next);
+      expect(button("saveAndApply").disabled).toBe(false);
+      await act(async () => button("saveAndApply").click());
+      expect(p.onSave).toHaveBeenCalledWith(expect.objectContaining({ grokBotUrl: next }));
+      expect(p.onSaveAndRestart).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("saves an Actor-local Bot URL while retaining its linked Grok Profile", async () => {
@@ -364,10 +442,6 @@ describe("Web Model effective Actor configuration", () => {
         revision: 1,
       },
     ];
-    mocks.status.mockResolvedValue({
-      ok: true,
-      result: { pairing: { state: "unpaired", actor_enabled: false }, browser_session: {} },
-    });
     await act(async () => root.render(<ActorConfigModal {...p} />));
     const input = host.querySelector<HTMLInputElement>('input[type="url"]')!;
     const url = "https://grok.com/bot/1373170d-9cf2-408c-b597-e243e5884f4a";
@@ -402,10 +476,6 @@ describe("Web Model effective Actor configuration", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     p.onSave = vi.fn().mockRejectedValue(new Error("connector missing"));
-    mocks.status.mockResolvedValue({
-      ok: true,
-      result: { pairing: { state: "unpaired", actor_enabled: false }, browser_session: {} },
-    });
     p.savedRuntime = "grok_web_model";
     p.savedActor = { ...p.savedActor, runtime: "grok_web_model", title: "Saved title" };
     await act(async () =>

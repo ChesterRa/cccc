@@ -170,6 +170,10 @@ async fn run_connector_mcp(
                     && tool_name == "cccc_runtime_wait_next_turn"
                 {
                     super::web_model_dots::claim(state, &request, &binding).await
+                } else if binding["transport"] == "grok_webhook"
+                    && tool_name == "cccc_runtime_wait_next_turn"
+                {
+                    super::grok_webhook::claim(state, &request, &binding).await
                 } else {
                     cccc_mcp::handle_request_for_binding(&state.home, &request, &binding).await
                 };

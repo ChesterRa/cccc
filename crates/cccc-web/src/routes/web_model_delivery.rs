@@ -448,20 +448,6 @@ async fn deliver_once(
             json!({"last_delivery_status":"resolved","last_error":""}),
         )?;
     }
-    if cccc_core::web_model_connectors::grok_bot_url(target_url).is_ok()
-        && !crate::browser_surface::conversation_target_matches(
-            target_url,
-            readiness["tab_url"].as_str().unwrap_or_default(),
-        )
-    {
-        update_target(
-            state,
-            group_id,
-            actor_id,
-            json!({"last_delivery_status":"failed","last_error":"Saved Grok Bot is not open in this Actor window"}),
-        )?;
-        return Ok(DeliveryOutcome::Stopped);
-    }
     if target["kind"] == "existing_chat" && is_chatgpt_url(target_url) {
         if let Err(error) = state
             .browser_surfaces
@@ -518,7 +504,11 @@ async fn deliver_once(
         &delivery_id,
         &event_label,
     )?;
-    let browser_prompt = with_actor_credential(state, group_id, actor_id, browser_prompt)?;
+    // Keep the existing binding check after the awaited claim; only Grok's
+    // browser credential injection has been removed.
+    if super::web_model_connector_store::for_actor(state, group_id, actor_id).is_none() {
+        return Err(ApiError::bad("Actor binding changed before delivery"));
+    }
     let attachment = compatibility_attachment(state, turn, &delivery_id)?;
     update_target(
         state,
@@ -909,9 +899,7 @@ pub(super) async fn resume_after_review(
         .map_err(|error| ApiError::bad(error.to_string()))?;
     let expected = target["url"].as_str().unwrap_or("");
     let current = readiness["tab_url"].as_str().unwrap_or("");
-    let matches = if is_chatgpt_url(expected)
-        || cccc_core::web_model_connectors::grok_bot_url(expected).is_ok()
-    {
+    let matches = if is_chatgpt_url(expected) {
         crate::browser_surface::conversation_target_matches(expected, current)
     } else {
         !expected.is_empty() && expected == current
@@ -1316,29 +1304,6 @@ fn build_browser_prompt(
             browser_batch_marker(actor_id, delivery_id, event_label)
         ),
         seed,
-    ))
-}
-
-fn with_actor_credential(
-    state: &AppState,
-    group: &str,
-    actor: &str,
-    prompt: String,
-) -> Result<String, ApiError> {
-    let Some(binding) = super::web_model_connector_store::for_actor(state, group, actor) else {
-        return Err(ApiError::bad("Actor binding changed before delivery"));
-    };
-    if binding["provider"] != "grok_web" {
-        return Ok(prompt);
-    }
-    let connector = super::web_model_connector_store::load(state)?
-        .into_iter()
-        .find(|c| c["connector_id"] == binding["connector_id"])
-        .ok_or_else(|| ApiError::bad("Grok connector unavailable"))?;
-    let token = cccc_core::web_model_connectors::grok_token(&connector, &binding)
-        .map_err(|e| ApiError::bad(e.to_string()))?;
-    Ok(format!(
-        "[CCCC] For CCCC connector tools in this task, include actor_token=\"{token}\" in every top-level call. This credential selects this Actor's configured permissions. Nested calls inside cccc_code_exec inherit that context. Keep it out of replies, files and commands.\n\n{prompt}"
     ))
 }
 

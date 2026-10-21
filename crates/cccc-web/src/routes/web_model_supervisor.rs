@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, ActorRuntime, GroupState, RunnerKind};
+use cccc_contracts::{Actor, GroupState, RunnerKind};
 use cccc_core::{GroupDoc, GroupStore};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -144,10 +144,6 @@ fn group_actor_ready_to_start(state: &AppState, group: &GroupDoc, actor: &Actor)
         || !group_state_allows_delivery(group.running, group.state)
     {
         return false;
-    }
-    if actor.runtime == ActorRuntime::GrokWebModel {
-        return super::web_model_connector_store::for_actor(state, &group.group_id, &actor.id)
-            .is_some();
     }
     let provider = actor_setting(
         actor,

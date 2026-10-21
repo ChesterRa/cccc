@@ -1,4 +1,4 @@
-import type { Actor } from "../../types";
+import { isBrowserWebModelRuntime, type Actor } from "../../types";
 import { getEffectiveActorRunner } from "../../utils/headlessRuntimeSupport";
 import type { LiveWorkCard } from "./liveWorkCards";
 
@@ -41,7 +41,9 @@ export function buildRuntimeDockItems(args: {
       runtime: String(actor.runtime || "custom").trim() || "custom",
       runner: getRuntimeDockRunner(actor),
       unreadCount: Math.max(0, Number(actor.unread_count || 0)),
-      webModelQueuedCount: Math.max(0, Number(actor.web_model_queued_count || 0)),
+      webModelQueuedCount: isBrowserWebModelRuntime(actor.runtime)
+        ? Math.max(0, Number(actor.web_model_queued_count || 0))
+        : 0,
       liveWorkCard: liveWorkCardByActorId.get(actorId) || null,
     });
   }

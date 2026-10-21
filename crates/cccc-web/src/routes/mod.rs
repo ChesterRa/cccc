@@ -12,6 +12,7 @@ mod context;
 mod diagnostics;
 mod file_response;
 mod filesystem;
+mod grok_webhook;
 mod group_copy;
 mod group_prompt_notify;
 mod group_prompts;
@@ -104,6 +105,7 @@ pub fn router() -> Router<AppState> {
         .merge(presentation_browser::routes())
         .merge(web_model_connectors::routes())
         .merge(web_model_dots::routes())
+        .merge(grok_webhook::routes())
         .merge(web_model_browser::routes())
         .merge(web_model_pairing::routes())
         .merge(web_model_shared_browser::routes())
@@ -121,5 +123,6 @@ pub fn router() -> Router<AppState> {
         .merge(terminal::routes())
 }
 
+pub(crate) use grok_webhook::spawn as spawn_grok_webhooks;
 pub(crate) use web_model_dots::spawn as spawn_dots_events;
 pub(crate) use web_model_supervisor::spawn as spawn_web_model_supervisor;

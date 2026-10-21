@@ -1142,7 +1142,7 @@
     "downloaded": "ダウンロード済み",
     "working": "処理中…",
     "pickFileFirst": "最初にプレビューするファイルを選択してください",
-    "reconnectGrok": "インポート後、各 Grok Actor の Bot URL を再度保存してください。"
+    "reconnectGrok": "インポート後、各 Grok Actor の Bot URL と Webhook Routine の認証情報を再設定してください。"
   },
   "developer": {
     "title": "開発者モード (グローバル)",
@@ -1616,11 +1616,9 @@
   },
   "grokShared": {
     "title": "Grok Bot 共有設定",
-    "description": "CCCC 専用ブラウザーで一度ログインすると、各 Actor が専用の Bot ウィンドウを維持します。",
-    "login": "共有 Grok ログイン",
-    "loginHint": "Grok Actor はログインを共有します。ログアウトはすべての Grok Actor に影響します。ログインウィンドウを閉じても、Actor ウィンドウと保存済みのログインは維持されます。",
+    "description": "ネイティブ Webhook Routine と共有 MCP コネクターで Grok Bot を接続します。CCCC 側のブラウザーログインは不要です。",
     "connectorHint": "Grok Connectors にこのコネクターを一度追加します。各 Actor は保存した Bot URL を使用し、タスクと一緒に専用の CCCC 認証情報を受け取ります。",
-    "actorHint": "Grok Bot Web Model Actor を作成し、Actor 設定で Bot URL を保存してから起動します。ペアリングメッセージは不要です。",
+    "actorHint": "各 Actor の接続設定で Bot URL と Webhook Routine を設定してください。",
     "rotateHint": "古い URL はすべての Grok Actor で無効になります。新しい URL で Grok コネクターを更新してください。既存の Bot 接続は維持されます。",
     "revokeHint": "すべての Grok Actor がツールにアクセスできなくなります。コネクターを再作成した後、各 Bot URL を再度保存してください。",
     "upgrade": "Grok コネクターを設定し、各 Actor の Bot URL を保存してください。",
@@ -1630,24 +1628,44 @@
     "notSeen": "コネクターのリクエストはまだありません。Grok に追加して設定を完了してください。"
   },
   "grokActor": {
-    "title": "Grok Bot の会話",
-    "hint": "共有 Grok ログインとコネクターを設定し、この Actor に既存の Bot URL を指定します。CCCC は Grok Bot を作成せず、ペアリングメッセージも送信しません。",
-    "shared": "共有ログインとコネクター",
+    "title": "Grok Bot",
+    "hint": "タスクはネイティブ Webhook Routine と CCCC MCP コネクター経由で届きます。ブラウザーでの配信は行いません。",
+    "shared": "MCP コネクター設定",
     "url": "Grok Bot URL（必須）",
     "change": "Bot を変更",
     "remove": "Bot の接続を解除",
     "confirmRemove": "接続解除を確認",
-    "login_required": "Grok へのログインが必要です",
-    "verification_required": "Grok の認証を完了してください",
-    "urlRequired": "ウィンドウを開く前に、この Actor の「Grok Bot の会話」設定で既存の Bot URL を保存してください。CCCC は Bot を自動作成しません。",
-    "open": "Bot ウィンドウを開く",
-    "bound": "Bot 設定済み",
-    "bound_stopped": "Bot 設定済み · Actor 停止中",
-    "unpaired": "Bot URL が必要です",
-    "browser_closed": "Bot 設定済み · ブラウザーは閉じています",
     "runtimeSaveHint": "既存の Bot URL をここに入力し、下の Actor 設定と一緒に保存します。変更の適用を確認したときだけ、実行中の Actor を停止して再起動します。",
     "invalidUrl": "完全な Grok Bot URL を入力してください：https://grok.com/bot/…",
-    "draftHint": "Actor の実行中も編集できます。下の「保存」で URL と他の設定をまとめて保存します。実行中の Actor への適用は確認後に行い、この Actor のみ再起動します。"
+    "draftHint": "Actor の実行中も編集できます。下の「保存」で Bot URL と他の設定をまとめて適用します。未完了のタスクは先に完了するか明示的に解決してください。Bot を変更すると古い Routine の認証情報は消去されます。",
+    "routine": "Webhook Routine",
+    "configured": "設定済み",
+    "setupRequired": "設定が必要",
+    "queued": "待機メッセージ",
+    "lastTask": "最近のタスク",
+    "noTask": "完了したタスクはありません",
+    "taskProgress": "タスク配信",
+    "connectorStep": "1. CCCC に接続",
+    "connectorHint": "この Bot に共有 CCCC MCP コネクターを追加します。アドレスと認証情報は全体設定で管理します。",
+    "botStep": "2. Bot を選択",
+    "routineStep": "3. Webhook Routine を設定",
+    "connectionSettings": "接続設定",
+    "readFailed": "Grok Bot の状態を読み取れませんでした。",
+    "unavailable": "利用できません",
+    "adminManaged": "この Bot の接続はインスタンス管理者が管理します。Group は通常どおり使えます。",
+    "setupHint": "接続設定を開き、この Bot に CCCC を接続してネイティブ Webhook Routine を保存してください。",
+    "disconnectHint": "切断する前に CCCC アクセスを停止してください。不要になった Routine は Grok 側でも無効にしてください。",
+    "outcomes": {
+      "done": "最近のタスク完了",
+      "failed": "最近のタスク失敗",
+      "cancelled": "最近のタスク終了"
+    },
+    "steps": {
+      "notify": "待機／送信",
+      "waiting": "Bot の取得待ち",
+      "working": "処理中",
+      "completed": "完了"
+    }
   },
   "voiceSettings": {
     "claudeTrustHint": "Claude を初めて使う前に、設定した CLAUDE_CONFIG_DIR で $CCCC_HOME/voice-secretary/jobs を一度信頼してください。以後のタスクは親ディレクトリの信頼を引き継ぎます。設定のためにモデルへ依頼する必要はありません。",
@@ -1981,5 +1999,39 @@
       "refreshTools": "ChatGPT で CCCC プラグインのツールを更新し、最新の設定手順を確認してください。",
       "callFailed": "再試行する前に、ChatGPT が報告した失敗した呼び出しを確認してください。この記録だけではターンの完了を判断できません。"
     }
+  },
+  "grokWebhook": {
+    "pause": "CCCC アクセスを停止",
+    "setupHint": "以下の指示でこの Bot に Webhook Routine を1つ保存し、デスクトップ版の認証情報を入力します。Routine は Grok のサブスクリプション枠を使用します。",
+    "instructions": "Routine 設定手順を取得",
+    "copyFailed": "コピーできませんでした。手順を選択して手動でコピーしてください。",
+    "saved": "Webhook 設定済み。空欄なら現在の設定を保持します。変更する場合は両方を入力してください。",
+    "desktop": "Grok デスクトップアプリで保存済み Routine を開き、POST to と Key をコピーします。Web 版では表示されません。",
+    "url": "POST to URL",
+    "key": "Routine Key",
+    "save": "Routine 認証情報を保存",
+    "pending": "待機中のメッセージ {{count}} 件",
+    "openBot": "Grok Bot を開く",
+    "runtimeHint": "CCCC は1件ずつタスクを取得・完了します。アクセス停止は CCCC の権限を失効させますが、Grok で実行中のクラウド処理は停止しません。",
+    "deliveryError": "Webhook 配信の確認が必要です（HTTP {{status}}）。デスクトップの Routine、Key、利用上限、CCCC コネクターを確認してください。",
+    "retry": "起動通知を再送",
+    "resolveHint": "先に Bot を確認してください。未完了タスクを終了してもそのメッセージは再配信しません。後続タスクは続行できます。Grok のクラウド処理はキャンセルされません。",
+    "resolve": "未完了タスクを終了",
+    "confirmResolve": "終了を確認",
+    "phase": {
+      "ready": "タスク待機中",
+      "stopped": "CCCC アクセス停止中",
+      "pending": "起動通知の送信待ち",
+      "delivering": "起動通知を送信中",
+      "delivered": "起動通知受付済み・取得待ち",
+      "unclaimed": "通知受付後に未取得・Routine とコネクターを確認",
+      "working": "取得済みタスクを処理中",
+      "interrupted": "未完了タスクを確認してください",
+      "failed": "起動通知失敗・待機メッセージは保持",
+      "unconfigured": "ネイティブ接続の設定が必要"
+    },
+    "saveAndApply": "認証情報を保存して適用",
+    "applyHint": "編集内容は保存するまでローカルに保持されます。待機中に適用しても、CCCC アクセスの有効・無効は変わりません。",
+    "waitForTask": "この接続には未完了のタスクがあります。編集はできますが、適用はタスクの完了または明示的な解決後に行ってください。"
   }
 }

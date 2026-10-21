@@ -27,7 +27,7 @@ pub(super) fn extend_grok_catalog(response: &mut Value) {
     if let Some(tools) = response["result"]["tools"].as_array_mut() {
         for tool in tools.iter_mut() {
             tool["inputSchema"]["properties"]["actor_token"] = json!({"type":"string","minLength":43,"maxLength":43,
-                "description":"CCCC Actor credential supplied in this Bot's current task message. Send it only to this CCCC connector; it selects the configured Group and Actor. Do not include it in replies, files or commands."});
+                "description":"CCCC Actor credential from this Bot's current Webhook event for a claim. Native business tools require the NEW execution credential returned by that claim. Send it only to this CCCC connector; it selects the configured Group and Actor. Do not include it in replies, files or commands."});
             if !tool["inputSchema"]["required"].is_array() {
                 tool["inputSchema"]["required"] = json!([]);
             }

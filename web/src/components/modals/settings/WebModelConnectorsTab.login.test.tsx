@@ -429,7 +429,8 @@ describe("shared Web Model login and connector", () => {
     const select = (name: string) =>
       Array.from(host.querySelectorAll("button")).find((b) => b.textContent === name)!;
     await act(async () => select("Grok Bot").click());
-    expect(mocks.browser).toHaveBeenLastCalledWith("status", false, "grok_web");
+    expect(mocks.browser.mock.calls.every((call) => call[2] === "chatgpt_web")).toBe(true);
+    expect(button("login")).toBeUndefined();
     expect(button("copy")).toBeUndefined();
     expect(button("create").disabled).toBe(false);
     await act(async () => button("create").click());

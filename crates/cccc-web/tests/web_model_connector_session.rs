@@ -17,7 +17,7 @@ struct Fixture {
 }
 
 #[tokio::test]
-async fn unconfigured_grok_actor_open_requires_url_without_launching_a_browser() {
+async fn grok_actors_reject_browser_apis_without_launching_a_browser() {
     let f = Fixture::new();
     let groups = GroupStore::new(f.home.clone()).expect("groups");
     groups
@@ -57,7 +57,7 @@ async fn unconfigured_grok_actor_open_requires_url_without_launching_a_browser()
             .to_bytes(),
     )
     .expect("json");
-    assert_eq!(body["error"]["code"], "grok_bot_url_required");
+    assert_eq!(body["ok"], false);
     let response = app
         .oneshot(
             Request::get(format!(
@@ -80,7 +80,7 @@ async fn unconfigured_grok_actor_open_requires_url_without_launching_a_browser()
             .to_bytes(),
     )
     .expect("json");
-    assert_eq!(body["result"]["browser_surface"]["active"], false);
+    assert_eq!(body["ok"], false);
 }
 impl Fixture {
     fn new() -> Self {
@@ -711,49 +711,26 @@ fn add_legacy_actor(groups: &GroupStore, group: &str) -> (std::path::PathBuf, Ve
 
 #[tokio::test]
 async fn closing_login_does_not_depend_on_actor_lifecycle_or_group_parsing() {
-    for provider in ["chatgpt_web", "grok_web"] {
-        let f = Fixture::new();
-        let groups = GroupStore::new(f.home.clone()).expect("groups");
-        if provider == "grok_web" {
-            let group = groups
-                .mutate(&f.group, |g| {
-                    g.actors[0].runtime = ActorRuntime::GrokWebModel;
-                    Ok(g.clone())
-                })
-                .expect("Grok Actor");
-            let connector =
-                store::configure_provider(&f.home, provider).expect("connector")["connector"]
-                    .clone();
-            let actor = &group.actors[0];
-            store::bind_grok(
-                &f.home,
-                connector["connector_id"].as_str().expect("id"),
-                &f.group,
-                &actor.id,
-                &cccc_core::actors::generation_identity(actor),
-                "https://grok.com/bot/00000000-0000-4000-8000-000000000001",
-            )
-            .expect("binding");
-        } else {
-            f.bind("alpha", "chat-a");
-        }
-        assert_eq!(
-            close_shared_browser(&f.home, provider).await,
-            StatusCode::OK,
-            "closing login must not require stopping enabled, bound Actors"
-        );
-        let (path, before) = add_legacy_actor(&groups, &f.group);
-        assert_eq!(
-            close_shared_browser(&f.home, provider).await,
-            StatusCode::OK,
-            "closing a window must not depend on parsing Actor configuration"
-        );
-        assert_eq!(std::fs::read(path).expect("unchanged group"), before);
-    }
+    let provider = "chatgpt_web";
+    let f = Fixture::new();
+    let groups = GroupStore::new(f.home.clone()).expect("groups");
+    f.bind("alpha", "chat-a");
+    assert_eq!(
+        close_shared_browser(&f.home, provider).await,
+        StatusCode::OK,
+        "closing login must not require stopping enabled, bound Actors"
+    );
+    let (path, before) = add_legacy_actor(&groups, &f.group);
+    assert_eq!(
+        close_shared_browser(&f.home, provider).await,
+        StatusCode::OK,
+        "closing a window must not depend on parsing Actor configuration"
+    );
+    assert_eq!(std::fs::read(path).expect("unchanged group"), before);
 }
 
 #[tokio::test]
-async fn grok_token_routes_real_tools_and_nested_management_without_identity_metadata() {
+async fn grok_execution_routes_real_tools_and_nested_management_without_identity_metadata() {
     let mut f = Fixture::new();
     let groups = GroupStore::new(f.home.clone()).expect("valid test fixture");
     let group = groups
@@ -761,6 +738,8 @@ async fn grok_token_routes_real_tools_and_nested_management_without_identity_met
             for a in &mut g.actors {
                 a.runtime = ActorRuntime::GrokWebModel;
             }
+            g.running = true;
+            g.state = cccc_contracts::GroupState::Active;
             Ok(g.clone())
         })
         .expect("valid test fixture");
@@ -770,23 +749,64 @@ async fn grok_token_routes_real_tools_and_nested_management_without_identity_met
         .as_str()
         .expect("valid test fixture")
         .into();
-    let mut tokens = Vec::new();
     for (i, a) in group.actors.iter().enumerate() {
         let url = format!("https://grok.com/bot/00000000-0000-4000-8000-{:012}", i + 1);
-        let b = store::bind_grok(
+        let id = f.connector["connector_id"].as_str().expect("connector");
+        let generation = cccc_core::actors::generation_identity(a);
+        store::bind_grok(&f.home, id, &f.group, &a.id, &generation, &url).expect("binding");
+        store::grok_webhook::configure(
             &f.home,
-            f.connector["connector_id"]
-                .as_str()
-                .expect("valid test fixture"),
+            id,
             &f.group,
             &a.id,
-            &cccc_core::actors::generation_identity(a),
-            &url,
+            &generation,
+            &format!("https://api2.cursor.sh/automations/webhook/synthetic-{i}"),
+            "synthetic-key",
         )
-        .expect("valid test fixture");
-        tokens.push(store::grok_token(&f.connector, &b).expect("valid test fixture"));
+        .expect("configuration");
+        let mut e = cccc_contracts::Event::new("chat.message", &f.group);
+        e.by = "user".into();
+        e.data = json!({"to":[a.id],"text":"synthetic task","message_mode":"send"})
+            .as_object()
+            .expect("event")
+            .clone();
+        cccc_core::ledger::append(&groups.ledger_path(&f.group).expect("ledger"), &e)
+            .expect("append");
     }
     let _daemon = start_daemon(&f.home).await;
+    let client = cccc_client::DaemonClient::new(f.home.clone());
+    let mut by_actor = std::collections::BTreeMap::new();
+    for _ in 0..2 {
+        let r = client
+            .call(&cccc_contracts::DaemonRequest {
+                v: 1,
+                op: "grok_webhook_next_delivery".into(),
+                args: json!({"by":"user"}).as_object().expect("args").clone(),
+            })
+            .await
+            .expect("next wake");
+        assert!(r.ok, "{:?}", r.error);
+        let delivery = &r.result["delivery"];
+        let claimed = f
+            .call(
+                "cccc_runtime_wait_next_turn",
+                json!({"actor_token":delivery["body"]["actor_token"]}),
+                json!({}),
+            )
+            .await;
+        assert_eq!(claimed["result"]["isError"], false, "{claimed}");
+        by_actor.insert(
+            delivery["actor_id"].as_str().expect("actor").to_owned(),
+            claimed["result"]["structuredContent"]["actor_token"]
+                .as_str()
+                .expect("execution token")
+                .to_owned(),
+        );
+    }
+    let tokens = [
+        by_actor.remove("alpha").expect("alpha"),
+        by_actor.remove("beta").expect("beta"),
+    ];
     let catalog = f
         .request(
             json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),

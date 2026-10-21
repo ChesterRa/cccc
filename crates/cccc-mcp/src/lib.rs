@@ -216,6 +216,13 @@ pub async fn handle_request_for_binding(
     request: &Value,
     binding: &Value,
 ) -> Value {
+    if binding["transport"] == "grok_webhook"
+        && binding["grok_stage"] != "execution"
+        && !(binding["grok_stage"] == "completion"
+            && request["params"]["name"] == "cccc_runtime_complete_turn")
+    {
+        return json!({"jsonrpc":"2.0","id":request["id"],"result":{"isError":true,"content":[{"type":"text","text":"grok_execution_token_required: claim with the current event and use its returned execution credential"}]}});
+    }
     let client = DaemonClient::new(home.clone());
     handle(
         home,
