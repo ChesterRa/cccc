@@ -44,6 +44,9 @@ const SECTION_SETTING_KEYS: &[(&str, &str, &str)] = &[
         "delivery",
         "mail_overdue_after_seconds",
     ),
+    ("disk_warning_percent", "delivery", "disk_warning_percent"),
+    ("disk_warning_bytes", "delivery", "disk_warning_bytes"),
+    ("disk_critical_percent", "delivery", "disk_critical_percent"),
     (
         "terminal_transcript_visibility",
         "terminal_transcript",

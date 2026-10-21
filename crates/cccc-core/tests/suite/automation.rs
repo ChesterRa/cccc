@@ -622,7 +622,8 @@ fn disabled_idle_mail_notice_does_not_announce_overdue_mail_on_write() {
 /// `health_digest_interval_seconds`, Mail still unread
 /// `mail_overdue_after_seconds` after its notice reaches the foreman in a
 /// digest; the digest names no message body, does not repeat a problem it
-/// listed unless asked to, and a read ends the problem.
+/// listed unless asked to, and a read ends the problem, which one more digest
+/// reports. The disk marks are off here; the next test covers them.
 #[test]
 fn mail_left_unread_after_its_notice_reaches_the_foreman_in_a_digest() {
     use sha2::{Digest, Sha256};
@@ -643,6 +644,9 @@ fn mail_left_unread_after_its_notice_reaches_the_foreman_in_a_digest() {
                     "health_digest_interval_seconds":1,
                     "health_digest_repeat_seconds":2,
                     "mail_overdue_after_seconds":2,
+                    "disk_warning_percent":0,
+                    "disk_warning_bytes":0,
+                    "disk_critical_percent":0,
                 }),
             );
             Ok(())
@@ -733,8 +737,89 @@ fn mail_left_unread_after_its_notice_reaches_the_foreman_in_a_digest() {
     assert_eq!(repeated.notifications.len(), 1, "the problem remains");
     assert_eq!(repeated.notifications[0].data["kind"], "health_digest");
 
-    // Reading the Inbox ends the problem.
+    // Reading the Inbox ends the problem; the foreman hears that once.
     cccc_core::inbox::consume_unread(&home, &group, "peer", "peer", 50).expect("read Mail");
     std::thread::sleep(std::time::Duration::from_millis(2_100));
+    let resolved = tick();
+    assert_eq!(resolved.notifications.len(), 1);
+    assert_eq!(resolved.notifications[0].data["kind"], "health_digest");
+    assert_eq!(
+        resolved.notifications[0].data["context"]["problem_keys"],
+        json!([])
+    );
+    std::thread::sleep(std::time::Duration::from_millis(2_100));
     assert!(tick().notifications.is_empty());
+}
+
+/// The tick samples the real volume that holds CCCC_HOME. The warning mark is
+/// placed around that volume's own available bytes, so the test runs on
+/// whatever disk it finds: the foreman hears when the volume is under the
+/// mark, not again while it hovers within 1 GiB above it, once when it is
+/// clear, and again when it falls back under.
+#[test]
+fn the_foreman_hears_when_the_cccc_home_volume_is_low_and_when_it_recovers() {
+    const GIB: u64 = 1 << 30;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("low disk", "").expect("group");
+    let available = fs2::available_space(temp.path()).expect("free space");
+    assert!(available > 3 * GIB, "needs 3 GiB free to place the mark");
+    let mark = |bytes: u64| {
+        store
+            .mutate(&group.group_id, |group| {
+                group.state = GroupState::Active;
+                if group.actors.is_empty() {
+                    actors::add(group, Actor::new("lead"))?;
+                }
+                group.extra.insert(
+                    "delivery".into(),
+                    json!({
+                        "health_digest_interval_seconds":1,
+                        "disk_warning_percent":0,
+                        "disk_critical_percent":0,
+                        "disk_warning_bytes":bytes,
+                    }),
+                );
+                Ok(())
+            })
+            .expect("delivery settings");
+    };
+    let eligible = HashSet::from(["lead".to_owned()]);
+    let tick = || {
+        automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+            .expect("tick")
+            .notifications
+    };
+    let keys = |notice: &Event| notice.data["context"]["problem_keys"].clone();
+
+    mark(available + GIB);
+    let low = tick();
+    assert_eq!(low.len(), 1);
+    assert_eq!(low[0].data["kind"], "health_digest");
+    assert_eq!(low[0].data["target_actor_id"], "lead");
+    assert_eq!(keys(&low[0]), json!(["disk:warning"]));
+    let message = low[0].data["message"].as_str().unwrap_or_default();
+    assert!(message.contains("CCCC home volume low: "), "{message}");
+    assert!(message.contains(" available of "), "{message}");
+    assert!(tick().is_empty(), "a listed problem is not sent again");
+
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    mark(available - GIB / 2);
+    assert!(
+        tick().is_empty(),
+        "within 1 GiB of the mark the warning holds"
+    );
+
+    mark(available - 2 * GIB);
+    let clear = tick();
+    assert_eq!(clear.len(), 1, "the volume is clear of the mark");
+    assert_eq!(keys(&clear[0]), json!([]));
+    assert!(tick().is_empty());
+
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    mark(available + GIB);
+    let again = tick();
+    assert_eq!(again.len(), 1, "low again after an all-clear is new");
+    assert_eq!(keys(&again[0]), json!(["disk:warning"]));
 }

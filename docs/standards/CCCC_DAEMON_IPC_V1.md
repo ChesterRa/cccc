@@ -1860,7 +1860,9 @@ Patch keys used by CCCC include:
   `reply_notice_after_seconds` (default 900, zero disables),
   `health_digest_interval_seconds` (default 0, zero disables the foreman health digest),
   `health_digest_repeat_seconds` (default 0, zero never repeats a digest),
-  `mail_overdue_after_seconds` (default 7200)
+  `mail_overdue_after_seconds` (default 7200), `disk_warning_percent` (default 15),
+  `disk_warning_bytes` (default 21474836480, 20 GiB), `disk_critical_percent` (default 5;
+  zero turns each disk mark off; with all three off the volume is not sampled)
 - Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
   `keepalive_max_per_actor`,
   `silence_timeout_seconds`, `help_nudge_interval_seconds`,
@@ -4613,8 +4615,16 @@ actor's Mail is such a problem while it is still unread
 `mail_overdue_after_seconds` after its first Mail notice that was not
 withdrawn. A digest goes out when a problem appears that the last digest did
 not list, at most once per interval, and, with `health_digest_repeat_seconds`
-above zero, again after that long while problems remain. It copies no message
-bodies and advances no Mail cursor.
+above zero, again after that long while problems remain. Once nothing the
+last digest listed remains, one more digest says so with no problem keys. The
+CCCC home volume is a problem while its available space is under
+`disk_critical_percent` (key `disk:critical`) or under `disk_warning_percent`
+or `disk_warning_bytes` (key `disk:warning`); a level the last digest listed
+holds until the volume is one percentage point and 1 GiB clear of its mark.
+A volume that cannot be sampled is listed as `disk:unavailable`, never as
+clear: the level the last digest listed is listed again beside it and keeps
+holding, so only a sample can end it.
+A digest copies no message bodies and advances no Mail cursor.
 
 Paused, stopped, or disabled actors are never woken for either notice. Pending
 Mail is surfaced at the next start/resume bootstrap and begins a fresh notice
