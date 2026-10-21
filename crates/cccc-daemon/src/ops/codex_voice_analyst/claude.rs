@@ -2454,6 +2454,47 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn prompt_reply_survives_an_agent_view_stall_past_one_request_window() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (config_dir, listener, _control_directory) =
+            bind_fake_control(&temp.path().join("config"));
+        let endpoint = control::Endpoint::resolve(&config_dir).expect("control endpoint");
+        let stall = Duration::from_secs(7);
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept the reply");
+            let mut stream = BufReader::new(stream);
+            let mut request = String::new();
+            stream.read_line(&mut request).await.expect("reply frame");
+            // A supervisor under load: the prompt is accepted, the answer is late.
+            tokio::time::sleep(stall).await;
+            stream
+                .get_mut()
+                .write_all(b"{\"ok\":true,\"op\":\"reply\"}\n")
+                .await
+                .expect("late answer");
+            // A second connection here would be the prompt sent twice.
+            let resent = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+                .await
+                .is_ok();
+            (request, resent)
+        });
+
+        let started = tokio::time::Instant::now();
+        control::reply(&endpoint, "abcdef12", "late but accepted")
+            .await
+            .expect("a late answer from a live supervisor is still an answer");
+        assert!(started.elapsed() >= stall, "the answer really was late");
+        let (request, resent) = server.await.expect("control server");
+        let request: Value = serde_json::from_str(&request).expect("reply frame JSON");
+        assert_eq!(request["op"], "reply");
+        assert_eq!(request["text"], "late but accepted");
+        assert!(!resent, "the prompt must be written exactly once");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn idle_session_with_stale_bookkeeping_is_attached_untouched() {
         let fixture = SettleFixture::new(json!({
             "tempo":"blocked",

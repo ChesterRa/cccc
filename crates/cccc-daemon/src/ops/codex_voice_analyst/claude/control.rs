@@ -9,6 +9,14 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 const PROTOCOL_VERSION: u64 = 1;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// A `reply` must never be sent twice: that would deliver the prompt twice. A
+/// late answer is therefore awaited on the same connection, in widening
+/// windows (20 seconds in all), before the request counts as failed.
+const REPLY_ANSWER_WINDOWS: [Duration; 3] = [
+    REQUEST_TIMEOUT,
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+];
 const MAX_FRAME_BYTES: usize = 512 * 1024;
 
 #[cfg(unix)]
@@ -109,7 +117,7 @@ impl Endpoint {
 }
 
 pub(super) async fn reply(endpoint: &Endpoint, short: &str, text: &str) -> io::Result<()> {
-    let response = request(
+    let response = request_within(
         endpoint,
         json!({
             "proto":PROTOCOL_VERSION,
@@ -118,6 +126,7 @@ pub(super) async fn reply(endpoint: &Endpoint, short: &str, text: &str) -> io::R
             "text":text,
             "auth":endpoint.auth()?,
         }),
+        &REPLY_ANSWER_WINDOWS,
     )
     .await?;
     require_ok(response, "reply")
@@ -186,16 +195,36 @@ pub(super) async fn interrupt(endpoint: &Endpoint, short: &str) -> io::Result<()
 }
 
 async fn request(endpoint: &Endpoint, value: Value) -> io::Result<Value> {
+    request_within(endpoint, value, &[REQUEST_TIMEOUT]).await
+}
+
+/// Writes the frame once, then keeps the same read pending through each
+/// window. The read is never restarted, so a partly received answer is kept.
+async fn request_within(
+    endpoint: &Endpoint,
+    value: Value,
+    windows: &[Duration],
+) -> io::Result<Value> {
     let mut stream = connect(endpoint).await?;
     write_frame(&mut stream, &value).await?;
-    tokio::time::timeout(REQUEST_TIMEOUT, read_frame(&mut stream))
-        .await
-        .map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::TimedOut,
-                "Claude Agent View request timed out",
-            )
-        })?
+    let mut response = std::pin::pin!(read_frame(&mut stream));
+    for (index, window) in windows.iter().enumerate() {
+        if let Ok(response) = tokio::time::timeout(*window, &mut response).await {
+            return response;
+        }
+        if let Some(next) = windows.get(index + 1) {
+            tracing::warn!(
+                operation = value["op"].as_str().unwrap_or("request"),
+                waited_ms = windows[..=index].iter().sum::<Duration>().as_millis() as u64,
+                next_wait_ms = next.as_millis() as u64,
+                "Claude Agent View is slow to answer; still waiting on the same connection"
+            );
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "Claude Agent View request timed out",
+    ))
 }
 
 #[cfg(unix)]
