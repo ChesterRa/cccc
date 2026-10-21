@@ -139,6 +139,19 @@ def replay(args: argparse.Namespace) -> dict:
             row = {"elapsed_s": time.monotonic() - start, "rss_kib": rss_kib(daemon.pid)}
             metrics.append(row)
             print(json.dumps(row), flush=True)
+            growth = (row["rss_kib"] - metrics[0]["rss_kib"]) / 1024
+            if growth > args.max_rss_growth_mib:
+                # A baseline need not survive its own unbounded retention for
+                # five minutes before the numeric budget can reject it.
+                args.output.write_text(json.dumps({
+                    "complete": False, "groups": len(groups),
+                    "enabled_actors": sum(len(actors) for _, actors in groups),
+                    "elapsed_s": row["elapsed_s"], "rss_growth_mib": growth,
+                    "max_rss_growth_mib": args.max_rss_growth_mib,
+                    "first_over_budget": {**row, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+                    "metrics": metrics, "errors": errors,
+                }, indent=2))
+                raise AssertionError(f"RSS grew {growth:.2f} MiB; budget {args.max_rss_growth_mib} MiB")
 
         def append():
             while not stop.wait(1):
@@ -159,6 +172,7 @@ def replay(args: argparse.Namespace) -> dict:
                 if daemon.poll() is not None or time.monotonic() > deadline:
                     raise RuntimeError("daemon failed to start")
                 time.sleep(0.1)
+                measure()
             measure()
             discovered = {group["group_id"] for group in call("group_list")["groups"]}
             if discovered != {group_id for group_id, _ in groups}:
@@ -215,7 +229,7 @@ def replay(args: argparse.Namespace) -> dict:
                         claims[query["group_id"]] += 1
                 elif line.startswith("CCCC_EVENT_INDEX_QUERY "):
                     index_queries.append(json.loads(line.removeprefix("CCCC_EVENT_INDEX_QUERY ")))
-            result = {"groups": len(groups), "enabled_actors": enabled, "elapsed_s": time.monotonic() - start, "rss_growth_mib": growth, "max_rss_growth_mib": args.max_rss_growth_mib, "unread_ticks_per_group": list(ticks.values()), "restore_delivery_actor_indices": [sorted(indices) for indices in deliveries.values()], "claim_queries_per_group": list(claims.values()), "full_event_index_queries": index_queries, "metrics": metrics, "latency": summary, "errors": errors}
+            result = {"complete": True, "groups": len(groups), "enabled_actors": enabled, "elapsed_s": time.monotonic() - start, "rss_growth_mib": growth, "max_rss_growth_mib": args.max_rss_growth_mib, "unread_ticks_per_group": list(ticks.values()), "restore_delivery_actor_indices": [sorted(indices) for indices in deliveries.values()], "claim_queries_per_group": list(claims.values()), "full_event_index_queries": index_queries, "metrics": metrics, "latency": summary, "errors": errors}
             args.output.write_text(json.dumps(result, indent=2))
             if errors:
                 raise AssertionError("replay had API failures")
