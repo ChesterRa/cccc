@@ -1,4 +1,5 @@
 use super::RuntimeEntry;
+use super::delivery::TurnDelivery;
 use super::delivery_projection::{TurnProjection, persist_message_completed};
 use super::turn_failure::settle_sent_request;
 use cccc_runtime::deepseek_supervisor::DeepSeekSupervisor;
@@ -35,7 +36,7 @@ pub(super) fn settle_timed_out_request(
     holder: &RuntimeEntry,
     supervisor: &mut DeepSeekSupervisor,
     projection: &TurnProjection<'_>,
-) -> bool {
+) -> TurnDelivery {
     let Ok(Some(_terminal)) = settle_sent_request(
         holder,
         supervisor,
@@ -43,11 +44,11 @@ pub(super) fn settle_timed_out_request(
         projection.request_id,
         false,
     ) else {
-        return false;
+        return TurnDelivery::Incomplete;
     };
     if persist_message_completed(projection).is_err() {
-        return false;
+        return TurnDelivery::Incomplete;
     }
     let _ = append_timeout_terminal(projection);
-    false
+    TurnDelivery::Failed("DeepSeek ACP turn timed out".into())
 }

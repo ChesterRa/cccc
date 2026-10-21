@@ -1,4 +1,5 @@
 use super::RuntimeEntry;
+use super::delivery::TurnDelivery;
 use cccc_contracts::{Actor, Event};
 use cccc_core::{GroupDoc, HomeLayout};
 use cccc_runtime::deepseek_supervisor::DeepSeekSupervisor;
@@ -85,7 +86,7 @@ pub(super) fn persist_terminal(
     supervisor: &mut DeepSeekSupervisor,
     projection: &TurnProjection<'_>,
     frame: &Value,
-) -> bool {
+) -> TurnDelivery {
     let stop_reason = cccc_runtime::deepseek_acp::terminal_stop_reason(frame);
     let cancelled = stop_reason == Some("cancelled");
     let failed = frame.get("error").is_some() || stop_reason != Some("end_turn");
@@ -95,7 +96,7 @@ pub(super) fn persist_terminal(
         "headless.turn.completed"
     };
     if persist_message_completed(projection).is_err() {
-        return false;
+        return TurnDelivery::Incomplete;
     }
     let (error, manual_restart_required) = if cancelled {
         (
@@ -126,6 +127,12 @@ pub(super) fn persist_terminal(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
+    let reason = data
+        .get("error")
+        .and_then(|value| value.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("DeepSeek ACP turn failed")
+        .to_owned();
     let dedupe_key = if failed {
         format!(
             "deepseek.turn:{kind}:{}:{}",
@@ -144,7 +151,7 @@ pub(super) fn persist_terminal(
     )
     .is_err()
     {
-        return false;
+        return TurnDelivery::Incomplete;
     }
     if manual_restart_required {
         match cccc_core::deepseek_restart_gate::require_manual_restart(
@@ -182,5 +189,9 @@ pub(super) fn persist_terminal(
             }
         }
     }
-    !failed
+    match (failed, cancelled) {
+        (false, _) => TurnDelivery::Completed,
+        (true, true) => TurnDelivery::Incomplete,
+        (true, false) => TurnDelivery::Failed(reason),
+    }
 }

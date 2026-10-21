@@ -13,9 +13,8 @@ pub(super) fn fail_sent_request(
     session_id: &str,
     request_id: u64,
     terminal_seen: bool,
-) -> bool {
+) {
     let _ = settle_sent_request(holder, supervisor, session_id, request_id, terminal_seen);
-    false
 }
 
 pub(super) fn settle_sent_request(
