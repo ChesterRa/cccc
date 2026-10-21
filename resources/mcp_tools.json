@@ -2226,7 +2226,7 @@
   },
   {
     "name": "cccc_context_get",
-    "description": "Get the context control-plane snapshot (coordination, agent states, attention, board).",
+    "description": "Get the context control-plane snapshot (coordination, agent states, attention, board). Tasks come in pages of at most 100 tasks and 256 KiB; when truncated is true, call again with cursor=next_cursor.",
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -2243,6 +2243,34 @@
         "include_archived": {
           "type": "boolean",
           "default": false
+        },
+        "detail": {
+          "type": "string",
+          "enum": [
+            "overview",
+            "summary",
+            "full"
+          ],
+          "default": "full",
+          "description": "summary shortens tasks and counts attention; overview omits tasks"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 100,
+          "description": "Most tasks in one page"
+        },
+        "cursor": {
+          "type": "string",
+          "description": "next_cursor from the previous page"
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 4096,
+          "maximum": 262144,
+          "default": 262144,
+          "description": "Largest answer in bytes; the page shrinks to fit"
         }
       },
       "required": []

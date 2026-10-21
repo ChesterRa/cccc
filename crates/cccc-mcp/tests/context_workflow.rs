@@ -240,3 +240,108 @@ async fn declared_context_tools_preserve_authority_recovery_and_query_semantics(
     let _ = daemon_task.await;
     outcome.expect("context workflow assertions");
 }
+
+/// Every bullet of this repository's own changelog becomes one task, so the
+/// board is large with real text rather than generated filler.
+fn changelog_tasks() -> Vec<Value> {
+    include_str!("../../../CHANGELOG.md")
+        .lines()
+        .filter_map(|line| line.strip_prefix("- "))
+        .map(|entry| {
+            let title = entry.chars().take(120).collect::<String>();
+            json!({"op":"task.create","title":title,"notes":entry})
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn context_get_answers_a_large_board_in_bounded_pages() {
+    const CAP: usize = 256 * 1024;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let mut group = groups.create("bounded context", "").expect("group");
+    for id in ["lead", "peer"] {
+        cccc_core::actors::add(&mut group, cccc_contracts::Actor::new(id)).expect("actor");
+    }
+    groups.save(&group).expect("save group");
+    let daemon_home = home.clone();
+    let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = cccc_client::DaemonClient::new(home.clone());
+    for _ in 0..100 {
+        let ping = cccc_contracts::DaemonRequest {
+            v: 1,
+            op: "ping".into(),
+            args: Default::default(),
+        };
+        if client.call(&ping).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let outcome = tokio::spawn(async move {
+        let id = group.group_id.as_str();
+        let operations = changelog_tasks();
+        let created = operations.len();
+        payload(
+            &tool(
+                &home,
+                id,
+                "lead",
+                "cccc_context_sync",
+                json!({"ops":operations}),
+            )
+            .await,
+        );
+
+        let expected = (1..=created)
+            .map(|number| json!(format!("T{number:03}")))
+            .collect::<Vec<_>>();
+        // The default bound, then a caller asking for smaller answers.
+        let mut page_counts = Vec::new();
+        for (max_bytes, cap) in [(Value::Null, CAP), (json!(16 * 1024), 16 * 1024)] {
+            let mut seen = Vec::new();
+            let mut cursor = Value::Null;
+            let mut pages = 0;
+            loop {
+                let response = tool(
+                    &home,
+                    id,
+                    "peer",
+                    "cccc_context_get",
+                    json!({"cursor":cursor,"max_bytes":max_bytes}),
+                )
+                .await;
+                let page = payload(&response);
+                let bytes = serde_json::to_vec(page).expect("page JSON").len();
+                assert!(bytes <= cap, "page {pages} is {bytes} bytes, over {cap}");
+                assert_eq!(
+                    page["tasks_summary"]["planned"], created,
+                    "counts cover every task"
+                );
+                let tasks = page["coordination"]["tasks"].as_array().expect("tasks");
+                assert!(!tasks.is_empty(), "every page makes progress");
+                assert!(tasks.len() <= 100);
+                seen.extend(tasks.iter().map(|task| task["id"].clone()));
+                pages += 1;
+                if page["truncated"] == false {
+                    assert_eq!(page["next_cursor"], Value::Null);
+                    break;
+                }
+                cursor = page["next_cursor"].clone();
+                assert_eq!(cursor, *seen.last().expect("last task"));
+            }
+            assert_eq!(seen, expected, "pages return each task once, in order");
+            page_counts.push(pages);
+        }
+        assert!(page_counts[0] > 1, "the board did not need paging");
+        assert!(
+            page_counts[1] > page_counts[0],
+            "a smaller byte bound needs more pages: {page_counts:?}"
+        );
+    })
+    .await;
+    daemon_task.abort();
+    let _ = daemon_task.await;
+    outcome.expect("bounded context assertions");
+}

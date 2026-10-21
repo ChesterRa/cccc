@@ -26,6 +26,64 @@ pub(super) fn project(document: ContextDoc, version: String, detail: &str) -> Va
     Value::Object(result)
 }
 
+/// One bounded page of the task-bearing snapshot.
+pub(super) struct Page {
+    pub limit: usize,
+    /// Tasks numbered at or below this were returned by earlier pages.
+    pub after: u64,
+    pub max_bytes: Option<usize>,
+    pub include_archived: bool,
+}
+
+/// `coordination.tasks` (and, in `full`, `board`) hold at most `limit` tasks
+/// after the cursor, halved until the whole answer fits `max_bytes`; at least
+/// one task is always returned so paging makes progress. `attention` and
+/// `tasks_summary` still cover every task, as counts; `task_list` pages the
+/// attention tasks themselves. `truncated` and `next_cursor` say how to go on.
+pub(super) fn project_page(
+    mut document: ContextDoc,
+    version: String,
+    detail: &str,
+    page: &Page,
+) -> Value {
+    let tasks = std::mem::take(&mut document.tasks);
+    let attention = attention(&tasks, false);
+    let summary = task_summary(&tasks, &attention);
+    let mut candidates = tasks
+        .into_iter()
+        .filter(|task| page.include_archived || status(task) != "archived")
+        .filter(|task| task_number(task) > page.after)
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(task_number);
+    let mut take = page.limit.min(candidates.len());
+    loop {
+        let mut slice = document.clone();
+        slice.tasks = candidates[..take].to_vec();
+        let mut value = project(slice, version.clone(), detail);
+        let truncated = take < candidates.len();
+        let next_cursor = truncated
+            .then(|| {
+                take.checked_sub(1)
+                    .and_then(|last| candidates[last].get("id"))
+            })
+            .flatten()
+            .cloned();
+        if let Some(object) = value.as_object_mut() {
+            object.insert("attention".into(), attention.clone());
+            object.insert("tasks_summary".into(), summary.clone());
+            object.insert("truncated".into(), Value::Bool(truncated));
+            object.insert("next_cursor".into(), next_cursor.unwrap_or(Value::Null));
+        }
+        let fits = page.max_bytes.is_none_or(|limit| {
+            serde_json::to_vec(&value).map_or(usize::MAX, |bytes| bytes.len()) <= limit
+        });
+        if fits || take <= 1 {
+            return value;
+        }
+        take /= 2;
+    }
+}
+
 fn coordination(
     source: &Map<String, Value>,
     tasks: &[Map<String, Value>],
@@ -104,6 +162,14 @@ fn agent_states(states: std::collections::BTreeMap<String, Map<String, Value>>) 
             })
             .collect(),
     )
+}
+
+fn task_number(task: &Map<String, Value>) -> u64 {
+    task.get("id")
+        .and_then(Value::as_str)
+        .and_then(|id| id.strip_prefix('T'))
+        .and_then(|number| number.parse().ok())
+        .unwrap_or(0)
 }
 
 fn status(task: &Map<String, Value>) -> &str {
