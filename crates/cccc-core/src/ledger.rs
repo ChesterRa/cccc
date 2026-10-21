@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 mod reverse;
+pub(crate) mod snapshot;
 pub use reverse::visit_newest_first;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,7 +158,17 @@ fn append_with(
             appended_bytes_match(&mut file, original_len, &encoded),
             Ok(true)
         ) {
+            let source = snapshot::Source::from_file(path, &file).ok();
             let _ = FileExt::unlock(&lock);
+            if let Some(source) = source {
+                crate::inbox::projection::note_append(
+                    path,
+                    event,
+                    source,
+                    original_len,
+                    original_len + encoded.len() as u64,
+                );
+            }
             crate::ledger_index::note_append(path, event, encoded.len());
             return Ok(());
         }
@@ -174,7 +185,17 @@ fn append_with(
         let _ = FileExt::unlock(&lock);
         return Err(error);
     }
+    let source = snapshot::Source::from_file(path, &file).ok();
     let _ = FileExt::unlock(&lock);
+    if let Some(source) = source {
+        crate::inbox::projection::note_append(
+            path,
+            event,
+            source,
+            original_len,
+            original_len + encoded.len() as u64,
+        );
+    }
     crate::ledger_index::note_append(path, event, encoded.len());
     Ok(())
 }
@@ -234,34 +255,6 @@ fn append_locked(file: &mut File, encoded: &[u8]) -> io::Result<()> {
 
 pub fn read_all(path: &Path) -> io::Result<Vec<Event>> {
     crate::ledger_index::inspect(path, |events, _| events.to_vec())
-}
-
-/// Visit canonical history in append order without retaining the shared index.
-/// Memory is bounded by one decoded record, including compressed segments.
-pub(crate) fn visit_oldest_first(path: &Path, mut visit: impl FnMut(Event)) -> io::Result<()> {
-    let _source_lock = acquire_reader_lock(path)?;
-    let group_id = ledger_group_id(path);
-    for source in source_paths(path)? {
-        let file = File::open(&source)?;
-        let mut reader: Box<dyn BufRead> = if is_gzip(&source) {
-            Box::new(BufReader::new(GzDecoder::new(file)))
-        } else {
-            Box::new(BufReader::new(file))
-        };
-        let mut line = Vec::new();
-        let mut line_no = 0;
-        while reader.read_until(b'\n', &mut line)? != 0 {
-            line_no += 1;
-            let raw = trim_ascii(&line);
-            if !raw.is_empty()
-                && let Some(event) = decode_event_line(raw, &source, line_no, &group_id)
-            {
-                visit(event);
-            }
-            line.clear();
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn read_all_uncached(path: &Path) -> io::Result<Vec<Event>> {

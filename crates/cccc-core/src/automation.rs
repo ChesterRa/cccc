@@ -1,7 +1,9 @@
 use cccc_contracts::{Event, GroupState};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashSet;
+#[cfg(test)]
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 
 use crate::actors;
@@ -450,25 +452,50 @@ fn due_unread_notices(
         return Ok(None);
     }
     let ledger_path = store.ledger_path(&group.group_id)?;
-    let cursors = inbox::cursors(home, &group.group_id)?;
-    // Project only the notices while borrowing history. Release the index read
-    // lock before appending, since append also updates that same index.
-    let notices = ledger::inspect(&ledger_path, |events, positions| {
-        unread_notices(
-            group,
-            &eligible,
-            events,
-            positions,
-            &cursors,
-            MailDelays {
-                busy: mail_after,
-                idle: mail_idle_after,
-                idle_actor_ids,
-                now: pass == UnreadPass::IdleMailNow,
-            },
-            reply_after,
-        )
-    })?;
+    let notices = inbox::projection::due(
+        home,
+        group,
+        &eligible,
+        MailDelays {
+            busy: mail_after,
+            idle: mail_idle_after,
+            idle_actor_ids,
+            now: pass == UnreadPass::IdleMailNow,
+        },
+        reply_after,
+    )?;
+    #[cfg(test)]
+    {
+        let cursors = inbox::cursors(home, &group.group_id)?;
+        let expected = ledger::inspect(&ledger_path, |events, positions| {
+            unread_notices(
+                group,
+                &eligible,
+                events,
+                positions,
+                &cursors,
+                MailDelays {
+                    busy: mail_after,
+                    idle: mail_idle_after,
+                    idle_actor_ids,
+                    now: pass == UnreadPass::IdleMailNow,
+                },
+                reply_after,
+            )
+        })?;
+        let signature = |events: &[Event]| {
+            events
+                .iter()
+                .map(|event| (&event.kind, &event.by, &event.data))
+                .map(|parts| serde_json::to_value(parts).expect("notice signature"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            signature(&notices),
+            signature(&expected),
+            "compact notice reducer disagrees with the original ordered reducer"
+        );
+    }
     Ok(Some((ledger_path, notices)))
 }
 
@@ -496,15 +523,15 @@ fn issue_notices(
 /// burst of Mail into one notice. `busy <= 0` turns Mail notices off; `idle <= 0`
 /// turns early notices off. With `now`, an idle actor is notified at once: the
 /// pass that runs as Mail is written.
-struct MailDelays<'a> {
-    busy: i64,
+pub(crate) struct MailDelays<'a> {
+    pub(crate) busy: i64,
     idle: i64,
     idle_actor_ids: &'a HashSet<String>,
     now: bool,
 }
 
 impl MailDelays<'_> {
-    fn for_actor(&self, actor_id: &str) -> i64 {
+    pub(crate) fn for_actor(&self, actor_id: &str) -> i64 {
         if self.busy > 0 && self.idle > 0 && self.idle_actor_ids.contains(actor_id) {
             if self.now {
                 0
@@ -517,6 +544,7 @@ impl MailDelays<'_> {
     }
 }
 
+#[cfg(test)]
 fn unread_notices(
     group: &GroupDoc,
     eligible: &[&cccc_contracts::Actor],
@@ -823,13 +851,13 @@ fn delivery_timing_value(group: &GroupDoc, key: &str, default: i64) -> i64 {
         .max(0)
 }
 
-fn timestamp(value: &str, default: i64) -> i64 {
+pub(crate) fn timestamp(value: &str, default: i64) -> i64 {
     DateTime::parse_from_rfc3339(value)
         .map(|value| value.timestamp())
         .unwrap_or(default)
 }
 
-fn notice_event(
+pub(crate) fn notice_event(
     group: &GroupDoc,
     actor: &cccc_contracts::Actor,
     kind: &str,

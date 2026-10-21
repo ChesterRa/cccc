@@ -13,6 +13,9 @@ use crate::fs::{read_json, with_exclusive_lock, write_json};
 use crate::ledger;
 use crate::{GroupDoc, GroupStore, HomeLayout};
 
+mod notices;
+pub(crate) mod projection;
+
 const MAIL_CURSOR_SCHEMA: u64 = 1;
 const PENDING_READ_SCHEMA: u64 = 1;
 
@@ -69,36 +72,20 @@ pub fn list_unread_many(
         return Ok(BTreeMap::new());
     }
     let state = load(home, &group.group_id)?;
-    unread_pages(home, group, actor_ids, &state, limit.min(1000))
+    projection::pages(home, group, actor_ids, &state, limit.min(1000))
 }
 
-// A later cursor or actor generation discards earlier candidates. This keeps
-// the oldest unread page without retaining unrelated messages or telemetry.
-fn unread_pages(
+/// Capped actor-list counts without decoding the returned Mail bodies.
+pub fn unread_counts(
     home: &HomeLayout,
     group: &GroupDoc,
     actor_ids: &[String],
-    state: &InboxState,
     limit: usize,
-) -> io::Result<BTreeMap<String, Vec<Event>>> {
-    let mut pages: BTreeMap<String, Vec<Event>> = actor_ids
-        .iter()
-        .map(|id| (id.clone(), Vec::new()))
-        .collect();
-    let path = GroupStore::new(home.clone())?.ledger_path(&group.group_id)?;
-    ledger::visit_oldest_first(&path, |event| {
-        let generation = actor_add_id(&event);
-        for (actor_id, page) in &mut pages {
-            if generation == Some(actor_id.as_str())
-                || state.cursors.get(actor_id) == Some(&event.id)
-            {
-                page.clear();
-            } else if page.len() < limit && is_mail_for_actor(group, &event, actor_id) {
-                page.push(event.clone());
-            }
-        }
-    })?;
-    Ok(pages)
+) -> io::Result<BTreeMap<String, usize>> {
+    if actor_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    projection::counts(home, group, actor_ids, limit)
 }
 
 pub fn consume_unread(
@@ -114,9 +101,10 @@ pub fn consume_unread(
     with_exclusive_lock(&lock_path, || {
         recover_pending_locked(home, &group.group_id)?;
         let mut state = load_raw(home, &group.group_id)?;
-        let messages = unread_pages(home, group, &[actor_id.to_owned()], &state, limit.min(200))?
-            .remove(actor_id)
-            .unwrap_or_default();
+        let messages =
+            projection::pages(home, group, &[actor_id.to_owned()], &state, limit.min(200))?
+                .remove(actor_id)
+                .unwrap_or_default();
 
         let Some(boundary) = messages.last() else {
             let (cursor_event_id, cursor_ts, cursor_updated_at) =
@@ -180,32 +168,8 @@ pub fn mail_pending_summary(
     group: &GroupDoc,
     actor_id: &str,
 ) -> io::Result<Option<Value>> {
-    let store = GroupStore::new(home.clone())?;
     let state = load(home, &group.group_id)?;
-    let cursor = state.cursors.get(actor_id).map(String::as_str);
-    let mut count = 0_usize;
-    let mut oldest_ts = None;
-    // Unread Mail starts after the later of the reader's cursor and the
-    // actor's latest generation. Walking newest-first stops at whichever comes
-    // first, so every MCP bridge answers this without indexing the ledger.
-    ledger::visit_newest_first(&store.ledger_path(&group.group_id)?, |event| {
-        if cursor == Some(event.id.as_str()) || actor_add_id(&event) == Some(actor_id) {
-            return ControlFlow::Break(());
-        }
-        // Reply and manual-delivery facts suppress the one-shot active notice,
-        // but they do not consume Mail. Natural hints must therefore mirror
-        // the unread Inbox projection rather than the notice-eligible subset.
-        if event.kind == "chat.message"
-            && event.by != actor_id
-            && event.data.get("message_mode").and_then(Value::as_str) == Some("mail")
-            && is_for_actor(group, &event, actor_id)
-        {
-            count += 1;
-            oldest_ts = Some(event.ts);
-        }
-        ControlFlow::Continue(())
-    })?;
-    let Some(oldest_ts) = oldest_ts else {
+    let Some((count, oldest_ts)) = projection::pending(home, group, actor_id, &state)? else {
         return Ok(None);
     };
     let oldest_age_seconds = DateTime::parse_from_rfc3339(&oldest_ts)
@@ -579,7 +543,9 @@ fn save(
     write_json(
         &path,
         &json!({"schema":MAIL_CURSOR_SCHEMA,"cursors":output}),
-    )
+    )?;
+    projection::note_cursor(&GroupStore::new(home.clone())?.ledger_path(group_id)?);
+    Ok(())
 }
 
 fn load_effective(home: &HomeLayout, group_id: &str) -> io::Result<InboxState> {
@@ -601,106 +567,6 @@ mod tests {
     use super::*;
     use cccc_contracts::Actor;
     use std::sync::{Arc, Barrier};
-
-    #[test]
-    fn unread_pages_and_consume_leave_the_shared_index_cold() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let store = GroupStore::new(home.clone()).expect("store");
-        let mut group = store.create("streamed Mail", "").expect("group");
-        group.actors.push(Actor::new("reader"));
-        group.actors.push(Actor::new("other"));
-        store.save(&group).expect("group actors");
-        let path = store.ledger_path(&group.group_id).expect("ledger");
-        let mut ids = Vec::new();
-        for index in 0..3 {
-            let mut event = Event::new("chat.message", &group.group_id);
-            event.by = "user".into();
-            event.ts = format!("2026-01-01T00:00:0{}Z", 3 - index);
-            event.data =
-                json!({"to":["reader","other"],"message_mode":"mail","text":index.to_string()})
-                    .as_object()
-                    .expect("data")
-                    .clone();
-            ids.push(event.id.clone());
-            ledger::append(&path, &event).expect("append");
-        }
-        crate::ledger_index::invalidate_path(&path);
-        let pages =
-            list_unread_many(&home, &group, &["reader".into(), "other".into()], 1).expect("pages");
-        assert_eq!(pages["reader"][0].id, ids[0]);
-        assert_eq!(pages["other"][0].id, ids[0]);
-        assert!(
-            !crate::ledger_index::is_cached(&path),
-            "a bounded peek populated the full index"
-        );
-        let consumed = consume_unread(&home, &group, "reader", "reader", 1).expect("consume");
-        assert_eq!(consumed.messages[0].id, ids[0]);
-        assert_eq!(
-            list_unread(&home, &group, "reader", 1).expect("next")[0].id,
-            ids[1]
-        );
-        assert!(
-            !crate::ledger_index::is_cached(&path),
-            "consuming Mail populated the full index"
-        );
-    }
-
-    #[test]
-    fn bounded_pages_stream_compressed_history_and_reset_at_new_generation() {
-        use std::io::Write;
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let store = GroupStore::new(home.clone()).expect("store");
-        let mut group = store.create("compressed Mail", "").expect("group");
-        let actor = Actor::new("reader");
-        group.actors.push(actor.clone());
-        store.save(&group).expect("actors");
-        let path = store.ledger_path(&group.group_id).expect("ledger");
-        let mail = || {
-            let mut event = Event::new("chat.message", &group.group_id);
-            event.by = "user".into();
-            event.data = json!({"to":["reader"],"message_mode":"mail","text":"generated"})
-                .as_object()
-                .expect("data")
-                .clone();
-            event
-        };
-        ledger::append(&path, &mail()).expect("old Mail");
-        let mut generation = Event::new("actor.add", &group.group_id);
-        generation.data = json!({"actor":actor})
-            .as_object()
-            .expect("generation")
-            .clone();
-        ledger::append(&path, &generation).expect("generation");
-        let first = mail();
-        ledger::append(&path, &first).expect("first");
-        let segments = path
-            .parent()
-            .expect("group dir")
-            .join("state/ledger/segments");
-        std::fs::create_dir_all(&segments).expect("segments");
-        let mut compressed = flate2::write::GzEncoder::new(
-            std::fs::File::create(segments.join("ledger.0001.jsonl.gz")).expect("gzip"),
-            flate2::Compression::default(),
-        );
-        compressed
-            .write_all(&std::fs::read(&path).expect("history"))
-            .expect("compress");
-        compressed.finish().expect("finish gzip");
-        std::fs::write(&path, b"").expect("rotate active");
-        let second = mail();
-        ledger::append(&path, &second).expect("second");
-        crate::ledger_index::invalidate_path(&path);
-        let page = list_unread(&home, &group, "reader", 1).expect("page");
-        assert_eq!(page[0].id, first.id);
-        consume_unread(&home, &group, "reader", "reader", 1).expect("consume");
-        assert_eq!(
-            list_unread(&home, &group, "reader", 1).expect("next")[0].id,
-            second.id
-        );
-        assert!(!crate::ledger_index::is_cached(&path));
-    }
 
     #[test]
     fn concurrent_consumers_return_each_message_once() {
