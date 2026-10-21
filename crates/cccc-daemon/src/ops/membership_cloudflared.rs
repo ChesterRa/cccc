@@ -527,7 +527,8 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("home");
-        let helper = cloudflared::install_dir(&home).join("cloudflared-test-helper");
+        // Multicall coreutils selects the utility from the executable's basename.
+        let helper = cloudflared::install_dir(&home).join("sleep");
         std::fs::create_dir_all(helper.parent().expect("parent")).expect("dir");
         symlink("/bin/sleep", &helper).expect("symlink");
         write_token(&home, "secret-token").expect("token");
@@ -554,11 +555,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("home");
-        let decoy = temp.path().join("cloudflared-decoy");
+        let decoy = temp.path().join("sleep");
         symlink("/bin/sleep", &decoy).expect("decoy binary");
         let mut child = Command::new(&decoy).arg("30").spawn().expect("sleep");
         std::fs::create_dir_all(cloudflared::install_dir(&home)).expect("dir");
-        symlink("/bin/false", cloudflared::binary_path(&home)).expect("managed binary");
+        // Use a non-coreutils executable: sleep and false may share a multicall binary.
+        symlink("/bin/sh", cloudflared::binary_path(&home)).expect("managed binary");
         std::fs::write(pid_path(&home), child.id().to_string()).expect("pid");
         let error = stop(&home).expect_err("must refuse");
         assert!(error.message.contains("tracked cloudflared executable"));
@@ -574,7 +576,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("home");
-        let helper = cloudflared::install_dir(&home).join("cloudflared-pid-fixture");
+        let helper = cloudflared::install_dir(&home).join("sleep");
         std::fs::create_dir_all(helper.parent().expect("parent")).expect("dir");
         symlink("/bin/sleep", &helper).expect("helper");
         std::fs::create_dir_all(pid_path(&home)).expect("blocking pid directory");

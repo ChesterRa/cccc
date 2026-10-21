@@ -424,7 +424,8 @@ fn rust_reach_off_stops_a_cloudflared_process_started_by_python() {
     home.initialize().expect("home");
     let helper_dir = home.root().join("libexec").join("cloudflared");
     std::fs::create_dir_all(&helper_dir).expect("helper dir");
-    let helper = helper_dir.join("cloudflared-test-helper");
+    // Keep the utility name for multicall implementations of /bin/sleep.
+    let helper = helper_dir.join("sleep");
     symlink("/bin/sleep", &helper).expect("helper symlink");
     let mut child = Command::new(&helper)
         .arg("30")
