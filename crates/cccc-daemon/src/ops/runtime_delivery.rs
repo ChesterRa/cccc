@@ -202,12 +202,77 @@ pub fn claim_deliveries(
 }
 
 pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usize, OpError> {
-    settle_claims(
-        home,
-        group,
-        None,
-        "daemon restarted before the claimed handoff recorded an outcome",
-    )
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
+    with_exclusive_lock(&delivery_lock_path(&ledger_path), || {
+        // Startup recovery needs only unresolved claims. Building the generic
+        // Event index here would retain history before IPC even becomes ready.
+        let mut pending = HashMap::<(String, String), String>::new();
+        ledger::visit_snapshot_oldest_first(&ledger_path, |event| {
+            if event.kind == "actor.add" {
+                let actor = event
+                    .data
+                    .get("actor")
+                    .and_then(Value::as_object)
+                    .and_then(|actor| actor.get("id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !actor.is_empty() {
+                    pending.retain(|(id, _), _| id != actor);
+                }
+            } else if event.kind == "runtime.delivery" {
+                let actor = event
+                    .data
+                    .get("actor_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let source = event
+                    .data
+                    .get("source_event_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !actor.is_empty() && !source.is_empty() {
+                    let key = (actor.to_owned(), source.to_owned());
+                    if event.data.get("state").and_then(Value::as_str) == Some("claimed") {
+                        pending.insert(
+                            key,
+                            event
+                                .data
+                                .get("transport")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                        );
+                    } else {
+                        pending.remove(&key);
+                    }
+                }
+            }
+            std::ops::ControlFlow::Continue(())
+        })?;
+        // No outcome is appended unless the complete snapshot was read.
+        let mut settled = 0;
+        for ((actor_id, source_event_id), transport) in pending {
+            let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
+                continue;
+            };
+            append_state(
+                home,
+                &group.group_id,
+                &actor.id,
+                &actor.created_at,
+                &source_event_id,
+                &transport,
+                DeliveryOutcome::Ambiguous(
+                    "daemon restarted before the claimed handoff recorded an outcome",
+                ),
+            )
+            .map_err(|error| std::io::Error::other(error.message))?;
+            settled += 1;
+        }
+        Ok(settled)
+    })
+    .map_err(OpError::io)
 }
 
 /// The caller has retired the previous transport and verified no active turn.

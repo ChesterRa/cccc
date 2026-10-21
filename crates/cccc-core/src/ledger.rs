@@ -13,6 +13,17 @@ mod reverse;
 pub(crate) mod snapshot;
 pub use reverse::visit_newest_first;
 
+/// Visit a committed oldest-first snapshot without retaining Event payloads.
+/// Source identities, descriptors and byte bounds are pinned under the reader
+/// lock; decoding and the callback run after that lock is released.
+pub fn visit_snapshot_oldest_first(
+    path: &Path,
+    mut visit: impl FnMut(Event) -> std::ops::ControlFlow<()>,
+) -> io::Result<()> {
+    snapshot::Snapshot::open(path)?.visit(&[], |event, _| visit(event))?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceRevision {
     pub(crate) path: PathBuf,
