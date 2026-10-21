@@ -449,6 +449,17 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
             return 0;
         }
     };
+    if std::env::var_os("CCCC_DELIVERY_QUERY_PROBE").is_some_and(|value| value == "1") {
+        let actor_index = group
+            .actors
+            .iter()
+            .filter(|actor| actor.enabled)
+            .position(|actor| actor.id == actor_id);
+        eprintln!(
+            "CCCC_DELIVERY_QUERY {}",
+            serde_json::json!({"group_id":group.group_id,"actor_index":actor_index,"selected":events.len()})
+        );
+    }
     events
         .into_iter()
         .map(|event| dispatch_to(home, group, &event, std::slice::from_ref(actor), false).queued)

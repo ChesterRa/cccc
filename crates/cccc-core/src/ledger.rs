@@ -264,7 +264,9 @@ fn append_locked(file: &mut File, encoded: &[u8]) -> io::Result<()> {
     file.sync_data()
 }
 
+#[track_caller]
 pub fn read_all(path: &Path) -> io::Result<Vec<Event>> {
+    note_index_query("read_all");
     crate::ledger_index::inspect(path, |events, _| events.to_vec())
 }
 
@@ -540,10 +542,12 @@ pub fn tail_filtered(
     Ok((newest_first, has_more))
 }
 
+#[track_caller]
 pub fn events_after(path: &Path, event_id: &str, limit: usize) -> io::Result<Vec<Event>> {
     if event_id.trim().is_empty() || limit == 0 {
         return Ok(Vec::new());
     }
+    note_index_query("events_after");
     crate::ledger_index::inspect(path, |events, positions| {
         let Some(index) = positions.get(event_id).copied() else {
             return Vec::new();
@@ -560,13 +564,16 @@ pub fn events_after(path: &Path, event_id: &str, limit: usize) -> io::Result<Vec
 /// Compute a projection without cloning the full history. The callback holds
 /// the index read lock: return owned results before appending or calling other
 /// ledger operations for the same path.
+#[track_caller]
 pub fn inspect<T>(
     path: &Path,
     inspect: impl FnOnce(&[Event], &std::collections::HashMap<String, usize>) -> T,
 ) -> io::Result<T> {
+    note_index_query("inspect");
     crate::ledger_index::inspect(path, inspect)
 }
 
+#[track_caller]
 pub fn inspect_status<T>(
     path: &Path,
     inspect: impl FnOnce(
@@ -575,24 +582,44 @@ pub fn inspect_status<T>(
         &std::collections::HashMap<String, usize>,
     ) -> T,
 ) -> io::Result<T> {
+    note_index_query("inspect_status");
     crate::ledger_index::inspect_status(path, inspect)
 }
 
+#[track_caller]
 pub fn find_event(path: &Path, event_id: &str) -> io::Result<Option<Event>> {
+    note_index_query("find_event");
     crate::ledger_index::find_event(path, event_id)
 }
 
+#[track_caller]
 pub fn find_idempotent(
     path: &Path,
     kind: &str,
     by: &str,
     client_id: &str,
 ) -> io::Result<Option<Event>> {
+    note_index_query("find_idempotent");
     crate::ledger_index::find_idempotent(path, kind, by, client_id)
 }
 
+#[track_caller]
 pub fn find_relay(path: &Path, source_event_id: &str) -> io::Result<Option<Event>> {
+    note_index_query("find_relay");
     crate::ledger_index::find_relay(path, source_event_id)
+}
+
+// An operator can audit an isolated replay for any remaining generic Event
+// index query. This emits only public source locations, never ledger content.
+#[track_caller]
+fn note_index_query(api: &str) {
+    if std::env::var_os("CCCC_LEDGER_INDEX_PROBE").is_some_and(|value| value == "1") {
+        let caller = std::panic::Location::caller();
+        eprintln!(
+            "CCCC_EVENT_INDEX_QUERY {}",
+            serde_json::json!({"api":api,"file":caller.file(),"line":caller.line()})
+        );
+    }
 }
 
 fn read_after_cursor(path: &Path, cursor: Option<&str>, group_id: &str) -> io::Result<Vec<Event>> {

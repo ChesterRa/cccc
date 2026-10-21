@@ -1,3 +1,4 @@
+use super::deliveries::DeliveryState;
 use super::notices::NoticeState;
 use super::*;
 use crate::ledger::snapshot::{Location, Snapshot, Source};
@@ -28,6 +29,7 @@ struct Projection {
     offsets: Vec<u64>,
     boxes: BTreeMap<String, Mailbox>,
     notices: NoticeState,
+    deliveries: DeliveryState,
 }
 #[derive(Default)]
 struct Slot {
@@ -98,6 +100,7 @@ impl Projection {
             offsets: Vec::new(),
             boxes: BTreeMap::new(),
             notices: NoticeState::default(),
+            deliveries: DeliveryState::default(),
         };
         for actor in &group.actors {
             result.boxes.entry(actor.id.clone()).or_default();
@@ -112,6 +115,7 @@ impl Projection {
         // Both passes use the same pinned FDs and bounds, with no ledger lock.
         snapshot.visit(&[], |event, _| {
             result.notices.remember_references(&event);
+            result.deliveries.remember_references(&event);
             ControlFlow::Continue(())
         })?;
         result.offsets = snapshot.visit(&[], |event, location| {
@@ -141,6 +145,7 @@ impl Projection {
             }
         }
         self.notices.note(&self.group, event);
+        self.deliveries.note(&self.group, event, location);
     }
     fn move_cursors(&mut self, state: &InboxState, snapshot: &Snapshot) -> io::Result<bool> {
         for (actor, mailbox) in &mut self.boxes {
@@ -217,6 +222,7 @@ fn with_projection<T>(
                     let mut unknown = false;
                     snapshot.visit(&projection.offsets, |event, _| {
                         unknown |= !projection.notices.can_append(&event);
+                        unknown |= !projection.deliveries.can_append(&event);
                         ControlFlow::Continue(())
                     })?;
                     if unknown || !projection.move_cursors(&state, &snapshot)? {
@@ -348,6 +354,42 @@ pub(crate) fn still_awaited(
     })
 }
 
+pub(super) fn pending_deliveries(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    limit: usize,
+) -> io::Result<Vec<Event>> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, snapshot| {
+        projection
+            .deliveries
+            .pending(actor, limit)
+            .into_iter()
+            .map(|location| snapshot.event(location))
+            .collect()
+    })
+}
+pub(super) fn delivery_states(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actors: &[String],
+    source: &str,
+) -> io::Result<HashMap<String, (String, String)>> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, _| {
+        Ok(actors
+            .iter()
+            .filter_map(|actor| {
+                projection
+                    .deliveries
+                    .latest(actor, source)
+                    .map(|state| (actor.clone(), state))
+            })
+            .collect())
+    })
+}
+
 // Called only after releasing the ledger writer lock. Never wait for a cold
 // replay or page decoding: a missed callback is recovered from source offsets
 // on the next query. Exact commit offsets make delayed callbacks idempotent.
@@ -376,7 +418,10 @@ pub(crate) fn note_append(path: &Path, event: &Event, source: Source, start: u64
     if projection.offsets[index] >= end {
         return;
     }
-    if projection.offsets[index] != start || !projection.notices.can_append(event) {
+    if projection.offsets[index] != start
+        || !projection.notices.can_append(event)
+        || !projection.deliveries.can_append(event)
+    {
         return;
     }
     projection.note(

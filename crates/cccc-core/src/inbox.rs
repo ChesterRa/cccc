@@ -13,6 +13,7 @@ use crate::fs::{read_json, with_exclusive_lock, write_json};
 use crate::ledger;
 use crate::{GroupDoc, GroupStore, HomeLayout};
 
+mod deliveries;
 mod notices;
 pub(crate) mod projection;
 
@@ -50,6 +51,26 @@ pub struct ConsumedInbox {
     pub cursor_ts: String,
     pub cursor_updated_at: String,
     pub read_event: Option<Event>,
+}
+
+/// Pending pushed/pulled runtime deliveries, without materializing history.
+pub fn pending_deliveries(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    limit: usize,
+) -> io::Result<Vec<Event>> {
+    projection::pending_deliveries(home, group, actor, limit)
+}
+
+/// Latest delivery state and transport, preserving legacy claim semantics.
+pub fn delivery_states(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actors: &[String],
+    source: &str,
+) -> io::Result<HashMap<String, (String, String)>> {
+    projection::delivery_states(home, group, actors, source)
 }
 
 pub fn list_unread(
