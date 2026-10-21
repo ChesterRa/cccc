@@ -44,7 +44,7 @@ async fn inbox_projection_refills_overflow_and_follows_compaction() {
             .expect("daemon"),
     );
     let deadline = Instant::now() + Duration::from_secs(20);
-    while !home.daemon_dir().join("ccccd.sock").exists() {
+    while !home.daemon_dir().join("ccccd.addr.json").exists() {
         assert!(daemon.0.try_wait().expect("status").is_none());
         assert!(Instant::now() < deadline, "startup timed out");
         tokio::time::sleep(Duration::from_millis(20)).await;

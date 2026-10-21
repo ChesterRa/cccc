@@ -138,8 +138,11 @@ def replay(args: argparse.Namespace) -> dict:
 
         worker = None
         try:
+            # Include startup recovery in the memory budget. The published
+            # address appears only after that recovery completes.
+            measure()
             deadline = time.monotonic() + 30
-            while not (home / "daemon/ccccd.sock").exists():
+            while not (home / "daemon/ccccd.addr.json").exists():
                 if daemon.poll() is not None or time.monotonic() > deadline:
                     raise RuntimeError("daemon failed to start")
                 time.sleep(0.1)
