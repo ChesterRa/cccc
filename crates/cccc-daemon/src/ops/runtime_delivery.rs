@@ -201,55 +201,60 @@ pub fn claim_deliveries(
     .map_err(OpError::io)
 }
 
+fn read_stranded_claims(path: &Path) -> std::io::Result<HashMap<(String, String), String>> {
+    // Startup recovery needs only unresolved claims. Building the generic
+    // Event index here would retain history before IPC even becomes ready.
+    let mut pending = HashMap::<(String, String), String>::new();
+    ledger::visit_snapshot_oldest_first(path, |event| {
+        if event.kind == "actor.add" {
+            let actor = event
+                .data
+                .get("actor")
+                .and_then(Value::as_object)
+                .and_then(|actor| actor.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !actor.is_empty() {
+                pending.retain(|(id, _), _| id != actor);
+            }
+        } else if event.kind == "runtime.delivery" {
+            let actor = event
+                .data
+                .get("actor_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let source = event
+                .data
+                .get("source_event_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !actor.is_empty() && !source.is_empty() {
+                let key = (actor.to_owned(), source.to_owned());
+                if event.data.get("state").and_then(Value::as_str) == Some("claimed") {
+                    pending.insert(
+                        key,
+                        event
+                            .data
+                            .get("transport")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    );
+                } else {
+                    pending.remove(&key);
+                }
+            }
+        }
+        std::ops::ControlFlow::Continue(())
+    })?;
+    Ok(pending)
+}
+
 pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usize, OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
     with_exclusive_lock(&delivery_lock_path(&ledger_path), || {
-        // Startup recovery needs only unresolved claims. Building the generic
-        // Event index here would retain history before IPC even becomes ready.
-        let mut pending = HashMap::<(String, String), String>::new();
-        ledger::visit_snapshot_oldest_first(&ledger_path, |event| {
-            if event.kind == "actor.add" {
-                let actor = event
-                    .data
-                    .get("actor")
-                    .and_then(Value::as_object)
-                    .and_then(|actor| actor.get("id"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if !actor.is_empty() {
-                    pending.retain(|(id, _), _| id != actor);
-                }
-            } else if event.kind == "runtime.delivery" {
-                let actor = event
-                    .data
-                    .get("actor_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let source = event
-                    .data
-                    .get("source_event_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if !actor.is_empty() && !source.is_empty() {
-                    let key = (actor.to_owned(), source.to_owned());
-                    if event.data.get("state").and_then(Value::as_str) == Some("claimed") {
-                        pending.insert(
-                            key,
-                            event
-                                .data
-                                .get("transport")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                        );
-                    } else {
-                        pending.remove(&key);
-                    }
-                }
-            }
-            std::ops::ControlFlow::Continue(())
-        })?;
+        let pending = read_stranded_claims(&ledger_path)?;
         // No outcome is appended unless the complete snapshot was read.
         let mut settled = 0;
         for ((actor_id, source_event_id), transport) in pending {
@@ -511,6 +516,87 @@ pub fn pending_sources(
 mod tests {
     use super::*;
     use std::sync::{Arc, Barrier};
+
+    #[test]
+    #[ignore = "operator-supplied copied real groups only"]
+    fn real_group_startup_claims_match_history() {
+        let root = std::env::var_os("CCCC_REAL_REPLAY_HOME").expect("real copied home required");
+        let home = HomeLayout::from_path(root).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let groups = store.list().expect("registered real groups");
+        assert!(
+            !groups.is_empty(),
+            "empty replay cannot prove claim recovery"
+        );
+        for group in groups {
+            let path = store.ledger_path(&group.group_id).expect("ledger");
+            // Preserve the old indexed reducer as a private-data oracle. It
+            // deliberately retains terminal states before selecting claims.
+            let expected = ledger::inspect(&path, |events, _| {
+                let mut latest = HashMap::<(String, String), (String, String)>::new();
+                for event in events {
+                    if event.kind == "actor.add" {
+                        let actor = event
+                            .data
+                            .get("actor")
+                            .and_then(Value::as_object)
+                            .and_then(|actor| actor.get("id"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        if !actor.is_empty() {
+                            latest.retain(|(id, _), _| id != actor);
+                        }
+                    } else if event.kind == "runtime.delivery" {
+                        let actor = event
+                            .data
+                            .get("actor_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        let source = event
+                            .data
+                            .get("source_event_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        if !actor.is_empty() && !source.is_empty() {
+                            latest.insert(
+                                (actor.to_owned(), source.to_owned()),
+                                (
+                                    event
+                                        .data
+                                        .get("state")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    event
+                                        .data
+                                        .get("transport")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                ),
+                            );
+                        }
+                    }
+                }
+                latest
+                    .into_iter()
+                    .filter_map(|(key, (state, transport))| {
+                        (state == "claimed").then_some((key, transport))
+                    })
+                    .collect::<HashMap<_, _>>()
+            })
+            .expect("legacy claim reducer");
+            let actual = read_stranded_claims(&path).expect("streamed claims");
+            assert_eq!(
+                actual, expected,
+                "startup claim reducer differs from history"
+            );
+            println!(
+                "{}",
+                json!({"group_id":group.group_id,"stranded_claims":actual.len()})
+            );
+        }
+    }
 
     #[test]
     fn concurrent_claims_are_unique_and_restart_settles_the_stranded_claim() {
