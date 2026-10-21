@@ -163,6 +163,7 @@ type TaskType =
   task_type?: TaskType
   notes?: string
   checklist?: Array<{ id?: string; text: string; status?: ChecklistStatus }>
+  rollup?: boolean
 }
 ```
 
@@ -179,6 +180,7 @@ Rules:
 - If `task_type` is omitted, the daemon MUST persist `standard` for a root task and `free` for a subtask.
 - `task_type` stores the durable work kind. It MUST NOT be treated as lifecycle state or parent/child structure.
 - `task_type` does not auto-seed `notes` or `checklist`; those remain ordinary editable task content.
+- If `rollup` is provided, it MUST be a boolean. See "Subtask rollup" under `task.move`.
 
 #### `task.update`
 
@@ -197,6 +199,7 @@ Rules:
   task_type?: TaskType
   notes?: string
   checklist?: Array<{ id?: string; text: string; status?: ChecklistStatus }>
+  rollup?: boolean
 }
 ```
 
@@ -226,6 +229,22 @@ Notes:
 - Moving to `archived` records `archived_from`.
 - This operation changes only task lifecycle state. It does not implicitly
   rewrite an assignee's `agent_state` or append daily/stable memory.
+
+Subtask rollup:
+- A task with `rollup: true` completes with its subtasks (tasks whose
+  `parent_id` is that task; archived subtasks do not count).
+- When an operation leaves every counted subtask `done`, the daemon moves the
+  task to `done` in the same write. When a subtask leaves `done`, or a new one
+  is added, while the task is `done`, the daemon moves the task back to
+  `active` if a subtask is active, otherwise to `planned`. The same rule then
+  applies to that task's own parent.
+- Only a change to the subtasks (status, `parent_id`, creation, deletion) or
+  setting `rollup` triggers this; a direct `task.move` of the task itself
+  stands.
+- Moving a rollup task to `done` while a subtask is neither `done` nor
+  `archived` MUST be rejected.
+- Each automatic move is reported in the change entry of the operation that
+  caused it: `rollup: [{ task_id, status }]`.
 
 #### `task.restore`
 

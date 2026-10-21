@@ -1,5 +1,6 @@
 use cccc_contracts::utc_now;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 use std::io;
 
 use super::model::ContextDoc;
@@ -7,6 +8,9 @@ use super::model::ContextDoc;
 const TASK_STATUSES: &[&str] = &["planned", "active", "done", "archived"];
 const TASK_TYPES: &[&str] = &["free", "standard", "optimization"];
 const WAITING_ON: &[&str] = &["none", "user", "actor", "external"];
+
+/// Each task's status, parent and `rollup` flag, to see what one operation changed.
+pub(super) type TaskShape = BTreeMap<String, (String, Option<String>, bool)>;
 
 pub(super) fn create(doc: &mut ContextDoc, op: &Map<String, Value>, by: &str) -> io::Result<()> {
     let title = required(op, "title")?.trim().to_owned();
@@ -21,6 +25,7 @@ pub(super) fn create(doc: &mut ContextDoc, op: &Map<String, Value>, by: &str) ->
         "free"
     });
     let waiting_on = enum_value(op, "waiting_on", WAITING_ON)?;
+    rollup_flag(op)?;
     let mut task = op
         .iter()
         .filter(|(key, _)| key.as_str() != "op")
@@ -69,6 +74,7 @@ pub(super) fn update(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resul
     }
     let waiting_on = enum_value(op, "waiting_on", WAITING_ON)?;
     let task_type = enum_value(op, "task_type", TASK_TYPES)?;
+    rollup_flag(op)?;
     let task = find_mut(doc, &task_id)?;
     let allowed = [
         "title",
@@ -82,6 +88,7 @@ pub(super) fn update(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resul
         "task_type",
         "notes",
         "checklist",
+        "rollup",
     ];
     for key in allowed {
         if let Some(value) = op.get(key) {
@@ -122,15 +129,20 @@ pub(super) fn move_task(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Re
     let task_id = required(op, "task_id")?;
     let status = enum_value(op, "status", TASK_STATUSES)?
         .ok_or_else(|| io::Error::other("status is required"))?;
-    let task = find_mut(doc, task_id)?;
-    let previous = task
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or("planned")
-        .to_owned();
+    let previous = status_of(find(doc, task_id)?).to_owned();
     if previous == status {
         return Ok(());
     }
+    if status == "done" && is_rollup(find(doc, task_id)?) {
+        let open = open_subtasks(doc, task_id);
+        if !open.is_empty() {
+            return Err(io::Error::other(format!(
+                "task {task_id} completes with its subtasks; still open: {}",
+                open.join(", ")
+            )));
+        }
+    }
+    let task = find_mut(doc, task_id)?;
     if status == "archived" {
         task.insert("archived_from".into(), Value::String(previous));
     } else {
@@ -177,6 +189,140 @@ pub(super) fn delete(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resul
             .is_none_or(|task_id| !removing.iter().any(|candidate| candidate == task_id))
     });
     Ok(())
+}
+
+pub(super) fn task_shape(doc: &ContextDoc) -> TaskShape {
+    doc.tasks
+        .iter()
+        .filter_map(|task| {
+            let id = task.get("id").and_then(Value::as_str)?;
+            let shape = (
+                status_of(task).to_owned(),
+                parent_of(task).map(str::to_owned),
+                is_rollup(task),
+            );
+            Some((id.to_owned(), shape))
+        })
+        .collect()
+}
+
+/// A task with `rollup` set completes with its subtasks: when its last open
+/// subtask is done it moves to done, and when a subtask is reopened or added
+/// while it is done it leaves done (to active if a subtask is active, else to
+/// planned). Only tasks whose subtasks changed in this operation, or whose
+/// flag was just set, are settled, so a direct move of the task itself
+/// stands. Returns each automatic move as `{"task_id", "status"}`.
+pub(super) fn roll_up(doc: &mut ContextDoc, before: &TaskShape) -> Vec<Value> {
+    let after = task_shape(doc);
+    let mut pending = Vec::new();
+    for (id, (status, parent, rollup)) in &after {
+        match before.get(id) {
+            Some((old_status, old_parent, old_rollup)) => {
+                if old_status != status || old_parent != parent {
+                    pending.extend(old_parent.iter().chain(parent.iter()).cloned());
+                }
+                if *rollup && !*old_rollup {
+                    pending.push(id.clone());
+                }
+            }
+            None => {
+                pending.extend(parent.iter().cloned());
+                if *rollup {
+                    pending.push(id.clone());
+                }
+            }
+        }
+    }
+    for (id, (_, parent, _)) in before {
+        if !after.contains_key(id) {
+            pending.extend(parent.iter().cloned());
+        }
+    }
+    let mut moves = Vec::new();
+    // Each automatic move only goes up the (acyclic) parent chain; the bound
+    // is a guard, not a limit any real tree reaches.
+    let mut budget = 2 * after.len() + pending.len();
+    while let Some(id) = pending.pop() {
+        if budget == 0 {
+            break;
+        }
+        budget -= 1;
+        if let Some(status) = settle(doc, &id) {
+            moves.push(json!({"task_id": id, "status": status}));
+            if let Some(parent) = find(doc, &id).ok().and_then(parent_of) {
+                pending.push(parent.to_owned());
+            }
+        }
+    }
+    moves
+}
+
+fn settle(doc: &mut ContextDoc, id: &str) -> Option<&'static str> {
+    let task = find(doc, id).ok()?;
+    let current = status_of(task);
+    if !is_rollup(task) || current == "archived" {
+        return None;
+    }
+    let subtasks = doc
+        .tasks
+        .iter()
+        .filter(|candidate| parent_of(candidate) == Some(id))
+        .map(status_of)
+        .filter(|status| *status != "archived")
+        .collect::<Vec<_>>();
+    if subtasks.is_empty() {
+        return None;
+    }
+    let target = if subtasks.iter().all(|status| *status == "done") {
+        "done"
+    } else if current != "done" {
+        return None;
+    } else if subtasks.contains(&"active") {
+        "active"
+    } else {
+        "planned"
+    };
+    if current == target {
+        return None;
+    }
+    let task = find_mut(doc, id).ok()?;
+    task.insert("status".into(), Value::String(target.into()));
+    task.insert("updated_at".into(), Value::String(utc_now()));
+    Some(target)
+}
+
+/// Subtasks of `id` that are neither done nor archived.
+fn open_subtasks(doc: &ContextDoc, id: &str) -> Vec<String> {
+    doc.tasks
+        .iter()
+        .filter(|task| {
+            parent_of(task) == Some(id) && !matches!(status_of(task), "done" | "archived")
+        })
+        .filter_map(|task| task.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect()
+}
+
+fn status_of(task: &Map<String, Value>) -> &str {
+    task.get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("planned")
+}
+
+fn parent_of(task: &Map<String, Value>) -> Option<&str> {
+    task.get("parent_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn is_rollup(task: &Map<String, Value>) -> bool {
+    task.get("rollup").and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn rollup_flag(op: &Map<String, Value>) -> io::Result<()> {
+    match op.get("rollup") {
+        None | Some(Value::Bool(_)) => Ok(()),
+        Some(_) => Err(io::Error::other("rollup must be a boolean")),
+    }
 }
 
 pub(super) fn maximum_task_number(tasks: &[Map<String, Value>]) -> u64 {

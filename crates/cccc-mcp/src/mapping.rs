@@ -225,6 +225,7 @@ fn task_action(
                     "task_type",
                     "notes",
                     "checklist",
+                    "rollup",
                 ],
             );
             args.insert("op".into(), Value::String("task.create".into()));
@@ -251,6 +252,7 @@ fn task_action(
                     "task_type",
                     "notes",
                     "checklist",
+                    "rollup",
                 ],
             );
             let has_patch = args.keys().any(|key| key != "task_id");

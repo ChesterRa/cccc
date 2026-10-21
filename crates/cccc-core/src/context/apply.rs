@@ -14,8 +14,18 @@ pub fn apply_all(
     for (index, operation) in operations.iter().enumerate() {
         let name = operation.get("op").and_then(Value::as_str).unwrap_or("");
         authorize(document, operation)?;
+        let shape = name
+            .starts_with("task.")
+            .then(|| super::task_apply::task_shape(document));
         apply_one(document, name, operation, by)?;
-        changes.push(json!({"index": index, "op": name, "detail": "applied"}));
+        let mut change = json!({"index": index, "op": name, "detail": "applied"});
+        if let Some(shape) = shape {
+            let rolled = super::task_apply::roll_up(document, &shape);
+            if !rolled.is_empty() {
+                change["rollup"] = Value::Array(rolled);
+            }
+        }
+        changes.push(change);
     }
     Ok(changes)
 }

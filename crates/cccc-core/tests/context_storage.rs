@@ -373,3 +373,107 @@ fn accepted_create_delete_batch_still_retires_its_task_number() {
         .expect("replacement");
     assert_eq!(result.context.tasks[0]["id"], "T002");
 }
+
+/// A rollup task's completion follows its subtasks, through the real store:
+/// not done while one is open, done with the last, out of done when one
+/// reopens or a new one appears, and up the tree to a rollup grandparent.
+#[test]
+fn a_rollup_task_completes_and_reopens_with_its_subtasks() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("rollup", "").expect("group");
+    let contexts = ContextStore::new(home.clone()).expect("contexts");
+    let sync = |ops: Vec<Value>| {
+        contexts.sync(
+            &group.group_id,
+            &ops.into_iter().map(op).collect::<Vec<_>>(),
+            None,
+            "user",
+            false,
+        )
+    };
+    let status = |id: &str| {
+        contexts
+            .load(&group.group_id)
+            .expect("context")
+            .tasks
+            .iter()
+            .find(|task| task["id"] == id)
+            .and_then(|task| task["status"].as_str().map(str::to_owned))
+            .expect("task status")
+    };
+    sync(vec![
+        json!({"op":"task.create","title":"release","rollup":true}),
+        json!({"op":"task.create","title":"build","parent_id":"T001"}),
+        json!({"op":"task.create","title":"publish","parent_id":"T001"}),
+    ])
+    .expect("tree");
+
+    let refused = sync(vec![
+        json!({"op":"task.move","task_id":"T001","status":"done"}),
+    ])
+    .expect_err("subtasks are open");
+    assert!(
+        refused.to_string().contains("still open: T002, T003"),
+        "{refused}"
+    );
+
+    sync(vec![
+        json!({"op":"task.move","task_id":"T002","status":"done"}),
+    ])
+    .expect("first");
+    assert_eq!(status("T001"), "planned");
+    let last = sync(vec![
+        json!({"op":"task.move","task_id":"T003","status":"done"}),
+    ])
+    .expect("last");
+    assert_eq!(status("T001"), "done");
+    assert_eq!(
+        last.changes[0]["rollup"],
+        json!([{"task_id":"T001","status":"done"}])
+    );
+
+    sync(vec![
+        json!({"op":"task.move","task_id":"T003","status":"active"}),
+    ])
+    .expect("reopen");
+    assert_eq!(status("T001"), "active", "a reopened subtask reopens it");
+    sync(vec![
+        json!({"op":"task.move","task_id":"T003","status":"archived"}),
+    ])
+    .expect("drop");
+    assert_eq!(status("T001"), "done", "archived subtasks do not count");
+    sync(vec![
+        json!({"op":"task.create","title":"announce","parent_id":"T001"}),
+    ])
+    .expect("added");
+    assert_eq!(status("T001"), "planned", "new planned work reopens it");
+
+    let nested = sync(vec![
+        json!({"op":"task.create","title":"quarter","rollup":true}),
+        json!({"op":"task.update","task_id":"T001","parent_id":"T005"}),
+        json!({"op":"task.move","task_id":"T004","status":"done"}),
+    ])
+    .expect("nested");
+    assert_eq!(status("T001"), "done");
+    assert_eq!(status("T005"), "done", "the rollup goes up the tree");
+    assert_eq!(
+        nested.changes[2]["rollup"],
+        json!([{"task_id":"T001","status":"done"},{"task_id":"T005","status":"done"}])
+    );
+
+    sync(vec![
+        json!({"op":"task.create","title":"plain"}),
+        json!({"op":"task.create","title":"step","parent_id":"T006"}),
+        json!({"op":"task.move","task_id":"T007","status":"done"}),
+    ])
+    .expect("plain");
+    assert_eq!(status("T006"), "planned", "without the flag nothing moves");
+    assert!(
+        sync(vec![
+            json!({"op":"task.update","task_id":"T006","rollup":"yes"})
+        ])
+        .is_err()
+    );
+}

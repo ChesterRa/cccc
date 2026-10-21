@@ -2410,6 +2410,10 @@
         "parent_id": {
           "type": "string"
         },
+        "rollup": {
+          "type": "boolean",
+          "description": "When true, the task completes with its subtasks: it moves to done when its last open subtask is done, leaves done when a subtask reopens, and cannot be moved to done while a subtask is open."
+        },
         "assignee": {
           "type": "string"
         },

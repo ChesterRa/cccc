@@ -1341,6 +1341,100 @@ fn rust_daemon_provider_auth_mutations_do_not_report_synthetic_lifecycle() {
     assert_eq!(invalid.error.expect("invalid action").code, "invalid_args");
 }
 
+#[test]
+fn a_peer_finishing_the_last_subtask_completes_a_rollup_task_it_does_not_own() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"subtask rollup"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["lead", "peer1"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runtime":"custom",
+                "command":["sh"],
+                "enabled":false,
+                "by":"user"
+            }),
+        );
+    }
+    call(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,
+            "by":"lead",
+            "ops":[
+                {"op":"task.create","title":"ship the release","rollup":true,"assignee":"lead"},
+                {"op":"task.create","title":"build","parent_id":"T001","assignee":"peer1"},
+                {"op":"task.create","title":"publish","parent_id":"T001","assignee":"peer1"},
+            ],
+        }),
+    );
+    let sync = |by: &str, task_id: &str, status: &str| {
+        raw_call(
+            &home,
+            "context_sync",
+            json!({
+                "group_id":group_id,
+                "by":by,
+                "ops":[{"op":"task.move","task_id":task_id,"status":status}],
+            }),
+        )
+    };
+    let early = sync("lead", "T001", "done");
+    assert!(
+        early
+            .error
+            .as_ref()
+            .is_some_and(|error| error.message.contains("still open: T002, T003")),
+        "the foreman cannot close it while work is open: {:?}",
+        early.error
+    );
+    assert!(
+        !sync("peer1", "T001", "done").ok,
+        "peer1 may not move it itself"
+    );
+
+    assert!(sync("peer1", "T002", "done").ok);
+    let last = sync("peer1", "T003", "done");
+    assert!(last.ok, "{:?}", last.error);
+    assert_eq!(
+        last.result["changes"][0]["rollup"],
+        json!([{"task_id":"T001","status":"done"}])
+    );
+    let context = cccc_core::context::ContextStore::new(home.clone())
+        .expect("context store")
+        .load(group_id)
+        .expect("context");
+    let parent = context
+        .tasks
+        .iter()
+        .find(|task| task["id"] == "T001")
+        .expect("parent");
+    assert_eq!(parent["status"], "done");
+    assert_eq!(parent["assignee"], "lead");
+
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let events = cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger path"))
+        .expect("ledger");
+    let recorded = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "context.sync")
+        .expect("context.sync");
+    assert_eq!(recorded.by, "peer1");
+    assert_eq!(
+        recorded.data["changes"][0]["rollup"],
+        json!([{"task_id":"T001","status":"done"}])
+    );
+}
+
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     let response = raw_call(home, op, args);
     assert!(response.ok, "{op}: {:?}", response.error);
