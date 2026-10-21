@@ -1857,6 +1857,8 @@ Patch keys used by CCCC include:
 - Messaging: `default_send_to`
 - Delivery: `mail_notice_after_seconds` (default 1800, zero disables all Mail notices),
   `mail_notice_idle_after_seconds` (default 60, zero disables only the early idle notice),
+  `mail_notice_repeat_seconds` (default 0: one notice per batch; above zero, Mail
+  still waiting is announced again that long after its last notice),
   `reply_notice_after_seconds` (default 900, zero disables)
 - Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
   `keepalive_max_per_actor`,
@@ -4590,8 +4592,11 @@ or Mail cursor advance. Passive status polling does not create notices.
 Before handoff, the owner rechecks whether the batch remains eligible. An obsolete
 notice established as unsent is withdrawn, not delivered or automatically retried. The
 notice states only that Mail is waiting and directs the actor to `inbox_read`;
-it does not copy message bodies, repeat, escalate, or create another Inbox
-obligation. Bootstrap, the next explicit Push, and low-frequency coordination
+it does not copy message bodies, escalate, or create another Inbox
+obligation. It does not repeat unless `mail_notice_repeat_seconds` is above zero:
+then a notice stands only that long, and Mail still waiting after it, together
+with Mail that arrived meanwhile, gets a new notice. A delivered notice does not
+count as read. Bootstrap, the next explicit Push, and low-frequency coordination
 responses MAY carry a passive `mail_pending` count without writing a notice.
 
 A `request_reply` obligation starts its timer only after an accepted runtime

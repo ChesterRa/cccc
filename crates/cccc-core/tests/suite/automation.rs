@@ -615,3 +615,109 @@ fn disabled_idle_mail_notice_does_not_announce_overdue_mail_on_write() {
             .all(|event| event.kind != "mail.read")
     );
 }
+
+/// A notice typed into a busy terminal is delivered (`accepted`) and can still be
+/// lost: in the case this follows, one notice was accepted, more Mail arrived
+/// for hours after it, and the recipient heard about none of it. With
+/// `mail_notice_repeat_seconds`, Mail still waiting after that long is announced
+/// again, together with the Mail that came after the first notice.
+#[test]
+fn an_unacted_mail_notice_is_repeated_with_the_mail_that_came_after_it() {
+    use sha2::{Digest, Sha256};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("unacted Mail", "").expect("group");
+    store
+        .mutate(&group.group_id, |group| {
+            group.state = GroupState::Active;
+            actors::add(group, Actor::new("peer"))?;
+            group.extra.insert(
+                "delivery".into(),
+                json!({"mail_notice_after_seconds":60,"mail_notice_repeat_seconds":2}),
+            );
+            Ok(())
+        })
+        .expect("delivery settings");
+    let group = store.load(&group.group_id).expect("group");
+    let peer = group
+        .actors
+        .iter()
+        .find(|actor| actor.id == "peer")
+        .expect("peer")
+        .clone();
+    let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+    let append_mail = |sent_at: chrono::DateTime<chrono::Utc>| {
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.ts = sent_at.to_rfc3339();
+        event.data = json!({"text":"check-in request","to":["peer"],"message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("Mail data");
+        ledger::append(&ledger_path, &event).expect("append Mail");
+        event
+    };
+    // The facts delivery writes as it hands a notice to the Actor's terminal.
+    let deliver = |notice: &Event, state: &str| {
+        let seed = [
+            group.group_id.as_str(),
+            "peer",
+            peer.created_at.as_str(),
+            notice.id.as_str(),
+        ]
+        .join("\0");
+        let digest = format!("{:x}", Sha256::digest(seed.as_bytes()));
+        let mut event = Event::new("runtime.delivery", &group.group_id);
+        event.by = "system".into();
+        event.data = json!({
+            "actor_id":"peer",
+            "source_event_id":notice.id,
+            "delivery_id":format!("delivery:peer:{}", &digest[..24]),
+            "state":state,
+            "transport":"pty",
+            "reason":null,
+        })
+        .as_object()
+        .cloned()
+        .expect("delivery data");
+        ledger::append(&ledger_path, &event).expect("append delivery");
+    };
+    let eligible = HashSet::from(["peer".to_owned()]);
+    let tick = || {
+        automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+            .expect("tick")
+    };
+
+    let first = append_mail(chrono::Utc::now() - chrono::Duration::seconds(120));
+    let noticed = tick();
+    assert_eq!(noticed.notifications.len(), 1);
+    let notice = &noticed.notifications[0];
+    assert_eq!(
+        notice.data["context"]["source_event_ids"],
+        json!([first.id])
+    );
+    deliver(notice, "claimed");
+    deliver(notice, "accepted");
+    let later = append_mail(chrono::Utc::now());
+    assert!(
+        tick().notifications.is_empty(),
+        "a notice stands for the repeat interval"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(2_100));
+    let repeated = tick();
+    assert_eq!(repeated.notifications.len(), 1, "the Mail is still unread");
+    assert_eq!(repeated.notifications[0].data["kind"], "mail_notice");
+    assert_eq!(
+        repeated.notifications[0].data["context"]["source_event_ids"],
+        json!([first.id, later.id]),
+        "the repeat names the Mail that came after the first notice"
+    );
+
+    // Reading the Inbox ends the reminders.
+    cccc_core::inbox::consume_unread(&home, &group, "peer", "peer", 50).expect("read Mail");
+    std::thread::sleep(std::time::Duration::from_millis(2_100));
+    assert!(tick().notifications.is_empty());
+}
