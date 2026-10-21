@@ -362,6 +362,42 @@ async fn context_get_answers_a_large_board_in_bounded_pages() {
             page_counts[1] > page_counts[0],
             "a smaller byte bound needs more pages: {page_counts:?}"
         );
+
+        // With the whole changelog as the project brief, not even one task fits
+        // in 16 KiB: the call fails and names the smallest page instead.
+        payload(
+            &tool(
+                &home,
+                id,
+                "lead",
+                "cccc_context_sync",
+                json!({"ops":[{"op":"coordination.brief.update","project_brief":CHANGELOG}]}),
+            )
+            .await,
+        );
+        let refused = tool(
+            &home,
+            id,
+            "peer",
+            "cccc_context_get",
+            json!({"max_bytes":16 * 1024}),
+        )
+        .await;
+        assert_eq!(refused["result"]["isError"], true, "{refused}");
+        let error = &refused["result"]["structuredContent"]["error"];
+        assert_eq!(error["code"], "invalid_args");
+        assert!(
+            error["message"]
+                .as_str()
+                .expect("error message")
+                .contains("max_bytes is smaller than the smallest page of this context"),
+            "{error}"
+        );
+        let response = tool(&home, id, "peer", "cccc_context_get", json!({})).await;
+        let page = payload(&response);
+        let bytes = serde_json::to_vec_pretty(page).expect("page JSON").len();
+        assert!(bytes <= CAP, "{bytes} bytes, over {CAP}");
+        assert_eq!(page["coordination"]["brief"]["project_brief"], CHANGELOG);
     })
     .await;
     daemon_task.abort();

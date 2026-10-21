@@ -4806,7 +4806,12 @@ Notes:
 - Paging starts when `limit`, `cursor` or `max_bytes` is present; without them
   the snapshot stays complete. A page holds at most `limit` tasks numbered
   after `cursor` in `coordination.tasks` (and, for `full`, in `board`), halved
-  until the whole answer fits `max_bytes`, and never fewer than one task.
+  until the whole answer fits `max_bytes`, and never fewer than one task. A
+  task too large for the page on its own has its longest free text (notes,
+  outcome, title or a checklist item) cut to fit, ending in
+  `… [clipped to fit the page]`; `task_list` returns it whole. If even that
+  page does not fit, the call fails with `invalid_args` and names the size of
+  the smallest page.
   `attention` becomes counts and `tasks_summary` still counts every task;
   `task_list` pages the attention tasks themselves. `cccc_context_get` always
   pages, at most 100 tasks and 256 KiB per answer.

@@ -38,9 +38,10 @@ fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     .map_err(OpError::io)?;
     let version = contexts.version(&document).map_err(OpError::io)?;
     match page(request)? {
-        Some(page) if detail != "overview" => object(super::context_projection::project_page(
-            document, version, &detail, &page,
-        )),
+        Some(page) if detail != "overview" => object(
+            super::context_projection::project_page(document, version, &detail, &page)
+                .map_err(page_too_small)?,
+        ),
         _ => object(super::context_projection::project(
             document, version, &detail,
         )),
@@ -93,6 +94,15 @@ fn page(request: &DaemonRequest) -> Result<Option<super::context_projection::Pag
         max_bytes,
         include_archived: bool_arg(request, "include_archived", true),
     }))
+}
+
+/// Not even one task (its text clipped) fits next to the brief and the Actor
+/// states, so no page can honour `max_bytes`.
+fn page_too_small(smallest: usize) -> OpError {
+    OpError::new(
+        "invalid_args",
+        format!("max_bytes is smaller than the smallest page of this context ({smallest} bytes)"),
+    )
 }
 
 fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

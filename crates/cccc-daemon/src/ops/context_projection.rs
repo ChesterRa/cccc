@@ -38,16 +38,17 @@ pub(super) struct Page {
 /// `coordination.tasks` (and, in `full`, `board`) hold at most `limit` tasks
 /// after the cursor, halved until the whole answer fits `max_bytes`; at least
 /// one task is always returned so paging makes progress, its longest text
-/// fields clipped (and marked) when it alone is over the bound. `attention`
-/// and `tasks_summary` still cover every task, as counts; `task_list` pages
-/// the attention tasks themselves. `truncated` and `next_cursor` say how to go
-/// on.
+/// clipped (and marked) while it alone keeps the answer over the bound.
+/// `attention` and `tasks_summary` still cover every task, as counts;
+/// `task_list` pages the attention tasks themselves. `truncated` and
+/// `next_cursor` say how to go on. When even that answer does not fit, the
+/// error is the size of the smallest page.
 pub(super) fn project_page(
     mut document: ContextDoc,
     version: String,
     detail: &str,
     page: &Page,
-) -> Value {
+) -> Result<Value, usize> {
     let tasks = std::mem::take(&mut document.tasks);
     let attention = attention(&tasks, false);
     let summary = task_summary(&tasks, &attention);
@@ -77,36 +78,44 @@ pub(super) fn project_page(
             object.insert("next_cursor".into(), next_cursor.unwrap_or(Value::Null));
         }
         // Measured as tools render it (pretty JSON), the larger of the two forms.
-        let over = page.max_bytes.map_or(0, |limit| {
-            serde_json::to_vec_pretty(&value)
-                .map_or(usize::MAX, |bytes| bytes.len())
-                .saturating_sub(limit)
-        });
-        if over == 0 || take == 0 {
-            return value;
-        }
+        let size = serde_json::to_vec_pretty(&value).map_or(usize::MAX, |bytes| bytes.len());
+        let Some(limit) = page.max_bytes.filter(|limit| size > *limit) else {
+            return Ok(value);
+        };
         if take > 1 {
             take /= 2;
-        } else if !clip_longest_text(&mut candidates[0], over) {
-            return value;
+        } else if take == 0 || !clip_longest_text(&mut candidates[0], size - limit) {
+            return Err(size);
         }
     }
 }
 
-/// Shorten the task's longest free-text field by at least `over` bytes and mark
-/// the cut; `task_list` still returns the whole task. False when that would
-/// not make the task any smaller.
+/// Shorten the task's longest free text (notes, outcome, title or a checklist
+/// item) by at least `over` bytes and mark the cut; `task_list` still returns
+/// the whole task. False when that would not make the task any smaller.
 fn clip_longest_text(task: &mut Map<String, Value>, over: usize) -> bool {
     const MARK: &str = " … [clipped to fit the page]";
-    let Some((key, text)) = ["notes", "outcome", "title"]
+    let mut texts = Vec::new();
+    for (key, value) in task.iter_mut() {
+        match key.as_str() {
+            "notes" | "outcome" | "title" => texts.push(value),
+            "checklist" => texts.extend(
+                value
+                    .as_array_mut()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| item.get_mut("text")),
+            ),
+            _ => {}
+        }
+    }
+    let Some(slot) = texts
         .into_iter()
-        .filter_map(|key| {
-            task.get(key)
-                .and_then(Value::as_str)
-                .map(|text| (key, text))
-        })
-        .max_by_key(|(_, text)| text.len())
+        .max_by_key(|text| text.as_str().map_or(0, str::len))
     else {
+        return false;
+    };
+    let Some(text) = slot.as_str() else {
         return false;
     };
     // Every character dropped is at least one byte, so this drops `over` more
@@ -119,7 +128,7 @@ fn clip_longest_text(task: &mut Map<String, Value>, over: usize) -> bool {
     if clipped.len() >= text.len() {
         return false;
     }
-    task.insert(key.into(), Value::String(clipped));
+    *slot = Value::String(clipped);
     true
 }
 
