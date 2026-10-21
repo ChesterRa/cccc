@@ -892,6 +892,53 @@ pub(crate) fn notice_event(
 mod tests {
     use super::*;
 
+    /// Private replay evidence is supplied by the operator, never checked in.
+    /// Run alone so the decode counter has no concurrent test producers.
+    #[test]
+    #[ignore = "requires CCCC_REAL_REPLAY_HOME pointing to copied real groups"]
+    fn real_group_notices_match_history_without_warm_history_decodes() {
+        let root = std::env::var_os("CCCC_REAL_REPLAY_HOME").expect("copied-group home required");
+        let home = HomeLayout::from_path(root).expect("replay home");
+        let store = GroupStore::new(home.clone()).expect("group store");
+        let groups = store.list().expect("real copied groups");
+        assert!(!groups.is_empty(), "empty replay cannot prove a projection");
+        for group in groups {
+            let eligible = actors::visible(&group)
+                .filter(|actor| actor.enabled)
+                .map(|actor| actor.id.clone())
+                .collect::<HashSet<_>>();
+            assert!(!eligible.is_empty(), "replay must keep enabled actors");
+            // due_unread_notices differentially checks the original ordered
+            // reducer's reply/read/delivery/withdrawal/claim decisions.
+            due_unread_notices(
+                &home,
+                &store,
+                &group,
+                Some(&eligible),
+                &HashSet::new(),
+                UnreadPass::Scheduled,
+            )
+            .expect("cold projection/oracle");
+            let decoded = crate::ledger::snapshot::decoded_records();
+            for _ in 0..5 {
+                due_unread_notices(
+                    &home,
+                    &store,
+                    &group,
+                    Some(&eligible),
+                    &HashSet::new(),
+                    UnreadPass::Scheduled,
+                )
+                .expect("warm projection/oracle");
+            }
+            assert_eq!(
+                crate::ledger::snapshot::decoded_records(),
+                decoded,
+                "warm unread ticks decoded history"
+            );
+        }
+    }
+
     /// Each recipient of one Mail; notices are issued in this order.
     const RECIPIENTS: [&str; 2] = ["first", "second"];
 

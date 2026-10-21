@@ -11,6 +11,13 @@ use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+#[cfg(test)]
+static DECODED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(test)]
+pub(crate) fn decoded_records() -> u64 {
+    DECODED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Source {
     pub path: PathBuf,
@@ -128,6 +135,8 @@ impl Snapshot {
                     break;
                 }
                 line_no += 1;
+                #[cfg(test)]
+                DECODED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let raw = trim_ascii(&line);
                 if line.last() != Some(&b'\n')
                     && !raw.is_empty()

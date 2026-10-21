@@ -207,33 +207,42 @@ fn with_projection<T>(
         let append_epoch = entry.append_epoch.load(Ordering::Acquire);
         let cursor_epoch = entry.cursor_epoch.load(Ordering::Acquire);
         let snapshot = Snapshot::open(&path)?;
-        let rebuild = match guard.as_mut() {
-            Some(projection)
-                if projection.routing == routing(group)
-                    && actor_ids.iter().all(|id| projection.boxes.contains_key(id))
-                    && snapshot.extends(&projection.sources) =>
-            {
-                let mut unknown = false;
-                snapshot.visit(&projection.offsets, |event, _| {
-                    unknown |= !projection.notices.can_append(&event);
-                    ControlFlow::Continue(())
-                })?;
-                if unknown || !projection.move_cursors(&state, &snapshot)? {
-                    true
-                } else {
-                    let old_offsets = projection.offsets.clone();
-                    projection.offsets = snapshot.visit(&old_offsets, |event, location| {
-                        projection.note(&event, location);
+        let refresh = (|| -> io::Result<()> {
+            let rebuild = match guard.as_mut() {
+                Some(projection)
+                    if projection.routing == routing(group)
+                        && actor_ids.iter().all(|id| projection.boxes.contains_key(id))
+                        && snapshot.extends(&projection.sources) =>
+                {
+                    let mut unknown = false;
+                    snapshot.visit(&projection.offsets, |event, _| {
+                        unknown |= !projection.notices.can_append(&event);
                         ControlFlow::Continue(())
                     })?;
-                    projection.sources = snapshot.sources.clone();
-                    false
+                    if unknown || !projection.move_cursors(&state, &snapshot)? {
+                        true
+                    } else {
+                        let old_offsets = projection.offsets.clone();
+                        projection.offsets = snapshot.visit(&old_offsets, |event, location| {
+                            projection.note(&event, location);
+                            ControlFlow::Continue(())
+                        })?;
+                        projection.sources = snapshot.sources.clone();
+                        false
+                    }
                 }
+                _ => true,
+            };
+            if rebuild {
+                *guard = Some(Projection::build(group, &state, &snapshot, actor_ids)?);
             }
-            _ => true,
-        };
-        if rebuild {
-            *guard = Some(Projection::build(group, &state, &snapshot, actor_ids)?);
+            Ok(())
+        })();
+        if let Err(error) = refresh {
+            // A failed suffix read/refill may have reduced only a prefix.
+            // Never retry it into the same partially advanced cache.
+            *guard = None;
+            return Err(error);
         }
         // Validate publication after decoding, not only before it. Appends
         // skipped by try_lock are merged by byte offset on the next iteration.
