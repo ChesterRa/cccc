@@ -236,6 +236,34 @@ pub fn read_all(path: &Path) -> io::Result<Vec<Event>> {
     crate::ledger_index::inspect(path, |events, _| events.to_vec())
 }
 
+/// Visit canonical history in append order without retaining the shared index.
+/// Memory is bounded by one decoded record, including compressed segments.
+pub(crate) fn visit_oldest_first(path: &Path, mut visit: impl FnMut(Event)) -> io::Result<()> {
+    let _source_lock = acquire_reader_lock(path)?;
+    let group_id = ledger_group_id(path);
+    for source in source_paths(path)? {
+        let file = File::open(&source)?;
+        let mut reader: Box<dyn BufRead> = if is_gzip(&source) {
+            Box::new(BufReader::new(GzDecoder::new(file)))
+        } else {
+            Box::new(BufReader::new(file))
+        };
+        let mut line = Vec::new();
+        let mut line_no = 0;
+        while reader.read_until(b'\n', &mut line)? != 0 {
+            line_no += 1;
+            let raw = trim_ascii(&line);
+            if !raw.is_empty()
+                && let Some(event) = decode_event_line(raw, &source, line_no, &group_id)
+            {
+                visit(event);
+            }
+            line.clear();
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn read_all_uncached(path: &Path) -> io::Result<Vec<Event>> {
     let group_id = ledger_group_id(path);
     let mut events = Vec::new();
