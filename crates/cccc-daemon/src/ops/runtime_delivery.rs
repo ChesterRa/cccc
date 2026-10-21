@@ -466,68 +466,128 @@ mod tests {
         );
         for meta in groups {
             let group = store.load(&meta.group_id).expect("group");
-            let mut queried = 0;
-            for actor in &group.actors {
-                for limit in [1, 20, 256] {
-                    let expected = legacy_pending_sources(&home, &group, actor, limit)
-                        .expect("legacy pending");
-                    let actual =
-                        pending_sources(&home, &group, actor, limit).expect("projected pending");
-                    assert_eq!(
-                        serde_json::to_value(actual).expect("actual"),
-                        serde_json::to_value(expected).expect("expected"),
-                        "pending delivery differs from history"
-                    );
-                    queried += 1;
-                }
-            }
-            let latest = ledger::inspect(
-                &store.ledger_path(&group.group_id).expect("ledger"),
-                |events, _| {
-                    let mut latest = std::collections::BTreeMap::new();
-                    for event in events
-                        .iter()
-                        .filter(|event| event.kind == "runtime.delivery")
-                    {
-                        if let (Some(actor), Some(source)) = (
-                            event.data.get("actor_id").and_then(Value::as_str),
-                            event.data.get("source_event_id").and_then(Value::as_str),
-                        ) {
-                            latest.insert(
-                                (actor.to_owned(), source.to_owned()),
-                                (
-                                    event
-                                        .data
-                                        .get("state")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or_default()
-                                        .to_owned(),
-                                    event
-                                        .data
-                                        .get("transport")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or_default()
-                                        .to_owned(),
-                                ),
-                            );
-                        }
+            let check = |stage: &str| {
+                let mut queried = 0;
+                for actor in &group.actors {
+                    for limit in [1, 20, 256] {
+                        let expected = legacy_pending_sources(&home, &group, actor, limit)
+                            .expect("legacy pending");
+                        let actual = pending_sources(&home, &group, actor, limit)
+                            .expect("projected pending");
+                        assert_eq!(
+                            serde_json::to_value(actual).expect("actual"),
+                            serde_json::to_value(expected).expect("expected"),
+                            "pending delivery differs from history"
+                        );
+                        queried += 1;
                     }
-                    latest
-                },
-            )
-            .expect("legacy latest");
-            let mut checked = 0;
-            for ((actor, source), state) in latest.iter().take(256) {
-                assert_eq!(
-                    latest_state(&home, &group.group_id, actor, source).expect("projected latest"),
-                    Some(state.clone())
+                }
+                let latest = ledger::inspect(
+                    &store.ledger_path(&group.group_id).expect("ledger"),
+                    |events, _| {
+                        let mut latest = std::collections::BTreeMap::new();
+                        for event in events
+                            .iter()
+                            .filter(|event| event.kind == "runtime.delivery")
+                        {
+                            if let (Some(actor), Some(source)) = (
+                                event.data.get("actor_id").and_then(Value::as_str),
+                                event.data.get("source_event_id").and_then(Value::as_str),
+                            ) {
+                                latest.insert(
+                                    (actor.to_owned(), source.to_owned()),
+                                    (
+                                        event
+                                            .data
+                                            .get("state")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or_default()
+                                            .to_owned(),
+                                        event
+                                            .data
+                                            .get("transport")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or_default()
+                                            .to_owned(),
+                                    ),
+                                );
+                            }
+                        }
+                        latest
+                    },
+                )
+                .expect("legacy latest");
+                let mut checked = 0;
+                for ((actor, source), state) in latest.iter().take(256) {
+                    assert_eq!(
+                        latest_state(&home, &group.group_id, actor, source)
+                            .expect("projected latest"),
+                        Some(state.clone())
+                    );
+                    checked += 1;
+                }
+                println!(
+                    "{}",
+                    json!({"group_id":group.group_id,"pending_queries":queried,"latest_queries":checked,"stage":stage})
                 );
-                checked += 1;
+            };
+            check("cold");
+            // Replay actual captured records, never padding or generated bodies.
+            let path = store.ledger_path(&group.group_id).expect("ledger");
+            let mut seeds = std::collections::BTreeMap::new();
+            ledger::visit_snapshot_oldest_first(&path, |event| {
+                let mode = event
+                    .data
+                    .get("message_mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if matches!(
+                    event.kind.as_str(),
+                    "actor.add" | "chat.read" | "runtime.delivery" | "system.notify"
+                ) || (event.kind == "chat.message"
+                    && matches!(mode, "mail" | "send" | "request_reply"))
+                {
+                    seeds.insert((event.kind.clone(), mode.to_owned()), event);
+                }
+                std::ops::ControlFlow::Continue(())
+            })
+            .expect("captured replay seeds");
+            assert!(!seeds.is_empty(), "real delivery records required");
+            for seed in seeds.values() {
+                let mut replay = Event::new(&seed.kind, &group.group_id);
+                replay.by = seed.by.clone();
+                replay.scope_key = seed.scope_key.clone();
+                replay.data = seed.data.clone();
+                ledger::append(&path, &replay).expect("replay actual event");
             }
-            println!(
-                "{}",
-                json!({"group_id":group.group_id,"pending_queries":queried,"latest_queries":checked})
-            );
+            check("append");
+            if let Some(actor) = group.actors.iter().find(|actor| actor.enabled) {
+                inbox::consume_unread(&home, &group, &actor.id, "user", 1)
+                    .expect("durable real Mail cursor");
+            }
+            check("cursor");
+            let seed = seeds.values().next().expect("seed");
+            let mut external = Event::new(&seed.kind, &group.group_id);
+            external.by = seed.by.clone();
+            external.scope_key = seed.scope_key.clone();
+            external.data = seed.data.clone();
+            let mut bytes = serde_json::to_vec(&external).expect("external event");
+            bytes.push(b'\n');
+            use std::io::Write;
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .expect("external writer")
+                .write_all(&bytes)
+                .expect("external growth without callback");
+            check("external-growth");
+            cccc_core::ledger_archive::compact(
+                &home,
+                &group.group_id,
+                "real delivery parity replay",
+            )
+            .expect("real-history rotation");
+            check("rotation");
         }
     }
 
