@@ -540,11 +540,12 @@ fn save(
             }),
         );
     }
+    let ledger_path = GroupStore::new(home.clone())?.ledger_path(group_id)?;
     write_json(
         &path,
         &json!({"schema":MAIL_CURSOR_SCHEMA,"cursors":output}),
     )?;
-    projection::note_cursor(&GroupStore::new(home.clone())?.ledger_path(group_id)?);
+    projection::note_cursor(&ledger_path);
     Ok(())
 }
 

@@ -896,7 +896,7 @@ mod tests {
     /// Run alone so the decode counter has no concurrent test producers.
     #[test]
     #[ignore = "requires CCCC_REAL_REPLAY_HOME pointing to copied real groups"]
-    fn real_group_notices_match_history_without_warm_history_decodes() {
+    fn real_group_notices_match_history_without_warm_projection_decodes() {
         let root = std::env::var_os("CCCC_REAL_REPLAY_HOME").expect("copied-group home required");
         let home = HomeLayout::from_path(root).expect("replay home");
         let store = GroupStore::new(home.clone()).expect("group store");
@@ -920,6 +920,8 @@ mod tests {
                 UnreadPass::Scheduled,
             )
             .expect("cold projection/oracle");
+            // The test-side legacy oracle intentionally reads history. This
+            // counter measures only the production Snapshot decoder.
             let decoded = crate::ledger::snapshot::decoded_records();
             for _ in 0..5 {
                 due_unread_notices(
@@ -935,7 +937,7 @@ mod tests {
             assert_eq!(
                 crate::ledger::snapshot::decoded_records(),
                 decoded,
-                "warm unread ticks decoded history"
+                "warm unread projection decoded ledger history"
             );
         }
     }

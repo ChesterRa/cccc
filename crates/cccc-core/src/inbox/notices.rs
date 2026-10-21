@@ -1,6 +1,7 @@
-//! Payload-free notice facts. The inbox page has a fixed bound; outstanding
-//! reply obligations/claim dependencies cannot be capped without changing the
-//! notice protocol. Keep their exact ordered facts separately from Mail bodies.
+//! Payload-free ordered notice facts, separate from the fixed inbox page.
+//! Historical Mail/reply/read/delivery/claim relations are not yet pruned:
+//! this metadata grows with history, even though no Event payload is retained.
+//! Capping arbitrary old claim references would change the notice protocol.
 use super::*;
 use std::collections::HashSet;
 
