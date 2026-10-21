@@ -671,6 +671,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
               activity,
               groupId,
             );
+            // The error activity is retained for display, but its turn is terminal.
+            completeStreamingEventsForActor(
+              actorId,
+              groupId,
+              streamId || turnId || `pending:${pendingEventId}:${actorId}`,
+            );
           } else if (streamId || turnId) {
             reconcileStreamingMessage({
               actorId,

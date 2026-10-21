@@ -1,4 +1,11 @@
 import {
+  GroupViewCache,
+  retainRecentChatBuckets,
+  touchChatBucket,
+  type GroupViewSnapshot,
+} from "./groupMemoryRetention";
+export type { GroupViewSnapshot } from "./groupMemoryRetention";
+import {
   mergeConnectDelivery,
   mergeObligationStatus,
   mergeReadStatus,
@@ -53,17 +60,6 @@ export type GroupChatBucket = {
   isChatWindowLoading: boolean;
 };
 
-export type GroupViewSnapshot = {
-  groupDoc: GroupDoc | null;
-  events: LedgerEvent[];
-  actors: Actor[];
-  groupContext: GroupContext | null;
-  groupSettings: GroupSettings | null;
-  groupPresentation: GroupPresentation | null;
-  hasMoreHistory: boolean;
-  cachedAt: number;
-};
-
 export type GroupStateSnapshot = {
   groups: GroupMeta[];
   selectedGroupId: string;
@@ -98,7 +94,6 @@ export const EMPTY_CHAT_BUCKET: GroupChatBucket = {
 export const INITIAL_LEDGER_TAIL_LIMIT = 120;
 export const CACHED_TAIL_REFRESH_DELAY_MS = 1200;
 export const MAX_UI_EVENTS = 800;
-const GROUP_VIEW_CACHE_TTL_MS = 300_000;
 const GROUP_ORDER_KEY = "cccc-group-order";
 const ARCHIVED_GROUP_IDS_KEY = "cccc-archived-group-ids";
 const SELECTED_GROUP_ID_KEY = "cccc-selected-group-id";
@@ -121,7 +116,7 @@ export const presentationRequestEpochByGroup = new Map<string, number>();
 export const chatWindowRequestEpochByGroup = new Map<string, number>();
 export const internalActorsRequestEpochByGroup = new Map<string, number>();
 export const contextRequestEpochByGroup = new Map<string, number>();
-export const groupViewCache = new Map<string, GroupViewSnapshot>();
+export const groupViewCache = new GroupViewCache<GroupViewSnapshot>();
 
 export function setRefreshGroupsInFlight(value: boolean): void {
   refreshGroupsInFlight = value;
@@ -341,12 +336,8 @@ function cloneGroupPresentation(
 }
 
 export function getCachedGroupActors(groupId: string): Actor[] {
-  const gid = String(groupId || "").trim();
-  if (!gid) return [];
-  const cached = groupViewCache.get(gid);
-  if (!cached) return [];
-  if (Date.now() - cached.cachedAt > GROUP_VIEW_CACHE_TTL_MS) return [];
-  return Array.isArray(cached.actors) ? cached.actors : [];
+  const actors = groupViewCache.get(String(groupId || "").trim())?.actors;
+  return Array.isArray(actors) ? actors : [];
 }
 
 export function getCachedGroupView(groupId: string): GroupViewSnapshot | null {
@@ -354,7 +345,6 @@ export function getCachedGroupView(groupId: string): GroupViewSnapshot | null {
   if (!gid) return null;
   const cached = groupViewCache.get(gid);
   if (!cached) return null;
-  if (Date.now() - cached.cachedAt > GROUP_VIEW_CACHE_TTL_MS) return null;
   return {
     groupDoc: cloneGroupDoc(cached.groupDoc),
     events: cloneEvents(cached.events),
@@ -546,8 +536,12 @@ export function ensureGroupChatBucket(
   groupId: string,
 ): Record<string, GroupChatBucket> {
   const gid = String(groupId || "").trim();
-  if (!gid || chatByGroup[gid]) return chatByGroup;
-  return { ...chatByGroup, [gid]: getGroupChatBucket(chatByGroup, gid) };
+  if (!gid) return chatByGroup;
+  return touchChatBucket(
+    chatByGroup,
+    gid,
+    chatByGroup[gid] || getGroupChatBucket(chatByGroup, gid),
+  );
 }
 
 export function selectChatBucketState(
@@ -911,37 +905,42 @@ export function buildChatBucketPatch(
     saveGroupView(gid, { events: nextEvents, hasMoreHistory: nextHasMoreHistory });
   }
   return {
-    chatByGroup: {
-      ...state.chatByGroup,
-      [gid]: {
-        events: nextEvents,
-        senderHistory:
-          patch.senderHistory !== undefined
-            ? patch.senderHistory
-            : prev.senderHistory && patch.events
-              ? projectSenderHistory(prev.senderHistory, patch.events, prev.events)
-              : (prev.senderHistory ?? null),
-        streamingEvents: nextStreamingEvents,
-        streamingTextByStreamId: nextStreamingTextByStreamId,
-        streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
-        replySessionsByPendingEventId: nextReplySessionsByPendingEventId,
-        pendingEventIdByStreamId: nextPendingEventIdByStreamId,
-        rawHeadlessEventsByActorId: nextRawHeadlessEventsByActorId,
-        previewSessionsByActorId: previewIndex.previewSessionsByActorId,
-        latestActorPreviewByActorId: previewIndex.latestActorPreviewByActorId,
-        latestActorTextByActorId: previewIndex.latestActorTextByActorId,
-        latestActorActivitiesByActorId: previewIndex.latestActorActivitiesByActorId,
-        chatWindow: patch.chatWindow !== undefined ? patch.chatWindow : prev.chatWindow,
-        hasMoreHistory: nextHasMoreHistory,
-        hasLoadedTail: patch.hasLoadedTail !== undefined ? patch.hasLoadedTail : prev.hasLoadedTail,
-        isLoadingHistory:
-          patch.isLoadingHistory !== undefined ? patch.isLoadingHistory : prev.isLoadingHistory,
-        isChatWindowLoading:
-          patch.isChatWindowLoading !== undefined
-            ? patch.isChatWindowLoading
-            : prev.isChatWindowLoading,
+    chatByGroup: retainRecentChatBuckets(
+      {
+        ...state.chatByGroup,
+        [gid]: {
+          events: nextEvents,
+          senderHistory:
+            patch.senderHistory !== undefined
+              ? patch.senderHistory
+              : prev.senderHistory && patch.events
+                ? projectSenderHistory(prev.senderHistory, patch.events, prev.events)
+                : (prev.senderHistory ?? null),
+          streamingEvents: nextStreamingEvents,
+          streamingTextByStreamId: nextStreamingTextByStreamId,
+          streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+          replySessionsByPendingEventId: nextReplySessionsByPendingEventId,
+          pendingEventIdByStreamId: nextPendingEventIdByStreamId,
+          rawHeadlessEventsByActorId: nextRawHeadlessEventsByActorId,
+          previewSessionsByActorId: previewIndex.previewSessionsByActorId,
+          latestActorPreviewByActorId: previewIndex.latestActorPreviewByActorId,
+          latestActorTextByActorId: previewIndex.latestActorTextByActorId,
+          latestActorActivitiesByActorId: previewIndex.latestActorActivitiesByActorId,
+          chatWindow: patch.chatWindow !== undefined ? patch.chatWindow : prev.chatWindow,
+          hasMoreHistory: nextHasMoreHistory,
+          hasLoadedTail:
+            patch.hasLoadedTail !== undefined ? patch.hasLoadedTail : prev.hasLoadedTail,
+          isLoadingHistory:
+            patch.isLoadingHistory !== undefined ? patch.isLoadingHistory : prev.isLoadingHistory,
+          isChatWindowLoading:
+            patch.isChatWindowLoading !== undefined
+              ? patch.isChatWindowLoading
+              : prev.isChatWindowLoading,
+        },
       },
-    },
+      state.selectedGroupId,
+      gid,
+    ),
   };
 }
 
