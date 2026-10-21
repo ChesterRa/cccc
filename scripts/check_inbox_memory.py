@@ -1,4 +1,4 @@
-"""Check RSS/latency against operator-supplied real groups, never generated data.
+"""Check anonymous RSS/latency with operator-supplied real groups.
 
 Example (Linux, on a disposable profiling host):
   python scripts/check_inbox_memory.py --source-home /private/copied-home \
@@ -29,11 +29,27 @@ import time
 import yaml
 
 
-def rss_kib(pid: int) -> int:
+def memory_sample(pid: int) -> dict:
+    memory = {}
     for line in Path(f"/proc/{pid}/status").read_text().splitlines():
-        if line.startswith("VmRSS:"):
-            return int(line.split()[1])
-    raise RuntimeError("daemon has no VmRSS")
+        name, _, value = line.partition(":")
+        if name in ("VmRSS", "RssAnon"):
+            memory[{"VmRSS": "rss_kib", "RssAnon": "rss_anon_kib"}[name]] = int(value.split()[0])
+    if len(memory) != 2:
+        raise RuntimeError("daemon has no VmRSS/RssAnon")
+    memory["memory_psi"] = Path("/proc/pressure/memory").read_text().strip()
+    builds = []
+    for directory in Path("/proc").iterdir():
+        if not directory.name.isdigit():
+            continue
+        try:
+            name = (directory / "comm").read_text().strip()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if name in ("cargo", "rustc"):
+            builds.append({"pid": int(directory.name), "comm": name})
+    memory["concurrent_builds"] = builds
+    return memory
 
 
 def copy_groups(source: Path, target: Path) -> tuple[list[tuple[str, list[str]]], dict]:
@@ -136,22 +152,24 @@ def replay(args: argparse.Namespace) -> dict:
             return response["result"]
 
         def measure():
-            row = {"elapsed_s": time.monotonic() - start, "rss_kib": rss_kib(daemon.pid)}
+            row = {"elapsed_s": time.monotonic() - start, **memory_sample(daemon.pid)}
             metrics.append(row)
             print(json.dumps(row), flush=True)
-            growth = (row["rss_kib"] - metrics[0]["rss_kib"]) / 1024
+            growth = (row["rss_anon_kib"] - metrics[0]["rss_anon_kib"]) / 1024
             if growth > args.max_rss_growth_mib:
                 # A baseline need not survive its own unbounded retention for
                 # five minutes before the numeric budget can reject it.
                 args.output.write_text(json.dumps({
                     "complete": False, "groups": len(groups),
                     "enabled_actors": sum(len(actors) for _, actors in groups),
-                    "elapsed_s": row["elapsed_s"], "rss_growth_mib": growth,
+                    "elapsed_s": row["elapsed_s"], "rss_anon_growth_mib": growth,
+                    "rss_growth_mib": (row["rss_kib"] - metrics[0]["rss_kib"]) / 1024,
+                    "acceptance_metric": "RssAnon",
                     "max_rss_growth_mib": args.max_rss_growth_mib,
                     "first_over_budget": {**row, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
                     "metrics": metrics, "errors": errors,
                 }, indent=2))
-                raise AssertionError(f"RSS grew {growth:.2f} MiB; budget {args.max_rss_growth_mib} MiB")
+                raise AssertionError(f"RssAnon grew {growth:.2f} MiB; budget {args.max_rss_growth_mib} MiB")
 
         def append():
             while not stop.wait(1):
@@ -209,7 +227,8 @@ def replay(args: argparse.Namespace) -> dict:
             for op in ("inbox_peek", "actor_list", "message_send"):
                 values = sorted(row["ms"] for row in calls if row["op"] == op)
                 summary[op] = {"n": len(values), "p50_ms": statistics.median(values), "p95_ms": values[min(len(values) - 1, int(0.95 * len(values)))], "max_ms": max(values)}
-            growth = (max(row["rss_kib"] for row in metrics) - metrics[0]["rss_kib"]) / 1024
+            growth = (max(row["rss_anon_kib"] for row in metrics) - metrics[0]["rss_anon_kib"]) / 1024
+            rss_growth = (max(row["rss_kib"] for row in metrics) - metrics[0]["rss_kib"]) / 1024
             ticks = {group_id: 0 for group_id, _ in groups}
             deliveries = {group_id: set() for group_id, _ in groups}
             claims = {group_id: 0 for group_id, _ in groups}
@@ -229,14 +248,14 @@ def replay(args: argparse.Namespace) -> dict:
                         claims[query["group_id"]] += 1
                 elif line.startswith("CCCC_EVENT_INDEX_QUERY "):
                     index_queries.append(json.loads(line.removeprefix("CCCC_EVENT_INDEX_QUERY ")))
-            result = {"complete": True, "groups": len(groups), "enabled_actors": enabled, "elapsed_s": time.monotonic() - start, "rss_growth_mib": growth, "max_rss_growth_mib": args.max_rss_growth_mib, "unread_ticks_per_group": list(ticks.values()), "restore_delivery_actor_indices": [sorted(indices) for indices in deliveries.values()], "claim_queries_per_group": list(claims.values()), "full_event_index_queries": index_queries, "metrics": metrics, "latency": summary, "errors": errors}
+            result = {"complete": True, "acceptance_metric": "RssAnon", "groups": len(groups), "enabled_actors": enabled, "elapsed_s": time.monotonic() - start, "rss_anon_growth_mib": growth, "rss_growth_mib": rss_growth, "max_rss_growth_mib": args.max_rss_growth_mib, "unread_ticks_per_group": list(ticks.values()), "restore_delivery_actor_indices": [sorted(indices) for indices in deliveries.values()], "claim_queries_per_group": list(claims.values()), "full_event_index_queries": index_queries, "metrics": metrics, "latency": summary, "errors": errors}
             args.output.write_text(json.dumps(result, indent=2))
             if errors:
                 raise AssertionError("replay had API failures")
             assert all(count >= 5 for count in ticks.values()), "fewer than five successful enabled-actor unread ticks per group"
             assert all(deliveries[group_id] == set(range(len(actors))) for group_id, actors in groups), "restore did not exercise every enabled actor's delivery query"
             assert sum(claims.values()) > 0, "replay did not exercise durable delivery claims"
-            assert growth <= args.max_rss_growth_mib, f"RSS grew {growth:.2f} MiB; budget {args.max_rss_growth_mib} MiB"
+            assert growth <= args.max_rss_growth_mib, f"RssAnon grew {growth:.2f} MiB; budget {args.max_rss_growth_mib} MiB"
             assert not index_queries, "replay still called the full Event index; see full_event_index_queries"
             return result
         finally:
@@ -256,7 +275,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-home", type=Path, required=True)
     parser.add_argument("--binary", type=lambda value: Path(value).resolve(), required=True)
-    parser.add_argument("--max-rss-growth-mib", type=float, default=128)
+    parser.add_argument("--max-rss-growth-mib", type=float, default=128, help="per-sample RssAnon growth budget; VmRSS is context")
     parser.add_argument("--seconds", type=int, default=335)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
