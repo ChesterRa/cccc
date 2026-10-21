@@ -241,32 +241,73 @@ async fn declared_context_tools_preserve_authority_recovery_and_query_semantics(
     outcome.expect("context workflow assertions");
 }
 
-const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+/// A slice of one of our real boards, anonymized: a run of consecutive tasks
+/// with the board's brief, recent decisions and all its Actor states. Every
+/// letter and digit of free text is replaced (`x`, `X`, `0`), Actor and task
+/// ids are renumbered, and the clock is shifted to start on 2000-01-01;
+/// statuses, fields, checklists, line breaks, punctuation, the byte length of
+/// every text and the time between events are as captured. The Actor states
+/// alone are larger than a 16 KiB page, and one task's notes are so long that
+/// no page holding that task fits the default bound whole.
+const CAPTURED_CONTEXT: &str = include_str!("fixtures/captured_context.json");
+const CLIP_MARK: &str = " … [clipped to fit the page]";
 
-/// Every bullet of this repository's own changelog becomes one task, so the
-/// board is large with real text rather than generated filler.
-fn changelog_tasks() -> Vec<Value> {
-    CHANGELOG
-        .lines()
-        .filter_map(|line| line.strip_prefix("- "))
-        .map(|entry| {
-            let title = entry.chars().take(120).collect::<String>();
-            json!({"op":"task.create","title":title,"notes":entry})
-        })
-        .collect()
+/// Put the captured context where the group's context store keeps it.
+fn install_captured_context(groups: &GroupStore, group_id: &str) -> Value {
+    let fixture: Value = serde_json::from_str(CAPTURED_CONTEXT).expect("captured context");
+    let context = groups
+        .group_dir(group_id)
+        .expect("group dir")
+        .join("context");
+    let write = |name: String, value: &Value| {
+        cccc_core::fs::write_yaml(&context.join(name), value).expect("captured context file");
+    };
+    write("context.yaml".into(), &fixture["context"]);
+    write(
+        "agents.yaml".into(),
+        &json!({"agent_states": fixture["agent_states"]}),
+    );
+    for task in fixture["tasks"].as_array().expect("tasks") {
+        write(
+            format!("tasks/{}.yaml", task["id"].as_str().expect("id")),
+            task,
+        );
+    }
+    fixture
+}
+
+/// The byte length of a task's longest free text, and whether it is a
+/// checklist item.
+fn longest_text(task: &Value) -> (usize, bool) {
+    let field = ["title", "notes", "outcome"]
+        .iter()
+        .filter_map(|key| task[*key].as_str())
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+    let item = task["checklist"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["text"].as_str())
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+    (field.max(item), item > field)
 }
 
 #[tokio::test]
-async fn context_get_answers_a_large_board_in_bounded_pages() {
+async fn context_get_pages_a_captured_board_within_its_byte_bound() {
     const CAP: usize = 256 * 1024;
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
     let groups = GroupStore::new(home.clone()).expect("groups");
-    let mut group = groups.create("bounded context", "").expect("group");
+    let mut group = groups.create("captured context", "").expect("group");
     for id in ["lead", "peer"] {
         cccc_core::actors::add(&mut group, cccc_contracts::Actor::new(id)).expect("actor");
     }
     groups.save(&group).expect("save group");
+    let fixture = install_captured_context(&groups, &group.group_id);
     let daemon_home = home.clone();
     let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     let client = cccc_client::DaemonClient::new(home.clone());
@@ -283,30 +324,32 @@ async fn context_get_answers_a_large_board_in_bounded_pages() {
     }
     let outcome = tokio::spawn(async move {
         let id = group.group_id.as_str();
-        let mut operations = changelog_tasks();
-        // One task larger than a page on its own: the whole changelog as notes.
-        let heading = CHANGELOG.lines().next().unwrap_or_default();
-        operations.push(json!({"op":"task.create","title":heading,"notes":CHANGELOG}));
-        let created = operations.len();
-        payload(
-            &tool(
-                &home,
-                id,
-                "lead",
-                "cccc_context_sync",
-                json!({"ops":operations}),
-            )
-            .await,
-        );
-
-        let expected = (1..=created)
-            .map(|number| json!(format!("T{number:03}")))
+        let tasks = fixture["tasks"].as_array().expect("tasks");
+        let captured = |task_id: &Value| {
+            tasks
+                .iter()
+                .find(|task| task["id"] == *task_id)
+                .expect("captured task")
+        };
+        let count = |status: &str| tasks.iter().filter(|task| task["status"] == status).count();
+        let live = tasks
+            .iter()
+            .filter(|task| task["status"] != "archived")
+            .map(|task| task["id"].clone())
             .collect::<Vec<_>>();
-        // The default bound, then a caller asking for smaller answers.
+        let largest = tasks
+            .iter()
+            .max_by_key(|task| longest_text(task).0)
+            .expect("largest task");
+
+        // The default bound, then a smaller one. A full page carries each task
+        // twice (the task list and the board) next to the Actor states, so the
+        // task with the largest notes is clipped at both, and further at the
+        // smaller one.
         let mut page_counts = Vec::new();
         let mut clipped = Vec::new();
-        for (max_bytes, cap) in [(Value::Null, CAP), (json!(16 * 1024), 16 * 1024)] {
-            let mut clips = 0;
+        for (max_bytes, cap) in [(Value::Null, CAP), (json!(160 * 1024), 160 * 1024)] {
+            let mut clips = Vec::new();
             let mut seen = Vec::new();
             let mut cursor = Value::Null;
             let mut pages = 0;
@@ -323,58 +366,101 @@ async fn context_get_answers_a_large_board_in_bounded_pages() {
                 // The text an Actor reads is the pretty-printed payload.
                 let bytes = serde_json::to_vec_pretty(page).expect("page JSON").len();
                 assert!(bytes <= cap, "page {pages} is {bytes} bytes, over {cap}");
-                assert_eq!(
-                    page["tasks_summary"]["planned"], created,
-                    "counts cover every task"
-                );
-                let tasks = page["coordination"]["tasks"].as_array().expect("tasks");
-                assert!(!tasks.is_empty(), "every page makes progress");
-                assert!(tasks.len() <= 100);
-                seen.extend(tasks.iter().map(|task| task["id"].clone()));
-                for task in tasks.iter().filter(|task| task["title"] == heading) {
-                    let notes = task["notes"].as_str().expect("notes");
-                    match notes.strip_suffix(" … [clipped to fit the page]") {
-                        Some(kept) => {
-                            assert!(CHANGELOG.starts_with(kept), "clipped, not rewritten");
-                            clips += 1;
+                let summary = &page["tasks_summary"];
+                assert_eq!(summary["total"], live.len(), "counts cover every task");
+                for status in ["planned", "done", "archived"] {
+                    assert_eq!(summary[status], count(status), "{status}");
+                }
+                let page_tasks = page["coordination"]["tasks"].as_array().expect("tasks");
+                assert!(!page_tasks.is_empty(), "every page makes progress");
+                assert!(page_tasks.len() <= 100);
+                for task in page_tasks {
+                    let source = captured(&task["id"]);
+                    for key in ["title", "notes", "outcome", "checklist"] {
+                        if task[key] == source[key] {
+                            continue;
                         }
-                        None => assert_eq!(notes, CHANGELOG),
+                        let text = task[key].as_str().expect("only text is clipped");
+                        let kept = text.strip_suffix(CLIP_MARK).expect("marked clip");
+                        let whole = source[key].as_str().expect("captured text");
+                        assert!(whole.starts_with(kept), "clipped, not rewritten");
+                        clips.push((task["id"].clone(), key, kept.len()));
                     }
                 }
+                seen.extend(page_tasks.iter().map(|task| task["id"].clone()));
                 pages += 1;
-                if page["truncated"] == false {
+                if page["truncated"] != true {
                     assert_eq!(page["next_cursor"], Value::Null);
                     break;
                 }
                 cursor = page["next_cursor"].clone();
                 assert_eq!(cursor, *seen.last().expect("last task"));
             }
-            assert_eq!(seen, expected, "pages return each task once, in order");
+            assert_eq!(seen, live, "pages return each task once, in order");
             page_counts.push(pages);
             clipped.push(clips);
         }
-        assert_eq!(
-            clipped[1], 1,
-            "the changelog task is clipped to the smaller bound"
-        );
+        for clips in &clipped {
+            let what = clips
+                .iter()
+                .map(|(task, key, _)| (task.clone(), *key))
+                .collect::<Vec<_>>();
+            assert_eq!(what, [(largest["id"].clone(), "notes")], "{clipped:?}");
+        }
+        assert!(clipped[1][0].2 < clipped[0][0].2, "{clipped:?}");
         assert!(page_counts[0] > 1, "the board did not need paging");
         assert!(
             page_counts[1] > page_counts[0],
             "a smaller byte bound needs more pages: {page_counts:?}"
         );
 
-        // With the whole changelog as the project brief, not even one task fits
-        // in 16 KiB: the call fails and names the smallest page instead.
-        payload(
-            &tool(
-                &home,
-                id,
-                "lead",
-                "cccc_context_sync",
-                json!({"ops":[{"op":"coordination.brief.update","project_brief":CHANGELOG}]}),
-            )
-            .await,
-        );
+        // A task whose longest text is a checklist item: with a bound just
+        // under its one-task page, that item is clipped and nothing else.
+        let checklist_task = tasks
+            .iter()
+            .find(|task| longest_text(task).1)
+            .expect("a captured task whose longest text is a checklist item");
+        let previous = tasks
+            .iter()
+            .filter(|task| task["status"] != "archived")
+            .take_while(|task| task["id"] != checklist_task["id"])
+            .last()
+            .map_or(Value::Null, |task| task["id"].clone());
+        let one_task =
+            |max_bytes: usize| json!({"cursor":previous,"limit":1,"max_bytes":max_bytes});
+        let response = tool(&home, id, "peer", "cccc_context_get", one_task(CAP)).await;
+        let whole = serde_json::to_vec_pretty(payload(&response))
+            .expect("page JSON")
+            .len();
+        let bound = whole - 40;
+        let response = tool(&home, id, "peer", "cccc_context_get", one_task(bound)).await;
+        let page = payload(&response);
+        let bytes = serde_json::to_vec_pretty(page).expect("page JSON").len();
+        assert!(bytes <= bound, "{bytes} bytes, over {bound}");
+        let task = &page["coordination"]["tasks"][0];
+        assert_eq!(task["id"], checklist_task["id"]);
+        for key in ["title", "notes", "outcome"] {
+            assert_eq!(task[key], checklist_task[key], "{key}");
+        }
+        let items = task["checklist"].as_array().expect("checklist");
+        let originals = checklist_task["checklist"].as_array().expect("checklist");
+        assert_eq!(items.len(), originals.len());
+        let longest = longest_text(checklist_task).0;
+        for (item, original) in items.iter().zip(originals) {
+            let text = original["text"].as_str().expect("item text");
+            if text.len() == longest {
+                let kept = item["text"]
+                    .as_str()
+                    .and_then(|clipped| clipped.strip_suffix(CLIP_MARK))
+                    .expect("the longest checklist item is clipped and marked");
+                assert!(text.starts_with(kept), "clipped, not rewritten");
+            } else {
+                assert_eq!(item, original);
+            }
+        }
+
+        // The captured Actor states alone outgrow 16 KiB: no page fits, and the
+        // call says so instead of answering over the bound.
         let refused = tool(
             &home,
             id,
@@ -393,11 +479,6 @@ async fn context_get_answers_a_large_board_in_bounded_pages() {
                 .contains("max_bytes is smaller than the smallest page of this context"),
             "{error}"
         );
-        let response = tool(&home, id, "peer", "cccc_context_get", json!({})).await;
-        let page = payload(&response);
-        let bytes = serde_json::to_vec_pretty(page).expect("page JSON").len();
-        assert!(bytes <= CAP, "{bytes} bytes, over {CAP}");
-        assert_eq!(page["coordination"]["brief"]["project_brief"], CHANGELOG);
     })
     .await;
     daemon_task.abort();
