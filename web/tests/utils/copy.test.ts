@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { copyTextToClipboard } from "../../src/utils/copy";
@@ -6,6 +7,9 @@ describe("copyTextToClipboard", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    document.body.innerHTML = "";
+    Reflect.deleteProperty(window, "prompt");
+    Reflect.deleteProperty(document, "execCommand");
   });
 
   it("uses navigator.clipboard when available", async () => {
@@ -18,31 +22,32 @@ describe("copyTextToClipboard", () => {
 
   it("falls back to execCommand and never uses window.prompt", async () => {
     const writeText = vi.fn().mockRejectedValue(new Error("denied"));
-    const focus = vi.fn();
-    const select = vi.fn();
-    const setAttribute = vi.fn();
-    const textarea = { value: "", style: {}, focus, select, setAttribute };
-    const appendChild = vi.fn();
-    const removeChild = vi.fn();
-    const execCommand = vi.fn().mockReturnValue(true);
-    const prompt = vi.fn();
-
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
-    vi.stubGlobal("window", { prompt });
-    vi.stubGlobal("document", {
-      body: { appendChild, removeChild },
-      createElement: vi.fn().mockReturnValue(textarea),
-      execCommand,
+    const dialog = document.createElement("section");
+    dialog.setAttribute("role", "dialog");
+    const trigger = document.createElement("button");
+    dialog.append(trigger);
+    document.body.append(dialog);
+    trigger.focus();
+    let copied = "";
+    // Only the native clipboard boundary is mocked; focus and selection use DOM.
+    const execCommand = vi.fn(() => {
+      const field = document.activeElement as HTMLTextAreaElement;
+      expect(field).toBeInstanceOf(HTMLTextAreaElement);
+      expect(dialog.contains(field)).toBe(true);
+      expect(field.readOnly).toBe(true);
+      copied = field.value.slice(field.selectionStart, field.selectionEnd);
+      return true;
     });
+    const prompt = vi.fn();
+    Object.defineProperty(window, "prompt", { value: prompt, configurable: true });
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    Object.defineProperty(document, "execCommand", { value: execCommand, configurable: true });
 
     await expect(copyTextToClipboard("fallback text")).resolves.toBe(true);
     expect(writeText).toHaveBeenCalledWith("fallback text");
-    expect(setAttribute).toHaveBeenCalledWith("readonly", "true");
-    expect(appendChild).toHaveBeenCalledWith(textarea);
-    expect(focus).toHaveBeenCalled();
-    expect(select).toHaveBeenCalled();
+    expect(copied).toBe("fallback text");
     expect(execCommand).toHaveBeenCalledWith("copy");
-    expect(removeChild).toHaveBeenCalledWith(textarea);
+    expect(dialog.querySelector("textarea")).toBeNull();
     expect(prompt).not.toHaveBeenCalled();
   });
 });

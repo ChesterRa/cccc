@@ -21,13 +21,16 @@ it.each([
   ],
   ["fails", () => vi.fn(() => false)],
   ["succeeds", () => vi.fn(() => true)],
-])("removes the fallback copy of the text when the legacy copy %s", async (_, execCommand) => {
-  const secret = "https://cccc.example.test/mcp/web-model/c/token/private-only";
-  Object.defineProperty(navigator, "clipboard", {
-    value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
-    configurable: true,
-  });
-  Object.defineProperty(document, "execCommand", { value: execCommand(), configurable: true });
-  await copyTextToClipboard(secret);
-  expect(leftInPage(secret)).toBe(false);
-});
+])(
+  "removes the fallback copy of the text when the legacy copy %s",
+  async (outcome, execCommand) => {
+    const secret = "https://cccc.example.test/mcp/web-model/c/token/private-only";
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    Object.defineProperty(document, "execCommand", { value: execCommand(), configurable: true });
+    expect(await copyTextToClipboard(secret)).toBe(outcome === "succeeds");
+    expect(leftInPage(secret)).toBe(false);
+  },
+);

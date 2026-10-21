@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ChevronLeft } from "lucide-react";
 import { apiJson } from "../../services/api/base";
 import { Button } from "../../components/ui/button";
+import { DirectConnectionStart } from "./DirectConnectionStart";
 import { DirectConnectionRow } from "./DirectConnectionRow";
 import { DirectInvitationShare, DirectJoinForm, DirectReceiveForm } from "./DirectPairingForms";
 import {
@@ -18,9 +19,11 @@ import { prepareDirectInvitation } from "./prepareDirectInvitation";
 export function DirectConnectionsPanel({
   groupId,
   groupTitle = groupId,
+  fill = false,
 }: {
   groupId: string;
   groupTitle?: string;
+  fill?: boolean;
 }) {
   const { t } = useTranslation("layout");
   const [error, setError] = useState("");
@@ -180,10 +183,10 @@ export function DirectConnectionsPanel({
   );
 
   return (
-    <div ref={panel} className="space-y-4 text-sm">
-      {!task && current.length === 0 && (
-        <p className="text-[var(--color-text-secondary)]">{t("direct.description")}</p>
-      )}
+    <div
+      ref={panel}
+      className={fill ? "flex min-h-full flex-col gap-4 text-sm" : "space-y-4 text-sm"}
+    >
       {(error || pollFailed) && (
         <p role="alert" className="break-words text-[var(--color-danger)]">
           {error || t("direct.statusUnavailable")}
@@ -209,11 +212,11 @@ export function DirectConnectionsPanel({
               : "space-y-3"
           }
         >
-          <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <Button
               size="sm"
               variant="ghost"
-              className="-ml-3 gap-1"
+              className="-ml-3 shrink-0 gap-1"
               disabled={busy}
               onClick={closeTask}
             >
@@ -277,28 +280,16 @@ export function DirectConnectionsPanel({
           )}
         </section>
       ) : (
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
-            <Button
-              data-direct-start="invite"
-              disabled={busy || !status || pollFailed}
-              onClick={() => start("invite")}
-            >
-              {t("direct.inviteGroup")}
-            </Button>
-            <Button
-              variant="outline"
-              data-direct-start="join"
-              disabled={busy || !status || pollFailed}
-              onClick={() => start("join")}
-            >
-              {t("direct.useInvite")}
-            </Button>
-          </div>
-          {current.length === 0 && (
-            <p className="text-xs text-[var(--color-text-secondary)]">{t("direct.chooseHint")}</p>
-          )}
-        </div>
+        <DirectConnectionStart
+          empty={
+            !!status &&
+            current.length === 0 &&
+            !submittedId &&
+            Object.keys(invitations).length === 0
+          }
+          disabled={busy || !status || pollFailed}
+          onStart={start}
+        />
       )}
       {status?.listener && task !== "settings" && task !== "invite" && (
         <div className="border-t border-[var(--glass-border-subtle)] pt-3">

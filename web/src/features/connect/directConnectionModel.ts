@@ -73,6 +73,8 @@ export function directRelationState(relation: DirectRelation): string {
   if (!relation.current) return "replaced";
   if (relation.state === "revoked") return "revoked";
   if (relation.state === "expired") return "expired";
+  if (relation.error && !relation.online && !directRelationClosed(relation))
+    return "connectionFailed";
   if (relation.state !== "active" && relation.expired)
     return relation.initiated ? "checkingApproval" : "expired";
   if (relation.online) return "online";

@@ -2,13 +2,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-import { Textarea } from "../../components/ui/textarea";
 export { DirectInvitationShare } from "./DirectInvitationShare";
-import {
-  readDirectInvitation,
-  type DirectAddress,
-  type DirectListener,
-} from "./directConnectionModel";
+export { DirectJoinForm } from "./DirectJoinForm";
+import type { DirectAddress, DirectListener } from "./directConnectionModel";
 
 export function DirectReceiveForm({
   listener,
@@ -209,75 +205,6 @@ export function DirectReceiveForm({
           </div>
         )}
       </fieldset>
-    </form>
-  );
-}
-
-export function DirectJoinForm({
-  groupTitle,
-  incoming,
-  setIncoming,
-  busy,
-  onJoin,
-}: {
-  groupTitle: string;
-  incoming: string;
-  setIncoming: (value: string) => void;
-  busy: boolean;
-  onJoin: () => void;
-}) {
-  const { t, i18n } = useTranslation("layout");
-  const id = useId();
-  const preview = readDirectInvitation(incoming);
-  const expired = preview && Date.parse(preview.expires_at) <= Date.now();
-  return (
-    <form
-      className="space-y-3"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (preview && !expired) onJoin();
-      }}
-    >
-      <p className="text-[var(--color-text-secondary)]">{t("direct.joinHint")}</p>
-      <label htmlFor={id} className="block font-medium">
-        {t("direct.pasteInvite")}
-      </label>
-      <Textarea
-        id={id}
-        rows={3}
-        maxLength={8192}
-        value={incoming}
-        autoComplete="off"
-        spellCheck={false}
-        onChange={(e) => setIncoming(e.target.value)}
-        placeholder="cccc-direct:…"
-      />
-      {incoming.trim() && !preview && <p role="alert">{t("direct.invalidInvitation")}</p>}
-      {preview && (
-        <div className="space-y-2 border-l-2 border-[var(--color-border-focus)] pl-3">
-          <p className="text-[var(--color-text-secondary)]">{t("direct.reviewPair")}</p>
-          <p className="break-words font-medium">
-            {groupTitle} ↔ {preview.host.name} · {preview.host.title}
-          </p>
-          <p className="break-words text-xs text-[var(--color-text-secondary)]">
-            {preview.address}
-          </p>
-          <p className="text-xs" role={expired ? "alert" : undefined}>
-            {expired
-              ? t("direct.expiredHint")
-              : t("direct.expiresAt", {
-                  time: new Date(preview.expires_at).toLocaleString(i18n.language),
-                })}
-          </p>
-          <details className="text-xs text-[var(--color-text-secondary)]">
-            <summary className="cursor-pointer">{t("direct.identity")}</summary>
-            <p className="break-all py-1">{preview.host.instance_id}</p>
-          </details>
-        </div>
-      )}
-      <Button type="submit" disabled={busy || !preview || !!expired}>
-        {t(busy ? "direct.requesting" : "direct.request")}
-      </Button>
     </form>
   );
 }

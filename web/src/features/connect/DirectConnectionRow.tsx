@@ -11,6 +11,7 @@ import {
 // Same dot language as the Connect sidebar: live, needs attention, or finished.
 function stateDot(state: string, closed: boolean) {
   if (state === "online") return "bg-emerald-400";
+  if (state === "connectionFailed") return "bg-[var(--color-danger)]";
   if (closed) return "bg-[var(--color-text-tertiary)]";
   return "bg-[var(--color-accent-warning)]";
 }

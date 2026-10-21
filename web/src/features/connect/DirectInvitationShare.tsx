@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { copyTextToClipboard } from "../../utils/copy";
 import { readDirectInvitation } from "./directConnectionModel";
+import "./directInvitationInput.css";
 
 export function DirectInvitationShare({ text }: { text: string }) {
   const { t, i18n } = useTranslation("layout");
   const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
+  const invitationField = useRef<HTMLTextAreaElement>(null);
   const preview = readDirectInvitation(text);
   if (!preview) return null;
   if (Date.parse(preview.expires_at) <= Date.now()) return <p>{t("direct.expiredHint")}</p>;
@@ -15,17 +17,18 @@ export function DirectInvitationShare({ text }: { text: string }) {
     <div className="space-y-3 rounded-xl border border-[var(--glass-border-subtle)] p-3">
       <p>{t("direct.shareHint")}</p>
       <Textarea
+        ref={invitationField}
         aria-label={t("direct.invitation")}
         rows={2}
         readOnly
         value={text}
-        className="font-mono text-xs"
+        className="direct-invitation-input font-mono text-xs"
         onFocus={(e) => e.target.select()}
       />
       <Button
         onClick={async () => {
           const focus = document.activeElement as HTMLElement | null;
-          setCopy((await copyTextToClipboard(text)) ? "copied" : "failed");
+          setCopy((await copyTextToClipboard(text, invitationField.current)) ? "copied" : "failed");
           if (focus?.isConnected) focus.focus();
         }}
       >

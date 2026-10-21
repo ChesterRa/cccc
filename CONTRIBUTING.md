@@ -112,6 +112,37 @@ Notes:
 - File length is a review signal, not a goal in itself. Refactor when cohesion,
   ownership, testing, or change risk provides concrete evidence.
 
+## Current Integration Contracts
+
+When working on the areas changed in v0.4.44, preserve these boundaries:
+
+- **Repository instructions:** use `AGENTS.md` through the runtime's native
+  loading rules. CCCC does not inject it into prompts or reload sessions on save.
+  The Web editor uses `/api/v1/groups/{group_id}/agents_md` and sends the displayed
+  `expected_path` when saving. The old `/project_md` endpoint,
+  `cccc_project_info` tool and PROJECT.md bootstrap metadata have been removed;
+  do not reintroduce them in integrations. Existing files are left untouched.
+  See [Architecture](docs/reference/architecture.md#mcp-server).
+- **Async Web operations:** bind reads and UI updates to their originating
+  Group, editor and request. Accepted writes may finish after the view changes;
+  stale responses must not overwrite another scope or an unsaved draft.
+  Invalidate affected read caches around mutations. Cover delayed reads,
+  read-after-write ordering, navigation and failed saves in regression tests.
+- **Voice:** the speaking service (Codex or Grok) and the Voice Analyst runtime
+  are independent choices. Keep long-lived credentials on the host, preserve
+  request context and language at handoff, and test interrupted or superseded audio
+  without replaying Analyst work. See the
+  [Voice guide](docs/guide/voice-secretary.md#live-voice-provider-connections).
+- **Direct connections:** closed records leave the panel without a separate
+  Remove UI. Cleanup uses the existing guarded daemon operation; offline and
+  uncertain connections remain visible. Preserve queued messages' original
+  routing and stop starting cleanup requests after the panel unmounts. See
+  [Connect](docs/guide/connect.md) and `web/src/features/connect/` tests.
+
+These notes supplement the API and architecture references; the
+[v0.4.44 release notes](docs/release/v0.4.44_release_notes.md) describe the full
+upgrade impact, including changes to repository instruction integrations.
+
 ## Commit Messages
 
 Use [Conventional Commits](https://www.conventionalcommits.org/):
