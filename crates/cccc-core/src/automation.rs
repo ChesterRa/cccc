@@ -902,7 +902,8 @@ mod tests {
         let store = GroupStore::new(home.clone()).expect("group store");
         let groups = store.list().expect("real copied groups");
         assert!(!groups.is_empty(), "empty replay cannot prove a projection");
-        for group in groups {
+        for meta in groups {
+            let group = store.load(&meta.group_id).expect("real group document");
             let eligible = actors::visible(&group)
                 .filter(|actor| actor.enabled)
                 .map(|actor| actor.id.clone())

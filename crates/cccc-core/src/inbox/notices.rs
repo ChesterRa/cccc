@@ -4,6 +4,8 @@
 use super::*;
 use std::collections::HashSet;
 
+type MailClaims = HashMap<(String, String), Vec<(String, Vec<String>)>>;
+
 #[derive(Default)]
 pub(crate) struct NoticeState {
     pub positions: HashMap<String, usize>,
@@ -17,7 +19,7 @@ pub(crate) struct NoticeState {
     cancelled: HashSet<String>,
     deliveries: HashMap<(String, String), (String, String, usize)>,
     actor_resumes: HashMap<String, String>,
-    mail_claims: HashMap<(String, String), Vec<(String, Vec<String>)>>,
+    mail_claims: MailClaims,
     reply_claims: HashSet<(String, String, String)>,
     resume_at: Option<String>,
 }
