@@ -441,6 +441,15 @@ fn due_unread_notices(
     if mail_after <= 0 && reply_after <= 0 {
         return Ok(None);
     }
+    // The foreman's digest also stays with the periodic tick.
+    let digest = match pass {
+        UnreadPass::Scheduled => Digest {
+            interval: delivery_timing_value(group, "health_digest_interval_seconds", 0),
+            repeat: delivery_timing_value(group, "health_digest_repeat_seconds", 0),
+            mail_overdue: delivery_timing_value(group, "mail_overdue_after_seconds", 7_200),
+        },
+        UnreadPass::IdleMailNow => Digest::default(),
+    };
     let eligible = actors::visible(group)
         .filter(|actor| {
             actor.enabled && delivery_actor_ids.is_none_or(|ids| ids.contains(&actor.id))
@@ -467,9 +476,22 @@ fn due_unread_notices(
                 now: pass == UnreadPass::IdleMailNow,
             },
             reply_after,
+            &digest,
         )
     })?;
     Ok(Some((ledger_path, notices)))
+}
+
+/// One message to the foreman listing what in the group needs a look, one
+/// line per problem. `interval <= 0` turns it off. It goes out when a problem
+/// appears that the last digest did not list, at most once per `interval`,
+/// and again after `repeat` while problems remain. A recipient's Mail becomes
+/// a problem once it is still unread `mail_overdue` after its first notice.
+#[derive(Default)]
+struct Digest {
+    interval: i64,
+    repeat: i64,
+    mail_overdue: i64,
 }
 
 /// Write each notice and hand it to delivery. A written notice is issued for
@@ -517,6 +539,7 @@ impl MailDelays<'_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn unread_notices(
     group: &GroupDoc,
     eligible: &[&cccc_contracts::Actor],
@@ -525,8 +548,12 @@ fn unread_notices(
     cursors: &BTreeMap<String, String>,
     mail_delays: MailDelays<'_>,
     reply_after: i64,
+    digest: &Digest,
 ) -> Vec<Event> {
     let mut notices = Vec::new();
+    // Each problem as (key, line); a key names one episode of it.
+    let mut problems = Vec::<(String, String)>::new();
+    let mut last_digest = None::<(i64, HashSet<String>)>;
     let generations = inbox::actor_generation_positions(events);
     let now = Utc::now().timestamp();
     let resume_at = events.iter().rev().find_map(|event| {
@@ -597,6 +624,20 @@ fn unread_notices(
                     .get("kind")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
+                if kind == "health_digest" {
+                    let listed = event
+                        .data
+                        .get("context")
+                        .and_then(|context| context.get("problem_keys"))
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect();
+                    last_digest = Some((timestamp(&event.ts, now), listed));
+                    continue;
+                }
                 if !matches!(kind, "mail_notice" | "reply_notice") {
                     continue;
                 }
@@ -727,6 +768,39 @@ fn unread_notices(
             }
         }
 
+        // Announced and still unread long after: the foreman should hear of it.
+        if digest.interval > 0
+            && let Some(oldest) = mail_pending.first()
+        {
+            let noticed_at = mail_claims
+                .get(&(actor.id.clone(), actor.created_at.clone()))
+                .into_iter()
+                .flatten()
+                .filter(|(notice_id, claimed)| {
+                    claimed.contains(&oldest.id)
+                        && deliveries
+                            .get(&(notice_id.clone(), actor.id.clone()))
+                            .is_none_or(|(state, _, _)| state != "withdrawn")
+                })
+                .filter_map(|(notice_id, _)| positions.get(notice_id))
+                .map(|position| timestamp(&events[*position].ts, now))
+                .collect::<Vec<_>>();
+            if let Some(first_noticed) = noticed_at.iter().min()
+                && now - first_noticed >= digest.mail_overdue
+            {
+                problems.push((
+                    format!("mail:{}:{}", actor.id, oldest.id),
+                    format!(
+                        "{}: {} Mail item(s) unread, the oldest for {}, after {} Mail notice(s).",
+                        actor.id,
+                        mail_pending.len(),
+                        duration_text(now - timestamp(&oldest.ts, now)),
+                        noticed_at.len()
+                    ),
+                ));
+            }
+        }
+
         if mail_delays.busy > 0 && !mail_pending.is_empty() {
             let pending_ids = mail_pending
                 .iter()
@@ -809,7 +883,65 @@ fn unread_notices(
             notices.push(event);
         }
     }
+    if digest.interval > 0
+        && !problems.is_empty()
+        && let Ok(foreman) = actors::unique_available_foreman(group)
+        && eligible.iter().any(|actor| actor.id == foreman.id)
+    {
+        let since = last_digest.as_ref().map_or(i64::MAX, |(at, _)| now - at);
+        let unlisted = problems.iter().any(|(key, _)| {
+            last_digest
+                .as_ref()
+                .is_none_or(|(_, listed)| !listed.contains(key))
+        });
+        if (unlisted && since >= digest.interval) || (digest.repeat > 0 && since >= digest.repeat) {
+            notices.push(digest_event(group, foreman, &problems));
+        }
+    }
     notices
+}
+
+fn digest_event(
+    group: &GroupDoc,
+    foreman: &cccc_contracts::Actor,
+    problems: &[(String, String)],
+) -> Event {
+    let lines = problems
+        .iter()
+        .map(|(_, line)| format!("- {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut event = notice_event(
+        group,
+        foreman,
+        "health_digest",
+        "Group health",
+        &format!(
+            "{} thing(s) in this group need a look:\n{lines}",
+            problems.len()
+        ),
+        Vec::new(),
+    );
+    if let Some(context) = event.data.get_mut("context").and_then(Value::as_object_mut) {
+        context.insert(
+            "problem_keys".into(),
+            json!(problems.iter().map(|(key, _)| key).collect::<Vec<_>>()),
+        );
+        context.insert("count".into(), json!(problems.len()));
+    }
+    event
+}
+
+/// `2h05m`, `45m` or `30s`.
+fn duration_text(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    if seconds >= 3_600 {
+        format!("{}h{:02}m", seconds / 3_600, seconds % 3_600 / 60)
+    } else if seconds >= 60 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{seconds}s")
+    }
 }
 
 fn delivery_timing_value(group: &GroupDoc, key: &str, default: i64) -> i64 {

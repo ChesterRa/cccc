@@ -30,6 +30,21 @@ const SECTION_SETTING_KEYS: &[(&str, &str, &str)] = &[
         "reply_notice_after_seconds",
     ),
     (
+        "health_digest_interval_seconds",
+        "delivery",
+        "health_digest_interval_seconds",
+    ),
+    (
+        "health_digest_repeat_seconds",
+        "delivery",
+        "health_digest_repeat_seconds",
+    ),
+    (
+        "mail_overdue_after_seconds",
+        "delivery",
+        "mail_overdue_after_seconds",
+    ),
+    (
         "terminal_transcript_visibility",
         "terminal_transcript",
         "visibility",
