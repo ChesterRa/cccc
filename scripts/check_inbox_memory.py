@@ -107,7 +107,7 @@ def replay(args: argparse.Namespace) -> dict:
         guard = threading.Lock()
         start = time.monotonic()
         log = open(Path(temporary) / "daemon.log", "wb")
-        daemon = subprocess.Popen([str(args.binary), "daemon", "run", "--host", "127.0.0.1", "--port", "0"], env=dict(os.environ, CCCC_HOME=str(home), RUST_LOG="warn"), stdout=log, stderr=log)
+        daemon = subprocess.Popen([str(args.binary), "daemon", "run", "--host", "127.0.0.1", "--port", "0"], env=dict(os.environ, CCCC_HOME=str(home), CCCC_AUTOMATION_TICK_PROBE="1", RUST_LOG="warn"), stdout=log, stderr=log)
 
         def call(op: str, **parameters):
             before = time.monotonic()
@@ -170,10 +170,17 @@ def replay(args: argparse.Namespace) -> dict:
                 values = sorted(row["ms"] for row in calls if row["op"] == op)
                 summary[op] = {"n": len(values), "p50_ms": statistics.median(values), "p95_ms": values[min(len(values) - 1, int(0.95 * len(values)))], "max_ms": max(values)}
             growth = (max(row["rss_kib"] for row in metrics) - metrics[0]["rss_kib"]) / 1024
-            result = {"groups": len(groups), "enabled_actors": enabled, "elapsed_s": time.monotonic() - start, "rss_growth_mib": growth, "max_rss_growth_mib": args.max_rss_growth_mib, "metrics": metrics, "latency": summary, "errors": errors}
+            ticks = {group_id: 0 for group_id, _ in groups}
+            for line in (Path(temporary) / "daemon.log").read_text(errors="replace").splitlines():
+                if line.startswith("CCCC_UNREAD_TICK "):
+                    tick = json.loads(line.removeprefix("CCCC_UNREAD_TICK "))
+                    if tick.get("include_unread") and tick.get("success") and tick.get("eligible_actors", 0) > 0 and tick.get("group_id") in ticks:
+                        ticks[tick["group_id"]] += 1
+            result = {"groups": len(groups), "enabled_actors": enabled, "elapsed_s": time.monotonic() - start, "rss_growth_mib": growth, "max_rss_growth_mib": args.max_rss_growth_mib, "unread_ticks_per_group": list(ticks.values()), "metrics": metrics, "latency": summary, "errors": errors}
             args.output.write_text(json.dumps(result, indent=2))
             if errors:
                 raise AssertionError("replay had API failures")
+            assert all(count >= 5 for count in ticks.values()), "fewer than five successful enabled-actor unread ticks per group"
             assert growth <= args.max_rss_growth_mib, f"RSS grew {growth:.2f} MiB; budget {args.max_rss_growth_mib} MiB"
             return result
         finally:
