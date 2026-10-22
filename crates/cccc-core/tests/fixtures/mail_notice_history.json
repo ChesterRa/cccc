@@ -1,7 +1,7 @@
 [
   {
-    "id": "a07246dd992c41fbadd86ba0c0efd2a8",
-    "ts": "2026-10-21T15:53:11.655560Z",
+    "id": "2a639d1846be494cb16f01e139934b02",
+    "ts": "2026-10-21T17:12:14.008579Z",
     "kind": "chat.message",
     "group_id": "captured-notice",
     "by": "sender",
@@ -13,8 +13,8 @@
     }
   },
   {
-    "id": "9632ed28f86c4eb58b93f8d2890f66e9",
-    "ts": "2026-10-21T15:53:11.709918Z",
+    "id": "e6f214b804f14fef867bbffb44d35085",
+    "ts": "2026-10-21T17:17:41.784825Z",
     "kind": "system.notify",
     "group_id": "captured-notice",
     "by": "system",
@@ -26,7 +26,7 @@
       "context": {
         "actor_created_at": "2026-09-22T19:18:35.569390Z",
         "source_event_ids": [
-          "a07246dd992c41fbadd86ba0c0efd2a8"
+          "2a639d1846be494cb16f01e139934b02"
         ],
         "count": 1,
         "actor_id": "recipient"
@@ -34,37 +34,37 @@
     }
   },
   {
-    "id": "94bbb7514f6344f4802ad006e9c94206",
-    "ts": "2026-10-21T15:53:11.728380Z",
+    "id": "e52a656dc21f4b23961d51bc27df3347",
+    "ts": "2026-10-21T17:17:41.835815Z",
     "kind": "runtime.delivery",
     "group_id": "captured-notice",
     "by": "system",
     "data": {
-      "source_event_id": "9632ed28f86c4eb58b93f8d2890f66e9",
+      "source_event_id": "e6f214b804f14fef867bbffb44d35085",
       "state": "claimed",
       "transport": "managed_session",
       "actor_id": "recipient"
     }
   },
   {
-    "id": "6db4f4a8bd1a449cbe42e8f9e3ebbbf5",
-    "ts": "2026-10-21T15:53:13.233770Z",
+    "id": "83e52558ea6b4f41a49ab76352a95ec8",
+    "ts": "2026-10-21T17:17:43.346568Z",
     "kind": "runtime.delivery",
     "group_id": "captured-notice",
     "by": "system",
     "data": {
-      "source_event_id": "9632ed28f86c4eb58b93f8d2890f66e9",
+      "source_event_id": "e6f214b804f14fef867bbffb44d35085",
       "state": "accepted",
       "transport": "managed_session",
       "actor_id": "recipient"
     }
   },
   {
-    "id": "e06536c97735496eb14470a510e2afb1",
-    "ts": "2026-10-21T16:07:17.488295Z",
+    "id": "500b8abd90744668bb882a32f3f18c23",
+    "ts": "2026-10-21T17:22:59.877054Z",
     "kind": "chat.message",
     "group_id": "captured-notice",
-    "by": "actor-2",
+    "by": "sender",
     "data": {
       "message_mode": "mail",
       "to": [

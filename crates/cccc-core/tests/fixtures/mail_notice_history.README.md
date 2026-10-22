@@ -4,7 +4,9 @@
 records captured on 2026-10-22: a concrete-recipient Mail, its notice, the
 notice's claimed and accepted delivery records, and later Mail to that recipient.
 Event IDs, timestamps, order, notice source references and delivery states are
-retained. Group and Actor identifiers use consistent aliases. Private Mail text
+retained. The complete source window was checked for reads, replies, manual
+delivery, generation changes, replacement notices and resumes; no relevant
+closing or replacement fact is omitted. Group and Actor identifiers use consistent aliases. Private Mail text
 and unrelated fields are omitted.
 
 Tests explicitly bind the projection to a disposable Group and translate the
