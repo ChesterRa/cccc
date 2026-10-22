@@ -182,11 +182,15 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
 }
 
 pub(super) fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {
-    match cccc_runtime::stop(&group.group_id, actor_id) {
+    let result = match cccc_runtime::stop(&group.group_id, actor_id) {
         Ok(status) => Ok(Some(status)),
         Err(cccc_runtime::RuntimeError::NotFound(_, _)) => Ok(None),
         Err(error) => Err(runtime_error(error)),
+    };
+    if result.is_ok() {
+        super::turn_probe::stopped(&group.group_id, actor_id);
     }
+    result
 }
 
 fn stop_registered(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {

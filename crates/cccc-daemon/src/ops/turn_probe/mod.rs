@@ -30,6 +30,13 @@ fn entries() -> &'static Mutex<BTreeMap<Key, Entry>> {
     ENTRIES.get_or_init(Mutex::default)
 }
 
+/// Retire bounded provider bindings after confirmed stop, including Actor deletion.
+pub(super) fn stopped(group: &str, actor: &str) {
+    if let Ok(mut entries) = entries().lock() {
+        entries.remove(&(group.to_owned(), actor.to_owned()));
+    }
+}
+
 /// Called once at a successful launch: saved configuration changes wait for restart.
 pub(super) fn started(actor: &Actor, status: &SessionStatus) {
     let key = (status.group_id.clone(), status.actor_id.clone());

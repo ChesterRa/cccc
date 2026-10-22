@@ -410,4 +410,6 @@ fn launch_policy_waits_for_restart_and_cache_never_crosses_a_generation() {
     // Saving auto without a restart cannot enable a previously off generation.
     assert_eq!(cached(&group, &actor.id), None);
     cccc_runtime::stop(&group, &actor.id).expect("stop second");
+    stopped(&group, &actor.id);
+    assert!(!entries().lock().expect("entries").contains_key(&key));
 }
