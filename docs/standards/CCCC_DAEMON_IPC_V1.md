@@ -4727,7 +4727,15 @@ read-only and MUST NOT append `mail.read` or mutate any delivery state.
 
 Args:
 ```ts
-{ group_id: string; detail?: "overview" | "summary" | "full" }
+{
+  group_id: string
+  detail?: "overview" | "summary" | "full"
+  limit?: number          // 1..500 tasks per page; default 100 once paging
+  cursor?: string         // next_cursor of the previous page
+  max_bytes?: number      // >= 4096; the page shrinks until the answer,
+                          // rendered as pretty JSON, fits
+  include_archived?: boolean // paging only; default true
+}
 ```
 
 Result:
@@ -4735,6 +4743,8 @@ Result:
 {
   version: string
   tasks_version: string
+  truncated?: boolean     // paging only: more tasks follow
+  next_cursor?: string | null
   coordination: {
     brief: {
       objective: string
@@ -4793,6 +4803,18 @@ Result:
 
 Notes:
 - Task objects returned in `coordination.tasks`, `board`, or `task_list` include `task_type`.
+- Paging starts when `limit`, `cursor` or `max_bytes` is present; without them
+  the snapshot stays complete. A page holds at most `limit` tasks numbered
+  after `cursor` in `coordination.tasks` (and, for `full`, in `board`), halved
+  until the whole answer fits `max_bytes`, and never fewer than one task. A
+  task too large for the page on its own has its longest free text (notes,
+  outcome, title or a checklist item) cut to fit, ending in
+  `… [clipped to fit the page]`; `task_list` returns it whole. If even that
+  page does not fit, the call fails with `invalid_args` and names the size of
+  the smallest page.
+  `attention` becomes counts and `tasks_summary` still counts every task;
+  `task_list` pages the attention tasks themselves. `cccc_context_get` always
+  pages, at most 100 tasks and 256 KiB per answer.
 - Daemon IPC defaults `detail` to `full`; the Web HTTP route defaults it to
   `summary` for routine refreshes.
 - `detail="overview"` does not read task files and omits `coordination.tasks`,
