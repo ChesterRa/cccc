@@ -4606,7 +4606,9 @@ batch to its initial notice plus that many repeats (default 3). A batch is the
 ordered set of still-pending Mail IDs; a changed set starts a fresh budget.
 Issued attempts, including withdrawn notices, consume this budget. The count
 is reconstructed from notice records after restart and survives claim pruning.
-Expired and withdrawn claims are pruned from the repeat projection. The max
+A withdrawn notice does not hold back the next attempt for the repeat
+interval; the explicit batch attempt budget still applies. Expired and
+withdrawn claims are pruned from the repeat projection. The max
 setting has no effect when repeat seconds is omitted or zero. A read, reply, accepted/ambiguous delivery of
 the Mail itself, or Actor-generation change ends that Mail's eligibility as
 above; acceptance of the notice itself does not. Runtime restart and
