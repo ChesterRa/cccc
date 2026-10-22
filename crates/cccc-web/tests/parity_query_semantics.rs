@@ -195,3 +195,45 @@ impl Drop for DaemonGuard {
         self.0.abort();
     }
 }
+
+#[tokio::test]
+async fn ledger_search_http_forwards_recorded_recipient_and_time_filters() {
+    let (_temp, home, group_id, daemon) = running_home().await;
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut events: Vec<Event> = serde_json::from_str(include_str!(
+        "../../cccc-daemon/tests/fixtures/ledger-search/events.json"
+    ))
+    .expect("recorded events");
+    for event in &mut events {
+        event.group_id = group_id.clone();
+        ledger::append(&store.ledger_path(&group_id).expect("ledger"), event).expect("append");
+    }
+    let selected = events
+        .iter()
+        .filter(|event| {
+            event
+                .data
+                .get("to")
+                .and_then(Value::as_array)
+                .is_some_and(|to| to.contains(&json!("actor-03")))
+        })
+        .collect::<Vec<_>>();
+    let since = &selected[1].ts;
+    let until = &selected[selected.len() - 2].ts;
+    let expected = selected
+        .iter()
+        .filter(|event| event.ts >= *since && event.ts <= *until)
+        .map(|event| json!(event.id))
+        .collect::<Vec<_>>();
+    let response=get(&home,format!("/api/v1/groups/{group_id}/ledger/search?kind=chat&to=actor-03&since_ts={since}&until_ts={until}&limit=200")).await;
+    daemon.0.abort();
+    assert_eq!(
+        response["result"]["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .map(|e| e["id"].clone())
+            .collect::<Vec<_>>(),
+        expected
+    );
+}
