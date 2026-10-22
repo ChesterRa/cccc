@@ -13,7 +13,7 @@ pub mod voice_secretary;
 
 pub use actor::{
     Actor, ActorRole, ActorRuntime, ActorSubmit, GroupState, RunnerKind, RuntimeMode,
-    RuntimeStateSource,
+    RuntimeStateSource, TurnProbe,
 };
 pub use codex_voice::{AgentRuntimeSettings, CodexVoiceAnalystSettings, CodexVoiceSettings};
 pub use deepseek::{

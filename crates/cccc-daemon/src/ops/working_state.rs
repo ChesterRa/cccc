@@ -30,11 +30,28 @@ pub(super) fn fields(
     running: bool,
     runner_effective: &str,
 ) -> Map<String, Value> {
-    let managed_session = super::local_headless::running(group_id, &actor.id)
-        || super::local_headless::uses_managed_session(actor);
+    fields_with_probe(home, actor, group_id, running, runner_effective, || {
+        super::turn_probe::cached(group_id, &actor.id)
+    })
+}
+
+pub(super) fn fields_with_probe(
+    home: &HomeLayout,
+    actor: &Actor,
+    group_id: &str,
+    running: bool,
+    runner_effective: &str,
+    probe: impl FnOnce() -> Option<super::turn_probe::TurnObservation>,
+) -> Map<String, Value> {
+    let registered_managed = super::local_headless::running(group_id, &actor.id);
+    let managed_session = registered_managed || super::local_headless::uses_managed_session(actor);
     let local_state = running
         .then(|| super::local_headless::status(group_id, &actor.id))
         .flatten();
+    let probe =
+        (running && !registered_managed && local_state.is_none() && runner_effective == "pty")
+            .then(probe)
+            .flatten();
     let (state, reason, updated_at, active_task_id) = if !running {
         (
             "stopped".to_owned(),
@@ -55,6 +72,8 @@ pub(super) fn fields(
             Some(local_state.updated_at),
             local_state.task_id,
         )
+    } else if let Some(probe) = probe {
+        super::turn_probe::fields(probe)
     } else if managed_session {
         (
             "waiting".to_owned(),

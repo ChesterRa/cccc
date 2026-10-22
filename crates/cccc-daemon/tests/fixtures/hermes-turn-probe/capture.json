@@ -1,0 +1,51 @@
+{
+  "schema_version": 31,
+  "captured_at_unix": 1792697799.0665095,
+  "clock_ticks_per_second": 100,
+  "processes": {
+    "2790164": {
+      "pid": 2790164,
+      "ppid": 2789094,
+      "start_ticks": 273132507,
+      "pid_namespace": 4026531836,
+      "born_before": 1792695985.5952091
+    },
+    "2790240": {
+      "pid": 2790240,
+      "ppid": 2789094,
+      "start_ticks": 273132518,
+      "pid_namespace": 4026531836,
+      "born_before": 1792695985.7052088
+    },
+    "2796583": {
+      "pid": 2796583,
+      "ppid": 2789094,
+      "start_ticks": 273134480,
+      "pid_namespace": 4026531836,
+      "born_before": 1792696005.325209
+    },
+    "2950773": {
+      "pid": 2950773,
+      "ppid": 2789094,
+      "start_ticks": 273270134,
+      "pid_namespace": 4026531836,
+      "born_before": 1792697361.8652086
+    },
+    "2789094": {
+      "pid": 2789094,
+      "ppid": 1,
+      "start_ticks": 273131084,
+      "pid_namespace": 4026531836,
+      "born_before": 1792695971.3652089
+    }
+  },
+  "target": {
+    "root_pid": 2790164,
+    "holder_pid": 2790164,
+    "conversation_id": "20261022_190630_6c7743"
+  },
+  "lease_count": 30,
+  "session_count": 30,
+  "database_sha256": "eaea613770e45a788b0c5aea65aff1718be8a35bd9b5d789150336a1d1792a50",
+  "redaction": "Only id, source, started_at and ended_at session columns were selected. All other session columns are NULL or schema defaults. No message table, bodies, prompts, environment values, actor/group identifiers or filesystem paths are included. Lease rows and process identity numbers are unmodified."
+}

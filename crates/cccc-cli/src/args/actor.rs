@@ -20,6 +20,9 @@ pub enum ActorAction {
         runtime: String,
         #[arg(long, default_value = "default", value_parser = ["default", "acp"])]
         runtime_mode: String,
+        /// Read-only native turn observation; takes effect on the next start.
+        #[arg(long, default_value = "off", value_parser = ["off", "auto", "hermes_turn_lease"])]
+        turn_probe: String,
         #[arg(long, default_value = "")]
         command: String,
         #[arg(long = "env")]
@@ -47,6 +50,9 @@ pub enum ActorAction {
         runtime: Option<String>,
         #[arg(long, value_parser = ["default", "acp"])]
         runtime_mode: Option<String>,
+        /// Read-only native turn observation; takes effect on the next start.
+        #[arg(long, value_parser = ["off", "auto", "hermes_turn_lease"])]
+        turn_probe: Option<String>,
         #[arg(long)]
         scope: Option<String>,
         #[arg(long)]

@@ -46,6 +46,22 @@ pub enum RuntimeMode {
     Acp,
 }
 
+/// Optional authoritative observation for a native terminal, applied on next start.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnProbe {
+    #[default]
+    Off,
+    Auto,
+    HermesTurnLease,
+}
+
+impl TurnProbe {
+    pub const fn is_off(&self) -> bool {
+        matches!(self, Self::Off)
+    }
+}
+
 impl RuntimeMode {
     pub const fn is_default(&self) -> bool {
         matches!(self, Self::Default)
@@ -213,6 +229,8 @@ pub struct Actor {
     pub runtime: ActorRuntime,
     #[serde(default, skip_serializing_if = "RuntimeMode::is_default")]
     pub runtime_mode: RuntimeMode,
+    #[serde(default, skip_serializing_if = "TurnProbe::is_off")]
+    pub turn_probe: TurnProbe,
     #[serde(default)]
     pub runtime_state_source: RuntimeStateSource,
     #[serde(default)]
@@ -255,6 +273,7 @@ impl Actor {
             runner: RunnerKind::default(),
             runtime: ActorRuntime::default(),
             runtime_mode: RuntimeMode::default(),
+            turn_probe: TurnProbe::Off,
             runtime_state_source: RuntimeStateSource::default(),
             internal_kind: None,
             avatar_asset_path: String::new(),

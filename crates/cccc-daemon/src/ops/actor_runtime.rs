@@ -163,7 +163,7 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     let command = cccc_runtime::resolve_command_executable(&command, &env);
     let history =
         terminal_history::config(home, &group.group_id, &actor.id).map_err(OpError::io)?;
-    cccc_runtime::start_with_history(
+    let status = cccc_runtime::start_with_history(
         LaunchSpec {
             group_id: group.group_id.clone(),
             actor_id: actor.id.clone(),
@@ -176,7 +176,9 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
         },
         history,
     )
-    .map_err(runtime_error)
+    .map_err(runtime_error)?;
+    super::turn_probe::started(&actor, &status);
+    Ok(status)
 }
 
 pub(super) fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {

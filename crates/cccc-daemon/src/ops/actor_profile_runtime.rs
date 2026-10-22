@@ -7,7 +7,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::dispatch::OpError;
 
 // Actor capability autoload is an independent, additive baseline, even when linked.
-const CONTROLLED_FIELDS: &[&str] = &["runtime", "runtime_mode", "command", "submit", "env"];
+const CONTROLLED_FIELDS: &[&str] = &[
+    "runtime",
+    "runtime_mode",
+    "turn_probe",
+    "command",
+    "submit",
+    "env",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityDefaults {
@@ -106,6 +113,7 @@ fn apply(home: &HomeLayout, actor: &Actor, profile_id: &str) -> Result<Actor, Op
     let mut resolved = actor.clone();
     resolved.runtime = profile.runtime;
     resolved.runtime_mode = profile.runtime_mode;
+    resolved.turn_probe = profile.turn_probe;
     resolved.runner = profile.runner;
     resolved.submit = profile.submit;
     resolved.command = profile.command;

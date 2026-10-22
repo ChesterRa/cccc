@@ -37,6 +37,7 @@ impl Publisher {
         let mut payloads = Vec::new();
         let mut snapshot = BTreeMap::new();
         for actor in &group.actors {
+            super::turn_probe::refresh(&group.group_id, actor);
             if let Some(payload) = running_payload(store.home(), group, actor) {
                 let runner = text(&payload, "runner_effective", "pty");
                 let state = text(&payload, "effective_working_state", "waiting");
