@@ -190,6 +190,147 @@ pub(super) fn touch_updated_at(document: &mut ContextDoc) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ContextStore, apply::apply_all};
+    use crate::{GroupStore, HomeLayout};
+
+    #[test]
+    fn failed_create_batches_retry_without_dangling_refs_across_id_widths() {
+        for high_water in [998, 9_998] {
+            for reference in ["parent_ref", "blocked_by_refs"] {
+                for fail_target in [true, false] {
+                    let temp = tempfile::tempdir().expect("fixture");
+                    let home = HomeLayout::from_path(temp.path()).expect("home");
+                    let groups = GroupStore::new(home.clone()).expect("groups");
+                    let group = groups.create("retry references", "").expect("group");
+                    let paths = ContextPaths::new(&groups.group_dir(&group.group_id).expect("dir"));
+                    let seed = ContextDoc {
+                        task_id_high_water: high_water,
+                        ..ContextDoc::default()
+                    };
+                    persist_diff(&paths, &ContextDoc::default(), &seed).expect("seed allocation");
+                    let before = load(&paths).expect("before batch");
+                    let mut referring = json!({"op":"task.create","title":"dependent","client_request_id":"dependent"});
+                    referring[reference] = if reference == "parent_ref" {
+                        json!("target")
+                    } else {
+                        json!(["target"])
+                    };
+                    let ops: Vec<_> = [
+                        json!({"op":"task.create","title":"target","client_request_id":"target"}),
+                        referring,
+                    ]
+                    .into_iter()
+                    .map(|op| op.as_object().expect("op").clone())
+                    .collect();
+                    let mut after = before.clone();
+                    let changes =
+                        apply_all(&mut after, &ops, "user", |_, _| Ok(())).expect("validate batch");
+                    let target_id = changes[0]["task_id"].as_str().expect("target id");
+                    let referring_id = changes[1]["task_id"].as_str().expect("dependent id");
+                    assert!(
+                        referring_id < target_id,
+                        "fixture must cross the padded ID width"
+                    );
+                    let blocked = paths.tasks_dir.join(format!(
+                        "{}.yaml",
+                        if fail_target { target_id } else { referring_id }
+                    ));
+                    // Inject the I/O fault after the snapshot/validation, without
+                    // a production failpoint or permission assumptions.
+                    fs::create_dir(&blocked).expect("block destination");
+                    assert!(persist_diff(&paths, &before, &after).is_err());
+                    fs::remove_dir(&blocked).expect("restore destination");
+                    let partial = load(&paths).expect("partial state");
+                    assert!(partial.revision > before.revision);
+                    assert_eq!(partial.task_id_high_water, high_water + 2);
+                    let retry = ContextStore::new(home)
+                        .expect("new store after failure")
+                        .sync(&group.group_id, &ops, None, "user", false)
+                        .expect("retry batch");
+                    assert_eq!(retry.context.tasks.len(), 2);
+                    let target = retry
+                        .context
+                        .tasks
+                        .iter()
+                        .find(|task| task["client_request_id"] == "target")
+                        .expect("target");
+                    let dependent = retry
+                        .context
+                        .tasks
+                        .iter()
+                        .find(|task| task["client_request_id"] == "dependent")
+                        .expect("dependent");
+                    if reference == "parent_ref" {
+                        assert_eq!(
+                            dependent["parent_id"], target["id"],
+                            "retry left an orphaned parent"
+                        );
+                    } else {
+                        assert_eq!(
+                            dependent["blocked_by"],
+                            json!([target["id"]]),
+                            "retry left an orphaned blocker"
+                        );
+                    }
+                    assert_eq!(
+                        partial.tasks.len(),
+                        usize::from(!fail_target),
+                        "only a successfully written reference target may survive"
+                    );
+                    assert_eq!(
+                        retry.changes[0]
+                            .get("replayed")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        !fail_target
+                    );
+                    assert!(retry.changes[1].get("replayed").is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn failed_new_target_write_does_not_publish_an_existing_tasks_update() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let paths = ContextPaths::new(temp.path());
+        let existing = json!({"id":"T001","title":"existing","status":"planned"})
+            .as_object()
+            .expect("task")
+            .clone();
+        let seed = ContextDoc {
+            task_id_high_water: 998,
+            tasks: vec![existing.clone()],
+            ..ContextDoc::default()
+        };
+        persist_diff(&paths, &ContextDoc::default(), &seed).expect("seed");
+        let before = load(&paths).expect("before");
+        let mut after = before.clone();
+        let created = super::super::task_apply::create(
+            &mut after,
+            json!({"title":"new target","client_request_id":"target"})
+                .as_object()
+                .expect("op"),
+            "user",
+        )
+        .expect("create");
+        super::super::task_apply::update(
+            &mut after,
+            json!({"task_id":"T001","parent_id":created.task_id,"blocked_by":[created.task_id]})
+                .as_object()
+                .expect("op"),
+        )
+        .expect("update");
+        let blocked = paths.tasks_dir.join(format!("{}.yaml", created.task_id));
+        fs::create_dir(&blocked).expect("block target");
+        assert!(persist_diff(&paths, &before, &after).is_err());
+        fs::remove_dir(&blocked).expect("restore target");
+        // Unchanged: the update was not published, so the task is still at
+        // the revision it was loaded with.
+        let mut unchanged = existing;
+        unchanged.insert("rev".into(), json!(0));
+        assert_eq!(load(&paths).expect("partial state").tasks, [unchanged]);
+    }
 
     #[test]
     fn partial_persistence_cannot_reuse_the_previous_revision() {

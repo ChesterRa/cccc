@@ -229,6 +229,9 @@ fn task_action(
                     "notes",
                     "checklist",
                     "if_task_rev",
+                    "client_request_id",
+                    "parent_ref",
+                    "blocked_by_refs",
                 ],
             );
             args.insert("op".into(), Value::String("task.create".into()));
@@ -618,6 +621,22 @@ mod tests {
             args["ops"][1],
             json!({"op":"task.move","task_id":"T001","status":"active"})
         );
+    }
+
+    #[test]
+    fn task_create_mapping_keeps_the_callers_ids_and_refs() {
+        let create = json!({
+            "action":"create","group_id":"g_test","actor_id":"lead","by":"lead",
+            "title":"publish","client_request_id":"publish","parent_ref":"release",
+            "blocked_by_refs":["build"]
+        })
+        .as_object()
+        .cloned()
+        .expect("create args");
+        let (_, args) = daemon_call("cccc_task", create).expect("create mapping");
+        assert_eq!(args["ops"][0]["client_request_id"], "publish");
+        assert_eq!(args["ops"][0]["parent_ref"], "release");
+        assert_eq!(args["ops"][0]["blocked_by_refs"], json!(["build"]));
     }
 
     #[test]

@@ -18,11 +18,22 @@ pub fn apply_all(
             super::task_revision::check(&document.tasks, operation)?;
         }
         let tasks = name.starts_with("task.").then(|| document.tasks.clone());
-        apply_one(document, name, operation, by)?;
+        let mut change = json!({"index": index, "op": name, "detail": "applied"});
+        if name == "task.create" {
+            // The created task's id, or the existing task a replayed
+            // `client_request_id` names, so the caller need not search for it.
+            let created = super::task_apply::create(document, operation, by)?;
+            change["task_id"] = Value::String(created.task_id);
+            if created.replayed {
+                change["replayed"] = Value::Bool(true);
+            }
+        } else {
+            apply_one(document, name, operation, by)?;
+        }
         if let Some(tasks) = tasks {
             super::task_revision::advance(&tasks, &mut document.tasks)?;
         }
-        changes.push(json!({"index": index, "op": name, "detail": "applied"}));
+        changes.push(change);
     }
     Ok(changes)
 }
@@ -36,7 +47,6 @@ fn apply_one(
     match name {
         "coordination.brief.update" => update_brief(document, operation, by),
         "coordination.note.add" => add_note(document, operation, by),
-        "task.create" => super::task_apply::create(document, operation, by),
         "task.update" => super::task_apply::update(document, operation),
         "task.move" => super::task_apply::move_task(document, operation),
         "task.restore" => super::task_apply::restore(document, operation),

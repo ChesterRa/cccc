@@ -2443,6 +2443,14 @@
         "parent_id": {
           "type": "string"
         },
+        "client_request_id": {
+          "type": "string",
+          "description": "Create only. Your own id for this task. Creating again with the same id returns the task you already created instead of a second one, so a retry is safe."
+        },
+        "parent_ref": {
+          "type": "string",
+          "description": "Create only, instead of parent_id: the client_request_id of a task you created."
+        },
         "assignee": {
           "type": "string"
         },
@@ -2454,6 +2462,13 @@
           "items": {
             "type": "string"
           }
+        },
+        "blocked_by_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Create only: client_request_ids of tasks you created that block this one; added to blocked_by."
         },
         "waiting_on": {
           "type": "string",
