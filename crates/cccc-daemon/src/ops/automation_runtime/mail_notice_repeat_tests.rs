@@ -15,9 +15,12 @@ impl Replay {
         let temp = tempfile::tempdir().expect("private replay");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let response = request(&home, "group_create", json!({"title":"notice replay"}));
-        let group_id = response["group"]["group_id"].as_str().unwrap().to_owned();
+        let group_id = response["group"]["group_id"]
+            .as_str()
+            .expect("captured notice replay invariant")
+            .to_owned();
         let project = temp.path().join("project");
-        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&project).expect("captured notice replay invariant");
         request(
             &home,
             "attach",
@@ -33,49 +36,57 @@ impl Replay {
             "group_settings_update",
             json!({"group_id":group_id,"by":"user","patch":patch}),
         );
-        let store = GroupStore::new(home.clone()).unwrap();
+        let store = GroupStore::new(home.clone()).expect("captured notice replay invariant");
         store
             .mutate(&group_id, |g| {
                 g.state = cccc_contracts::GroupState::Active;
                 Ok(())
             })
-            .unwrap();
-        let group = store.load(&group_id).unwrap();
+            .expect("captured notice replay invariant");
+        let group = store
+            .load(&group_id)
+            .expect("captured notice replay invariant");
         let actor_created_at = group
             .actors
             .iter()
             .find(|a| a.id == "recipient")
-            .unwrap()
+            .expect("captured notice replay invariant")
             .created_at
             .clone();
         let mut events: Vec<Event> = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../cccc-core/tests/fixtures/mail_notice_history.json"
         )))
-        .unwrap();
+        .expect("captured notice replay invariant");
         let captured_at = DateTime::parse_from_rfc3339(
             &events
                 .iter()
                 .find(|e| e.kind == "system.notify")
-                .unwrap()
+                .expect("captured notice replay invariant")
                 .ts,
         )
-        .unwrap();
+        .expect("captured notice replay invariant");
         let anchor = Utc::now() - chrono::Duration::seconds(notice_age);
-        let path = store.ledger_path(&group_id).unwrap();
+        let path = store
+            .ledger_path(&group_id)
+            .expect("captured notice replay invariant");
         let mut mail_ids = Vec::new();
         for event in &mut events {
-            let at = DateTime::parse_from_rfc3339(&event.ts).unwrap();
+            let at =
+                DateTime::parse_from_rfc3339(&event.ts).expect("captured notice replay invariant");
             event.ts = (anchor + (at - captured_at)).to_rfc3339();
             event.group_id = group_id.clone();
             if event.kind == "chat.message" {
                 mail_ids.push(event.id.clone());
             }
             if event.kind == "system.notify" {
-                event.data.get_mut("context").unwrap()["actor_created_at"] =
+                event
+                    .data
+                    .get_mut("context")
+                    .expect("captured notice replay invariant")["actor_created_at"] =
                     json!(actor_created_at);
             }
-            cccc_core::ledger::append(&path, event).unwrap();
+            cccc_core::ledger::append(&path, event).expect("captured notice replay invariant");
         }
         // The real actor.start still begins its normal one-second Mail window.
         std::thread::sleep(Duration::from_millis(1200));
@@ -88,12 +99,16 @@ impl Replay {
     }
 
     fn notices(&self) -> Vec<Event> {
-        let store = GroupStore::new(self.home.clone()).unwrap();
-        cccc_core::ledger::read_all(&store.ledger_path(&self.group_id).unwrap())
-            .unwrap()
-            .into_iter()
-            .filter(|e| e.kind == "system.notify" && e.data["kind"] == "mail_notice")
-            .collect()
+        let store = GroupStore::new(self.home.clone()).expect("captured notice replay invariant");
+        cccc_core::ledger::read_all(
+            &store
+                .ledger_path(&self.group_id)
+                .expect("captured notice replay invariant"),
+        )
+        .expect("captured notice replay invariant")
+        .into_iter()
+        .filter(|e| e.kind == "system.notify" && e.data["kind"] == "mail_notice")
+        .collect()
     }
 
     fn tick(&self) {
@@ -111,7 +126,7 @@ impl Replay {
                 "recipient",
                 event_id,
             )
-            .unwrap();
+            .expect("captured notice replay invariant");
             if state.as_ref().is_some_and(|s| s.0 == "accepted") {
                 return;
             }
@@ -133,7 +148,10 @@ impl Replay {
             2,
             "production daemon must repeat an accepted-but-unread notice"
         );
-        let repeated = notices.last().unwrap().clone();
+        let repeated = notices
+            .last()
+            .expect("captured notice replay invariant")
+            .clone();
         assert_eq!(
             repeated.data["context"]["source_event_ids"],
             json!(self.mail_ids)
@@ -156,7 +174,13 @@ impl Replay {
                     "inbox_read",
                     json!({"group_id":self.group_id,"actor_id":"recipient","by":"recipient"}),
                 );
-                assert_eq!(result["messages"].as_array().unwrap().len(), 2);
+                assert_eq!(
+                    result["messages"]
+                        .as_array()
+                        .expect("captured notice replay invariant")
+                        .len(),
+                    2
+                );
             }
             "reply" => {
                 for id in &self.mail_ids {
@@ -200,7 +224,7 @@ impl Drop for Replay {
                 op: "actor_stop".into(),
                 args: json!({"group_id":self.group_id,"actor_id":"recipient","by":"user"})
                     .as_object()
-                    .unwrap()
+                    .expect("captured notice replay invariant")
                     .clone(),
             },
         );
@@ -216,11 +240,14 @@ fn request(home: &HomeLayout, op: &str, args: Value) -> Value {
         &DaemonRequest {
             v: 1,
             op: op.into(),
-            args: args.as_object().unwrap().clone(),
+            args: args
+                .as_object()
+                .expect("captured notice replay invariant")
+                .clone(),
         },
     );
     assert!(response.ok, "{op}: {response:?}");
-    response.result
+    Value::Object(response.result)
 }
 
 fn add_actor(home: &HomeLayout, group: &str) {
@@ -247,7 +274,13 @@ fn mail_notice_repeat_daemon_accepts_repeat_with_later_mail() {
         "inbox_peek",
         json!({"group_id":replay.group_id,"actor_id":"recipient","by":"recipient"}),
     );
-    assert_eq!(inbox["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        inbox["messages"]
+            .as_array()
+            .expect("captured notice replay invariant")
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -287,7 +320,10 @@ fn closes_repeat(resolution: &str) {
             "new generation is still notice-eligible"
         );
         assert_eq!(
-            notices.last().unwrap().data["context"]["source_event_ids"],
+            notices
+                .last()
+                .expect("captured notice replay invariant")
+                .data["context"]["source_event_ids"],
             json!([sent["event"]["id"]])
         );
     }

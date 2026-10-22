@@ -18,8 +18,12 @@ impl Replay {
             "../../tests/fixtures/mail_notice_history.json"
         ))
         .expect("captured history");
-        let notice = events.iter().find(|e| e.kind == "system.notify").unwrap();
-        let captured_at = DateTime::parse_from_rfc3339(&notice.ts).unwrap();
+        let notice = events
+            .iter()
+            .find(|e| e.kind == "system.notify")
+            .expect("captured notice replay invariant");
+        let captured_at =
+            DateTime::parse_from_rfc3339(&notice.ts).expect("captured notice replay invariant");
         let actor_created_at = notice.data["context"]["actor_created_at"]
             .as_str()
             .expect("captured Actor generation")
@@ -42,12 +46,15 @@ impl Replay {
             })
             .expect("replay group");
         let anchor = Utc::now() - chrono::Duration::seconds(notice_age);
-        let path = store.ledger_path(&group.group_id).unwrap();
+        let path = store
+            .ledger_path(&group.group_id)
+            .expect("captured notice replay invariant");
         let mut mail_ids = Vec::new();
         for event in &mut events {
             // Explicit playback binding: translate the whole captured timeline,
             // preserving its relative times and order. No captured fact is invented.
-            let at = DateTime::parse_from_rfc3339(&event.ts).unwrap();
+            let at =
+                DateTime::parse_from_rfc3339(&event.ts).expect("captured notice replay invariant");
             event.ts = (anchor + (at - captured_at)).to_rfc3339();
             event.group_id = group.group_id.clone();
             if event.kind == "chat.message" {
@@ -58,7 +65,9 @@ impl Replay {
         Self {
             _temp: temp,
             home,
-            group: store.load(&group.group_id).unwrap(),
+            group: store
+                .load(&group.group_id)
+                .expect("captured notice replay invariant"),
             store,
             mail_ids,
         }
@@ -98,13 +107,16 @@ fn mail_notice_repeat_carries_both_captured_pending_mail() {
     assert_eq!(due[0].data["context"]["count"], 2);
     assert_eq!(
         inbox::list_unread(&replay.home, &replay.group, "recipient", 10)
-            .unwrap()
+            .expect("captured notice replay invariant")
             .len(),
         2,
         "a notice does not consume or promote its Mail"
     );
     ledger::append(
-        &replay.store.ledger_path(&replay.group.group_id).unwrap(),
+        &replay
+            .store
+            .ledger_path(&replay.group.group_id)
+            .expect("captured notice replay invariant"),
         &due[0],
     )
     .expect("issue repeat");
