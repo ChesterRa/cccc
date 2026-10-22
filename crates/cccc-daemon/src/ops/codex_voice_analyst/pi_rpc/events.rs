@@ -3,6 +3,12 @@ use std::collections::BTreeMap;
 use std::io;
 use tokio::sync::{broadcast, oneshot};
 
+const PROVIDER_FAILED: &str = "Pi provider turn failed; check the selected provider configuration";
+const LENGTH_STOPPED: &str = concat!(
+    "Pi stopped the turn at the model's length limit before a final reply; ",
+    "the context window or output budget is used up"
+);
+
 pub(super) struct Turn {
     pub id: String,
     pub delegation_id: String,
@@ -12,7 +18,7 @@ pub(super) struct Turn {
     pub cancelling: bool,
     pub admission: Option<oneshot::Sender<io::Result<String>>>,
     final_text: String,
-    provider_failed: bool,
+    failure: Option<&'static str>,
     message: u64,
     tools: BTreeMap<String, Value>,
 }
@@ -32,7 +38,7 @@ impl Turn {
             cancelling: false,
             admission: Some(admission),
             final_text: String::new(),
-            provider_failed: false,
+            failure: None,
             message: 0,
             tools: BTreeMap::new(),
         }
@@ -92,7 +98,7 @@ impl Turn {
             }
             let status = if self.cancelling || record["aborted"] == true {
                 "interrupted"
-            } else if self.provider_failed {
+            } else if self.failure.is_some() {
                 "failed"
             } else {
                 "completed"
@@ -122,10 +128,15 @@ impl Turn {
             "message_end" if record["message"]["role"] == "assistant" => {
                 // Authoritative snapshots replace the streamed reconstruction.
                 self.final_text = message_text(&record["message"]);
-                self.provider_failed = matches!(
-                    record["message"]["stopReason"].as_str(),
-                    Some("error" | "aborted")
-                );
+                self.failure = match record["message"]["stopReason"].as_str() {
+                    Some("error" | "aborted") => Some(PROVIDER_FAILED),
+                    // The model's context or output budget ran out before it
+                    // wrote any text (a reasoning-only answer included). Pi
+                    // settles this like a normal turn, so it would read as an
+                    // idle, healthy Actor that answered nothing.
+                    Some("length") if self.final_text.trim().is_empty() => Some(LENGTH_STOPPED),
+                    _ => None,
+                };
                 publish(
                     sender,
                     generation,
@@ -133,7 +144,7 @@ impl Turn {
                     json!({"method":"item/completed","params":{"threadId":session,"turnId":self.id,"item":{"id":format!("pi-message-{}",self.message),"type":"agentMessage","text":self.final_text}}}),
                 );
             }
-            "auto_retry_end" if record["success"] == false => self.provider_failed = true,
+            "auto_retry_end" if record["success"] == false => self.failure = Some(PROVIDER_FAILED),
             "tool_execution_start" | "tool_execution_update" | "tool_execution_end" => {
                 let title = record["toolName"].as_str().unwrap_or_default();
                 publish(
@@ -181,7 +192,8 @@ impl Turn {
         session: &str,
         status: &str,
     ) {
-        let error=(status=="failed").then(||json!({"message":"Pi provider turn failed; check the selected provider configuration"}));
+        let reason = self.failure.unwrap_or(PROVIDER_FAILED);
+        let error = (status == "failed").then(|| json!({"message": reason}));
         publish(
             sender,
             generation,
@@ -219,9 +231,99 @@ pub(super) fn publish(
     });
 }
 
+/// Real Pi 1.3.0 RPC output (`pi --mode rpc`, 2026-10-22, an OpenAI-compatible
+/// provider) for one prompt that hit the model's length limit. The model's
+/// configured `contextWindow` was set just above the prompt, so Pi clamped the
+/// request's output budget to one token: the model spent it and wrote no text
+/// (`content: []`, `stopReason: "length"`), Pi removed the empty reply from its
+/// context (`context_edit`) and settled. Each line is as captured; only the two
+/// system-prompt records and the closing `agent_end` transcript echo, which
+/// carry local paths, are left out.
+#[cfg(test)]
+pub(crate) const CAPTURED_LENGTH_STOP: &str = include_str!("captured_length_stop_empty.jsonl");
+
+/// Replays captured Pi RPC records through one controlled turn and returns the
+/// normalized events, in order. `response` records stay with the protocol
+/// loop, as in a live session.
+#[cfg(test)]
+pub(crate) fn replay_captured_turn(captured: &str, thread_id: &str) -> Vec<Value> {
+    let records = captured
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("captured Pi RPC record"))
+        .filter(|record| record["type"] != "response")
+        .collect::<Vec<_>>();
+    let prompt = records
+        .iter()
+        .find(|record| record["type"] == "message_start" && record["message"]["role"] == "user")
+        .map(|record| message_text(&record["message"]))
+        .expect("captured prompt");
+    let (sender, mut receiver) = broadcast::channel(records.len() * 4);
+    let (admission, _) = oneshot::channel();
+    let mut turn = Turn::new("captured".into(), prompt, admission);
+    let mut settled = false;
+    for record in &records {
+        settled |= turn
+            .observe(record, &sender, "generation", thread_id)
+            .expect("captured record is accepted");
+    }
+    assert!(settled, "the captured session settles its turn");
+    std::iter::from_fn(|| receiver.try_recv().ok())
+        .map(|event| event.message)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The single turn/completed a replay publishes.
+    fn settled_turn(events: &[Value]) -> Value {
+        let terminals = events
+            .iter()
+            .filter(|event| event["method"] == "turn/completed")
+            .collect::<Vec<_>>();
+        assert_eq!(terminals.len(), 1, "one terminal per turn");
+        terminals[0]["params"]["turn"].clone()
+    }
+
+    #[test]
+    fn a_captured_length_stop_without_a_reply_settles_failed() {
+        // The second capture is the reasoning-only variant: the model spent
+        // its budget thinking (`content: [thinking]`) and wrote no text.
+        for captured in [
+            CAPTURED_LENGTH_STOP,
+            include_str!("captured_length_stop_thinking.jsonl"),
+        ] {
+            let turn = settled_turn(&replay_captured_turn(captured, "s"));
+            assert_eq!(turn["status"], "failed", "{turn}");
+            assert!(
+                turn["error"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("length limit")),
+                "{turn}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_captured_length_stop_with_a_partial_reply_still_completes() {
+        let events = replay_captured_turn(include_str!("captured_length_stop_partial.jsonl"), "s");
+        let turn = settled_turn(&events);
+        assert_eq!(turn["status"], "completed");
+        assert_eq!(turn["error"], Value::Null);
+        let answer = events
+            .iter()
+            .find(|event| {
+                event["method"] == "item/completed"
+                    && event["params"]["item"]["type"] == "agentMessage"
+            })
+            .expect("the partial reply is published");
+        assert_eq!(
+            answer["params"]["item"]["text"],
+            "The quick brown fox jumps over the"
+        );
+    }
+
     #[test]
     fn only_settled_completes_and_authoritative_message_replaces_deltas() {
         let (sender, mut receiver) = broadcast::channel(32);

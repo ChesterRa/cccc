@@ -309,3 +309,21 @@ async fn completed_with_an_error_is_projected_as_one_failed_outcome() {
     assert_eq!(terminals[0]["data"]["status"], "failed");
     assert_eq!(f.session.status.lock().expect("state").status, "error");
 }
+
+#[tokio::test]
+async fn a_captured_pi_length_stop_without_a_reply_reads_as_an_error() {
+    // A real Pi turn that hit the model's length limit before writing any text.
+    let f = Fixture::new(true, "");
+    let captured = crate::ops::codex_voice_analyst::CAPTURED_PI_LENGTH_STOP;
+    for message in crate::ops::codex_voice_analyst::replay_captured_pi_turn(captured, "abcdef01") {
+        handle_message(&f.session, message);
+    }
+    let terminals = f.terminals();
+    assert_eq!(terminals.len(), 1);
+    assert_eq!(terminals[0]["type"], "headless.turn.failed");
+    let error = terminals[0]["data"]["error"].as_str().unwrap_or_default();
+    assert!(error.contains("length limit"), "{error}");
+    let state = f.session.status.lock().expect("state");
+    assert_eq!(state.status, "error");
+    assert_eq!(state.reason.as_deref(), Some(error));
+}
