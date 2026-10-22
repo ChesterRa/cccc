@@ -462,6 +462,7 @@ fn due_unread_notices(
         },
         UnreadPass::IdleMailNow => Digest::default(),
     };
+    // The digest is its own setting: it runs with Mail and reply notices off.
     if mail_after <= 0 && reply_after <= 0 && digest.interval <= 0 {
         return Ok(None);
     }
