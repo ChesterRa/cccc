@@ -6,9 +6,11 @@ notice's claimed and accepted delivery records, and later Mail to that recipient
 Event IDs, timestamps, order, notice source references and delivery states are
 retained. The complete source window was checked for reads, replies, manual
 delivery, generation changes, replacement notices and resumes; no relevant
-closing or replacement fact is omitted. Group and Actor identifiers use consistent aliases. Private Mail content and unrelated fields are omitted, except for one
-verbatim generic word from each body so actual manual PTY delivery has a
-nonempty payload. These excerpts are captured substrings, not generated text.
+closing or replacement fact is omitted. Group and Actor identifiers use
+consistent aliases. Private Mail bodies are replaced with nonempty
+`[redacted: N chars]` markers; N is the original character count. Body size
+is not a tested dimension: the real delivery worker requires a nonempty
+payload. Unrelated fields are omitted. No private body words are retained.
 
 Tests explicitly bind the projection to a disposable Group and translate the
 whole timestamp series relative to its captured notice, preserving all time
