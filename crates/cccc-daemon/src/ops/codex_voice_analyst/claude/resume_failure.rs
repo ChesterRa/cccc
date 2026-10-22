@@ -78,19 +78,10 @@ pub(in crate::ops::codex_voice_analyst) fn diagnostic(
             true,
         ));
     }
+    if let Some(diagnostic) = transient(error.kind()) {
+        return Some((diagnostic, false));
+    }
     let diagnostic = match error.kind() {
-        io::ErrorKind::TimedOut
-        | io::ErrorKind::WouldBlock
-        | io::ErrorKind::Interrupted
-        | io::ErrorKind::ConnectionAborted
-        | io::ErrorKind::ConnectionRefused
-        | io::ErrorKind::ConnectionReset
-        | io::ErrorKind::BrokenPipe => {
-            return Some((
-                "Claude resume encountered a temporary control or startup failure. The saved conversation remains eligible for retry.",
-                false,
-            ));
-        }
         io::ErrorKind::NotFound => "A file or executable required to resume Claude is unavailable.",
         io::ErrorKind::PermissionDenied => {
             "Claude resume failed a permission or credential-boundary check."
@@ -106,6 +97,31 @@ pub(in crate::ops::codex_voice_analyst) fn diagnostic(
         }
     };
     Some((diagnostic, true))
+}
+
+/// Name the error kind of a transient failure from a fixed vocabulary, so an
+/// operator can tell a timeout from a refused or reset control connection
+/// without CCCC persisting any provider text.
+fn transient(kind: io::ErrorKind) -> Option<&'static str> {
+    macro_rules! transient {
+        ($kind:literal) => {
+            concat!(
+                "Claude resume encountered a temporary control or startup failure (kind=",
+                $kind,
+                "). The saved conversation remains eligible for retry."
+            )
+        };
+    }
+    Some(match kind {
+        io::ErrorKind::TimedOut => transient!("timed_out"),
+        io::ErrorKind::WouldBlock => transient!("would_block"),
+        io::ErrorKind::Interrupted => transient!("interrupted"),
+        io::ErrorKind::ConnectionAborted => transient!("connection_aborted"),
+        io::ErrorKind::ConnectionRefused => transient!("connection_refused"),
+        io::ErrorKind::ConnectionReset => transient!("connection_reset"),
+        io::ErrorKind::BrokenPipe => transient!("broken_pipe"),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -144,5 +160,34 @@ mod tests {
             "unconfirmed cleanup must not start another job automatically"
         );
         assert!(!safe.contains("synthetic-secret"));
+    }
+
+    #[test]
+    fn transient_resume_diagnostics_name_the_error_kind_and_nothing_else() {
+        for (kind, token) in [
+            (io::ErrorKind::TimedOut, "timed_out"),
+            (io::ErrorKind::WouldBlock, "would_block"),
+            (io::ErrorKind::Interrupted, "interrupted"),
+            (io::ErrorKind::ConnectionAborted, "connection_aborted"),
+            (io::ErrorKind::ConnectionRefused, "connection_refused"),
+            (io::ErrorKind::ConnectionReset, "connection_reset"),
+            (io::ErrorKind::BrokenPipe, "broken_pipe"),
+        ] {
+            let error = io::Error::new(
+                kind,
+                "/home/user/.claude/daemon/control.sock ANTHROPIC_API_KEY=synthetic-secret",
+            );
+            let (safe, blocked) = diagnostic(&error).expect("transient failure");
+            assert!(!blocked, "{kind:?} keeps automatic recovery");
+            assert!(safe.contains(&format!("(kind={token})")), "{safe}");
+            assert!(safe.contains("remains eligible for retry"), "{safe}");
+            assert!(!safe.contains("synthetic-secret"), "{safe}");
+            assert!(!safe.contains("control.sock"), "{safe}");
+        }
+        for kind in [io::ErrorKind::NotFound, io::ErrorKind::Other] {
+            let (safe, blocked) = diagnostic(&io::Error::new(kind, "x")).expect("failure");
+            assert!(blocked, "{kind:?} still pauses automatic recovery");
+            assert!(!safe.contains("kind="), "{safe}");
+        }
     }
 }

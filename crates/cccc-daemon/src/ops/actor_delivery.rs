@@ -17,6 +17,9 @@ const QUEUE_CAPACITY: usize = 256;
 const COMPLETION_CAPACITY: usize = 4096;
 const BATCH_CAPACITY: usize = 64;
 const DEFERRED_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(4);
+/// Retries of a turn the provider ran and failed: after the first turn and
+/// this many more, the delivery is settled Failed with the provider's error.
+const FAILED_TURN_RETRIES: u32 = 3;
 const TERMINAL_SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_millis(1_500);
 const TERMINAL_REPEAT_SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
 
@@ -449,6 +452,17 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
             return 0;
         }
     };
+    if std::env::var_os("CCCC_DELIVERY_QUERY_PROBE").is_some_and(|value| value == "1") {
+        let actor_index = group
+            .actors
+            .iter()
+            .filter(|actor| actor.enabled)
+            .position(|actor| actor.id == actor_id);
+        eprintln!(
+            "CCCC_DELIVERY_QUERY {}",
+            serde_json::json!({"group_id":group.group_id,"actor_index":actor_index,"selected":events.len()})
+        );
+    }
     events
         .into_iter()
         .map(|event| dispatch_to(home, group, &event, std::slice::from_ref(actor), false).queued)
@@ -626,6 +640,8 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
         let mut preamble_session = String::new();
         let mut deferred = Vec::new();
         let mut deferred_failures: u32 = 0;
+        // Failed turns of the job at the head of the batch, by event id.
+        let mut failed_turns = (String::new(), 0_u32);
         while !thread_cancelled.load(Ordering::Acquire) {
             let mut batch = if deferred.is_empty() {
                 let Ok(job) = receiver.recv() else {
@@ -667,6 +683,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
             }
             let mut delivered = false;
             let mut terminal_reason = None;
+            let mut rejected = None;
             for attempt in 0..3 {
                 match actor_delivery_worker::process_batch(
                     &mut batch,
@@ -679,6 +696,12 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                     }
                     actor_delivery_worker::BatchOutcome::Terminal(reason) => {
                         terminal_reason = Some(reason);
+                        break;
+                    }
+                    // The provider already ran and failed this turn: try again
+                    // only after the deferred backoff, never at once.
+                    actor_delivery_worker::BatchOutcome::Rejected(reason) => {
+                        rejected = Some(reason);
                         break;
                     }
                     actor_delivery_worker::BatchOutcome::Retry => {}
@@ -696,6 +719,18 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
             if let Some(reason) = terminal_reason {
                 fail_jobs(&batch, &reason);
                 deferred_failures = 0;
+            } else if let Some(reason) = rejected {
+                let head = batch.first().map(|job| job.event.id.clone());
+                if head.as_ref() != Some(&failed_turns.0) {
+                    failed_turns = (head.unwrap_or_default(), 0);
+                }
+                failed_turns.1 += 1;
+                if failed_turns.1 > FAILED_TURN_RETRIES && !batch.is_empty() {
+                    fail_job(&batch.remove(0), &reason);
+                    failed_turns = (String::new(), 0);
+                }
+                deferred = batch;
+                deferred_failures = deferred_failures.saturating_add(1);
             } else if !delivered {
                 deferred = batch;
                 deferred_failures = deferred_failures.saturating_add(1);
@@ -801,6 +836,141 @@ mod tests {
             .filter_map(|event| event.data.get("state").and_then(serde_json::Value::as_str))
             .collect();
         assert_eq!(states, ["claimed", "failed"]);
+    }
+
+    /// The provider answers every turn with the error a DeepSeek actor got
+    /// for each of its turns while its API key was rejected, copied from that
+    /// actor's runtime journal with the key suffix and request id redacted.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_provider_turn_releases_the_next_delivery_after_its_retry_limit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("failing provider", "").expect("group");
+        let script = r#"while IFS= read -r line; do
+if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
+elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
+else
+  rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  echo "$rid" >> "$PROMPT_LOG"
+  if printf '%s' "$line" | grep -q NEXT_READY; then
+    printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$rid"
+  else
+    printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"Internal error: turn failed: Authentication Fails, Your api key: ****[redacted] is invalid (request_id: [redacted])"}}\n' "$rid"
+  fi
+fi
+done"#;
+        let prompt_log = temp.path().join("prompts");
+        let mut actor = Actor::new("deepseek");
+        actor.runtime = ActorRuntime::Deepseek;
+        actor.command = vec!["sh".into(), "-c".into(), script.into()];
+        actor.env.insert(
+            "PROMPT_LOG".into(),
+            prompt_log.to_string_lossy().into_owned(),
+        );
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        crate::ops::deepseek_runtime::start(&home, &group, &actor, temp.path()).expect("start");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"to":["deepseek"],"text":"work","message_mode":"send"})
+            .as_object()
+            .expect("data")
+            .clone();
+        let mut followup = event.clone();
+        followup.id = Event::new("chat.message", &group.group_id).id;
+        followup.data.insert("text".into(), json!("NEXT_READY"));
+        let path = store.ledger_path(&group.group_id).expect("ledger path");
+        ledger::append(&path, &event).expect("first source");
+        ledger::append(&path, &followup).expect("next source");
+        let key = (group.group_id.clone(), actor.id.clone(), event.id.clone());
+        let next_key = (
+            group.group_id.clone(),
+            actor.id.clone(),
+            followup.id.clone(),
+        );
+        in_flight()
+            .lock()
+            .expect("claims")
+            .extend([key.clone(), next_key.clone()]);
+        let worker = spawn_worker(&(group.group_id.clone(), actor.id.clone()));
+        worker
+            .sender
+            .as_ref()
+            .expect("sender")
+            .send(DeliveryJob {
+                home: home.clone(),
+                group: group.clone(),
+                actor: actor.clone(),
+                event: event.clone(),
+            })
+            .expect("enqueue");
+        worker
+            .sender
+            .as_ref()
+            .expect("sender")
+            .send(DeliveryJob {
+                home: home.clone(),
+                group: group.clone(),
+                actor: actor.clone(),
+                event: followup.clone(),
+            })
+            .expect("enqueue follow-up behind failed delivery");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            drain_group(&home, &group.group_id);
+            let state = crate::ops::runtime_delivery::latest_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &event.id,
+            )
+            .expect("state");
+            let next_state = crate::ops::runtime_delivery::latest_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &followup.id,
+            )
+            .expect("next state");
+            if state.is_some_and(|(state, _)| state == "failed")
+                && next_state.is_some_and(|(state, _)| state == "accepted")
+            {
+                break;
+            }
+            let turns = std::fs::read_to_string(&prompt_log)
+                .map(|log| log.lines().count())
+                .unwrap_or_default();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "still retrying after {turns} failed turns"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // Nothing more is sent once the delivery has failed.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        worker.shutdown();
+        crate::ops::deepseek_runtime::stop(&group.group_id, &actor.id);
+        let turns = std::fs::read_to_string(&prompt_log).expect("prompt log");
+        // The failed turn and three retries, then the next task exactly once.
+        assert_eq!(turns.lines().count(), 5);
+        assert!(!in_flight().lock().expect("claims").contains(&key));
+        assert!(!in_flight().lock().expect("claims").contains(&next_key));
+        let events =
+            ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger")).expect("events");
+        let failures: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "runtime.delivery")
+            .filter(|event| {
+                event.data.get("state").and_then(serde_json::Value::as_str) == Some("failed")
+            })
+            .filter_map(|event| event.data.get("reason").and_then(serde_json::Value::as_str))
+            .collect();
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("Authentication Fails"));
     }
 
     #[test]

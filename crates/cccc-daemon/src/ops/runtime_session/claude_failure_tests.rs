@@ -59,7 +59,7 @@ impl Fixture {
         .expect("record success");
     }
 
-    fn failure(&self, attempt: &ResumeAttempt, blocked: bool) {
+    fn failure(&self, attempt: &ResumeAttempt, blocked: bool) -> Option<String> {
         record_resume_failure(
             &self.home,
             &self.group,
@@ -68,7 +68,7 @@ impl Fixture {
             "Safe fixture diagnosis",
             blocked,
         )
-        .expect("record failure");
+        .expect("record failure")
     }
 
     fn receipt(&self) -> Map<String, Value> {
@@ -127,6 +127,79 @@ fn transient_resume_failure_retains_eligibility_and_success_clears_diagnostics()
     f.success();
     assert_eq!(f.receipt()["failure_count"], 0);
     assert_eq!(f.receipt()["last_resume_error"], "");
+}
+
+#[test]
+fn repeated_transient_resume_failures_pause_automatic_launch_but_keep_the_conversation() {
+    let f = Fixture::new();
+    for failure in 1..AUTOMATIC_RESUME_FAILURE_LIMIT {
+        let attempt = f.prepare().expect("prepare").expect("saved session");
+        assert_eq!(
+            f.failure(&attempt, false),
+            None,
+            "failure {failure} retries"
+        );
+        assert_eq!(f.receipt()["status"], "usable");
+    }
+    let attempt = f.prepare().expect("prepare").expect("saved session");
+    let paused = f
+        .failure(&attempt, false)
+        .expect("the limit pauses recovery");
+    let failed = f.receipt();
+    assert_eq!(failed["status"], "resume_failed");
+    assert_eq!(failed["resume_eligible"], true);
+    assert_eq!(failed["provider_session_id"], SESSION);
+    assert_eq!(failed["failure_count"], AUTOMATIC_RESUME_FAILURE_LIMIT);
+    assert_eq!(failed["last_resume_error"], paused.as_str());
+    assert!(paused.starts_with("Safe fixture diagnosis "), "{paused}");
+    assert!(
+        paused.contains("after 10 consecutive failed resumes"),
+        "{paused}"
+    );
+    for _ in 0..4 {
+        let error = f
+            .prepare()
+            .err()
+            .expect("automatic launch is paused, not fresh");
+        assert!(is_resume_blocked(&error));
+    }
+    assert_eq!(f.receipt(), failed, "paused reads must not start attempts");
+
+    // An explicit Start/Restart gets exactly one more attempt per pause.
+    assert!(retry_failed_resume(&f.home, &f.group, "worker").expect("explicit retry"));
+    let retry = f.prepare().expect("retry").expect("same saved identity");
+    assert_eq!(retry.session_id, SESSION);
+    assert!(
+        f.failure(&retry, false).is_some(),
+        "still failing: pause again"
+    );
+    assert!(is_resume_blocked(&f.prepare().err().expect("paused again")));
+
+    // A successful resume resets the count.
+    assert!(retry_failed_resume(&f.home, &f.group, "worker").expect("explicit retry"));
+    assert!(f.prepare().expect("retry").is_some());
+    f.success();
+    assert_eq!(f.receipt()["failure_count"], 0);
+    let attempt = f.prepare().expect("prepare").expect("saved session");
+    assert_eq!(f.failure(&attempt, false), None, "a fresh count retries");
+}
+
+#[test]
+fn a_blocking_failure_at_the_limit_keeps_its_own_diagnosis() {
+    let f = Fixture::new();
+    for _ in 1..AUTOMATIC_RESUME_FAILURE_LIMIT {
+        let attempt = f.prepare().expect("prepare").expect("saved session");
+        f.failure(&attempt, false);
+    }
+    let attempt = f.prepare().expect("prepare").expect("saved session");
+    assert_eq!(
+        f.failure(&attempt, true),
+        None,
+        "already blocked on its own"
+    );
+    assert_eq!(f.receipt()["status"], "resume_failed");
+    assert_eq!(f.receipt()["resume_eligible"], false);
+    assert_eq!(f.receipt()["last_resume_error"], "Safe fixture diagnosis");
 }
 
 #[test]

@@ -15,6 +15,8 @@ mod interactions;
 mod protocol_loop;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use events::{CAPTURED_LENGTH_STOP, CAPTURED_TOOL_TURN, replay_captured_turn};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(40);
 const STOP_TIMEOUT: Duration = Duration::from_secs(2);

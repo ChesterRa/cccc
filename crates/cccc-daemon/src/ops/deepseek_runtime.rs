@@ -7,7 +7,7 @@ mod recovery;
 mod turn_failure;
 mod turn_timeout;
 
-pub use delivery::deliver;
+pub use delivery::{TurnDelivery, deliver};
 pub use lifecycle::apply;
 
 use cccc_contracts::Actor;

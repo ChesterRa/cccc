@@ -207,6 +207,13 @@ impl AnalystSession {
                 params["config"] = json!(overrides);
             }
         }
+        // app-server does not apply a `-m`/`--model` given before `app-server`:
+        // a thread opens on the model its config.toml names unless the request
+        // names one. Ask for the model the command declares, new or resumed.
+        let model = super::launch_command::model_from_arguments(&remote_tui_prefix);
+        if !model.is_empty() {
+            params["model"] = json!(model);
+        }
         let requested_thread_id = resume_thread_id
             .as_deref()
             .map(str::trim)

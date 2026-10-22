@@ -137,4 +137,7 @@ Role and actor sections below are additive overlays selected by `cccc_help`.
 | actor_start | yes | yes (any) | no |
 | actor_stop | yes | yes (any) | yes (self) |
 | actor_restart | yes | yes (any) | yes (any) |
-| actor_remove | yes | yes (self/peer) | yes (self) |
+| actor_remove | yes | yes (peer only) | yes (self) |
+
+The foreman cannot remove itself. The user can remove it; the next visible
+Actor then becomes foreman, or the Group has no foreman if none remain.
