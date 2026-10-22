@@ -43,15 +43,18 @@ pub(super) fn fields_with_probe(
     runner_effective: &str,
     probe: impl FnOnce() -> Option<super::turn_probe::TurnObservation>,
 ) -> Map<String, Value> {
-    let registered_managed = super::local_headless::running(group_id, &actor.id);
-    let managed_session = registered_managed || super::local_headless::uses_managed_session(actor);
+    let registered_managed = super::local_headless::registered_running(group_id, &actor.id);
+    let managed_session =
+        registered_managed.unwrap_or(false) || super::local_headless::uses_managed_session(actor);
     let local_state = running
         .then(|| super::local_headless::status(group_id, &actor.id))
         .flatten();
-    let probe =
-        (running && !registered_managed && local_state.is_none() && runner_effective == "pty")
-            .then(probe)
-            .flatten();
+    let probe = (running
+        && registered_managed.is_none()
+        && local_state.is_none()
+        && runner_effective == "pty")
+        .then(probe)
+        .flatten();
     let (state, reason, updated_at, active_task_id) = if !running {
         (
             "stopped".to_owned(),

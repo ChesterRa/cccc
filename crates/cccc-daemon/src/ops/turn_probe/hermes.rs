@@ -21,7 +21,20 @@ impl Hermes {
     ) -> TurnObservation {
         match self.read(path, processes, root, now) {
             Ok(value) => value,
-            Err(why) => TurnObservation::Unknown { why },
+            Err(why) => {
+                if matches!(
+                    why,
+                    "holder_generation_mismatch"
+                        | "session_binding_changed"
+                        | "holder_left_tree"
+                        | "generation_changed"
+                        | "process_unavailable"
+                        | "process_not_live"
+                ) {
+                    self.sessions.clear();
+                }
+                TurnObservation::Unknown { why }
+            }
         }
     }
 

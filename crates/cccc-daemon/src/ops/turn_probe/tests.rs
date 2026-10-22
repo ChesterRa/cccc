@@ -281,3 +281,63 @@ fn stopped_and_headless_states_never_consult_the_probe() {
         assert_eq!(state["effective_working_state"], expected);
     }
 }
+
+#[test]
+fn launch_policy_waits_for_restart_and_cache_never_crosses_a_generation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = format!("probe-{}", uuid::Uuid::new_v4());
+    let mut actor = Actor::new("peer");
+    actor.runtime = ActorRuntime::Hermes;
+    actor.turn_probe = TurnProbe::Auto;
+    let launch = || {
+        cccc_runtime::start(cccc_runtime::LaunchSpec {
+            group_id: group.clone(),
+            actor_id: actor.id.clone(),
+            runner: cccc_contracts::RunnerKind::Pty,
+            command: vec!["/bin/cat".into()],
+            cwd: temp.path().into(),
+            env: BTreeMap::new(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("owned terminal")
+    };
+    let first = launch();
+    started(&actor, &first);
+    let key = (group.clone(), actor.id.clone());
+    entries()
+        .lock()
+        .expect("entries")
+        .get_mut(&key)
+        .expect("opted-in generation")
+        .observation = TurnObservation::Working { since: None };
+    assert!(matches!(
+        cached(&group, &actor.id),
+        Some(TurnObservation::Working { .. })
+    ));
+    let mut saved = actor.clone();
+    saved.turn_probe = TurnProbe::Off;
+    assert!(
+        matches!(
+            cached(&group, &saved.id),
+            Some(TurnObservation::Working { .. })
+        ),
+        "saving off must not alter the running launch policy"
+    );
+    cccc_runtime::stop(&group, &actor.id).expect("stop first");
+    assert_eq!(cached(&group, &actor.id), None);
+    let second = launch();
+    assert_eq!(
+        cached(&group, &actor.id),
+        None,
+        "new generation cannot inherit working"
+    );
+    started(&saved, &second);
+    assert!(
+        !entries().lock().expect("entries").contains_key(&key),
+        "off launch has no provider reader"
+    );
+    // Saving auto without a restart cannot enable a previously off generation.
+    assert_eq!(cached(&group, &actor.id), None);
+    cccc_runtime::stop(&group, &actor.id).expect("stop second");
+}

@@ -796,6 +796,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn turn_probe_is_opt_in_and_profile_controlled() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = ProfileStore::new(home).expect("store");
+        let off = store
+            .upsert(
+                json!({"id":"native", "runtime":"hermes"})
+                    .as_object()
+                    .expect("profile")
+                    .clone(),
+                None,
+            )
+            .expect("default profile");
+        assert!(off.get("turn_probe").is_none());
+        assert_eq!(
+            store
+                .runtime_ref("native", "global", "")
+                .expect("runtime")
+                .expect("profile")
+                .turn_probe,
+            TurnProbe::Off
+        );
+        store
+            .upsert(
+                json!({"id":"native", "runtime":"hermes", "turn_probe":"auto"})
+                    .as_object()
+                    .expect("profile")
+                    .clone(),
+                None,
+            )
+            .expect("opt in");
+        assert_eq!(
+            store
+                .runtime_ref("native", "global", "")
+                .expect("runtime")
+                .expect("profile")
+                .turn_probe,
+            TurnProbe::Auto
+        );
+        assert!(
+            store
+                .upsert(
+                    json!({"id":"native", "turn_probe":"guess_from_output"})
+                        .as_object()
+                        .expect("profile")
+                        .clone(),
+                    None
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
     fn profile_upsert_canonicalizes_shell_command_strings() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path()).expect("home");

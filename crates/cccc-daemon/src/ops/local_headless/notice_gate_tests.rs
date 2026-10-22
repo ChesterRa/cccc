@@ -60,6 +60,43 @@ fn send() -> Event {
     event("chat.message", json!({"text":"work"}))
 }
 
+#[test]
+fn registered_managed_authority_never_consults_a_native_turn_probe() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (mut item, _control) = session(temp.path());
+    item.group_id = format!("managed-probe-{}", uuid::Uuid::new_v4());
+    item.managed = Arc::new(AnalystSession::claude_for_shutdown_test(
+        temp.path(),
+        "abcdef09",
+        Vec::new(),
+        true,
+    ));
+    let key = (item.group_id.clone(), item.actor_id.clone());
+    let item = Arc::new(item);
+    sessions()
+        .write()
+        .expect("registry")
+        .insert(key.clone(), Arc::clone(&item));
+    let mut actor = Actor::new(&item.actor_id);
+    // Saved settings may already describe the next launch, not the current owner.
+    actor.runtime = ActorRuntime::Hermes;
+    actor.turn_probe = cccc_contracts::TurnProbe::Auto;
+    for expected in ["working", "idle"] {
+        item.set_status(expected, None);
+        let state = crate::ops::working_state::fields_with_probe(
+            &item.home,
+            &actor,
+            &item.group_id,
+            true,
+            "pty",
+            || panic!("managed authority must skip the probe"),
+        );
+        assert_eq!(state["effective_working_state"], expected);
+        assert_eq!(state["effective_working_reason"], "managed_agent_session");
+    }
+    sessions().write().expect("registry").remove(&key);
+}
+
 fn turn(session: &Session, method: &str, id: &str) {
     super::super::output::handle_message(
         session,

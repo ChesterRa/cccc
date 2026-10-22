@@ -76,7 +76,7 @@ pub(super) fn refresh(group: &str, actor: &Actor) {
         return;
     };
     // Registered managed authority always wins, including late registration.
-    entry.observation = if super::local_headless::running(group, &actor.id)
+    entry.observation = if super::local_headless::registered_running(group, &actor.id).is_some()
         || super::local_headless::status(group, &actor.id).is_some()
     {
         TurnObservation::Unknown {
