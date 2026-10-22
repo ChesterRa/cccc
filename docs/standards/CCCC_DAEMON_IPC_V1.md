@@ -4598,6 +4598,8 @@ it does not copy message bodies, escalate, or create another Inbox obligation.
 By default it is issued once per pending batch. With the opt-in
 `delivery.mail_notice_repeat_seconds` greater than zero, a notice stops holding
 back the next notice once that many seconds have elapsed since it was issued.
+The clock starts at issue, not acceptance: delayed delivery can make two
+actor-visible notices arrive closer together than this interval.
 The next unread pass may issue a fresh notice containing every still-pending
 Mail, including later arrivals. `delivery.mail_notice_repeat_max` bounds each
 batch to its initial notice plus that many repeats (default 3). A batch is the
