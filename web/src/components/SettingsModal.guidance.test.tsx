@@ -84,7 +84,16 @@ it.each([0, 1])(
         />,
       ),
     );
-    await vi.waitFor(() => expect(host.querySelectorAll("textarea")).toHaveLength(2));
+    // GuidanceTab is a lazy chunk. Wait for it inside act() so its retry render, its
+    // prompt load and their effects are flushed by act(), not by the Scheduler after the
+    // test has moved on. act() flushes only when its outermost scope exits, so poll
+    // between back-to-back scopes rather than with vi.waitFor inside one.
+    // Bounded under the 5 s test timeout so a lazy-chunk failure ends at this assertion.
+    const readinessDeadline = Date.now() + 4000;
+    while (host.querySelectorAll("textarea").length < 2 && Date.now() < readinessDeadline) {
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+    }
+    expect(host.querySelectorAll("textarea")).toHaveLength(2);
     const trigger = [...host.querySelectorAll<HTMLButtonElement>("button")].filter(
       (button) => button.textContent === "guidance.expand",
     )[index];
