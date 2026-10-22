@@ -39,6 +39,12 @@ revision is reserved before payload writes so such a failure invalidates prior
 before deciding what to retry; a newer revision alone is not a success receipt.
 Dry runs and rejected batches do not reserve a revision.
 
+New task records are written in their ordered creation sequence before updates
+to previously stored tasks. Creation references resolve to earlier tasks, so a
+new reference target is durable before the create that names it. This ordering
+also applies across task-number digit widths; lexical filename order MUST NOT
+let a dependent create survive alone and replay stale references on retry.
+
 Task numbers are durable identities within a Group. Deleting a task, including
 its unexecuted descendants, MUST NOT make a reserved number available for a later
 task. The existing Context version record retains the allocation high-water mark
