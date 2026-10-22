@@ -20,3 +20,6 @@ does not create a provider record or claim that a real turn ended at that time.
 Negative controls delete a table/row or change a schema version on disposable
 copies of this capture. They are deliberately damaged captures, not additional
 provider observations. Database contention uses an exclusive lock on a copy.
+The original session DDL references content tables that are intentionally absent
+from this projection. Mutation controls disable foreign-key enforcement on their
+disposable copy; the adapter performs only read queries.

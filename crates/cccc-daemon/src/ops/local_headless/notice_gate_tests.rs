@@ -60,8 +60,8 @@ fn send() -> Event {
     event("chat.message", json!({"text":"work"}))
 }
 
-#[test]
-fn registered_managed_authority_never_consults_a_native_turn_probe() {
+#[tokio::test]
+async fn registered_managed_authority_never_consults_a_native_turn_probe() {
     let temp = tempfile::tempdir().expect("tempdir");
     let (mut item, _control) = session(temp.path());
     item.group_id = format!("managed-probe-{}", uuid::Uuid::new_v4());

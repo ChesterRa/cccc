@@ -236,7 +236,7 @@ fn unavailable_schema_lock_and_missing_session_fail_closed() {
         TurnObservation::Working { .. }
     ));
     writer
-        .execute_batch("DELETE FROM sessions")
+        .execute_batch("PRAGMA foreign_keys=OFF; DELETE FROM sessions")
         .expect("missing sessions control");
     let later: f64 = writer
         .query_row(
