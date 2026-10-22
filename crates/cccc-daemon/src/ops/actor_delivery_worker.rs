@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::ops::actor_delivery::{DeliveryJob, complete_job};
 use crate::ops::actor_runtime;
+use crate::ops::deepseek_runtime::TurnDelivery;
 
 const PREAMBLE_DELAY: Duration = Duration::from_millis(500);
 const INPUT_MODE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -22,6 +23,9 @@ pub enum BatchOutcome {
     /// has no attached scope); the delivery must be settled Failed instead of
     /// retried.
     Terminal(String),
+    /// The runtime ran a turn for the first job and the provider reported it
+    /// failed. The caller bounds how many such turns one job may cost.
+    Rejected(String),
 }
 
 /// Scope-resolution errors match `actor_new_session`: without an attached scope
@@ -77,10 +81,10 @@ pub fn process_batch(
     if jobs.is_empty() {
         return BatchOutcome::Delivered;
     }
-    let jobs = jobs.as_slice();
     if current_actor.runtime == ActorRuntime::Deepseek {
         return process_deepseek_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
     }
+    let jobs = jobs.as_slice();
     if crate::ops::local_headless::uses_managed_delivery(&current_group.group_id, &current_actor) {
         return process_managed_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
     }
@@ -151,8 +155,10 @@ pub fn process_batch(
     BatchOutcome::Retry
 }
 
+/// Delivered jobs leave `jobs`, so a rejected batch always starts with the job
+/// whose turn failed.
 fn process_deepseek_batch(
-    jobs: &[DeliveryJob],
+    jobs: &mut Vec<DeliveryJob>,
     home: &cccc_core::HomeLayout,
     group: &cccc_core::GroupDoc,
     actor: &Actor,
@@ -173,13 +179,15 @@ fn process_deepseek_batch(
             }
         }
     }
-    for job in jobs {
-        if cancelled.load(Ordering::Acquire)
-            || !crate::ops::deepseek_runtime::deliver(home, group, actor, &job.event, cancelled)
-        {
+    while let Some(job) = jobs.first() {
+        if cancelled.load(Ordering::Acquire) {
             return BatchOutcome::Retry;
         }
-        complete_job(job);
+        match crate::ops::deepseek_runtime::deliver(home, group, actor, &job.event, cancelled) {
+            TurnDelivery::Completed => complete_job(&jobs.remove(0)),
+            TurnDelivery::Failed(reason) => return BatchOutcome::Rejected(reason),
+            TurnDelivery::Incomplete => return BatchOutcome::Retry,
+        }
     }
     BatchOutcome::Delivered
 }
