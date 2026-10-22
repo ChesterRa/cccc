@@ -432,6 +432,7 @@ fn due_unread_notices(
 ) -> io::Result<Option<(std::path::PathBuf, Vec<Event>)>> {
     let mail_after = delivery_timing_value(group, "mail_notice_after_seconds", 1_800);
     let mail_idle_after = delivery_timing_value(group, "mail_notice_idle_after_seconds", 60);
+    let mail_repeat = delivery_timing_value(group, "mail_notice_repeat_seconds", 0);
     if pass == UnreadPass::IdleMailNow && mail_idle_after <= 0 {
         return Ok(None);
     }
@@ -458,6 +459,7 @@ fn due_unread_notices(
         &eligible,
         MailDelays {
             busy: mail_after,
+            repeat: mail_repeat,
             idle: mail_idle_after,
             idle_actor_ids,
             now: pass == UnreadPass::IdleMailNow,
@@ -476,6 +478,7 @@ fn due_unread_notices(
                 &cursors,
                 MailDelays {
                     busy: mail_after,
+                    repeat: mail_repeat,
                     idle: mail_idle_after,
                     idle_actor_ids,
                     now: pass == UnreadPass::IdleMailNow,
@@ -525,6 +528,7 @@ fn issue_notices(
 /// pass that runs as Mail is written.
 pub(crate) struct MailDelays<'a> {
     pub(crate) busy: i64,
+    pub(crate) repeat: i64,
     idle: i64,
     idle_actor_ids: &'a HashSet<String>,
     now: bool,
@@ -543,6 +547,9 @@ impl MailDelays<'_> {
         }
     }
 }
+
+#[cfg(test)]
+type ReferenceMailClaims = HashMap<(String, String), Vec<(String, i64, Vec<String>)>>;
 
 #[cfg(test)]
 fn unread_notices(
@@ -574,7 +581,7 @@ fn unread_notices(
     let mut actor_resumes = HashMap::<String, i64>::new();
     // Each Mail notice, keyed by its own event id: a withdrawn notice was never
     // sent and must not stop the next one.
-    let mut mail_claims = HashMap::<(String, String), Vec<(String, Vec<String>)>>::new();
+    let mut mail_claims = ReferenceMailClaims::new();
     let mut reply_claims = HashSet::<(String, String, String)>::new();
     for (position, event) in events.iter().enumerate() {
         match event.kind.as_str() {
@@ -650,7 +657,7 @@ fn unread_notices(
                     mail_claims
                         .entry((actor_id.into(), created_at.into()))
                         .or_default()
-                        .push((event.id.clone(), source_ids));
+                        .push((event.id.clone(), timestamp(&event.ts, now), source_ids));
                 } else {
                     reply_claims.extend(
                         source_ids
@@ -765,12 +772,13 @@ fn unread_notices(
                 .into_iter()
                 .flatten()
                 .rev()
-                .filter(|(notice_id, _)| {
-                    deliveries
-                        .get(&(notice_id.clone(), actor.id.clone()))
-                        .is_none_or(|(state, _, _)| state != "withdrawn")
+                .filter(|(notice_id, claimed_at, _)| {
+                    (mail_delays.repeat <= 0 || now - claimed_at < mail_delays.repeat)
+                        && deliveries
+                            .get(&(notice_id.clone(), actor.id.clone()))
+                            .is_none_or(|(state, _, _)| state != "withdrawn")
                 })
-                .any(|(_, claimed)| {
+                .any(|(_, _, claimed)| {
                     let claimed = claimed
                         .iter()
                         .filter(|source| positions.contains_key(*source))
@@ -1198,3 +1206,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "automation/mail_notice_repeat_tests.rs"]
+mod mail_notice_repeat_tests;

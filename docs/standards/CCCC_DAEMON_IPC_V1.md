@@ -1857,6 +1857,7 @@ Patch keys used by CCCC include:
 - Messaging: `default_send_to`
 - Delivery: `mail_notice_after_seconds` (default 1800, zero disables all Mail notices),
   `mail_notice_idle_after_seconds` (default 60, zero disables only the early idle notice),
+  `mail_notice_repeat_seconds` (default 0, zero keeps single-notice behavior),
   `reply_notice_after_seconds` (default 900, zero disables)
 - Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
   `keepalive_max_per_actor`,
@@ -4592,8 +4593,16 @@ or Mail cursor advance. Passive status polling does not create notices.
 Before handoff, the owner rechecks whether the batch remains eligible. An obsolete
 notice established as unsent is withdrawn, not delivered or automatically retried. The
 notice states only that Mail is waiting and directs the actor to `inbox_read`;
-it does not copy message bodies, repeat, escalate, or create another Inbox
-obligation. Bootstrap, the next explicit Push, and low-frequency coordination
+it does not copy message bodies, escalate, or create another Inbox obligation.
+By default it is issued once per pending batch. With the opt-in
+`delivery.mail_notice_repeat_seconds` greater than zero, a notice stops holding
+back the next notice once that many seconds have elapsed since it was issued.
+The next unread pass may issue a fresh notice containing every still-pending
+Mail, including later arrivals. A read, reply, accepted/ambiguous delivery of
+the Mail itself, or Actor-generation change ends that Mail's eligibility as
+above; acceptance of the notice itself does not. Each repeat starts its own
+interval. Repeating a notice **does not repeat the underlying task execution**,
+promote Mail to Push, advance an Inbox cursor, or create a new Mail obligation. Bootstrap, the next explicit Push, and low-frequency coordination
 responses MAY carry a passive `mail_pending` count without writing a notice.
 
 A `request_reply` obligation starts its timer only after an accepted runtime

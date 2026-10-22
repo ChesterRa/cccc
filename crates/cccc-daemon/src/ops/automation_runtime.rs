@@ -687,3 +687,6 @@ mod tests {
             .expect("automation rule");
     }
 }
+
+#[cfg(all(test, unix))]
+mod mail_notice_repeat_tests;

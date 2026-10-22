@@ -5,7 +5,13 @@
 use super::*;
 use std::collections::HashSet;
 
-type MailClaims = HashMap<(String, String), Vec<(String, Vec<String>)>>;
+type MailClaims = HashMap<(String, String), Vec<MailClaim>>;
+
+struct MailClaim {
+    id: String,
+    ts: String,
+    sources: Vec<String>,
+}
 
 #[derive(Default)]
 pub(crate) struct NoticeState {
@@ -187,7 +193,11 @@ impl NoticeState {
                     self.mail_claims
                         .entry((actor.to_owned(), created.to_owned()))
                         .or_default()
-                        .push((event.id.clone(), ids));
+                        .push(MailClaim {
+                            id: event.id.clone(),
+                            ts: event.ts.clone(),
+                            sources: ids,
+                        });
                 } else {
                     self.reply_claims.extend(
                         ids.into_iter()
@@ -309,13 +319,19 @@ impl NoticeState {
                     .into_iter()
                     .flatten()
                     .rev()
-                    .filter(|(id, _)| {
-                        self.deliveries
-                            .get(&(id.clone(), actor.id.clone()))
-                            .is_none_or(|v| v.0 != "withdrawn")
+                    .filter(|claim| {
+                        // A notice being accepted is not a read of its Mail.
+                        // Opt-in expiry releases only the notice's batching claim.
+                        (mail_delays.repeat <= 0
+                            || now - timestamp(&claim.ts, now) < mail_delays.repeat)
+                            && self
+                                .deliveries
+                                .get(&(claim.id.clone(), actor.id.clone()))
+                                .is_none_or(|v| v.0 != "withdrawn")
                     })
-                    .any(|(_, claimed)| {
-                        let claimed = claimed
+                    .any(|claim| {
+                        let claimed = claim
+                            .sources
                             .iter()
                             .filter(|id| self.positions.contains_key(*id))
                             .collect::<Vec<_>>();
