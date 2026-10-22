@@ -1,5 +1,6 @@
-//! Short-lock snapshots: pin file identity and committed byte bounds, then
-//! decode outside the append/rotation lock. No descriptor is kept by a cache.
+//! Short-lock snapshots: retain source identity and committed byte bounds,
+//! pin only the rotating active file, and open immutable archives on demand.
+//! Decoding runs outside the writer lock; caches retain no descriptors.
 use super::{
     acquire_reader_lock, decode_event_line, is_gzip, ledger_group_id, source_paths, trim_ascii,
 };
@@ -10,6 +11,11 @@ use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+#[cfg(test)]
+thread_local! {
+    static GZIP_READERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[cfg(test)]
 static DECODED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -67,7 +73,7 @@ pub(crate) struct Location {
 
 pub(crate) struct Snapshot {
     pub sources: Vec<Source>,
-    files: Vec<File>,
+    active: Option<(usize, File)>,
     group_id: String,
 }
 
@@ -75,15 +81,20 @@ impl Snapshot {
     pub fn open(path: &Path) -> io::Result<Self> {
         let _lock = acquire_reader_lock(path)?;
         let mut sources = Vec::new();
-        let mut files = Vec::new();
-        for path in source_paths(path)? {
-            let file = File::open(&path)?;
-            sources.push(Source::from_file(&path, &file)?);
-            files.push(file);
+        let mut active = None;
+        for source_path in source_paths(path)? {
+            let file = File::open(&source_path)?;
+            let index = sources.len();
+            sources.push(Source::from_file(&source_path, &file)?);
+            if source_path == path {
+                // Compaction renames this file. A pin retains the captured
+                // prefix without retaining one descriptor per sealed segment.
+                active = Some((index, file));
+            }
         }
         Ok(Self {
             sources,
-            files,
+            active,
             group_id: ledger_group_id(path),
         })
     }
@@ -94,15 +105,45 @@ impl Snapshot {
                 .sources
                 .iter()
                 .zip(previous)
-                .all(|(next, old)| next.extends(old) && (!is_gzip(&next.path) || next == old))
+                .enumerate()
+                .all(|(index, (next, old))| {
+                    if self
+                        .active
+                        .as_ref()
+                        .is_some_and(|(active, _)| *active == index)
+                    {
+                        next.extends(old)
+                    } else {
+                        next == old
+                    }
+                })
+    }
+
+    fn file(&self, source: usize) -> io::Result<File> {
+        if let Some((index, file)) = &self.active
+            && *index == source
+        {
+            return file.try_clone();
+        }
+        let token = &self.sources[source];
+        let file = File::open(&token.path)?;
+        if Source::from_file(&token.path, &file)? != *token {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "ledger archive changed during snapshot",
+            ));
+        }
+        Ok(file)
     }
 
     fn reader(&self, source: usize, offset: u64) -> io::Result<Box<dyn BufRead>> {
         let token = &self.sources[source];
-        let mut file = self.files[source].try_clone()?;
+        let mut file = self.file(source)?;
         // Cloned descriptors share their offset; each snapshot is used serially.
         file.seek(SeekFrom::Start(0))?;
         if is_gzip(&token.path) {
+            #[cfg(test)]
+            GZIP_READERS.with(|count| count.set(count.get() + 1));
             let mut decoded = GzDecoder::new(file.take(token.len));
             io::copy(&mut decoded.by_ref().take(offset), &mut io::sink())?;
             Ok(Box::new(BufReader::new(decoded)))
@@ -172,11 +213,75 @@ impl Snapshot {
         Ok(ends)
     }
 
-    pub fn event(&self, location: Location) -> io::Result<Event> {
-        let mut reader = self.reader(location.source, location.offset)?;
-        let length = usize::try_from(location.end - location.offset).map_err(io::Error::other)?;
-        let mut bytes = vec![0; length];
-        reader.read_exact(&mut bytes)?;
-        serde_json::from_slice(trim_ascii(&bytes)).map_err(io::Error::other)
+    /// Read a bounded page in source order, then restore request order. A gzip
+    /// prefix is decoded once per source, even for shared-recipient messages.
+    pub fn events(&self, locations: &[Location]) -> io::Result<Vec<Event>> {
+        let mut ordered: Vec<_> = locations.iter().copied().enumerate().collect();
+        ordered.sort_unstable_by_key(|(_, location)| *location);
+        let mut result: Vec<Option<Event>> = vec![None; locations.len()];
+        let mut start = 0;
+        while start < ordered.len() {
+            let source = ordered[start].1.source;
+            let token = &self.sources[source];
+            let mut end = start + 1;
+            while end < ordered.len() && ordered[end].1.source == source {
+                end += 1;
+            }
+            let mut position = ordered[start].1.offset;
+            let mut compressed = if is_gzip(&token.path) {
+                Some(self.reader(source, position)?)
+            } else {
+                None
+            };
+            let mut plain = if compressed.is_none() {
+                Some(self.file(source)?)
+            } else {
+                None
+            };
+            let mut previous: Option<(Location, usize)> = None;
+            for &(index, location) in &ordered[start..end] {
+                if let Some((last, previous_index)) = previous
+                    && last == location
+                {
+                    result[index] = result[previous_index].clone();
+                    continue;
+                }
+                let event = if let Some(reader) = compressed.as_mut() {
+                    let skip = location.offset.checked_sub(position).ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "overlapping ledger locations")
+                    })?;
+                    if io::copy(&mut reader.by_ref().take(skip), &mut io::sink())? != skip {
+                        return Err(io::ErrorKind::UnexpectedEof.into());
+                    }
+                    let event = read_event(reader, location)?;
+                    position = location.end;
+                    event
+                } else {
+                    let file = plain.as_mut().expect("plain source");
+                    file.seek(SeekFrom::Start(location.offset))?;
+                    read_event(
+                        &mut file.take(token.len.saturating_sub(location.offset)),
+                        location,
+                    )?
+                };
+                result[index] = Some(event);
+                previous = Some((location, index));
+            }
+            start = end;
+        }
+        Ok(result
+            .into_iter()
+            .map(|event| event.expect("requested event"))
+            .collect())
     }
 }
+
+fn read_event(reader: &mut impl Read, location: Location) -> io::Result<Event> {
+    let length = usize::try_from(location.end - location.offset).map_err(io::Error::other)?;
+    let mut bytes = vec![0; length];
+    reader.read_exact(&mut bytes)?;
+    serde_json::from_slice(trim_ascii(&bytes)).map_err(io::Error::other)
+}
+
+#[cfg(test)]
+mod tests;

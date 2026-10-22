@@ -265,17 +265,33 @@ fn call_detail(tool: &str, args: &Value) -> String {
 /// `/opt/tools/deploy --target prod`: the program's file name, and for a few
 /// tools whose first argument names a subcommand, that word.
 fn program(command: &str) -> String {
+    // shell-words handles quoting, not shell expansion or control syntax.
+    // Keep complex commands out of summaries rather than misidentify a secret
+    // inside an assignment/substitution as the executable.
+    if command.contains(['$', '`', '(', ')', ';', '|', '&', '<', '>', '\n', '\r']) {
+        return String::new();
+    }
     const SUBCOMMANDS: [&str; 10] = [
         "cargo", "git", "npm", "pnpm", "yarn", "go", "docker", "kubectl", "uv", "gh",
     ];
-    let mut words = command
-        .split_whitespace()
-        .skip_while(|word| word.contains('='));
+    // Split quoted words before skipping shell assignments: whitespace inside
+    // a credential must never make a fragment look like the executable name.
+    let Ok(words) = shell_words::split(command) else {
+        return String::new();
+    };
+    let mut words = words.iter().map(String::as_str).skip_while(|word| {
+        word.split_once('=').is_some_and(|(name, _)| {
+            let mut chars = name.chars();
+            chars
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+    });
     let Some(first) = words.next() else {
         return String::new();
     };
-    let first = first.trim_matches(['"', '\'']);
-    let name = first.rsplit('/').next().unwrap_or(first);
+    let name = first.rsplit(['/', '\\']).next().unwrap_or(first);
     let subcommand = words.next().filter(|word| {
         SUBCOMMANDS.contains(&name)
             && word.chars().all(|c| c.is_ascii_lowercase() || c == '-')
@@ -326,6 +342,12 @@ pub(super) fn publish(
 #[cfg(test)]
 pub(crate) const CAPTURED_LENGTH_STOP: &str = include_str!("captured_length_stop_empty.jsonl");
 
+/// Real Pi 1.3.0 RPC tool execution capture, 2026-10-21: bash lists a
+/// scratch directory and read opens notes.txt. Local-path system-prompt
+/// records and the closing agent_end transcript echo were omitted.
+#[cfg(test)]
+pub(crate) const CAPTURED_TOOL_TURN: &str = include_str!("captured_tool_turn.jsonl");
+
 /// Replays captured Pi RPC records through one controlled turn and returns the
 /// normalized events, in order. `response` records stay with the protocol
 /// loop, as in a live session.
@@ -335,38 +357,6 @@ pub(crate) fn replay_captured_turn(captured: &str, thread_id: &str) -> Vec<Value
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).expect("captured Pi RPC record"))
         .filter(|record| record["type"] != "response")
-        .collect::<Vec<_>>();
-    let prompt = records
-        .iter()
-        .find(|record| record["type"] == "message_start" && record["message"]["role"] == "user")
-        .map(|record| message_text(&record["message"]))
-        .expect("captured prompt");
-    let (sender, mut receiver) = broadcast::channel(records.len() * 4);
-    let (admission, _) = oneshot::channel();
-    let mut turn = Turn::new("captured".into(), prompt, admission);
-    let mut settled = false;
-    for record in &records {
-        settled |= turn
-            .observe(record, &sender, "generation", thread_id)
-            .expect("captured record is accepted");
-    }
-    assert!(settled, "the captured session settles its turn");
-    std::iter::from_fn(|| receiver.try_recv().ok())
-        .map(|event| event.message)
-        .collect()
-}
-
-/// Replays a real Pi 1.3.0 RPC session through one controlled turn and returns
-/// the normalized events, in order. Captured 2026-10-21 from `pi --mode rpc`
-/// against an OpenAI-compatible provider: one prompt that ran `bash` and `read`
-/// in a scratch directory, then answered. Every line is as captured; only the
-/// two system-prompt records and the closing `agent_end` transcript echo, which
-/// carry local paths, were left out.
-#[cfg(test)]
-pub(crate) fn replay_captured_tool_turn(thread_id: &str) -> Vec<Value> {
-    let records = include_str!("captured_tool_turn.jsonl")
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("captured Pi RPC record"))
         .collect::<Vec<_>>();
     let prompt = records
         .iter()
@@ -442,7 +432,7 @@ mod tests {
 
     #[test]
     fn captured_tool_calls_are_published_as_started_then_finished() {
-        let calls = replay_captured_tool_turn("s")
+        let calls = replay_captured_turn(CAPTURED_TOOL_TURN, "s")
             .into_iter()
             .filter(|message| {
                 message["method"] == "cccc/toolActivity" && message["params"]["phase"].is_string()
@@ -492,6 +482,43 @@ mod tests {
                 json!({"command": format!("{PRIVATE}/bin/deploy --token {TOKEN}")}),
                 "deploy",
             ),
+            (
+                "bash",
+                json!({"command": format!("API_KEY='fixture {TOKEN}' cargo test --locked")}),
+                "cargo test",
+            ),
+            (
+                "bash",
+                json!({"command": format!("'{PRIVATE}/tools with spaces/deploy' --token {TOKEN}")}),
+                "deploy",
+            ),
+            (
+                "bash",
+                json!({"command": format!("API_KEY='fixture {TOKEN} cargo test")}),
+                "",
+            ),
+            (
+                "bash",
+                json!({"command": format!("API_KEY=$(echo 'fixture {TOKEN}') cargo test")}),
+                "",
+            ),
+            (
+                "bash",
+                json!({"command": format!("API_KEY=`echo 'fixture {TOKEN}'` cargo test")}),
+                "",
+            ),
+            (
+                "bash",
+                json!({"command": format!("API_KEY=<(echo 'fixture {TOKEN}') cargo test")}),
+                "",
+            ),
+            (
+                "bash",
+                json!({"command": "API_KEY=$((1 + 2)) cargo test"}),
+                "",
+            ),
+            ("bash", json!({"command": "cargo test && printf done"}), ""),
+            ("bash", json!({"command": "cargo test > result.txt"}), ""),
             (
                 "read",
                 json!({"path": format!("{PRIVATE}/notes.txt")}),

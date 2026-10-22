@@ -439,6 +439,21 @@ fn the_foreman_cannot_remove_itself_and_its_removal_records_the_successor() {
     assert_eq!(changes[0].by, "user");
     assert_eq!(changes[0].data["from"], "lead");
     assert_eq!(changes[0].data["to"], "peer1");
+
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    assert!(actor_ids(&home).is_empty());
+    let changes = cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger"))
+        .expect("ledger")
+        .into_iter()
+        .filter(|event| event.kind == "group.foreman_change")
+        .collect::<Vec<_>>();
+    assert_eq!(changes.len(), 2);
+    assert_eq!(changes[1].data["from"], "peer1");
+    assert_eq!(changes[1].data["to"], Value::Null);
 }
 
 #[test]

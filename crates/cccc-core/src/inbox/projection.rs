@@ -34,7 +34,6 @@ struct Projection {
 #[derive(Default)]
 struct Slot {
     projection: Mutex<Option<Projection>>,
-    append_epoch: AtomicU64,
     cursor_epoch: AtomicU64,
 }
 type Entry = Arc<Slot>;
@@ -112,7 +111,8 @@ impl Projection {
             result.notices.remember_cursor(cursor);
         }
         // Discover historical references before reducing their source records.
-        // Both passes use the same pinned FDs and bounds, with no ledger lock.
+        // Both passes use the same identities and byte bounds, with no writer
+        // lock. Only the rotating active file needs a pinned descriptor.
         snapshot.visit(&[], |event, _| {
             result.notices.remember_references(&event);
             result.deliveries.remember_references(&event);
@@ -199,7 +199,7 @@ fn with_projection<T>(
     group: &GroupDoc,
     actor_ids: &[String],
     state: &InboxState,
-    inspect: impl FnOnce(&Projection, &Snapshot) -> io::Result<T>,
+    mut inspect: impl FnMut(&Projection, &Snapshot) -> io::Result<T>,
 ) -> io::Result<T> {
     let path = GroupStore::new(home.clone())?.ledger_path(&group.group_id)?;
     let entry = entry(&path);
@@ -209,10 +209,9 @@ fn with_projection<T>(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut state = state.clone();
     loop {
-        let append_epoch = entry.append_epoch.load(Ordering::Acquire);
         let cursor_epoch = entry.cursor_epoch.load(Ordering::Acquire);
         let snapshot = Snapshot::open(&path)?;
-        let refresh = (|| -> io::Result<()> {
+        let result = (|| -> io::Result<T> {
             let rebuild = match guard.as_mut() {
                 Some(projection)
                     if projection.routing == routing(group)
@@ -242,28 +241,29 @@ fn with_projection<T>(
             if rebuild {
                 *guard = Some(Projection::build(group, &state, &snapshot, actor_ids)?);
             }
-            Ok(())
+            inspect(guard.as_ref().expect("projection initialized"), &snapshot)
         })();
-        if let Err(error) = refresh {
+        if result.is_err() {
             // A failed suffix read/refill may have reduced only a prefix.
             // Never retry it into the same partially advanced cache.
             *guard = None;
-            return Err(error);
         }
-        // Validate publication after decoding, not only before it. Appends
-        // skipped by try_lock are merged by byte offset on the next iteration.
-        // Rotation/replacement causes a new inode/order token and a rebuild.
+        // Validate after page decoding as well: archives open on demand and
+        // may have been replaced since capture. Read-only inspection can retry
+        // when a sealed source, the captured active prefix or a cursor changed;
+        // stable read errors escape. Ordinary appends leave that prefix valid
+        // and must not starve publication. A missed try_lock callback merges
+        // by byte offset on the next query.
         let current = Snapshot::open(&path)?;
         let current_state = load(home, &group.group_id)?;
-        if current.sources != snapshot.sources
+        if !current.extends(&snapshot.sources)
             || current_state.cursors != state.cursors
-            || entry.append_epoch.load(Ordering::Acquire) != append_epoch
             || entry.cursor_epoch.load(Ordering::Acquire) != cursor_epoch
         {
             state = current_state;
             continue;
         }
-        return inspect(guard.as_ref().expect("projection initialized"), &snapshot);
+        return result;
     }
 }
 
@@ -275,18 +275,26 @@ pub(super) fn pages(
     limit: usize,
 ) -> io::Result<BTreeMap<String, Vec<Event>>> {
     with_projection(home, group, actor_ids, state, |projection, snapshot| {
-        actor_ids
+        let mut locations = Vec::new();
+        let batches: Vec<_> = actor_ids
             .iter()
             .map(|actor| {
-                let messages = projection.boxes[actor]
-                    .page
-                    .iter()
-                    .take(limit.min(PAGE_SIZE))
-                    .map(|mail| snapshot.event(mail.location))
-                    .collect::<io::Result<Vec<_>>>()?;
-                Ok((actor.clone(), messages))
+                let start = locations.len();
+                locations.extend(
+                    projection.boxes[actor]
+                        .page
+                        .iter()
+                        .take(limit.min(PAGE_SIZE))
+                        .map(|mail| mail.location),
+                );
+                (actor.clone(), locations.len() - start)
             })
-            .collect()
+            .collect();
+        let mut messages = snapshot.events(&locations)?.into_iter();
+        Ok(batches
+            .into_iter()
+            .map(|(actor, count)| (actor, messages.by_ref().take(count).collect()))
+            .collect())
     })
 }
 pub(super) fn counts(
@@ -335,7 +343,7 @@ pub(crate) fn due(
             group,
             eligible,
             &projection.cursors,
-            mail_delays,
+            &mail_delays,
             reply_after,
         ))
     })
@@ -362,12 +370,7 @@ pub(super) fn pending_deliveries(
 ) -> io::Result<Vec<Event>> {
     let state = load(home, &group.group_id)?;
     with_projection(home, group, &[], &state, |projection, snapshot| {
-        projection
-            .deliveries
-            .pending(actor, limit)
-            .into_iter()
-            .map(|location| snapshot.event(location))
-            .collect()
+        snapshot.events(&projection.deliveries.pending(actor, limit))
     })
 }
 pub(super) fn delivery_states(
@@ -397,7 +400,6 @@ pub(crate) fn note_append(path: &Path, event: &Event, source: Source, start: u64
     let Some(entry) = cached(path) else {
         return;
     };
-    entry.append_epoch.fetch_add(1, Ordering::Release);
     let Ok(mut guard) = entry.projection.try_lock() else {
         return;
     };
@@ -442,5 +444,296 @@ pub(crate) fn note_append(path: &Path, event: &Event, source: Source, start: u64
 pub(crate) fn note_cursor(path: &Path) {
     if let Some(entry) = cached(path) {
         entry.cursor_epoch.fetch_add(1, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    struct Fixture {
+        _temp: tempfile::TempDir,
+        home: HomeLayout,
+        group: GroupDoc,
+        ledger: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().expect("fixture");
+            let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+            let store = GroupStore::new(home.clone()).expect("store");
+            let mut group = store.create("projection boundary", "").expect("group");
+            group.actors.push(cccc_contracts::Actor::new("reader"));
+            store.save(&group).expect("save");
+            let ledger = store.ledger_path(&group.group_id).expect("ledger");
+            fs::write(&ledger, b"").expect("active ledger");
+            Self {
+                _temp: temp,
+                home,
+                group,
+                ledger,
+            }
+        }
+
+        fn mail(&self, text: &str) -> Event {
+            let mut event = Event::new("chat.message", &self.group.group_id);
+            event.by = "user".into();
+            event.data = json!({"to":["reader"],"message_mode":"mail","text":text})
+                .as_object()
+                .expect("data")
+                .clone();
+            event
+        }
+    }
+
+    fn page(projection: &Projection, snapshot: &Snapshot) -> io::Result<Vec<Event>> {
+        snapshot.events(
+            &projection.boxes["reader"]
+                .page
+                .iter()
+                .map(|mail| mail.location)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn appending_during_each_page_read_returns_the_captured_prefix_and_catches_up() {
+        for native_writer in [true, false] {
+            let f = Fixture::new();
+            let first = f.mail("captured Mail");
+            let next = f.mail("appended Mail");
+            ledger::append(&f.ledger, &first).expect("initial Mail");
+            let state = load(&f.home, &f.group.group_id).expect("state");
+            let mut attempts = 0;
+            let rows = with_projection(
+                &f.home,
+                &f.group,
+                &["reader".into()],
+                &state,
+                |projection, snapshot| {
+                    attempts += 1;
+                    assert_eq!(
+                        attempts, 1,
+                        "append-only growth must not force another page decode"
+                    );
+                    let rows = page(projection, snapshot)?;
+                    // Every inspection overlaps a write, as with a continuously
+                    // active background writer. Fail on a retry instead of hanging.
+                    if native_writer {
+                        ledger::append(&f.ledger, &next)?;
+                    } else {
+                        let _lock = ledger::acquire_writer_lock(&f.ledger)?;
+                        let mut stream = fs::OpenOptions::new().append(true).open(&f.ledger)?;
+                        serde_json::to_writer(&mut stream, &next)?;
+                        stream.write_all(b"\n")?;
+                    }
+                    Ok(rows)
+                },
+            )
+            .expect("captured page");
+            assert_eq!(
+                rows.iter().map(|row| &row.id).collect::<Vec<_>>(),
+                [&first.id]
+            );
+            let caught_up = super::super::list_unread(&f.home, &f.group, "reader", 10)
+                .expect("catch up skipped callback");
+            assert_eq!(
+                caught_up.iter().map(|row| &row.id).collect::<Vec<_>>(),
+                [&first.id, &next.id]
+            );
+            let consumed = super::super::consume_unread(&f.home, &f.group, "reader", "reader", 1)
+                .expect("consume prefix");
+            assert_eq!(consumed.messages[0].id, first.id);
+            assert_eq!(
+                super::super::list_unread(&f.home, &f.group, "reader", 10).expect("remaining Mail")
+                    [0]
+                .id,
+                next.id
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_advance_during_page_decode_still_reconciles() {
+        let f = Fixture::new();
+        let first = f.mail("first Mail");
+        let next = f.mail("next Mail");
+        ledger::append(&f.ledger, &first).expect("first");
+        ledger::append(&f.ledger, &next).expect("next");
+        let state = load(&f.home, &f.group.group_id).expect("state");
+        let mut attempts = 0;
+        let rows = with_projection(
+            &f.home,
+            &f.group,
+            &["reader".into()],
+            &state,
+            |projection, snapshot| {
+                attempts += 1;
+                let rows = page(projection, snapshot)?;
+                if attempts == 1 {
+                    let mut advanced = state.clone();
+                    advanced.cursors.insert("reader".into(), first.id.clone());
+                    super::super::save(&f.home, &f.group.group_id, &advanced, "reader", &first.ts)?;
+                }
+                Ok(rows)
+            },
+        )
+        .expect("cursor-consistent page");
+        assert_eq!(attempts, 2);
+        assert_eq!(
+            rows.iter().map(|row| &row.id).collect::<Vec<_>>(),
+            [&next.id]
+        );
+    }
+
+    #[test]
+    fn active_truncation_during_page_decode_still_reconciles() {
+        let f = Fixture::new();
+        let old = f.mail(&"old Mail ".repeat(100));
+        let new = f.mail("replacement Mail");
+        ledger::append(&f.ledger, &old).expect("old Mail");
+        let state = load(&f.home, &f.group.group_id).expect("state");
+        let mut attempts = 0;
+        let rows = with_projection(
+            &f.home,
+            &f.group,
+            &["reader".into()],
+            &state,
+            |projection, snapshot| {
+                attempts += 1;
+                let rows = page(projection, snapshot)?;
+                if attempts == 1 {
+                    let _lock = ledger::acquire_writer_lock(&f.ledger)?;
+                    fs::write(&f.ledger, format!("{}\n", serde_json::to_string(&new)?))?;
+                }
+                Ok(rows)
+            },
+        )
+        .expect("reconciled truncation");
+        assert_eq!(attempts, 2);
+        assert_eq!(
+            rows.iter().map(|row| &row.id).collect::<Vec<_>>(),
+            [&new.id]
+        );
+    }
+
+    #[test]
+    fn sealed_plain_archive_growth_during_page_decode_still_reconciles() {
+        let f = Fixture::new();
+        let first = f.mail("archived Mail");
+        let next = f.mail("archive repair Mail");
+        let segments = GroupStore::new(f.home.clone())
+            .expect("store")
+            .state_dir(&f.group.group_id)
+            .expect("state")
+            .join("ledger/segments");
+        fs::create_dir_all(&segments).expect("segments");
+        let archive = segments.join("ledger.000001.jsonl");
+        fs::write(
+            &archive,
+            format!("{}\n", serde_json::to_string(&first).expect("event")),
+        )
+        .expect("archive");
+        let state = load(&f.home, &f.group.group_id).expect("state");
+        let mut attempts = 0;
+        let rows = with_projection(
+            &f.home,
+            &f.group,
+            &["reader".into()],
+            &state,
+            |projection, snapshot| {
+                attempts += 1;
+                let rows = page(projection, snapshot)?;
+                if attempts == 1 {
+                    // Only active-ledger growth is compatible. A repair to a
+                    // sealed plain archive must still invalidate the page.
+                    let _lock = ledger::acquire_writer_lock(&f.ledger)?;
+                    let mut stream = fs::OpenOptions::new().append(true).open(&archive)?;
+                    serde_json::to_writer(&mut stream, &next)?;
+                    stream.write_all(b"\n")?;
+                }
+                Ok(rows)
+            },
+        )
+        .expect("reconciled archive growth");
+        assert_eq!(attempts, 2);
+        assert_eq!(
+            rows.iter().map(|row| &row.id).collect::<Vec<_>>(),
+            [&first.id, &next.id]
+        );
+    }
+
+    #[test]
+    fn archive_replacement_before_or_after_page_read_retries_publication() {
+        for replace_before_read in [true, false] {
+            let temp = tempfile::tempdir().expect("fixture");
+            let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+            let store = GroupStore::new(home.clone()).expect("store");
+            let mut group = store.create("archive replacement", "").expect("group");
+            group.actors.push(cccc_contracts::Actor::new("reader"));
+            store.save(&group).expect("save");
+            let ledger = store.ledger_path(&group.group_id).expect("ledger");
+            fs::write(&ledger, b"").expect("active ledger");
+            let segments = store
+                .state_dir(&group.group_id)
+                .expect("state")
+                .join("ledger/segments");
+            fs::create_dir_all(&segments).expect("segments");
+            let archive = segments.join("ledger.000001.jsonl");
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.by = "user".into();
+            event.data = json!({"to":["reader"],"message_mode":"mail","text":"fixed fixture"})
+                .as_object()
+                .expect("data")
+                .clone();
+            let bytes = format!("{}\n", serde_json::to_string(&event).expect("event"));
+            fs::write(&archive, &bytes).expect("archive");
+            let state = load(&home, &group.group_id).expect("state");
+            let mut attempts = 0;
+            let page = with_projection(
+                &home,
+                &group,
+                &["reader".into()],
+                &state,
+                |projection, snapshot| {
+                    attempts += 1;
+                    let replace = || {
+                        // A writer replaces a sealed source between capture and
+                        // publication. Keep its old inode alive through rename.
+                        let _lock = crate::ledger::acquire_writer_lock(&ledger).expect("writer");
+                        let old = archive.with_extension("retired");
+                        fs::rename(&archive, &old).expect("retire source");
+                        fs::write(&archive, &bytes).expect("replacement");
+                        fs::remove_file(old).expect("retired source");
+                    };
+                    if attempts == 1 && replace_before_read {
+                        replace();
+                    }
+                    let locations: Vec<_> = projection.boxes["reader"]
+                        .page
+                        .iter()
+                        .map(|mail| mail.location)
+                        .collect();
+                    let page = snapshot.events(&locations);
+                    if attempts == 1 && !replace_before_read {
+                        replace();
+                    }
+                    page
+                },
+            )
+            .expect("reconciled page");
+            assert_eq!(attempts, 2, "publication must retry the changed source");
+            assert_eq!(
+                page.iter().map(|row| &row.id).collect::<Vec<_>>(),
+                [&event.id]
+            );
+            assert_eq!(
+                super::super::list_unread(&home, &group, "reader", 1).expect("warm page")[0].id,
+                event.id
+            );
+        }
     }
 }

@@ -14,8 +14,9 @@ pub(crate) mod snapshot;
 pub use reverse::visit_newest_first;
 
 /// Visit a committed oldest-first snapshot without retaining Event payloads.
-/// Source identities, descriptors and byte bounds are pinned under the reader
-/// lock; decoding and the callback run after that lock is released.
+/// Source identities and byte bounds are captured under the reader lock. Only
+/// the rotating active file is pinned; sealed archives open on demand with
+/// identity validation. Decoding and callbacks run after the lock is released.
 pub fn visit_snapshot_oldest_first(
     path: &Path,
     mut visit: impl FnMut(Event) -> std::ops::ControlFlow<()>,

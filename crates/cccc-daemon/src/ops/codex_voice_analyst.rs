@@ -36,10 +36,8 @@ mod native_input;
 mod opencode;
 mod pi_rpc;
 #[cfg(test)]
-pub(crate) use pi_rpc::replay_captured_tool_turn as replay_captured_pi_tool_turn;
-#[cfg(test)]
 pub(crate) use pi_rpc::{
-    CAPTURED_LENGTH_STOP as CAPTURED_PI_LENGTH_STOP,
+    CAPTURED_LENGTH_STOP as CAPTURED_PI_LENGTH_STOP, CAPTURED_TOOL_TURN as CAPTURED_PI_TOOL_TURN,
     replay_captured_turn as replay_captured_pi_turn,
 };
 mod process;

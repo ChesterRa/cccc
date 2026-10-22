@@ -234,7 +234,7 @@ impl NoticeState {
         group: &GroupDoc,
         eligible: &[&cccc_contracts::Actor],
         cursors: &BTreeMap<String, String>,
-        mail_delays: crate::automation::MailDelays<'_>,
+        mail_delays: &crate::automation::MailDelays<'_>,
         reply_after: i64,
     ) -> Vec<Event> {
         use crate::automation::{notice_event, timestamp};

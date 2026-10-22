@@ -843,7 +843,7 @@ mod tests {
     /// actor's runtime journal with the key suffix and request id redacted.
     #[cfg(unix)]
     #[test]
-    fn a_turn_the_provider_keeps_failing_is_retried_three_times_then_failed() {
+    fn a_failed_provider_turn_releases_the_next_delivery_after_its_retry_limit() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
@@ -856,7 +856,11 @@ elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
 else
   rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   echo "$rid" >> "$PROMPT_LOG"
-  printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"Internal error: turn failed: Authentication Fails, Your api key: ****[redacted] is invalid (request_id: [redacted])"}}\n' "$rid"
+  if printf '%s' "$line" | grep -q NEXT_READY; then
+    printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$rid"
+  else
+    printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"Internal error: turn failed: Authentication Fails, Your api key: ****[redacted] is invalid (request_id: [redacted])"}}\n' "$rid"
+  fi
 fi
 done"#;
         let prompt_log = temp.path().join("prompts");
@@ -876,8 +880,22 @@ done"#;
             .as_object()
             .expect("data")
             .clone();
+        let mut followup = event.clone();
+        followup.id = Event::new("chat.message", &group.group_id).id;
+        followup.data.insert("text".into(), json!("NEXT_READY"));
+        let path = store.ledger_path(&group.group_id).expect("ledger path");
+        ledger::append(&path, &event).expect("first source");
+        ledger::append(&path, &followup).expect("next source");
         let key = (group.group_id.clone(), actor.id.clone(), event.id.clone());
-        in_flight().lock().expect("claims").insert(key.clone());
+        let next_key = (
+            group.group_id.clone(),
+            actor.id.clone(),
+            followup.id.clone(),
+        );
+        in_flight()
+            .lock()
+            .expect("claims")
+            .extend([key.clone(), next_key.clone()]);
         let worker = spawn_worker(&(group.group_id.clone(), actor.id.clone()));
         worker
             .sender
@@ -890,8 +908,20 @@ done"#;
                 event: event.clone(),
             })
             .expect("enqueue");
+        worker
+            .sender
+            .as_ref()
+            .expect("sender")
+            .send(DeliveryJob {
+                home: home.clone(),
+                group: group.clone(),
+                actor: actor.clone(),
+                event: followup.clone(),
+            })
+            .expect("enqueue follow-up behind failed delivery");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         loop {
+            drain_group(&home, &group.group_id);
             let state = crate::ops::runtime_delivery::latest_state(
                 &home,
                 &group.group_id,
@@ -899,7 +929,16 @@ done"#;
                 &event.id,
             )
             .expect("state");
-            if state.is_some_and(|(state, _)| state == "failed") {
+            let next_state = crate::ops::runtime_delivery::latest_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &followup.id,
+            )
+            .expect("next state");
+            if state.is_some_and(|(state, _)| state == "failed")
+                && next_state.is_some_and(|(state, _)| state == "accepted")
+            {
                 break;
             }
             let turns = std::fs::read_to_string(&prompt_log)
@@ -916,9 +955,10 @@ done"#;
         worker.shutdown();
         crate::ops::deepseek_runtime::stop(&group.group_id, &actor.id);
         let turns = std::fs::read_to_string(&prompt_log).expect("prompt log");
-        // The first turn and three retries.
-        assert_eq!(turns.lines().count(), 4);
+        // The failed turn and three retries, then the next task exactly once.
+        assert_eq!(turns.lines().count(), 5);
         assert!(!in_flight().lock().expect("claims").contains(&key));
+        assert!(!in_flight().lock().expect("claims").contains(&next_key));
         let events =
             ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger")).expect("events");
         let failures: Vec<_> = events
