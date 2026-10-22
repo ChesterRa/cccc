@@ -1,4 +1,5 @@
 use cccc_contracts::DaemonRequest;
+use cccc_core::context::Blockers;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -25,6 +26,7 @@ pub(super) fn validated_filter(
 
 pub(super) fn matches_task(
     task: &Map<String, Value>,
+    blockers: &Blockers,
     status: Option<&str>,
     attention: Option<&str>,
     query: &str,
@@ -40,7 +42,7 @@ pub(super) fn matches_task(
     if !assignee.is_empty() && assignee != "__unassigned__" && task_assignee != assignee {
         return false;
     }
-    if attention.is_some_and(|wanted| !matches_attention(task, wanted)) {
+    if attention.is_some_and(|wanted| !matches_attention(task, blockers, wanted)) {
         return false;
     }
     query.is_empty()
@@ -58,9 +60,11 @@ pub(super) fn matches_task(
 }
 
 pub(super) fn facets(tasks: &[Map<String, Value>]) -> Value {
+    let blockers = Blockers::new(tasks);
     let mut statuses = BTreeMap::<String, usize>::new();
     let mut assignees = BTreeSet::new();
     let mut blocked_count = 0;
+    let mut ready_count = 0;
     let mut waiting_user = 0;
     let mut handoffs = 0;
     let mut unassigned = 0;
@@ -75,8 +79,9 @@ pub(super) fn facets(tasks: &[Map<String, Value>]) -> Value {
         } else {
             assignees.insert(assignee.to_owned());
         }
+        ready_count += usize::from(ready(task, &blockers));
         if task_status(task) != "done" {
-            blocked_count += usize::from(blocked(task));
+            blocked_count += usize::from(blocked(task, &blockers));
             waiting_user += usize::from(text(task, "waiting_on") == "user");
             handoffs += usize::from(!text(task, "handoff_to").is_empty());
         }
@@ -84,6 +89,7 @@ pub(super) fn facets(tasks: &[Map<String, Value>]) -> Value {
     json!({
         "status_counts":statuses,
         "blocked":blocked_count,
+        "ready":ready_count,
         "waiting_user":waiting_user,
         "pending_handoffs":handoffs,
         "unassigned":unassigned,
@@ -91,7 +97,20 @@ pub(super) fn facets(tasks: &[Map<String, Value>]) -> Value {
     })
 }
 
-pub(super) fn sort_tasks(tasks: &mut [Map<String, Value>], status: Option<&str>) {
+pub(super) fn sort_tasks(
+    tasks: &mut [Map<String, Value>],
+    status: Option<&str>,
+    attention: Option<&str>,
+) {
+    if attention == Some("ready") {
+        // Ready work is taken oldest first.
+        tasks.sort_by(|left, right| {
+            text(left, "created_at")
+                .cmp(text(right, "created_at"))
+                .then_with(|| task_number(left).cmp(&task_number(right)))
+        });
+        return;
+    }
     let date_key = if status == Some("planned") {
         "created_at"
     } else {
@@ -133,11 +152,12 @@ pub(super) fn delete_info(tasks: &[Map<String, Value>], root: &str) -> Value {
     json!({"allowed":blocked.is_none(),"total":ids.len(),"reason":reason})
 }
 
-fn matches_attention(task: &Map<String, Value>, wanted: &str) -> bool {
+fn matches_attention(task: &Map<String, Value>, blockers: &Blockers, wanted: &str) -> bool {
     let status = task_status(task);
     match wanted {
         "unassigned" => status != "archived" && text(task, "assignee").is_empty(),
-        "blocked" => !matches!(status, "done" | "archived") && blocked(task),
+        "blocked" => !matches!(status, "done" | "archived") && blocked(task, blockers),
+        "ready" => ready(task, blockers),
         "waiting_user" => {
             !matches!(status, "done" | "archived") && text(task, "waiting_on") == "user"
         }
@@ -146,11 +166,17 @@ fn matches_attention(task: &Map<String, Value>, wanted: &str) -> bool {
     }
 }
 
-fn blocked(task: &Map<String, Value>) -> bool {
-    task.get("blocked_by")
-        .and_then(Value::as_array)
-        .is_some_and(|items| !items.is_empty())
-        || matches!(text(task, "waiting_on"), "actor" | "external")
+/// Held back by a blocker that is not done or archived, or waiting on an
+/// actor or something external.
+fn blocked(task: &Map<String, Value>, blockers: &Blockers) -> bool {
+    !blockers.open(task).is_empty() || matches!(text(task, "waiting_on"), "actor" | "external")
+}
+
+/// Planned, waiting on nothing, and every blocker done or archived.
+fn ready(task: &Map<String, Value>, blockers: &Blockers) -> bool {
+    task_status(task) == "planned"
+        && matches!(text(task, "waiting_on"), "" | "none")
+        && blockers.open(task).is_empty()
 }
 
 fn unexecuted(task: &Map<String, Value>) -> bool {

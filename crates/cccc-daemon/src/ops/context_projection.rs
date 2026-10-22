@@ -1,4 +1,4 @@
-use cccc_core::context::ContextDoc;
+use cccc_core::context::{Blockers, ContextDoc};
 use serde_json::{Map, Value, json};
 
 pub(super) fn project(document: ContextDoc, version: String, detail: &str) -> Value {
@@ -226,10 +226,8 @@ fn status(task: &Map<String, Value>) -> &str {
         .unwrap_or("planned")
 }
 
-fn is_blocked(task: &Map<String, Value>) -> bool {
-    task.get("blocked_by")
-        .and_then(Value::as_array)
-        .is_some_and(|items| !items.is_empty())
+fn is_blocked(task: &Map<String, Value>, blockers: &Blockers) -> bool {
+    !blockers.open(task).is_empty()
         || matches!(
             task.get("waiting_on").and_then(Value::as_str),
             Some("actor" | "external")
@@ -262,10 +260,14 @@ fn task_summary(tasks: &[Map<String, Value>], attention: &Value) -> Value {
 }
 
 fn attention(tasks: &[Map<String, Value>], full: bool) -> Value {
+    let blockers = Blockers::new(tasks);
     let live = tasks
         .iter()
         .filter(|task| !matches!(status(task), "done" | "archived"));
-    let blocked = live.clone().filter(|task| is_blocked(task)).count();
+    let blocked = live
+        .clone()
+        .filter(|task| is_blocked(task, &blockers))
+        .count();
     let waiting_user = live
         .clone()
         .filter(|task| task.get("waiting_on").and_then(Value::as_str) == Some("user"))
@@ -283,7 +285,7 @@ fn attention(tasks: &[Map<String, Value>], full: bool) -> Value {
                 .iter()
                 .filter(|task| status(task) != "done" && status(task) != "archived")
                 .filter(|task| match wanted {
-                    "blocked" => is_blocked(task),
+                    "blocked" => is_blocked(task, &blockers),
                     "waiting_user" => {
                         task.get("waiting_on").and_then(Value::as_str) == Some("user")
                     }

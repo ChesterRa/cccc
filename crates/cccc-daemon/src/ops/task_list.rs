@@ -1,5 +1,8 @@
 use cccc_contracts::DaemonRequest;
-use cccc_core::{HomeLayout, context::ContextStore};
+use cccc_core::{
+    HomeLayout,
+    context::{Blockers, ContextStore},
+};
 use serde_json::{Map, Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
@@ -7,7 +10,7 @@ use task_list_pages::{PageFilter, index, page, pages};
 use task_list_query::{delete_info, facets, matches_task, sort_tasks, text, validated_filter};
 
 const STATUSES: [&str; 4] = ["planned", "active", "done", "archived"];
-const ATTENTION_FILTERS: [&str; 4] = ["blocked", "waiting_user", "handoff", "unassigned"];
+const ATTENTION_FILTERS: [&str; 5] = ["blocked", "ready", "waiting_user", "handoff", "unassigned"];
 const MAX_PAGE_SIZE: usize = 100;
 
 pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -69,20 +72,23 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         return object(result);
     }
 
+    let blockers = Blockers::new(&document.tasks);
     let mut tasks = document
         .tasks
-        .into_iter()
+        .iter()
         .filter(|task| {
             matches_task(
                 task,
+                &blockers,
                 status.as_deref(),
                 attention.as_deref(),
                 &query,
                 &assignee,
             )
         })
+        .cloned()
         .collect::<Vec<_>>();
-    sort_tasks(&mut tasks, status.as_deref());
+    sort_tasks(&mut tasks, status.as_deref(), attention.as_deref());
     object(json!({"tasks":tasks}))
 }
 

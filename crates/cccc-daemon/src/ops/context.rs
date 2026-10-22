@@ -3,7 +3,7 @@ use super::operation::{
     Policy::{Read, Write},
 };
 use cccc_contracts::{ActorRole, DaemonRequest, Event};
-use cccc_core::context::{ContextDoc, ContextStore};
+use cccc_core::context::{Blockers, ContextDoc, ContextStore};
 use cccc_core::ledger;
 use cccc_core::{GroupDoc, HomeLayout, actors};
 use serde_json::{Map, Value, json};
@@ -154,11 +154,16 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .as_object()
             .cloned()
             .unwrap_or_default();
-        ledger::append(
-            &store(home)?.ledger_path(&group_id).map_err(OpError::io)?,
-            &event,
-        )
-        .map_err(OpError::io)?;
+        let ledger_path = store(home)?.ledger_path(&group_id).map_err(OpError::io)?;
+        ledger::append(&ledger_path, &event).map_err(OpError::io)?;
+        notify_unblocked(
+            home,
+            &group,
+            &result.before,
+            &result.context,
+            &event.id,
+            &ledger_path,
+        )?;
     }
     object(json!({
         "success": true,
@@ -166,6 +171,38 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "changes": result.changes,
         "version": result.version,
     }))
+}
+
+/// Tells each assignee whose task lost its last open blocker in this sync,
+/// because a blocker entered done, that the task is unblocked. `before` is the
+/// Context as the sync found it, read under the same lock.
+fn notify_unblocked(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    before: &ContextDoc,
+    after: &ContextDoc,
+    sync_event_id: &str,
+    ledger_path: &std::path::Path,
+) -> Result<(), OpError> {
+    for (task, done) in Blockers::unblocked(&before.tasks, &after.tasks) {
+        let assignee = task.get("assignee").and_then(Value::as_str).unwrap_or("");
+        let Some(actor) = group.actors.iter().find(|actor| actor.id == assignee) else {
+            continue;
+        };
+        let task_id = task.get("id").and_then(Value::as_str).unwrap_or("");
+        let title = task.get("title").and_then(Value::as_str).unwrap_or("");
+        let notice = cccc_core::automation::task_unblocked_notice(
+            group,
+            actor,
+            task_id,
+            title,
+            &done,
+            sync_event_id,
+        );
+        ledger::append(ledger_path, &notice).map_err(OpError::io)?;
+        super::actor_delivery::dispatch(home, group, &notice);
+    }
+    Ok(())
 }
 
 pub(super) fn load_group(home: &HomeLayout, group_id: &str) -> Result<GroupDoc, OpError> {

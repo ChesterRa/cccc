@@ -1,3 +1,4 @@
+use cccc_core::context::Blockers;
 use serde_json::{Map, Value, json};
 
 use super::task_list_query::{matches_task, sort_tasks, task_number, task_status};
@@ -15,11 +16,13 @@ pub(super) fn page(
     limit: usize,
     filter: &PageFilter<'_>,
 ) -> Value {
+    let blockers = Blockers::new(tasks);
     let mut matching = tasks
         .iter()
         .filter(|task| {
             matches_task(
                 task,
+                &blockers,
                 status,
                 filter.attention,
                 filter.query,
@@ -28,7 +31,7 @@ pub(super) fn page(
         })
         .cloned()
         .collect::<Vec<_>>();
-    sort_tasks(&mut matching, status);
+    sort_tasks(&mut matching, status, filter.attention);
     let total_count = matching.len();
     let items = matching
         .into_iter()

@@ -857,6 +857,36 @@ pub(crate) fn timestamp(value: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
+/// The `task_unblocked` notice for `actor`, the assignee of `task_id`, whose
+/// last open blockers (`done`) entered done in the context change recorded
+/// as `source_event_id`.
+pub fn task_unblocked_notice(
+    group: &GroupDoc,
+    actor: &cccc_contracts::Actor,
+    task_id: &str,
+    title: &str,
+    done: &[String],
+    source_event_id: &str,
+) -> Event {
+    let mut event = notice_event(
+        group,
+        actor,
+        "task_unblocked",
+        "Task unblocked",
+        &format!(
+            "{task_id} \"{title}\" has no open blocker left: {} {} done.",
+            done.join(", "),
+            if done.len() == 1 { "is" } else { "are" }
+        ),
+        vec![source_event_id.to_owned()],
+    );
+    if let Some(context) = event.data.get_mut("context").and_then(Value::as_object_mut) {
+        context.insert("task_id".into(), json!(task_id));
+        context.insert("blockers_done".into(), json!(done));
+    }
+    event
+}
+
 pub(crate) fn notice_event(
     group: &GroupDoc,
     actor: &cccc_contracts::Actor,

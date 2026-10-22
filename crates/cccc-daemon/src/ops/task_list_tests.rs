@@ -166,10 +166,12 @@ fn attention_facets_and_filters_ignore_completed_history() {
     .map(|value| value.as_object().cloned().expect("task"));
 
     let facets = super::task_list_query::facets(&tasks);
+    let blockers = cccc_core::context::Blockers::new(&tasks);
 
     assert_eq!(facets["blocked"], 1);
     assert!(super::task_list_query::matches_task(
         &tasks[0],
+        &blockers,
         None,
         Some("blocked"),
         "",
@@ -177,6 +179,7 @@ fn attention_facets_and_filters_ignore_completed_history() {
     ));
     assert!(!super::task_list_query::matches_task(
         &tasks[1],
+        &blockers,
         None,
         Some("blocked"),
         "",

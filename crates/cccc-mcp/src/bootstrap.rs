@@ -314,6 +314,7 @@ fn task_slice(tasks: &[Value], actor_id: &str) -> (Vec<Value>, Vec<Value>) {
     let mut actor_attention = Vec::new();
     let mut waiting_user = Vec::new();
     let mut globally_blocked = Vec::new();
+    let blockers = cccc_core::context::Blockers::new(tasks.iter().filter_map(Value::as_object));
     for task in tasks.iter().filter_map(Value::as_object) {
         let status = lower_string(task.get("status"));
         if matches!(status.as_str(), "done" | "archived") {
@@ -329,12 +330,7 @@ fn task_slice(tasks: &[Value], actor_id: &str) -> (Vec<Value>, Vec<Value>) {
             actor_attention.push(slim);
         } else if waiting_on == "user" {
             waiting_user.push(slim);
-        } else if task
-            .get("blocked_by")
-            .and_then(Value::as_array)
-            .is_some_and(|items| !items.is_empty())
-            || waiting_on == "external"
-        {
+        } else if !blockers.open(task).is_empty() || waiting_on == "external" {
             globally_blocked.push(slim);
         }
     }
@@ -1155,5 +1151,20 @@ mod tests {
         );
         assert!(payload.get("group").is_none());
         assert!(payload.get("context").is_none());
+    }
+
+    #[test]
+    fn a_task_whose_blockers_are_done_is_not_shown_as_blocked() {
+        let tasks = [
+            json!({"id":"T1","title":"schema","status":"done"}),
+            json!({"id":"T2","title":"release","status":"planned","blocked_by":["T1"]}),
+            json!({"id":"T3","title":"docs","status":"planned","blocked_by":["T1","T9"]}),
+        ];
+        let (_, attention) = task_slice(&tasks, "peer1");
+        let ids = attention
+            .iter()
+            .map(|task| task["id"].as_str().expect("id"))
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["T3"]);
     }
 }

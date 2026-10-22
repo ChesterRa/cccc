@@ -200,6 +200,8 @@ Rules:
 - If `task_type` is omitted, the daemon MUST persist `standard` for a root task and `free` for a subtask.
 - `task_type` stores the durable work kind. It MUST NOT be treated as lifecycle state or parent/child structure.
 - `task_type` does not auto-seed `notes` or `checklist`; those remain ordinary editable task content.
+- `blocked_by` lists the ids of tasks this one waits for. A blocker stays open
+  until its task is `done` or `archived`; an entry that names no task stays open.
 
 #### `task.update`
 

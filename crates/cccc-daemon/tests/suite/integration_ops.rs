@@ -1616,3 +1616,180 @@ fn actor_removal_returns_its_open_tasks_to_the_board() {
         2
     );
 }
+
+#[test]
+fn blockers_resolve_on_done_and_the_assignee_hears_once() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"blockers"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["lead", "peer1"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runtime":"custom",
+                "command":["sh"],
+                "enabled":false,
+                "by":"user"
+            }),
+        );
+    }
+    let sync = |ops: Value| {
+        call(
+            &home,
+            "context_sync",
+            json!({"group_id":group_id,"by":"lead","ops":ops}),
+        )
+    };
+    sync(json!([
+        {"op":"task.create","title":"schema","assignee":"lead"},
+        {"op":"task.create","title":"migration","assignee":"lead"},
+        {"op":"task.create","title":"release","assignee":"peer1","blocked_by":["T001","T002"]},
+        {"op":"task.create","title":"docs","assignee":"peer1","blocked_by":["T404"]},
+        {"op":"task.create","title":"spike"},
+        {"op":"task.create","title":"follow-up","assignee":"peer1","blocked_by":["T005"]},
+        {"op":"task.create","title":"survey","waiting_on":"user"},
+    ]));
+    let listed = |attention: &str| {
+        let listed = call(
+            &home,
+            "task_list",
+            json!({"group_id":group_id,"attention":attention,"limit":50}),
+        );
+        let ids = listed.result["tasks"]
+            .as_array()
+            .expect("tasks")
+            .iter()
+            .map(|task| task["id"].as_str().expect("id").to_owned())
+            .collect::<Vec<_>>();
+        (ids, listed.result["facets"].clone())
+    };
+    let (blocked, facets) = listed("blocked");
+    assert_eq!(blocked, ["T006", "T004", "T003"]);
+    assert_eq!(
+        (facets["blocked"].clone(), facets["ready"].clone()),
+        (json!(3), json!(3))
+    );
+    assert_eq!(listed("ready").0, ["T001", "T002", "T005"]);
+
+    let notices = || {
+        let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+        cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger path"))
+            .expect("ledger")
+            .into_iter()
+            .filter(|event| event.kind == "system.notify" && event.data["kind"] == "task_unblocked")
+            .collect::<Vec<_>>()
+    };
+    // One of two blockers done, then a blocker archived: nobody is told.
+    sync(json!([{"op":"task.move","task_id":"T001","status":"done"}]));
+    sync(json!([{"op":"task.move","task_id":"T005","status":"archived"}]));
+    assert!(notices().is_empty());
+    assert_eq!(listed("ready").0, ["T002", "T006"]);
+
+    // The last open blocker of T003 is done: its assignee is told, once.
+    let done = sync(json!([{"op":"task.move","task_id":"T002","status":"done"}]));
+    assert!(done.ok);
+    let (blocked, facets) = listed("blocked");
+    assert_eq!(blocked, ["T004"]);
+    assert_eq!(
+        (facets["blocked"].clone(), facets["ready"].clone()),
+        (json!(1), json!(2))
+    );
+    assert_eq!(listed("ready").0, ["T003", "T006"]);
+    let summary = call(
+        &home,
+        "context_get",
+        json!({"group_id":group_id,"detail":"summary"}),
+    );
+    assert_eq!(summary.result["attention"]["blocked"], 1);
+
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let events = cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger path"))
+        .expect("ledger");
+    let sync_event = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "context.sync")
+        .expect("context.sync");
+    let told = notices();
+    assert_eq!(told.len(), 1, "{told:?}");
+    let data = &told[0].data;
+    assert_eq!(data["target_actor_id"], "peer1");
+    assert_eq!(data["related_event_id"], json!(sync_event.id));
+    assert_eq!(data["context"]["task_id"], "T003");
+    assert_eq!(data["context"]["blockers_done"], json!(["T002"]));
+    assert_eq!(
+        data["message"],
+        "T003 \"release\" has no open blocker left: T002 is done."
+    );
+}
+
+#[test]
+fn a_sync_that_edits_blocked_by_and_completes_a_blocker_is_judged_before_and_after() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"blocker edits"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["lead", "peer1"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runtime":"custom",
+                "command":["sh"],
+                "enabled":false,
+                "by":"user"
+            }),
+        );
+    }
+    let sync = |ops: Value| {
+        call(
+            &home,
+            "context_sync",
+            json!({"group_id":group_id,"by":"lead","ops":ops}),
+        )
+    };
+    sync(json!([
+        {"op":"task.create","title":"schema","assignee":"lead"},
+        {"op":"task.create","title":"release","assignee":"peer1","blocked_by":["T001"]},
+        {"op":"task.create","title":"migration","assignee":"lead"},
+        {"op":"task.create","title":"docs","assignee":"peer1"},
+    ]));
+    let notices = || {
+        let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+        cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger path"))
+            .expect("ledger")
+            .into_iter()
+            .filter(|event| event.kind == "system.notify" && event.data["kind"] == "task_unblocked")
+            .collect::<Vec<_>>()
+    };
+
+    // T002 was held by T001. One sync drops T001 from its list and completes
+    // T001: T002 was blocked before and is free after, so its assignee hears.
+    sync(json!([
+        {"op":"task.update","task_id":"T002","blocked_by":[]},
+        {"op":"task.move","task_id":"T001","status":"done"},
+    ]));
+    let told = notices();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].data["target_actor_id"], "peer1");
+    assert_eq!(told[0].data["context"]["task_id"], "T002");
+    assert_eq!(told[0].data["context"]["blockers_done"], json!(["T001"]));
+
+    // T004 was free. One sync adds T003 to its list and completes T003: T004
+    // was never blocked, so nobody is told it is unblocked.
+    sync(json!([
+        {"op":"task.update","task_id":"T004","blocked_by":["T003"]},
+        {"op":"task.move","task_id":"T003","status":"done"},
+    ]));
+    assert_eq!(notices().len(), 1, "{:?}", notices());
+}

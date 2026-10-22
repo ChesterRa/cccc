@@ -5130,7 +5130,7 @@ Args:
   statuses?: string // comma-separated statuses for an atomic multi-column page
   query?: string
   assignee?: string // use "__unassigned__" for tasks without an assignee
-  attention?: "blocked" | "waiting_user" | "handoff" | "unassigned"
+  attention?: "blocked" | "ready" | "waiting_user" | "handoff" | "unassigned"
   offset?: number
   limit?: number // 1..100
   include_index?: boolean
@@ -5164,6 +5164,7 @@ Result:
   facets: {
     status_counts: Record<string, number>
     blocked: number
+    ready: number
     waiting_user: number
     pending_handoffs: number
     unassigned: number
@@ -5185,6 +5186,7 @@ Result:
   facets: {
     status_counts: Record<string, number>
     blocked: number
+    ready: number
     waiting_user: number
     pending_handoffs: number
     unassigned: number
@@ -5213,7 +5215,23 @@ Notes:
   task detail.
 - Filters are applied before pagination. Planned tasks sort newest-created first;
   other columns sort most-recently-updated first, with numeric task id as a stable
-  tie-breaker.
+  tie-breaker. `attention=ready` sorts oldest-created first, so the next task to
+  take comes first.
+- A blocker is open while the task it names is neither `done` nor `archived`; an
+  entry that names no task stays open. `attention=blocked` (and the `blocked`
+  facet) lists tasks that are not done or archived and have an open blocker or
+  wait on `actor` or `external`. `attention=ready` (and the `ready` facet) lists
+  planned tasks with `waiting_on` unset or `none` and no open blocker.
+- When a committed `context_sync` leaves a task that is not done or archived
+  with no open blocker, while before the sync it had one, and at least one of
+  those earlier blockers entered `done` in the sync, the daemon sends the task's
+  assignee one `system.notify(kind="task_unblocked")` naming the task
+  (`context.task_id`) and those blockers (`context.blockers_done`), related to
+  the batch's `context.sync` event. The task's `blocked_by` and the blockers'
+  statuses are read together as they stood before the sync, and again after
+  it, so a sync that also edits `blocked_by` is judged by the list before and
+  after it. A task released only by an archived blocker or by an edit to its
+  list, a task the sync created, and a task without an assignee get no notice.
 - `offset` requires `limit`. `tasks_version` is the task-specific revision, not
   the broader context revision. Clients MUST discard a continuation response
   and restart all loaded pages when it differs from the initial page revision.
