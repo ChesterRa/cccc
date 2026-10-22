@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum TurnObservation {
     Working { since: Option<String> },
-    Idle,
+    Idle { since: Option<String> },
     Unknown { why: &'static str },
 }
 
@@ -139,7 +139,7 @@ pub(super) fn fields(
 ) -> (String, String, Option<String>, Option<String>) {
     let (state, since) = match observation {
         TurnObservation::Working { since } => ("working", since),
-        TurnObservation::Idle => ("idle", Some(cccc_contracts::utc_now())),
+        TurnObservation::Idle { since } => ("idle", since),
         TurnObservation::Unknown { .. } => {
             unreachable!("Unknown falls through before field construction")
         }

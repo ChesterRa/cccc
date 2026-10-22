@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 pub(super) struct Hermes {
     // Learned only from a live owned lease, never from session id/cwd similarity.
     sessions: BTreeMap<String, Process>,
+    database_identity: Option<(u64, u64)>,
 }
 
 impl Hermes {
@@ -30,6 +31,7 @@ impl Hermes {
                         | "generation_changed"
                         | "process_unavailable"
                         | "process_not_live"
+                        | "database_replaced"
                 ) {
                     self.sessions.clear();
                 }
@@ -48,11 +50,17 @@ impl Hermes {
         if !now.is_finite() {
             return Err("clock_invalid");
         }
+        let identity = database_identity(path)?;
+        if self.database_identity.is_some_and(|old| old != identity) {
+            self.database_identity = Some(identity);
+            return Err("database_replaced");
+        }
         let db = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(|_| "database_unavailable")?;
+        db.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH, 8192);
         db.busy_timeout(Duration::from_millis(25))
             .map_err(|_| "database_unavailable")?;
         let deadline = Instant::now() + Duration::from_millis(50);
@@ -89,6 +97,9 @@ impl Hermes {
         let mut working_since: Option<f64> = None;
         let mut learned = self.sessions.clone();
         for (session, holder, acquired, expiry) in leases {
+            if Instant::now() >= deadline {
+                return Err("probe_budget");
+            }
             if !acquired.is_finite() || !expiry.is_finite() || expiry < acquired {
                 return Err("lease_invalid");
             }
@@ -124,6 +135,9 @@ impl Hermes {
         // Recheck every provider identity. A dead/reused holder is never proof of idle.
         let mut live_sessions = 0;
         for (session, bound) in &learned {
+            if Instant::now() >= deadline {
+                return Err("probe_budget");
+            }
             let current = owned(processes, root, bound.pid)?.ok_or("holder_left_tree")?;
             if current.start != bound.start || current.namespace != bound.namespace {
                 return Err("holder_generation_mismatch");
@@ -146,20 +160,41 @@ impl Hermes {
         }
         db.execute_batch("ROLLBACK")
             .map_err(|_| "database_unavailable")?;
+        if database_identity(path)? != identity {
+            return Err("database_replaced");
+        }
         if Instant::now() >= deadline {
             return Err("probe_budget");
         }
         self.sessions = learned;
+        self.database_identity = Some(identity);
         if let Some(since) = working_since {
             Ok(TurnObservation::Working {
                 since: timestamp(since),
             })
         } else if live_sessions > 0 {
-            Ok(TurnObservation::Idle)
+            Ok(TurnObservation::Idle {
+                since: timestamp(now),
+            })
         } else {
             Err("session_not_bound")
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn database_identity(path: &Path) -> Result<(u64, u64), &'static str> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(path).map_err(|_| "database_unavailable")?;
+    if !metadata.is_file() {
+        return Err("database_not_regular");
+    }
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn database_identity(_path: &Path) -> Result<(u64, u64), &'static str> {
+    Err("database_identity_unsupported")
 }
 
 fn timestamp(seconds: f64) -> Option<String> {

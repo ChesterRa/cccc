@@ -92,10 +92,10 @@ fn real_lease_is_working_then_provider_expiry_is_idle_only_after_binding() {
         )
         .expect("expiry");
     // Replay at the provider's own expiry; no invented lease or session rows.
-    assert_eq!(
+    assert!(matches!(
         probe.observe(&path, &capture, &root, last_expiry + 1.0),
-        TurnObservation::Idle
-    );
+        TurnObservation::Idle { .. }
+    ));
     assert!(
         matches!(
             hermes::Hermes::default().observe(&path, &capture, &root, last_expiry + 1.0),
@@ -129,6 +129,76 @@ fn foreign_lease_cannot_establish_an_actor_binding() {
         hermes::Hermes::default().observe(&path, &capture, &root, capture.now()),
         TurnObservation::Unknown { .. }
     ));
+}
+
+#[test]
+fn several_real_sessions_require_every_owned_lease_to_expire_before_idle() {
+    let capture = Capture::load();
+    let parent = capture
+        .read(capture.root().parent)
+        .expect("captured common ancestor");
+    let path = fixture("during.sqlite3");
+    let mut probe = hermes::Hermes::default();
+    assert!(matches!(
+        probe.observe(&path, &capture, &parent, capture.now()),
+        TurnObservation::Working { .. }
+    ));
+    let db = Connection::open(&path).expect("fixture");
+    let expiry: (f64, f64) = db
+        .query_row(
+            "SELECT MIN(expires_at),MAX(expires_at) FROM session_turn_leases WHERE expires_at>?1",
+            [capture.now()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("provider expiries");
+    assert!(
+        expiry.0 < expiry.1,
+        "capture includes distinct live lease expiries"
+    );
+    assert!(
+        matches!(
+            probe.observe(&path, &capture, &parent, (expiry.0 + expiry.1) / 2.0),
+            TurnObservation::Working { .. }
+        ),
+        "one expired lease cannot make several bound sessions idle"
+    );
+    assert!(matches!(
+        probe.observe(&path, &capture, &parent, expiry.1 + 1.0),
+        TurnObservation::Idle { .. }
+    ));
+}
+
+#[test]
+fn replacing_the_provider_database_discards_the_prior_session_binding() {
+    let capture = Capture::load();
+    let (_temp, path) = copy_database();
+    let mut probe = hermes::Hermes::default();
+    assert!(matches!(
+        probe.observe(&path, &capture, &capture.root(), capture.now()),
+        TurnObservation::Working { .. }
+    ));
+    let later: f64 = Connection::open(&path)
+        .expect("copy")
+        .query_row(
+            "SELECT MAX(expires_at)+1 FROM session_turn_leases",
+            [],
+            |row| row.get(0),
+        )
+        .expect("expiry");
+    let replacement = path.with_extension("replacement");
+    std::fs::copy(fixture("during.sqlite3"), &replacement).expect("real capture copy");
+    std::fs::rename(replacement, &path).expect("replace database");
+    assert!(matches!(
+        probe.observe(&path, &capture, &capture.root(), later),
+        TurnObservation::Unknown { .. }
+    ));
+    assert!(
+        matches!(
+            probe.observe(&path, &capture, &capture.root(), later),
+            TurnObservation::Unknown { .. }
+        ),
+        "matching old rows in a different database are not a positive process binding"
+    );
 }
 
 #[test]

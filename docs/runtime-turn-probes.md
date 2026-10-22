@@ -25,7 +25,8 @@ message, prompt or response columns are selected.
 An unexpired CLI lease counts as working only when its holder's PID namespace
 and ancestry match the owned PTY generation. PID/start-time checks reject
 reused identities; a lease acquired before that process was born cannot bind
-it. Bindings are in memory and are discarded on a new terminal generation.
+it. Bindings are in memory and are discarded on a new terminal generation or
+replacement of the provider's database file. Oversized metadata is rejected.
 
 Idle requires a previously bound session row that is still open, a still-live
 holder with the same process identity, and no active owned lease. A freshly

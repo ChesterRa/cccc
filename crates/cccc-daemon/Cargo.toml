@@ -26,7 +26,7 @@ regex.workspace = true
 same-file.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
-rusqlite = { version = "0.32.1", features = ["bundled", "hooks"] }
+rusqlite = { version = "0.32.1", features = ["bundled", "hooks", "limits"] }
 tokio-rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
