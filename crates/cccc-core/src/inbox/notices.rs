@@ -5,7 +5,9 @@
 use super::*;
 use std::collections::HashSet;
 
-type MailClaims = HashMap<(String, String), Vec<(String, Vec<String>)>>;
+// Each Mail notice by its own id, with its time: a withdrawn notice was never
+// sent and must not stop the next one, and its time bounds how long it stands.
+type MailClaims = HashMap<(String, String), Vec<(String, String, Vec<String>)>>;
 
 #[derive(Default)]
 pub(crate) struct NoticeState {
@@ -187,7 +189,7 @@ impl NoticeState {
                     self.mail_claims
                         .entry((actor.to_owned(), created.to_owned()))
                         .or_default()
-                        .push((event.id.clone(), ids));
+                        .push((event.id.clone(), event.ts.clone(), ids));
                 } else {
                     self.reply_claims.extend(
                         ids.into_iter()
@@ -309,12 +311,17 @@ impl NoticeState {
                     .into_iter()
                     .flatten()
                     .rev()
-                    .filter(|(id, _)| {
+                    .filter(|(id, _, _)| {
                         self.deliveries
                             .get(&(id.clone(), actor.id.clone()))
                             .is_none_or(|v| v.0 != "withdrawn")
                     })
-                    .any(|(_, claimed)| {
+                    // A delivered notice is not a read one: once it is `repeat`
+                    // old, Mail still waiting is announced again.
+                    .filter(|(_, at, _)| {
+                        mail_delays.repeat <= 0 || now - timestamp(at, now) < mail_delays.repeat
+                    })
+                    .any(|(_, _, claimed)| {
                         let claimed = claimed
                             .iter()
                             .filter(|id| self.positions.contains_key(*id))

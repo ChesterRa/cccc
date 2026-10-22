@@ -459,6 +459,7 @@ fn due_unread_notices(
         MailDelays {
             busy: mail_after,
             idle: mail_idle_after,
+            repeat: delivery_timing_value(group, "mail_notice_repeat_seconds", 0),
             idle_actor_ids,
             now: pass == UnreadPass::IdleMailNow,
         },
@@ -477,6 +478,7 @@ fn due_unread_notices(
                 MailDelays {
                     busy: mail_after,
                     idle: mail_idle_after,
+                    repeat: delivery_timing_value(group, "mail_notice_repeat_seconds", 0),
                     idle_actor_ids,
                     now: pass == UnreadPass::IdleMailNow,
                 },
@@ -522,10 +524,12 @@ fn issue_notices(
 /// waits `busy`; once the actor is idle it only waits `idle`, which batches a
 /// burst of Mail into one notice. `busy <= 0` turns Mail notices off; `idle <= 0`
 /// turns early notices off. With `now`, an idle actor is notified at once: the
-/// pass that runs as Mail is written.
+/// pass that runs as Mail is written. A notice only stands for `repeat` seconds
+/// when that is above zero: Mail still waiting after it is announced again.
 pub(crate) struct MailDelays<'a> {
     pub(crate) busy: i64,
     idle: i64,
+    pub(crate) repeat: i64,
     idle_actor_ids: &'a HashSet<String>,
     now: bool,
 }
@@ -573,8 +577,8 @@ fn unread_notices(
     let mut deliveries = HashMap::<(String, String), (String, i64, usize)>::new();
     let mut actor_resumes = HashMap::<String, i64>::new();
     // Each Mail notice, keyed by its own event id: a withdrawn notice was never
-    // sent and must not stop the next one.
-    let mut mail_claims = HashMap::<(String, String), Vec<(String, Vec<String>)>>::new();
+    // sent and must not stop the next one. Its time bounds how long it stands.
+    let mut mail_claims = HashMap::<(String, String), Vec<(String, i64, Vec<String>)>>::new();
     let mut reply_claims = HashSet::<(String, String, String)>::new();
     for (position, event) in events.iter().enumerate() {
         match event.kind.as_str() {
@@ -650,7 +654,7 @@ fn unread_notices(
                     mail_claims
                         .entry((actor_id.into(), created_at.into()))
                         .or_default()
-                        .push((event.id.clone(), source_ids));
+                        .push((event.id.clone(), timestamp(&event.ts, now), source_ids));
                 } else {
                     reply_claims.extend(
                         source_ids
@@ -765,12 +769,17 @@ fn unread_notices(
                 .into_iter()
                 .flatten()
                 .rev()
-                .filter(|(notice_id, _)| {
+                .filter(|(notice_id, _, _)| {
                     deliveries
                         .get(&(notice_id.clone(), actor.id.clone()))
                         .is_none_or(|(state, _, _)| state != "withdrawn")
                 })
-                .any(|(_, claimed)| {
+                // A delivered notice is not a read one: once it is `repeat` old,
+                // Mail still waiting is announced again.
+                .filter(|(_, noticed_at, _)| {
+                    mail_delays.repeat <= 0 || now - noticed_at < mail_delays.repeat
+                })
+                .any(|(_, _, claimed)| {
                     let claimed = claimed
                         .iter()
                         .filter(|source| positions.contains_key(*source))
