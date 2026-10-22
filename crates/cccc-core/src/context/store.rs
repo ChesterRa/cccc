@@ -74,8 +74,16 @@ impl ContextStore {
                 return Err(io::Error::other("version_conflict"));
             }
             let mut document = before.clone();
-            let changes = apply_all(&mut document, operations, by, authorize)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+            let changes = apply_all(&mut document, operations, by, authorize).map_err(|error| {
+                if error
+                    .get_ref()
+                    .is_some_and(|cause| cause.is::<super::TaskConflict>())
+                {
+                    error
+                } else {
+                    io::Error::new(io::ErrorKind::InvalidInput, error)
+                }
+            })?;
             yaml_storage::touch_updated_at(&mut document);
             let version = if dry_run {
                 current_version

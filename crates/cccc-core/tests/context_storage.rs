@@ -34,7 +34,7 @@ fn legacy_migration_preserves_resolved_canonical_relationships() {
             }
             _ => {}
         }
-        let dependency = json!({"id":"T002", "title":"canonical dependency"});
+        let mut dependency = json!({"id":"T002", "title":"canonical dependency"});
         for task in [
             owner.clone(),
             dependency.clone(),
@@ -66,6 +66,9 @@ fn legacy_migration_preserves_resolved_canonical_relationships() {
 
         let contexts = ContextStore::new(home).expect("contexts");
         let actual = contexts.load(&group.group_id).expect("migration");
+        // Read projections expose revision zero without rewriting legacy files.
+        owner["rev"] = json!(0);
+        dependency["rev"] = json!(0);
         let find = |id: &str| {
             actual
                 .tasks
