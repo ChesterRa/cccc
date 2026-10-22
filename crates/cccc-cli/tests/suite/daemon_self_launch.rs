@@ -5,6 +5,84 @@ use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+// These black-box cases also run unchanged against the stock daemon as the
+// missing-feature reference. Only the CLI's public IPC interface is used.
+#[test]
+fn host_disk_diagnostic_is_sampled_without_any_group() {
+    with_disk_daemon(|home| {
+        std::thread::sleep(Duration::from_millis(100));
+        let diagnostic = wait_disk_sample(home);
+        assert!(diagnostic["space"]["total_bytes"].as_u64().is_some());
+        assert!(diagnostic["space"]["available_bytes"].as_u64().is_some());
+        assert!(diagnostic["sampled_at"].as_str().is_some());
+        assert_eq!(diagnostic["sample_interval_seconds"], 60);
+        assert!(
+            std::fs::read_dir(home.join("groups"))
+                .expect("group directory")
+                .next()
+                .is_none(),
+            "the host diagnostic must not require a Group"
+        );
+    });
+}
+
+#[test]
+fn host_disk_diagnostic_status_polling_does_not_resample() {
+    with_disk_daemon(|home| {
+        let initial = wait_disk_sample(home);
+        for _ in 0..8 {
+            let current = disk_ping(home);
+            assert_eq!(current["attempts"], initial["attempts"]);
+            assert_eq!(current["sampled_at"], initial["sampled_at"]);
+            assert_eq!(current["space"], initial["space"]);
+        }
+    });
+}
+
+fn with_disk_daemon(check: impl FnOnce(&Path)) {
+    let temp = tempfile::tempdir().expect("home");
+    let home = temp.path().join("home");
+    let executable = Path::new(env!("CARGO_BIN_EXE_cccc"));
+    let start = run(executable, &home, &["daemon", "start"]);
+    assert!(start.status.success(), "start: {}", detail(&start));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(&home)));
+    let stop = run(executable, &home, &["daemon", "stop"]);
+    wait_for_daemon_exit(&home);
+    assert!(stop.status.success(), "stop: {}", detail(&stop));
+    assert_daemon_lock_released(&home);
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
+}
+
+fn disk_ping(home: &Path) -> serde_json::Value {
+    let layout = cccc_core::HomeLayout::from_path(home).expect("home layout");
+    let response = tokio::runtime::Runtime::new()
+        .expect("RPC runtime")
+        .block_on(
+            cccc_client::DaemonClient::new(layout).call(&cccc_contracts::DaemonRequest {
+                v: 1,
+                op: "ping".into(),
+                args: Default::default(),
+            }),
+        )
+        .expect("actual daemon ping");
+    assert!(response.ok, "ping succeeds");
+    response.result["diagnostics"]["disk"].clone()
+}
+
+fn wait_disk_sample(home: &Path) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let value = disk_ping(home);
+        if value["attempts"].as_u64().is_some_and(|count| count > 0) {
+            return value;
+        }
+        assert!(Instant::now() < deadline, "host disk diagnostic is missing");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn installed_cli_starts_daemon_without_a_sibling_daemon_binary() {
     let temp = tempfile::tempdir().expect("tempdir");

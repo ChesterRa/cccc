@@ -367,12 +367,42 @@ Result:
   compatibility?: string;
   build?: { source_id: string };
   executable?: string | null;
+  diagnostics?: {
+    disk: {
+      state: "unknown" | "healthy" | "low" | "unavailable";
+      sample_interval_seconds: number;
+      low_bytes: number;
+      recovery_bytes: number;
+      attempts: number;
+      last_attempt_at: string | null;
+      sampled_at: string | null;
+      space: { available_bytes: number; total_bytes: number } | null;
+      error: string | null;
+    } | null;
+  };
 }
 ```
 
 Notes:
 - SDK-compatible daemons MUST return `ipc_v: 1`; omitting it is interpreted as IPC version `0`.
 - The bundled daemon MUST identify its implementation as `rust`.
+- `diagnostics.disk` is passive host information for the filesystem containing
+  `CCCC_HOME`, sampled once on daemon startup and every 60 seconds thereafter.
+  One daemon-owned sampler runs independently of Groups, notice ticks and
+  status requests; missed intervals are skipped. Reading `ping` never samples.
+  Available bytes are those allocatable by the daemon's user, excluding
+  filesystem reservations that user cannot allocate. There is no disk Mail,
+  foreman notice, notification owner, ledger event or notice-policy change.
+- The diagnostic enters `low` below 3 GiB available and returns to `healthy`
+  at or above 4 GiB. The 1 GiB recovery margin prevents flapping near the low
+  boundary; these diagnostic constants and the cadence are exposed in every
+  sample. They impose no write admission or free-space requirement.
+  A failed probe sets `unavailable` with an error, retaining the last successful
+  sample, its `sampled_at`, and the previous low/recovery state. Only a successful
+  sample can establish recovery. `last_attempt_at` and `attempts` include failed
+  probes. Before the first result the state is `unknown`; timestamps and space
+  are null. A null disk object means no active sampler in that process/home.
+  Samples are in memory and reset when the daemon exits. No disk cache is written.
 - `compatibility`, when present, is an implementation-specific compatibility identity; clients MUST NOT infer compatibility from the implementation name alone.
 - SDK-compatible daemons MUST return a `capabilities` feature map. The native
   daemon advertises supported `events_stream`, `remote_access`, optional

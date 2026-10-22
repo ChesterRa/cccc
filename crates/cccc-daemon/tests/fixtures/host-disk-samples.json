@@ -1,0 +1,32 @@
+[
+  {
+    "id": "volume_a",
+    "captured_at": "2026-10-22T19:21:11.793841+00:00",
+    "f_frsize": 4096,
+    "f_blocks": 78687103,
+    "f_bavail": 9616834,
+    "f_bfree": 12827970,
+    "available_bytes": 39390552064,
+    "total_bytes": 322302373888
+  },
+  {
+    "id": "volume_b",
+    "captured_at": "2026-10-22T19:21:11.793878+00:00",
+    "f_frsize": 4096,
+    "f_blocks": 802229,
+    "f_bavail": 801974,
+    "f_bfree": 801974,
+    "available_bytes": 3284885504,
+    "total_bytes": 3285929984
+  },
+  {
+    "id": "volume_c",
+    "captured_at": "2026-10-22T19:22:11.226861+00:00",
+    "f_frsize": 4096,
+    "f_blocks": 1280,
+    "f_bavail": 1280,
+    "f_bfree": 1280,
+    "available_bytes": 5242880,
+    "total_bytes": 5242880
+  }
+]

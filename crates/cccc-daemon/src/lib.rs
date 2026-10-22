@@ -16,6 +16,7 @@ mod server_automation;
 mod server_connection;
 mod server_connections;
 mod server_events_stream;
+mod server_host_disk;
 mod server_lifecycle;
 mod server_terminal_attach;
 
