@@ -1,59 +1,19 @@
 use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
-use std::time::Duration;
 
-/// A terminal (PTY) Actor without a managed session reports no turns. The
-/// daemon reads every byte the process writes to its terminal, so output this
-/// recent is the runtime-independent evidence that it is working.
-/// `CCCC_PTY_ACTIVE_WINDOW_SECONDS` overrides it (1..=600).
-const DEFAULT_PTY_ACTIVE_WINDOW: Duration = Duration::from_secs(10);
-
-fn pty_active_window() -> Duration {
-    std::env::var("CCCC_PTY_ACTIVE_WINDOW_SECONDS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .map_or(DEFAULT_PTY_ACTIVE_WINDOW, |seconds| {
-            Duration::from_secs(seconds.clamp(1, 600))
-        })
-}
-
-pub(super) struct PtyOutputActivity {
-    pub state: &'static str,
-    pub reason: &'static str,
-    pub last_output_at: Option<String>,
-    pub idle_seconds: Option<u64>,
-}
-
-pub(super) fn pty_output_activity(
-    group_id: &str,
-    actor_id: &str,
-    window: Duration,
-) -> PtyOutputActivity {
-    let Some(quiet) = cccc_runtime::since_last_output(group_id, actor_id)
-        .ok()
-        .flatten()
-    else {
-        return PtyOutputActivity {
-            state: "waiting",
-            reason: "pty_running_state_unknown",
-            last_output_at: None,
-            idle_seconds: None,
-        };
+/// When a live terminal session last wrote output, for display only. Output
+/// does not establish whether the process is working: a model can compute
+/// silently, and a spinner or a waiting prompt can keep printing. The working
+/// state therefore never reads these values.
+fn pty_output_observation(group_id: &str, actor_id: &str) -> (Value, Value) {
+    let Ok(Some(observed)) = cccc_runtime::last_output(group_id, actor_id) else {
+        return (Value::Null, Value::Null);
     };
-    let (state, reason) = if quiet <= window {
-        ("working", "pty_output_recent")
-    } else {
-        ("idle", "pty_output_quiet")
-    };
-    PtyOutputActivity {
-        state,
-        reason,
-        last_output_at: chrono::Duration::from_std(quiet).ok().map(|quiet| {
-            (chrono::Utc::now() - quiet).to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
-        }),
-        idle_seconds: Some(quiet.as_secs()),
-    }
+    let last_output_at = chrono::DateTime::<chrono::Utc>::from(observed.last_output_at)
+        .to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+    let quiet_seconds = observed.quiet_for.as_secs();
+    (Value::String(last_output_at), json!(quiet_seconds))
 }
 
 pub fn runtime_actor_fields(
@@ -89,7 +49,6 @@ pub(super) fn fields(
     let local_state = running
         .then(|| super::local_headless::status(group_id, &actor.id))
         .flatten();
-    let mut idle_seconds = None;
     let (state, reason, updated_at, active_task_id) = if !running {
         (
             "stopped".to_owned(),
@@ -146,22 +105,27 @@ pub(super) fn fields(
     } else if runner_effective == "headless" {
         ("idle".to_owned(), "headless_running".to_owned(), None, None)
     } else {
-        let activity = pty_output_activity(group_id, &actor.id, pty_active_window());
-        idle_seconds = activity.idle_seconds;
         (
-            activity.state.to_owned(),
-            activity.reason.to_owned(),
-            activity.last_output_at,
+            "waiting".to_owned(),
+            "pty_running_state_unknown".to_owned(),
+            None,
             None,
         )
     };
+    let (pty_last_output_at, pty_quiet_seconds) = if running && runner_effective == "pty" {
+        pty_output_observation(group_id, &actor.id)
+    } else {
+        (Value::Null, Value::Null)
+    };
 
     Map::from_iter([
-        ("idle_seconds".into(), json!(idle_seconds)),
+        ("idle_seconds".into(), Value::Null),
         ("runner_effective".into(), json!(runner_effective)),
         ("effective_working_state".into(), json!(state)),
         ("effective_working_reason".into(), json!(reason)),
         ("effective_working_updated_at".into(), json!(updated_at)),
         ("effective_active_task_id".into(), json!(active_task_id)),
+        ("pty_last_output_at".into(), pty_last_output_at),
+        ("pty_quiet_seconds".into(), pty_quiet_seconds),
     ])
 }

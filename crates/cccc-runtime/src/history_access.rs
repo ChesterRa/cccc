@@ -1,7 +1,7 @@
 use crate::RuntimeError;
 use crate::output::HistoryPage;
 use crate::registry::{completed_history, lookup, with_session};
-use std::time::Duration;
+use crate::session_history::OutputObservation;
 
 pub fn history(
     group_id: &str,
@@ -66,14 +66,17 @@ pub fn active_history_since(
         .active_page_since(after, limit)
 }
 
-/// Time since the live session's process last wrote to its terminal, or `None`
-/// before its first output. A restarted process starts a new session.
-pub fn since_last_output(group_id: &str, actor_id: &str) -> Result<Option<Duration>, RuntimeError> {
+/// When the live session's process last wrote to its terminal, or `None` before
+/// its first output. A new session starts without an observation.
+pub fn last_output(
+    group_id: &str,
+    actor_id: &str,
+) -> Result<Option<OutputObservation>, RuntimeError> {
     lookup(group_id, actor_id)?
         .lock()
         .map_err(|_| RuntimeError::Poisoned)?
         .history_handle()
-        .since_last_output()
+        .last_output()
 }
 
 pub fn active_history_replay(
