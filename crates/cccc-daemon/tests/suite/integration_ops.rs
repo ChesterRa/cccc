@@ -1428,6 +1428,89 @@ fn rust_daemon_provider_auth_mutations_do_not_report_synthetic_lifecycle() {
     assert_eq!(invalid.error.expect("invalid action").code, "invalid_args");
 }
 
+#[test]
+fn a_foreman_retrying_a_tree_after_a_lost_reply_gets_the_same_tasks() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"client ids"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["lead", "peer1"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runtime":"custom",
+                "command":["sh"],
+                "enabled":false,
+                "by":"user"
+            }),
+        );
+    }
+    let tree = json!({
+        "group_id":group_id,
+        "by":"lead",
+        "ops":[
+            {"op":"task.create","title":"ship the release","client_request_id":"release"},
+            {"op":"task.create","title":"build","client_request_id":"build",
+                "parent_ref":"release","assignee":"peer1"},
+            {"op":"task.create","title":"publish","client_request_id":"publish",
+                "parent_ref":"release","blocked_by_refs":["build"],"assignee":"peer1"},
+        ],
+    });
+    let task_ids = |response: &DaemonResponse| {
+        response.result["changes"]
+            .as_array()
+            .expect("changes")
+            .iter()
+            .map(|change| change["task_id"].clone())
+            .collect::<Vec<_>>()
+    };
+    let first = call(&home, "context_sync", tree.clone());
+    assert_eq!(
+        task_ids(&first),
+        [json!("T001"), json!("T002"), json!("T003")]
+    );
+    let retried = call(&home, "context_sync", tree);
+    assert_eq!(task_ids(&retried), task_ids(&first));
+    assert!(
+        retried.result["changes"]
+            .as_array()
+            .expect("changes")
+            .iter()
+            .all(|change| change["replayed"] == true)
+    );
+    let context = cccc_core::context::ContextStore::new(home.clone())
+        .expect("context store")
+        .load(group_id)
+        .expect("context");
+    assert_eq!(context.tasks.len(), 3, "one tree, not two");
+    assert_eq!(context.tasks[2]["parent_id"], "T001");
+    assert_eq!(context.tasks[2]["blocked_by"], json!(["T002"]));
+
+    let foreign = raw_call(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,
+            "by":"peer1",
+            "ops":[{"op":"task.create","title":"test","parent_ref":"release"}],
+        }),
+    );
+    let error = foreign.error.expect("a peer cannot use the foreman's ids");
+    assert_eq!(error.code, "invalid_args");
+    assert!(
+        error
+            .message
+            .contains("task ref release names no task created by peer1"),
+        "{}",
+        error.message
+    );
+}
+
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     let response = raw_call(home, op, args);
     assert!(response.ok, "{op}: {:?}", response.error);

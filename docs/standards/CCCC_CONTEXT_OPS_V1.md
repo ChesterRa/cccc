@@ -39,6 +39,12 @@ revision is reserved before payload writes so such a failure invalidates prior
 before deciding what to retry; a newer revision alone is not a success receipt.
 Dry runs and rejected batches do not reserve a revision.
 
+New task records are written in their ordered creation sequence before updates
+to previously stored tasks. Creation references resolve to earlier tasks, so a
+new reference target is durable before the create that names it. This ordering
+also applies across task-number digit widths; lexical filename order MUST NOT
+let a dependent create survive alone and replay stale references on retry.
+
 Task numbers are durable identities within a Group. Deleting a task, including
 its unexecuted descendants, MUST NOT make a reserved number available for a later
 task. The existing Context version record retains the allocation high-water mark
@@ -163,6 +169,9 @@ type TaskType =
   task_type?: TaskType
   notes?: string
   checklist?: Array<{ id?: string; text: string; status?: ChecklistStatus }>
+  client_request_id?: string
+  parent_ref?: string
+  blocked_by_refs?: string[]
 }
 ```
 
@@ -171,9 +180,21 @@ Permission: any actor.
 Rules:
 - `title` is required.
 - The daemon assigns the next unused `T<number>` ID. Clients MUST use the assigned
-  ID from authoritative task reads, rather than infer it from the current task
-  count.
+  ID from authoritative task reads, or from the operation's change entry
+  (`task_id`, see §6), rather than infer it from the current task count.
 - If `parent_id` is provided, the parent task MUST exist.
+- `client_request_id` is the caller's own id for the task and is stored on it.
+  If the same caller (`by`) already created a task with that `client_request_id`,
+  the operation creates nothing and its change entry names the existing task
+  with `replayed: true`. The operation's other fields are not compared or
+  applied. A deleted task no longer reserves its `client_request_id`.
+- `parent_ref` names the parent by the `client_request_id` of a task the same
+  caller created, earlier in the same batch or before it. It MUST NOT be
+  combined with `parent_id`. Each `blocked_by_refs` entry is resolved the same
+  way and appended to `blocked_by`. A ref that names no such task MUST reject
+  the batch. One `context_sync` can then create a whole tree, validated as a
+  whole; a retry of that batch, after a lost reply or a storage failure,
+  returns the tasks already written and creates only the missing ones.
 - Peer actors MUST NOT create a task assigned to another peer.
 - If `task_type` is provided, it MUST be one of the allowed task-type ids above.
 - If `task_type` is omitted, the daemon MUST persist `standard` for a root task and `free` for a subtask.
@@ -345,6 +366,9 @@ If `context_sync.args.dry_run == true`, the daemon MUST NOT persist changes and 
 ## 6. Result Notes
 
 `context_sync` returns `changes: Array<{ index, op, detail }>` where `detail` is intended for logs/UI. SDKs SHOULD NOT parse `detail` as a stable machine contract.
+
+A `task.create` entry also carries `task_id`: the task the operation created or,
+for a replayed `client_request_id`, the existing task, with `replayed: true`.
 
 When Group Space is enabled and a curated context change is detected, the daemon MAY also return:
 

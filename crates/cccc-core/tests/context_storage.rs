@@ -373,3 +373,105 @@ fn accepted_create_delete_batch_still_retires_its_task_number() {
         .expect("replacement");
     assert_eq!(result.context.tasks[0]["id"], "T002");
 }
+
+/// One batch creates a whole tree under the caller's own ids, and a retry of
+/// the same batch returns the tasks it created instead of a second tree.
+#[test]
+fn a_retried_tree_batch_returns_the_tasks_it_created() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("client ids", "")
+        .expect("group");
+    let contexts = ContextStore::new(home).expect("contexts");
+    let sync = |by: &str, ops: Vec<Value>| {
+        contexts.sync(
+            &group.group_id,
+            &ops.into_iter().map(op).collect::<Vec<_>>(),
+            None,
+            by,
+            false,
+        )
+    };
+    let tree = || {
+        vec![
+            json!({"op":"task.create","title":"ship the release","client_request_id":"release"}),
+            json!({"op":"task.create","title":"build","client_request_id":"build",
+                "parent_ref":"release"}),
+            json!({"op":"task.create","title":"publish","client_request_id":"publish",
+                "parent_ref":"release","blocked_by_refs":["build"]}),
+        ]
+    };
+    let task_ids = |changes: &[Value]| {
+        changes
+            .iter()
+            .map(|change| change["task_id"].clone())
+            .collect::<Vec<_>>()
+    };
+
+    let first = sync("lead", tree()).expect("tree");
+    assert_eq!(
+        task_ids(&first.changes),
+        [json!("T001"), json!("T002"), json!("T003")]
+    );
+    let tasks = &first.context.tasks;
+    assert_eq!(tasks[1]["parent_id"], "T001");
+    assert_eq!(tasks[2]["parent_id"], "T001");
+    assert_eq!(tasks[2]["blocked_by"], json!(["T002"]));
+    assert_eq!(tasks[2]["client_request_id"], "publish");
+    assert!(tasks[2].get("parent_ref").is_none() && tasks[2].get("blocked_by_refs").is_none());
+
+    let retry = sync("lead", tree()).expect("retry");
+    assert_eq!(retry.context.tasks.len(), 3, "the retry creates nothing");
+    assert_eq!(task_ids(&retry.changes), task_ids(&first.changes));
+    assert!(retry.changes.iter().all(|c| c["replayed"] == true));
+
+    // The ids are each caller's own: another caller gets its own task, and
+    // cannot hang work under the first caller's tasks by their ids.
+    let other = sync(
+        "peer1",
+        vec![json!({"op":"task.create","title":"ship the release","client_request_id":"release"})],
+    )
+    .expect("another caller");
+    assert_eq!(other.changes[0]["task_id"], "T004");
+    assert!(other.changes[0].get("replayed").is_none());
+    let foreign = sync(
+        "peer1",
+        vec![json!({"op":"task.create","title":"test","parent_ref":"build"})],
+    )
+    .expect_err("not peer1's id");
+    assert!(
+        foreign
+            .to_string()
+            .contains("task ref build names no task created by peer1"),
+        "{foreign}"
+    );
+    let both = sync(
+        "lead",
+        vec![json!({"op":"task.create","title":"x","parent_id":"T001","parent_ref":"release"})],
+    )
+    .expect_err("one parent");
+    assert!(
+        both.to_string().contains("parent_id or parent_ref"),
+        "{both}"
+    );
+    assert_eq!(
+        contexts.load(&group.group_id).expect("context").tasks.len(),
+        4,
+        "rejected batches write nothing"
+    );
+
+    // A deleted task no longer holds its id.
+    sync("lead", vec![json!({"op":"task.delete","task_id":"T003"})]).expect("delete");
+    let again = sync(
+        "lead",
+        vec![
+            json!({"op":"task.create","title":"publish","client_request_id":"publish",
+                "parent_ref":"release"}),
+        ],
+    )
+    .expect("recreate");
+    assert_eq!(again.changes[0]["task_id"], "T005");
+    assert!(again.changes[0].get("replayed").is_none());
+}
