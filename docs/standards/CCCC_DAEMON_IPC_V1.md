@@ -4606,7 +4606,10 @@ batch to its initial notice plus that many repeats (default 3). A batch is the
 ordered set of still-pending Mail IDs; a changed set starts a fresh budget.
 The cap is per pending batch, not per individual Mail: partial resolution
 also changes the batch and starts a new budget.
-Issued attempts, including withdrawn notices, consume this budget. The count
+Issued attempts, including withdrawn notices, consume this budget. A peer
+that stays busy can remain un-notified for that Mail after all max+1 attempts
+are withdrawn; the finite cap does not guarantee eventual notice delivery.
+The count
 is reconstructed from notice records after restart and survives claim pruning.
 A withdrawn notice does not hold back the next attempt for the repeat
 interval; the explicit batch attempt budget still applies. Expired and
