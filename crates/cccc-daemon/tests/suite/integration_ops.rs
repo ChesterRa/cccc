@@ -1533,3 +1533,68 @@ fn actor_removal_returns_its_open_tasks_to_the_board() {
         2
     );
 }
+
+#[test]
+fn task_revision_is_exposed_and_conflicts_name_the_recorded_task() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let created = call(&home, "group_create", json!({"title":"revision API"}));
+    let id = created.result["group"]["group_id"].as_str().expect("group");
+    let groups = cccc_core::GroupStore::new(home.clone()).expect("groups");
+    let directory = groups
+        .group_dir(id)
+        .expect("group dir")
+        .join("context/tasks");
+    let tasks: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../cccc-core/tests/fixtures/task-revision/tasks.json"
+    ))
+    .expect("recording");
+    for task in tasks {
+        cccc_core::fs::write_yaml(
+            &directory.join(format!("{}.yaml", task["id"].as_str().expect("id"))),
+            &task,
+        )
+        .expect("recorded task");
+    }
+    for detail in ["summary", "full"] {
+        let read = call(&home, "context_get", json!({"group_id":id,"detail":detail}));
+        assert_eq!(read.result["coordination"]["tasks"][0]["rev"], 0);
+    }
+    let read = call(
+        &home,
+        "task_list",
+        json!({"group_id":id,"limit":100,"include_index":true}),
+    );
+    assert!(
+        read.result["tasks"]
+            .as_array()
+            .expect("tasks")
+            .iter()
+            .all(|t| t["rev"] == 0)
+    );
+    assert!(
+        read.result["task_index"]
+            .as_array()
+            .expect("index")
+            .iter()
+            .all(|t| t["rev"] == 0)
+    );
+    call(
+        &home,
+        "context_sync",
+        json!({"group_id":id,"by":"user","ops":[{"op":"agent_state.update","actor_id":"peer","focus":"unrelated context"}]}),
+    );
+    let patch = json!({"group_id":id,"by":"user","ops":[{"op":"task.update","task_id":"T792","waiting_on":"none","if_task_rev":0}]});
+    call(&home, "context_sync", patch.clone());
+    let before = call(&home, "context_get", json!({"group_id":id,"detail":"full"}));
+    let conflict = raw_call(&home, "context_sync", patch);
+    let error = conflict.error.expect("conflict");
+    assert_eq!(error.code, "task_conflict");
+    assert_eq!(error.details["task_id"], "T792");
+    assert_eq!(error.details["expected"], 0);
+    assert_eq!(error.details["actual"], 1);
+    assert_eq!(
+        call(&home, "context_get", json!({"group_id":id,"detail":"full"})).result,
+        before.result
+    );
+}

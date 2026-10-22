@@ -23,7 +23,7 @@ pub(super) fn create(doc: &mut ContextDoc, op: &Map<String, Value>, by: &str) ->
     let waiting_on = enum_value(op, "waiting_on", WAITING_ON)?;
     let mut task = op
         .iter()
-        .filter(|(key, _)| key.as_str() != "op")
+        .filter(|(key, _)| !matches!(key.as_str(), "op" | "if_task_rev" | "rev"))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<Map<_, _>>();
     let number = doc
@@ -110,7 +110,7 @@ pub(super) fn update(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resul
 pub(super) fn move_task(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Result<()> {
     let unexpected = op
         .keys()
-        .filter(|key| !matches!(key.as_str(), "op" | "task_id" | "status"))
+        .filter(|key| !matches!(key.as_str(), "op" | "task_id" | "status" | "if_task_rev"))
         .cloned()
         .collect::<Vec<_>>();
     if !unexpected.is_empty() {

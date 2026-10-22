@@ -146,6 +146,31 @@ type TaskType =
   | "optimization"
 ```
 
+Every task read exposes a daemon-owned unsigned `rev`. Existing task files with
+no stored revision read as `rev: 0` without being rewritten; new tasks start at
+`rev: 1`. A semantic task change advances its revision once per operation,
+including tasks changed indirectly. `rev` and the derived `updated_at` timestamp
+are excluded when detecting an identical patch, which retains both values.
+Revision overflow is rejected before persistence. Clients MUST NOT set `rev`.
+
+Every operation targeting an existing task MAY include `if_task_rev: number`.
+The guard is checked under the Context lock against that operation's preceding
+in-memory result. A mismatch rejects the entire batch with `task_conflict` and
+`details {task_id, expected, actual}`. Unrelated task or agent-state writes do not
+invalidate this guard. A supplied whole-context `if_version` still applies
+independently and is checked first. Invalid guards (including null, negative,
+fractional and string values) are rejected. Dry runs validate/project revisions
+without writing. After any I/O failure reload the task before retrying; task
+files atomically contain their content and revision, but the Context file batch
+is not a multi-file transaction. A delete guard covers its named root, not
+independent revisions of every descendant.
+
+`task.create` has no existing task revision and rejects `if_task_rev`; retry
+identity is separate from revision fencing. Task ID non-reuse prevents a deleted
+task's token from referring to later work. Direct file editors must coordinate
+with the Context writer and maintain revisions; this API cannot fence edits
+that bypass its storage lock and metadata.
+
 #### `task.create`
 
 ```ts
@@ -186,6 +211,7 @@ Rules:
 {
   op: "task.update"
   task_id: string
+  if_task_rev?: number // unsigned revision from the task read
   title?: string
   outcome?: string
   parent_id?: string | null
@@ -214,6 +240,7 @@ Rules:
 {
   op: "task.move"
   task_id: string
+  if_task_rev?: number // unsigned revision from the task read
   status: TaskStatus
 }
 ```
@@ -222,7 +249,7 @@ Permission: assignee / handoff target / foreman / user.
 
 Notes:
 - This is the canonical lifecycle transition op.
-- `task.move` only accepts `task_id` and `status`. Fields such as `outcome`, `notes`, `checklist`, or `task_type` MUST go through `task.update`.
+- `task.move` only accepts `task_id`, `status` and optional `if_task_rev`. Fields such as `outcome`, `notes`, `checklist`, or `task_type` MUST go through `task.update`.
 - Moving to `archived` records `archived_from`.
 - This operation changes only task lifecycle state. It does not implicitly
   rewrite an assignee's `agent_state` or append daily/stable memory.
@@ -230,7 +257,7 @@ Notes:
 #### `task.restore`
 
 ```ts
-{ op: "task.restore"; task_id: string }
+{ op: "task.restore"; task_id: string; if_task_rev?: number }
 ```
 
 Permission: assignee / handoff target / foreman / user.
@@ -241,7 +268,7 @@ Rules:
 #### `task.delete`
 
 ```ts
-{ op: "task.delete"; task_id: string }
+{ op: "task.delete"; task_id: string; if_task_rev?: number }
 ```
 
 Permission: assignee / handoff target / foreman / user. A peer MUST be the

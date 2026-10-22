@@ -4887,6 +4887,12 @@ Result:
 }
 ```
 
+Task reads carry `rev`. Existing-task ops may supply `if_task_rev`; a stale
+revision rejects the batch with `task_conflict` and details naming the task,
+expected revision and actual revision. Unrelated context changes leave this
+token usable. `if_version` remains an independent whole-context guard. See
+`CCCC_CONTEXT_OPS_V1.md` for revision, no-op and batch semantics.
+
 #### `memory_reme_layout_get`
 
 Args:

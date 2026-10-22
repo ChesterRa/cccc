@@ -228,6 +228,7 @@ fn task_action(
                     "task_type",
                     "notes",
                     "checklist",
+                    "if_task_rev",
                 ],
             );
             args.insert("op".into(), Value::String("task.create".into()));
@@ -238,6 +239,7 @@ fn task_action(
                 args.insert("task_type".into(), value);
             }
             let status = args.remove("status");
+            let guard = args.get("if_task_rev").cloned();
             let task_id = args.get("task_id").cloned();
             retain_fields(
                 &mut args,
@@ -254,9 +256,12 @@ fn task_action(
                     "task_type",
                     "notes",
                     "checklist",
+                    "if_task_rev",
                 ],
             );
-            let has_patch = args.keys().any(|key| key != "task_id");
+            let has_patch = args
+                .keys()
+                .any(|key| !matches!(key.as_str(), "task_id" | "if_task_rev"));
             if has_patch || status.is_none() {
                 args.insert("op".into(), Value::String("task.update".into()));
                 operations.push(Value::Object(args));
@@ -268,6 +273,11 @@ fn task_action(
                     movement.insert("task_id".into(), task_id);
                 }
                 movement.insert("status".into(), status);
+                if operations.is_empty()
+                    && let Some(guard) = guard
+                {
+                    movement.insert("if_task_rev".into(), guard);
+                }
                 operations.push(Value::Object(movement));
             }
         }
@@ -275,9 +285,9 @@ fn task_action(
             retain_fields(
                 &mut args,
                 if action_name == "move" {
-                    &["task_id", "status"]
+                    &["task_id", "status", "if_task_rev"]
                 } else {
-                    &["task_id"]
+                    &["task_id", "if_task_rev"]
                 },
             );
             args.insert(
@@ -645,5 +655,27 @@ mod tests {
         let (op, args) = daemon_call("cccc_message_send", args).expect("mapping");
         assert_eq!(op, "reply");
         assert_eq!(args["by"], "backend");
+    }
+
+    #[test]
+    fn task_revision_guard_is_preserved_once_in_compound_updates() {
+        for arguments in [
+            json!({"action":"update","task_id":"T792","waiting_on":"none","status":"active","if_task_rev":0}),
+            json!({"action":"update","task_id":"T792","status":"active","if_task_rev":0}),
+            json!({"action":"move","task_id":"T792","status":"active","if_task_rev":0}),
+            json!({"action":"restore","task_id":"T792","if_task_rev":0}),
+            json!({"action":"delete","task_id":"T792","if_task_rev":0}),
+        ] {
+            let (_, args) = daemon_call("cccc_task", arguments.as_object().expect("args").clone())
+                .expect("mapping");
+            let operations = args["ops"].as_array().expect("ops");
+            assert_eq!(operations[0]["if_task_rev"], 0);
+            assert!(
+                operations
+                    .iter()
+                    .skip(1)
+                    .all(|op| op.get("if_task_rev").is_none())
+            );
+        }
     }
 }

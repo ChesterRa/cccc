@@ -14,7 +14,14 @@ pub fn apply_all(
     for (index, operation) in operations.iter().enumerate() {
         let name = operation.get("op").and_then(Value::as_str).unwrap_or("");
         authorize(document, operation)?;
+        if name.starts_with("task.") {
+            super::task_revision::check(&document.tasks, operation)?;
+        }
+        let tasks = name.starts_with("task.").then(|| document.tasks.clone());
         apply_one(document, name, operation, by)?;
+        if let Some(tasks) = tasks {
+            super::task_revision::advance(&tasks, &mut document.tasks)?;
+        }
         changes.push(json!({"index": index, "op": name, "detail": "applied"}));
     }
     Ok(changes)

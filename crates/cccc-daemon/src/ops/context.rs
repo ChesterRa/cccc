@@ -139,6 +139,10 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(|error| {
             if let Some(error) = denied.take() {
                 error
+            } else if let Some(conflict) = error.get_ref().and_then(|cause| cause.downcast_ref::<cccc_core::context::TaskConflict>()) {
+                let mut failure = OpError::new("task_conflict", conflict.to_string());
+                failure.details = json!({"task_id":conflict.task_id,"expected":conflict.expected,"actual":conflict.actual}).as_object().cloned().unwrap_or_default();
+                failure
             } else if error.to_string() == "version_conflict" {
                 OpError::new("version_conflict", "context version conflict")
             } else if error.kind() == std::io::ErrorKind::InvalidInput {
