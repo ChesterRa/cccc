@@ -53,7 +53,6 @@ const TRANSCRIPT_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const PROMPT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(30);
 const PROMPT_SETTLED_CORRELATION_TIMEOUT: Duration = Duration::from_secs(10);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
-const GONE_CONFIRM: Duration = Duration::from_secs(2);
 const LIVENESS_FAILURE_TIMEOUT: Duration = Duration::from_secs(10);
 const PARTIAL_TAIL_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_LAUNCH_OUTPUT_BYTES: usize = 64 * 1024;
@@ -490,6 +489,19 @@ async fn rollback_started_job(config_dir: &Path, short: &str) -> io::Result<()> 
 }
 
 async fn kill_and_confirm(endpoint: &control::Endpoint, short: &str) -> io::Result<()> {
+    confirm_job_removal(endpoint, short)
+        .await
+        .map_err(unconfirmed_stop)
+}
+
+fn unconfirmed_stop(error: io::Error) -> io::Error {
+    io::Error::new(
+        error.kind(),
+        format!("Claude Agent View stop unconfirmed; ownership retained: {error}"),
+    )
+}
+
+async fn confirm_job_removal(endpoint: &control::Endpoint, short: &str) -> io::Result<()> {
     let mut kill_error = None;
     match control::list(endpoint).await {
         Ok(jobs)
@@ -508,13 +520,9 @@ async fn kill_and_confirm(endpoint: &control::Endpoint, short: &str) -> io::Resu
     }
     let deadline = tokio::time::Instant::now() + STOP_TIMEOUT;
     let mut last_error: Option<io::Error>;
-    // A control endpoint that stays unreachable is gone for good: the task and
-    // its harness are already dead, so that counts as stopped. Agent View jobs
-    // can outlive a brief harness restart, so only an absence sustained past
-    // the confirmation window counts — anything shorter is a restart race.
-    // A missing socket and a socket nobody listens on are both absence, and an
-    // exiting supervisor can show either; only a reply proves the task lives.
-    let mut gone_since: Option<tokio::time::Instant> = None;
+    // Agent View jobs can outlive their control harness. This adapter owns a
+    // job identifier, not a process identity it can verify has exited, so only
+    // a successful authoritative listing without that job confirms removal.
     loop {
         match control::list(endpoint).await {
             Ok(jobs)
@@ -526,18 +534,9 @@ async fn kill_and_confirm(endpoint: &control::Endpoint, short: &str) -> io::Resu
             }
             Ok(_) => {
                 last_error = None;
-                gone_since = None;
-            }
-            Err(error) if control_endpoint_absent(&error) => {
-                last_error = Some(error);
-                let since = gone_since.get_or_insert_with(tokio::time::Instant::now);
-                if since.elapsed() >= GONE_CONFIRM {
-                    return Ok(());
-                }
             }
             Err(error) if retryable_control_error(&error) => {
                 last_error = Some(error);
-                gone_since = None;
             }
             Err(error) => return Err(error),
         }
@@ -550,21 +549,11 @@ async fn kill_and_confirm(endpoint: &control::Endpoint, short: &str) -> io::Resu
                 .unwrap_or_default();
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                format!("Claude Agent View task did not stop{observation}{kill}"),
+                format!("job removal was not confirmed{observation}{kill}"),
             ));
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-}
-
-/// Nothing is serving the control endpoint: its socket is missing, or is left
-/// behind with no listener. Unlike a reset or an aborted connection, neither
-/// shows that a supervisor is still there.
-fn control_endpoint_absent(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
-    )
 }
 
 fn retryable_control_error(error: &io::Error) -> bool {
@@ -940,12 +929,12 @@ impl ClaudeClient {
             tokio::time::timeout(STOP_TIMEOUT + Duration::from_secs(1), receiver)
                 .await
                 .map_err(|_| {
-                    io::Error::new(
+                    unconfirmed_stop(io::Error::new(
                         io::ErrorKind::TimedOut,
-                        "Claude managed-session stop confirmation timed out",
-                    )
+                        "stop confirmation timed out",
+                    ))
                 })?
-                .map_err(|_| closed_error())??;
+                .map_err(|_| unconfirmed_stop(closed_error()))??;
         } else {
             kill_and_confirm(&self.endpoint, &self.short).await?;
         }
@@ -2526,12 +2515,10 @@ mod tests {
         );
     }
 
-    /// A control endpoint whose socket file never existed (task and harness
-    /// already gone) counts as stopped after a short confirmation window
-    /// instead of burning the full stop timeout and failing the shutdown.
+    /// A missing endpoint cannot establish whether the managed job exited.
     #[cfg(unix)]
     #[tokio::test]
-    async fn stop_treats_a_persistently_missing_endpoint_as_stopped() {
+    async fn stop_is_unconfirmed_when_the_endpoint_stays_missing() {
         use sha2::{Digest, Sha256};
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -2560,17 +2547,14 @@ mod tests {
 
         let endpoint = control::Endpoint::resolve(&config_dir).expect("endpoint resolves");
         let started = std::time::Instant::now();
-        kill_and_confirm(&endpoint, "deadbeef")
+        let error = kill_and_confirm(&endpoint, "deadbeef")
             .await
-            .expect("a missing endpoint is already stopped");
+            .expect_err("a missing endpoint cannot confirm job removal");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("stop unconfirmed"), "{error}");
         assert!(
-            started.elapsed() >= GONE_CONFIRM,
-            "a missing endpoint must be confirmed gone first: {:?}",
-            started.elapsed()
-        );
-        assert!(
-            started.elapsed() < STOP_TIMEOUT,
-            "missing endpoint must not wait out the stop timeout: {:?}",
+            started.elapsed() >= STOP_TIMEOUT,
+            "a missing endpoint must allow time for authoritative confirmation: {:?}",
             started.elapsed()
         );
     }
@@ -2616,34 +2600,37 @@ mod tests {
             .await
             .expect_err("a stuck task still fails the stop");
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("stop unconfirmed"), "{error}");
         server.abort();
     }
 
-    /// A control socket left behind by a supervisor that has exited refuses
-    /// connections. Nothing is listening, so nothing can still run the task:
-    /// a refusal sustained past the confirmation window counts as stopped.
+    /// A stale socket is not proof that the managed job has exited. Its owned
+    /// directory is still cleaned by the test's guard after the failed stop.
     #[cfg(unix)]
     #[tokio::test]
-    async fn stop_treats_a_persistently_refused_endpoint_as_stopped() {
+    async fn stop_is_unconfirmed_when_a_stale_socket_refuses_connections() {
         let temp = tempfile::tempdir().expect("tempdir");
         let (config_dir, listener, _guard) = bind_fake_control(&temp.path().join("config"));
         // The socket file outlives its listener, so connecting is refused.
         drop(listener);
         let endpoint = control::Endpoint::resolve(&config_dir).expect("endpoint resolves");
         let started = std::time::Instant::now();
-        kill_and_confirm(&endpoint, "deadbeef")
+        let error = kill_and_confirm(&endpoint, "deadbeef")
             .await
-            .expect("a refused endpoint is already stopped");
-        assert!(started.elapsed() >= GONE_CONFIRM, "{:?}", started.elapsed());
-        assert!(started.elapsed() < STOP_TIMEOUT, "{:?}", started.elapsed());
+            .expect_err("a stale socket cannot confirm job removal");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("stop unconfirmed"), "{error}");
+        assert!(started.elapsed() >= STOP_TIMEOUT, "{:?}", started.elapsed());
+        let socket = _guard.0.join("control.sock");
+        assert!(socket.exists(), "unconfirmed stop preserves the socket");
+        drop(_guard);
+        assert!(!socket.exists(), "the owner can still clean a stale socket");
     }
 
-    /// While a supervisor exits, its socket path can be seen both missing and
-    /// present-but-refusing. Either observation is evidence of absence, so
-    /// switching between them must not restart the confirmation window.
+    /// Neither missing nor refused observations confirm managed job removal.
     #[cfg(unix)]
     #[tokio::test]
-    async fn stop_treats_an_endpoint_alternating_missing_and_refused_as_stopped() {
+    async fn stop_is_unconfirmed_when_the_endpoint_alternates_missing_and_refused() {
         let temp = tempfile::tempdir().expect("tempdir");
         let (config_dir, listener, guard) = bind_fake_control(&temp.path().join("config"));
         let socket = guard.0.join("control.sock");
@@ -2670,9 +2657,10 @@ mod tests {
         let stopped = kill_and_confirm(&endpoint, "deadbeef").await;
         alternating.store(false, Ordering::Release);
         alternate.await.expect("alternating endpoint");
-        stopped.expect("an endpoint that is only ever missing or refused is stopped");
-        assert!(started.elapsed() >= GONE_CONFIRM, "{:?}", started.elapsed());
-        assert!(started.elapsed() < STOP_TIMEOUT, "{:?}", started.elapsed());
+        let error = stopped.expect_err("endpoint absence cannot confirm job removal");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("stop unconfirmed"), "{error}");
+        assert!(started.elapsed() >= STOP_TIMEOUT, "{:?}", started.elapsed());
     }
 }
 

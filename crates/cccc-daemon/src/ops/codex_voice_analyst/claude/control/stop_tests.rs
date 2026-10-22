@@ -101,5 +101,6 @@ async fn live_claude_empty_session_resumes_without_a_prompt_after_control_gap() 
         "a still-running task whose endpoint disappears and returns must not be reported stopped",
     );
     assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(error.to_string().contains("stop unconfirmed"), "{error}");
     assert!(ownership_retained, "unconfirmed stop must retain ownership");
 }
