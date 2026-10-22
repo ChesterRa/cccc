@@ -2,12 +2,10 @@
 //! a Mail notice is due, and delivery re-checks it right before sending one, so
 //! a notice whose Mail was read, answered, or delivered meanwhile is dropped.
 
-use cccc_contracts::Event;
-use serde_json::Value;
 use std::collections::HashSet;
 use std::io;
 
-use crate::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
+use crate::{GroupDoc, HomeLayout, inbox};
 
 /// A Mail awaits its recipient until it is read, replied to, or handed to the
 /// recipient's runtime (`accepted`, or `ambiguous` once it may have been).
@@ -28,64 +26,14 @@ pub fn still_awaited(
     if mail_ids.is_empty() {
         return Ok(HashSet::new());
     }
-    let store = GroupStore::new(home.clone())?;
-    let cursor = inbox::cursors(home, &group.group_id)?.remove(actor_id);
-    let wanted = mail_ids.iter().cloned().collect::<HashSet<_>>();
-    ledger::inspect_status(
-        &store.ledger_path(&group.group_id)?,
-        |events, positions, generations| {
-            let generation = generations.get(actor_id).copied().unwrap_or(0);
-            let cursor_position = cursor.as_ref().and_then(|id| positions.get(id)).copied();
-            let scan_start = mail_ids
-                .iter()
-                .filter_map(|id| positions.get(id.as_str()).copied())
-                .min()
-                .unwrap_or(events.len())
-                .max(generation);
-            let mut replied = HashSet::new();
-            let mut delivery = std::collections::HashMap::<&str, &str>::new();
-            for event in events.get(scan_start..).unwrap_or_default() {
-                let source = |key: &str| event.data.get(key).and_then(Value::as_str);
-                if event.kind == "chat.message" && event.by == actor_id {
-                    if let Some(target) = source("reply_to").filter(|id| wanted.contains(*id)) {
-                        replied.insert(target);
-                    }
-                } else if event.kind == "runtime.delivery"
-                    && source("actor_id") == Some(actor_id)
-                    && let (Some(target), Some(state)) =
-                        (source("source_event_id"), source("state"))
-                    && wanted.contains(target)
-                {
-                    delivery.insert(target, state);
-                }
-            }
-            mail_ids
-                .iter()
-                .filter(|id| {
-                    positions.get(id.as_str()).is_some_and(|&position| {
-                        position >= generation
-                            && is_mail(&events[position])
-                            && awaiting(
-                                cursor_position.is_some_and(|cursor| cursor >= position),
-                                replied.contains(id.as_str()),
-                                delivery.get(id.as_str()).copied(),
-                            )
-                    })
-                })
-                .cloned()
-                .collect()
-        },
-    )
-}
-
-fn is_mail(event: &Event) -> bool {
-    event.kind == "chat.message"
-        && event.data.get("message_mode").and_then(Value::as_str) == Some("mail")
+    inbox::projection::still_awaited(home, group, actor_id, mail_ids)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{GroupStore, ledger};
+    use cccc_contracts::Event;
     use cccc_contracts::{Actor, GroupState};
     use serde_json::json;
 

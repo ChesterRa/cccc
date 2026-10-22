@@ -329,7 +329,7 @@ A message addresses either the human user or one or more actors, never both.
 | actor_start | ✓ | ✓ (any) | ✗ |
 | actor_stop | ✓ | ✓ (any) | ✓ (self) |
 | actor_restart | ✓ | ✓ (any) | ✓ (self) |
-| actor_remove | ✓ | ✓ (self/peer) | ✓ (self) |
+| actor_remove | ✓ | ✓ (peer only) | ✓ (self) |
 
 ## MCP Server
 

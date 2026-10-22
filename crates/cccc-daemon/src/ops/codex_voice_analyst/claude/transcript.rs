@@ -70,6 +70,9 @@ pub(super) struct TranscriptState {
     /// turns from such inputs (scheduled prompts, cross-session messages); the turn they start
     /// is attributed to these prompts.
     meta_prompt_ids: Vec<String>,
+    /// promptIds of the turn that settled last. An interruption marker under one of them
+    /// comes after its turn ended and must not cancel the next one.
+    settled_prompt_ids: HashSet<String>,
 }
 
 impl TranscriptState {
@@ -84,6 +87,7 @@ impl TranscriptState {
             events,
             active: None,
             meta_prompt_ids: Vec::new(),
+            settled_prompt_ids: HashSet::new(),
         }
     }
 
@@ -174,15 +178,16 @@ impl TranscriptState {
         let text = text_content(content);
         if matches!(text.trim(), INTERRUPTION_MARKER | TOOL_INTERRUPTION_MARKER) {
             let prompt_id = required_prompt_id(record)?;
-            if self
-                .active
-                .as_ref()
-                .is_some_and(|turn| turn.prompt_ids.contains(prompt_id))
-            {
+            // Claude Code writes the marker when it aborts the running request: under the
+            // turn's own prompt when the user stops it, and under the next prompt when input
+            // queued during the turn interrupts it (that prompt's record follows). A marker
+            // for a turn that already ended, or with no turn running, settles nothing.
+            if self.active.as_ref().is_some_and(|turn| {
+                turn.prompt_ids.contains(prompt_id) || !self.settled_prompt_ids.contains(prompt_id)
+            }) {
                 self.settle("cancelled", None);
-                return Ok(IngestOutcome::None);
             }
-            return invalid("Claude interruption marker did not match the active turn");
+            return Ok(IngestOutcome::None);
         }
         if text.trim().is_empty() {
             return Ok(IngestOutcome::None);
@@ -434,9 +439,10 @@ impl TranscriptState {
 
     fn settle(&mut self, requested_status: &str, requested_error: Option<&str>) {
         self.meta_prompt_ids.clear();
-        let Some(active) = self.active.take() else {
+        let Some(mut active) = self.active.take() else {
             return;
         };
+        self.settled_prompt_ids = std::mem::take(&mut active.prompt_ids);
         let error = requested_error.map(str::to_owned).or(active.error);
         let status = if error.is_some() {
             "failed"

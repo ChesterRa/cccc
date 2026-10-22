@@ -73,7 +73,26 @@ pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cance
         &delivery_actor_ids,
         &idle_actor_ids,
     ) {
-        Ok(result) => apply(home, result, cancelled),
+        Ok(result) => {
+            let unread_success = result.unread_failure.is_none();
+            apply(home, result, cancelled);
+            // Opt-in, payload-free evidence that daemon discovery, runtime
+            // eligibility and the periodic unread pass actually participated
+            // in an operator's isolated real-group memory replay.
+            if include_unread
+                && std::env::var_os("CCCC_AUTOMATION_TICK_PROBE").is_some_and(|value| value == "1")
+            {
+                eprintln!(
+                    "CCCC_UNREAD_TICK {}",
+                    json!({
+                        "group_id":group_id,
+                        "include_unread":include_unread,
+                        "eligible_actors":delivery_actor_ids.len(),
+                        "success":unread_success && !cancelled.load(Ordering::Acquire),
+                    })
+                );
+            }
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => tracing::warn!(%error, %group_id, "automation group tick failed"),
     }

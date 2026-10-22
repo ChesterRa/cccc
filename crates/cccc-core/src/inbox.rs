@@ -13,6 +13,10 @@ use crate::fs::{read_json, with_exclusive_lock, write_json};
 use crate::ledger;
 use crate::{GroupDoc, GroupStore, HomeLayout};
 
+mod deliveries;
+mod notices;
+pub(crate) mod projection;
+
 const MAIL_CURSOR_SCHEMA: u64 = 1;
 const PENDING_READ_SCHEMA: u64 = 1;
 
@@ -49,6 +53,26 @@ pub struct ConsumedInbox {
     pub read_event: Option<Event>,
 }
 
+/// Pending pushed/pulled runtime deliveries, without materializing history.
+pub fn pending_deliveries(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    limit: usize,
+) -> io::Result<Vec<Event>> {
+    projection::pending_deliveries(home, group, actor, limit)
+}
+
+/// Latest delivery state and transport, preserving legacy claim semantics.
+pub fn delivery_states(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actors: &[String],
+    source: &str,
+) -> io::Result<HashMap<String, (String, String)>> {
+    projection::delivery_states(home, group, actors, source)
+}
+
 pub fn list_unread(
     home: &HomeLayout,
     group: &GroupDoc,
@@ -68,31 +92,21 @@ pub fn list_unread_many(
     if actor_ids.is_empty() {
         return Ok(BTreeMap::new());
     }
-    let store = GroupStore::new(home.clone())?;
     let state = load(home, &group.group_id)?;
-    ledger::inspect_status(
-        &store.ledger_path(&group.group_id)?,
-        |events, positions, generations| {
-            actor_ids
-                .iter()
-                .map(|actor_id| {
-                    let cursor_start = state
-                        .cursors
-                        .get(actor_id)
-                        .and_then(|id| positions.get(id))
-                        .map_or(0, |index| index + 1);
-                    let generation_start = generations.get(actor_id).copied().unwrap_or(0);
-                    let unread = events[cursor_start.max(generation_start)..]
-                        .iter()
-                        .filter(|event| is_mail_for_actor(group, event, actor_id))
-                        .take(limit.min(1000))
-                        .cloned()
-                        .collect();
-                    (actor_id.clone(), unread)
-                })
-                .collect()
-        },
-    )
+    projection::pages(home, group, actor_ids, &state, limit.min(1000))
+}
+
+/// Capped actor-list counts without decoding the returned Mail bodies.
+pub fn unread_counts(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_ids: &[String],
+    limit: usize,
+) -> io::Result<BTreeMap<String, usize>> {
+    if actor_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    projection::counts(home, group, actor_ids, limit)
 }
 
 pub fn consume_unread(
@@ -108,23 +122,10 @@ pub fn consume_unread(
     with_exclusive_lock(&lock_path, || {
         recover_pending_locked(home, &group.group_id)?;
         let mut state = load_raw(home, &group.group_id)?;
-        let messages = ledger::inspect_status(
-            &store.ledger_path(&group.group_id)?,
-            |events, positions, generations| {
-                let cursor_start = state
-                    .cursors
-                    .get(actor_id)
-                    .and_then(|id| positions.get(id))
-                    .map_or(0, |index| index + 1);
-                let generation_start = generations.get(actor_id).copied().unwrap_or(0);
-                events[cursor_start.max(generation_start)..]
-                    .iter()
-                    .filter(|event| is_mail_for_actor(group, event, actor_id))
-                    .take(limit.min(200))
-                    .cloned()
-                    .collect::<Vec<_>>()
-            },
-        )?;
+        let messages =
+            projection::pages(home, group, &[actor_id.to_owned()], &state, limit.min(200))?
+                .remove(actor_id)
+                .unwrap_or_default();
 
         let Some(boundary) = messages.last() else {
             let (cursor_event_id, cursor_ts, cursor_updated_at) =
@@ -188,32 +189,8 @@ pub fn mail_pending_summary(
     group: &GroupDoc,
     actor_id: &str,
 ) -> io::Result<Option<Value>> {
-    let store = GroupStore::new(home.clone())?;
     let state = load(home, &group.group_id)?;
-    let cursor = state.cursors.get(actor_id).map(String::as_str);
-    let mut count = 0_usize;
-    let mut oldest_ts = None;
-    // Unread Mail starts after the later of the reader's cursor and the
-    // actor's latest generation. Walking newest-first stops at whichever comes
-    // first, so every MCP bridge answers this without indexing the ledger.
-    ledger::visit_newest_first(&store.ledger_path(&group.group_id)?, |event| {
-        if cursor == Some(event.id.as_str()) || actor_add_id(&event) == Some(actor_id) {
-            return ControlFlow::Break(());
-        }
-        // Reply and manual-delivery facts suppress the one-shot active notice,
-        // but they do not consume Mail. Natural hints must therefore mirror
-        // the unread Inbox projection rather than the notice-eligible subset.
-        if event.kind == "chat.message"
-            && event.by != actor_id
-            && event.data.get("message_mode").and_then(Value::as_str) == Some("mail")
-            && is_for_actor(group, &event, actor_id)
-        {
-            count += 1;
-            oldest_ts = Some(event.ts);
-        }
-        ControlFlow::Continue(())
-    })?;
-    let Some(oldest_ts) = oldest_ts else {
+    let Some((count, oldest_ts)) = projection::pending(home, group, actor_id, &state)? else {
         return Ok(None);
     };
     let oldest_age_seconds = DateTime::parse_from_rfc3339(&oldest_ts)
@@ -584,10 +561,13 @@ fn save(
             }),
         );
     }
+    let ledger_path = GroupStore::new(home.clone())?.ledger_path(group_id)?;
     write_json(
         &path,
         &json!({"schema":MAIL_CURSOR_SCHEMA,"cursors":output}),
-    )
+    )?;
+    projection::note_cursor(&ledger_path);
+    Ok(())
 }
 
 fn load_effective(home: &HomeLayout, group_id: &str) -> io::Result<InboxState> {

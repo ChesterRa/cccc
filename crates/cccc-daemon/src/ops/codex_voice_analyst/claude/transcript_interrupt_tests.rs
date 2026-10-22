@@ -78,15 +78,65 @@ fn interruption_of_an_admitted_followup_cancels_the_same_turn() {
         assert_eq!(ended.message["params"]["turn"]["status"], "cancelled");
         assert!(state.active_turn_id().is_none());
 
-        // Old or unadmitted prompt ids cannot cancel a subsequent turn.
+        // A marker under the previous turn's prompt ids cannot cancel the next turn, and it
+        // does not end the session either.
         state
             .ingest(&user("next", "next request"), None)
             .expect("ingest transcript record");
-        assert!(
-            state
-                .ingest(&user("followup", TOOL_INTERRUPTION_MARKER), None)
-                .is_err()
-        );
+        state
+            .ingest(&user("followup", TOOL_INTERRUPTION_MARKER), None)
+            .expect("a stale marker settles nothing");
         assert_eq!(state.active_turn_id(), Some("claude-next"));
     }
+}
+
+/// Real Claude Code 2.1.296 transcript records (2026-10-21): a typed prompt opens a turn;
+/// while it runs the user queues "retry"; Claude Code aborts the turn and writes the
+/// interruption marker under the queued prompt's id, then the queued prompt itself. Every
+/// line is as captured (ids, timestamps, key order); only the working directory, the git
+/// branch and the opening prompt's text read "[redacted]".
+const QUEUED_INPUT_INTERRUPT: &str = include_str!("transcript_queued_interrupt.jsonl");
+
+#[test]
+fn input_queued_during_a_turn_cancels_it_and_opens_the_next() {
+    let records = QUEUED_INPUT_INTERRUPT
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("captured record"))
+        .collect::<Vec<_>>();
+    let session_id = records[0]["sessionId"].as_str().expect("session id");
+    let (sender, mut events) = broadcast::channel(32);
+    let mut state = TranscriptState::new("generation-1".into(), session_id.into(), sender);
+    for record in &records {
+        state
+            .ingest(record, None)
+            .expect("the interruption keeps the session");
+    }
+    let messages = std::iter::from_fn(|| events.try_recv().ok())
+        .map(|event| event.message)
+        .collect::<Vec<_>>();
+    let turns = messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message["method"].as_str(),
+                Some("turn/started" | "turn/completed")
+            )
+        })
+        .map(|message| {
+            let turn = &message["params"]["turn"];
+            let method = message["method"].as_str();
+            (method, turn["id"].as_str(), turn["status"].as_str())
+        })
+        .collect::<Vec<_>>();
+    let interrupted = Some("claude-327a5c53-0d23-4c91-bae2-4e575086e6af");
+    let queued = Some("claude-7e73a7fa-8ae4-4bb0-92de-ef84d697f5ed");
+    assert_eq!(
+        turns,
+        [
+            (Some("turn/started"), interrupted, None),
+            (Some("turn/completed"), interrupted, Some("cancelled")),
+            (Some("turn/started"), queued, None),
+        ]
+    );
+    assert_eq!(state.active_turn_id(), queued);
 }

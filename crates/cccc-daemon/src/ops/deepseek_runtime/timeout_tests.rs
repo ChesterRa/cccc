@@ -38,14 +38,17 @@ done"#;
         .expect("event data");
 
     let started = Instant::now();
-    assert!(!delivery::deliver_with_timeout(
-        &home,
-        &group,
-        &actor,
-        &event,
-        &AtomicBool::new(false),
-        Duration::from_millis(500),
-    ));
+    assert_eq!(
+        delivery::deliver_with_timeout(
+            &home,
+            &group,
+            &actor,
+            &event,
+            &AtomicBool::new(false),
+            Duration::from_millis(500),
+        ),
+        TurnDelivery::Failed("DeepSeek ACP turn timed out".into())
+    );
 
     assert!(started.elapsed() < Duration::from_secs(2));
     assert!(running(&group.group_id, &actor.id));
@@ -133,14 +136,17 @@ done"#;
         cancel_signal.store(true, Ordering::Release);
     });
 
-    assert!(!delivery::deliver_with_timeout(
-        &home,
-        &group,
-        &actor,
-        &event,
-        cancelled.as_ref(),
-        Duration::from_secs(5),
-    ));
+    assert_ne!(
+        delivery::deliver_with_timeout(
+            &home,
+            &group,
+            &actor,
+            &event,
+            cancelled.as_ref(),
+            Duration::from_secs(5),
+        ),
+        TurnDelivery::Completed
+    );
     cancel_thread.join().expect("cancel thread");
 
     let events = std::fs::read_to_string(
@@ -187,14 +193,17 @@ done"#;
         .cloned()
         .expect("event data");
 
-    assert!(!delivery::deliver_with_timeout(
-        &home,
-        &group,
-        &actor,
-        &event,
-        &AtomicBool::new(false),
-        Duration::from_millis(100),
-    ));
+    assert_ne!(
+        delivery::deliver_with_timeout(
+            &home,
+            &group,
+            &actor,
+            &event,
+            &AtomicBool::new(false),
+            Duration::from_millis(100),
+        ),
+        TurnDelivery::Completed
+    );
 
     let events = std::fs::read_to_string(
         store

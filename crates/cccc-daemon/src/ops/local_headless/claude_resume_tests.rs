@@ -324,6 +324,78 @@ fn copied_claude_resume_stops_auto_wake_and_explicit_retry_delivers_the_original
 }
 
 #[test]
+fn temporary_claude_resume_failures_stop_auto_wake_at_the_limit_and_keep_the_conversation() {
+    if isolated(
+        "temporary_claude_resume_failures_stop_auto_wake_at_the_limit_and_keep_the_conversation",
+    ) {
+        return;
+    }
+    // A resumed job that never settles fails with a retryable WouldBlock.
+    let f = Fixture::new("busy");
+    // Nine earlier automatic attempts at this conversation already failed.
+    let mut receipt = f.receipt();
+    receipt["failure_count"] = json!(9);
+    cccc_core::fs::write_json(
+        &f.home
+            .groups_dir()
+            .join(&f.group.group_id)
+            .join("state/runtime_sessions/claude-1.json"),
+        &receipt,
+    )
+    .expect("receipt after nine failures");
+    let job = f.delivery();
+    let handled = super::super::actor_delivery_worker::process_batch(
+        &mut vec![job.clone()],
+        &mut String::new(),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(
+        handled,
+        crate::ops::actor_delivery_worker::BatchOutcome::Delivered,
+        "the tenth consecutive failure leaves the automatic retry lane"
+    );
+    assert_eq!(f.launches(), 1);
+    let failed = f.receipt();
+    assert_eq!(failed["status"], "resume_failed");
+    assert_eq!(failed["resume_eligible"], true);
+    assert_eq!(failed["provider_session_id"], SAVED);
+    assert_eq!(failed["failure_count"], 10);
+    let diagnostic = failed["last_resume_error"].as_str().expect("diagnostic");
+    assert!(
+        diagnostic.contains("temporary control or startup failure"),
+        "{diagnostic}"
+    );
+    assert!(
+        diagnostic.contains("after 10 consecutive failed resumes"),
+        "{diagnostic}"
+    );
+    for _ in 0..4 {
+        assert!(matches!(
+            super::super::actor_delivery_worker::process_batch(
+                &mut vec![job.clone()],
+                &mut String::new(),
+                &AtomicBool::new(false)
+            ),
+            crate::ops::actor_delivery_worker::BatchOutcome::Delivered
+        ));
+    }
+    assert_eq!(f.launches(), 1, "no repeated provider launch");
+    assert_eq!(f.receipt(), failed);
+
+    std::fs::write(f.config.join("mode"), "healthy").expect("provider recovers");
+    let started = f.lifecycle("actor_start");
+    assert!(started.ok, "{:?}", started.error);
+    f.wait(|| {
+        std::fs::read_to_string(f.config.join("received"))
+            .is_ok_and(|received| received.contains("PENDING_TASK"))
+    });
+    assert_eq!(f.launches(), 2);
+    assert_eq!(f.receipt()["provider_session_id"], SAVED);
+    assert_eq!(f.receipt()["failure_count"], 0);
+    assert_eq!(f.receipt()["last_resume_error"], "");
+}
+
+#[test]
 fn missing_claude_history_does_not_become_a_fresh_session_on_the_second_start() {
     if isolated("missing_claude_history_does_not_become_a_fresh_session_on_the_second_start") {
         return;

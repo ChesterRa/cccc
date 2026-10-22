@@ -1,7 +1,9 @@
 use cccc_contracts::{Event, GroupState};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashSet;
+#[cfg(test)]
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 
 use crate::actors;
@@ -459,26 +461,52 @@ fn due_unread_notices(
         return Ok(None);
     }
     let ledger_path = store.ledger_path(&group.group_id)?;
-    let cursors = inbox::cursors(home, &group.group_id)?;
-    // Project only the notices while borrowing history. Release the index read
-    // lock before appending, since append also updates that same index.
-    let notices = ledger::inspect(&ledger_path, |events, positions| {
-        unread_notices(
-            group,
-            &eligible,
-            events,
-            positions,
-            &cursors,
-            MailDelays {
-                busy: mail_after,
-                idle: mail_idle_after,
-                idle_actor_ids,
-                now: pass == UnreadPass::IdleMailNow,
-            },
-            reply_after,
-            &digest,
-        )
-    })?;
+    let notices = inbox::projection::due(
+        home,
+        group,
+        &eligible,
+        MailDelays {
+            busy: mail_after,
+            idle: mail_idle_after,
+            idle_actor_ids,
+            now: pass == UnreadPass::IdleMailNow,
+        },
+        reply_after,
+        &digest,
+    )?;
+    #[cfg(test)]
+    {
+        let cursors = inbox::cursors(home, &group.group_id)?;
+        let expected = ledger::inspect(&ledger_path, |events, positions| {
+            unread_notices(
+                group,
+                &eligible,
+                events,
+                positions,
+                &cursors,
+                MailDelays {
+                    busy: mail_after,
+                    idle: mail_idle_after,
+                    idle_actor_ids,
+                    now: pass == UnreadPass::IdleMailNow,
+                },
+                reply_after,
+                &digest,
+            )
+        })?;
+        let signature = |events: &[Event]| {
+            events
+                .iter()
+                .map(|event| (&event.kind, &event.by, &event.data))
+                .map(|parts| serde_json::to_value(parts).expect("notice signature"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            signature(&notices),
+            signature(&expected),
+            "compact notice reducer disagrees with the original ordered reducer"
+        );
+    }
     Ok(Some((ledger_path, notices)))
 }
 
@@ -488,10 +516,10 @@ fn due_unread_notices(
 /// and again after `repeat` while problems remain. A recipient's Mail becomes
 /// a problem once it is still unread `mail_overdue` after its first notice.
 #[derive(Default)]
-struct Digest {
-    interval: i64,
-    repeat: i64,
-    mail_overdue: i64,
+pub(crate) struct Digest {
+    pub(crate) interval: i64,
+    pub(crate) repeat: i64,
+    pub(crate) mail_overdue: i64,
 }
 
 /// Write each notice and hand it to delivery. A written notice is issued for
@@ -518,15 +546,15 @@ fn issue_notices(
 /// burst of Mail into one notice. `busy <= 0` turns Mail notices off; `idle <= 0`
 /// turns early notices off. With `now`, an idle actor is notified at once: the
 /// pass that runs as Mail is written.
-struct MailDelays<'a> {
-    busy: i64,
+pub(crate) struct MailDelays<'a> {
+    pub(crate) busy: i64,
     idle: i64,
     idle_actor_ids: &'a HashSet<String>,
     now: bool,
 }
 
 impl MailDelays<'_> {
-    fn for_actor(&self, actor_id: &str) -> i64 {
+    pub(crate) fn for_actor(&self, actor_id: &str) -> i64 {
         if self.busy > 0 && self.idle > 0 && self.idle_actor_ids.contains(actor_id) {
             if self.now {
                 0
@@ -539,6 +567,7 @@ impl MailDelays<'_> {
     }
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn unread_notices(
     group: &GroupDoc,
@@ -901,7 +930,7 @@ fn unread_notices(
     notices
 }
 
-fn digest_event(
+pub(crate) fn digest_event(
     group: &GroupDoc,
     foreman: &cccc_contracts::Actor,
     problems: &[(String, String)],
@@ -933,7 +962,7 @@ fn digest_event(
 }
 
 /// `2h05m`, `45m` or `30s`.
-fn duration_text(seconds: i64) -> String {
+pub(crate) fn duration_text(seconds: i64) -> String {
     let seconds = seconds.max(0);
     if seconds >= 3_600 {
         format!("{}h{:02}m", seconds / 3_600, seconds % 3_600 / 60)
@@ -955,13 +984,13 @@ fn delivery_timing_value(group: &GroupDoc, key: &str, default: i64) -> i64 {
         .max(0)
 }
 
-fn timestamp(value: &str, default: i64) -> i64 {
+pub(crate) fn timestamp(value: &str, default: i64) -> i64 {
     DateTime::parse_from_rfc3339(value)
         .map(|value| value.timestamp())
         .unwrap_or(default)
 }
 
-fn notice_event(
+pub(crate) fn notice_event(
     group: &GroupDoc,
     actor: &cccc_contracts::Actor,
     kind: &str,
@@ -995,6 +1024,56 @@ fn notice_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Private replay evidence is supplied by the operator, never checked in.
+    /// Run alone so the decode counter has no concurrent test producers.
+    #[test]
+    #[ignore = "requires CCCC_REAL_REPLAY_HOME pointing to copied real groups"]
+    fn real_group_notices_match_history_without_warm_projection_decodes() {
+        let root = std::env::var_os("CCCC_REAL_REPLAY_HOME").expect("copied-group home required");
+        let home = HomeLayout::from_path(root).expect("replay home");
+        let store = GroupStore::new(home.clone()).expect("group store");
+        let groups = store.list().expect("real copied groups");
+        assert!(!groups.is_empty(), "empty replay cannot prove a projection");
+        for meta in groups {
+            let group = store.load(&meta.group_id).expect("real group document");
+            let eligible = actors::visible(&group)
+                .filter(|actor| actor.enabled)
+                .map(|actor| actor.id.clone())
+                .collect::<HashSet<_>>();
+            assert!(!eligible.is_empty(), "replay must keep enabled actors");
+            // due_unread_notices differentially checks the original ordered
+            // reducer's reply/read/delivery/withdrawal/claim decisions.
+            due_unread_notices(
+                &home,
+                &store,
+                &group,
+                Some(&eligible),
+                &HashSet::new(),
+                UnreadPass::Scheduled,
+            )
+            .expect("cold projection/oracle");
+            // The test-side legacy oracle intentionally reads history. This
+            // counter measures only the production Snapshot decoder.
+            let decoded = crate::ledger::snapshot::decoded_records();
+            for _ in 0..5 {
+                due_unread_notices(
+                    &home,
+                    &store,
+                    &group,
+                    Some(&eligible),
+                    &HashSet::new(),
+                    UnreadPass::Scheduled,
+                )
+                .expect("warm projection/oracle");
+            }
+            assert_eq!(
+                crate::ledger::snapshot::decoded_records(),
+                decoded,
+                "warm unread projection decoded ledger history"
+            );
+        }
+    }
 
     /// Each recipient of one Mail; notices are issued in this order.
     const RECIPIENTS: [&str; 2] = ["first", "second"];

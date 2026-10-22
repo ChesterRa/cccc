@@ -32,9 +32,17 @@ pub fn require_actor(
             ActorAction::Add | ActorAction::Start | ActorAction::Stop | ActorAction::Restart,
         ) => Ok(()),
         (Some(ActorRole::Foreman), ActorAction::Remove)
-            if target == who || effective_role(group, target) == Some(ActorRole::Peer) =>
+            if effective_role(group, target) == Some(ActorRole::Peer) =>
         {
             Ok(())
+        }
+        // The Foreman is the first visible Actor, so removing it hands the role
+        // to the next one. That succession is the user's decision.
+        (Some(ActorRole::Foreman), ActorAction::Remove) if target == who => {
+            Err(io::Error::other(format!(
+                "permission denied: the foreman ({who}) cannot remove itself; \
+                 the user can remove it, which makes the next Actor the foreman"
+            )))
         }
         (Some(ActorRole::Peer), ActorAction::Restart) => Ok(()),
         (Some(ActorRole::Peer), ActorAction::Stop | ActorAction::Remove) if target == who => Ok(()),

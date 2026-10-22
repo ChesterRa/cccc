@@ -26,6 +26,112 @@ pub(super) fn project(document: ContextDoc, version: String, detail: &str) -> Va
     Value::Object(result)
 }
 
+/// One bounded page of the task-bearing snapshot.
+pub(super) struct Page {
+    pub limit: usize,
+    /// Tasks numbered at or below this were returned by earlier pages.
+    pub after: u64,
+    pub max_bytes: Option<usize>,
+    pub include_archived: bool,
+}
+
+/// `coordination.tasks` (and, in `full`, `board`) hold at most `limit` tasks
+/// after the cursor, halved until the whole answer fits `max_bytes`; at least
+/// one task is always returned so paging makes progress, its longest text
+/// clipped (and marked) while it alone keeps the answer over the bound.
+/// `attention` and `tasks_summary` still cover every task, as counts;
+/// `task_list` pages the attention tasks themselves. `truncated` and
+/// `next_cursor` say how to go on. When even that answer does not fit, the
+/// error is the size of the smallest page.
+pub(super) fn project_page(
+    mut document: ContextDoc,
+    version: String,
+    detail: &str,
+    page: &Page,
+) -> Result<Value, usize> {
+    let tasks = std::mem::take(&mut document.tasks);
+    let attention = attention(&tasks, false);
+    let summary = task_summary(&tasks, &attention);
+    let mut candidates = tasks
+        .into_iter()
+        .filter(|task| page.include_archived || status(task) != "archived")
+        .filter(|task| task_number(task) > page.after)
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(task_number);
+    let mut take = page.limit.min(candidates.len());
+    loop {
+        let mut slice = document.clone();
+        slice.tasks = candidates[..take].to_vec();
+        let mut value = project(slice, version.clone(), detail);
+        let truncated = take < candidates.len();
+        let next_cursor = truncated
+            .then(|| {
+                take.checked_sub(1)
+                    .and_then(|last| candidates[last].get("id"))
+            })
+            .flatten()
+            .cloned();
+        if let Some(object) = value.as_object_mut() {
+            object.insert("attention".into(), attention.clone());
+            object.insert("tasks_summary".into(), summary.clone());
+            object.insert("truncated".into(), Value::Bool(truncated));
+            object.insert("next_cursor".into(), next_cursor.unwrap_or(Value::Null));
+        }
+        // Measured as tools render it (pretty JSON), the larger of the two forms.
+        let size = serde_json::to_vec_pretty(&value).map_or(usize::MAX, |bytes| bytes.len());
+        let Some(limit) = page.max_bytes.filter(|limit| size > *limit) else {
+            return Ok(value);
+        };
+        if take > 1 {
+            take /= 2;
+        } else if take == 0 || !clip_longest_text(&mut candidates[0], size - limit) {
+            return Err(size);
+        }
+    }
+}
+
+/// Shorten the task's longest free text (notes, outcome, title or a checklist
+/// item) by at least `over` bytes and mark the cut; `task_list` still returns
+/// the whole task. False when that would not make the task any smaller.
+fn clip_longest_text(task: &mut Map<String, Value>, over: usize) -> bool {
+    const MARK: &str = " … [clipped to fit the page]";
+    let mut texts = Vec::new();
+    for (key, value) in task.iter_mut() {
+        match key.as_str() {
+            "notes" | "outcome" | "title" => texts.push(value),
+            "checklist" => texts.extend(
+                value
+                    .as_array_mut()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| item.get_mut("text")),
+            ),
+            _ => {}
+        }
+    }
+    let Some(slot) = texts
+        .into_iter()
+        .max_by_key(|text| text.as_str().map_or(0, str::len))
+    else {
+        return false;
+    };
+    let Some(text) = slot.as_str() else {
+        return false;
+    };
+    // Every character dropped is at least one byte, so this drops `over` more
+    // bytes than the mark adds.
+    let keep = text
+        .chars()
+        .count()
+        .saturating_sub(over.saturating_add(MARK.len()));
+    let clipped = text.chars().take(keep).collect::<String>() + MARK;
+    if clipped.len() >= text.len() {
+        return false;
+    }
+    *slot = Value::String(clipped);
+    true
+}
+
 fn coordination(
     source: &Map<String, Value>,
     tasks: &[Map<String, Value>],
@@ -104,6 +210,14 @@ fn agent_states(states: std::collections::BTreeMap<String, Map<String, Value>>) 
             })
             .collect(),
     )
+}
+
+fn task_number(task: &Map<String, Value>) -> u64 {
+    task.get("id")
+        .and_then(Value::as_str)
+        .and_then(|id| id.strip_prefix('T'))
+        .and_then(|number| number.parse().ok())
+        .unwrap_or(0)
 }
 
 fn status(task: &Map<String, Value>) -> &str {
