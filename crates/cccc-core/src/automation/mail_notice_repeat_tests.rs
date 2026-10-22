@@ -195,6 +195,7 @@ fn mail_notice_repeat_warm_projection_does_not_replay_history() {
     let replay = Replay::captured(3610, Some(3600));
     assert_eq!(replay.due().len(), 1);
     let decoded = crate::ledger::snapshot::decoded_records();
+    assert!(decoded > 0, "cold projection must decode captured records");
     for _ in 0..5 {
         assert_eq!(replay.due().len(), 1);
     }
