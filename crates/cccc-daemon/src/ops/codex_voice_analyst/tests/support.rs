@@ -48,7 +48,7 @@ pub(super) async fn fake_app_server() -> (
                             request["params"]["cwd"],
                             json!(std::env::current_dir().expect("cwd"))
                         );
-                        assert!(request["params"].get("model").is_none());
+                        assert_eq!(request["params"]["model"], "glm-5.3");
                         assert_eq!(request["params"]["approvalPolicy"], "never");
                         assert_eq!(request["params"]["sandbox"], "danger-full-access");
                         assert_eq!(request["params"]["historyMode"], "legacy");
@@ -90,6 +90,7 @@ pub(super) async fn fake_app_server() -> (
                             request["params"]["cwd"],
                             json!(std::env::current_dir().expect("cwd"))
                         );
+                        assert_eq!(request["params"]["model"], "glm-5.3");
                         assert_eq!(request["params"]["approvalPolicy"], "never");
                         assert_eq!(request["params"]["sandbox"], "danger-full-access");
                         assert!(request["params"].get("historyMode").is_none());
