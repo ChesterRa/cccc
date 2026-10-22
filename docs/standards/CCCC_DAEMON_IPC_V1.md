@@ -1857,8 +1857,8 @@ Patch keys used by CCCC include:
 - Messaging: `default_send_to`
 - Delivery: `mail_notice_after_seconds` (default 1800, zero disables all Mail notices),
   `mail_notice_idle_after_seconds` (default 60, zero disables only the early idle notice),
-  `mail_notice_repeat_seconds` (default 0: one notice per batch; above zero, Mail
-  still waiting is announced again that long after its last notice),
+  `mail_notice_repeat_seconds` (default 0, zero keeps single-notice behavior),
+  `mail_notice_repeat_max` (default 3, maximum repeats per pending Mail batch; zero allows only its initial notice),
   `reply_notice_after_seconds` (default 900, zero disables)
 - Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
   `keepalive_max_per_actor`,
@@ -4594,11 +4594,33 @@ or Mail cursor advance. Passive status polling does not create notices.
 Before handoff, the owner rechecks whether the batch remains eligible. An obsolete
 notice established as unsent is withdrawn, not delivered or automatically retried. The
 notice states only that Mail is waiting and directs the actor to `inbox_read`;
-it does not copy message bodies, escalate, or create another Inbox
-obligation. It does not repeat unless `mail_notice_repeat_seconds` is above zero:
-then a notice stands only that long, and Mail still waiting after it, together
-with Mail that arrived meanwhile, gets a new notice. A delivered notice does not
-count as read. Bootstrap, the next explicit Push, and low-frequency coordination
+it does not copy message bodies, escalate, or create another Inbox obligation.
+By default it is issued once per pending batch. With the opt-in
+`delivery.mail_notice_repeat_seconds` greater than zero, a notice stops holding
+back the next notice once that many seconds have elapsed since it was issued.
+The clock starts at issue, not acceptance: delayed delivery can make two
+actor-visible notices arrive closer together than this interval.
+The next unread pass may issue a fresh notice containing every still-pending
+Mail, including later arrivals. `delivery.mail_notice_repeat_max` bounds each
+batch to its initial notice plus that many repeats (default 3). A batch is the
+ordered set of still-pending Mail IDs; a changed set starts a fresh budget.
+The cap is per pending batch, not per individual Mail: partial resolution
+also changes the batch and starts a new budget.
+Issued attempts, including withdrawn notices, consume this budget. A peer
+that stays busy can remain un-notified for that Mail after all max+1 attempts
+are withdrawn; the finite cap does not guarantee eventual notice delivery.
+The count
+is reconstructed from notice records after restart and survives claim pruning.
+A withdrawn notice does not hold back the next attempt for the repeat
+interval; the explicit batch attempt budget still applies. Expired and
+withdrawn claims are pruned from the repeat projection. The max
+setting has no effect when repeat seconds is omitted or zero. A read, reply, accepted/ambiguous delivery of
+the Mail itself, or Actor-generation change ends that Mail's eligibility as
+above; acceptance of the notice itself does not. Runtime restart and
+`actor_new_session` preserve the Actor generation, pending Mail and repeat
+budget; they only restart the ordinary post-resume notice delay. Each repeat starts its own
+interval. Repeating a notice **does not repeat the underlying task execution**,
+promote Mail to Push, advance an Inbox cursor, or create a new Mail obligation. Bootstrap, the next explicit Push, and low-frequency coordination
 responses MAY carry a passive `mail_pending` count without writing a notice.
 
 A `request_reply` obligation starts its timer only after an accepted runtime
