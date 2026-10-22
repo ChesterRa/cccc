@@ -304,6 +304,15 @@ fn mail_notice_repeat_generation_change_keeps_new_batch_cap() {
     actors::remove(&mut replay.group, "recipient").expect("remove Actor");
     let actor = actors::add(&mut replay.group, cccc_contracts::Actor::new("recipient"))
         .expect("new Actor generation");
+    // Inspect the exact cached Group consumed by append-time pruning before
+    // any ledger mutation can independently trigger a snapshot rebuild.
+    assert_ne!(actor.created_at, "2026-09-22T19:18:35.569390Z");
+    assert_eq!(
+        inbox::projection::cached_actor_generation(&replay.home, &replay.group, "recipient")
+            .expect("current projection metadata"),
+        Some(actor.created_at.clone()),
+        "same-ID replacement must refresh the cached generation before pruning"
+    );
     let mut added = Event::new("actor.add", &replay.group.group_id);
     added.data = json!({"actor":actor})
         .as_object()

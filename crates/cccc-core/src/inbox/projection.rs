@@ -462,6 +462,23 @@ pub(crate) fn retained_mail_notice_claims(
 }
 
 #[cfg(test)]
+pub(crate) fn cached_actor_generation(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+) -> io::Result<Option<String>> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, _| {
+        Ok(projection
+            .group
+            .actors
+            .iter()
+            .find(|a| a.id == actor)
+            .map(|a| a.created_at.clone()))
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
