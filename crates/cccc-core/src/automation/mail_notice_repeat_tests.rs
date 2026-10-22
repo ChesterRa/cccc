@@ -139,7 +139,6 @@ fn mail_notice_repeat_default_and_zero_keep_one_shot_behavior() {
 }
 
 #[test]
-#[ignore = "run alone: process-wide projection decode counter"]
 fn mail_notice_repeat_warm_projection_does_not_replay_history() {
     let replay = Replay::captured(3610, Some(3600));
     assert_eq!(replay.due().len(), 1);

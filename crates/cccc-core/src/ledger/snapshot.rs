@@ -15,13 +15,14 @@ use std::time::SystemTime;
 #[cfg(test)]
 thread_local! {
     static GZIP_READERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DECODED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
-static DECODED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
 pub(crate) fn decoded_records() -> u64 {
-    DECODED.load(std::sync::atomic::Ordering::Relaxed)
+    // Snapshot decoding is synchronous on the query thread. Parallel tests
+    // must not count each other's unrelated history reads.
+    DECODED.with(std::cell::Cell::get)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,7 +178,7 @@ impl Snapshot {
                 }
                 line_no += 1;
                 #[cfg(test)]
-                DECODED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                DECODED.with(|count| count.set(count.get() + 1));
                 let raw = trim_ascii(&line);
                 if line.last() != Some(&b'\n')
                     && !raw.is_empty()
