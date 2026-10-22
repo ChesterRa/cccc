@@ -426,6 +426,18 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
             .clone();
         request(
             &replay.home,
+            "group_settings_update",
+            json!({"group_id":replay.group_id,"by":"user","patch":{"mail_notice_repeat_seconds":1,"mail_notice_repeat_max":1}}),
+        );
+        // Bind the new settings to a warm projection before the lifecycle op,
+        // without issuing a notice while its one-second claim may expire.
+        request(
+            &replay.home,
+            "inbox_peek",
+            json!({"group_id":replay.group_id,"actor_id":"recipient","by":"recipient"}),
+        );
+        request(
+            &replay.home,
             op,
             json!({"group_id":replay.group_id,"actor_id":"recipient","by":"user"}),
         );
@@ -434,11 +446,7 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
             created,
             "runtime lifecycle is not a new Actor generation"
         );
-        request(
-            &replay.home,
-            "group_settings_update",
-            json!({"group_id":replay.group_id,"by":"user","patch":{"mail_notice_repeat_seconds":1}}),
-        );
+
         std::thread::sleep(Duration::from_millis(1200));
         let before = replay.notices().len();
         replay.tick();
@@ -454,6 +462,8 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
             json!(replay.mail_ids)
         );
         replay.accepted(&notice.id);
+        std::thread::sleep(Duration::from_millis(1200));
+        replay.expect_no_repeat(); // A reset budget would allow another notice.
     }
 }
 
