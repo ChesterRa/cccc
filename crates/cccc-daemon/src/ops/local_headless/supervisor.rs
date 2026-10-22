@@ -391,6 +391,13 @@ pub(crate) fn registered_running(group_id: &str, actor_id: &str) -> Option<bool>
     lookup(&(group_id.to_owned(), actor_id.to_owned())).map(|item| item.running())
 }
 
+/// Native observations require confirmed absence, including under registry errors.
+pub(crate) fn has_no_registered_session(group_id: &str, actor_id: &str) -> bool {
+    sessions()
+        .read()
+        .is_ok_and(|sessions| !sessions.contains_key(&(group_id.to_owned(), actor_id.to_owned())))
+}
+
 #[must_use]
 pub fn status(group_id: &str, actor_id: &str) -> Option<HeadlessStatus> {
     let item = lookup(&(group_id.to_owned(), actor_id.to_owned()))?;

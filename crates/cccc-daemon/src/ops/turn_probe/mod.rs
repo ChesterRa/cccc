@@ -76,7 +76,7 @@ pub(super) fn refresh(group: &str, actor: &Actor) {
         return;
     };
     // Registered managed authority always wins, including late registration.
-    entry.observation = if super::local_headless::registered_running(group, &actor.id).is_some()
+    entry.observation = if !super::local_headless::has_no_registered_session(group, &actor.id)
         || super::local_headless::status(group, &actor.id).is_some()
     {
         TurnObservation::Unknown {
@@ -127,6 +127,9 @@ pub(super) fn cached(group: &str, actor: &str) -> Option<TurnObservation> {
         .ok()?
         .get(&(group.into(), actor.into()))
         .cloned()?;
+    if !super::local_headless::has_no_registered_session(group, actor) {
+        return None;
+    }
     generation(group, actor, &entry)?;
     match entry.observation {
         TurnObservation::Unknown { .. } => None,
