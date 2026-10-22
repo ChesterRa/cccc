@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline Agent View fixture: exact resume, copied IDs, missing history and trust."""
+"""Offline Agent View fixture: exact resume, copied IDs, missing history, busy jobs and trust."""
 import hashlib
 import json
 import os
@@ -76,7 +76,7 @@ else:
             path.write_text(json.dumps({"type": "user", "sessionId": session, "message": {"content": "fixture history"}}) + "\n")
         write_json(root / "jobs" / SHORT / "state.json", {
             "sessionId": session, "daemonShort": SHORT, "cwd": os.getcwd(),
-            "tempo": "idle", "inFlight": {"tasks": 0, "queued": 0},
+            "tempo": "working" if mode == "busy" else "idle", "inFlight": {"tasks": 0, "queued": 0},
             "intent": "history-bearing", "linkScanOffset": 0,
             "linkScanPath": str(path) if path.exists() else None, "outcome": None,
         })

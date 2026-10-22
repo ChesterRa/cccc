@@ -418,7 +418,9 @@ history and pending messages are preserved. Correct the provider configuration
 and use **Start** or **Restart** to retry that conversation. **New session** starts
 fresh without deleting provider history. Successful resume clears the failure
 state and delivers the pending messages. Known temporary control/startup errors
-remain retryable. The workspace-trust terminal only accepts the operator's trust
+remain retryable until the same saved conversation has failed to resume 10 times
+in a row; automatic recovery then pauses as above, with the conversation still
+eligible for **Start** or **Restart**. The workspace-trust terminal only accepts the operator's trust
 decision; CCCC waits for the managed session before delivering tasks.
 
 For Codex, Grok, OpenCode and Kilo, a failed attempt to restore a matching saved conversation also shows **Resume failed** and retains the original identity, history and pending messages. Correct the provider configuration and use **Start** or **Restart** to retry; **New session** intentionally starts fresh. Profile summaries distinguish native TUI, ACP and Pi RPC so a saved execution mode is visible before launch.
