@@ -1,11 +1,17 @@
 //! Payload-free ordered notice facts, separate from the fixed inbox page.
-//! Historical Mail/reply/read/delivery/claim relations are not yet pruned:
-//! this metadata grows with history, even though no Event payload is retained.
-//! Capping arbitrary old claim references would change the notice protocol.
+//! Repeat claims are pruned once expired or withdrawn. A separate current-batch
+//! counter preserves the finite repeat budget across pruning and rebuilds.
+//! Other historical relations still grow with history; no payload is retained.
 use super::*;
 use std::collections::HashSet;
 
 type MailClaims = HashMap<(String, String), Vec<MailClaim>>;
+
+#[derive(Default)]
+struct MailBatch {
+    sources: Vec<String>,
+    issued: u64,
+}
 
 struct MailClaim {
     id: String,
@@ -27,6 +33,7 @@ pub(crate) struct NoticeState {
     deliveries: HashMap<(String, String), (String, String, usize)>,
     actor_resumes: HashMap<String, String>,
     mail_claims: MailClaims,
+    mail_batches: HashMap<(String, String), MailBatch>,
     reply_claims: HashSet<(String, String, String)>,
     resume_at: Option<String>,
 }
@@ -190,14 +197,19 @@ impl NoticeState {
                     .unwrap_or_default();
                 let ids = Self::reference_ids(event);
                 if kind == "mail_notice" {
-                    self.mail_claims
-                        .entry((actor.to_owned(), created.to_owned()))
-                        .or_default()
-                        .push(MailClaim {
-                            id: event.id.clone(),
-                            ts: event.ts.clone(),
-                            sources: ids,
-                        });
+                    let key = (actor.to_owned(), created.to_owned());
+                    let batch = self.mail_batches.entry(key.clone()).or_default();
+                    if batch.sources == ids {
+                        batch.issued = batch.issued.saturating_add(1);
+                    } else {
+                        batch.sources.clone_from(&ids);
+                        batch.issued = 1;
+                    }
+                    self.mail_claims.entry(key).or_default().push(MailClaim {
+                        id: event.id.clone(),
+                        ts: event.ts.clone(),
+                        sources: ids,
+                    });
                 } else {
                     self.reply_claims.extend(
                         ids.into_iter()
@@ -207,6 +219,42 @@ impl NoticeState {
             }
             _ => {}
         }
+        self.prune_mail_claims(group);
+    }
+
+    fn prune_mail_claims(&mut self, group: &GroupDoc) {
+        let repeat =
+            crate::automation::delivery_timing_value(group, "mail_notice_repeat_seconds", 0);
+        if repeat <= 0 {
+            return;
+        }
+        let now = Utc::now().timestamp();
+        self.mail_claims.retain(|(actor, created), claims| {
+            let current = group
+                .actors
+                .iter()
+                .any(|a| a.id == *actor && a.created_at == *created);
+            claims.retain(|claim| {
+                current
+                    && now - crate::automation::timestamp(&claim.ts, now) < repeat
+                    && self
+                        .deliveries
+                        .get(&(claim.id.clone(), actor.clone()))
+                        .is_none_or(|v| v.0 != "withdrawn")
+            });
+            !claims.is_empty()
+        });
+        self.mail_batches.retain(|(actor, created), _| {
+            group
+                .actors
+                .iter()
+                .any(|a| a.id == *actor && a.created_at == *created)
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_mail_claims(&self) -> usize {
+        self.mail_claims.values().map(Vec::len).sum()
     }
 
     pub fn still_awaited(
@@ -240,7 +288,7 @@ impl NoticeState {
     }
 
     pub fn due(
-        &self,
+        &mut self,
         group: &GroupDoc,
         eligible: &[&cccc_contracts::Actor],
         cursors: &BTreeMap<String, String>,
@@ -248,6 +296,7 @@ impl NoticeState {
         reply_after: i64,
     ) -> Vec<Event> {
         use crate::automation::{notice_event, timestamp};
+        self.prune_mail_claims(group);
         let now = Utc::now().timestamp();
         let resume_at = self.resume_at.as_deref().map(|ts| timestamp(ts, now));
         let mut notices = Vec::new();
@@ -313,6 +362,18 @@ impl NoticeState {
                 }
             }
             if mail_delays.busy > 0 && !mail.is_empty() {
+                let pending_batch = mail
+                    .iter()
+                    .map(|source| source.id.clone())
+                    .collect::<Vec<_>>();
+                let exhausted = mail_delays.repeat > 0
+                    && self
+                        .mail_batches
+                        .get(&(actor.id.clone(), actor.created_at.clone()))
+                        .is_some_and(|batch| {
+                            batch.sources == pending_batch
+                                && batch.issued as u128 > mail_delays.repeat_max as u128
+                        });
                 let active = self
                     .mail_claims
                     .get(&(actor.id.clone(), actor.created_at.clone()))
@@ -354,7 +415,7 @@ impl NoticeState {
                     .actor_resumes
                     .get(&actor.id)
                     .map_or(first, |resume| first.max(timestamp(resume, now)));
-                if !active && now - first >= after {
+                if !active && !exhausted && now - first >= after {
                     let mut event = notice_event(
                         group,
                         actor,

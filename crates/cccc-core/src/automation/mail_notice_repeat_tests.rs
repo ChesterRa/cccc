@@ -6,10 +6,15 @@ struct Replay {
     store: GroupStore,
     group: GroupDoc,
     mail_ids: Vec<String>,
+    later_mail: Option<Event>,
 }
 
 impl Replay {
     fn captured(notice_age: i64, repeat: Option<i64>) -> Self {
+        Self::captured_records(notice_age, repeat, true)
+    }
+
+    fn captured_records(notice_age: i64, repeat: Option<i64>, include_later: bool) -> Self {
         let temp = tempfile::tempdir().expect("replay directory");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
@@ -50,13 +55,18 @@ impl Replay {
             .ledger_path(&group.group_id)
             .expect("captured notice replay invariant");
         let mut mail_ids = Vec::new();
-        for event in &mut events {
+        let mut later_mail = None;
+        for (index, event) in events.iter_mut().enumerate() {
             // Explicit playback binding: translate the whole captured timeline,
             // preserving its relative times and order. No captured fact is invented.
             let at =
                 DateTime::parse_from_rfc3339(&event.ts).expect("captured notice replay invariant");
             event.ts = (anchor + (at - captured_at)).to_rfc3339();
             event.group_id = group.group_id.clone();
+            if !include_later && index == 4 {
+                later_mail = Some(event.clone());
+                continue;
+            }
             if event.kind == "chat.message" {
                 mail_ids.push(event.id.clone());
             }
@@ -70,7 +80,29 @@ impl Replay {
                 .expect("captured notice replay invariant"),
             store,
             mail_ids,
+            later_mail,
         }
+    }
+
+    fn set_max(&mut self, max: i64) {
+        self.group
+            .extra
+            .get_mut("delivery")
+            .expect("delivery settings")["mail_notice_repeat_max"] = json!(max);
+    }
+
+    fn issue_expired(&self, mut notice: Event) {
+        // Replay the production-issued output at the fixture's translated
+        // issue time, advancing one interval without a wall-clock sleep.
+        notice.ts = (Utc::now() - chrono::Duration::seconds(3610)).to_rfc3339();
+        ledger::append(
+            &self
+                .store
+                .ledger_path(&self.group.group_id)
+                .expect("ledger"),
+            &notice,
+        )
+        .expect("issue replayed output");
     }
 
     fn due(&self) -> Vec<Event> {
@@ -147,4 +179,75 @@ fn mail_notice_repeat_warm_projection_does_not_replay_history() {
         assert_eq!(replay.due().len(), 1);
     }
     assert_eq!(crate::ledger::snapshot::decoded_records(), decoded);
+}
+
+#[test]
+fn mail_notice_repeat_stops_at_exact_batch_max_and_resets_for_later_mail() {
+    for max in [0, 1, 3] {
+        // A real prefix ending at accepted delivery, before the captured later Mail.
+        let mut replay = Replay::captured_records(3610, Some(3600), false);
+        replay.set_max(max);
+        for _ in 0..max {
+            let due = replay.due();
+            assert_eq!(due.len(), 1, "repeat budget {max}");
+            replay.issue_expired(due.into_iter().next().expect("repeat"));
+        }
+        assert!(
+            replay.due().is_empty(),
+            "exactly {max} repeats, excluding the captured initial notice"
+        );
+        assert!(
+            replay.due().is_empty(),
+            "pruning must not reset the counter"
+        );
+        ledger::append(
+            &replay
+                .store
+                .ledger_path(&replay.group.group_id)
+                .expect("ledger"),
+            replay.later_mail.as_ref().expect("captured later Mail"),
+        )
+        .expect("append real later Mail");
+        let due = replay.due();
+        assert_eq!(due.len(), 1, "a new pending batch has an initial notice");
+        assert_eq!(due[0].data["context"]["count"], 2);
+    }
+    let replay = Replay::captured_records(3610, Some(3600), false);
+    for _ in 0..3 {
+        let due = replay.due();
+        assert_eq!(due.len(), 1, "default max is three");
+        replay.issue_expired(due.into_iter().next().expect("repeat"));
+    }
+    assert!(replay.due().is_empty());
+}
+
+#[test]
+fn mail_notice_repeat_prunes_claims_across_many_intervals_and_rebuilds() {
+    let mut replay = Replay::captured_records(3610, Some(3600), false);
+    replay.set_max(64);
+    for _ in 0..64 {
+        let due = replay.due();
+        assert_eq!(due.len(), 1);
+        assert!(
+            inbox::projection::retained_mail_notice_claims(&replay.home, &replay.group)
+                .expect("claim count")
+                <= 1
+        );
+        replay.issue_expired(due.into_iter().next().expect("repeat"));
+    }
+    assert!(replay.due().is_empty());
+    assert!(
+        inbox::projection::retained_mail_notice_claims(&replay.home, &replay.group)
+            .expect("claim count")
+            <= 1
+    );
+    // A setting change rebuilds the production projection from real issued
+    // records; neither the finite budget nor pruned claim state can reset.
+    replay.set_max(63);
+    assert!(replay.due().is_empty(), "rebuild preserves exhaustion");
+    assert!(
+        inbox::projection::retained_mail_notice_claims(&replay.home, &replay.group)
+            .expect("claim count")
+            <= 1
+    );
 }

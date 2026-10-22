@@ -1858,6 +1858,7 @@ Patch keys used by CCCC include:
 - Delivery: `mail_notice_after_seconds` (default 1800, zero disables all Mail notices),
   `mail_notice_idle_after_seconds` (default 60, zero disables only the early idle notice),
   `mail_notice_repeat_seconds` (default 0, zero keeps single-notice behavior),
+  `mail_notice_repeat_max` (default 3, maximum repeats per pending Mail batch; zero allows only its initial notice),
   `reply_notice_after_seconds` (default 900, zero disables)
 - Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
   `keepalive_max_per_actor`,
@@ -4598,7 +4599,13 @@ By default it is issued once per pending batch. With the opt-in
 `delivery.mail_notice_repeat_seconds` greater than zero, a notice stops holding
 back the next notice once that many seconds have elapsed since it was issued.
 The next unread pass may issue a fresh notice containing every still-pending
-Mail, including later arrivals. A read, reply, accepted/ambiguous delivery of
+Mail, including later arrivals. `delivery.mail_notice_repeat_max` bounds each
+batch to its initial notice plus that many repeats (default 3). A batch is the
+ordered set of still-pending Mail IDs; a changed set starts a fresh budget.
+Issued attempts, including withdrawn notices, consume this budget. The count
+is reconstructed from notice records after restart and survives claim pruning.
+Expired and withdrawn claims are pruned from the repeat projection. The max
+setting has no effect when repeat seconds is omitted or zero. A read, reply, accepted/ambiguous delivery of
 the Mail itself, or Actor-generation change ends that Mail's eligibility as
 above; acceptance of the notice itself does not. Each repeat starts its own
 interval. Repeating a notice **does not repeat the underlying task execution**,
