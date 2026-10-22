@@ -4604,6 +4604,8 @@ The next unread pass may issue a fresh notice containing every still-pending
 Mail, including later arrivals. `delivery.mail_notice_repeat_max` bounds each
 batch to its initial notice plus that many repeats (default 3). A batch is the
 ordered set of still-pending Mail IDs; a changed set starts a fresh budget.
+The cap is per pending batch, not per individual Mail: partial resolution
+also changes the batch and starts a new budget.
 Issued attempts, including withdrawn notices, consume this budget. The count
 is reconstructed from notice records after restart and survives claim pruning.
 A withdrawn notice does not hold back the next attempt for the repeat
