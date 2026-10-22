@@ -3370,6 +3370,7 @@ Args:
   group_id: string
   actor_id?: string
   title?: string
+  model?: string // the model the Actor runs, as a label; at most 128 characters, no control characters
   runtime?: string
   runtime_mode?: "default" | "acp" // optional headless ACP for Antigravity, Auggie, Copilot, Devin, Cursor, Kimi Code, Kiro, Hermes and Droid
   command?: string[]
@@ -3424,7 +3425,7 @@ Args:
 ```
 
 Patch keys used by CCCC v0.4.x include:
-- Identity/UI: `title`
+- Identity/UI: `title`, `model` (a label naming the model the Actor runs; launching does not read it; an empty string clears it)
 - Runtime: `runtime`, `runtime_mode`, `command`, `submit`
 - Scope: `default_scope_key`
 - Enable/disable: `enabled`

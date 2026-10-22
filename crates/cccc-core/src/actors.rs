@@ -39,6 +39,18 @@ pub fn validate_actor_id(value: &str) -> io::Result<String> {
     Ok(id.to_owned())
 }
 
+/// An Actor's `model` label, trimmed: at most 128 characters and no control
+/// characters. Empty clears it.
+pub fn validate_model(value: &str) -> io::Result<String> {
+    let model = value.trim();
+    if model.chars().count() > 128 || model.chars().any(char::is_control) {
+        return Err(io::Error::other(
+            "model must be at most 128 characters, without control characters",
+        ));
+    }
+    Ok(model.to_owned())
+}
+
 pub fn visible(group: &GroupDoc) -> impl Iterator<Item = &Actor> {
     group
         .actors
@@ -95,6 +107,7 @@ pub fn add(group: &mut GroupDoc, mut actor: Actor) -> io::Result<Actor> {
     }
 
     actor.id = validate_actor_id(&actor.id)?;
+    actor.model = validate_model(&actor.model)?;
     actor
         .runtime_mode
         .validate(actor.runtime)
@@ -153,6 +166,7 @@ pub fn update(
     object.insert("updated_at".into(), Value::String(utc_now()));
     let mut actor: Actor = serde_json::from_value(value).map_err(io::Error::other)?;
     actor.role = None;
+    actor.model = validate_model(&actor.model)?;
     actor
         .runtime_mode
         .validate(actor.runtime)

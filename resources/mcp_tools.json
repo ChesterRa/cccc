@@ -1344,6 +1344,10 @@
         "title": {
           "type": "string"
         },
+        "model": {
+          "type": "string",
+          "description": "On add: the model this Actor runs, as a label; launching does not read it."
+        },
         "command": {
           "type": "array",
           "items": {

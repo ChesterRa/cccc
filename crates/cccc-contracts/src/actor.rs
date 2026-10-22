@@ -193,6 +193,10 @@ pub struct Actor {
     pub role: Option<ActorRole>,
     #[serde(default)]
     pub title: String,
+    /// The model this Actor runs, as its operator names it. A label for
+    /// people and tools; launching does not read it. Empty when unset.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
     #[serde(default)]
     pub command: Vec<String>,
     #[serde(default)]
@@ -245,6 +249,7 @@ impl Actor {
             id: id.into(),
             role: None,
             title: String::new(),
+            model: String::new(),
             command: Vec::new(),
             env: BTreeMap::new(),
             default_scope_key: String::new(),
