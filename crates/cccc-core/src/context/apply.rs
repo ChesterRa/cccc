@@ -14,8 +14,19 @@ pub fn apply_all(
     for (index, operation) in operations.iter().enumerate() {
         let name = operation.get("op").and_then(Value::as_str).unwrap_or("");
         authorize(document, operation)?;
-        apply_one(document, name, operation, by)?;
-        changes.push(json!({"index": index, "op": name, "detail": "applied"}));
+        let mut change = json!({"index": index, "op": name, "detail": "applied"});
+        if name == "task.create" {
+            // The created task's id, or the existing task a replayed
+            // `client_request_id` names, so the caller need not search for it.
+            let created = super::task_apply::create(document, operation, by)?;
+            change["task_id"] = Value::String(created.task_id);
+            if created.replayed {
+                change["replayed"] = Value::Bool(true);
+            }
+        } else {
+            apply_one(document, name, operation, by)?;
+        }
+        changes.push(change);
     }
     Ok(changes)
 }
@@ -29,7 +40,6 @@ fn apply_one(
     match name {
         "coordination.brief.update" => update_brief(document, operation, by),
         "coordination.note.add" => add_note(document, operation, by),
-        "task.create" => super::task_apply::create(document, operation, by),
         "task.update" => super::task_apply::update(document, operation),
         "task.move" => super::task_apply::move_task(document, operation),
         "task.restore" => super::task_apply::restore(document, operation),
