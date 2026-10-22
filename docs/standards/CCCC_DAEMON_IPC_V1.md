@@ -4607,7 +4607,9 @@ is reconstructed from notice records after restart and survives claim pruning.
 Expired and withdrawn claims are pruned from the repeat projection. The max
 setting has no effect when repeat seconds is omitted or zero. A read, reply, accepted/ambiguous delivery of
 the Mail itself, or Actor-generation change ends that Mail's eligibility as
-above; acceptance of the notice itself does not. Each repeat starts its own
+above; acceptance of the notice itself does not. Runtime restart and
+`actor_new_session` preserve the Actor generation, pending Mail and repeat
+budget; they only restart the ordinary post-resume notice delay. Each repeat starts its own
 interval. Repeating a notice **does not repeat the underlying task execution**,
 promote Mail to Push, advance an Inbox cursor, or create a new Mail obligation. Bootstrap, the next explicit Push, and low-frequency coordination
 responses MAY carry a passive `mail_pending` count without writing a notice.

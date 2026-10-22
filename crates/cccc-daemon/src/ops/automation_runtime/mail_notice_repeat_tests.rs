@@ -367,3 +367,45 @@ fn mail_notice_repeat_daemon_stops_at_configured_max() {
     std::thread::sleep(Duration::from_millis(1200));
     replay.expect_no_repeat();
 }
+
+#[test]
+fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
+    for op in ["actor_restart", "actor_new_session"] {
+        let replay = Replay::captured(3610, Some(3600));
+        replay.repeat();
+        let store = GroupStore::new(replay.home.clone()).expect("group store");
+        let created = store.load(&replay.group_id).expect("group").actors[0]
+            .created_at
+            .clone();
+        request(
+            &replay.home,
+            op,
+            json!({"group_id":replay.group_id,"actor_id":"recipient","by":"user"}),
+        );
+        assert_eq!(
+            store.load(&replay.group_id).expect("group").actors[0].created_at,
+            created,
+            "runtime lifecycle is not a new Actor generation"
+        );
+        request(
+            &replay.home,
+            "group_settings_update",
+            json!({"group_id":replay.group_id,"by":"user","patch":{"mail_notice_repeat_seconds":1}}),
+        );
+        std::thread::sleep(Duration::from_millis(1200));
+        let before = replay.notices().len();
+        replay.tick();
+        let notices = replay.notices();
+        assert_eq!(
+            notices.len(),
+            before + 1,
+            "{op} preserves pending Mail and its repeat budget"
+        );
+        let notice = notices.last().expect("repeat after runtime lifecycle");
+        assert_eq!(
+            notice.data["context"]["source_event_ids"],
+            json!(replay.mail_ids)
+        );
+        replay.accepted(&notice.id);
+    }
+}
