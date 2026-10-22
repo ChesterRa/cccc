@@ -72,17 +72,20 @@ fn cached(path: &Path) -> Option<Entry> {
         .map(|(_, entry)| entry.clone())
 }
 fn routing(group: &GroupDoc) -> Value {
-    json!(
+    json!((
         group
             .actors
             .iter()
             .map(|actor| (
                 &actor.id,
+                &actor.created_at,
                 effective_role(group, &actor.id),
                 &actor.internal_kind
             ))
-            .collect::<Vec<_>>()
-    )
+            .collect::<Vec<_>>(),
+        crate::automation::delivery_timing_value(group, "mail_notice_repeat_seconds", 0),
+        crate::automation::delivery_timing_value(group, "mail_notice_repeat_max", 3),
+    ))
 }
 impl Projection {
     fn build(
@@ -199,7 +202,7 @@ fn with_projection<T>(
     group: &GroupDoc,
     actor_ids: &[String],
     state: &InboxState,
-    mut inspect: impl FnMut(&Projection, &Snapshot) -> io::Result<T>,
+    mut inspect: impl FnMut(&mut Projection, &Snapshot) -> io::Result<T>,
 ) -> io::Result<T> {
     let path = GroupStore::new(home.clone())?.ledger_path(&group.group_id)?;
     let entry = entry(&path);
@@ -241,7 +244,7 @@ fn with_projection<T>(
             if rebuild {
                 *guard = Some(Projection::build(group, &state, &snapshot, actor_ids)?);
             }
-            inspect(guard.as_ref().expect("projection initialized"), &snapshot)
+            inspect(guard.as_mut().expect("projection initialized"), &snapshot)
         })();
         if result.is_err() {
             // A failed suffix read/refill may have reduced only a prefix.
@@ -445,6 +448,34 @@ pub(crate) fn note_cursor(path: &Path) {
     if let Some(entry) = cached(path) {
         entry.cursor_epoch.fetch_add(1, Ordering::Release);
     }
+}
+
+#[cfg(test)]
+pub(crate) fn retained_mail_notice_claims(
+    home: &HomeLayout,
+    group: &GroupDoc,
+) -> io::Result<usize> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, _| {
+        Ok(projection.notices.retained_mail_claims())
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn cached_actor_generation(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+) -> io::Result<Option<String>> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, _| {
+        Ok(projection
+            .group
+            .actors
+            .iter()
+            .find(|a| a.id == actor)
+            .map(|a| a.created_at.clone()))
+    })
 }
 
 #[cfg(test)]

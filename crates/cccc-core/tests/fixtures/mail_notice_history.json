@@ -1,0 +1,82 @@
+[
+  {
+    "v": 1,
+    "id": "e6b3e52e715044539a4347af4e032bf4",
+    "ts": "2026-10-02T19:38:26.394825Z",
+    "kind": "chat.message",
+    "group_id": "captured-notice",
+    "by": "sender",
+    "data": {
+      "message_mode": "mail",
+      "to": [
+        "recipient"
+      ],
+      "text": "[redacted: 1796 chars]"
+    }
+  },
+  {
+    "v": 1,
+    "id": "f9e17baae8fe4376bf877871249a6dcc",
+    "ts": "2026-10-02T20:09:05.867777Z",
+    "kind": "system.notify",
+    "group_id": "captured-notice",
+    "by": "system",
+    "data": {
+      "kind": "mail_notice",
+      "title": "Mail waiting",
+      "message": "You have 1 Mail item(s) waiting. Call cccc_inbox_read when appropriate.",
+      "target_actor_id": "recipient",
+      "context": {
+        "actor_created_at": "2026-09-22T19:18:35.569390Z",
+        "source_event_ids": [
+          "e6b3e52e715044539a4347af4e032bf4"
+        ],
+        "count": 1,
+        "actor_id": "recipient"
+      }
+    }
+  },
+  {
+    "v": 1,
+    "id": "40d0e90756954b619baf6c93cb41ed76",
+    "ts": "2026-10-02T20:09:05.880241Z",
+    "kind": "runtime.delivery",
+    "group_id": "captured-notice",
+    "by": "system",
+    "data": {
+      "source_event_id": "f9e17baae8fe4376bf877871249a6dcc",
+      "state": "claimed",
+      "transport": "managed_session",
+      "actor_id": "recipient"
+    }
+  },
+  {
+    "v": 1,
+    "id": "e235d8d346ec47ef957c8284b07bbbeb",
+    "ts": "2026-10-02T20:09:07.383802Z",
+    "kind": "runtime.delivery",
+    "group_id": "captured-notice",
+    "by": "system",
+    "data": {
+      "source_event_id": "f9e17baae8fe4376bf877871249a6dcc",
+      "state": "accepted",
+      "transport": "managed_session",
+      "actor_id": "recipient"
+    }
+  },
+  {
+    "v": 1,
+    "id": "bbf78cafdec144b494b613d6d8812485",
+    "ts": "2026-10-02T20:38:03.060386Z",
+    "kind": "chat.message",
+    "group_id": "captured-notice",
+    "by": "sender",
+    "data": {
+      "message_mode": "mail",
+      "to": [
+        "recipient"
+      ],
+      "text": "[redacted: 1845 chars]"
+    }
+  }
+]
