@@ -226,6 +226,7 @@ fn task_action(
                     "notes",
                     "checklist",
                     "rollup",
+                    "decision_request",
                 ],
             );
             args.insert("op".into(), Value::String("task.create".into()));
@@ -253,6 +254,7 @@ fn task_action(
                     "notes",
                     "checklist",
                     "rollup",
+                    "decision_request",
                 ],
             );
             let has_patch = args.keys().any(|key| key != "task_id");
@@ -269,6 +271,11 @@ fn task_action(
                 movement.insert("status".into(), status);
                 operations.push(Value::Object(movement));
             }
+        }
+        "decide" => {
+            retain_fields(&mut args, &["task_id", "choice", "text", "source"]);
+            args.insert("op".into(), Value::String("task.decide".into()));
+            operations.push(Value::Object(args));
         }
         "move" | "restore" | "delete" => {
             retain_fields(
@@ -566,6 +573,38 @@ mod tests {
         assert_eq!(
             args["ops"][1],
             json!({"op":"task.move","task_id":"T001","status":"active"})
+        );
+    }
+
+    #[test]
+    fn task_decide_mapping_answers_the_decision_request() {
+        let request = json!({"question":"Ship on Friday?","options":["yes","no"]});
+        let create = json!({
+            "action":"create","group_id":"g_test","actor_id":"lead","by":"lead",
+            "title":"release day","decision_request":request
+        })
+        .as_object()
+        .cloned()
+        .expect("create args");
+        let (_, args) = daemon_call("cccc_task", create).expect("create mapping");
+        assert_eq!(args["ops"][0]["decision_request"], request);
+
+        let decide = json!({
+            "action":"decide","group_id":"g_test","actor_id":"peer","by":"peer",
+            "task_id":"T001","choice":"yes","text":"Ship it.","source":"chat","title":"ignored"
+        })
+        .as_object()
+        .cloned()
+        .expect("decide args");
+        let (op, args) = daemon_call("cccc_task", decide).expect("decide mapping");
+        assert_eq!(op, "context_sync");
+        assert_eq!(args["by"], "peer");
+        assert_eq!(
+            args["ops"],
+            json!([{
+                "op":"task.decide","task_id":"T001","choice":"yes","text":"Ship it.",
+                "source":"chat"
+            }])
         );
     }
 

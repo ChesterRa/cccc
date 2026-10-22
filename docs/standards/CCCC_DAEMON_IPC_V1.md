@@ -1863,6 +1863,10 @@ Patch keys used by CCCC include:
   `silence_timeout_seconds`, `help_nudge_interval_seconds`,
   `help_nudge_min_messages`
 - Terminal transcript: `terminal_transcript_visibility`, `terminal_transcript_notify_tail`, `terminal_transcript_notify_lines`
+- Tasks: `task_approvers` (actor ids that may answer decision requests with
+  `task.decide` besides the user; stored as `tasks.approvers`; only the user's
+  path, `user`, `system` or an empty `by`, may change it; an empty list names
+  no approvers)
 
 Result:
 ```ts

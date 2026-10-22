@@ -58,6 +58,7 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             )
         })?)
     };
+    let approver = is_task_approver(&group, &by);
     let mut denied = None;
     let result = contexts
         .sync_checked(
@@ -67,7 +68,7 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             &by,
             bool_arg(request, "dry_run", false),
             |document, operation| {
-                authorize(role, document, operation, &by).map_err(|error| {
+                authorize(role, approver, document, operation, &by).map_err(|error| {
                     denied = Some(error);
                     std::io::Error::other("context authorization rejected")
                 })
@@ -127,8 +128,25 @@ fn parse_operations(request: &DaemonRequest) -> Result<Vec<Map<String, Value>>, 
         .collect()
 }
 
+/// Actors the group lets answer decision requests besides the user: the
+/// `task_approvers` setting.
+fn is_task_approver(group: &GroupDoc, actor_id: &str) -> bool {
+    group
+        .extra
+        .get("tasks")
+        .and_then(Value::as_object)
+        .and_then(|tasks| tasks.get("approvers"))
+        .and_then(Value::as_array)
+        .is_some_and(|approvers| {
+            approvers
+                .iter()
+                .any(|approver| approver.as_str() == Some(actor_id))
+        })
+}
+
 fn authorize(
     role: Option<ActorRole>,
+    approver: bool,
     document: &ContextDoc,
     operation: &Map<String, Value>,
     by: &str,
@@ -142,6 +160,12 @@ fn authorize(
             return Err(OpError::new(
                 "permission_denied",
                 format!("{name} requires foreman or user"),
+            ));
+        }
+        "task.decide" if !approver => {
+            return Err(OpError::new(
+                "permission_denied",
+                "task.decide requires the user or an actor listed in task_approvers",
             ));
         }
         "agent_state.update" | "agent_state.clear" => {

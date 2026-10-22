@@ -1435,6 +1435,130 @@ fn a_peer_finishing_the_last_subtask_completes_a_rollup_task_it_does_not_own() {
     );
 }
 
+#[test]
+fn only_the_user_and_the_approvers_it_names_answer_decision_requests() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"decisions"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["lead", "peer1"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runtime":"custom",
+                "command":["sh"],
+                "enabled":false,
+                "by":"user"
+            }),
+        );
+    }
+    call(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,
+            "by":"lead",
+            "ops":[
+                {"op":"task.create","title":"release day","waiting_on":"user",
+                    "decision_request":{"question":"Ship on Friday?","options":["yes","no"]}},
+                {"op":"task.create","title":"hotfix","waiting_on":"user",
+                    "decision_request":{"question":"Patch tonight?"}},
+                {"op":"task.create","title":"rollback","waiting_on":"user",
+                    "decision_request":{"question":"Keep the old build?"}},
+                {"op":"task.create","title":"freeze","waiting_on":"user",
+                    "decision_request":{"question":"Freeze merges?"}},
+                {"op":"task.create","title":"notes","waiting_on":"user",
+                    "decision_request":{"question":"Publish the notes?"}},
+            ],
+        }),
+    );
+    let summary = call(
+        &home,
+        "context_get",
+        json!({"group_id":group_id,"detail":"summary"}),
+    );
+    assert_eq!(
+        summary.result["coordination"]["tasks"][0]["decision_request"]["question"],
+        "Ship on Friday?"
+    );
+    let decide = |by: &str, task_id: &str, choice: &str| {
+        raw_call(
+            &home,
+            "context_sync",
+            json!({
+                "group_id":group_id,
+                "by":by,
+                "ops":[{"op":"task.decide","task_id":task_id,"choice":choice}],
+            }),
+        )
+    };
+    let approvers = |by: &str, list: Value| {
+        raw_call(
+            &home,
+            "group_settings_update",
+            json!({"group_id":group_id,"by":by,"patch":{"task_approvers":list}}),
+        )
+    };
+    let refused = |response: DaemonResponse| {
+        assert_eq!(
+            response.error.expect("not an approver").code,
+            "permission_denied"
+        );
+    };
+    refused(decide("lead", "T001", "yes"));
+    refused(decide("peer1", "T001", "yes"));
+    refused(approvers("lead", json!(["lead"])));
+
+    // An empty list names no approvers: only the user's path decides.
+    assert!(approvers("user", json!([])).ok);
+    refused(decide("peer1", "T001", "yes"));
+
+    // `system` and an empty `by` are the user's path, for the list and for decisions.
+    let by_system = approvers("system", json!(["lead"]));
+    assert!(by_system.ok, "{:?}", by_system.error);
+    let by_lead = decide("lead", "T001", "yes");
+    assert!(by_lead.ok, "{:?}", by_lead.error);
+    let by_empty = approvers("", json!(["peer1"]));
+    assert!(by_empty.ok, "{:?}", by_empty.error);
+    refused(decide("lead", "T002", "tonight"));
+    let by_peer = decide("peer1", "T002", "tonight");
+    assert!(by_peer.ok, "{:?}", by_peer.error);
+    for (by, task_id) in [("user", "T003"), ("system", "T004"), ("", "T005")] {
+        let decided = decide(by, task_id, "yes");
+        assert!(decided.ok, "{by:?}: {:?}", decided.error);
+    }
+
+    let context = cccc_core::context::ContextStore::new(home.clone())
+        .expect("context store")
+        .load(group_id)
+        .expect("context");
+    let deciders = ["lead", "peer1", "user", "system", ""];
+    for (task, by) in deciders.iter().enumerate() {
+        assert_eq!(context.tasks[task]["status"], "done");
+        assert_eq!(context.tasks[task]["waiting_on"], "none");
+        assert_eq!(context.tasks[task]["decision"]["by"], *by);
+    }
+    assert_eq!(context.tasks[1]["decision"]["choice"], "tonight");
+    let notes = context.coordination["recent_decisions"]
+        .as_array()
+        .expect("decision notes");
+    assert_eq!(
+        notes
+            .iter()
+            .map(|note| (note["task_id"].clone(), note["by"].clone()))
+            .collect::<Vec<_>>(),
+        (1..=5)
+            .zip(deciders)
+            .map(|(task, by)| (json!(format!("T{task:03}")), json!(by)))
+            .collect::<Vec<_>>()
+    );
+}
+
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     let response = raw_call(home, op, args);
     assert!(response.ok, "{op}: {:?}", response.error);

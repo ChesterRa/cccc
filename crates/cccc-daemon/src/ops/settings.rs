@@ -45,6 +45,7 @@ const SECTION_SETTING_KEYS: &[(&str, &str, &str)] = &[
         "notify_lines",
     ),
     ("panorama_enabled", "features", "panorama_enabled"),
+    ("task_approvers", "tasks", "approvers"),
 ];
 
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
@@ -69,6 +70,16 @@ fn group_settings(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     authorize(&group, request)?;
     let mut patch = patch(request)?;
     patch.remove("by");
+    // Approvers answer decision requests in the user's place, so only the
+    // user's path (`user`, `system` or an empty `by`) names them; a foreman
+    // could otherwise approve its own requests.
+    let by = string_arg(request, "by").unwrap_or_default();
+    if patch.contains_key("task_approvers") && !matches!(by.trim(), "" | "user" | "system") {
+        return Err(OpError::new(
+            "permission_denied",
+            "task_approvers can only be changed by the user",
+        ));
+    }
     let settings_value = store(home)?
         .mutate(&group.group_id, |doc| {
             let mut flat = match doc.extra.remove("settings") {

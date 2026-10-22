@@ -2351,7 +2351,7 @@
   },
   {
     "name": "cccc_task",
-    "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|move|restore|delete. Use for multi-actor, long-horizon, or user-tracked work. Lifecycle transitions are canonical via move; update with status auto-applies the matching lifecycle move.",
+    "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|move|restore|delete|decide. Use for multi-actor, long-horizon, or user-tracked work. Lifecycle transitions are canonical via move; update with status auto-applies the matching lifecycle move. decide answers a task's decision_request: the user and actors in the group's task_approvers may decide; it records the decision, adds a decision note and moves the task to done.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2371,7 +2371,8 @@
             "update",
             "move",
             "restore",
-            "delete"
+            "delete",
+            "decide"
           ],
           "default": "list"
         },
@@ -2466,6 +2467,39 @@
               "text"
             ]
           }
+        },
+        "decision_request": {
+          "type": "object",
+          "description": "Create or update: a question this task waits on, with the options to choose from and a recommendation. Set waiting_on to user with it when the user should answer.",
+          "properties": {
+            "question": {
+              "type": "string"
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "recommendation": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "question"
+          ]
+        },
+        "choice": {
+          "type": "string",
+          "description": "Decide only: the answer; one of the decision request's options when it lists any."
+        },
+        "text": {
+          "type": "string",
+          "description": "Decide only: the answer in the decider's own words."
+        },
+        "source": {
+          "type": "string",
+          "description": "Decide only: where the answer was given, e.g. a message id."
         }
       },
       "required": []

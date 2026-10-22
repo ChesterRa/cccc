@@ -63,7 +63,7 @@ fn coordination(
 }
 
 fn summary_task(task: &Map<String, Value>) -> Map<String, Value> {
-    const FIELDS: [&str; 18] = [
+    const FIELDS: [&str; 20] = [
         "id",
         "title",
         "outcome",
@@ -78,6 +78,8 @@ fn summary_task(task: &Map<String, Value>) -> Map<String, Value> {
         "task_type",
         "notes",
         "checklist",
+        "decision_request",
+        "decision",
         "created_at",
         "updated_at",
         "progress",

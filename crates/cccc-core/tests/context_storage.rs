@@ -477,3 +477,99 @@ fn a_rollup_task_completes_and_reopens_with_its_subtasks() {
         .is_err()
     );
 }
+
+#[test]
+fn a_decision_request_is_answered_once_and_leaves_a_decision_note() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("decisions", "").expect("group");
+    let contexts = ContextStore::new(home).expect("contexts");
+    let sync = |ops: Value, by: &str| {
+        let ops = ops.as_array().expect("ops").iter().cloned().map(op);
+        contexts.sync(&group.group_id, &ops.collect::<Vec<_>>(), None, by, false)
+    };
+    sync(
+        json!([
+            {"op":"task.create","title":"release day","waiting_on":"user",
+                "decision_request":{"question":"Ship on Friday?","options":["yes","no"],
+                    "recommendation":"yes"}},
+            {"op":"task.create","title":"plain task"},
+        ]),
+        "lead",
+    )
+    .expect("create");
+    let before = contexts.load(&group.group_id).expect("created");
+    assert_eq!(
+        before.tasks[0]["decision_request"]["options"],
+        json!(["yes", "no"])
+    );
+    for invalid in [
+        json!({"op":"task.create","title":"x","decision_request":{"options":["a"]}}),
+        json!({"op":"task.create","title":"x","decision_request":{"question":"q","options":[""]}}),
+        json!({"op":"task.create","title":"x","decision":{"choice":"yes"}}),
+        json!({"op":"task.decide","task_id":"T001","choice":"maybe"}),
+        json!({"op":"task.decide","task_id":"T002","choice":"yes"}),
+    ] {
+        assert!(sync(json!([invalid]), "user").is_err(), "{invalid}");
+    }
+    assert_eq!(contexts.load(&group.group_id).expect("unchanged"), before);
+
+    sync(
+        json!([{"op":"task.decide","task_id":"T001","choice":"yes",
+            "text":"Yes, ship it on Friday.","source":"chat 4f2a"}]),
+        "user",
+    )
+    .expect("decide");
+    let context = contexts.load(&group.group_id).expect("decided");
+    let task = &context.tasks[0];
+    assert_eq!(task["status"], "done");
+    assert_eq!(task["waiting_on"], "none");
+    assert_eq!(task["decision"]["choice"], "yes");
+    assert_eq!(task["decision"]["text"], "Yes, ship it on Friday.");
+    assert_eq!(task["decision"]["source"], "chat 4f2a");
+    assert_eq!(task["decision"]["by"], "user");
+    let notes = context.coordination["recent_decisions"]
+        .as_array()
+        .expect("decision notes");
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0]["summary"], "Ship on Friday? — yes");
+    assert_eq!(notes[0]["task_id"], "T001");
+    assert_eq!(notes[0]["by"], "user");
+    for again in [
+        json!({"op":"task.decide","task_id":"T001","choice":"no"}),
+        json!({"op":"task.update","task_id":"T001","decision_request":null}),
+    ] {
+        assert!(sync(json!([again]), "user").is_err(), "{again}");
+    }
+    assert_eq!(
+        contexts.load(&group.group_id).expect("answered once"),
+        context
+    );
+
+    sync(
+        json!([
+            {"op":"task.create","title":"launch","rollup":true,
+                "decision_request":{"question":"Launch now?"}},
+            {"op":"task.create","title":"sign-off","parent_id":"T003",
+                "decision_request":{"question":"Signed off?"}},
+        ]),
+        "lead",
+    )
+    .expect("rollup tree");
+    let open = sync(
+        json!([{"op":"task.decide","task_id":"T003","choice":"yes"}]),
+        "user",
+    )
+    .expect_err("its subtask is open");
+    assert!(open.to_string().contains("still open: T004"), "{open}");
+    let signed = sync(
+        json!([{"op":"task.decide","task_id":"T004","choice":"yes"}]),
+        "user",
+    )
+    .expect("subtask decided");
+    assert_eq!(
+        signed.changes[0]["rollup"],
+        json!([{"task_id":"T003","status":"done"}])
+    );
+}

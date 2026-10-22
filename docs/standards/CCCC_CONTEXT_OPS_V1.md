@@ -146,6 +146,16 @@ type TaskType =
   | "optimization"
 ```
 
+Decision request:
+
+```ts
+type DecisionRequest = {
+  question: string
+  options?: string[]
+  recommendation?: string
+}
+```
+
 #### `task.create`
 
 ```ts
@@ -164,6 +174,7 @@ type TaskType =
   notes?: string
   checklist?: Array<{ id?: string; text: string; status?: ChecklistStatus }>
   rollup?: boolean
+  decision_request?: DecisionRequest | null
 }
 ```
 
@@ -181,6 +192,10 @@ Rules:
 - `task_type` stores the durable work kind. It MUST NOT be treated as lifecycle state or parent/child structure.
 - `task_type` does not auto-seed `notes` or `checklist`; those remain ordinary editable task content.
 - If `rollup` is provided, it MUST be a boolean. See "Subtask rollup" under `task.move`.
+- `decision_request` asks a question the task waits on. `question` is required;
+  `options`, when given, MUST be non-empty strings. Set `waiting_on: "user"`
+  with it when the user should answer. `task.decide` answers it.
+- `decision` is recorded only by `task.decide`; a create that carries it MUST be rejected.
 
 #### `task.update`
 
@@ -200,6 +215,7 @@ Rules:
   notes?: string
   checklist?: Array<{ id?: string; text: string; status?: ChecklistStatus }>
   rollup?: boolean
+  decision_request?: DecisionRequest | null
 }
 ```
 
@@ -210,6 +226,8 @@ Rules:
 - If `parent_id` changes, the daemon MUST reject cycles.
 - `task.update` does not change lifecycle status.
 - If `task_type` is provided, it MUST be one of the allowed task-type ids above.
+- `decision_request` follows the `task.create` rules; `null` removes it. Once
+  the task is decided, changing it MUST be rejected.
 
 #### `task.move`
 
@@ -245,6 +263,33 @@ Subtask rollup:
   `archived` MUST be rejected.
 - Each automatic move is reported in the change entry of the operation that
   caused it: `rollup: [{ task_id, status }]`.
+
+#### `task.decide`
+
+```ts
+{
+  op: "task.decide"
+  task_id: string
+  choice: string
+  text?: string
+  source?: string
+}
+```
+
+Permission: user, or an actor listed in the group setting `task_approvers`
+(an array of actor ids, stored as `tasks.approvers`). `system` and an empty
+`by` are the user's path, as everywhere in this model, so they may decide too.
+An empty or absent `task_approvers` names no approvers: only the user decides.
+The foreman is not an approver unless it is listed.
+
+Rules:
+- The task MUST have a `decision_request`, MUST NOT be decided already and MUST NOT be archived.
+- A rollup task MUST NOT be decided while a subtask is neither `done` nor `archived`.
+- If the request lists `options`, `choice` MUST be one of them.
+- The daemon records `decision: { choice, text?, source?, by, at }` on the task,
+  sets `waiting_on` to `none` and moves the task to `done`.
+- It appends a `decision` coordination note whose `summary` is the question and
+  the choice, with the task's `task_id`.
 
 #### `task.restore`
 
@@ -391,7 +436,8 @@ Curated trigger allowlist:
 | Role | Allowed ops |
 |------|------------|
 | `user` | All ops |
-| `foreman` | All ops except changing another actor's `agent_state` |
-| `peer` | `coordination.note.add`, `task.create`, `task.update` (own assigned / handed-off), `task.move` (own assigned / handed-off), `task.restore` (own assigned / handed-off), `task.delete` (own assigned / handed-off), `agent_state.update` (self), `agent_state.clear` (self) |
+| `foreman` | All ops except changing another actor's `agent_state`, and `task.decide` unless listed in `task_approvers` |
+| `peer` | `coordination.note.add`, `task.create`, `task.update` (own assigned / handed-off), `task.move` (own assigned / handed-off), `task.restore` (own assigned / handed-off), `task.delete` (own assigned / handed-off), `task.decide` (when listed in `task_approvers`), `agent_state.update` (self), `agent_state.clear` (self) |
 
-Permission checks use `context_sync.args.by`.
+Permission checks use `context_sync.args.by`. `system` and an empty `by` take
+the `user` row.
