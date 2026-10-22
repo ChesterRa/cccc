@@ -11,6 +11,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_FRAME_BYTES: usize = 512 * 1024;
 
+#[cfg(all(test, unix))]
+mod stop_tests;
+
 #[cfg(unix)]
 pub(super) type PlatformStream = tokio::net::UnixStream;
 #[cfg(windows)]
