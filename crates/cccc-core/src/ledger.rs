@@ -10,7 +10,20 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 mod reverse;
+pub(crate) mod snapshot;
 pub use reverse::visit_newest_first;
+
+/// Visit a committed oldest-first snapshot without retaining Event payloads.
+/// Source identities and byte bounds are captured under the reader lock. Only
+/// the rotating active file is pinned; sealed archives open on demand with
+/// identity validation. Decoding and callbacks run after the lock is released.
+pub fn visit_snapshot_oldest_first(
+    path: &Path,
+    mut visit: impl FnMut(Event) -> std::ops::ControlFlow<()>,
+) -> io::Result<()> {
+    snapshot::Snapshot::open(path)?.visit(&[], |event, _| visit(event))?;
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceRevision {
@@ -157,7 +170,17 @@ fn append_with(
             appended_bytes_match(&mut file, original_len, &encoded),
             Ok(true)
         ) {
+            let source = snapshot::Source::from_file(path, &file).ok();
             let _ = FileExt::unlock(&lock);
+            if let Some(source) = source {
+                crate::inbox::projection::note_append(
+                    path,
+                    event,
+                    source,
+                    original_len,
+                    original_len + encoded.len() as u64,
+                );
+            }
             crate::ledger_index::note_append(path, event, encoded.len());
             return Ok(());
         }
@@ -174,7 +197,17 @@ fn append_with(
         let _ = FileExt::unlock(&lock);
         return Err(error);
     }
+    let source = snapshot::Source::from_file(path, &file).ok();
     let _ = FileExt::unlock(&lock);
+    if let Some(source) = source {
+        crate::inbox::projection::note_append(
+            path,
+            event,
+            source,
+            original_len,
+            original_len + encoded.len() as u64,
+        );
+    }
     crate::ledger_index::note_append(path, event, encoded.len());
     Ok(())
 }
@@ -232,7 +265,9 @@ fn append_locked(file: &mut File, encoded: &[u8]) -> io::Result<()> {
     file.sync_data()
 }
 
+#[track_caller]
 pub fn read_all(path: &Path) -> io::Result<Vec<Event>> {
+    note_index_query("read_all");
     crate::ledger_index::inspect(path, |events, _| events.to_vec())
 }
 
@@ -508,10 +543,12 @@ pub fn tail_filtered(
     Ok((newest_first, has_more))
 }
 
+#[track_caller]
 pub fn events_after(path: &Path, event_id: &str, limit: usize) -> io::Result<Vec<Event>> {
     if event_id.trim().is_empty() || limit == 0 {
         return Ok(Vec::new());
     }
+    note_index_query("events_after");
     crate::ledger_index::inspect(path, |events, positions| {
         let Some(index) = positions.get(event_id).copied() else {
             return Vec::new();
@@ -528,13 +565,16 @@ pub fn events_after(path: &Path, event_id: &str, limit: usize) -> io::Result<Vec
 /// Compute a projection without cloning the full history. The callback holds
 /// the index read lock: return owned results before appending or calling other
 /// ledger operations for the same path.
+#[track_caller]
 pub fn inspect<T>(
     path: &Path,
     inspect: impl FnOnce(&[Event], &std::collections::HashMap<String, usize>) -> T,
 ) -> io::Result<T> {
+    note_index_query("inspect");
     crate::ledger_index::inspect(path, inspect)
 }
 
+#[track_caller]
 pub fn inspect_status<T>(
     path: &Path,
     inspect: impl FnOnce(
@@ -543,24 +583,44 @@ pub fn inspect_status<T>(
         &std::collections::HashMap<String, usize>,
     ) -> T,
 ) -> io::Result<T> {
+    note_index_query("inspect_status");
     crate::ledger_index::inspect_status(path, inspect)
 }
 
+#[track_caller]
 pub fn find_event(path: &Path, event_id: &str) -> io::Result<Option<Event>> {
+    note_index_query("find_event");
     crate::ledger_index::find_event(path, event_id)
 }
 
+#[track_caller]
 pub fn find_idempotent(
     path: &Path,
     kind: &str,
     by: &str,
     client_id: &str,
 ) -> io::Result<Option<Event>> {
+    note_index_query("find_idempotent");
     crate::ledger_index::find_idempotent(path, kind, by, client_id)
 }
 
+#[track_caller]
 pub fn find_relay(path: &Path, source_event_id: &str) -> io::Result<Option<Event>> {
+    note_index_query("find_relay");
     crate::ledger_index::find_relay(path, source_event_id)
+}
+
+// An operator can audit an isolated replay for any remaining generic Event
+// index query. This emits only public source locations, never ledger content.
+#[track_caller]
+fn note_index_query(api: &str) {
+    if std::env::var_os("CCCC_LEDGER_INDEX_PROBE").is_some_and(|value| value == "1") {
+        let caller = std::panic::Location::caller();
+        eprintln!(
+            "CCCC_EVENT_INDEX_QUERY {}",
+            serde_json::json!({"api":api,"file":caller.file(),"line":caller.line()})
+        );
+    }
 }
 
 fn read_after_cursor(path: &Path, cursor: Option<&str>, group_id: &str) -> io::Result<Vec<Event>> {

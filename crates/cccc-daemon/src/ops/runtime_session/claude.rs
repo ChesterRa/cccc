@@ -11,6 +11,11 @@ use std::path::Path;
 
 const MANAGED_RECORD_VERSION: u64 = 2;
 const MANAGED_TRANSPORT: &str = "claude_agent_view";
+/// Consecutive failed resumes of one saved conversation after which automatic
+/// recovery pauses even for failures that are individually retryable. A
+/// successful resume resets the count; an explicit Start/Restart gets one more
+/// attempt per pause.
+const AUTOMATIC_RESUME_FAILURE_LIMIT: u64 = 10;
 
 #[cfg(test)]
 #[path = "claude_failure_tests.rs"]
@@ -96,6 +101,10 @@ pub fn prepare_managed(
 }
 
 /// Preserve the original conversation and fence late failures from newer attempts/successes.
+///
+/// Returns the recorded diagnostic when this failure was retryable on its own
+/// but reached `AUTOMATIC_RESUME_FAILURE_LIMIT` and so paused automatic
+/// recovery. The conversation stays resume-eligible: only the retry loop stops.
 pub fn record_resume_failure(
     home: &HomeLayout,
     group_id: &str,
@@ -103,27 +112,37 @@ pub fn record_resume_failure(
     attempt: &ResumeAttempt,
     diagnostic: &str,
     blocked: bool,
-) -> io::Result<()> {
+) -> io::Result<Option<String>> {
     let mut document = read(home, group_id, actor_id)?;
     if string(&document, "provider_session_id") != attempt.session_id
         || string(&document, "last_resume_attempt_id") != attempt.attempt_id
     {
-        return Ok(());
+        return Ok(None);
     }
-    document.insert("last_resume_error".into(), json!(diagnostic));
     let failures = document
         .get("failure_count")
         .and_then(Value::as_u64)
-        .unwrap_or(0);
-    document.insert("failure_count".into(), json!(failures.saturating_add(1)));
-    if blocked {
+        .unwrap_or(0)
+        .saturating_add(1);
+    let limited = !blocked && failures >= AUTOMATIC_RESUME_FAILURE_LIMIT;
+    let diagnostic = if limited {
+        format!("{diagnostic} CCCC stopped after {failures} consecutive failed resumes.")
+    } else {
+        diagnostic.to_owned()
+    };
+    document.insert("last_resume_error".into(), json!(diagnostic));
+    document.insert("failure_count".into(), json!(failures));
+    if blocked || limited {
         document.insert("status".into(), json!("resume_failed"));
+    }
+    if blocked {
         document.insert("resume_eligible".into(), json!(false));
     }
     // A terminal attempt must not record the same failure twice.
     document.insert("last_resume_attempt_id".into(), json!(""));
     document.insert("updated_at".into(), json!(utc_now()));
-    write(home, group_id, actor_id, &document)
+    write(home, group_id, actor_id, &document)?;
+    Ok(limited.then_some(diagnostic))
 }
 
 /// Called only by an authorized explicit Actor lifecycle action, never auto-wake or polling.

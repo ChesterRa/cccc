@@ -8,9 +8,20 @@ use serde_json::{Map, Value, json};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+/// What became of one delivery attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnDelivery {
+    /// The turn completed, now or in an earlier attempt.
+    Completed,
+    /// The provider ran the turn and reported it failed, or it timed out.
+    Failed(String),
+    /// Nothing conclusive: not sent, cancelled, or the session broke.
+    Incomplete,
+}
+
 /// Deliver one DeepSeek ACP prompt and persist provider output before the
-/// caller records a cursor completion. A failure returns false so the source
-/// event remains unread; permanent deployment/context failures also block
+/// caller records a cursor completion. Anything but `Completed` leaves the
+/// source event unread; permanent deployment/context failures also block
 /// automatic restart until the actor is explicitly started again.
 pub fn deliver(
     home: &HomeLayout,
@@ -18,7 +29,7 @@ pub fn deliver(
     actor: &Actor,
     event: &Event,
     cancelled: &AtomicBool,
-) -> bool {
+) -> TurnDelivery {
     deliver_with_timeout(
         home,
         group,
@@ -36,9 +47,9 @@ pub(super) fn deliver_with_timeout(
     event: &Event,
     cancelled: &AtomicBool,
     turn_timeout: Duration,
-) -> bool {
+) -> TurnDelivery {
     if cancelled.load(Ordering::Acquire) {
-        return false;
+        return TurnDelivery::Incomplete;
     }
     let key = (group.group_id.clone(), actor.id.clone());
     let holder = sessions()
@@ -46,10 +57,10 @@ pub(super) fn deliver_with_timeout(
         .ok()
         .and_then(|map| map.get(&key).cloned());
     let Some(holder) = holder else {
-        return false;
+        return TurnDelivery::Incomplete;
     };
     if super::recovery::has_completed_event(home, group, actor, &event.id) {
-        return true;
+        return TurnDelivery::Completed;
     }
     let payload = crate::ops::actor_delivery_render::render_batch_with_mail_context(
         home,
@@ -58,20 +69,20 @@ pub(super) fn deliver_with_timeout(
         std::slice::from_ref(event),
     );
     let Some(mut payload) = payload else {
-        return false;
+        return TurnDelivery::Incomplete;
     };
     if event.kind == "chat.message" {
         payload.push_str("\n\n[cccc] ");
         payload.push_str(cccc_core::system_prompt::NEW_MESSAGE_MODE_GUIDANCE);
     }
     if !holder.running.load(Ordering::Acquire) {
-        return false;
+        return TurnDelivery::Incomplete;
     }
     let Ok(mut supervisor) = holder.supervisor.lock() else {
-        return false;
+        return TurnDelivery::Incomplete;
     };
     let Some(session_id) = supervisor.session_id().map(str::to_owned) else {
-        return false;
+        return TurnDelivery::Incomplete;
     };
     let request_id = match supervisor.enqueue(payload).and_then(|_| {
         supervisor
@@ -79,19 +90,20 @@ pub(super) fn deliver_with_timeout(
             .map(|value| value.unwrap_or_default())
     }) {
         Ok(id) if id > 0 => id,
-        _ => return false,
+        _ => return TurnDelivery::Incomplete,
     };
     let turn_deadline = Instant::now() + turn_timeout;
     macro_rules! fail {
-        ($terminal_seen:expr) => {
-            return fail_sent_request(
+        ($terminal_seen:expr) => {{
+            fail_sent_request(
                 &holder,
                 &mut supervisor,
                 &session_id,
                 request_id,
                 $terminal_seen,
-            )
-        };
+            );
+            return TurnDelivery::Incomplete;
+        }};
     }
     let attempt_id = format!("{session_id}:{request_id}");
     let turn_id = format!("deepseek:{}:{attempt_id}", event.id);

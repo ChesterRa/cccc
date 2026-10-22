@@ -614,6 +614,12 @@ To reduce implementation burden, CCCS v1 MAY be implemented in profiles:
 ### 13.2 Management Profile (optional)
 - `group.*`, `actor.*`
 
+CCCC emits `group.foreman_change` after removal of the current foreman, with
+`data.from` naming the removed Actor and `data.to` naming its successor or
+`null` when none remain. `by` retains the removal's principal. This is a
+management notification of the committed membership change, not an independent
+role assignment; consumers derive current roles from the Group's Actor list.
+
 ### 13.3 Context Profile (optional)
 - `context.sync` (implementation-defined ops)
 
