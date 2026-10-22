@@ -19,6 +19,7 @@ use crate::server_actor_activity::ActorActivityService;
 use crate::server_automation::AutomationScheduler;
 use crate::server_connection::spawn_connection;
 use crate::server_connections::ConnectionTasks;
+use crate::server_host_disk::HostDiskService;
 use crate::server_lifecycle::{DaemonLifecycle, cleanup_stale};
 
 type RuntimeRestoreSpawner = fn(HomeLayout, DispatchLocks);
@@ -40,6 +41,7 @@ async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> R
     let mut lifecycle = DaemonLifecycle::new(paths, lock);
     std::fs::write(&lifecycle.paths.pid, format!("{}\n", std::process::id()))?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let host_disk = HostDiskService::start(lifecycle.paths.home.clone());
     let actor_activity = ActorActivityService::start(lifecycle.paths.home.clone());
     let dispatch_locks = DispatchLocks::default();
 
@@ -62,6 +64,7 @@ async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> R
         )
         .await
     };
+    host_disk.finish().await;
     actor_activity.finish().await;
     lifecycle.finish(result)
 }

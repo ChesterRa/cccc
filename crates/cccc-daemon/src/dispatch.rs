@@ -44,7 +44,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     })
 }
 
-fn ping(_home: &HomeLayout, _request: &DaemonRequest) -> OpResult {
+fn ping(home: &HomeLayout, _request: &DaemonRequest) -> OpResult {
     object(json!({
         "pid": std::process::id(),
         "version": env!("CARGO_PKG_VERSION"),
@@ -52,6 +52,7 @@ fn ping(_home: &HomeLayout, _request: &DaemonRequest) -> OpResult {
         "executable": std::env::current_exe().ok(),
         "ts": cccc_contracts::utc_now(),
         "ipc_v": 1,
+        "diagnostics": { "disk": crate::server_host_disk::snapshot(home) },
         "capabilities": {
             "events_stream": true,
             "remote_access": true,
