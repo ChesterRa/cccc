@@ -292,3 +292,46 @@ fn mail_notice_repeat_captured_later_boundary_read_closes_earlier_mail() {
             .is_empty()
     );
 }
+
+#[test]
+fn mail_notice_repeat_generation_change_keeps_new_batch_cap() {
+    let mut replay = Replay::captured_records(10, Some(1), false);
+    replay.set_max(0);
+    assert!(replay.due().is_empty(), "warm the exhausted old generation");
+
+    // Exercise the core projection boundary without intervening daemon response
+    // queries that can rebuild its cache while the Actor list is empty.
+    actors::remove(&mut replay.group, "recipient").expect("remove Actor");
+    let actor = actors::add(&mut replay.group, cccc_contracts::Actor::new("recipient"))
+        .expect("new Actor generation");
+    let mut added = Event::new("actor.add", &replay.group.group_id);
+    added.data = json!({"actor":actor})
+        .as_object()
+        .expect("Actor event")
+        .clone();
+    let path = replay
+        .store
+        .ledger_path(&replay.group.group_id)
+        .expect("ledger");
+    ledger::append(&path, &added).expect("record actual core Actor operation");
+    let fixture: Vec<Event> = serde_json::from_str(include_str!(
+        "../../tests/fixtures/mail_notice_history.json"
+    ))
+    .expect("captured Mail payload");
+    let mut mail = Event::new("chat.message", &replay.group.group_id);
+    mail.by = "sender".into();
+    mail.data = fixture[0].data.clone();
+    ledger::append(&path, &mail).expect("replay a new-generation Mail operation");
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    let initial = replay.due();
+    assert_eq!(initial.len(), 1, "the new batch has an initial notice");
+    assert_eq!(
+        initial[0].data["context"]["source_event_ids"],
+        json!([mail.id])
+    );
+    replay.issue_expired(initial.into_iter().next().expect("new initial notice"));
+    assert!(
+        replay.due().is_empty(),
+        "pruning must preserve the new generation's max=0 budget"
+    );
+}
