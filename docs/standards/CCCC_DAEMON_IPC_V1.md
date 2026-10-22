@@ -1857,7 +1857,8 @@ Patch keys used by CCCC include:
 - Messaging: `default_send_to`
 - Delivery: `mail_notice_after_seconds` (default 1800, zero disables all Mail notices),
   `mail_notice_idle_after_seconds` (default 60, zero disables only the early idle notice),
-  `reply_notice_after_seconds` (default 900, zero disables)
+  `reply_notice_after_seconds` (default 900, zero disables),
+  `task_assigned_notice` (default false; true sends the task assignment notice)
 - Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
   `keepalive_max_per_actor`,
   `silence_timeout_seconds`, `help_nudge_interval_seconds`,
@@ -4602,6 +4603,23 @@ message or cancellation has closed it by `reply_notice_after_seconds`, an
 active/idle enabled actor may receive one content-free
 `system.notify(kind="reply_notice")`. It never repeats or escalates. Failed,
 blocked, or ambiguous delivery does not nudge the recipient.
+
+When the Group delivery setting `task_assigned_notice` is true, a committed,
+non-dry-run `context_sync` that names an Actor as a task's `assignee` or
+`handoff_to` sends that Actor one `system.notify(kind="task_assigned")`, with
+`target_actor_id` set to it. A field counts when its value after the batch
+differs from its value before it, so rewriting the same assignee, clearing a
+field, or assigning within a batch and back again sends nothing. The writer
+(`by`) is never told about its own writes, and only enabled, visible Actors of
+the Group receive the notice. One notice per Actor covers every task the batch
+named it on: `context.task_ids` lists them in task order,
+`context.assigned_by` is the writer and `context.source_event_ids` holds the
+batch's `context.sync` event, which is also `related_event_id`. The notice is
+ordinary Push work: it is delivered like other Actor-targeted notifications and
+is not held back like Mail notices. It never repeats. Task writes that do not go
+through `context_sync`, such as `tracked_send` (whose message already reaches
+its recipients) and the release of a removed Actor's tasks, send no notice. The
+setting defaults to false, so existing Groups see no new delivery traffic.
 
 Paused, stopped, or disabled actors are never woken for either notice. Pending
 Mail is surfaced at the next start/resume bootstrap and begins a fresh notice

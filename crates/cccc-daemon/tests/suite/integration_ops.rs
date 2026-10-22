@@ -1616,3 +1616,209 @@ fn actor_removal_returns_its_open_tasks_to_the_board() {
         2
     );
 }
+
+#[test]
+fn a_task_write_tells_each_actor_it_names_once_the_group_asks_for_it() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"assignment notice"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["lead", "peer1", "peer2"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runtime":"custom",
+                "command":["sh"],
+                "by":"user"
+            }),
+        );
+    }
+    call(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,
+            "by":"lead",
+            "ops":[{"op":"task.create","title":"triage the report","assignee":"peer1"}],
+        }),
+    );
+    assert!(
+        task_assigned_notices(&home, group_id).is_empty(),
+        "the notice is off unless the group turns it on"
+    );
+
+    let settings = call(
+        &home,
+        "group_settings_update",
+        json!({"group_id":group_id,"by":"user","patch":{"task_assigned_notice":true}}),
+    );
+    assert_eq!(settings.result["settings"]["task_assigned_notice"], true);
+    let synced = call(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,
+            "by":"lead",
+            "ops":[
+                {"op":"task.create","title":"build","assignee":"peer1"},
+                {"op":"task.create","title":"publish","assignee":"peer1","handoff_to":"peer2"},
+                {"op":"task.create","title":"announce","assignee":"lead"},
+            ],
+        }),
+    );
+    assert_eq!(synced.result["changes"][2]["task_id"], "T004");
+
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let events = cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger path"))
+        .expect("ledger");
+    let sync_id = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "context.sync")
+        .map(|event| event.id.clone())
+        .expect("context.sync");
+    let notices = task_assigned_notices(&home, group_id);
+    let targets = notices
+        .iter()
+        .map(|notice| notice.data["target_actor_id"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        targets,
+        [json!("peer1"), json!("peer2")],
+        "one notice per named actor, none to the writer"
+    );
+    assert_eq!(
+        notices[0].data["context"]["task_ids"],
+        json!(["T002", "T003"])
+    );
+    assert_eq!(notices[1].data["context"]["task_ids"], json!(["T003"]));
+    for notice in &notices {
+        assert_eq!(notice.by, "system");
+        assert_eq!(notice.data["priority"], "normal");
+        assert_eq!(notice.data["title"], "Task assigned");
+        assert_eq!(notice.data["im_visibility"], "internal");
+        assert_eq!(notice.data["related_event_id"], json!(sync_id));
+        assert_eq!(notice.data["context"]["source_event_ids"], json!([sync_id]));
+        assert_eq!(notice.data["context"]["assigned_by"], "lead");
+        assert_eq!(
+            notice.data["context"]["actor_id"],
+            notice.data["target_actor_id"]
+        );
+    }
+    assert!(
+        notices[0].data["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("T002, T003")),
+        "{}",
+        notices[0].data["message"]
+    );
+}
+
+#[test]
+fn a_task_write_that_names_no_new_actor_sends_no_assignment_notice() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"quiet writes"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for (actor_id, enabled) in [
+        ("lead", true),
+        ("peer1", true),
+        ("peer2", true),
+        ("away", false),
+    ] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runtime":"custom",
+                "command":["sh"],
+                "enabled":enabled,
+                "by":"user"
+            }),
+        );
+    }
+    call(
+        &home,
+        "group_settings_update",
+        json!({"group_id":group_id,"by":"user","patch":{"task_assigned_notice":true}}),
+    );
+    let sync = |by: &str, ops: Value, dry_run: bool| {
+        call(
+            &home,
+            "context_sync",
+            json!({"group_id":group_id,"by":by,"ops":ops,"dry_run":dry_run}),
+        );
+    };
+    sync(
+        "lead",
+        json!([{"op":"task.create","title":"fix the flaky test","assignee":"peer1"}]),
+        false,
+    );
+    assert_eq!(task_assigned_notices(&home, group_id).len(), 1);
+
+    // The same assignee again, with another change.
+    sync(
+        "lead",
+        json!([{"op":"task.update","task_id":"T001","title":"fix the flaky test on Windows",
+            "assignee":"peer1"}]),
+        false,
+    );
+    // A dry run commits nothing.
+    sync(
+        "lead",
+        json!([{"op":"task.update","task_id":"T001","assignee":"peer2"}]),
+        true,
+    );
+    // The writer naming itself.
+    sync(
+        "peer1",
+        json!([{"op":"task.create","title":"write the regression test","assignee":"peer1"}]),
+        false,
+    );
+    // A disabled actor, and a name that is no actor.
+    sync(
+        "lead",
+        json!([
+            {"op":"task.update","task_id":"T001","assignee":"away"},
+            {"op":"task.update","task_id":"T002","handoff_to":"user"},
+        ]),
+        false,
+    );
+    // Reassigned and back within one batch, then cleared.
+    sync(
+        "lead",
+        json!([
+            {"op":"task.update","task_id":"T001","assignee":"peer2"},
+            {"op":"task.update","task_id":"T001","assignee":"away"},
+        ]),
+        false,
+    );
+    sync(
+        "lead",
+        json!([{"op":"task.update","task_id":"T001","assignee":null}]),
+        false,
+    );
+
+    let notices = task_assigned_notices(&home, group_id);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(notices[0].data["target_actor_id"], "peer1");
+    assert_eq!(notices[0].data["context"]["task_ids"], json!(["T001"]));
+}
+
+fn task_assigned_notices(home: &HomeLayout, group_id: &str) -> Vec<cccc_contracts::Event> {
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger path"))
+        .expect("ledger")
+        .into_iter()
+        .filter(|event| event.kind == "system.notify" && event.data["kind"] == "task_assigned")
+        .collect()
+}

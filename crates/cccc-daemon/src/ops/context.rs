@@ -159,6 +159,7 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             &event,
         )
         .map_err(OpError::io)?;
+        super::task_assigned_notice::issue(home, &group, &event, &result.before, &result.context);
     }
     object(json!({
         "success": true,

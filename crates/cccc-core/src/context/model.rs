@@ -63,6 +63,10 @@ impl Default for ContextDoc {
 #[derive(Debug, Clone, Serialize)]
 pub struct ContextSyncResult {
     pub context: ContextDoc,
+    /// The Context as the sync found it, read under the same lock, so a caller
+    /// can tell what the batch changed. It is not part of the reply.
+    #[serde(skip)]
+    pub before: ContextDoc,
     pub version: String,
     pub changes: Vec<Value>,
     pub dry_run: bool,

@@ -260,6 +260,7 @@ Notes:
 |----------|--------|---------|-------------|
 | Mail notice | `delivery.mail_notice_after_seconds` | 1800s | One content-free Inbox reminder for a concrete pending Mail batch; no repeat or escalation |
 | Reply notice | `delivery.reply_notice_after_seconds` | 900s | One content-free reminder after an accepted `request_reply` remains unanswered |
+| Task assignment notice | `delivery.task_assigned_notice` | false | Optional notice to an Actor a task write names as assignee or handoff target, other than the writer |
 | Actor idle | `actor_idle_timeout_seconds` | 0s | Optional actor idle notification to foreman; `0` disables it by default |
 | Keepalive | `keepalive_delay_seconds` | 0s | Optional follow-up after an actor declares a next step and then goes quiet |
 | Silence check | `silence_timeout_seconds` | 0s | Optional group-level silence review and idle transition; `0` disables it |

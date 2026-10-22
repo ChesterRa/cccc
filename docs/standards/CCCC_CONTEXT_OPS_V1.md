@@ -370,6 +370,11 @@ If `context_sync.args.dry_run == true`, the daemon MUST NOT persist changes and 
 A `task.create` entry also carries `task_id`: the task the operation created or,
 for a replayed `client_request_id`, the existing task, with `replayed: true`.
 
+When the Group delivery setting `task_assigned_notice` is true, a committed
+batch that names an Actor other than the writer as a task's `assignee` or
+`handoff_to` also sends that Actor one `system.notify(kind="task_assigned")`
+listing those tasks (see the daemon IPC standard). A dry run sends nothing.
+
 When Group Space is enabled and a curated context change is detected, the daemon MAY also return:
 
 ```ts

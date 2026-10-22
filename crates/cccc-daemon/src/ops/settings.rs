@@ -29,6 +29,7 @@ const SECTION_SETTING_KEYS: &[(&str, &str, &str)] = &[
         "delivery",
         "reply_notice_after_seconds",
     ),
+    ("task_assigned_notice", "delivery", "task_assigned_notice"),
     (
         "terminal_transcript_visibility",
         "terminal_transcript",

@@ -87,6 +87,7 @@ impl ContextStore {
             };
             Ok(ContextSyncResult {
                 context: document,
+                before,
                 version,
                 changes,
                 dry_run,

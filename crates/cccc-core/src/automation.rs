@@ -857,7 +857,8 @@ pub(crate) fn timestamp(value: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
-pub(crate) fn notice_event(
+/// A `system.notify` addressed to one Actor, naming the events it is about.
+pub fn notice_event(
     group: &GroupDoc,
     actor: &cccc_contracts::Actor,
     kind: &str,
