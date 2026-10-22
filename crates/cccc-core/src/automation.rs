@@ -440,9 +440,6 @@ fn due_unread_notices(
         UnreadPass::Scheduled => delivery_timing_value(group, "reply_notice_after_seconds", 900),
         UnreadPass::IdleMailNow => 0,
     };
-    if mail_after <= 0 && reply_after <= 0 {
-        return Ok(None);
-    }
     // The foreman's digest also stays with the periodic tick.
     let digest = match pass {
         UnreadPass::Scheduled => Digest {
@@ -452,6 +449,10 @@ fn due_unread_notices(
         },
         UnreadPass::IdleMailNow => Digest::default(),
     };
+    // The digest is its own setting: it runs with Mail and reply notices off.
+    if mail_after <= 0 && reply_after <= 0 && digest.interval <= 0 {
+        return Ok(None);
+    }
     let eligible = actors::visible(group)
         .filter(|actor| {
             actor.enabled && delivery_actor_ids.is_none_or(|ids| ids.contains(&actor.id))

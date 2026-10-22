@@ -738,3 +738,109 @@ fn mail_left_unread_after_its_notice_reaches_the_foreman_in_a_digest() {
     std::thread::sleep(std::time::Duration::from_millis(2_100));
     assert!(tick().notifications.is_empty());
 }
+
+/// The digest is its own setting: with Mail and reply notices turned off it
+/// still runs, and Mail announced before they were turned off and still
+/// unread reaches the foreman, while no Mail notice goes out.
+#[test]
+fn the_digest_runs_with_mail_and_reply_notices_off() {
+    use sha2::{Digest, Sha256};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("digest only", "").expect("group");
+    let settings = |mail_after: i64, reply_after: i64| {
+        store
+            .mutate(&group.group_id, |group| {
+                group.extra.insert(
+                    "delivery".into(),
+                    json!({
+                        "mail_notice_after_seconds":mail_after,
+                        "reply_notice_after_seconds":reply_after,
+                        "health_digest_interval_seconds":1,
+                        "mail_overdue_after_seconds":2,
+                    }),
+                );
+                Ok(())
+            })
+            .expect("delivery settings");
+    };
+    store
+        .mutate(&group.group_id, |group| {
+            group.state = GroupState::Active;
+            actors::add(group, Actor::new("lead"))?;
+            actors::add(group, Actor::new("peer"))?;
+            Ok(())
+        })
+        .expect("actors");
+    settings(60, 900);
+    let group = store.load(&group.group_id).expect("group");
+    let peer = group
+        .actors
+        .iter()
+        .find(|actor| actor.id == "peer")
+        .expect("peer")
+        .clone();
+    let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+    let mut mail = Event::new("chat.message", &group.group_id);
+    mail.by = "user".into();
+    mail.ts = (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339();
+    mail.data = json!({"text":"check-in request","to":["peer"],"message_mode":"mail"})
+        .as_object()
+        .cloned()
+        .expect("Mail data");
+    ledger::append(&ledger_path, &mail).expect("append Mail");
+    let eligible = HashSet::from(["lead".to_owned(), "peer".to_owned()]);
+    let tick = || {
+        automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+            .expect("tick")
+    };
+
+    let noticed = tick();
+    assert_eq!(noticed.notifications.len(), 1);
+    let notice = &noticed.notifications[0];
+    assert_eq!(notice.data["kind"], "mail_notice");
+    // The facts delivery writes as it hands the notice to the Actor's terminal.
+    for state in ["claimed", "accepted"] {
+        let seed = [
+            group.group_id.as_str(),
+            "peer",
+            peer.created_at.as_str(),
+            notice.id.as_str(),
+        ]
+        .join("\0");
+        let digest = format!("{:x}", Sha256::digest(seed.as_bytes()));
+        let mut event = Event::new("runtime.delivery", &group.group_id);
+        event.by = "system".into();
+        event.data = json!({
+            "actor_id":"peer",
+            "source_event_id":notice.id,
+            "delivery_id":format!("delivery:peer:{}", &digest[..24]),
+            "state":state,
+            "transport":"pty",
+            "reason":null,
+        })
+        .as_object()
+        .cloned()
+        .expect("delivery data");
+        ledger::append(&ledger_path, &event).expect("append delivery");
+    }
+
+    settings(0, 0);
+    std::thread::sleep(std::time::Duration::from_millis(2_100));
+    let digest = tick();
+    assert_eq!(
+        digest.notifications.len(),
+        1,
+        "only the digest: {:?}",
+        digest.notifications
+    );
+    let digest = &digest.notifications[0];
+    assert_eq!(digest.data["kind"], "health_digest");
+    assert_eq!(digest.data["target_actor_id"], "lead");
+    assert_eq!(
+        digest.data["context"]["problem_keys"],
+        json!([format!("mail:peer:{}", mail.id)])
+    );
+}
