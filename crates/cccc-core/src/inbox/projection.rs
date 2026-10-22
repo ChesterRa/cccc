@@ -78,6 +78,7 @@ fn routing(group: &GroupDoc) -> Value {
             .iter()
             .map(|actor| (
                 &actor.id,
+                &actor.created_at,
                 effective_role(group, &actor.id),
                 &actor.internal_kind
             ))

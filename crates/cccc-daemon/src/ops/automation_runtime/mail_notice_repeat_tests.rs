@@ -348,24 +348,43 @@ fn mail_notice_repeat_daemon_stops_after_actor_generation_change() {
 
 #[test]
 fn mail_notice_repeat_daemon_stops_at_configured_max() {
-    let replay = Replay::captured(3610, Some(1));
-    let settings = request(
-        &replay.home,
-        "group_settings_update",
-        json!({"group_id":replay.group_id,"by":"user","patch":{"mail_notice_repeat_max":2}}),
-    );
-    assert_eq!(settings["settings"]["mail_notice_repeat_max"], 2);
-    replay.repeat(); // Initial notice for the two-Mail pending batch.
-    for _ in 0..2 {
+    for replaced in [false, true] {
+        let replay = Replay::captured(3610, Some(1));
+        let settings = request(
+            &replay.home,
+            "group_settings_update",
+            json!({"group_id":replay.group_id,"by":"user","patch":{"mail_notice_repeat_max":2}}),
+        );
+        assert_eq!(settings["settings"]["mail_notice_repeat_max"], 2);
+        if replaced {
+            // Keep a warm cache across removal/re-addition of the same Actor ID.
+            replay.repeat();
+            replay.resolve("generation");
+            request(
+                &replay.home,
+                "send",
+                json!({"group_id":replay.group_id,"by":"user","to":["recipient"],"text":"New generation Mail","message_mode":"mail"}),
+            );
+            std::thread::sleep(Duration::from_millis(1200));
+            let before = replay.notices().len();
+            replay.tick();
+            let notices = replay.notices();
+            assert_eq!(notices.len(), before + 1);
+            replay.accepted(&notices.last().expect("new generation initial").id);
+        } else {
+            replay.repeat(); // Initial notice for the two-Mail pending batch.
+        }
+        for _ in 0..2 {
+            std::thread::sleep(Duration::from_millis(1200));
+            let before = replay.notices().len();
+            replay.tick();
+            let notices = replay.notices();
+            assert_eq!(notices.len(), before + 1);
+            replay.accepted(&notices.last().expect("bounded repeat").id);
+        }
         std::thread::sleep(Duration::from_millis(1200));
-        let before = replay.notices().len();
-        replay.tick();
-        let notices = replay.notices();
-        assert_eq!(notices.len(), before + 1);
-        replay.accepted(&notices.last().expect("bounded repeat").id);
+        replay.expect_no_repeat();
     }
-    std::thread::sleep(Duration::from_millis(1200));
-    replay.expect_no_repeat();
 }
 
 #[test]
