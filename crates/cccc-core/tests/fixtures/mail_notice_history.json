@@ -9,7 +9,8 @@
       "message_mode": "mail",
       "to": [
         "recipient"
-      ]
+      ],
+      "text": "review"
     }
   },
   {
@@ -69,7 +70,8 @@
       "message_mode": "mail",
       "to": [
         "recipient"
-      ]
+      ],
+      "text": "the"
     }
   }
 ]
