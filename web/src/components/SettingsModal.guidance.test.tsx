@@ -84,7 +84,13 @@ it.each([0, 1])(
         />,
       ),
     );
-    await vi.waitFor(() => expect(host.querySelectorAll("textarea")).toHaveLength(2));
+    // GuidanceTab is a lazy chunk. Wait for it inside act() so its retry render, its
+    // prompt load and their effects are flushed by act(), not by the Scheduler after the
+    // test has moved on. act() flushes only when its outermost scope exits, so poll
+    // between back-to-back scopes rather than with vi.waitFor inside one.
+    while (host.querySelectorAll("textarea").length !== 2) {
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+    }
     const trigger = [...host.querySelectorAll<HTMLButtonElement>("button")].filter(
       (button) => button.textContent === "guidance.expand",
     )[index];
