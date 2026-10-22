@@ -451,6 +451,17 @@ pub(crate) fn note_cursor(path: &Path) {
 }
 
 #[cfg(test)]
+pub(crate) fn retained_mail_notice_claims(
+    home: &HomeLayout,
+    group: &GroupDoc,
+) -> io::Result<usize> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, _| {
+        Ok(projection.notices.retained_mail_claims())
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
@@ -739,15 +750,4 @@ mod tests {
             );
         }
     }
-}
-
-#[cfg(test)]
-pub(crate) fn retained_mail_notice_claims(
-    home: &HomeLayout,
-    group: &GroupDoc,
-) -> io::Result<usize> {
-    let state = load(home, &group.group_id)?;
-    with_projection(home, group, &[], &state, |projection, _| {
-        Ok(projection.notices.retained_mail_claims())
-    })
 }
