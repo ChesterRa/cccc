@@ -38,7 +38,15 @@ fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     .map_err(OpError::io)?;
     let version = contexts.version(&document).map_err(OpError::io)?;
     match page(request)? {
-        Some(page) if detail != "overview" => object(
+        Some(page) if detail == "overview" => {
+            let value = super::context_projection::project(document, version, &detail);
+            let size = serde_json::to_vec_pretty(&value).map_or(usize::MAX, |bytes| bytes.len());
+            if page.max_bytes.is_some_and(|limit| size > limit) {
+                return Err(page_too_small(size));
+            }
+            object(value)
+        }
+        Some(page) => object(
             super::context_projection::project_page(document, version, &detail, &page)
                 .map_err(page_too_small)?,
         ),
