@@ -35,9 +35,59 @@ fn project_structured_event(session: &Session, message: &Value) {
             data.insert("kind".into(), json!("approval"));
             "headless.activity.updated"
         }
+        "cccc/toolActivity" => match tool_activity(session, params, turn_id) {
+            Some((kind, activity)) => {
+                data.extend(activity);
+                kind
+            }
+            None => return,
+        },
         _ => return,
     };
     emit(session, kind, data);
+}
+
+/// A tool call the adapter identified as started or finished. Anonymous
+/// progress titles stay out of the journal.
+fn tool_activity(
+    session: &Session,
+    params: &Value,
+    turn_id: &str,
+) -> Option<(&'static str, Map<String, Value>)> {
+    let item_id = params["itemId"].as_str().filter(|id| !id.is_empty())?;
+    let phase = params["phase"].as_str()?;
+    let tool = params["title"].as_str().unwrap_or_default();
+    let item_type = params["itemType"].as_str().unwrap_or("toolCall");
+    let detail = session.managed.safe_diagnostic(&std::io::Error::other(
+        params["detail"].as_str().unwrap_or_default(),
+    ));
+    let (kind, status, summary) = match phase {
+        "started" => ("headless.activity.started", "started", tool.to_owned()),
+        "completed" => ("headless.activity.completed", "completed", tool.to_owned()),
+        "failed" => (
+            "headless.activity.completed",
+            "completed",
+            format!("{tool} failed"),
+        ),
+        _ => return None,
+    };
+    let mut activity = Map::from_iter([
+        ("activity_id".into(), json!(format!("{turn_id}:{item_id}"))),
+        ("kind".into(), json!("tool")),
+        ("status".into(), json!(status)),
+        ("summary".into(), json!(summary)),
+        ("tool_name".into(), json!(tool)),
+        ("raw_item_type".into(), json!(item_type)),
+    ]);
+    if !detail.is_empty() {
+        let field = if item_type == "commandExecution" {
+            "command"
+        } else {
+            "detail"
+        };
+        activity.insert(field.into(), json!(detail));
+    }
+    Some((kind, activity))
 }
 
 fn respond_unsupported_server_request(session: &Session, message: &Value) {

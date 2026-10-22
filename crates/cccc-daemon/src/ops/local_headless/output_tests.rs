@@ -327,3 +327,61 @@ async fn a_captured_pi_length_stop_without_a_reply_reads_as_an_error() {
     assert_eq!(state.status, "error");
     assert_eq!(state.reason.as_deref(), Some(error));
 }
+
+#[tokio::test]
+async fn captured_pi_tool_calls_reach_the_journal_between_turn_start_and_answer() {
+    // The captured session reads notes.txt. Marking that value private proves
+    // that call arguments pass the session's redaction before the journal.
+    let f = Fixture::new(true, "notes.txt");
+    for message in crate::ops::codex_voice_analyst::replay_captured_pi_tool_turn("abcdef01") {
+        handle_message(&f.session, message);
+    }
+    let events = f.events();
+    let kinds = events
+        .iter()
+        .filter_map(|event| event["type"].as_str())
+        .filter(|kind| *kind != "headless.message.delta")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        [
+            "headless.turn.started",
+            "headless.activity.started",
+            "headless.activity.started",
+            "headless.activity.completed",
+            "headless.activity.completed",
+            "headless.message.completed",
+            "headless.turn.completed",
+        ]
+    );
+    let activity = |kind: &str, tool: &str| {
+        events
+            .iter()
+            .find(|event| event["type"] == kind && event["data"]["tool_name"] == tool)
+            .map(|event| event["data"].clone())
+            .expect("tool activity")
+    };
+    let bash = activity("headless.activity.completed", "bash");
+    assert_eq!(bash["status"], "completed");
+    assert_eq!(bash["kind"], "tool");
+    assert_eq!(bash["raw_item_type"], "commandExecution");
+    assert_eq!(bash["command"], "ls", "the program, not its arguments");
+    assert_eq!(
+        bash["activity_id"],
+        activity("headless.activity.started", "bash")["activity_id"],
+        "a call's start and finish share one trace entry"
+    );
+    let read = activity("headless.activity.started", "read");
+    assert_eq!(read["status"], "started");
+    assert_eq!(read["detail"], "[redacted]");
+    let text = events
+        .iter()
+        .filter(|event| event["type"] == "headless.message.delta")
+        .filter_map(|event| event["data"]["delta"].as_str())
+        .collect::<String>();
+    // Both assistant messages stream: the line before the calls, then the answer.
+    assert_eq!(
+        text,
+        "I'll run the command and read the file.notes.txt contains the text \"fixture file\"."
+    );
+}
