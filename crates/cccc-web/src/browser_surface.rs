@@ -1,3 +1,4 @@
+mod chatgpt_dom;
 mod frame;
 mod input_events;
 mod interaction;

@@ -54,6 +54,7 @@ interface ModalState {
     scope?: "group" | "global";
     tab?: string;
     webModelProvider?: "chatgpt_web" | "grok_web" | "dots";
+    webModelSection?: "login" | "connector";
     voiceSection?: "secretary" | "realtime";
     voiceAudio?: boolean;
     voiceAnalyst?: boolean;
@@ -67,6 +68,7 @@ interface ModalState {
     scope?: "group" | "global";
     tab?: string;
     webModelProvider?: "chatgpt_web" | "grok_web" | "dots";
+    webModelSection?: "login" | "connector";
     voiceSection?: "secretary" | "realtime";
     voiceAudio?: boolean;
     voiceAnalyst?: boolean;
@@ -128,6 +130,7 @@ export const useModalStore = create<ModalState>((set) => ({
           target.scope === "global" ? "global" : target.scope === "group" ? "group" : undefined,
         tab: typeof target.tab === "string" ? target.tab : undefined,
         webModelProvider: target.webModelProvider,
+        webModelSection: target.webModelSection,
         voiceSection: target.voiceSection,
         voiceAudio: target.voiceAudio,
         voiceAnalyst: target.voiceAnalyst,

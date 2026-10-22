@@ -7694,6 +7694,8 @@ The private Web port owns one shared ChatGPT browser/profile with a persistent i
 
 Shared login and Actor windows MUST become viewable and closable after navigation starts, without waiting for the provider's DOMContentLoaded or load event. Window availability is distinct from delivery readiness: the existing target, composer, draft and running-state checks still apply before claiming or submitting work. The global shared-browser close endpoint MUST close only its provider's owned login Page; it MUST preserve Actor windows, bindings and authenticated profile, without requiring Actors to stop. Web shutdown remains responsible for closing the shared process and display resources.
 
+Browser status MUST distinguish positive sign-in or security-verification evidence from a missing, loading or unrecognized conversation input. An inspection failure MUST NOT imply missing login. Private Web browser-session reads expose the latest `checked_at` and may report `page_not_ready`, `loading`, `unchecked`, or `inspection_failed`; an explicit `inspect=true` recheck observes the existing Page without navigation, prompt submission or task creation. Delivery and pairing MUST share message-role recognition for the current ChatGPT DOM: a batch echo requires a user message, and a pairing receipt requires a subsequent assistant message before the next user boundary. A surrounding turn containing both roles is not an assistant receipt.
+
 These IPC operations use the daemon global write permit and require `by=user`; none is an Actor MCP catalog operation:
 
 | Operation | Required input / effect |

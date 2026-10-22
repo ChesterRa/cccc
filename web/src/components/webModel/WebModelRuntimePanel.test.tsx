@@ -6,8 +6,8 @@ import type { Actor } from "../../types";
 
 const mocks = vi.hoisted(() => ({ load: vi.fn(), open: vi.fn(), edit: vi.fn() }));
 vi.mock("react-i18next", () => {
-  const t = (key: string, options?: { defaultValue?: string }) => options?.defaultValue || key;
-  return { useTranslation: () => ({ t }) };
+  const t = (key: string) => key;
+  return { useTranslation: () => ({ t, i18n: { language: "en" } }) };
 });
 vi.mock("../../stores", () => ({
   useModalStore: (select: (s: unknown) => unknown) => select({ openActorEditor: mocks.edit }),
@@ -41,6 +41,7 @@ class Socket {
   close() {
     this.readyState = 3;
   }
+  send() {}
 }
 let host: HTMLDivElement, root: ReturnType<typeof createRoot>;
 beforeEach(() => {
@@ -68,6 +69,27 @@ async function mount(current = actor) {
     ),
   );
 }
+
+it("keeps administrator-owned browser state out of a Group user's panel", async () => {
+  await act(async () =>
+    root.render(
+      <WebModelRuntimePanel
+        groupId="g_a"
+        actor={actor}
+        isRunning
+        isVisible
+        isDark={false}
+        canAccessConnection={false}
+      />,
+    ),
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(6000));
+  expect(mocks.load).not.toHaveBeenCalled();
+  expect(mocks.open).not.toHaveBeenCalled();
+  expect(Socket.instances).toHaveLength(0);
+  expect(host.textContent).toContain("webModelActor.adminManaged");
+  expect(host.querySelectorAll("button")).toHaveLength(0);
+});
 
 it("waits for the owned window's open operation before attaching to a warmup surface", async () => {
   let finish!: (r: ReturnType<typeof response>) => void;
@@ -147,4 +169,97 @@ it("does not offer an empty settings menu for read-only panes", async () => {
   );
   expect(host.querySelector('[aria-label="settings:title"]')).toBeNull();
   expect(mocks.open).not.toHaveBeenCalled();
+});
+
+it("keeps the normal detail toolbar free of a duplicate Actor editor", async () => {
+  await mount();
+  expect(host.textContent).not.toContain("settings:webModelActor.title");
+  expect(mocks.edit).not.toHaveBeenCalled();
+});
+
+it("checks a paused Actor's existing page without opening, refreshing or sending", async () => {
+  const notReady = response();
+  Object.assign(notReady.result.browser_session, {
+    ready: false,
+    login_required: false,
+    state: "page_not_ready",
+  });
+  mocks.load.mockResolvedValue(notReady);
+  const shared = vi.fn();
+  await act(async () =>
+    root.render(
+      <WebModelRuntimePanel
+        groupId="g_a"
+        actor={actor}
+        isRunning={false}
+        isVisible
+        isDark={false}
+        onOpenSharedSettings={shared}
+      />,
+    ),
+  );
+  expect(host.textContent).toContain("webModelActor.states.page_not_ready");
+  const buttons = () => [...host.querySelectorAll("button")];
+  await act(async () =>
+    buttons()
+      .find((b) => b.textContent === "settings:webModelActor.sharedLogin")!
+      .click(),
+  );
+  expect(shared).toHaveBeenCalledOnce();
+  let finishRead!: (r: ReturnType<typeof response>) => void;
+  const ready = response();
+  Object.assign(ready.result.browser_session, { ready: true, checked_at: "2026-10-22T12:00:00Z" });
+  mocks.load.mockImplementation((_group, _actor, options) =>
+    options?.inspect
+      ? Promise.resolve(ready)
+      : new Promise((resolve) => {
+          finishRead = resolve;
+        }),
+  );
+  await act(async () => vi.advanceTimersByTime(2000));
+  await act(async () =>
+    buttons()
+      .find((b) => b.textContent === "settings:webModelActor.checkPage")!
+      .click(),
+  );
+  expect(mocks.load).toHaveBeenCalledWith("g_a", "a", { inspect: true });
+  await act(async () => finishRead(notReady));
+  expect(host.textContent).not.toContain("webModelActor.states.page_not_ready");
+  expect(
+    buttons().find((b) => b.textContent === "settings:webModelActor.checkPage")?.disabled,
+  ).toBe(false);
+  expect(mocks.open).not.toHaveBeenCalled();
+  expect(Socket.instances).toHaveLength(0);
+});
+
+it("keeps an explicit check newer than a pending surface reconnection status read", async () => {
+  const notReady = response();
+  Object.assign(notReady.result.browser_session, {
+    ready: false,
+    login_required: false,
+    state: "page_not_ready",
+  });
+  mocks.load.mockResolvedValue(notReady);
+  mocks.open.mockResolvedValue(notReady);
+  await mount();
+  let finishRead!: (r: ReturnType<typeof response>) => void;
+  const ready = response();
+  Object.assign(ready.result.browser_session, { ready: true });
+  mocks.load.mockImplementation((_group, _actor, options) =>
+    options?.inspect
+      ? Promise.resolve(ready)
+      : new Promise((resolve) => {
+          finishRead = resolve;
+        }),
+  );
+  await act(async () => (Socket.instances[0] as Socket & { onclose: () => void }).onclose());
+  await act(async () =>
+    [...host.querySelectorAll("button")]
+      .find((b) => b.textContent === "settings:webModelActor.checkPage")!
+      .click(),
+  );
+  expect(host.textContent).not.toContain("webModelActor.states.page_not_ready");
+  await act(async () => finishRead(notReady));
+  expect(host.textContent).not.toContain("webModelActor.states.page_not_ready");
+  expect(mocks.open).toHaveBeenCalledOnce();
 });

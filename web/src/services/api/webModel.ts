@@ -23,7 +23,7 @@ export type WebModelConnector = {
   last_turn_id?: string;
   last_error?: string;
   /** Shared connector diagnostics: event/tool outcomes and fixed reason codes only. */
-  events_log?: DotsEventCall[];
+  events_log?: WebModelConnectorCall[];
   /** The Actor this connector's Dot is bound to, if any. */
   dots_actor?: { group_id: string; actor_id: string } | null;
   connector_url?: string;
@@ -51,7 +51,7 @@ export type DotsPhase =
   | "failed"
   | "stopped";
 
-export type DotsEventCall = {
+export type WebModelConnectorCall = {
   at: string;
   method: string;
   tool_name?: string;
@@ -147,6 +147,7 @@ export type WebModelBrowserSession = {
   ready?: boolean;
   login_required?: boolean;
   verification_required?: boolean;
+  checked_at?: string | null;
   state?: string;
   pid?: number;
   cdp_port?: number;

@@ -123,7 +123,7 @@ async function render(compact: boolean, currentActor = actor, groupId = "g_dot")
         onLaunch={mocks.launch}
         onRelaunch={vi.fn()}
         onNewSession={vi.fn()}
-        onEdit={vi.fn()}
+        onEdit={mocks.edit}
         onRemove={vi.fn()}
         onInbox={vi.fn()}
         busy=""
@@ -222,7 +222,8 @@ it("opens the shared ChatGPT settings directly without Actor editing", async () 
   expect(mocks.settings).toHaveBeenCalledWith({
     scope: "global",
     tab: "webModels",
-    webModelProvider: "dots",
+    webModelProvider: "chatgpt_web",
+    webModelSection: "connector",
   });
   expect(mocks.edit).not.toHaveBeenCalled();
 });
@@ -300,6 +301,37 @@ it("shows an administrator-managed connection for a Group writer without fetchin
   expect(mocks.load).not.toHaveBeenCalled();
 });
 
+it.each(["working", "interrupted"])(
+  "keeps one Grok access control in the detail footer during %s work",
+  async (phase) => {
+    mocks.load.mockResolvedValue({
+      ok: true,
+      result: {
+        group_id: "g_dot",
+        actor_id: "bot",
+        connected: true,
+        bound: true,
+        configured: true,
+        enabled: true,
+        phase,
+        pending_count: 0,
+        active_turn_id: "unfinished-turn",
+      },
+    });
+    await render(false, { ...actor, id: "bot", runtime: "grok_web_model" });
+    const controls = [...host.querySelectorAll<HTMLButtonElement>("button")].filter(
+      (button) =>
+        button.getAttribute("aria-label") === "dotsPause" ||
+        button.textContent === "actors:dotsPause",
+    );
+    expect(controls).toHaveLength(1);
+    expect(controls[0].getAttribute("aria-label")).toBe("dotsPause");
+    await act(async () => controls[0].click());
+    expect(mocks.pause).toHaveBeenCalledOnce();
+    expect(mocks.update).not.toHaveBeenCalled();
+  },
+);
+
 it("renders a Grok native pane and task status without a terminal or browser", async () => {
   mocks.load.mockResolvedValue({
     ok: true,
@@ -326,6 +358,38 @@ it("renders a Grok native pane and task status without a terminal or browser", a
       .click(),
   );
   expect(mocks.edit).toHaveBeenCalledWith(grok, "chatgpt");
+});
+
+it("uses the footer's single Actor editor entry for a configured Dots pane", async () => {
+  mocks.load.mockResolvedValue(
+    dotsState({ connected: true, paired: true, subscribed: true, phase: "ready" }),
+  );
+  await render(false);
+  expect(host.textContent).not.toContain("dotsActor.connectionSettings");
+  expect(host.querySelector('section[aria-label="dotsActor.connectionSettings"]')).toBeNull();
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>('[aria-label="editAgentConfig"]')!.click(),
+  );
+  expect(mocks.edit).toHaveBeenCalledOnce();
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("uses CCCC access controls and a shared-login destination for the browser runtime", async () => {
+  const browserActor = { ...actor, runtime: "web_model", running: false } as Actor;
+  await render(false, browserActor);
+  expect(host.querySelector('[aria-label="dotsPause"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label="quitAgent"]')).toBeNull();
+  expect(host.querySelector('[aria-label="sendInterruptLabel"]')).toBeNull();
+  expect(host.querySelector('[aria-label="relaunchAgent"]')).toBeNull();
+  expect(host.textContent).toContain("webAccessEnabled");
+  const props = mocks.browser.mock.calls.at(-1)![0];
+  await act(async () => props.onOpenSharedSettings());
+  expect(mocks.settings).toHaveBeenCalledWith({
+    scope: "global",
+    tab: "webModels",
+    webModelProvider: "chatgpt_web",
+    webModelSection: "login",
+  });
 });
 it("does not fetch restricted Grok state for a Group writer", async () => {
   mocks.access = false;
@@ -367,4 +431,11 @@ it("does not carry a Dot's state into Grok after a runtime change", async () => 
   expect(host.querySelector("[data-terminal-title-bar]")?.textContent).toContain(
     "settings:grokWebhook.phase.unconfigured",
   );
+});
+
+it("passes the same instance-connection permission to the ChatGPT browser panel", async () => {
+  mocks.access = false;
+  await render(false, { ...actor, runtime: "web_model" });
+  expect(mocks.browser).toHaveBeenCalled();
+  expect(mocks.browser.mock.calls.at(-1)?.[0].canAccessConnection).toBe(false);
 });

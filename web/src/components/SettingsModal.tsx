@@ -124,8 +124,15 @@ export function SettingsModal({
   const [canAccessGlobalSettings, setCanAccessGlobalSettings] = useState<boolean | null>(null);
   const [webAccessSession, setWebAccessSession] = useState<WebAccessSession | null>(null);
   const [webModelProvider, setWebModelProvider] = useState<api.WebModelView>("chatgpt_web");
+  const [webModelFocusTarget, setWebModelFocusTarget] = useState<{
+    section: "login" | "connector";
+    nonce: number;
+  }>();
   const settingsTarget = useModalStore((state) => state.settingsTarget);
   const clearSettingsTarget = useModalStore((state) => state.clearSettingsTarget);
+  useEffect(() => {
+    if (!isOpen) setWebModelFocusTarget(undefined);
+  }, [isOpen]);
 
   // Automation + delivery settings state
   const [mailNoticeAfterSeconds, setMailNoticeAfterSeconds] = useState(1800);
@@ -569,6 +576,11 @@ export function SettingsModal({
       settingsTarget.voiceSection && !settingsTarget.voiceAudio ? settingsTarget.nonce : 0,
     );
     if (settingsTarget.webModelProvider) setWebModelProvider(settingsTarget.webModelProvider);
+    setWebModelFocusTarget(
+      settingsTarget.webModelSection
+        ? { section: settingsTarget.webModelSection, nonce: settingsTarget.nonce }
+        : undefined,
+    );
     clearSettingsTarget();
   }, [clearSettingsTarget, isOpen, settingsTarget]);
 
@@ -941,6 +953,7 @@ export function SettingsModal({
 
                 {activeTab === "webModels" && (
                   <WebModelConnectorsTab
+                    focusTarget={webModelFocusTarget}
                     provider={webModelProvider}
                     onProviderChange={setWebModelProvider}
                     isDark={isDark}

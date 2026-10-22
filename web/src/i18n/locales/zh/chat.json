@@ -141,7 +141,7 @@
     "mcpCopyFailed": "无法读取或复制 MCP URL，请重试。",
     "mcpStartFirst": "启动后复制 MCP",
     "mcpStartFirstHint": "请先启动这个 Web Model Actor，再复制 MCP URL。",
-    "actorStoppedSurface": "此 Actor 已停止。启动后可恢复投递，也可以打开“Web 模型 对话”查看或更换工作对话。",
+    "actorStoppedSurface": "Actor 或其 Group 停止时，无法操作交互会话。",
     "browserReadOnly": "只读模式下无法打开 Web 模型 浏览器。",
     "permissionHint": "ChatGPT 可能正在等待你批准 CCCC app 权限。请切到 ChatGPT 页面，点击 Allow；如果看到 Always allow，建议选择它。批准后回到这里继续。",
     "permissionHintDismiss": "不再提示",

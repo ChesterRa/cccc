@@ -67,3 +67,33 @@ it("opens Web Models directly on the Dots view when a Dots Actor asks for its se
   await vi.waitFor(() => expect(webModels.props?.provider).toBe("dots"));
   expect(webModels.props?.isActive).toBe(true);
 });
+
+it.each(["login", "connector"] as const)(
+  "carries the explicit %s destination into shared settings",
+  async (section) => {
+    useModalStore
+      .getState()
+      .openSettingsTarget({
+        scope: "global",
+        tab: "webModels",
+        webModelProvider: "chatgpt_web",
+        webModelSection: section,
+      });
+    await act(async () =>
+      root.render(
+        <SettingsModal
+          codexVoice={{} as never}
+          isOpen
+          onClose={() => {}}
+          settings={null}
+          onUpdateSettings={async () => {}}
+          busy={false}
+          isDark={false}
+          groupId="g1"
+        />,
+      ),
+    );
+    await vi.waitFor(() => expect(webModels.props?.focusTarget?.section).toBe(section));
+    expect(webModels.props?.provider).toBe("chatgpt_web");
+  },
+);

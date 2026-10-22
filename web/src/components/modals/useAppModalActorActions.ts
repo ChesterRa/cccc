@@ -17,7 +17,7 @@ import { parseHelpMarkdown, updateActorHelpNote } from "../../utils/helpMarkdown
 import { parsePrivateEnvSetText } from "../../utils/privateEnvInput";
 import { runtimeDetectionKey } from "../../utils/runtimeDetection";
 import { isGrokBotUrl } from "../../utils/webModelTargetDraft";
-import type { CreatedDotsNavigation } from "../../hooks/useAppTabState";
+import type { CreatedNativeActorNavigation } from "../../hooks/useAppTabState";
 import type { EditActorSavePayload, SaveActorProfileResult } from "./ActorConfigModal";
 import { resolveNewActorId } from "./actorCreateModel";
 import type { ActorSecretSaveChanges } from "./actorSecretManagerModel";
@@ -37,7 +37,7 @@ export function useAppModalActorActions(args: {
   setEditingActor: (actor: Actor | null) => void;
   closeModal: (modal: "addActor") => void;
   refreshActors: (groupId?: string, opts?: { includeUnread?: boolean }) => Promise<void>;
-  onDotsActorCreated?: (visit: CreatedDotsNavigation) => void;
+  onNativeActorCreated?: (visit: CreatedNativeActorNavigation) => void;
   editActorRuntime: SupportedRuntime;
   editActorCommand: string;
   editActorTitle: string;
@@ -72,7 +72,7 @@ export function useAppModalActorActions(args: {
     setEditingActor,
     closeModal,
     refreshActors,
-    onDotsActorCreated,
+    onNativeActorCreated,
     editActorRuntime,
     editActorCommand,
     editActorTitle,
@@ -485,7 +485,8 @@ export function useAppModalActorActions(args: {
 
       await refreshActors(targetGroupId);
       if (!isCurrentEdit()) return;
-      setEditingActor(null);
+      // Saving the Bot is the first connection step; keep Routine setup reachable.
+      if (grokBotUrl === undefined) setEditingActor(null);
 
       if (!options.restart && grokBotUrl === undefined) {
         const isRunning = Boolean(editingActor.running ?? editingActor.enabled ?? false);
@@ -795,15 +796,17 @@ export function useAppModalActorActions(args: {
         }
       }
 
+      const createdRuntime = (resp.result as { actor?: { runtime?: string } })?.actor?.runtime;
       if (
-        (resp.result as { actor?: { runtime?: string } })?.actor?.runtime === "chatgpt_dots" &&
+        (createdRuntime === "chatgpt_dots" || createdRuntime === "grok_web_model") &&
         useGroupStore.getState().selectedGroupId === creationGroupId &&
         useUIStore.getState().activeTab === creationActiveTab
       ) {
-        onDotsActorCreated?.({
+        onNativeActorCreated?.({
           groupId: creationGroupId,
           actorId: createdActorId,
           activeTab: creationActiveTab,
+          runtime: createdRuntime,
         });
       }
       closeModal("addActor");

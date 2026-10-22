@@ -137,7 +137,7 @@
     "mcpCopyFailed": "MCP URL の読み込みまたはコピーに失敗しました。再試行してください。",
     "mcpStartFirst": "起動後に MCP をコピー",
     "mcpStartFirstHint": "MCP URL をコピーする前に、この Web Model actor を起動してください。",
-    "actorStoppedSurface": "この Actor は停止中です。開始すると配信が再開します。「Web モデル の会話」から作業用の会話を表示・変更することもできます。",
+    "actorStoppedSurface": "Actor またはその Group が停止中は、対話画面を操作できません。",
     "browserReadOnly": "読み取り専用モードでは Web モデル ブラウザを開けません。",
     "permissionHint": "ChatGPT が CCCC app の許可待ちになっている可能性があります。ChatGPT 画面に切り替えて Allow をクリックしてください。Always allow が表示される場合は選択することをおすすめします。許可後、この画面に戻って続行してください。",
     "permissionHintDismiss": "今後表示しない",

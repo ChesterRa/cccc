@@ -101,9 +101,9 @@ impl PairingPage {
         };
         let result = self
             .page
-            .evaluate(format!(
-                "({RECEIPT_SCRIPT})({})",
-                json!({"prompt":prompt,"receipt":receipt})
+            .evaluate(super::chatgpt_dom::with_messages(
+                RECEIPT_SCRIPT,
+                &json!({"prompt":prompt,"receipt":receipt}).to_string(),
             ))
             .await?
             .into_value::<Value>()?;
@@ -145,14 +145,13 @@ fn chatgpt_page_url(raw: &str) -> Option<reqwest::Url> {
     })
 }
 
-const RECEIPT_SCRIPT: &str = r#"({prompt,receipt}) => {
+const RECEIPT_SCRIPT: &str = r#"({prompt,receipt}, messages) => {
   const normalize = s => String(s || '').replace(/\s+/g, ' ').trim();
-  const messages = [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')];
-  const index = messages.findLastIndex(e => e.dataset.messageAuthorRole === 'user' && normalize(e.innerText) === normalize(prompt));
+  const index = messages.findLastIndex(e => e.role === 'user' && normalize(e.node.innerText) === normalize(prompt));
   let verified = false;
   if (index >= 0) for (const e of messages.slice(index + 1)) {
-    if (e.dataset.messageAuthorRole === 'user') break;
-    if (e.getClientRects().length && (e.innerText || '').includes(receipt)) { verified = true; break; }
+    if (e.role === 'user') break;
+    if (e.node.getClientRects().length && (e.node.innerText || '').includes(receipt)) { verified = true; break; }
   }
   return {url:location.href,verified};
 }"#;
@@ -160,6 +159,101 @@ const RECEIPT_SCRIPT: &str = r#"({prompt,receipt}) => {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn current_chatgpt_pairing_receipt_keeps_exact_user_and_assistant_boundaries() {
+        if crate::system_browser_path().is_none() {
+            return;
+        }
+        let _chrome_guard = super::super::chrome_test_guard().await;
+        let temp = tempfile::tempdir().expect("fixture");
+        let (url, server) = super::super::browser_surface_tests::local_page("<main></main>").await;
+        let surfaces = BrowserSurfaces::default();
+        surfaces
+            .open("pairing-dom", &temp.path().join("profile"), &url, 800, 600)
+            .await
+            .expect("open");
+        let page = surfaces
+            .sessions
+            .lock()
+            .await
+            .get("pairing-dom")
+            .expect("session")
+            .page
+            .clone();
+        let user = |text: &str| {
+            format!(
+                "<div data-content-search-unit-key><div data-user-message-bubble>{text}</div></div>"
+            )
+        };
+        let assistant = |text: &str| {
+            format!(
+                "<div data-content-search-unit-key><h4 data-conversation-role=assistant>Assistant</h4><div>{text}</div></div>"
+            )
+        };
+        let prompt = "Pair fixture-code with fixture-receipt";
+        let receipt = "fixture-receipt";
+        for (label, html, verified) in [
+            (
+                "returned receipt",
+                format!("{}{}", user(prompt), assistant(receipt)),
+                true,
+            ),
+            (
+                "user quote is not a reply",
+                format!("{}{}", user(prompt), assistant("No receipt")),
+                false,
+            ),
+            (
+                "earlier reply",
+                format!("{}{}", assistant(receipt), user(prompt)),
+                false,
+            ),
+            (
+                "later user boundary",
+                format!(
+                    "{}{}{}",
+                    user(prompt),
+                    user("Different task"),
+                    assistant(receipt)
+                ),
+                false,
+            ),
+            (
+                "wrong setup code",
+                format!("{}{}", user("Pair an old code"), assistant(receipt)),
+                false,
+            ),
+            (
+                "mixed DOM",
+                format!(
+                    "<article data-message-author-role=user>{}</article><article data-message-author-role=assistant>{}</article>",
+                    user(prompt),
+                    assistant(receipt)
+                ),
+                true,
+            ),
+        ] {
+            page.evaluate(format!(
+                "document.querySelector('main').innerHTML={}",
+                json!(html)
+            ))
+            .await
+            .expect("fixture DOM");
+            let result = page
+                .evaluate(super::super::chatgpt_dom::with_messages(
+                    RECEIPT_SCRIPT,
+                    &json!({"prompt":prompt,"receipt":receipt}).to_string(),
+                ))
+                .await
+                .expect("receipt check")
+                .into_value::<Value>()
+                .expect("result");
+            assert_eq!(result["verified"], verified, "{label}");
+        }
+        surfaces.close("pairing-dom").await.expect("close");
+        server.abort();
+    }
 
     #[test]
     fn only_native_new_chat_routes_can_remain_pending() {

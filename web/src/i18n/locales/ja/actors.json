@@ -360,7 +360,9 @@
   },
   "selectRuntime": "未設定",
   "dotsPause": "CCCC アクセスを一時停止",
-  "dotsPauseHint": "CCCC の配信とツールアクセスを一時停止します。ChatGPT で実行中のタスクは継続する可能性があります。",
+  "dotsPauseHint": "CCCC の配信とツールアクセスを一時停止します。接続先のサービスで実行中のタスクは継続する場合があります。",
   "dotsEnable": "CCCC のアクセスを有効化",
-  "dotsResume": "CCCC のアクセスを再開"
+  "dotsResume": "CCCC のアクセスを再開",
+  "webAccessEnabled": "CCCC アクセス有効",
+  "webAccessPaused": "CCCC アクセスを一時停止中"
 }

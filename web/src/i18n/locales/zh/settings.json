@@ -1505,10 +1505,10 @@
     "description": "ChatGPT Web Model Actor 在 CCCC 专用浏览器中对话。登录一次，每个 Actor 保持独立窗口和对话。",
     "upgrade": "此版本需要重新配置共享连接器并配对对话，原有对话和历史记录会保留。",
     "login": "共享 ChatGPT 登录",
-    "loginHint": "所有 Actor 窗口共享此登录。退出登录会影响全部 ChatGPT Actor；关闭登录窗口不影响 Actor 窗口和已保存的登录。",
+    "loginHint": "ChatGPT Web Model 的 Actor 窗口共享此登录。退出登录会影响这些浏览器 Actor；关闭登录窗口会保留它们的窗口和登录状态。",
     "verification": "需要完成网站验证",
     "ready": "已登录",
-    "openState": "登录窗口已打开，请检查登录",
+    "openState": "浏览器已打开 · 尚未检查页面",
     "closed": "登录窗口已关闭",
     "open": "打开登录窗口",
     "check": "检查登录",
@@ -1544,7 +1544,9 @@
       "auth": "认证方式",
       "urlHidden": "私密 URL，已隐藏，请直接复制",
       "copyName": "复制名称"
-    }
+    },
+    "loginRequired": "ChatGPT 需要登录",
+    "pageNotReady": "会话输入框尚未就绪"
   },
   "webModelActor": {
     "title": "ChatGPT 对话",
@@ -1554,7 +1556,7 @@
     "new": "预览新对话",
     "url": "已有 ChatGPT 对话 URL",
     "openUrl": "预览此 URL",
-    "pairHint": "在此 Actor 的 ChatGPT 对话中启用 CCCC 连接器，然后正常启动 Actor 即可。CCCC 会自动发送一条设置消息核验连接，再投递任务，无需提前在此处连接。未发送的草稿会保留。",
+    "pairHint": "在此 Actor 的 ChatGPT 会话中启用 CCCC 连接器，然后在此启用 CCCC 访问。群组运行时，CCCC 会自动发送一条设置消息，验证连接后再投递任务。未发送的草稿会保留。",
     "restoreHint": "要恢复之前对话的连接，请预览之前的 URL，并按提示确认暂停此 Actor，然后点击“使用此对话”。未完成的投递记录会保留；存在未解决的投递时只能恢复同一个对话。",
     "cancel": "取消配对",
     "remove": "解除配对",
@@ -1579,7 +1581,9 @@
       "browser_closed": "已连接 · 浏览器已关闭",
       "replacement_failed": "更换对话失败",
       "replacement_interrupted": "更换对话已中断",
-      "replacement_cancelled": "更换对话已取消"
+      "replacement_cancelled": "更换对话已取消",
+      "page_not_ready": "ChatGPT 输入框尚未就绪",
+      "inspection_failed": "无法检查 ChatGPT 页面"
     },
     "previousUrl": "原来的对话（有未完成投递时请使用此 URL 重新配对）",
     "errors": {
@@ -1604,7 +1608,13 @@
     "bindingRetained": "新的连接核验成功前，原有绑定保持不变。",
     "pauseChangeConfirm": "现在暂停此 Actor 并切换对话吗？其他 Actor 不受影响。新对话连接成功后，可在这里点击“启动 Actor”继续。未发送的草稿和未确认的投递仍会受到保护。",
     "pauseRemoveConfirm": "现在停止此 Actor 并解除对话连接吗？该操作立即生效，其他 Actor 不受影响。",
-    "start": "启动 Actor"
+    "start": "启用 CCCC 接入",
+    "sharedLogin": "共享 ChatGPT 登录",
+    "checkPage": "重新检查",
+    "configureConnection": "配置连接",
+    "checkedAt": "页面检查时间：{{time}}",
+    "immediateHint": "连接操作立即生效；其它 Actor 修改使用下方按钮保存。",
+    "adminManaged": "此 Actor 的 ChatGPT 连接由实例管理员管理。你仍可正常使用群组。"
   },
   "grokShared": {
     "title": "Grok Bot 共享设置",
@@ -1629,14 +1639,13 @@
     "confirmRemove": "确认解除",
     "runtimeSaveHint": "在这里填写已有 Bot URL，与底部的 Actor 设置一起保存。只有确认应用更改时，才会停止并重新启动正在运行的 Actor。",
     "invalidUrl": "请输入完整的 Grok Bot 地址：https://grok.com/bot/…",
-    "draftHint": "运行时也可以编辑。使用底部“保存”一并应用 Bot URL 和其他设置；未完成的任务需先完成或明确处理。更换 Bot 会清除旧 Routine 凭据。",
+    "draftHint": "运行时也可以编辑。使用底部“保存”一并应用 Bot URL 和其他设置；未完成的任务需先完成或明确处理。更换 Bot 会清除旧 Routine 凭据。 保存后可在此继续设置 Routine。",
     "routine": "Webhook Routine",
     "configured": "已配置",
     "setupRequired": "需要设置",
     "queued": "待处理消息",
     "lastTask": "最近任务",
     "noTask": "暂无已完成任务",
-    "taskProgress": "任务投递",
     "connectorStep": "1. 连接 CCCC",
     "connectorHint": "为此 Bot 添加共享的 CCCC MCP 连接器。地址与凭据在全局设置中管理。",
     "botStep": "2. 选择 Bot",
@@ -1646,18 +1655,20 @@
     "unavailable": "暂不可用",
     "adminManaged": "此 Bot 的连接由实例管理员管理，你仍可正常使用 Group。",
     "setupHint": "打开连接设置，为此 Bot 连接 CCCC 并保存原生 Webhook Routine。",
-    "disconnectHint": "断开前请停止 CCCC 访问。不再使用时，也请在 Grok 停用 Routine。",
+    "disconnectHint": "断开前请暂停 CCCC 访问。不再使用时，也请在 Grok 停用 Routine。",
     "outcomes": {
       "done": "最近任务已完成",
       "failed": "最近任务失败",
       "cancelled": "最近任务已结束"
     },
     "steps": {
-      "notify": "排队／发送",
       "waiting": "等待 Bot 领取",
-      "working": "工作中",
-      "completed": "已完成"
-    }
+      "notifyHint": "消息已保存，等待 CCCC 通知 Bot。",
+      "sendingHint": "CCCC 正在向 Grok 发送 Webhook 通知。",
+      "waitingHint": "Grok 已接受 Webhook 通知，等待 Bot 领取此任务。",
+      "workingHint": "Bot 已领取此任务，等待完成回执。"
+    },
+    "deliveryHint": "Webhook 通知成功后，仍需等待 Bot 领取任务。"
   },
   "voiceSettings": {
     "claudeTrustHint": "首次使用 Claude 前，请用对应的 CLAUDE_CONFIG_DIR 信任一次 $CCCC_HOME/voice-secretary/jobs。后续任务沿用父目录信任；设置时无需发送模型任务。",
@@ -1845,7 +1856,7 @@
     "openDetails": "查看详情",
     "title": "ChatGPT Dots",
     "hint": "任务通过 ChatGPT 原生事件投递。暂停 CCCC 访问不会停止已经在 ChatGPT 中执行的任务。回复返回本工作组。",
-    "createHint": "保存后，在此 Actor 的主面板中连接 Dots 原生事件任务。同一 ChatGPT 账号复用现有 CCCC 插件，无需打开 CCCC 浏览器登录窗口。一个 Dot 只连接一个 Actor。",
+    "createHint": "保存后，在此 Actor 面板继续连接 Dots 原生事件任务。复用同一 ChatGPT 账号中的 CCCC 插件，无需 CCCC 浏览器登录窗口。当前共享连接器一次仅支持一个 Dots Actor。",
     "connect": "连接 Dots",
     "getInstructions": "获取设置说明",
     "connectHint": "如果 ChatGPT 账号尚未连接 CCCC 插件，请先完成共享 ChatGPT 设置。升级 CCCC 后刷新插件工具。将设置说明复制到你的 Dot，为此 Actor 配对并保存原生事件任务。",
@@ -1856,13 +1867,13 @@
     "adminStatus": "连接由管理员管理",
     "adminManaged": "此 Actor 的 Dots 连接和任务状态由管理员管理。",
     "disconnect": "断开 Dots",
-    "sharedSettings": "共享 ChatGPT 设置",
+    "sharedSettings": "共享 ChatGPT 连接器",
     "connectionSettings": "连接设置",
     "openDots": "打开 Dots ↗",
     "instructions": "Dots 设置说明",
     "copyInstructions": "复制设置说明",
     "copied": "已复制",
-    "pauseBeforeChanging": "修改连接前，请先暂停 CCCC 访问。",
+    "pauseBeforeChanging": "断开时会先暂停此 Actor 的 CCCC 访问，排队消息会保留。",
     "disconnectConfirm": "断开此 Actor 与 Dots 的连接？这会移除 CCCC 访问权限，原生任务和 ChatGPT 历史仍保留。",
     "resolve": "结清未确认投递",
     "resolveConfirm": "已经在 Dots 中检查此任务了吗？将未确认投递结清，不再发送。远端任务可能仍在运行。",
@@ -1898,7 +1909,7 @@
       "executionInterrupted": "结果返回前 CCCC 访问发生了变更，请在 Dots 中检查未完成任务。",
       "subscriptionGone": "原生事件订阅已失效。请重新获取设置说明，并在 Dots 中更新原生任务。",
       "connectorRequired": "请先配置共享 ChatGPT 连接器。",
-      "bindingConflict": "本账号的 Dot 已连接另一个 Actor。迁移连接前，请先暂停并断开那个 Actor。"
+      "bindingConflict": "此共享连接器已有一个 Dots Actor。迁移连接前，请暂停并断开该 Actor。"
     },
     "unavailable": "状态暂不可用",
     "subscriptionExpires": "事件订阅到期：{{time}}",
@@ -1912,25 +1923,17 @@
       "notSubscribed": "未订阅",
       "pending": "待办消息",
       "lastTask": "上次任务",
-      "noTask": "暂无任务"
-    },
-    "delivery": {
-      "title": "任务投递",
-      "lastCompleted": "最近完成的任务",
-      "hint": "事件已被接收后，仍可能需要等待 Dot 领取任务。",
-      "empty": "当前没有正在投递的任务。"
+      "noTask": "暂无任务",
+      "pairing": "配对",
+      "paired": "已配对",
+      "notPaired": "未配对"
     },
     "steps": {
-      "notify": "排队／发送通知",
-      "notifyHint": "消息已保存，等待 CCCC 通知 Dot。",
-      "notifySending": "正在发送通知",
-      "notifySendingHint": "CCCC 正在向 ChatGPT 发送事件。",
       "waiting": "等待 Dot 领取",
+      "notifyHint": "消息已保存，等待 CCCC 通知 Dot。",
+      "sendingHint": "CCCC 正在向 ChatGPT 发送事件。",
       "waitingHint": "ChatGPT 已接收事件，等待 Dot 领取本轮任务。",
-      "working": "处理中",
-      "workingHint": "Dot 已领取本轮任务，正在等待处理结果。",
-      "completed": "已完成",
-      "completedHint": "CCCC 已确认本轮任务的完成回执。"
+      "workingHint": "Dot 已领取本轮任务，正在等待处理结果。"
     },
     "settings": {
       "instructions": "设置说明",
@@ -1952,40 +1955,27 @@
       "tipRefresh": "在 ChatGPT 插件设置里对 CCCC 选择 Refresh tools，再让 Dot 重试。",
       "tipPermissions": "确认已允许 CCCC 插件领取、回复和完成任务。",
       "tipRetry": "聊天中的确认不算完成；CCCC 必须检测到配对和订阅都已完成，这个 Actor 才能接收任务。"
-    }
+    },
+    "deliveryHint": "事件已被接收后，仍可能需要等待 Dot 领取任务。",
+    "pauseDisconnectConfirm": "暂停此 Actor 的 CCCC 访问并断开 Dots 连接？排队消息、原生任务和 ChatGPT 历史会保留，其它 Actor 不受影响。"
   },
   "dotsSettings": {
     "title": "ChatGPT Dots",
     "description": "Dots 通过 ChatGPT 原生事件接收任务，回复返回所在工作组；不需要 CCCC 浏览器登录窗口。",
     "prereq": "前置条件",
-    "prereqHint": "Dots 与 ChatGPT 共用同一个 CCCC 连接器。这里只显示状态，请到 ChatGPT 页管理，避免建出第二个。",
+    "prereqHint": "Dots 共用 ChatGPT CCCC 连接器。共享配置和最近的插件诊断请在 ChatGPT 页面管理。",
     "addressReady": "已配置公网 HTTPS Web 访问地址。",
     "configureWebAccess": "Web 访问设置",
-    "connectorReady": "共享 CCCC 连接器已就绪。",
+    "connectorReady": "共享 CCCC 连接器已配置。",
     "connectorMissing": "请先在 ChatGPT 页创建共享 CCCC 连接器。",
     "manageConnector": "到 ChatGPT 管理连接器",
     "boundActor": "已绑定的 Dots Actor",
-    "boundHint": "一个 Dot 只连接一个 Actor。在该 Actor 的主面板中完成设置、查看投递进度。",
+    "boundHint": "此共享连接器一次仅支持一个 Dots Actor。迁移连接前，请暂停并断开当前 Actor。",
     "actorReadFailed": "暂时无法读取此 Actor 的状态。下面显示的是最后一次确认的状态，会自动重试。",
     "noActor": "还没有绑定 Dots Actor。创建运行时为 ChatGPT Dots 的 Actor，并在它的主面板中连接。",
-    "actorGroup": "工作组 {{group}}",
-    "diagnostics": "共用插件诊断",
-    "diagnosticsHint": "最近 10 次订阅和任务工具调用结果，最新的在前。插件也服务普通 ChatGPT Actor，这些记录不全属于当前 Dot。只保留原因代码，不记录凭据或调用参数。",
-    "noCalls": "还没有调用记录。",
-    "callOk": "调用成功",
-    "callFailed": "失败 · {{reason}}",
-    "reasons": {
-      "pairingExpired": "为目标 Actor 获取新的设置说明，并在 10 分钟内使用其中的配对码。",
-      "bindingChanged": "先核对目标 Actor 及其当前连接，再获取新的设置说明。",
-      "conversationUnpaired": "请使用已配对的会话。如果 Actor 已配对，但同一个 Dot 仍被拒绝，请暂停其 CCCC 访问，再明确断开并重新连接。",
-      "executionToken": "刷新插件工具，用最新设置说明更新已有原生任务。任务工具只使用领取返回的执行凭据。",
-      "actorStopped": "如需接收任务，请恢复目标 Actor 的 CCCC 访问。",
-      "refreshTools": "在 ChatGPT 中刷新 CCCC 插件工具，并核对最新设置说明。",
-      "callFailed": "重试前查看 ChatGPT 报告的具体失败调用；仅凭此记录不能判断任务是否已经完成。"
-    }
+    "actorGroup": "工作组 {{group}}"
   },
   "grokWebhook": {
-    "pause": "停止 CCCC 访问",
     "setupHint": "使用下方指令在此 Bot 保存一个 Webhook Routine，再填写桌面端提供的凭据。Routine 使用你的 Grok 订阅额度。",
     "instructions": "获取 Routine 设置指令",
     "copyFailed": "复制失败，请手动选择并复制指令。",
@@ -1996,7 +1986,7 @@
     "save": "保存 Routine 凭据",
     "pending": "{{count}} 条待处理消息",
     "openBot": "打开 Grok Bot",
-    "runtimeHint": "CCCC 每次领取并完成一个任务。停止访问会撤销 CCCC 权限，但不会停止 Grok 已在云端运行的工作。",
+    "runtimeHint": "CCCC 每次领取并完成一个任务。暂停访问会撤销 CCCC 权限，但不会停止 Grok 已在云端运行的工作。",
     "deliveryError": "Webhook 投递需要处理（HTTP {{status}}）。请检查桌面端 Routine、Key、额度及 CCCC 连接器。",
     "retry": "重试唤醒",
     "resolveHint": "请先检查 Bot。结束此未完成任务后不会重新投递其消息，后续排队工作可以继续。这不会取消 Grok 云端工作。",
@@ -2004,7 +1994,7 @@
     "confirmResolve": "确认结束",
     "phase": {
       "ready": "已就绪，等待任务",
-      "stopped": "CCCC 访问已停止",
+      "stopped": "CCCC 访问已暂停",
       "pending": "等待发送唤醒",
       "delivering": "正在发送唤醒",
       "delivered": "唤醒已接受，等待领取",
@@ -2017,5 +2007,35 @@
     "saveAndApply": "保存并应用凭据",
     "applyHint": "编辑内容仅保留在本地，保存后才生效。空闲时应用会保持当前的 CCCC 访问启用状态。",
     "waitForTask": "当前连接有未完成的任务。可以先编辑，待任务完成或明确处理后再应用。"
+  },
+  "nativeActor": {
+    "deliveryTitle": "任务投递",
+    "failed": "投递失败",
+    "interrupted": "任务已中断",
+    "unclaimed": "尚未领取 · 请检查连接",
+    "steps": {
+      "notify": "排队 / 发送",
+      "sending": "正在发送通知",
+      "working": "处理中",
+      "completed": "已完成"
+    },
+    "connectionBusy": "有未完成任务正在使用此连接。请等任务完成或明确结清后再应用连接变更。"
+  },
+  "webModelDiagnostics": {
+    "refresh": "刷新",
+    "noCalls": "还没有调用记录。",
+    "callOk": "调用成功",
+    "callFailed": "失败 · {{reason}}",
+    "reasons": {
+      "pairingExpired": "请从目标 Actor 的连接设置重新配置连接。配对码会在 10 分钟后过期。",
+      "bindingChanged": "先核对目标 Actor 及其当前连接，再获取新的设置说明。",
+      "conversationUnpaired": "请使用此 Actor 已配对的会话。如需更换，请在该 Actor 的连接设置中明确重新连接。",
+      "executionToken": "请用最新设置说明更新原生任务，仅使用本次任务领取返回的执行凭据。",
+      "actorStopped": "如需接收任务，请恢复目标 Actor 的 CCCC 访问。",
+      "refreshTools": "在供应商应用中刷新 CCCC 连接器工具，并核对当前连接设置。",
+      "callFailed": "重试前在供应商应用中查看具体失败调用；仅凭此记录不能判断任务是否已经完成。"
+    },
+    "title": "连接器诊断",
+    "hint": "此共享连接器最近 10 条订阅与任务工具调用结果，最新记录在前，可能涉及多个 Actor。仅保存原因码，不含凭据或调用参数。"
   }
 }

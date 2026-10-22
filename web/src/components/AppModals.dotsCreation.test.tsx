@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   add: vi.fn(),
   refresh: vi.fn(),
   recipientsProps: vi.fn(),
+  bind: vi.fn(),
+  editSaveTarget: "",
   t: (key: string) => key,
 }));
 vi.mock("react-i18next", async (original) => ({
@@ -16,6 +18,8 @@ vi.mock("react-i18next", async (original) => ({
 }));
 vi.mock("../services/api", () => ({
   addActor: (...args: unknown[]) => mocks.add(...args),
+  bindGrokBot: (...args: unknown[]) => mocks.bind(...args),
+  fetchGroupPrompts: async () => ({ ok: true, result: { help: { content: "" } } }),
   listActorProfiles: async () => ({ ok: true, result: { profiles: [] } }),
 }));
 vi.mock("./modals/ActorConfigModal", () => ({
@@ -23,13 +27,37 @@ vi.mock("./modals/ActorConfigModal", () => ({
     mode,
     isOpen,
     onCreate,
+    onSave,
   }: {
     mode: string;
     isOpen: boolean;
     onCreate?: () => Promise<boolean>;
+    onSave?: (payload: {
+      mode: "custom";
+      setVars: {};
+      unsetKeys: [];
+      clear: false;
+      capabilityAutoload: [];
+      grokBotUrl: string;
+    }) => Promise<void>;
   }) =>
     mode === "create" && isOpen ? (
       <button onClick={() => void onCreate?.()}>Create Dot</button>
+    ) : mode === "edit" && isOpen && mocks.editSaveTarget ? (
+      <button
+        onClick={() =>
+          void onSave?.({
+            mode: "custom",
+            setVars: {},
+            unsetKeys: [],
+            clear: false,
+            capabilityAutoload: [],
+            grokBotUrl: mocks.editSaveTarget,
+          })
+        }
+      >
+        Save Bot URL
+      </button>
     ) : null,
 }));
 vi.mock("./SearchModal", () => ({ SearchModal: () => null }));
@@ -66,6 +94,8 @@ let root: ReturnType<typeof createRoot>;
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.clearAllMocks();
+  mocks.editSaveTarget = "";
+  mocks.bind.mockResolvedValue({ ok: true, result: {} });
   useModalStore.setState({
     modals: { ...useModalStore.getState().modals, addActor: true },
     editingActor: null,
@@ -101,7 +131,7 @@ function AppLifecycleHost() {
   const groupId = useGroupStore((state) => state.selectedGroupId);
   const actors = useGroupStore((state) => state.actors);
   const activeTab = useUIStore((state) => state.activeTab);
-  const { onDotsActorCreated } = useAppTabState({
+  const { onNativeActorCreated } = useAppTabState({
     activeTab,
     runtimeActors: actors,
     selectedGroupId: groupId,
@@ -119,7 +149,7 @@ function AppLifecycleHost() {
       ccccHome="/fixture-only"
       composerRef={createRef()}
       onStartReply={vi.fn()}
-      onDotsActorCreated={onDotsActorCreated}
+      onNativeActorCreated={onNativeActorCreated}
       onThemeChange={vi.fn()}
       onTextScaleChange={vi.fn()}
       onDeleteGroup={vi.fn()}
@@ -158,6 +188,20 @@ it("waits for the existing Actor refresh to publish the created identity rather 
   expect(useUIStore.getState().activeTab).toBe("chat");
   await act(async () => useGroupStore.setState({ actors: [created] }));
   expect(useUIStore.getState().activeTab).toBe("dot-created");
+});
+
+it("takes a newly created Grok Bot to its required connection settings after hydration", async () => {
+  const grok = { ...created, id: "grok-created", runtime: "grok_web_model" } as Actor;
+  useFormStore.setState({ newActorRuntime: "grok_web_model", newActorId: grok.id });
+  mocks.add.mockResolvedValue({ ok: true, result: { actor: grok } });
+  mocks.refresh.mockResolvedValue(undefined);
+  await render();
+  await submit();
+  expect(useModalStore.getState().editingActor).toBeNull();
+  await act(async () => useGroupStore.setState({ actors: [grok] }));
+  expect(useUIStore.getState().activeTab).toBe(grok.id);
+  expect(useModalStore.getState().editingActor?.id).toBe(grok.id);
+  expect(useModalStore.getState().editingActorSection).toBe("chatgpt");
 });
 it("does not navigate a different Group when an accepted creation response arrives late", async () => {
   let finish!: (value: unknown) => void;
@@ -224,4 +268,35 @@ it("resolves RecipientsModal metadata from the selected Group's chatByGroup buck
   expect(mocks.recipientsProps).toHaveBeenLastCalledWith(
     expect.objectContaining({ isOpen: true, messageMode: "request_reply", canCancelReply: true }),
   );
+});
+
+it("does not open stale Grok settings if the Actor changes while navigation awaits confirmation", async () => {
+  const grok = { ...created, id: "grok-created", runtime: "grok_web_model" } as Actor;
+  useFormStore.setState({ newActorRuntime: "grok_web_model", newActorId: grok.id });
+  mocks.add.mockResolvedValue({ ok: true, result: { actor: grok } });
+  mocks.refresh.mockImplementation(async () => useGroupStore.setState({ actors: [grok] }));
+  useWorkspaceNavigation.setState({ owners: new Set([Symbol("unsaved-work")]), pending: null });
+  await render();
+  await submit();
+  expect(useWorkspaceNavigation.getState().pending).not.toBeNull();
+  await act(async () => useGroupStore.setState({ actors: [{ ...grok, runtime: "codex" }] }));
+  await act(async () => finishWorkspaceNavigation(true));
+  expect(useUIStore.getState().activeTab).toBe("chat");
+  expect(useModalStore.getState().editingActor).toBeNull();
+});
+it("keeps Grok setup open after its Bot URL is saved so Routine setup can continue", async () => {
+  const grok = { ...created, id: "grok-created", runtime: "grok_web_model" } as Actor;
+  useFormStore.setState({ newActorRuntime: "grok_web_model", newActorId: grok.id });
+  mocks.add.mockResolvedValue({ ok: true, result: { actor: grok } });
+  mocks.refresh.mockImplementation(async () => useGroupStore.setState({ actors: [grok] }));
+  await render();
+  await submit();
+  mocks.editSaveTarget = "https://grok.com/bot/00000000-0000-4000-8000-000000000001";
+  await render();
+  const save = [...host.querySelectorAll("button")].find(
+    (button) => button.textContent === "Save Bot URL",
+  )!;
+  await act(async () => save.click());
+  expect(mocks.bind).toHaveBeenCalledExactlyOnceWith("g_a", grok.id, mocks.editSaveTarget);
+  expect(useModalStore.getState().editingActor?.id).toBe(grok.id);
 });

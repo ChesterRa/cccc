@@ -72,7 +72,9 @@ interface AppModalsProps {
   fetchContext: ContextModalFetch;
   canManageGroups: boolean;
   accountLabel?: string | null;
-  onDotsActorCreated?: (visit: import("../hooks/useAppTabState").CreatedDotsNavigation) => void;
+  onNativeActorCreated?: (
+    visit: import("../hooks/useAppTabState").CreatedNativeActorNavigation,
+  ) => void;
 }
 
 function sortPresentationSlotIds(slotIds: string[]): string[] {
@@ -108,7 +110,7 @@ export function AppModals({
   onThemeChange,
   onTextScaleChange,
   onDeleteGroup,
-  onDotsActorCreated,
+  onNativeActorCreated,
   fetchContext,
   canManageGroups,
   accountLabel,
@@ -394,7 +396,7 @@ export function AppModals({
     setEditingActor,
     closeModal,
     refreshActors,
-    onDotsActorCreated,
+    onNativeActorCreated,
     editActorRuntime,
     editActorCommand,
     editActorTitle,

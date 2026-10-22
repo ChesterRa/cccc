@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   copy: vi.fn(),
   connectors: vi.fn(),
   create: vi.fn(),
+  stop: vi.fn(),
   language: "en",
 }));
 vi.mock("react-i18next", () => ({
@@ -24,6 +25,7 @@ vi.mock("../../services/api", () => ({
   createWebModelConnector: (...args: unknown[]) => mocks.create(...args),
   fetchDotsActorState: (...args: unknown[]) => mocks.load(...args),
   updateDotsActorConnection: (...args: unknown[]) => mocks.update(...args),
+  stopActor: (...args: unknown[]) => mocks.stop(...args),
 }));
 import { DotsActorPanel } from "./DotsActorPanel";
 
@@ -49,6 +51,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.language = "en";
   mocks.load.mockResolvedValue(state());
+  mocks.stop.mockResolvedValue({ ok: true, result: {} });
   mocks.connectors.mockResolvedValue({
     ok: true,
     result: {
@@ -80,7 +83,7 @@ afterEach(async () => {
 });
 const render = async (props: Partial<React.ComponentProps<typeof DotsActorPanel>> = {}) => {
   await act(async () =>
-    root.render(<DotsActorPanel groupId="g_a" actorId="dot" isVisible setup {...props} />),
+    root.render(<DotsActorPanel groupId="g_a" actorId="dot" isVisible {...props} />),
   );
 };
 const button = (text: string) =>
@@ -98,7 +101,7 @@ it("keeps Dot pairing setup visible when the native task subscribed before pairi
   await render();
   expect(host.textContent).toContain("dotsActor.phases.waiting_pairing");
   expect(host.textContent).toContain("dotsActor.setup.copyTitle");
-  expect(host.textContent).not.toContain("dotsActor.delivery.title");
+  expect(host.textContent).not.toContain("nativeActor.deliveryTitle");
   expect(button("dotsActor.getInstructions").disabled).toBe(false);
   expect(mocks.update).not.toHaveBeenCalled();
 });
@@ -186,30 +189,78 @@ it("keeps task-update guidance reachable for an enabled Actor waiting for its Do
       pending_count: 1,
     }),
   );
-  await render();
+  await render({ setup: true });
   expect(mocks.update).not.toHaveBeenCalled();
   expect(host.textContent).not.toContain("dotsActor.nativeStepPasteConfirm");
   await act(async () => button("dotsActor.getInstructions").click());
   expect(mocks.update).toHaveBeenCalledTimes(1);
   expect(mocks.update).toHaveBeenCalledWith("g_a", "dot", "connect", undefined);
   expect(host.textContent).toContain("dotsActor.nativeStepPasteConfirm");
-  expect(host.textContent).toContain("dotsActor.phases.delivered");
-  expect(button("dotsActor.disconnect").disabled).toBe(true);
+  expect(host.querySelector("dl")).toBeNull();
+  expect(host.querySelector("li[data-step]")).toBeNull();
+  expect(button("dotsActor.disconnect").disabled).toBe(false);
   await act(async () => button("dotsActor.copyInstructions").click());
   expect(mocks.copy).toHaveBeenCalledWith(host.querySelector("textarea")!.value);
 });
-it("does not allow connection changes while CCCC access is enabled or unresolved work remains", async () => {
+it("offers a confirmed pause-and-disconnect while idle and still blocks unresolved work", async () => {
   mocks.load.mockResolvedValue(
     state({ enabled: true, connected: true, subscribed: true, phase: "ready" }),
   );
-  await render();
-  expect(button("dotsActor.disconnect").disabled).toBe(true);
+  await render({ setup: true });
+  expect(button("dotsActor.disconnect").disabled).toBe(false);
   expect(host.textContent).toContain("dotsActor.pauseBeforeChanging");
   mocks.load.mockResolvedValue(
     state({ connected: true, subscribed: true, active_turn_id: "turn1", phase: "failed" }),
   );
   await act(async () => vi.advanceTimersByTimeAsync(2_000));
   expect(button("dotsActor.disconnect").disabled).toBe(true);
+});
+
+it("pauses only after disconnect confirmation and never disconnects if pausing fails", async () => {
+  mocks.load.mockResolvedValue(
+    state({ enabled: true, connected: true, subscribed: true, phase: "ready" }),
+  );
+  await render({ setup: true });
+  vi.mocked(confirm).mockReturnValue(false);
+  await act(async () => button("dotsActor.disconnect").click());
+  expect(mocks.stop).not.toHaveBeenCalled();
+  expect(mocks.update).not.toHaveBeenCalled();
+  vi.mocked(confirm).mockReturnValue(true);
+  mocks.stop.mockResolvedValue({ ok: false, error: { message: "pause failed" } });
+  await act(async () => button("dotsActor.disconnect").click());
+  expect(mocks.stop).toHaveBeenCalledExactlyOnceWith("g_a", "dot");
+  expect(mocks.update).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("pause failed");
+});
+
+it("waits for pause before disconnecting the same Actor and preserves a newly discovered unfinished turn", async () => {
+  mocks.load.mockResolvedValue(
+    state({ enabled: true, connected: true, subscribed: true, phase: "ready" }),
+  );
+  await render({ setup: true, isRunning: true });
+  let finish!: (value: unknown) => void;
+  mocks.stop.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+  await act(async () => button("dotsActor.disconnect").click());
+  expect(mocks.stop).toHaveBeenCalledOnce();
+  expect(mocks.update).not.toHaveBeenCalled();
+  mocks.load.mockResolvedValue(
+    state({
+      enabled: false,
+      connected: true,
+      subscribed: true,
+      phase: "interrupted",
+      active_turn_id: "just-claimed",
+    }),
+  );
+  mocks.update.mockResolvedValue({
+    ok: false,
+    error: { code: "delivery_unresolved", message: "unfinished" },
+  });
+  await act(async () => finish({ ok: true, result: {} }));
+  expect(mocks.update).toHaveBeenCalledExactlyOnceWith("g_a", "dot", "disconnect", undefined);
+  expect(host.textContent).toContain("dotsActor.reviewUnfinished");
+  expect(button("dotsActor.disconnect").disabled).toBe(true);
+  expect(button("dotsActor.resolve")).toBeDefined();
 });
 it("requires review confirmation and sends only the exact unfinished turn", async () => {
   mocks.load.mockResolvedValue(
@@ -365,12 +416,12 @@ it("gives a localized setup action for missing shared configuration", async () =
 });
 it("keeps the last authoritative status through read failure and preserves action errors after read recovery", async () => {
   mocks.load.mockResolvedValue(state({ connected: true, subscribed: true, phase: "stopped" }));
-  await render();
+  await render({ setup: true });
   mocks.update.mockResolvedValue({ ok: false, error: { message: "action rejected" } });
   await act(async () => button("dotsActor.disconnect").click());
   mocks.load.mockResolvedValue({ ok: false, error: { message: "status unavailable" } });
   await act(async () => vi.advanceTimersByTimeAsync(2_000));
-  expect(host.textContent).toContain("dotsActor.phases.stopped");
+  expect(button("dotsActor.disconnect").disabled).toBe(false);
   expect(host.textContent).toContain("status unavailable");
   mocks.load.mockResolvedValue(state({ connected: true, subscribed: true, phase: "stopped" }));
   await act(async () => vi.advanceTimersByTimeAsync(2_000));
@@ -398,7 +449,7 @@ it("can retrieve instructions for the same subscribed connection without pausing
   mocks.load.mockResolvedValue(
     state({ enabled: true, connected: true, subscribed: true, phase: "ready" }),
   );
-  await render({ setup: false, isRunning: true });
+  await render({ setup: true, isRunning: true });
   const instructions = button("dotsActor.getInstructions");
   expect(instructions).toBeDefined();
   expect(instructions.disabled).toBe(false);
@@ -411,9 +462,9 @@ it("keeps connection-changing controls locked for an unfinished turn and exposes
   mocks.load.mockResolvedValue(
     state({ connected: true, phase: "working", active_turn_id: "turn-active" }),
   );
-  await render({ setup: false });
+  await render({ setup: true });
   expect(button("dotsActor.getInstructions").disabled).toBe(true);
-  await render({ setup: false, readOnly: true });
+  await render({ setup: true, readOnly: true });
   expect(button("dotsActor.getInstructions")).toBeUndefined();
   expect(button("dotsActor.disconnect")).toBeUndefined();
   expect(button("dotsActor.sharedSettings")).toBeUndefined();
@@ -521,9 +572,11 @@ it("shows a permanent subscription and the latest delivery steps once subscribed
   expect(current.querySelector("svg")?.getAttribute("class")).toContain("clock");
   expect(current.querySelector(".animate-spin")).toBeNull();
   expect(host.textContent).not.toContain("dotsActor.steps.workingHint");
-  expect(host.textContent).not.toContain("dotsActor.steps.completedHint");
   expect(host.textContent).not.toContain("dotsActor.setup.copyTitle");
+  expect(button("dotsActor.getInstructions")).toBeUndefined();
+  await render({ setup: true });
   expect(button("dotsActor.getInstructions")).toBeTruthy();
+  expect(host.querySelector("li[data-step]")).toBeNull();
 });
 
 it("guides an unsubscribed Actor through the numbered setup instead of delivery steps", async () => {
@@ -578,7 +631,12 @@ it.each([
     expect(host.textContent).toContain("dotsActor.subscriptionExpired");
     expect(host.textContent).not.toContain("dotsActor.adminSetup");
     if (phase === "interrupted") expect(button("dotsActor.resolve").disabled).toBe(false);
-    if (!readOnly) expect(button("dotsActor.getInstructions").disabled).toBe(true);
+    if (!readOnly) {
+      expect(button("dotsActor.getInstructions")).toBeUndefined();
+      await render({ setup: true });
+      expect(button("dotsActor.getInstructions").disabled).toBe(true);
+      expect(host.querySelector("li[data-step]")).toBeNull();
+    }
     expect(mocks.update).not.toHaveBeenCalled();
   },
 );
@@ -607,17 +665,15 @@ it("shows the actual current stage and spins only while sending or working", asy
       );
     else if (phase !== "interrupted" && phase !== "failed")
       expect(current.querySelector("svg")?.getAttribute("class")).toContain("clock");
-    if (phase === "delivering")
-      expect(current.textContent).toContain("dotsActor.steps.notifySending");
+    if (phase === "delivering") expect(current.textContent).toContain("nativeActor.steps.sending");
     if (phase === "failed") {
-      expect(current.textContent).toContain("dotsActor.phases.failed");
+      expect(current.textContent).toContain("nativeActor.failed");
       expect(current.textContent).not.toContain("dotsActor.steps.notifyHint");
     }
     if (phase === "interrupted") {
-      expect(current.textContent).toContain("dotsActor.phases.interrupted");
+      expect(current.textContent).toContain("nativeActor.interrupted");
       expect(current.textContent).not.toContain("dotsActor.steps.workingHint");
     }
-    expect(host.textContent).not.toContain("dotsActor.steps.completedHint");
   }
   expect(mocks.update).not.toHaveBeenCalled();
 });
@@ -643,7 +699,7 @@ it.each(["partial", "cancelled", "failed"] as const)(
     expect(host.querySelector("li[data-step]")).toBeNull();
     expect(host.querySelector('[aria-current="step"]')).toBeNull();
     expect(host.querySelector(".animate-spin")).toBeNull();
-    expect(host.textContent).toContain("dotsActor.delivery.empty");
+    expect(host.querySelector('section[aria-label="nativeActor.deliveryTitle"]')).toBeNull();
     expect(mocks.update).not.toHaveBeenCalled();
   },
 );
@@ -667,14 +723,13 @@ it.each(["ready", "stopped"] as const)(
       }),
     );
     await render();
-    const delivery = host.querySelector('section[aria-label="dotsActor.delivery.lastCompleted"]')!;
-    expect(delivery.textContent).toContain("12:34");
-    expect(delivery.querySelectorAll('li[data-state="done"]')).toHaveLength(4);
-    expect(delivery.querySelectorAll('li[data-state="done"] svg')).toHaveLength(4);
-    expect(delivery.querySelector('[aria-current="step"]')).toBeNull();
-    expect(delivery.querySelector(".animate-spin")).toBeNull();
-    expect(delivery.textContent).toContain("dotsActor.steps.completedHint");
-    expect(delivery.textContent).not.toContain("dotsActor.steps.workingHint");
+    const summary = host.querySelector("dl")!;
+    expect(summary.textContent).toContain("dotsActor.lastExecution.done");
+    expect(summary.textContent).toContain("12:34");
+    expect(host.querySelector('section[aria-label="nativeActor.deliveryTitle"]')).toBeNull();
+    expect(host.querySelector("li[data-step]")).toBeNull();
+    expect(host.querySelector('[aria-current="step"]')).toBeNull();
+    expect(host.querySelector(".animate-spin")).toBeNull();
     expect(host.textContent).toContain(`dotsActor.phases.${phase}`);
     expect(mocks.update).not.toHaveBeenCalled();
   },
@@ -898,6 +953,88 @@ it("opens full details from a compact completed task without mutating its connec
   expect(host.textContent).not.toContain("dotsActor.settings.instructionsHint");
   await act(async () => button("dotsActor.openDetails").click());
   expect(onExpand).toHaveBeenCalledOnce();
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("keeps a configured daily pane focused on status and opens the existing connection editor without writes", async () => {
+  mocks.load.mockResolvedValue(state({ connected: true, subscribed: true, phase: "ready" }));
+  const onSettings = vi.fn();
+  await render({ setup: false, onSettings });
+  expect(host.querySelector('section[aria-label="dotsActor.connectionSettings"]')).toBeNull();
+  expect(button("dotsActor.getInstructions")).toBeUndefined();
+  expect(host.querySelector("li[data-step]")).toBeNull();
+  expect(button("dotsActor.connectionSettings")).toBeUndefined();
+  expect(onSettings).not.toHaveBeenCalled();
+  expect(mocks.update).not.toHaveBeenCalled();
+  await render({ setup: true, onSettings });
+  expect(button("dotsActor.getInstructions")).toBeDefined();
+  expect(button("dotsActor.connectionSettings")).toBeUndefined();
+});
+
+it.each(["ready", "delivered", "working", "interrupted"] as const)(
+  "keeps %s task overview out of connection editing while retaining task-dependent controls",
+  async (phase) => {
+    const unfinished = phase === "working" || phase === "interrupted";
+    mocks.load.mockResolvedValue(
+      state({
+        connected: true,
+        subscribed: true,
+        phase,
+        pending_count: 19,
+        active_turn_id: unfinished ? "accepted-turn" : undefined,
+        last_execution: {
+          turn_id: "past",
+          event_ids: ["past"],
+          status: "done",
+          completed_at: "2026-10-22T00:00:00Z",
+        },
+      }),
+    );
+    await render({ setup: true });
+    expect(host.querySelector("dl")).toBeNull();
+    expect(host.querySelector("li[data-step]")).toBeNull();
+    expect(host.textContent).not.toContain("dotsActor.lastExecution.done");
+    expect(host.textContent).not.toContain(`dotsActor.phases.${phase}`);
+    expect(button("dotsActor.getInstructions").disabled).toBe(unfinished);
+    if (phase === "working") expect(host.textContent).toContain("nativeActor.connectionBusy");
+    if (phase === "interrupted") expect(button("dotsActor.resolve")).toBeDefined();
+    expect(mocks.update).not.toHaveBeenCalled();
+  },
+);
+
+it("retains setup guidance and read-only restrictions in the daily pane", async () => {
+  const onSettings = vi.fn();
+  await render({ setup: false, onSettings });
+  expect(button("dotsActor.connect")).toBeDefined();
+  expect(host.querySelector("li[data-setup-step]")).not.toBeNull();
+  await render({ setup: false, readOnly: true, onSettings });
+  expect(button("dotsActor.connectionSettings")).toBeUndefined();
+  expect(button("dotsActor.connect")).toBeUndefined();
+  expect(host.textContent).toContain("dotsActor.adminSetup");
+  expect(onSettings).not.toHaveBeenCalled();
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("keeps pairing and subscription feedback live in the connection editor without a delivery dashboard", async () => {
+  mocks.load.mockResolvedValue(
+    state({ connected: true, paired: false, subscribed: true, phase: "waiting_pairing" }),
+  );
+  await render({ setup: true });
+  expect(host.textContent).toContain("dotsActor.status.notPaired");
+  expect(host.textContent).toContain("dotsActor.status.permanent");
+  mocks.load.mockResolvedValue(
+    state({ connected: true, paired: true, subscribed: false, phase: "waiting_subscription" }),
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(host.textContent).toContain("dotsActor.status.paired");
+  expect(host.textContent).toContain("dotsActor.status.notSubscribed");
+  mocks.load.mockResolvedValue(
+    state({ connected: true, paired: true, subscribed: true, phase: "ready" }),
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(host.textContent).toContain("dotsActor.status.paired");
+  expect(host.textContent).toContain("dotsActor.status.permanent");
+  expect(host.querySelector("dl,li[data-step]")).toBeNull();
   expect(mocks.update).not.toHaveBeenCalled();
 });
 it("keeps compact setup and interrupted task recovery reachable without automatic writes", async () => {

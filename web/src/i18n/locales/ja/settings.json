@@ -1513,10 +1513,10 @@
     "description": "ChatGPT Web Model Actor は CCCC 専用ブラウザーで会話します。一度ログインすれば、各 Actor が独立したウィンドウと会話を保ちます。",
     "upgrade": "このバージョンでは共通コネクターの再設定と会話のペアリングが必要です。既存の会話と履歴は保持されます。",
     "login": "ChatGPT 共通ログイン",
-    "loginHint": "すべての Actor ウィンドウがこのログインを共有します。ログアウトは全 ChatGPT Actor に影響します。ログインウィンドウを閉じても、Actor ウィンドウと保存済みのログインは維持されます。",
+    "loginHint": "ChatGPT Web Model の Actor ウィンドウはこのログインを共有します。ログアウトはこれらのブラウザ Actor に影響します。ログインウィンドウを閉じても、Actor のウィンドウとログイン状態は保持されます。",
     "verification": "サイトの認証が必要",
     "ready": "ログイン済み",
-    "openState": "ログインウィンドウを開きました · ログインを確認",
+    "openState": "ブラウザ起動済み · ページ未確認",
     "closed": "ログインウィンドウは閉じています",
     "open": "ログインウィンドウを開く",
     "check": "ログインを確認",
@@ -1552,7 +1552,9 @@
       "auth": "認証",
       "urlHidden": "非公開 URL（非表示）。コピーしてください",
       "copyName": "名前をコピー"
-    }
+    },
+    "loginRequired": "ChatGPT へのログインが必要",
+    "pageNotReady": "会話の入力欄は準備中"
   },
   "webModelActor": {
     "title": "ChatGPT の会話",
@@ -1562,7 +1564,7 @@
     "new": "新しい会話をプレビュー",
     "url": "既存の ChatGPT 会話 URL",
     "openUrl": "この URL をプレビュー",
-    "pairHint": "この Actor の ChatGPT 会話で CCCC コネクターを有効にして、通常どおり Actor を開始してください。CCCC は設定メッセージを1件送って接続を検証してからタスクを配信します。ここで先に接続する必要はありません。未送信の下書きは保持されます。",
+    "pairHint": "この Actor の ChatGPT 会話で CCCC コネクターを有効にし、ここで CCCC アクセスを有効にしてください。グループの実行中に、CCCC が設定メッセージを自動で 1 件送り、接続を確認してからタスクを配信します。未送信の下書きは保持されます。",
     "restoreHint": "以前の URL をプレビューし、必要に応じて Actor の一時停止を確認してから「この会話を使用」を選択してください。未完了の配信記録は保持されます。未解決の配信がある場合は同じ会話にのみ復元できます。",
     "cancel": "ペアリングをキャンセル",
     "remove": "ペアリングを解除",
@@ -1587,7 +1589,9 @@
       "browser_closed": "接続済み · ブラウザーは閉じています",
       "replacement_failed": "会話の変更に失敗",
       "replacement_interrupted": "会話の変更が中断されました",
-      "replacement_cancelled": "会話の変更をキャンセルしました"
+      "replacement_cancelled": "会話の変更をキャンセルしました",
+      "page_not_ready": "ChatGPT の入力欄は準備中",
+      "inspection_failed": "ChatGPT ページを確認できません"
     },
     "previousUrl": "以前の会話（保留中の配信がある場合はこの URL で再ペアリング）",
     "errors": {
@@ -1612,7 +1616,13 @@
     "bindingRetained": "新しい接続の検証が成功するまで、元の接続は維持されます。",
     "pauseChangeConfirm": "この Actor を一時停止して会話を変更しますか？他の Actor は影響を受けません。新しい会話の接続後、ここで「Actor を起動」を押して再開できます。未送信の下書きや未確認の配信は保護されます。",
     "pauseRemoveConfirm": "この Actor を停止して会話の接続を解除しますか？すぐに反映され、他の Actor は影響を受けません。",
-    "start": "Actor を起動"
+    "start": "CCCC アクセスを有効化",
+    "sharedLogin": "共有 ChatGPT ログイン",
+    "checkPage": "再確認",
+    "configureConnection": "接続を設定",
+    "checkedAt": "ページ確認日時：{{time}}",
+    "immediateHint": "接続操作はすぐに反映されます。その他の Actor 変更は下のボタンで保存してください。",
+    "adminManaged": "この Actor の ChatGPT 接続はインスタンス管理者が管理します。グループは引き続き通常どおり使用できます。"
   },
   "grokShared": {
     "title": "Grok Bot 共有設定",
@@ -1637,14 +1647,13 @@
     "confirmRemove": "接続解除を確認",
     "runtimeSaveHint": "既存の Bot URL をここに入力し、下の Actor 設定と一緒に保存します。変更の適用を確認したときだけ、実行中の Actor を停止して再起動します。",
     "invalidUrl": "完全な Grok Bot URL を入力してください：https://grok.com/bot/…",
-    "draftHint": "Actor の実行中も編集できます。下の「保存」で Bot URL と他の設定をまとめて適用します。未完了のタスクは先に完了するか明示的に解決してください。Bot を変更すると古い Routine の認証情報は消去されます。",
+    "draftHint": "Actor の実行中も編集できます。下の「保存」で Bot URL と他の設定をまとめて適用します。未完了のタスクは先に完了するか明示的に解決してください。Bot を変更すると古い Routine の認証情報は消去されます。 保存後、この画面で Routine の設定を続けられます。",
     "routine": "Webhook Routine",
     "configured": "設定済み",
     "setupRequired": "設定が必要",
     "queued": "待機メッセージ",
     "lastTask": "最近のタスク",
     "noTask": "完了したタスクはありません",
-    "taskProgress": "タスク配信",
     "connectorStep": "1. CCCC に接続",
     "connectorHint": "この Bot に共有 CCCC MCP コネクターを追加します。アドレスと認証情報は全体設定で管理します。",
     "botStep": "2. Bot を選択",
@@ -1654,18 +1663,20 @@
     "unavailable": "利用できません",
     "adminManaged": "この Bot の接続はインスタンス管理者が管理します。Group は通常どおり使えます。",
     "setupHint": "接続設定を開き、この Bot に CCCC を接続してネイティブ Webhook Routine を保存してください。",
-    "disconnectHint": "切断する前に CCCC アクセスを停止してください。不要になった Routine は Grok 側でも無効にしてください。",
+    "disconnectHint": "切断する前に CCCC アクセスを一時停止してください。不要になった Routine は Grok 側でも無効にしてください。",
     "outcomes": {
       "done": "最近のタスク完了",
       "failed": "最近のタスク失敗",
       "cancelled": "最近のタスク終了"
     },
     "steps": {
-      "notify": "待機／送信",
       "waiting": "Bot の取得待ち",
-      "working": "処理中",
-      "completed": "完了"
-    }
+      "notifyHint": "メッセージは保存済みです。CCCC から Bot への通知を待っています。",
+      "sendingHint": "CCCC が Grok に Webhook 通知を送信しています。",
+      "waitingHint": "Grok が Webhook 通知を受理しました。Bot によるこのタスクの取得を待っています。",
+      "workingHint": "Bot がこのタスクを取得しました。完了通知を待っています。"
+    },
+    "deliveryHint": "Webhook 通知の成功後も、Bot によるタスクの取得を待ちます。"
   },
   "voiceSettings": {
     "claudeTrustHint": "Claude を初めて使う前に、設定した CLAUDE_CONFIG_DIR で $CCCC_HOME/voice-secretary/jobs を一度信頼してください。以後のタスクは親ディレクトリの信頼を引き継ぎます。設定のためにモデルへ依頼する必要はありません。",
@@ -1861,7 +1872,7 @@
     "openDetails": "詳細を表示",
     "title": "ChatGPT Dots",
     "hint": "タスクは ChatGPT のネイティブイベントで配信されます。CCCC アクセスを一時停止しても、ChatGPT で実行中のタスクは停止しません。返信はこの Group に戻ります。",
-    "createHint": "保存後、この Actor のパネルで Dots のネイティブイベントタスクに接続します。同じ ChatGPT アカウントの CCCC プラグインを使用し、CCCC のブラウザーログイン画面は不要です。1 つの Dot は 1 つの Actor に接続します。",
+    "createHint": "保存後、この Actor のパネルで Dots のネイティブイベントタスクに接続します。同じ ChatGPT アカウントの CCCC プラグインを使用し、CCCC のブラウザーログイン画面は不要です。現在、共有コネクターが同時に接続できる Dots Actor は 1 つです。",
     "connect": "Dots に接続",
     "getInstructions": "設定手順を取得",
     "connectHint": "ChatGPT アカウントに CCCC プラグインが接続されていない場合は、共有 ChatGPT 設定を先に完了してください。CCCC の更新後はプラグインのツールを更新します。設定手順を Dot に貼り付け、この Actor とペアリングしてネイティブイベントタスクを保存します。",
@@ -1872,13 +1883,13 @@
     "adminStatus": "接続は管理者が管理",
     "adminManaged": "この Actor の Dots 接続とタスク状態は管理者が管理します。",
     "disconnect": "Dots を切断",
-    "sharedSettings": "共有 ChatGPT 設定",
+    "sharedSettings": "共有 ChatGPT コネクター",
     "connectionSettings": "接続設定",
     "openDots": "Dots を開く ↗",
     "instructions": "Dots の設定手順",
     "copyInstructions": "設定手順をコピー",
     "copied": "コピーしました",
-    "pauseBeforeChanging": "接続を変更する前に CCCC アクセスを一時停止してください。",
+    "pauseBeforeChanging": "切断時に、この Actor の CCCC アクセスを先に一時停止します。待機中のメッセージは保持されます。",
     "disconnectConfirm": "この Actor と Dots の接続を解除しますか？CCCC アクセスは削除されます。ネイティブタスクと ChatGPT の履歴は残ります。",
     "resolve": "未確認の配信を解決",
     "resolveConfirm": "Dots でこのタスクを確認しましたか？再送せずに未確認の配信を解決します。リモートのタスクはまだ実行中の可能性があります。",
@@ -1914,7 +1925,7 @@
       "executionInterrupted": "結果が届く前に CCCC アクセスが変更されました。Dots で未完了のタスクを確認してください。",
       "subscriptionGone": "ネイティブイベントのサブスクリプションが無効です。設定手順を再取得し、Dots のネイティブタスクを更新してください。",
       "connectorRequired": "先に共有 ChatGPT コネクターを設定してください。",
-      "bindingConflict": "このアカウントの Dot は別の Actor に接続されています。接続を移す前に、その Actor を一時停止して切断してください。"
+      "bindingConflict": "この共有コネクターにはすでに Dots Actor が接続されています。接続を移す前に、その Actor を一時停止して切断してください。"
     },
     "unavailable": "状態を取得できません",
     "subscriptionExpires": "イベント購読の有効期限：{{time}}",
@@ -1928,25 +1939,17 @@
       "notSubscribed": "未購読",
       "pending": "未処理メッセージ",
       "lastTask": "前回のタスク",
-      "noTask": "タスクはまだありません"
-    },
-    "delivery": {
-      "title": "タスク配信",
-      "lastCompleted": "直近の完了タスク",
-      "hint": "イベントの受信後も、Dot がタスクを受け取るまで待つ場合があります。",
-      "empty": "現在配信中のタスクはありません。"
+      "noTask": "タスクはまだありません",
+      "pairing": "ペアリング",
+      "paired": "設定済み",
+      "notPaired": "未設定"
     },
     "steps": {
-      "notify": "キュー／通知",
-      "notifyHint": "メッセージは保存済みで、CCCC から Dot への通知を待っています。",
-      "notifySending": "通知を送信中",
-      "notifySendingHint": "CCCC が ChatGPT にイベントを送信しています。",
       "waiting": "Dot の受け取り待ち",
+      "notifyHint": "メッセージは保存済みで、CCCC から Dot への通知を待っています。",
+      "sendingHint": "CCCC が ChatGPT にイベントを送信しています。",
       "waitingHint": "ChatGPT はイベントを受信しました。Dot のタスク受け取りを待っています。",
-      "working": "処理中",
-      "workingHint": "Dot はこのタスクを受け取りました。処理結果を待っています。",
-      "completed": "完了",
-      "completedHint": "CCCC がこのタスクの完了記録を確認しました。"
+      "workingHint": "Dot はこのタスクを受け取りました。処理結果を待っています。"
     },
     "settings": {
       "instructions": "設定手順",
@@ -1968,40 +1971,27 @@
       "tipRefresh": "ChatGPT のプラグイン設定で CCCC の Refresh tools を選び、Dot に再試行させてください。",
       "tipPermissions": "CCCC プラグインにタスクの受け取り・返信・完了を許可しているか確認してください。",
       "tipRetry": "チャットでの確認だけでは完了しません。CCCC がペアリングと購読の両方を検出してから、この Actor が作業を受け取れます。"
-    }
+    },
+    "deliveryHint": "イベントの受信後も、Dot がタスクを受け取るまで待つ場合があります。",
+    "pauseDisconnectConfirm": "この Actor の CCCC アクセスを一時停止し、Dots との接続を解除しますか？ 待機中のメッセージ、ネイティブタスク、ChatGPT の履歴は残り、ほかの Actor は影響を受けません。"
   },
   "dotsSettings": {
     "title": "ChatGPT Dots",
     "description": "Dots は ChatGPT のネイティブイベントでタスクを受け取り、所属グループに返信します。CCCC のブラウザーログイン画面は不要です。",
     "prereq": "前提条件",
-    "prereqHint": "Dots は ChatGPT の CCCC コネクターを共用します。ここでは状態のみ表示し、重複を防ぐため管理は ChatGPT ビューで行います。",
+    "prereqHint": "Dots は ChatGPT の CCCC コネクターを共有します。共有設定と最近のプラグイン診断は ChatGPT ビューで管理します。",
     "addressReady": "公開 HTTPS の Web アドレスが設定されています。",
     "configureWebAccess": "Web アクセス設定",
-    "connectorReady": "共有 CCCC コネクターは準備完了です。",
+    "connectorReady": "共有 CCCC コネクターは設定済みです。",
     "connectorMissing": "先に ChatGPT ビューで共有 CCCC コネクターを作成してください。",
     "manageConnector": "ChatGPT で管理",
     "boundActor": "接続済みの Dots Actor",
-    "boundHint": "1 つの Dot は 1 つの Actor にのみ接続します。設定と配信状況はその Actor のメインパネルで確認します。",
+    "boundHint": "この共有コネクターが同時に接続できる Dots Actor は 1 つです。接続を移す前に、現在の Actor を一時停止して切断してください。",
     "actorReadFailed": "この Actor の状態を今は読み取れませんでした。最後に確認できた状態を表示し、自動で再試行します。",
     "noActor": "Dots Actor はまだ接続されていません。ランタイム ChatGPT Dots の Actor を作成し、そのメインパネルから接続してください。",
-    "actorGroup": "グループ {{group}}",
-    "diagnostics": "共有プラグインの診断",
-    "diagnosticsHint": "直近 10 回の購読とタスクツール呼び出しの結果（新しい順）。通常の ChatGPT Actor も使うプラグインのため、すべてがこの Dot の呼び出しとは限りません。理由コードのみを保存し、資格情報や引数は記録しません。",
-    "noCalls": "呼び出しの記録はまだありません。",
-    "callOk": "呼び出し成功",
-    "callFailed": "失敗 · {{reason}}",
-    "reasons": {
-      "pairingExpired": "対象 Actor の新しい設定手順を取得し、10 分以内にペアリングコードを使ってください。",
-      "bindingChanged": "対象 Actor と現在の接続を確認してから、新しい設定手順を取得してください。",
-      "conversationUnpaired": "ペアリング済みの会話を使ってください。Actor がペアリング済みなのに同じ Dot が拒否される場合は、その CCCC アクセスを一時停止し、明示的に切断して再接続してください。",
-      "executionToken": "プラグインのツールを更新し、最新の設定手順で既存のネイティブタスクを更新してください。タスクツールには取得時に返された実行用資格情報だけを使います。",
-      "actorStopped": "作業を受け取る場合は、対象 Actor の CCCC アクセスを再開してください。",
-      "refreshTools": "ChatGPT で CCCC プラグインのツールを更新し、最新の設定手順を確認してください。",
-      "callFailed": "再試行する前に、ChatGPT が報告した失敗した呼び出しを確認してください。この記録だけではターンの完了を判断できません。"
-    }
+    "actorGroup": "グループ {{group}}"
   },
   "grokWebhook": {
-    "pause": "CCCC アクセスを停止",
     "setupHint": "以下の指示でこの Bot に Webhook Routine を1つ保存し、デスクトップ版の認証情報を入力します。Routine は Grok のサブスクリプション枠を使用します。",
     "instructions": "Routine 設定手順を取得",
     "copyFailed": "コピーできませんでした。手順を選択して手動でコピーしてください。",
@@ -2012,7 +2002,7 @@
     "save": "Routine 認証情報を保存",
     "pending": "待機中のメッセージ {{count}} 件",
     "openBot": "Grok Bot を開く",
-    "runtimeHint": "CCCC は1件ずつタスクを取得・完了します。アクセス停止は CCCC の権限を失効させますが、Grok で実行中のクラウド処理は停止しません。",
+    "runtimeHint": "CCCC は1件ずつタスクを取得・完了します。アクセスの一時停止は CCCC の権限を失効させますが、Grok で実行中のクラウド処理は停止しません。",
     "deliveryError": "Webhook 配信の確認が必要です（HTTP {{status}}）。デスクトップの Routine、Key、利用上限、CCCC コネクターを確認してください。",
     "retry": "起動通知を再送",
     "resolveHint": "先に Bot を確認してください。未完了タスクを終了してもそのメッセージは再配信しません。後続タスクは続行できます。Grok のクラウド処理はキャンセルされません。",
@@ -2020,7 +2010,7 @@
     "confirmResolve": "終了を確認",
     "phase": {
       "ready": "タスク待機中",
-      "stopped": "CCCC アクセス停止中",
+      "stopped": "CCCC アクセスを一時停止中",
       "pending": "起動通知の送信待ち",
       "delivering": "起動通知を送信中",
       "delivered": "起動通知受付済み・取得待ち",
@@ -2033,5 +2023,35 @@
     "saveAndApply": "認証情報を保存して適用",
     "applyHint": "編集内容は保存するまでローカルに保持されます。待機中に適用しても、CCCC アクセスの有効・無効は変わりません。",
     "waitForTask": "この接続には未完了のタスクがあります。編集はできますが、適用はタスクの完了または明示的な解決後に行ってください。"
+  },
+  "nativeActor": {
+    "deliveryTitle": "タスク配信",
+    "failed": "配信に失敗",
+    "interrupted": "タスクが中断されました",
+    "unclaimed": "未取得 · 接続を確認",
+    "steps": {
+      "notify": "待機 / 送信",
+      "sending": "通知を送信中",
+      "working": "処理中",
+      "completed": "完了"
+    },
+    "connectionBusy": "未完了のタスクがこの接続を使用中です。完了するか明示的に解決してから、接続の変更を適用してください。"
+  },
+  "webModelDiagnostics": {
+    "refresh": "更新",
+    "noCalls": "呼び出しの記録はまだありません。",
+    "callOk": "呼び出し成功",
+    "callFailed": "失敗 · {{reason}}",
+    "reasons": {
+      "pairingExpired": "対象 Actor の接続設定から接続を設定し直してください。ペアリングコードは 10 分で期限切れになります。",
+      "bindingChanged": "対象 Actor と現在の接続を確認してから、新しい設定手順を取得してください。",
+      "conversationUnpaired": "この Actor とペアリング済みの会話を使用してください。変更する場合は、その Actor の接続設定で明示的に再接続してください。",
+      "executionToken": "最新の設定手順でネイティブタスクを更新し、今回のタスク取得で返された実行認証情報のみを使用してください。",
+      "actorStopped": "作業を受け取る場合は、対象 Actor の CCCC アクセスを再開してください。",
+      "refreshTools": "プロバイダーのアプリで CCCC コネクターのツールを更新し、現在の接続設定を確認してください。",
+      "callFailed": "再試行する前に、プロバイダーのアプリで失敗した呼び出しを確認してください。この記録だけではターンの完了を判断できません。"
+    },
+    "title": "コネクター診断",
+    "hint": "この共有コネクターの最新 10 件の購読とタスクツールの呼び出し結果です。新しい順で、複数の Actor の記録を含む場合があります。理由コードのみを保存し、認証情報や呼び出し引数は含みません。"
   }
 }

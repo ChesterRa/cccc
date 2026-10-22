@@ -226,7 +226,7 @@ export default function App({
     actorsRef,
     allTabs,
     handleTabChange,
-    onDotsActorCreated,
+    onNativeActorCreated,
   } = useAppTabState({
     activeTab,
     runtimeActors: visibleRuntimeActors,
@@ -531,7 +531,7 @@ export default function App({
             ccccHome={ccccHome}
             composerRef={composerRef}
             onStartReply={startReply}
-            onDotsActorCreated={onDotsActorCreated}
+            onNativeActorCreated={onNativeActorCreated}
             onThemeChange={setTheme}
             onTextScaleChange={setTextScale}
             onDeleteGroup={handleDeleteGroup}

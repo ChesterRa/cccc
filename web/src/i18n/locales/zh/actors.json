@@ -360,7 +360,9 @@
   },
   "selectRuntime": "未配置",
   "dotsPause": "暂停 CCCC 访问",
-  "dotsPauseHint": "暂停 CCCC 投递及工具访问，已经在 ChatGPT 中执行的任务可能继续运行。",
+  "dotsPauseHint": "暂停 CCCC 投递及工具访问；外部服务中已经运行的任务可能继续执行。",
   "dotsEnable": "启用 CCCC 访问",
-  "dotsResume": "恢复 CCCC 访问"
+  "dotsResume": "恢复 CCCC 访问",
+  "webAccessEnabled": "CCCC 访问已启用",
+  "webAccessPaused": "CCCC 访问已暂停"
 }

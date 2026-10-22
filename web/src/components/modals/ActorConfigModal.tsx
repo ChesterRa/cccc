@@ -842,12 +842,8 @@ function EditActorConfigModal({
     openSettingsTarget({
       scope: "global",
       tab: "webModels",
-      webModelProvider:
-        conversationRuntime === "grok_web_model"
-          ? "grok_web"
-          : conversationRuntime === "chatgpt_dots"
-            ? "dots"
-            : "chatgpt_web",
+      webModelProvider: conversationRuntime === "grok_web_model" ? "grok_web" : "chatgpt_web",
+      webModelSection: conversationRuntime === "web_model" ? "login" : "connector",
     });
   };
   const [secretKeys, setSecretKeys] = useState<string[]>([]);
@@ -1722,6 +1718,9 @@ function EditActorConfigModal({
                     : "settings:webModelActor.title",
               )}
             >
+              <p className="mb-3 text-xs text-[var(--color-text-muted)]">
+                {t("settings:webModelActor.immediateHint")}
+              </p>
               {conversationRuntime === "chatgpt_dots" ? (
                 <DotsActorPanel
                   key={`${groupId}/${actorId}/dots`}
@@ -1758,6 +1757,7 @@ function EditActorConfigModal({
                   actorId={actorId}
                   isDark={isDark}
                   isVisible={!suspended}
+                  canAccessConnection={canAccessGlobalSettings}
                   onOpenSharedSettings={openSharedSettings}
                   onBusyChange={setConnectionBusy}
                   saving={secretsBusy || busy === "actor-update"}

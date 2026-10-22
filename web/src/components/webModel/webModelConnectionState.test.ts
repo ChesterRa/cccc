@@ -30,4 +30,15 @@ describe("ChatGPT connection status authority", () => {
       webModelConnectionState(pairing, { active: true, verification_required: true }).displayState,
     ).toBe("verification_required");
   });
+  it.each(["page_not_ready", "inspection_failed"])(
+    "keeps %s separate from missing login",
+    (state) => {
+      expect(
+        webModelConnectionState(
+          { state: "bound" },
+          { active: true, ready: false, login_required: false, state },
+        ).displayState,
+      ).toBe(state);
+    },
+  );
 });

@@ -114,3 +114,40 @@ it("keeps shared settings reachable without exposing browser controls", async ()
   expect(host.querySelector("select")).toBeNull();
   expect(mocks.remove).not.toHaveBeenCalled();
 });
+it("unlocks Routine setup when the saved Bot URL is confirmed without discarding a different draft", async () => {
+  await mount();
+  await act(async () => button("grokActor.change").click());
+  await fill(next);
+  expect(button("grokWebhook.instructions").disabled).toBe(true);
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(button("grokWebhook.instructions").disabled).toBe(true);
+  mocks.load.mockResolvedValue(response(true, next));
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(button("grokWebhook.instructions").disabled).toBe(false);
+  expect(host.querySelector("input")!.value).toBe(next);
+});
+it.each([
+  `${next}?from=fixture`,
+  `${next}#routine`,
+  `https://grok.com/bot/${next.split("/").at(-1)!.toUpperCase()}`,
+  `https://grok.com/bot/${next.split("/").at(-1)!.toUpperCase()}?from=fixture#routine`,
+])("unlocks Routine setup after the daemon canonicalizes %s", async (draft) => {
+  await mount();
+  await act(async () => button("grokActor.change").click());
+  await fill(draft);
+  expect(button("grokWebhook.instructions").disabled).toBe(true);
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(button("grokWebhook.instructions").disabled).toBe(true);
+  mocks.load.mockResolvedValue(response(true, next));
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(button("grokWebhook.instructions").disabled).toBe(false);
+  expect(host.querySelector("input")!.value).toBe(next);
+});
+it("retains an invalid URL draft while the Actor has no saved Bot", async () => {
+  mocks.load.mockResolvedValue(response(false));
+  await mount();
+  await fill("not-a-bot-url");
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(host.querySelector("input")!.value).toBe("not-a-bot-url");
+  expect(button("grokWebhook.instructions").disabled).toBe(true);
+});

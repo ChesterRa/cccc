@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui/button";
 import { inputClass } from "../modals/settings/types";
+import { canonicalGrokBotUrl } from "../../utils/webModelTargetDraft";
 import { GrokActorPanel } from "./GrokActorPanel";
 
 export function GrokActorSetup({
@@ -49,6 +50,12 @@ export function GrokActorSetup({
         if (state) {
           onEnabledChange?.(state.enabled);
           onUnresolvedChange?.(Boolean(state.active_turn_id));
+          if (
+            draftUrl !== undefined &&
+            state.bot_url &&
+            canonicalGrokBotUrl(draftUrl) === state.bot_url
+          )
+            onDraftChange(undefined);
         }
       }}
       targetEditor={(state, locked) => {
@@ -68,7 +75,9 @@ export function GrokActorSetup({
                     value={draftUrl ?? saved}
                     onChange={(event) =>
                       onDraftChange(
-                        event.target.value.trim() === saved ? undefined : event.target.value,
+                        canonicalGrokBotUrl(event.target.value) === saved
+                          ? undefined
+                          : event.target.value,
                       )
                     }
                     className={inputClass(isDark) + " mt-1 w-full"}

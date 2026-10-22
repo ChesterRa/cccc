@@ -360,7 +360,9 @@
   },
   "selectRuntime": "Not configured",
   "dotsPause": "Pause CCCC access",
-  "dotsPauseHint": "Pauses CCCC delivery and tool access. A task already running in ChatGPT may continue.",
+  "dotsPauseHint": "Pauses CCCC delivery and tool access. A task already running in the provider's service may continue.",
   "dotsEnable": "Enable CCCC access",
-  "dotsResume": "Resume CCCC access"
+  "dotsResume": "Resume CCCC access",
+  "webAccessEnabled": "CCCC access enabled",
+  "webAccessPaused": "CCCC access paused"
 }

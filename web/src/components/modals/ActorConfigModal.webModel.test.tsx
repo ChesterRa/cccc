@@ -302,7 +302,8 @@ describe("Web Model effective Actor configuration", () => {
     expect(useModalStore.getState().settingsTarget).toMatchObject({
       scope: "global",
       tab: "webModels",
-      webModelProvider: "dots",
+      webModelProvider: "chatgpt_web",
+      webModelSection: "connector",
     });
     expect(p.onCancel).not.toHaveBeenCalled();
   });

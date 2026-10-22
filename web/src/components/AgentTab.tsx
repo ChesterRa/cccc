@@ -172,7 +172,7 @@ export function AgentTab({
   const isDots = actor.runtime === "chatgpt_dots";
   const isGrok = actor.runtime === "grok_web_model";
   const isEventActor = isDots || isGrok;
-  const lifecycleActive = isEventActor ? Boolean(actor.enabled) : isRunning;
+  const lifecycleActive = isWebModel ? Boolean(actor.enabled) : isRunning;
   const openActorEditor = useModalStore((state) => state.openActorEditor);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const settingsOpen = useModalStore((state) => state.modals.settings);
@@ -430,6 +430,7 @@ export function AgentTab({
               ? "settings:dotsActor.unavailable"
               : "common:loading",
       );
+    if (isWebModel) return t(actor.enabled ? "webAccessEnabled" : "webAccessPaused");
     if (!isRunning) return t("stopped");
     if (workingState === "error") return t("common:error");
     if (workingState === "working" || workingState === "waiting" || workingState === "stuck")
@@ -817,7 +818,7 @@ export function AgentTab({
             connected={terminalReady && connectionStatus === "connected"}
             connectionFailed={connectionFailed}
             canStartNewSession={canStartNewSession}
-            pauseCcccAccess={isEventActor}
+            pauseCcccAccess={isWebModel}
             dotsConnected={Boolean(eventState?.connected)}
             unreadCount={unreadCount}
             onInterrupt={sendInterrupt}
@@ -839,7 +840,7 @@ export function AgentTab({
       <div
         className={classNames(
           compact ? "hidden" : "border-b px-4 py-2 sm:px-5",
-          isEventActor && "max-sm:pr-16",
+          isWebModel && "max-sm:pr-16",
           isDark
             ? "border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))]"
             : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.88))]",
@@ -884,7 +885,7 @@ export function AgentTab({
             </div>
 
             <div className="flex min-w-0 items-center gap-3">
-              <div className={classNames("min-w-0", !isEventActor && "shrink-0")}>
+              <div className={classNames("min-w-0", !isWebModel && "shrink-0")}>
                 <div className="flex items-center gap-2 min-w-0">
                   <span
                     id={compact ? undefined : `runtime-inspector-${groupId}-${actor.id}`}
@@ -1029,6 +1030,7 @@ export function AgentTab({
                   readOnly={readOnly}
                   compact={compact}
                   onExpand={onExpand}
+                  onSettings={() => openActorEditor(actor, "chatgpt")}
                   canAccessConnection={canAccessGlobalSettings}
                   onStateChange={receiveEventState}
                   onOpenSharedSettings={
@@ -1037,7 +1039,8 @@ export function AgentTab({
                           openSettingsTarget({
                             scope: "global",
                             tab: "webModels",
-                            webModelProvider: "dots",
+                            webModelProvider: "chatgpt_web",
+                            webModelSection: "connector",
                           })
                       : undefined
                   }
@@ -1073,6 +1076,18 @@ export function AgentTab({
                   isVisible={isVisible}
                   readOnly={readOnly}
                   compact={compact}
+                  canAccessConnection={canAccessGlobalSettings}
+                  onOpenSharedSettings={
+                    canControl && canAccessGlobalSettings
+                      ? () =>
+                          openSettingsTarget({
+                            scope: "global",
+                            tab: "webModels",
+                            webModelProvider: "chatgpt_web",
+                            webModelSection: "login",
+                          })
+                      : undefined
+                  }
                 />
               ) : null}
               {hasManagedRuntimeControls(actor) && (
@@ -1233,13 +1248,13 @@ export function AgentTab({
                 onClick={onQuit}
                 disabled={isBusy}
                 className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                aria-label={t(isEventActor ? "dotsPause" : "quitAgent")}
-                title={isEventActor ? t("dotsPauseHint") : undefined}
+                aria-label={t(isWebModel ? "dotsPause" : "quitAgent")}
+                title={isWebModel ? t("dotsPauseHint") : undefined}
               >
                 <StopIcon size={16} />
-                {!isSmallScreen && t(isEventActor ? "dotsPause" : "quit")}
+                {!isSmallScreen && t(isWebModel ? "dotsPause" : "quit")}
               </button>
-              {!isEventActor ? (
+              {!isWebModel ? (
                 <button
                   onClick={sendInterrupt}
                   disabled={connectionStatus !== "connected" || !terminalWritable}
@@ -1250,7 +1265,7 @@ export function AgentTab({
                   ⌃C
                 </button>
               ) : null}
-              {!isEventActor ? (
+              {!isWebModel ? (
                 <button
                   onClick={onRelaunch}
                   disabled={isBusy}
@@ -1288,10 +1303,10 @@ export function AgentTab({
                 onClick={onLaunch}
                 disabled={isBusy}
                 className={`${primaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                aria-label={t(isEventActor ? eventStartKey : "launchAgentLabel")}
+                aria-label={t(isWebModel ? eventStartKey : "launchAgentLabel")}
               >
                 <PlayIcon size={16} />
-                {isBusy ? t("common:loading") : t(isEventActor ? eventStartKey : "launch")}
+                {isBusy ? t("common:loading") : t(isWebModel ? eventStartKey : "launch")}
               </button>
               {canStartNewSession ? (
                 <button

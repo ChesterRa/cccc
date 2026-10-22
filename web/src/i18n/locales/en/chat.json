@@ -141,7 +141,7 @@
     "mcpCopyFailed": "Could not load or copy the MCP URL. Try again.",
     "mcpStartFirst": "Start to copy MCP",
     "mcpStartFirstHint": "Start this Web Model actor before copying its MCP URL.",
-    "actorStoppedSurface": "This Actor is stopped. Start it to resume delivery, or open Web Model conversation to view or change its working conversation.",
+    "actorStoppedSurface": "The interactive conversation is unavailable while this Actor or its Group is stopped.",
     "browserReadOnly": "The Web Model browser is unavailable in read-only mode.",
     "permissionHint": "ChatGPT may be waiting for you to approve CCCC app access. Switch to ChatGPT and click Allow; choose Always allow if it is available. After approving, return here to continue.",
     "permissionHintDismiss": "Don't show again",
