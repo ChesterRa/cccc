@@ -4097,6 +4097,9 @@ Read events from one Group without delivering messages or creating runtime work.
   q?: string                     // case-insensitive text search; default empty
   by?: string                    // exact event.by filter; empty means unrestricted
   by_any?: string[]              // OR of concrete event.by identities; empty/omitted means unrestricted
+  to?: string                    // exact member of event.data.to
+  since_ts?: string              // inclusive RFC3339 lower bound on event.ts
+  until_ts?: string              // inclusive RFC3339 upper bound on event.ts
   before?: string                // exclusive ledger event ID
   after?: string                 // exclusive ledger event ID
   limit?: number                 // default 50, clamped to 1..200
@@ -4109,6 +4112,13 @@ Result: `{ events: CCCSEventV1[], count: number, has_more: boolean }`.
 Filters combine with AND; `by_any` matches any identity in its set. Both sender
 filters may be used together, in which case both must match. Entries in `by_any`
 MUST be nonblank strings; invalid collections return `invalid_args`.
+Recipient filtering matches a stored recipient identity; it does not expand roles or
+selectors. Events without that recipient do not match. Timestamp bounds compare
+instants (including offsets), not timestamp strings. Invalid or blank filter
+values and a lower bound later than the upper bound return `invalid_args`.
+Null or omitted filters are unrestricted. With a time bound, an event with an
+unparseable timestamp does not match. These filters are also accepted as plain
+HTTP query parameters by the ledger search endpoint.
 Filtering precedes the page limit. Without `after`, return the latest matching
 page before `before`; with `after`, return the earliest matching page after it.
 Results retain ledger order and one cursor spans all selected senders. Cursor IDs

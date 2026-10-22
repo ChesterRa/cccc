@@ -24,10 +24,19 @@ pub fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         text: string_arg(request, "q").unwrap_or_default(),
         by: string_arg(request, "by").unwrap_or_default(),
         by_any: sender_ids(request)?,
+        recipient: recipient(request)?,
+        since: timestamp(request, "since_ts")?,
+        until: timestamp(request, "until_ts")?,
         before: nonempty(request, "before"),
         after: nonempty(request, "after"),
         limit: integer(request, "limit", 50).clamp(1, 200),
     };
+    if matches!((query.since, query.until), (Some(since), Some(until)) if since > until) {
+        return Err(OpError::new(
+            "invalid_args",
+            "since_ts must not be later than until_ts",
+        ));
+    }
     let page = ledger::inspect(&path, |events, positions| page(events, positions, query))
         .map_err(OpError::io)??;
     result(home, request, page)
@@ -125,6 +134,9 @@ struct Query {
     text: String,
     by: String,
     by_any: HashSet<String>,
+    recipient: Option<String>,
+    since: Option<chrono::DateTime<chrono::FixedOffset>>,
+    until: Option<chrono::DateTime<chrono::FixedOffset>>,
     before: Option<String>,
     after: Option<String>,
     limit: usize,
@@ -149,6 +161,17 @@ fn page(
         matches_kind(event, query.kind)
             && (query.by.is_empty() || event.by == query.by)
             && (query.by_any.is_empty() || query.by_any.contains(&event.by))
+            && query.recipient.as_ref().is_none_or(|recipient| {
+                event
+                    .data
+                    .get("to")
+                    .and_then(Value::as_array)
+                    .is_some_and(|to| {
+                        to.iter()
+                            .any(|value| value.as_str() == Some(recipient.as_str()))
+                    })
+            })
+            && matches_time(event, query.since, query.until)
             && (text.is_empty()
                 || serde_json::to_string(event)
                     .unwrap_or_default()
@@ -203,6 +226,58 @@ fn cursor(
         .or_else(|| events.iter().position(|event| event.id == id))
         .map(Some)
         .ok_or_else(|| OpError::new("event_not_found", format!("event not found: {id}")))
+}
+
+fn recipient(request: &DaemonRequest) -> Result<Option<String>, OpError> {
+    request
+        .args
+        .get("to")
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    OpError::new("invalid_args", "to must be a nonempty recipient identity")
+                })
+        })
+        .transpose()
+}
+
+fn timestamp(
+    request: &DaemonRequest,
+    name: &str,
+) -> Result<Option<chrono::DateTime<chrono::FixedOffset>>, OpError> {
+    request
+        .args
+        .get(name)
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_str()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .ok_or_else(|| {
+                    OpError::new(
+                        "invalid_args",
+                        format!("{name} must be an RFC3339 timestamp"),
+                    )
+                })
+        })
+        .transpose()
+}
+
+fn matches_time(
+    event: &Event,
+    since: Option<chrono::DateTime<chrono::FixedOffset>>,
+    until: Option<chrono::DateTime<chrono::FixedOffset>>,
+) -> bool {
+    if since.is_none() && until.is_none() {
+        return true;
+    }
+    chrono::DateTime::parse_from_rfc3339(&event.ts).is_ok_and(|at| {
+        since.is_none_or(|since| at >= since) && until.is_none_or(|until| at <= until)
+    })
 }
 
 fn sender_ids(request: &DaemonRequest) -> Result<HashSet<String>, OpError> {

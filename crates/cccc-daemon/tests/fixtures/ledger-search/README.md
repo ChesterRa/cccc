@@ -1,0 +1,1 @@
+Recorded ledger window, 2026-10-22. Event IDs, timestamps, kinds and order are retained. Group and actor identities are consistently aliased; message bodies and unrelated fields are omitted. No events were generated.
