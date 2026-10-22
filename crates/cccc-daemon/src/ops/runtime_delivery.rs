@@ -1,15 +1,19 @@
 use cccc_contracts::{Actor, Event};
 use cccc_core::fs::with_exclusive_lock;
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
-use serde_json::{Map, Value, json};
+#[cfg(test)]
+use serde_json::Map;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::dispatch::OpError;
 
+#[cfg(test)]
 mod legacy_read_watermark;
 
+#[cfg(test)]
 use legacy_read_watermark::LegacyReadWatermark;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,32 +91,12 @@ pub fn latest_state(
     source_event_id: &str,
 ) -> Result<Option<(String, String)>, OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    let path = store.ledger_path(group_id).map_err(OpError::io)?;
-    ledger::inspect(&path, |events, _| {
-        events.iter().rev().find_map(|event| {
-            (event.kind == "runtime.delivery"
-                && event.data.get("actor_id").and_then(Value::as_str) == Some(actor_id)
-                && event.data.get("source_event_id").and_then(Value::as_str)
-                    == Some(source_event_id))
-            .then(|| {
-                (
-                    event
-                        .data
-                        .get("state")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                    event
-                        .data
-                        .get("transport")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                )
-            })
-        })
-    })
-    .map_err(OpError::io)
+    let group = store.load(group_id).map_err(OpError::io)?;
+    Ok(
+        inbox::delivery_states(home, &group, &[actor_id.to_owned()], source_event_id)
+            .map_err(OpError::io)?
+            .remove(actor_id),
+    )
 }
 
 pub fn claim(
@@ -142,44 +126,39 @@ pub fn claim_deliveries(
     source_event_id: &str,
     force_ambiguous: bool,
 ) -> Result<(bool, HashMap<String, String>), OpError> {
+    if std::env::var_os("CCCC_DELIVERY_QUERY_PROBE").is_some_and(|value| value == "1") {
+        eprintln!(
+            "CCCC_DELIVERY_STATE_QUERY {}",
+            json!({"group_id":group.group_id,"actors":deliveries.len()})
+        );
+    }
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
     let lock_path = delivery_lock_path(&ledger_path);
     with_exclusive_lock(&lock_path, || {
-        let (claimable, mut states) = ledger::inspect(&ledger_path, |events, _| {
+        let actors = deliveries
+            .iter()
+            .map(|(actor, _)| actor.id.clone())
+            .collect::<Vec<_>>();
+        let latest = inbox::delivery_states(home, group, &actors, source_event_id)?;
+        let (claimable, mut states) = {
             let mut states = HashMap::new();
+            let mut claimable = true;
             for (actor, _transport) in deliveries {
-                let state = events
-                    .iter()
-                    .rev()
-                    .find_map(|event| {
-                        (event.kind == "runtime.delivery"
-                            && event.data.get("actor_id").and_then(Value::as_str)
-                                == Some(actor.id.as_str())
-                            && event.data.get("source_event_id").and_then(Value::as_str)
-                                == Some(source_event_id))
-                        .then(|| {
-                            event
-                                .data
-                                .get("state")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned()
-                        })
-                    })
+                let state = latest
+                    .get(&actor.id)
+                    .map(|state| state.0.clone())
                     .unwrap_or_default();
                 states.insert(actor.id.clone(), state.clone());
-                if state == "claimed" {
-                    return (false, states);
-                }
-                if matches!(state.as_str(), "accepted" | "withdrawn")
+                if matches!(state.as_str(), "claimed" | "accepted" | "withdrawn")
                     || (state == "ambiguous" && !force_ambiguous)
                 {
-                    return (false, states);
+                    claimable = false;
+                    break;
                 }
             }
-            (true, states)
-        })?;
+            (claimable, states)
+        };
         if !claimable {
             return Ok((false, states));
         }
@@ -201,13 +180,83 @@ pub fn claim_deliveries(
     .map_err(OpError::io)
 }
 
+fn read_stranded_claims(path: &Path) -> std::io::Result<HashMap<(String, String), String>> {
+    // Startup recovery needs only unresolved claims. Building the generic
+    // Event index here would retain history before IPC even becomes ready.
+    let mut pending = HashMap::<(String, String), String>::new();
+    ledger::visit_snapshot_oldest_first(path, |event| {
+        if event.kind == "actor.add" {
+            let actor = event
+                .data
+                .get("actor")
+                .and_then(Value::as_object)
+                .and_then(|actor| actor.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !actor.is_empty() {
+                pending.retain(|(id, _), _| id != actor);
+            }
+        } else if event.kind == "runtime.delivery" {
+            let actor = event
+                .data
+                .get("actor_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let source = event
+                .data
+                .get("source_event_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !actor.is_empty() && !source.is_empty() {
+                let key = (actor.to_owned(), source.to_owned());
+                if event.data.get("state").and_then(Value::as_str) == Some("claimed") {
+                    pending.insert(
+                        key,
+                        event
+                            .data
+                            .get("transport")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    );
+                } else {
+                    pending.remove(&key);
+                }
+            }
+        }
+        std::ops::ControlFlow::Continue(())
+    })?;
+    Ok(pending)
+}
+
 pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usize, OpError> {
-    settle_claims(
-        home,
-        group,
-        None,
-        "daemon restarted before the claimed handoff recorded an outcome",
-    )
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
+    with_exclusive_lock(&delivery_lock_path(&ledger_path), || {
+        let pending = read_stranded_claims(&ledger_path)?;
+        // No outcome is appended unless the complete snapshot was read.
+        let mut settled = 0;
+        for ((actor_id, source_event_id), transport) in pending {
+            let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
+                continue;
+            };
+            append_state(
+                home,
+                &group.group_id,
+                &actor.id,
+                &actor.created_at,
+                &source_event_id,
+                &transport,
+                DeliveryOutcome::Ambiguous(
+                    "daemon restarted before the claimed handoff recorded an outcome",
+                ),
+            )
+            .map_err(|error| std::io::Error::other(error.message))?;
+            settled += 1;
+        }
+        Ok(settled)
+    })
+    .map_err(OpError::io)
 }
 
 /// The caller has retired the previous transport and verified no active turn.
@@ -235,66 +284,13 @@ fn settle_claims(
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
     with_exclusive_lock(&delivery_lock_path(&ledger_path), || {
-        let latest = ledger::inspect(&ledger_path, |events, _| {
-            let mut latest = HashMap::<(String, String), (String, String)>::new();
-            for event in events {
-                if event.kind == "actor.add" {
-                    let actor_id = event
-                        .data
-                        .get("actor")
-                        .and_then(Value::as_object)
-                        .and_then(|actor| actor.get("id"))
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    if !actor_id.is_empty() {
-                        latest.retain(|(existing, _), _| existing != actor_id);
-                    }
-                    continue;
-                }
-                if event.kind != "runtime.delivery" {
-                    continue;
-                }
-                let actor_id = event
-                    .data
-                    .get("actor_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let source_event_id = event
-                    .data
-                    .get("source_event_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if actor_id.is_empty() || source_event_id.is_empty() {
-                    continue;
-                }
-                latest.insert(
-                    (actor_id.into(), source_event_id.into()),
-                    (
-                        event
-                            .data
-                            .get("state")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .into(),
-                        event
-                            .data
-                            .get("transport")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .into(),
-                    ),
-                );
-            }
-            latest
-        })?;
+        let pending = read_stranded_claims(&ledger_path)?;
         let mut settled = 0;
-        for ((actor_id, source_event_id), (state, transport)) in latest {
+        for ((actor_id, source_event_id), transport) in pending {
             let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
                 continue;
             };
-            if state != "claimed"
-                || replacement.is_some_and(|(id, current)| actor_id != id || transport == current)
-            {
+            if replacement.is_some_and(|(id, current)| actor_id != id || transport == current) {
                 continue;
             }
             append_state(
@@ -354,6 +350,16 @@ fn delivery_lock_path(ledger_path: &Path) -> PathBuf {
 }
 
 pub fn pending_sources(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    limit: usize,
+) -> Result<Vec<Event>, OpError> {
+    inbox::pending_deliveries(home, group, &actor.id, limit).map_err(OpError::io)
+}
+
+#[cfg(test)]
+fn legacy_pending_sources(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
@@ -446,6 +452,225 @@ pub fn pending_sources(
 mod tests {
     use super::*;
     use std::sync::{Arc, Barrier};
+
+    #[test]
+    #[ignore = "operator-supplied copied real groups only"]
+    fn real_group_delivery_queries_match_history() {
+        let root = std::env::var_os("CCCC_REAL_REPLAY_HOME").expect("real copied home required");
+        let home = HomeLayout::from_path(root).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let groups = store.list().expect("registered groups");
+        assert!(
+            !groups.is_empty(),
+            "empty replay cannot prove delivery parity"
+        );
+        for meta in groups {
+            let group = store.load(&meta.group_id).expect("group");
+            let check = |stage: &str| {
+                let mut queried = 0;
+                for actor in &group.actors {
+                    for limit in [1, 20, 256] {
+                        let expected = legacy_pending_sources(&home, &group, actor, limit)
+                            .expect("legacy pending");
+                        let actual = pending_sources(&home, &group, actor, limit)
+                            .expect("projected pending");
+                        assert_eq!(
+                            serde_json::to_value(actual).expect("actual"),
+                            serde_json::to_value(expected).expect("expected"),
+                            "pending delivery differs from history"
+                        );
+                        queried += 1;
+                    }
+                }
+                let latest = ledger::inspect(
+                    &store.ledger_path(&group.group_id).expect("ledger"),
+                    |events, _| {
+                        let mut latest = std::collections::BTreeMap::new();
+                        for event in events
+                            .iter()
+                            .filter(|event| event.kind == "runtime.delivery")
+                        {
+                            if let (Some(actor), Some(source)) = (
+                                event.data.get("actor_id").and_then(Value::as_str),
+                                event.data.get("source_event_id").and_then(Value::as_str),
+                            ) {
+                                latest.insert(
+                                    (actor.to_owned(), source.to_owned()),
+                                    (
+                                        event
+                                            .data
+                                            .get("state")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or_default()
+                                            .to_owned(),
+                                        event
+                                            .data
+                                            .get("transport")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or_default()
+                                            .to_owned(),
+                                    ),
+                                );
+                            }
+                        }
+                        latest
+                    },
+                )
+                .expect("legacy latest");
+                let mut checked = 0;
+                for ((actor, source), state) in latest.iter().take(256) {
+                    assert_eq!(
+                        latest_state(&home, &group.group_id, actor, source)
+                            .expect("projected latest"),
+                        Some(state.clone())
+                    );
+                    checked += 1;
+                }
+                println!(
+                    "{}",
+                    json!({"group_id":group.group_id,"pending_queries":queried,"latest_queries":checked,"stage":stage})
+                );
+            };
+            check("cold");
+            // Replay actual captured records, never padding or generated bodies.
+            let path = store.ledger_path(&group.group_id).expect("ledger");
+            let mut seeds = std::collections::BTreeMap::new();
+            ledger::visit_snapshot_oldest_first(&path, |event| {
+                let mode = event
+                    .data
+                    .get("message_mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if matches!(
+                    event.kind.as_str(),
+                    "actor.add" | "chat.read" | "runtime.delivery" | "system.notify"
+                ) || (event.kind == "chat.message"
+                    && matches!(mode, "mail" | "send" | "request_reply"))
+                {
+                    seeds.insert((event.kind.clone(), mode.to_owned()), event);
+                }
+                std::ops::ControlFlow::Continue(())
+            })
+            .expect("captured replay seeds");
+            assert!(!seeds.is_empty(), "real delivery records required");
+            for seed in seeds.values() {
+                let mut replay = Event::new(&seed.kind, &group.group_id);
+                replay.by = seed.by.clone();
+                replay.scope_key = seed.scope_key.clone();
+                replay.data = seed.data.clone();
+                ledger::append(&path, &replay).expect("replay actual event");
+            }
+            check("append");
+            if let Some(actor) = group.actors.iter().find(|actor| actor.enabled) {
+                inbox::consume_unread(&home, &group, &actor.id, "user", 1)
+                    .expect("durable real Mail cursor");
+            }
+            check("cursor");
+            let seed = seeds.values().next().expect("seed");
+            let mut external = Event::new(&seed.kind, &group.group_id);
+            external.by = seed.by.clone();
+            external.scope_key = seed.scope_key.clone();
+            external.data = seed.data.clone();
+            let mut bytes = serde_json::to_vec(&external).expect("external event");
+            bytes.push(b'\n');
+            use std::io::Write;
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .expect("external writer")
+                .write_all(&bytes)
+                .expect("external growth without callback");
+            check("external-growth");
+            cccc_core::ledger_archive::compact(
+                &home,
+                &group.group_id,
+                "real delivery parity replay",
+            )
+            .expect("real-history rotation");
+            check("rotation");
+        }
+    }
+
+    #[test]
+    #[ignore = "operator-supplied copied real groups only"]
+    fn real_group_startup_claims_match_history() {
+        let root = std::env::var_os("CCCC_REAL_REPLAY_HOME").expect("real copied home required");
+        let home = HomeLayout::from_path(root).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let groups = store.list().expect("registered real groups");
+        assert!(
+            !groups.is_empty(),
+            "empty replay cannot prove claim recovery"
+        );
+        for group in groups {
+            let path = store.ledger_path(&group.group_id).expect("ledger");
+            // Preserve the old indexed reducer as a private-data oracle. It
+            // deliberately retains terminal states before selecting claims.
+            let expected = ledger::inspect(&path, |events, _| {
+                let mut latest = HashMap::<(String, String), (String, String)>::new();
+                for event in events {
+                    if event.kind == "actor.add" {
+                        let actor = event
+                            .data
+                            .get("actor")
+                            .and_then(Value::as_object)
+                            .and_then(|actor| actor.get("id"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        if !actor.is_empty() {
+                            latest.retain(|(id, _), _| id != actor);
+                        }
+                    } else if event.kind == "runtime.delivery" {
+                        let actor = event
+                            .data
+                            .get("actor_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        let source = event
+                            .data
+                            .get("source_event_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        if !actor.is_empty() && !source.is_empty() {
+                            latest.insert(
+                                (actor.to_owned(), source.to_owned()),
+                                (
+                                    event
+                                        .data
+                                        .get("state")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    event
+                                        .data
+                                        .get("transport")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                ),
+                            );
+                        }
+                    }
+                }
+                latest
+                    .into_iter()
+                    .filter_map(|(key, (state, transport))| {
+                        (state == "claimed").then_some((key, transport))
+                    })
+                    .collect::<HashMap<_, _>>()
+            })
+            .expect("legacy claim reducer");
+            let actual = read_stranded_claims(&path).expect("streamed claims");
+            assert_eq!(
+                actual, expected,
+                "startup claim reducer differs from history"
+            );
+            println!(
+                "{}",
+                json!({"group_id":group.group_id,"stranded_claims":actual.len()})
+            );
+        }
+    }
 
     #[test]
     fn concurrent_claims_are_unique_and_restart_settles_the_stranded_claim() {
