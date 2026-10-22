@@ -461,24 +461,43 @@ async fn context_get_pages_a_captured_board_within_its_byte_bound() {
 
         // The captured Actor states alone outgrow 16 KiB: no page fits, and the
         // call says so instead of answering over the bound.
-        let refused = tool(
+        for detail in ["full", "overview"] {
+            let refused = tool(
+                &home,
+                id,
+                "peer",
+                "cccc_context_get",
+                json!({"detail":detail,"max_bytes":16 * 1024}),
+            )
+            .await;
+            assert_eq!(refused["result"]["isError"], true, "{detail}: {refused}");
+            let error = &refused["result"]["structuredContent"]["error"];
+            assert_eq!(error["code"], "invalid_args");
+            assert!(
+                error["message"]
+                    .as_str()
+                    .expect("error message")
+                    .contains("max_bytes is smaller than the smallest page of this context"),
+                "{detail}: {error}"
+            );
+        }
+        let overview = tool(
             &home,
             id,
             "peer",
             "cccc_context_get",
-            json!({"max_bytes":16 * 1024}),
+            json!({"detail":"overview","max_bytes":CAP}),
         )
         .await;
-        assert_eq!(refused["result"]["isError"], true, "{refused}");
-        let error = &refused["result"]["structuredContent"]["error"];
-        assert_eq!(error["code"], "invalid_args");
+        let overview = payload(&overview);
         assert!(
-            error["message"]
-                .as_str()
-                .expect("error message")
-                .contains("max_bytes is smaller than the smallest page of this context"),
-            "{error}"
+            serde_json::to_vec_pretty(overview)
+                .expect("overview JSON")
+                .len()
+                <= CAP
         );
+        assert!(overview.get("board").is_none());
+        assert!(overview["coordination"].get("tasks").is_none());
     })
     .await;
     daemon_task.abort();
