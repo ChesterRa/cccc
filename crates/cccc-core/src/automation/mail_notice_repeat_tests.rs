@@ -6,7 +6,6 @@ struct Replay {
     store: GroupStore,
     group: GroupDoc,
     mail_ids: Vec<String>,
-    later_mail: Option<Event>,
 }
 
 impl Replay {
@@ -15,14 +14,25 @@ impl Replay {
     }
 
     fn captured_records(notice_age: i64, repeat: Option<i64>, include_later: bool) -> Self {
+        Self::captured_fixture(
+            notice_age,
+            repeat,
+            include_later,
+            include_str!("../../tests/fixtures/mail_notice_history.json"),
+        )
+    }
+
+    fn captured_fixture(
+        notice_age: i64,
+        repeat: Option<i64>,
+        include_later: bool,
+        fixture: &str,
+    ) -> Self {
         let temp = tempfile::tempdir().expect("replay directory");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("notice replay", "").expect("group");
-        let mut events: Vec<Event> = serde_json::from_str(include_str!(
-            "../../tests/fixtures/mail_notice_history.json"
-        ))
-        .expect("captured history");
+        let mut events: Vec<Event> = serde_json::from_str(fixture).expect("captured history");
         let notice = events
             .iter()
             .find(|e| e.kind == "system.notify")
@@ -55,7 +65,6 @@ impl Replay {
             .ledger_path(&group.group_id)
             .expect("captured notice replay invariant");
         let mut mail_ids = Vec::new();
-        let mut later_mail = None;
         for (index, event) in events.iter_mut().enumerate() {
             // Explicit playback binding: translate the whole captured timeline,
             // preserving its relative times and order. No captured fact is invented.
@@ -64,13 +73,25 @@ impl Replay {
             event.ts = (anchor + (at - captured_at)).to_rfc3339();
             event.group_id = group.group_id.clone();
             if !include_later && index == 4 {
-                later_mail = Some(event.clone());
                 continue;
             }
             if event.kind == "chat.message" {
                 mail_ids.push(event.id.clone());
             }
             ledger::append(&path, event).expect("replay captured event");
+        }
+        if let Some(read) = events.iter().find(|event| event.kind == "mail.read") {
+            // Restore the captured read boundary using the actual cursor
+            // transaction; appending a ledger fact alone is not a cursor write.
+            let group = store.load(&group.group_id).expect("replay group");
+            let consumed = inbox::consume_unread(&home, &group, "recipient", "recipient", 10)
+                .expect("replay captured read transaction");
+            assert_eq!(
+                consumed.cursor_event_id,
+                read.data["event_id"]
+                    .as_str()
+                    .expect("captured read boundary")
+            );
         }
         Self {
             _temp: temp,
@@ -80,7 +101,6 @@ impl Replay {
                 .expect("captured notice replay invariant"),
             store,
             mail_ids,
-            later_mail,
         }
     }
 
@@ -94,7 +114,7 @@ impl Replay {
     fn issue_expired(&self, mut notice: Event) {
         // Replay the production-issued output at the fixture's translated
         // issue time, advancing one interval without a wall-clock sleep.
-        notice.ts = (Utc::now() - chrono::Duration::seconds(3610)).to_rfc3339();
+        notice.ts = (Utc::now() - chrono::Duration::seconds(1)).to_rfc3339();
         ledger::append(
             &self
                 .store
@@ -165,7 +185,7 @@ fn mail_notice_repeat_does_not_fire_before_its_interval() {
 #[test]
 fn mail_notice_repeat_default_and_zero_keep_one_shot_behavior() {
     for setting in [None, Some(0)] {
-        let replay = Replay::captured(86400, setting);
+        let replay = Replay::captured(3610, setting);
         assert!(replay.due().is_empty(), "setting {setting:?}");
     }
 }
@@ -185,7 +205,7 @@ fn mail_notice_repeat_warm_projection_does_not_replay_history() {
 fn mail_notice_repeat_stops_at_exact_batch_max_and_resets_for_later_mail() {
     for max in [0, 1, 3] {
         // A real prefix ending at accepted delivery, before the captured later Mail.
-        let mut replay = Replay::captured_records(3610, Some(3600), false);
+        let mut replay = Replay::captured_records(10, Some(1), false);
         replay.set_max(max);
         for _ in 0..max {
             let due = replay.due();
@@ -200,30 +220,26 @@ fn mail_notice_repeat_stops_at_exact_batch_max_and_resets_for_later_mail() {
             replay.due().is_empty(),
             "pruning must not reset the counter"
         );
-        ledger::append(
-            &replay
-                .store
-                .ledger_path(&replay.group.group_id)
-                .expect("ledger"),
-            replay.later_mail.as_ref().expect("captured later Mail"),
-        )
-        .expect("append real later Mail");
-        let due = replay.due();
-        assert_eq!(due.len(), 1, "a new pending batch has an initial notice");
-        assert_eq!(due[0].data["context"]["count"], 2);
     }
-    let replay = Replay::captured_records(3610, Some(3600), false);
+    let replay = Replay::captured_records(10, Some(1), false);
     for _ in 0..3 {
         let due = replay.due();
         assert_eq!(due.len(), 1, "default max is three");
         replay.issue_expired(due.into_iter().next().expect("repeat"));
     }
     assert!(replay.due().is_empty());
+    // The real later Mail changes the pending batch after its original
+    // one-Mail batch has used the max=0 budget (initial notice only).
+    let mut later = Replay::captured(3610, Some(3600));
+    later.set_max(0);
+    let due = later.due();
+    assert_eq!(due.len(), 1, "a changed batch has an initial notice");
+    assert_eq!(due[0].data["context"]["count"], 2);
 }
 
 #[test]
 fn mail_notice_repeat_prunes_claims_across_many_intervals_and_rebuilds() {
-    let mut replay = Replay::captured_records(3610, Some(3600), false);
+    let mut replay = Replay::captured_records(10, Some(1), false);
     replay.set_max(64);
     for _ in 0..64 {
         let due = replay.due();
@@ -249,5 +265,29 @@ fn mail_notice_repeat_prunes_claims_across_many_intervals_and_rebuilds() {
         inbox::projection::retained_mail_notice_claims(&replay.home, &replay.group)
             .expect("claim count")
             <= 1
+    );
+}
+
+#[test]
+fn mail_notice_repeat_captured_later_boundary_read_closes_earlier_mail() {
+    assert_eq!(
+        Replay::captured(3610, Some(3600)).due().len(),
+        1,
+        "unread control"
+    );
+    let replay = Replay::captured_fixture(
+        3610,
+        Some(3600),
+        true,
+        include_str!("../../tests/fixtures/mail_notice_read_history.json"),
+    );
+    assert!(
+        replay.due().is_empty(),
+        "the captured later boundary closes both Mail before repeat"
+    );
+    assert!(
+        inbox::list_unread(&replay.home, &replay.group, "recipient", 10)
+            .expect("read cursor")
+            .is_empty()
     );
 }

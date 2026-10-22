@@ -1,7 +1,8 @@
 [
   {
-    "id": "2a639d1846be494cb16f01e139934b02",
-    "ts": "2026-10-21T17:12:14.008579Z",
+    "v": 1,
+    "id": "e6b3e52e715044539a4347af4e032bf4",
+    "ts": "2026-10-02T19:38:26.394825Z",
     "kind": "chat.message",
     "group_id": "captured-notice",
     "by": "sender",
@@ -10,12 +11,13 @@
       "to": [
         "recipient"
       ],
-      "text": "[redacted: 439 chars]"
+      "text": "[redacted: 1796 chars]"
     }
   },
   {
-    "id": "e6f214b804f14fef867bbffb44d35085",
-    "ts": "2026-10-21T17:17:41.784825Z",
+    "v": 1,
+    "id": "f9e17baae8fe4376bf877871249a6dcc",
+    "ts": "2026-10-02T20:09:05.867777Z",
     "kind": "system.notify",
     "group_id": "captured-notice",
     "by": "system",
@@ -27,7 +29,7 @@
       "context": {
         "actor_created_at": "2026-09-22T19:18:35.569390Z",
         "source_event_ids": [
-          "2a639d1846be494cb16f01e139934b02"
+          "e6b3e52e715044539a4347af4e032bf4"
         ],
         "count": 1,
         "actor_id": "recipient"
@@ -35,34 +37,37 @@
     }
   },
   {
-    "id": "e52a656dc21f4b23961d51bc27df3347",
-    "ts": "2026-10-21T17:17:41.835815Z",
+    "v": 1,
+    "id": "40d0e90756954b619baf6c93cb41ed76",
+    "ts": "2026-10-02T20:09:05.880241Z",
     "kind": "runtime.delivery",
     "group_id": "captured-notice",
     "by": "system",
     "data": {
-      "source_event_id": "e6f214b804f14fef867bbffb44d35085",
+      "source_event_id": "f9e17baae8fe4376bf877871249a6dcc",
       "state": "claimed",
       "transport": "managed_session",
       "actor_id": "recipient"
     }
   },
   {
-    "id": "83e52558ea6b4f41a49ab76352a95ec8",
-    "ts": "2026-10-21T17:17:43.346568Z",
+    "v": 1,
+    "id": "e235d8d346ec47ef957c8284b07bbbeb",
+    "ts": "2026-10-02T20:09:07.383802Z",
     "kind": "runtime.delivery",
     "group_id": "captured-notice",
     "by": "system",
     "data": {
-      "source_event_id": "e6f214b804f14fef867bbffb44d35085",
+      "source_event_id": "f9e17baae8fe4376bf877871249a6dcc",
       "state": "accepted",
       "transport": "managed_session",
       "actor_id": "recipient"
     }
   },
   {
-    "id": "500b8abd90744668bb882a32f3f18c23",
-    "ts": "2026-10-21T17:22:59.877054Z",
+    "v": 1,
+    "id": "bbf78cafdec144b494b613d6d8812485",
+    "ts": "2026-10-02T20:38:03.060386Z",
     "kind": "chat.message",
     "group_id": "captured-notice",
     "by": "sender",
@@ -71,7 +76,7 @@
       "to": [
         "recipient"
       ],
-      "text": "[redacted: 408 chars]"
+      "text": "[redacted: 1845 chars]"
     }
   }
 ]

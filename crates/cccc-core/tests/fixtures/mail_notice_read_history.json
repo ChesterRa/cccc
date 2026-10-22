@@ -1,0 +1,94 @@
+[
+  {
+    "v": 1,
+    "id": "2a639d1846be494cb16f01e139934b02",
+    "ts": "2026-10-21T17:12:14.008579Z",
+    "kind": "chat.message",
+    "group_id": "captured-notice",
+    "by": "sender",
+    "data": {
+      "message_mode": "mail",
+      "to": [
+        "recipient"
+      ],
+      "text": "[redacted: 439 chars]"
+    }
+  },
+  {
+    "v": 1,
+    "id": "e6f214b804f14fef867bbffb44d35085",
+    "ts": "2026-10-21T17:17:41.784825Z",
+    "kind": "system.notify",
+    "group_id": "captured-notice",
+    "by": "system",
+    "data": {
+      "kind": "mail_notice",
+      "title": "Mail waiting",
+      "message": "You have 1 Mail item(s) waiting. Call cccc_inbox_read when appropriate.",
+      "target_actor_id": "recipient",
+      "context": {
+        "actor_created_at": "2026-09-22T19:18:35.569390Z",
+        "source_event_ids": [
+          "2a639d1846be494cb16f01e139934b02"
+        ],
+        "count": 1,
+        "actor_id": "recipient"
+      }
+    }
+  },
+  {
+    "v": 1,
+    "id": "e52a656dc21f4b23961d51bc27df3347",
+    "ts": "2026-10-21T17:17:41.835815Z",
+    "kind": "runtime.delivery",
+    "group_id": "captured-notice",
+    "by": "system",
+    "data": {
+      "source_event_id": "e6f214b804f14fef867bbffb44d35085",
+      "state": "claimed",
+      "transport": "managed_session",
+      "actor_id": "recipient"
+    }
+  },
+  {
+    "v": 1,
+    "id": "83e52558ea6b4f41a49ab76352a95ec8",
+    "ts": "2026-10-21T17:17:43.346568Z",
+    "kind": "runtime.delivery",
+    "group_id": "captured-notice",
+    "by": "system",
+    "data": {
+      "source_event_id": "e6f214b804f14fef867bbffb44d35085",
+      "state": "accepted",
+      "transport": "managed_session",
+      "actor_id": "recipient"
+    }
+  },
+  {
+    "v": 1,
+    "id": "500b8abd90744668bb882a32f3f18c23",
+    "ts": "2026-10-21T17:22:59.877054Z",
+    "kind": "chat.message",
+    "group_id": "captured-notice",
+    "by": "sender",
+    "data": {
+      "message_mode": "mail",
+      "to": [
+        "recipient"
+      ],
+      "text": "[redacted: 408 chars]"
+    }
+  },
+  {
+    "v": 1,
+    "id": "96119085d790419a8271b47b43dc62d1",
+    "ts": "2026-10-21T17:27:39.044831Z",
+    "kind": "mail.read",
+    "group_id": "captured-notice",
+    "by": "recipient",
+    "data": {
+      "actor_id": "recipient",
+      "event_id": "500b8abd90744668bb882a32f3f18c23"
+    }
+  }
+]

@@ -12,6 +12,10 @@ struct Replay {
 
 impl Replay {
     fn captured(notice_age: i64, repeat: Option<i64>) -> Self {
+        Self::captured_fixture(notice_age, repeat, false)
+    }
+
+    fn captured_fixture(notice_age: i64, repeat: Option<i64>, read_stop: bool) -> Self {
         let temp = tempfile::tempdir().expect("private replay");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let response = request(&home, "group_create", json!({"title":"notice replay"}));
@@ -53,11 +57,19 @@ impl Replay {
             .expect("captured notice replay invariant")
             .created_at
             .clone();
-        let mut events: Vec<Event> = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../cccc-core/tests/fixtures/mail_notice_history.json"
-        )))
-        .expect("captured notice replay invariant");
+        let fixture = if read_stop {
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../cccc-core/tests/fixtures/mail_notice_read_history.json"
+            ))
+        } else {
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../cccc-core/tests/fixtures/mail_notice_history.json"
+            ))
+        };
+        let mut events: Vec<Event> =
+            serde_json::from_str(fixture).expect("captured notice replay invariant");
         let captured_at = DateTime::parse_from_rfc3339(
             &events
                 .iter()
@@ -87,6 +99,22 @@ impl Replay {
                     json!(actor_created_at);
             }
             cccc_core::ledger::append(&path, event).expect("captured notice replay invariant");
+        }
+        if let Some(read) = events.iter().find(|event| event.kind == "mail.read") {
+            // Replay the cursor half of the captured read via the actual daemon.
+            let consumed = request(
+                &home,
+                "inbox_read",
+                json!({"group_id":group_id,"actor_id":"recipient","by":"recipient"}),
+            );
+            assert_eq!(
+                consumed["messages"]
+                    .as_array()
+                    .expect("captured read messages")
+                    .last()
+                    .expect("captured read boundary")["id"],
+                read.data["event_id"]
+            );
         }
         // The real actor.start still begins its normal one-second Mail window.
         std::thread::sleep(Duration::from_millis(1200));
@@ -285,7 +313,7 @@ fn mail_notice_repeat_daemon_accepts_repeat_with_later_mail() {
 
 #[test]
 fn mail_notice_repeat_daemon_preserves_interval_and_default() {
-    for (age, repeat) in [(3590, Some(3600)), (86400, None), (86400, Some(0))] {
+    for (age, repeat) in [(3590, Some(3600)), (3610, None), (3610, Some(0))] {
         let replay = Replay::captured(age, repeat);
         replay.expect_no_repeat();
     }
@@ -427,4 +455,21 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
         );
         replay.accepted(&notice.id);
     }
+}
+
+#[test]
+fn mail_notice_repeat_daemon_captured_later_boundary_read_stops_before_repeat() {
+    let replay = Replay::captured_fixture(3610, Some(3600), true);
+    replay.expect_no_repeat();
+    let inbox = request(
+        &replay.home,
+        "inbox_peek",
+        json!({"group_id":replay.group_id,"actor_id":"recipient","by":"recipient"}),
+    );
+    assert!(
+        inbox["messages"]
+            .as_array()
+            .expect("captured read Inbox")
+            .is_empty()
+    );
 }

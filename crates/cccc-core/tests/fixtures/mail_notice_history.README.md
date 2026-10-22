@@ -1,19 +1,28 @@
-# Captured notice history
+# Captured accepted-but-unread notice history
 
-`mail_notice_history.json` is a structural projection of five ordered ledger
-records captured on 2026-10-22: a concrete-recipient Mail, its notice, the
-notice's claimed and accepted delivery records, and later Mail to that recipient.
-Event IDs, timestamps, order, notice source references and delivery states are
-retained. The complete source window was checked for reads, replies, manual
-delivery, generation changes, replacement notices and resumes; no relevant
-closing or replacement fact is omitted. Group and Actor identifiers use
-consistent aliases. Private Mail bodies are replaced with nonempty
-`[redacted: N chars]` markers; N is the original character count. Body size
-is not a tested dimension: the real delivery worker requires a nonempty
-payload. Unrelated fields are omitted. No private body words are retained.
+This five-record protocol projection contains a Mail, its notice, claimed and
+accepted notice delivery, and later Mail to the same recipient. Both Mail
+remain unread, unreplied and undelivered through the repeat assertions. The
+source audit extends from the first Mail through 66 hours after the notice,
+not merely to the last selected record. It finds no closing read (including
+a later boundary), reply, delivery of either Mail, or Actor-generation change.
+Only these two recipient Mail occur within the first 7,250 seconds after the
+notice, covering the one-hour repeat and an additional interval. The longer
+audit includes later arrivals, which are outside those assertion horizons.
 
-Tests explicitly bind the projection to a disposable Group and translate the
-whole timestamp series relative to its captured notice, preserving all time
-differences. Daemon tests may bind the notice's generation to their newly created
-recipient. Subsequent reads, replies, manual deliveries and generation changes
-are controlled test operations; they are not claimed as captured history.
+The short-interval cap cases use the captured prefix ending at acceptance.
+Their 65 one-second intervals fit before the captured later Mail arrives.
+Their additional notices are outputs of the tested policy replayed with an
+explicit issue-time translation, not claimed as captured historical repeats.
+
+Event IDs, times, order, source references and delivery states are retained.
+Identifiers and times are correlatable with the private source, not anonymous.
+Group and Actor names use consistent aliases. Mail bodies are nonempty
+`[redacted: N chars]` markers; N is the original character count. No body words
+are retained. Private source hashes and per-record mappings are not published.
+
+Tests bind the history to disposable Groups and translate its whole timeline,
+preserving relative times. Later read/reply/delivery and lifecycle operations
+are real controlled test actions. This replaces the earlier selection whose
+later-boundary read invalidated its use as an unresolved repeat case; that
+history is now retained separately in `mail_notice_read_history.json`.
