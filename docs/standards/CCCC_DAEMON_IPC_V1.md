@@ -3457,6 +3457,8 @@ Args:
 ```
 
 Notes:
+- A foreman MAY remove a peer but MUST NOT remove itself; a peer MAY remove itself. User and system removal remain allowed. In CCCC, the first visible Actor is the foreman, so removing it promotes the next visible Actor, if any. The daemon emits `group.foreman_change` with `{from: actor_id, to: successor_id | null}` after the committed removal; the actor list remains the authority for role selection.
+- Planned and active tasks assigned to the removed Actor are released by clearing `assignee`, preserving their status and content. Finished and archived task ownership remains historical. The release is recorded as `context.sync`; failure of this post-commit cleanup is logged without undoing the Actor removal.
 - Removing an actor ends that actor id's current generation. Actor-generation-scoped browser target, bootstrap, delivery receipt, delivery preference, and persisted runner/turn state MUST be retired before the operation reports success. A shared provider login profile MAY remain.
 - Every Web Model binding and pending pairing belonging to the removed Actor generation MUST be retired before success. Shared connector credentials and other Actors remain intact. Re-adding the same Actor ID MUST NOT restore an earlier generation’s authority.
 
@@ -4630,6 +4632,17 @@ merely to count unread Mail. A reverse scan MAY stop at the cursor or generation
 boundary; segment discovery and reads MUST share the ledger reader boundary so
 concurrent rotation cannot hide events. These reads MUST NOT advance the cursor.
 
+Native Inbox snapshots retain the active ledger descriptor across rotation and
+validate sealed archive identities when opening them on demand. Simultaneous
+file descriptors do not grow with the number of archive segments; decoding
+runs outside the append lock. Page reads batch selected records by segment,
+decoding each selected gzip prefix once while preserving request order and
+shared-recipient duplicates. A changed sealed archive, incompatible active
+prefix or cursor invalidates the captured page before publication. Ordinary
+active-ledger appends do not delay publication of that prefix; subsequent reads
+catch up from its committed offsets. Unchanged read errors are returned rather
+than hidden by retries.
+
 Args:
 ```ts
 { group_id: string; actor_id: string; by?: string; limit?: number }
@@ -4727,7 +4740,15 @@ read-only and MUST NOT append `mail.read` or mutate any delivery state.
 
 Args:
 ```ts
-{ group_id: string; detail?: "overview" | "summary" | "full" }
+{
+  group_id: string
+  detail?: "overview" | "summary" | "full"
+  limit?: number          // 1..500 tasks per page; default 100 once paging
+  cursor?: string         // next_cursor of the previous page
+  max_bytes?: number      // >= 4096; the page shrinks until the answer,
+                          // rendered as pretty JSON, fits
+  include_archived?: boolean // paging only; default true
+}
 ```
 
 Result:
@@ -4735,6 +4756,8 @@ Result:
 {
   version: string
   tasks_version: string
+  truncated?: boolean     // paging only: more tasks follow
+  next_cursor?: string | null
   coordination: {
     brief: {
       objective: string
@@ -4793,6 +4816,18 @@ Result:
 
 Notes:
 - Task objects returned in `coordination.tasks`, `board`, or `task_list` include `task_type`.
+- Paging starts when `limit`, `cursor` or `max_bytes` is present; without them
+  the snapshot stays complete. A page holds at most `limit` tasks numbered
+  after `cursor` in `coordination.tasks` (and, for `full`, in `board`), halved
+  until the whole answer fits `max_bytes`, and never fewer than one task. A
+  task too large for the page on its own has its longest free text (notes,
+  outcome, title or a checklist item) cut to fit, ending in
+  `… [clipped to fit the page]`; `task_list` returns it whole. If even that
+  page does not fit, the call fails with `invalid_args` and names the size of
+  the smallest page.
+  `attention` becomes counts and `tasks_summary` still counts every task;
+  `task_list` pages the attention tasks themselves. `cccc_context_get` always
+  pages, at most 100 tasks and 256 KiB per answer.
 - Daemon IPC defaults `detail` to `full`; the Web HTTP route defaults it to
   `summary` for routine refreshes.
 - `detail="overview"` does not read task files and omits `coordination.tasks`,
@@ -5205,6 +5240,18 @@ outcome: `headless.turn.completed`, `headless.turn.failed`, or
 `headless.turn.cancelled`. Native terminal sessions retain their existing
 successful-turn projection; published failures or cancellations MUST NOT create
 duplicate turn terminals.
+For Pi RPC sessions, identified `tool_execution_start` and
+`tool_execution_end` events project to `headless.activity.started` and
+`headless.activity.completed` under one turn-scoped `activity_id`. Failed
+calls finish that activity with a failure summary; they do not themselves
+fail the model turn. Anonymous titles and streaming tool-result updates stay
+transient. The journal retains the tool name and category, with at most a
+bounded program/subcommand or file basename after private-value redaction;
+command arguments, directories, tool inputs and results are not copied.
+Only simple shell commands receive a program/subcommand detail; commands with
+shell substitutions or control syntax retain just the tool name, because word
+splitting alone cannot safely identify their executable.
+
 Headless journal snapshots restore historical output only; replay MUST NOT
 overwrite current Actor or Group runtime state. Independent live streams can
 also deliver an older journal event after newer daemon-owned status; clients

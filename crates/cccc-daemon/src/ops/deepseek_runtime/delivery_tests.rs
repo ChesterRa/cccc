@@ -3,6 +3,17 @@ use cccc_contracts::{ActorRuntime, Event};
 use cccc_core::{GroupStore, ledger};
 use std::sync::atomic::AtomicBool;
 
+/// These tests ask only whether the turn completed.
+fn deliver(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    event: &Event,
+    cancelled: &AtomicBool,
+) -> bool {
+    super::deliver(home, group, actor, event, cancelled) == TurnDelivery::Completed
+}
+
 #[cfg(unix)]
 #[test]
 fn fake_acp_delivery_persists_update_and_terminal_before_success() {

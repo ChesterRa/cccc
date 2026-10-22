@@ -373,3 +373,125 @@ async fn disconnected_start_is_reported_and_the_ambiguous_delegation_is_not_repl
         .expect("stop disconnected session");
     server.await.expect("disconnecting fake server");
 }
+
+/// Real exchanges with a Codex 0.159.1 app-server whose config.toml names
+/// gpt-6.1-sol, for a command that declares gpt-6-luna. Each ran on a fresh
+/// app-server with the params a managed session sends, once without a model
+/// and once with the declared one; the resumed thread was opened without one.
+const DECLARED_MODEL_CAPTURE: &str =
+    include_str!("../../fixtures/codex_thread_model_0_159_1.jsonl");
+
+fn declared_model_capture() -> (Value, HashMap<String, Vec<Value>>) {
+    let mut lines = DECLARED_MODEL_CAPTURE
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("capture line"));
+    let header = lines.next().expect("capture header")["capture"].clone();
+    let mut responses: HashMap<String, Vec<Value>> = HashMap::new();
+    for line in lines {
+        if line["frame"].get("method").is_none() {
+            let exchange = line["exchange"].as_str().expect("exchange").to_owned();
+            responses
+                .entry(exchange)
+                .or_default()
+                .push(line["frame"].clone());
+        }
+    }
+    (header, responses)
+}
+
+/// Answers one connection with the captured responses of the exchange its
+/// thread request matches, and returns the model the app-server reported.
+async fn replay_declared_model_capture(listener: tokio::net::TcpListener, kind: &str) -> String {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let (header, responses) = declared_model_capture();
+    let declared = header["command"][2].clone();
+    let (stream, _) = listener.accept().await.expect("accept");
+    let mut socket = tokio_tungstenite::accept_async(stream)
+        .await
+        .expect("websocket");
+    let mut exchange = &responses[&format!("{kind}_without_model")];
+    let mut model = String::new();
+    let methods: &[&str] = if kind == "start" {
+        &[
+            "initialize",
+            "thread/start",
+            "thread/name/set",
+            "thread/read",
+        ]
+    } else {
+        &["initialize", "thread/resume"]
+    };
+    for (index, method) in methods.iter().enumerate() {
+        let Message::Text(text) = socket.next().await.expect("frame").expect("text") else {
+            panic!("expected {method}");
+        };
+        let request: Value = serde_json::from_str(&text).expect("request");
+        assert_eq!(request["method"], *method);
+        if index == 1 {
+            let wanted = &request["params"]["model"];
+            assert!(wanted.is_null() || *wanted == declared, "model {wanted}");
+            let with = if wanted.is_null() { "without" } else { "with" };
+            exchange = &responses[&format!("{kind}_{with}_model")];
+            model = exchange[1]["result"]["thread"]["model"]
+                .as_str()
+                .expect("thread model")
+                .to_owned();
+        }
+        let mut response = exchange[index].clone();
+        response["id"] = request["id"].clone();
+        socket
+            .send(Message::Text(response.to_string().into()))
+            .await
+            .expect("response");
+    }
+    model
+}
+
+#[tokio::test]
+async fn new_and_resumed_codex_threads_run_the_model_the_command_declares() {
+    let (header, _) = declared_model_capture();
+    let executable = std::env::current_exe().expect("test executable");
+    let prepared = super::super::launch_command::prepare(
+        &[
+            executable.to_string_lossy().into_owned(),
+            "-m".into(),
+            "gpt-6-luna".into(),
+        ],
+        &Default::default(),
+    )
+    .expect("command");
+    for kind in ["start", "resume"] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let endpoint = format!("ws://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(replay_declared_model_capture(listener, kind));
+        let session = AnalystSession::connect(ConnectConfig {
+            binding: WorkspaceBinding {
+                root: std::env::current_dir().expect("cwd"),
+            },
+            generation: format!("declared-model-{kind}"),
+            endpoint,
+            remote_tui_prefix: prepared.remote_tui_prefix.clone(),
+            environment: Default::default(),
+            resume_thread_id: (kind == "resume").then(|| {
+                header["resumed_thread_id"]
+                    .as_str()
+                    .expect("resumed thread")
+                    .to_owned()
+            }),
+            process: None,
+            delegations: HashMap::new(),
+            purpose: SessionPurpose::Actor,
+        })
+        .await
+        .expect("connect");
+        let model = server.await.expect("replayed app-server");
+        assert_eq!(
+            model, "gpt-6-luna",
+            "thread/{kind} left the thread on {model}, not the declared model"
+        );
+        drop(session);
+    }
+}

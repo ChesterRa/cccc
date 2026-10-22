@@ -21,11 +21,7 @@ pub(super) fn list(
         .map(|actor| actor.id.clone())
         .collect::<Vec<_>>();
     let unread = if include_unread {
-        inbox::list_unread_many(home, group, &actor_ids, 1000)
-            .map_err(OpError::io)?
-            .into_iter()
-            .map(|(actor_id, events)| (actor_id, events.len()))
-            .collect::<BTreeMap<_, _>>()
+        inbox::unread_counts(home, group, &actor_ids, 1000).map_err(OpError::io)?
     } else {
         BTreeMap::new()
     };

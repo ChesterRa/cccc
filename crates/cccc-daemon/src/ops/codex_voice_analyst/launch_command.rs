@@ -58,7 +58,7 @@ pub(super) fn prepare(
     })
 }
 
-fn model_from_arguments(arguments: &[String]) -> String {
+pub(super) fn model_from_arguments(arguments: &[String]) -> String {
     arguments
         .windows(2)
         .find(|items| matches!(items[0].as_str(), "-m" | "--model"))
