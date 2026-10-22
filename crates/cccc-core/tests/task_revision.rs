@@ -52,22 +52,28 @@ fn task_revision_fences_recorded_task_without_conflicting_on_other_context_write
         operation(json!({"op":"task.update","task_id":"T792","waiting_on":"none","if_task_rev":0}));
     assert!(
         store
-            .sync(&group, &[change.clone()], Some(&version), "user", false)
+            .sync(
+                &group,
+                std::slice::from_ref(&change),
+                Some(&version),
+                "user",
+                false
+            )
             .is_err(),
         "context guard remains independent"
     );
     store
-        .sync(&group, &[change.clone()], None, "user", true)
+        .sync(&group, std::slice::from_ref(&change), None, "user", true)
         .expect("preview");
     assert_eq!(revision(&store, &group, "T792"), 0);
     store
-        .sync(&group, &[change.clone()], None, "user", false)
+        .sync(&group, std::slice::from_ref(&change), None, "user", false)
         .expect("fresh task guard");
     assert_eq!(revision(&store, &group, "T792"), 1);
     let before = store.load(&group).expect("before");
     for dry in [true, false] {
         let error = store
-            .sync(&group, &[change.clone()], None, "user", dry)
+            .sync(&group, std::slice::from_ref(&change), None, "user", dry)
             .expect_err("stale task");
         assert!(
             error.to_string().contains("T792"),
