@@ -66,7 +66,10 @@ pub fn daemon_call(
             normalize_message_author(&mut args);
             "reply_request_cancel"
         }
-        "cccc_context_get" => "context_get",
+        "cccc_context_get" => {
+            bound_context_page(&mut args);
+            "context_get"
+        }
         "cccc_context_sync" => "context_sync",
         "cccc_capability_search" => "capability_search",
         "cccc_capability_state" => "capability_state",
@@ -225,6 +228,9 @@ fn task_action(
                     "task_type",
                     "notes",
                     "checklist",
+                    "client_request_id",
+                    "parent_ref",
+                    "blocked_by_refs",
                     "rollup",
                     "decision_request",
                 ],
@@ -312,6 +318,28 @@ fn task_action(
     Ok(("context_sync".into(), request))
 }
 
+/// An Actor's context read is paged: at most 100 tasks and 256 KiB per answer
+/// (a caller may ask for less). Large groups otherwise return megabytes that
+/// providers reject, and the turn retries the same oversized read.
+const CONTEXT_PAGE_LIMIT: u64 = 100;
+const CONTEXT_PAGE_MAX_BYTES: u64 = 256 * 1024;
+
+fn bound_context_page(args: &mut Map<String, Value>) {
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(CONTEXT_PAGE_LIMIT)
+        .clamp(1, CONTEXT_PAGE_LIMIT);
+    let max_bytes = args
+        .get("max_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(CONTEXT_PAGE_MAX_BYTES)
+        .clamp(4096, CONTEXT_PAGE_MAX_BYTES);
+    args.insert("limit".into(), Value::from(limit));
+    args.insert("max_bytes".into(), Value::from(max_bytes));
+    args.entry("include_archived").or_insert(Value::Bool(false));
+}
+
 fn retain_fields(args: &mut Map<String, Value>, allowed: &[&str]) {
     args.retain(|key, _| allowed.contains(&key.as_str()));
 }
@@ -346,6 +374,24 @@ mod tests {
     use super::daemon_call;
     use crate::argument_normalization::normalize_message_author;
     use serde_json::{Map, json};
+
+    #[test]
+    fn context_reads_never_ask_for_more_than_one_bounded_page() {
+        let (op, args) = daemon_call("cccc_context_get", Map::new()).expect("mapping");
+        assert_eq!(op, "context_get");
+        assert_eq!(args["limit"], 100);
+        assert_eq!(args["max_bytes"], 256 * 1024);
+        assert_eq!(args["include_archived"], false);
+        let asked = json!({"limit":5000,"max_bytes":10_000_000,"include_archived":true});
+        let (_, args) = daemon_call(
+            "cccc_context_get",
+            asked.as_object().cloned().expect("args"),
+        )
+        .expect("mapping");
+        assert_eq!(args["limit"], 100);
+        assert_eq!(args["max_bytes"], 256 * 1024);
+        assert_eq!(args["include_archived"], true);
+    }
 
     #[test]
     fn connect_destination_is_qualified_even_when_group_ids_match() {
@@ -606,6 +652,22 @@ mod tests {
                 "source":"chat"
             }])
         );
+    }
+
+    #[test]
+    fn task_create_mapping_keeps_the_callers_ids_and_refs() {
+        let create = json!({
+            "action":"create","group_id":"g_test","actor_id":"lead","by":"lead",
+            "title":"publish","client_request_id":"publish","parent_ref":"release",
+            "blocked_by_refs":["build"]
+        })
+        .as_object()
+        .cloned()
+        .expect("create args");
+        let (_, args) = daemon_call("cccc_task", create).expect("create mapping");
+        assert_eq!(args["ops"][0]["client_request_id"], "publish");
+        assert_eq!(args["ops"][0]["parent_ref"], "release");
+        assert_eq!(args["ops"][0]["blocked_by_refs"], json!(["build"]));
     }
 
     #[test]

@@ -87,9 +87,21 @@ pub(super) fn write_task_diff(
     after: &[Map<String, Value>],
 ) -> io::Result<()> {
     let before = task_map(before);
+    // Creates append in operation order: caller refs can only name earlier
+    // tasks. Keep that order across T999/T1000 instead of sorting filenames.
+    // Finish new targets before existing tasks can publish references to them.
+    for task in after {
+        if task
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !before.contains_key(id))
+        {
+            write_task(paths, task)?;
+        }
+    }
     let after = task_map(after);
     for (id, task) in &after {
-        if before.get(id) != Some(task) {
+        if before.get(id).is_some_and(|previous| previous != task) {
             write_task(paths, task)?;
         }
     }

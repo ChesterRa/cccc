@@ -1,0 +1,10 @@
+{"id":"capture-1","type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"Reply with one word: ready."}],"timestamp":1792636635810}}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Reply with one word: ready."}],"timestamp":1792636635810}}
+{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"openai-compatible","model":"free","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"pending","timestamp":1792636635844}}
+{"type":"message_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"openai-compatible","model":"free","usage":{"input":429,"output":1,"cacheRead":1280,"cacheWrite":0,"reasoning":0,"totalTokens":1710,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"length","timestamp":1792636635844,"responseId":"0728a9dc2adead39a0ec0fc388ed1bf2","responseModel":"minimax-m3.1-flash-free","rawStopReason":"length","durationMs":7418,"thinkingLevel":"medium"}}
+{"type":"turn_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"openai-compatible","model":"free","usage":{"input":429,"output":1,"cacheRead":1280,"cacheWrite":0,"reasoning":0,"totalTokens":1710,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"length","timestamp":1792636635844,"responseId":"0728a9dc2adead39a0ec0fc388ed1bf2","responseModel":"minimax-m3.1-flash-free","rawStopReason":"length","durationMs":7418,"thinkingLevel":"medium"},"toolResults":[]}
+{"type":"entry_appended","entry":{"type":"context_edit","id":"a855e189","parentId":"a9b49c41","timestamp":"2026-10-22T02:37:23.268Z","targetId":"a9b49c41","replacement":null}}
+{"type":"agent_settled","aborted":false}

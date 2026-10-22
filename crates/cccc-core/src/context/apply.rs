@@ -17,8 +17,18 @@ pub fn apply_all(
         let shape = name
             .starts_with("task.")
             .then(|| super::task_apply::task_shape(document));
-        apply_one(document, name, operation, by)?;
         let mut change = json!({"index": index, "op": name, "detail": "applied"});
+        if name == "task.create" {
+            // The created task's id, or the existing task a replayed
+            // `client_request_id` names, so the caller need not search for it.
+            let created = super::task_apply::create(document, operation, by)?;
+            change["task_id"] = Value::String(created.task_id);
+            if created.replayed {
+                change["replayed"] = Value::Bool(true);
+            }
+        } else {
+            apply_one(document, name, operation, by)?;
+        }
         if let Some(shape) = shape {
             let rolled = super::task_apply::roll_up(document, &shape);
             if !rolled.is_empty() {
@@ -39,7 +49,6 @@ fn apply_one(
     match name {
         "coordination.brief.update" => update_brief(document, operation, by),
         "coordination.note.add" => add_note(document, operation, by),
-        "task.create" => super::task_apply::create(document, operation, by),
         "task.update" => super::task_apply::update(document, operation),
         "task.move" => super::task_apply::move_task(document, operation),
         "task.restore" => super::task_apply::restore(document, operation),

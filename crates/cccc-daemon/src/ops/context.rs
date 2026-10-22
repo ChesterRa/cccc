@@ -37,9 +37,72 @@ fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     .map_err(OpError::io)?;
     let version = contexts.version(&document).map_err(OpError::io)?;
-    object(super::context_projection::project(
-        document, version, &detail,
-    ))
+    match page(request)? {
+        Some(page) if detail != "overview" => object(
+            super::context_projection::project_page(document, version, &detail, &page)
+                .map_err(page_too_small)?,
+        ),
+        _ => object(super::context_projection::project(
+            document, version, &detail,
+        )),
+    }
+}
+
+/// Paging starts when a caller sends `limit`, `cursor` or `max_bytes`; without
+/// them the snapshot stays complete.
+fn page(request: &DaemonRequest) -> Result<Option<super::context_projection::Page>, OpError> {
+    let args = &request.args;
+    if !["limit", "cursor", "max_bytes"]
+        .iter()
+        .any(|key| args.contains_key(*key))
+    {
+        return Ok(None);
+    }
+    let number = |key: &str| match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .map(Some)
+            .ok_or_else(|| OpError::new("invalid_args", format!("{key} must be an integer"))),
+    };
+    let limit = number("limit")?.unwrap_or(100);
+    if !(1..=500).contains(&limit) {
+        return Err(OpError::new(
+            "invalid_args",
+            "limit must be between 1 and 500",
+        ));
+    }
+    let max_bytes = number("max_bytes")?;
+    if max_bytes.is_some_and(|bytes| bytes < 4096) {
+        return Err(OpError::new(
+            "invalid_args",
+            "max_bytes must be at least 4096",
+        ));
+    }
+    let after = match args.get("cursor") {
+        None | Some(Value::Null) => 0,
+        Some(cursor) => cursor
+            .as_str()
+            .and_then(|id| id.trim().strip_prefix('T'))
+            .and_then(|number| number.parse().ok())
+            .ok_or_else(|| OpError::new("invalid_args", "cursor must be a task id such as T042"))?,
+    };
+    Ok(Some(super::context_projection::Page {
+        limit,
+        after,
+        max_bytes,
+        include_archived: bool_arg(request, "include_archived", true),
+    }))
+}
+
+/// Not even one task (its text clipped) fits next to the brief and the Actor
+/// states, so no page can honour `max_bytes`.
+fn page_too_small(smallest: usize) -> OpError {
+    OpError::new(
+        "invalid_args",
+        format!("max_bytes is smaller than the smallest page of this context ({smallest} bytes)"),
+    )
 }
 
 fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

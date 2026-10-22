@@ -131,12 +131,12 @@ impl AnalystSession {
                     && let Some(attempt) = resume_attempt.as_ref()
                     && let Some((diagnostic, blocked)) = claude::resume_diagnostic(&error)
                 {
-                    super::super::runtime_session::record_claude_resume_failure(
+                    let limited = super::super::runtime_session::record_claude_resume_failure(
                         home, group_id, actor_id, attempt, diagnostic, blocked,
                     )?;
-                    return Err(if blocked {
+                    return Err(if blocked || limited.is_some() {
                         io::Error::other(super::super::runtime_session::ClaudeResumeBlocked(
-                            diagnostic.into(),
+                            limited.unwrap_or_else(|| diagnostic.into()),
                         ))
                     } else {
                         io::Error::new(error.kind(), diagnostic)

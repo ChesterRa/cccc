@@ -370,6 +370,93 @@ fn actor_add_rejects_private_env_from_foreman() {
     assert!(group.actors.iter().all(|actor| actor.id != "peer1"));
 }
 #[test]
+fn the_foreman_cannot_remove_itself_and_its_removal_records_the_successor() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"foreman succession"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["lead", "peer1", "peer2"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runtime":"custom",
+                "command":["sh"],
+                "enabled":false,
+                "by":"user"
+            }),
+        );
+    }
+    let actor_ids = |home: &HomeLayout| {
+        call(home, "actor_list", json!({"group_id":group_id,"by":"user"})).result["actors"]
+            .as_array()
+            .expect("actors")
+            .iter()
+            .filter_map(|actor| actor["id"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+
+    let refused = raw_call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"lead","by":"lead"}),
+    );
+    assert!(!refused.ok, "the foreman removed itself");
+    assert!(
+        refused
+            .error
+            .expect("refusal")
+            .message
+            .contains("cannot remove itself")
+    );
+    assert_eq!(actor_ids(&home), ["lead", "peer1", "peer2"]);
+
+    // A peer may still leave on its own; that moves no role.
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"peer2","by":"peer2"}),
+    );
+    // The user's removal of the foreman hands the role on, and says so.
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"lead","by":"user"}),
+    );
+    assert_eq!(actor_ids(&home), ["peer1"]);
+
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let changes = cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger path"))
+        .expect("ledger")
+        .into_iter()
+        .filter(|event| event.kind == "group.foreman_change")
+        .collect::<Vec<_>>();
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0].by, "user");
+    assert_eq!(changes[0].data["from"], "lead");
+    assert_eq!(changes[0].data["to"], "peer1");
+
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    assert!(actor_ids(&home).is_empty());
+    let changes = cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger"))
+        .expect("ledger")
+        .into_iter()
+        .filter(|event| event.kind == "group.foreman_change")
+        .collect::<Vec<_>>();
+    assert_eq!(changes.len(), 2);
+    assert_eq!(changes[1].data["from"], "peer1");
+    assert_eq!(changes[1].data["to"], Value::Null);
+}
+
+#[test]
 fn actor_removal_retires_connectors_after_the_runtime_changes() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
@@ -1342,6 +1429,89 @@ fn rust_daemon_provider_auth_mutations_do_not_report_synthetic_lifecycle() {
 }
 
 #[test]
+fn a_foreman_retrying_a_tree_after_a_lost_reply_gets_the_same_tasks() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"client ids"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["lead", "peer1"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runtime":"custom",
+                "command":["sh"],
+                "enabled":false,
+                "by":"user"
+            }),
+        );
+    }
+    let tree = json!({
+        "group_id":group_id,
+        "by":"lead",
+        "ops":[
+            {"op":"task.create","title":"ship the release","client_request_id":"release"},
+            {"op":"task.create","title":"build","client_request_id":"build",
+                "parent_ref":"release","assignee":"peer1"},
+            {"op":"task.create","title":"publish","client_request_id":"publish",
+                "parent_ref":"release","blocked_by_refs":["build"],"assignee":"peer1"},
+        ],
+    });
+    let task_ids = |response: &DaemonResponse| {
+        response.result["changes"]
+            .as_array()
+            .expect("changes")
+            .iter()
+            .map(|change| change["task_id"].clone())
+            .collect::<Vec<_>>()
+    };
+    let first = call(&home, "context_sync", tree.clone());
+    assert_eq!(
+        task_ids(&first),
+        [json!("T001"), json!("T002"), json!("T003")]
+    );
+    let retried = call(&home, "context_sync", tree);
+    assert_eq!(task_ids(&retried), task_ids(&first));
+    assert!(
+        retried.result["changes"]
+            .as_array()
+            .expect("changes")
+            .iter()
+            .all(|change| change["replayed"] == true)
+    );
+    let context = cccc_core::context::ContextStore::new(home.clone())
+        .expect("context store")
+        .load(group_id)
+        .expect("context");
+    assert_eq!(context.tasks.len(), 3, "one tree, not two");
+    assert_eq!(context.tasks[2]["parent_id"], "T001");
+    assert_eq!(context.tasks[2]["blocked_by"], json!(["T002"]));
+
+    let foreign = raw_call(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,
+            "by":"peer1",
+            "ops":[{"op":"task.create","title":"test","parent_ref":"release"}],
+        }),
+    );
+    let error = foreign.error.expect("a peer cannot use the foreman's ids");
+    assert_eq!(error.code, "invalid_args");
+    assert!(
+        error
+            .message
+            .contains("task ref release names no task created by peer1"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
 fn a_peer_finishing_the_last_subtask_completes_a_rollup_task_it_does_not_own() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
@@ -1574,4 +1744,93 @@ fn raw_call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
             args: args.as_object().cloned().unwrap_or_else(Map::new),
         },
     )
+}
+
+#[test]
+fn actor_removal_returns_its_open_tasks_to_the_board() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"task release"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["leaving", "staying"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runtime":"custom",
+                "command":["sh"],
+                "enabled":false,
+                "by":"user"
+            }),
+        );
+    }
+    call(
+        &home,
+        "context_sync",
+        json!({
+            "group_id":group_id,
+            "by":"user",
+            "ops":[
+                {"op":"task.create","title":"in progress","status":"active","assignee":"leaving","notes":"half done; see branch"},
+                {"op":"task.create","title":"queued","status":"planned","assignee":"leaving"},
+                {"op":"task.create","title":"finished","status":"done","assignee":"leaving"},
+                {"op":"task.create","title":"someone else's","status":"active","assignee":"staying"},
+            ],
+        }),
+    );
+
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"leaving","by":"user"}),
+    );
+
+    let context = cccc_core::context::ContextStore::new(home.clone())
+        .expect("context store")
+        .load(group_id)
+        .expect("context");
+    let task = |title: &str| {
+        context
+            .tasks
+            .iter()
+            .find(|task| task["title"] == title)
+            .cloned()
+            .expect("task")
+    };
+    let assignee = |title: &str| task(title).get("assignee").cloned().unwrap_or(Value::Null);
+    assert_eq!(
+        assignee("in progress"),
+        Value::Null,
+        "active work is released"
+    );
+    assert_eq!(assignee("queued"), Value::Null, "planned work is released");
+    assert_eq!(assignee("finished"), "leaving", "history keeps its author");
+    assert_eq!(assignee("someone else's"), "staying");
+    assert_eq!(task("in progress")["notes"], "half done; see branch");
+    assert_eq!(task("in progress")["status"], "active");
+
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let events = cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger path"))
+        .expect("ledger");
+    let removed_at = events
+        .iter()
+        .position(|event| event.kind == "actor.remove")
+        .expect("actor.remove");
+    let releases = events[removed_at..]
+        .iter()
+        .filter(|event| event.kind == "context.sync")
+        .collect::<Vec<_>>();
+    assert_eq!(releases.len(), 1, "one event records the release");
+    assert_eq!(releases[0].by, "user");
+    assert_eq!(
+        releases[0].data["changes"]
+            .as_array()
+            .expect("changes")
+            .len(),
+        2
+    );
 }
