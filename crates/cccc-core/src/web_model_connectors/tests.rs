@@ -94,6 +94,63 @@ fn host_metadata_is_scoped_stable_and_strict() {
     assert!(!a.contains("host-A"));
 }
 #[test]
+fn host_identity_diagnostics_are_scoped_component_hashes_not_routing_keys() {
+    let (_temp, home, configured) = fixture();
+    let connector = &configured["connector"];
+    let metadata = json!({"openai/session":"synthetic-conversation",
+        "openai/subject":"synthetic-user","openai/organization":"synthetic-org",
+        "unrelated":"synthetic-private-metadata"});
+    let routing = session_key(connector, &metadata).expect("routing key");
+    assert_eq!(
+        routing,
+        hash(
+            &json!([
+                "cccc-web-model-session-v1",
+                connector["connector_id"],
+                connector["routing_salt"],
+                metadata["openai/session"],
+                metadata["openai/subject"],
+                metadata["openai/organization"]
+            ])
+            .to_string()
+        )
+    );
+    let fingerprints = host_identity_fingerprints(connector, &metadata).expect("fingerprints");
+    assert_eq!(fingerprints.as_object().expect("object").len(), 3);
+    for value in fingerprints.as_object().expect("object").values() {
+        assert_eq!(value.as_str().expect("hash").len(), 64);
+        assert_ne!(value, &json!(routing));
+    }
+    assert!(!fingerprints.to_string().contains("synthetic"));
+    let mut changed = metadata.clone();
+    changed["openai/organization"] = json!("synthetic-other-org");
+    let other = host_identity_fingerprints(connector, &changed).expect("changed organization");
+    assert_eq!(fingerprints["session"], other["session"]);
+    assert_eq!(fingerprints["subject"], other["subject"]);
+    assert_ne!(fingerprints["organization"], other["organization"]);
+    changed
+        .as_object_mut()
+        .expect("metadata")
+        .remove("openai/subject");
+    let absent = host_identity_fingerprints(connector, &changed).expect("missing optional field");
+    assert!(absent["subject"].is_null());
+    assert_eq!(absent["session"], fingerprints["session"]);
+    assert!(host_identity_fingerprints(connector, &json!({})).is_err());
+    assert!(host_identity_fingerprints(connector, &json!({"openai/session":7})).is_err());
+    let rotated = configure(&home).expect("credential rotation");
+    assert_eq!(
+        fingerprints,
+        host_identity_fingerprints(&rotated["connector"], &metadata).expect("rotation")
+    );
+    let mut other_connector = connector.clone();
+    other_connector["routing_salt"] = json!("synthetic-other-salt");
+    let other = host_identity_fingerprints(&other_connector, &metadata).expect("other connector");
+    for field in ["session", "subject", "organization"] {
+        assert_ne!(fingerprints[field], other[field]);
+    }
+}
+
+#[test]
 fn pairing_is_one_session_and_needs_explicit_confirmation() {
     let (_temp, home, c) = fixture();
     let id = c["connector"]["connector_id"].as_str().expect("id");

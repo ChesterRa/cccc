@@ -6,6 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.45]
+
+### Added
+
+- Native Webhook Routine delivery for Grok Bot Actors through the Grok subscription and CCCC remote MCP connector, with ordered admission, task-scoped credentials, exact completion and explicit interrupted-task recovery. Existing Grok Actors require Routine setup; browser delivery is removed.
+- Retry-safe task creation with caller-owned `client_request_id`, `parent_ref` and `blocked_by_refs`; optional per-task `rev`/`if_task_rev` checks for existing-task operations.
+- Optional Context task pagination and rendered-response byte limits, exact stored-recipient and timestamp filters for history search, and passive terminal output timestamps/quiet durations in Actor queries.
+- Opt-in repeat Mail reminders through `delivery.mail_notice_repeat_seconds`, defaulting to zero. Repeats preserve pending-delivery ownership and never replay the underlying work.
+
+### Changed
+
+- Align Web Model access controls and connection setup while retaining browser login, Dots event pairing and Grok Routine differences. Actor details focus on operation, editors on setup; Dots retains vertical progress. Enabled-Actor edits preserve drafts and apply only when the runtime lifecycle permits.
+- Show claimed Dots/Grok turns as awaiting completion and allow users to end an exact unfinished turn without first pausing. Retire its execution authority while preserving access and connection state, without stopping cloud work or replaying inputs.
+- Stream Inbox and startup-recovery ledger facts into compact projections, bound archive file handles, and batch selected gzip records by segment. Bound recoverable Web Group caches and retire unused terminal streams while protecting active output and drafts.
+- Clarify Direct/account invitation flows, local/remote Group identity, retrying connection errors and approval state.
+
+### Fixed
+
+- Protect ChatGPT drafts, generation and exact user/assistant receipt boundaries in the current page layout; distinguish current readiness from stale login/delivery status and provide a shared-login entry point.
+- Clear old Grok Routine drafts and credentials when switching Bots; acknowledge canonical Bot URLs after saving; prevent stale completion credentials from completing a newer task.
+- Distinguish paused Dots access from host-identity and Actor lifecycle failures, preserve paused access during setup, and add bounded salted identity diagnostics. Clarify current-turn credential handoff through host tool arguments without putting credentials in saved handlers or CCCC business code.
+- Persist new task reference targets before dependents across task-number digit widths and partial-write retries. Clear removed Actors' open-task assignment/handoff references and hot/warm working state while preserving progress and historical ownership; prevent foreman self-removal and record user-triggered succession.
+- Preserve Claude sessions across queued-input interruption and late replies, pause repeated automatic restoration failures, and retain resources until authoritative stop. Honor Codex command model selection, avoid replaying failed DeepSeek turns, expose safe Pi tool activity, and settle Pi length stops without final text as failed.
+- Avoid claim-table pruning for unrelated ledger events, blocking optional terminal observations, and command-substitution secrets in Pi activity summaries. Correct cloudflared multicall fixtures, Chrome CI selection and lazy Guidance test readiness.
+
 ## [0.4.44]
 
 ### Added

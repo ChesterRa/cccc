@@ -4,6 +4,11 @@ use crate::AppState;
 use cccc_core::web_model_connectors as store;
 use serde_json::{Value, json};
 
+// Native hosts may wrap MCP calls in JavaScript. Passing an argument there is
+// distinct from embedding authority in the business code CCCC will execute.
+pub(super) const CREDENTIAL_ARGUMENT_USAGE: &str = "Use credentials only to populate actor_token arguments to tools on this CCCC connector. Host JavaScript orchestration may pass a current value in that argument, including a literal when needed. Never put credentials in cccc_code_exec source/code, business code, files, commands, logs, saved instructions or user-facing messages.";
+pub(super) const NATIVE_EXECUTION_HANDOFF: &str = "Use only this run's successful claim result: actor_token, turn.turn_id and turn.event_ids. Prefer retaining these together in temporary host context and passing references. If a temporary reference is lost, use this same run's original claim tool result to fill tool arguments; do not claim again or recover credentials from prior runs, chat history or saved memory. Discard temporary context after confirmed completion.";
+
 pub(super) fn extend_catalog(response: &mut Value) {
     if let Some(tools) = response["result"]["tools"].as_array_mut() {
         tools.extend([
@@ -27,7 +32,11 @@ pub(super) fn extend_grok_catalog(response: &mut Value) {
     if let Some(tools) = response["result"]["tools"].as_array_mut() {
         for tool in tools.iter_mut() {
             tool["inputSchema"]["properties"]["actor_token"] = json!({"type":"string","minLength":43,"maxLength":43,
-                "description":"CCCC Actor credential from this Bot's current Webhook event for a claim. Native business tools require the NEW execution credential returned by that claim. Send it only to this CCCC connector; it selects the configured Group and Actor. Do not include it in replies, files or commands."});
+                "description":format!("CCCC Actor credential from this Bot's current Webhook event for a claim. Native business tools require the NEW execution credential returned by that claim. Send it only to this CCCC connector; it selects the configured Group and Actor. {CREDENTIAL_ARGUMENT_USAGE}")});
+            if tool["name"] == "cccc_runtime_wait_next_turn" {
+                let description = tool["description"].as_str().unwrap_or_default();
+                tool["description"] = json!(format!("{description} {NATIVE_EXECUTION_HANDOFF}"));
+            }
             if !tool["inputSchema"]["required"].is_array() {
                 tool["inputSchema"]["required"] = json!([]);
             }
@@ -155,7 +164,8 @@ pub(super) async fn handle(state: &AppState, connector: &Value, request: &Value)
                     Ok(status) => result(
                         request,
                         json!({"routing_mode":"mcp_events","state":status["phase"],
-                    "paired":status["paired"],"group_id":binding["group_id"],"actor_id":binding["actor_id"]}),
+                    "paired":status["paired"],"enabled":status["enabled"],"subscribed":status["subscribed"],
+                    "group_id":binding["group_id"],"actor_id":binding["actor_id"]}),
                         false,
                     ),
                     Err(_) => result(

@@ -62,15 +62,15 @@ CCCC installs with one command and needs no separately operated database, messag
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
 
-## 0.4.44 Highlights
+## 0.4.45 Highlights
 
-- **Follow selected senders:** check the Foreman, peers or user in one menu, combine with message types, and browse older matching messages with live receipts. Sending keeps your filters and links to hidden outgoing messages.
-- **Experimental Grok Voice:** use the host's Grok Build subscription login without a separate API key. Codex Voice gains more voices and language hints; both keep the Analyst runtime independent. Grok announces complete investigation results in order.
-- **Room for the work:** responsive terminal pages show up to four panes in a 2×2 grid, with compact headers, Actor avatars and shared dividers. Voice and task workspaces recover space while retaining their full controls.
-- **Repository-native instructions:** Context edits the active workspace's `AGENTS.md`; runtimes own its loading. Special `PROJECT.md` handling and `cccc_project_info` are removed, leaving existing files untouched.
-- **More reliable daily use:** playable video attachments, Group selection that survives refresh, settings that preserve drafts and complete accepted actions, cleaner Direct connections, and website installers that follow the latest stable release.
+- **Native Grok Bot delivery:** Webhook Routines and remote MCP replace browser delivery, with ordered task admission, scoped credentials and explicit recovery. Existing Grok Actors need Routine setup.
+- **Clearer Web Model setup:** consistent access and editing controls retain ChatGPT browser login, Dots event pairing and Grok Routine differences. ChatGPT recognizes the current page layout and offers a shared-login entry point.
+- **Large Groups with less repeated work:** compact Inbox projections, bounded archive handles, batched gzip reads and bounded Web caches preserve history and active output. Optional repeat Mail reminders default to off and never replay tasks.
+- **Safer task operations:** retry identities and references support task-tree creation; optional revision checks reject stale edits. Context pagination and byte limits bound requested answers, and Actor removal clears stale task references and working state.
+- **More predictable recovery:** improve Claude interruption/resume handling and stop diagnostics, honor Codex command model selection, avoid failed DeepSeek turn replay, and show safe Pi tool activity. Direct connection previews clarify Group identity and retrying errors.
 
-See the [0.4.44 release notes](docs/release/v0.4.44_release_notes.md) for upgrade steps and feature boundaries. Review old `PROJECT.md` instructions before merging them into `AGENTS.md`. Live voice remains experimental; Grok's reported pitch/timbre drift is not confirmed fixed. The global Secretary still shares model history across Groups.
+See the [0.4.45 release notes](docs/release/v0.4.45_release_notes.md) for upgrade steps and feature boundaries. Live voice remains experimental; Grok's reported pitch/timbre drift is not confirmed fixed. The global Secretary still shares model history across Groups. External-session hot attachment is not included.
 
 ## Quick Start
 

@@ -1,3 +1,5 @@
+#[path = "suite/actor_context_cleanup.rs"]
+mod actor_context_cleanup;
 #[path = "suite/admin_ops.rs"]
 mod admin_ops;
 #[path = "suite/assistant_voice_ops.rs"]

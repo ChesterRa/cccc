@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { AlertIcon, CheckIcon, ClockIcon, RefreshIcon } from "../Icons";
 import { DELIVERY_STEPS, deliveryProgress, type StepState } from "./nativeActorStatus";
 
@@ -50,14 +51,16 @@ export function NativeActorDelivery({
   provider,
   t,
   compact = false,
+  children,
 }: {
   phase: string;
   provider: "dots" | "grok";
   t: T;
   compact?: boolean;
+  children?: ReactNode;
 }) {
   const progress = deliveryProgress(phase);
-  if (!progress) return null;
+  if (!progress) return children ? <>{children}</> : null;
   const messages = `${provider}Actor`;
   return (
     <section
@@ -82,7 +85,6 @@ export function NativeActorDelivery({
                 ? progress.next
                 : "todo";
           const sending = stepState === "current" && phase === "delivering";
-          const spinning = stepState === "current" && (sending || phase === "working");
           const label =
             stepState === "error"
               ? t(`nativeActor.${phase}`)
@@ -113,7 +115,7 @@ export function NativeActorDelivery({
                   <CheckIcon className="size-3.5" />
                 ) : stepState === "error" ? (
                   <AlertIcon className="size-3.5" />
-                ) : spinning ? (
+                ) : sending ? (
                   <RefreshIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
                 ) : stepState === "current" ? (
                   <ClockIcon className="size-3.5" />
@@ -137,6 +139,17 @@ export function NativeActorDelivery({
           );
         })}
       </ol>
+      {children && (
+        <div
+          className={
+            compact
+              ? "mt-2 border-t border-[var(--glass-border-subtle)] pt-2"
+              : "border-t border-[var(--glass-border-subtle)] px-4 py-3"
+          }
+        >
+          {children}
+        </div>
+      )}
     </section>
   );
 }

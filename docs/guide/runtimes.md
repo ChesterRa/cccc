@@ -617,6 +617,20 @@ execution credential. Only that credential permits business tools and completion
 of the exact task. A successful webhook response acknowledges receipt, not task
 completion. Waiting never triggers browser delivery.
 
+Keep each successful claim's execution credential, turn ID and event IDs together
+in temporary host state for that run. Direct tool calls and host-side JavaScript
+may pass the credential in the CCCC tool's `actor_token` argument, including a
+literal argument value when necessary. It must not enter `cccc_code_exec`
+`source`/`code`, business code, files, commands, logs, saved instructions or
+user-facing messages. No particular host storage API is required.
+
+Losing a JavaScript variable does not expire the credential. The same execution
+may use its original claim tool result to fill tool arguments without claiming
+again. This does not permit using prior runs, chat history, subscription
+configuration or saved memory to recover credentials. If that original result
+is unavailable, report the block and explicitly resolve the unfinished turn
+before starting new work. Discard temporary context after confirmed completion.
+
 If an older task asks to read subscription configuration or refuses to save a
 credential in its handler, get the current setup instructions and update that
 same task with the credential-free handler. Updating CCCC cannot rewrite a task
@@ -631,9 +645,23 @@ fresh pairing. This resets only the Dot connection; the shared plugin and other
 ChatGPT Actors remain connected. CCCC never treats an arbitrary unpaired chat
 as the account's Dot.
 
+Pairing can finish while CCCC access is paused. The setup instructions check
+`cccc_connector_status` before the optional first claim. A paired, paused Dot
+reports that setup is complete and waits for you to resume access in Actor
+details. `paired_actor_stopped` means access is paused, not that pairing was
+lost. `paired_actor_identity_changed` means the Actor was replaced;
+`paired_actor_runtime_changed` means its runtime changed. Review the intended
+Actor before reconnecting in either of those cases.
+
 For failed setup or tool calls, open the instance's **ChatGPT Dots** settings
 and check **Shared plugin diagnostics**. It keeps ten recent subscription and
-task-tool outcomes with safe reason codes and setup hints. Successful status
+task-tool outcomes with safe reason codes and setup hints. Pairing and claim
+records may include expandable **Host identity fingerprints**: connector-scoped
+salted hashes for conversation, user and organization, with absent optional
+fields marked as not supplied. Compare a successful pairing and a rejected
+claim to see which component differs; fingerprints do not grant access and
+cannot prove why the provider changed a value. Raw identifiers, credentials and
+call arguments are not recorded. Successful status
 reads do not erase these records. The plugin also serves ordinary ChatGPT
 Actors, so check the failed tool and time against the conversation you tested.
 An old diagnostic is not the Actor's current phase, and a successful claim or
@@ -662,10 +690,16 @@ automatically. Disconnecting or rebinding revokes the old pairing and subscripti
 - **Notification failed before acceptance:** check the shared connector and
   native task, then pause and resume the Actor to notify unclaimed work again.
   This does not replay an accepted task.
-- **Unfinished delivery:** review the messages and the Dot's work, then choose
-  **Resolve unfinished delivery** for that exact turn. This reconciles its
-  existing receipt or closes the turn without rerunning it; it does not stop
-  ChatGPT's cloud work.
+- **Unfinished turn:** a claimed turn means CCCC is waiting for a completion
+  receipt; it does not prove the Dot is still processing it. If it cannot finish,
+  review the messages and the Dot's work, then choose **End this turn** in
+  **Task delivery** and confirm. Pausing CCCC access first is not required.
+  This revokes the old execution's authority and preserves an existing completion
+  or records cancellation without rerunning the task. It does not stop ChatGPT's
+  cloud work. Other queued messages may proceed while access is enabled. To run
+  the original task again, check for earlier side effects and send a new,
+  explicit message. Repeated claims, restarting or re-pairing do not resume an
+  abandoned execution.
 - **Disconnect or move the binding:** pause the connected Actor and finish or
   resolve its accepted turn before disconnecting it. Then connect the intended
   Actor. Disconnecting revokes the CCCC setup credential, but the native task

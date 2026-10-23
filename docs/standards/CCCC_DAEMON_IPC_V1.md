@@ -3470,7 +3470,7 @@ Args:
 
 Notes:
 - A foreman MAY remove a peer but MUST NOT remove itself; a peer MAY remove itself. User and system removal remain allowed. In CCCC, the first visible Actor is the foreman, so removing it promotes the next visible Actor, if any. The daemon emits `group.foreman_change` with `{from: actor_id, to: successor_id | null}` after the committed removal; the actor list remains the authority for role selection.
-- Planned and active tasks assigned to the removed Actor are released by clearing `assignee`, preserving their status and content. Finished and archived task ownership remains historical. The release is recorded as `context.sync`; failure of this post-commit cleanup is logged without undoing the Actor removal.
+- Planned and active tasks clear `assignee` and/or `handoff_to` when the corresponding field names the removed Actor, preserving their status, content and references to other Actors. Finished and archived task references remain historical. The removed Actor's existing `agent_state` is cleared through `agent_state.clear` (both `hot` and `warm`), so its working context does not carry into a later registration with the same ID. The cleanup is recorded as `context.sync`; failure of this post-commit cleanup is logged without undoing the Actor removal.
 - Removing an actor ends that actor id's current generation. Actor-generation-scoped browser target, bootstrap, delivery receipt, delivery preference, and persisted runner/turn state MUST be retired before the operation reports success. A shared provider login profile MAY remain.
 - Every Web Model binding and pending pairing belonging to the removed Actor generation MUST be retired before success. Shared connector credentials and other Actors remain intact. Re-adding the same Actor ID MUST NOT restore an earlier generation’s authority.
 
@@ -7775,6 +7775,25 @@ The ChatGPT remote MCP entrance advertises one fixed tool schema. Connector-leve
 
 Code-mode nested calls MUST recheck captured Actor generation and binding revision before executing. Request context fixes the caller (`by`) and Group; `cccc_actor.actor_id` remains the explicit management target and MUST NOT be replaced with the caller. Other identity-bearing tools continue to use the bound Actor. Command stdin/output and code cells MUST remain scoped to their original Actor/binding; re-pairing MUST NOT transfer access to retained work. Credential rotation invalidates the old credential without reassigning conversations; revocation and Actor/Group removal invalidate affected routes. These checks cannot undo an already executed command.
 
+Native execution credentials are tool-argument data. A native host SHOULD retain
+the successful claim result, including its `actor_token`, turn ID and exact
+event IDs, together in temporary state for that execution. Direct tool calls and
+host-side JavaScript orchestration MAY pass the current credential as the
+tool's `actor_token` argument, including a literal argument value when required
+by the host. This permission MUST NOT extend to `cccc_code_exec` `source`/`code`,
+business code, files, commands, logs, saved task instructions or user-facing
+messages. No host-specific persistence API is required.
+
+Losing a temporary variable reference does not invalidate its credential: the
+same execution MAY read its original successful claim tool result to populate
+tool arguments. It MUST NOT claim again to retrieve that value or recover a
+credential from another execution, chat history, subscription configuration or
+saved memory. Discard temporary context after confirmed completion. If the
+original result is unavailable, report the block and preserve unfinished work
+for explicit recovery; do not infer another identity, replay work or complete
+without the exact turn receipt. These data-flow rules do not change any
+admission, epoch, generation, binding-revision or task-ownership checks.
+
 
 ### Grok Bot native Webhook execution
 
@@ -7792,7 +7811,7 @@ Native execution capabilities and captured code-mode contexts MUST be revalidate
 
 The Web network worker owns only I/O. The daemon leases each attempt for 30 seconds and persists attempt outcomes; HTTP 200 records `delivered`, never business `accepted` or completion. Transient network/429/5xx failures retry the same wake at most three times with 2s/4s backoff. Other HTTP results are terminal for automatic delivery. A delivered wake is not automatically resent; after 120 seconds without a claim it projects `unclaimed`. Explicit retry reuses its identity/capability and cannot replay accepted work. Multiple Web workers share the daemon lease. Network sends are bounded to 15 seconds and independent Actors may progress concurrently.
 
-Actor stop/restart/new-session and Group pause/stop retire native epoch authority. Accepted unfinished work remains canonical, is shown as interrupted, and MUST NOT be automatically replayed. A stopped Actor's user may explicitly resolve its exact active turn/event IDs, preserving an already committed completion or appending cancelled completion. Claimed inputs with uncertain handoff are settled ambiguous. This is retirement of CCCC authority, not cancellation of provider cloud work. Disconnect, URL replacement, runtime/provider replacement, Actor/Group removal, copy/reset and connector revocation retire private configuration with the binding. Revocation MUST NOT hide an accepted unfinished turn: canonical ownership keeps the recovery view available even without the old connector. An unchanged native URL save retains the configuration.
+Actor stop/restart/new-session and Group pause/stop retire native epoch authority. Accepted unfinished work remains canonical, is shown as interrupted, and MUST NOT be automatically replayed. A user may explicitly resolve the exact active turn/event IDs while the Actor is enabled or paused, preserving an already committed completion or appending cancelled completion. Resolution retires old execution authority under the Group write permit and preserves the Actor's enabled state. Claimed inputs with uncertain handoff are settled ambiguous. This is retirement of CCCC authority, not cancellation of provider cloud work. Disconnect, URL replacement, runtime/provider replacement, Actor/Group removal, copy/reset and connector revocation retire private configuration with the binding. Revocation MUST NOT hide an accepted unfinished turn: canonical ownership keeps the recovery view available even without the old connector. An unchanged native URL save retains the configuration.
 
 | Private daemon operation | Inputs and behavior |
 | --- | --- |
@@ -7802,7 +7821,7 @@ Actor stop/restart/new-session and Group pause/stop retire native epoch authorit
 | `grok_webhook_next_delivery` | user-owned Web worker only; no selectors required; atomically lease one eligible wake, returning private URL/key/body/epoch/attempt for I/O. |
 | `grok_webhook_delivery_record` | user-owned Web worker only; connector/Group/Actor, event_id, epoch, attempt, http_status or null. Late/stale outcomes do not overwrite claims or newer epochs. |
 | `grok_work_claim` | bound Actor only; captured claim authority from the authenticated Web MCP port. Runtime wait MUST NOT bypass this path for any Grok Actor. |
-| `grok_work_resolve` | user only; stopped Actor, exact active turn_id and event_ids; no replay or provider cancellation. |
+| `grok_work_resolve` | user only; exact active turn_id and event_ids; retires old execution authority without changing enabled state, replay or provider cancellation. |
 
 Private Web `GET /api/v1/web-model/grok-webhook` returns the native state directly from the daemon. POST accepts `instructions`, `bind`, `disconnect`, `configure`, `retry`, or `resolve`. `bind` and `disconnect` call the existing provider-isolated binding operations; `configure` accepts only URL/key, with no delivery mode. Instructions are credential-free and describe creating/updating one native Routine, not a timed poll. The desktop Routine URL/key belong only in the private setup UI. The native viewer MUST NOT use browser-session status or open a browser surface. Setup/connection controls require the same private administrator access as Dots. Routine permissions, provider limits and provider-side pauses remain external constraints.
 
@@ -7836,6 +7855,16 @@ Pausing or resuming access MUST NOT invalidate an unexpired setup code for the
 same Actor binding. Pairing MAY finish while paused, but MUST NOT enable the
 Actor or restore task execution authority. Claims and execution credentials
 remain fenced by the current enabled state and execution epoch.
+For an already paired Dot, `cccc_connector_status` MUST expose `paired`,
+`enabled`, `subscribed` and its current phase as `state`. Successful setup MUST
+check this status before the optional initial claim. A paused Actor remains
+paired: report setup complete and wait for explicit access resumption; do not
+enable it, replace its binding or describe the pause as lost pairing.
+Tool admission MUST distinguish `paired_actor_stopped` (access paused),
+`paired_actor_identity_changed` (generation replaced),
+`paired_actor_runtime_changed` (runtime or runner changed), and
+`paired_actor_unavailable` (Actor removed). These reasons MUST NOT weaken any
+existing generation, enabled-state or binding checks.
 
 Subsequent Dots claims call `cccc_runtime_wait_next_turn` with `{}`. The already
 authenticated MCP entrance matches host `openai/session`, with optional subject
@@ -7868,6 +7897,13 @@ response bodies or credentials. This history belongs to the shared connector,
 including ordinary ChatGPT Actors, and MUST NOT replace a Dots Actor's current
 daemon-owned phase. Successful observational calls do not displace this history.
 A diagnostic write failure MUST NOT change an already accepted tool result.
+Pairing and claim records with valid ChatGPT host metadata MAY additionally
+contain `host_identity` fingerprints for `session`, `subject`, and
+`organization`; absent optional fields are null. Each fingerprint MUST be a
+domain-separated hash scoped by the connector ID and private routing salt,
+never a raw host identifier or the routing session key. These fingerprints are
+diagnostic only and MUST NOT select an Actor, replace a binding or authorize a
+claim. The ten-record bound and shared-connector scope remain unchanged.
 
 The claim captures the current binding, Actor generation, execution epoch and
 wake identity before waiting for the daemon's operation permit. The daemon MUST
@@ -7936,7 +7972,7 @@ connection, network receipt and resolution operations require `by="user"`.
 | `dots_events_next_delivery` | Claims a bounded sending lease for pending inbox work; returns private callback data and one persisted event identity. It never accepts a business turn. |
 | `dots_events_delivery_record` | Exact connector, epoch, event and attempt; records HTTP handoff or a safe error. Bounded retries reuse the same event; HTTP 410/413 are not retried. |
 | `dots_work_claim` | Captured binding, epoch and current wake identity; accepts at most one existing canonical turn and returns its private execution `actor_token` only after persistence. Idle, duplicate or competing claims expose no business body or execution credential and do not recover another execution. |
-| `dots_work_control` | User `action="resolve"` with exact canonical `turn_id` and `event_ids`; reconciles an existing terminal receipt, or cancels unfinished work without replay. It does not terminate ChatGPT cloud work. |
+| `dots_work_control` | User `action="resolve"` with exact canonical `turn_id` and `event_ids`; reconciles an existing terminal receipt, or cancels unfinished work without replay. Retires old execution authority while preserving the Actor's enabled state; does not terminate ChatGPT cloud work. |
 
 After a notification fails before any turn is accepted, explicit Actor stop/start
 invalidates the old event and permits a fresh notification of still-pending

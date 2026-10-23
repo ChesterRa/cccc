@@ -19,7 +19,7 @@ pub(super) fn record(
     connector_id: &str,
     activity: Activity<'_>,
 ) -> Result<(), ApiError> {
-    record_route(state, connector_id, None, activity)
+    record_route(state, connector_id, None, activity, None)
 }
 
 pub(super) fn record_route(
@@ -27,6 +27,7 @@ pub(super) fn record_route(
     connector_id: &str,
     route: Option<&Value>,
     activity: Activity<'_>,
+    host_identity: Option<&Value>,
 ) -> Result<(), ApiError> {
     web_model_connector_store::update_connector(state, connector_id, |connector| {
         let item = if let Some(route) = route {
@@ -53,12 +54,13 @@ pub(super) fn record_route(
             item["updated_at"] = json!(cccc_contracts::utc_now());
         }
         if retain_tool_call(&activity) {
-            append_call(
-                connector,
-                json!({"at":cccc_contracts::utc_now(),"method":"tools/call",
-                    "tool_name":activity.tool_name,"ok":activity.call_status == "ok",
-                    "reason":(!activity.error.is_empty()).then_some(activity.error)}),
-            );
+            let mut entry = json!({"at":cccc_contracts::utc_now(),"method":"tools/call",
+                "tool_name":activity.tool_name,"ok":activity.call_status == "ok",
+                "reason":(!activity.error.is_empty()).then_some(activity.error)});
+            if let Some(identity) = host_identity {
+                entry["host_identity"] = identity.clone();
+            }
+            append_call(connector, entry);
         }
     })
     .map(|_| ())
@@ -143,6 +145,10 @@ fn safe_reason(error: &Value) -> String {
                     | "pairing_not_received"
                     | "conversation_not_paired"
                     | "conversation_pairing_changed"
+                    | "paired_actor_stopped"
+                    | "paired_actor_identity_changed"
+                    | "paired_actor_runtime_changed"
+                    | "paired_actor_unavailable"
                     | "session_missing"
                     | "session_metadata_invalid"
                     | "binding_conflict"

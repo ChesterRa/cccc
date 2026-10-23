@@ -121,9 +121,7 @@ function Panel({
   }, []);
   const locked = readOnly || saving || Boolean(action) || !state || !isVisible;
   const unresolved = Boolean(state?.active_turn_id);
-  async function act(
-    kind: "instructions" | "configure" | "retry" | "resolve" | "disconnect" | "pause",
-  ) {
+  async function act(kind: "instructions" | "configure" | "retry" | "resolve" | "disconnect") {
     if (locked || !canAccessConnection || pending.current || !state) return;
     if (kind === "configure" && unresolved) return;
     pending.current = true;
@@ -132,24 +130,19 @@ function Panel({
     setError("");
     current.current.onBusyChange?.(true);
     try {
-      if (kind === "pause") {
-        const r = await api.stopActor(groupId, actorId);
-        if (!r.ok) throw new Error(r.error.message);
-      } else {
-        const r = await api.changeGrokWebhook(groupId, actorId, {
-          action: kind,
-          ...(kind === "configure" ? { url: url.trim(), key: key.trim() } : {}),
-          ...(kind === "resolve" && confirm ? confirm : {}),
-        });
-        if (!current.current.visible) return;
-        if (!r.ok)
-          throw new Error(
-            r.error.code === "delivery_unresolved" ? t("grokWebhook.waitForTask") : r.error.message,
-          );
-        if (kind === "instructions") {
-          setInstructions(r.result.instructions || "");
-          setCopied(false);
-        }
+      const r = await api.changeGrokWebhook(groupId, actorId, {
+        action: kind,
+        ...(kind === "configure" ? { url: url.trim(), key: key.trim() } : {}),
+        ...(kind === "resolve" && confirm ? confirm : {}),
+      });
+      if (!current.current.visible) return;
+      if (!r.ok)
+        throw new Error(
+          r.error.code === "delivery_unresolved" ? t("grokWebhook.waitForTask") : r.error.message,
+        );
+      if (kind === "instructions") {
+        setInstructions(r.result.instructions || "");
+        setCopied(false);
       }
       if (!current.current.visible) return;
       if (kind === "configure") {
@@ -215,46 +208,47 @@ function Panel({
       )}
     </>
   );
-  const recovery = !readOnly && state && (
-    <>
-      {setup && unresolved && state.enabled && (
-        <Button variant="outline" disabled={locked} onClick={() => void act("pause")}>
-          {t("actors:dotsPause")}
-        </Button>
-      )}
-      {!unresolved && ["failed", "unclaimed"].includes(phase) && (
-        <Button variant="outline" disabled={locked} onClick={() => void act("retry")}>
-          {t("grokWebhook.retry")}
-        </Button>
-      )}
-      {unresolved && !state.enabled && (
-        <div className="space-y-2">
-          <p className="text-xs text-[var(--color-text-muted)]">{t("grokWebhook.resolveHint")}</p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              disabled={locked}
-              onClick={() =>
-                confirm
-                  ? void act("resolve")
-                  : setConfirm({
-                      turn_id: state.active_turn_id!,
-                      event_ids: [...(state.active_event_ids || [])],
-                    })
-              }
-            >
-              {t(confirm ? "grokWebhook.confirmResolve" : "grokWebhook.resolve")}
-            </Button>
-            {confirm && (
-              <Button variant="ghost" onClick={() => setConfirm(null)}>
-                {t("common:cancel")}
+  const recovery = !readOnly &&
+    state &&
+    (unresolved || ["failed", "unclaimed"].includes(phase)) && (
+      <>
+        {!unresolved && ["failed", "unclaimed"].includes(phase) && (
+          <Button variant="outline" disabled={locked} onClick={() => void act("retry")}>
+            {t("grokWebhook.retry")}
+          </Button>
+        )}
+        {unresolved && (
+          <div className="space-y-2">
+            <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+              {t(confirm ? "nativeActor.endTurnConfirm" : "nativeActor.endTurnHint", {
+                provider: t("grokActor.title"),
+              })}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                disabled={locked}
+                onClick={() =>
+                  confirm
+                    ? void act("resolve")
+                    : setConfirm({
+                        turn_id: state.active_turn_id!,
+                        event_ids: [...(state.active_event_ids || [])],
+                      })
+                }
+              >
+                {t(confirm ? "nativeActor.confirmEndTurn" : "nativeActor.endTurn")}
               </Button>
-            )}
+              {confirm && (
+                <Button variant="ghost" onClick={() => setConfirm(null)}>
+                  {t("common:cancel")}
+                </Button>
+              )}
+            </div>
           </div>
-        </div>
-      )}
-    </>
-  );
+        )}
+      </>
+    );
   const summaries: Array<[string, string]> = [
     [
       t("grokActor.routine"),
@@ -316,8 +310,13 @@ function Panel({
       </div>
       {notices}
       {!setup && <NativeActorSummary cells={summaries} compact={compact} />}
-      {recovery}
-      {!setup && <NativeActorDelivery phase={phase} provider="grok" t={t} compact={compact} />}
+      {setup ? (
+        recovery
+      ) : (
+        <NativeActorDelivery phase={phase} provider="grok" t={t} compact={compact}>
+          {recovery}
+        </NativeActorDelivery>
+      )}
       {setup && !readOnly && (
         <div className={card + " shrink-0 divide-y divide-[var(--glass-border-subtle)]"}>
           <div className="space-y-2 px-4 py-3">

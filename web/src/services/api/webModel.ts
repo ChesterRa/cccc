@@ -22,7 +22,7 @@ export type WebModelConnector = {
   last_wait_status?: string;
   last_turn_id?: string;
   last_error?: string;
-  /** Shared connector diagnostics: event/tool outcomes and fixed reason codes only. */
+  /** Bounded outcomes, fixed reasons and optional salted host identity fingerprints. */
   events_log?: WebModelConnectorCall[];
   /** The Actor this connector's Dot is bound to, if any. */
   dots_actor?: { group_id: string; actor_id: string } | null;
@@ -57,6 +57,7 @@ export type WebModelConnectorCall = {
   tool_name?: string;
   ok: boolean;
   reason: string | null;
+  host_identity?: { session: string; subject: string | null; organization: string | null };
 };
 
 export type DotsActorState = {

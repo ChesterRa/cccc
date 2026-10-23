@@ -1863,6 +1863,7 @@
     "nativeStepCopy": "复制下方的设置说明。",
     "nativeStepPasteConfirm": "粘贴到你的 Dot，完成配对并保存原生事件任务。已有任务请更新，不要重复创建；聊天回复不代表任务已经保存。",
     "nativeStepObserve": "返回这里，CCCC 会自动检查配对和订阅。设置完成后，如果 CCCC 访问已暂停，请恢复访问。",
+    "pairedPaused": "此 Dot 已配对。CCCC 访问已暂停；完成原生事件任务的保存后，在 Actor 详情恢复访问即可接收任务，无需重新配对。",
     "adminSetup": "需要管理员将此 Actor 连接到 Dots 原生任务。",
     "adminStatus": "连接由管理员管理",
     "adminManaged": "此 Actor 的 Dots 连接和任务状态由管理员管理。",
@@ -1875,9 +1876,6 @@
     "copied": "已复制",
     "pauseBeforeChanging": "断开时会先暂停此 Actor 的 CCCC 访问，排队消息会保留。",
     "disconnectConfirm": "断开此 Actor 与 Dots 的连接？这会移除 CCCC 访问权限，原生任务和 ChatGPT 历史仍保留。",
-    "resolve": "结清未确认投递",
-    "resolveConfirm": "已经在 Dots 中检查此任务了吗？将未确认投递结清，不再发送。远端任务可能仍在运行。",
-    "reviewUnfinished": "结清前，请先在 Dots 中检查此投递。CCCC 不会自动重新发送。",
     "readFailed": "暂时无法更新状态，保留最后已知状态。",
     "actionFailed": "连接操作失败，请重试。",
     "copyFailed": "复制失败，请选中说明手动复制。",
@@ -1890,7 +1888,7 @@
       "ready": "可接收任务",
       "delivering": "正在发送事件",
       "delivered": "等待 Dot 领取任务",
-      "working": "Dot 正在处理任务",
+      "working": "已领取，等待完成回执",
       "interrupted": "投递未确认 · 请检查",
       "failed": "投递失败 · 请检查",
       "stopped": "CCCC 访问已暂停",
@@ -1933,7 +1931,7 @@
       "notifyHint": "消息已保存，等待 CCCC 通知 Dot。",
       "sendingHint": "CCCC 正在向 ChatGPT 发送事件。",
       "waitingHint": "ChatGPT 已接收事件，等待 Dot 领取本轮任务。",
-      "workingHint": "Dot 已领取本轮任务，正在等待处理结果。"
+      "workingHint": "Dot 已领取此任务，CCCC 正在等待完成回执。"
     },
     "settings": {
       "instructions": "设置说明",
@@ -1989,9 +1987,6 @@
     "runtimeHint": "CCCC 每次领取并完成一个任务。暂停访问会撤销 CCCC 权限，但不会停止 Grok 已在云端运行的工作。",
     "deliveryError": "Webhook 投递需要处理（HTTP {{status}}）。请检查桌面端 Routine、Key、额度及 CCCC 连接器。",
     "retry": "重试唤醒",
-    "resolveHint": "请先检查 Bot。结束此未完成任务后不会重新投递其消息，后续排队工作可以继续。这不会取消 Grok 云端工作。",
-    "resolve": "结束未完成任务",
-    "confirmResolve": "确认结束",
     "phase": {
       "ready": "已就绪，等待任务",
       "stopped": "CCCC 访问已暂停",
@@ -1999,7 +1994,7 @@
       "delivering": "正在发送唤醒",
       "delivered": "唤醒已接受，等待领取",
       "unclaimed": "唤醒已接受但未领取，请检查 Routine 和连接器",
-      "working": "正在处理已领取任务",
+      "working": "已领取，等待完成回执",
       "interrupted": "存在未完成任务，请先检查",
       "failed": "唤醒失败，排队消息已保留",
       "unconfigured": "需要完成原生设置"
@@ -2016,12 +2011,24 @@
     "steps": {
       "notify": "排队 / 发送",
       "sending": "正在发送通知",
-      "working": "处理中",
+      "working": "等待完成回执",
       "completed": "已完成"
     },
-    "connectionBusy": "有未完成任务正在使用此连接。请等任务完成或明确结清后再应用连接变更。"
+    "connectionBusy": "有未完成回合正在使用此连接。请等待完成或明确结束此回合，再应用连接变更。",
+    "endTurn": "结束此回合",
+    "confirmEndTurn": "确认结束",
+    "endTurnHint": "若此回合无法完成，请先在 {{provider}} 中检查已执行的操作，再结束此回合。这不会停止云端任务或重新投递原消息。",
+    "endTurnConfirm": "已在 {{provider}} 中检查此任务了吗？结束后将撤销本回合的 CCCC 访问权限；若尚无完成回执，将记录为取消。云端任务可能仍在运行。原消息不会重新投递；CCCC 访问启用时，其他排队任务可以继续执行。"
   },
   "webModelDiagnostics": {
+    "identity": {
+      "title": "宿主身份指纹",
+      "hint": "用于比对此连接器内的配对与领取调用。这些是加盐哈希，不是原始身份或凭据。",
+      "session": "会话",
+      "subject": "用户",
+      "organization": "组织",
+      "absent": "宿主未提供"
+    },
     "refresh": "刷新",
     "noCalls": "还没有调用记录。",
     "callOk": "调用成功",
@@ -2036,6 +2043,6 @@
       "callFailed": "重试前在供应商应用中查看具体失败调用；仅凭此记录不能判断任务是否已经完成。"
     },
     "title": "连接器诊断",
-    "hint": "此共享连接器最近 10 条订阅与任务工具调用结果，最新记录在前，可能涉及多个 Actor。仅保存原因码，不含凭据或调用参数。"
+    "hint": "此共享连接器最近 10 条订阅与任务工具调用结果，最新记录在前，可能涉及多个 Actor。记录固定原因码和可选的加盐身份指纹，不含凭据或调用参数。"
   }
 }

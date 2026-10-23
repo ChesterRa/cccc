@@ -208,6 +208,19 @@ async fn run_connector_mcp(
         "ok"
     };
     let (wait_status, turn_id, error) = activity::details(&tool_name, &response);
+    let host_identity = if connector["provider"] == "chatgpt_web"
+        && matches!(
+            tool_name.as_str(),
+            "cccc_pair" | "cccc_runtime_wait_next_turn"
+        ) {
+        cccc_core::web_model_connectors::host_identity_fingerprints(
+            connector,
+            &request["params"]["_meta"],
+        )
+        .ok()
+    } else {
+        None
+    };
     // A diagnostic write must not turn an accepted pairing or claim into a failure.
     let _ = activity::record_route(
         state,
@@ -221,6 +234,7 @@ async fn run_connector_mcp(
             turn_id: &turn_id,
             error: &error,
         },
+        host_identity.as_ref(),
     );
     if modern {
         response = super::web_model_dots::protocol::complete(response);

@@ -113,14 +113,24 @@ pub(super) fn resolve(
         .actors
         .iter()
         .find(|a| Some(a.id.as_str()) == binding["actor_id"].as_str())
-        .ok_or_else(|| ApiError::forbidden("paired Actor is unavailable"))?;
+        .ok_or_else(|| {
+            ApiError::forbidden("paired_actor_unavailable: The paired Actor no longer exists")
+        })?;
+    if binding["generation"] != cccc_core::actors::generation_identity(actor) {
+        return Err(ApiError::forbidden(
+            "paired_actor_identity_changed: The paired Actor was replaced; explicitly reconnect the intended Actor",
+        ));
+    }
     if actor.runtime.web_model_provider() != connector["provider"].as_str()
         || actor.runner != RunnerKind::Headless
-        || !actor.enabled
-        || binding["generation"] != cccc_core::actors::generation_identity(actor)
     {
         return Err(ApiError::forbidden(
-            "paired Actor is stopped or its identity changed",
+            "paired_actor_runtime_changed: The paired Actor's runtime changed; review its connection settings",
+        ));
+    }
+    if !actor.enabled {
+        return Err(ApiError::forbidden(
+            "paired_actor_stopped: CCCC access is paused. Pairing is retained; resume access in CCCC to receive work. Do not pair again",
         ));
     }
     if request["params"]["arguments"]

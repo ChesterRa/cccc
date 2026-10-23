@@ -118,12 +118,6 @@ pub(in crate::ops) fn completed(
 pub(super) fn resolve(home: &HomeLayout, r: &DaemonRequest) -> OpResult {
     user(r)?;
     let (g, a) = group_actor(home, r)?;
-    if a.enabled {
-        return Err(OpError::new(
-            "actor_must_be_stopped",
-            "Stop CCCC access before resolving unfinished work; this does not stop Grok cloud work",
-        ));
-    }
     let runtime = super::super::runtime_state::actor_state(home, &g.group_id, &a.id)?;
     let turn = required_arg(r, "turn_id")?;
     let ids = r
@@ -135,6 +129,8 @@ pub(super) fn resolve(home: &HomeLayout, r: &DaemonRequest) -> OpResult {
     if runtime["active_turn_id"] != turn || runtime["active_event_ids"] != json!(ids) {
         return Err(OpError::new("stale_turn", "The unfinished turn changed"));
     }
+    // The Group write permit serializes resolution with claim/completion. Retire
+    // this execution's authority without requiring a separate Actor stop/start.
     private::invalidate(home, &g.group_id, &a.id).map_err(state_error)?;
     let ids = ids
         .iter()

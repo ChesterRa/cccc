@@ -239,39 +239,56 @@ it("does not apply an old Actor's action result to a new Actor", async () => {
   await act(async () => finish({ ok: true, result: { instructions: "old handler" } }));
   expect(host.querySelector("textarea")).toBeNull();
 });
-it.each([true, false])(
-  "retains exact unfinished task IDs across confirmation and polling (setup=%s)",
-  async (setup) => {
+it.each([
+  { setup: true, enabled: false },
+  { setup: false, enabled: false },
+  { setup: true, enabled: true },
+  { setup: false, enabled: true },
+])(
+  "retains exact unfinished task IDs across confirmation and polling (%j)",
+  async ({ setup, enabled }) => {
     mocks.load.mockResolvedValue({
       ok: true,
       result: {
         ...state,
-        phase: "interrupted",
+        enabled,
+        phase: enabled ? "working" : "interrupted",
         active_turn_id: "older",
         active_event_ids: ["old"],
       },
     });
     await render({ setup });
-    await act(async () => button("grokWebhook.resolve").click());
+    expect(mocks.change).not.toHaveBeenCalled();
+    if (!setup)
+      expect(
+        host
+          .querySelector('section[aria-label="nativeActor.deliveryTitle"]')
+          ?.contains(button("nativeActor.endTurn")),
+      ).toBe(true);
+    await act(async () => button("nativeActor.endTurn").click());
+    expect(mocks.change).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("nativeActor.endTurnConfirm");
     mocks.load.mockResolvedValue({
       ok: true,
       result: {
         ...state,
-        phase: "interrupted",
+        enabled,
+        phase: enabled ? "working" : "interrupted",
         active_turn_id: "newer",
         active_event_ids: ["new"],
       },
     });
     await tick();
-    await act(async () => button("grokWebhook.confirmResolve").click());
+    await act(async () => button("nativeActor.confirmEndTurn").click());
     expect(mocks.change).toHaveBeenCalledExactlyOnceWith("g", "bot", {
       action: "resolve",
       turn_id: "older",
       event_ids: ["old"],
     });
+    expect(mocks.stop).not.toHaveBeenCalled();
   },
 );
-it("can pause CCCC access from the editor after the connector was revoked", async () => {
+it("keeps explicit turn resolution reachable after connector revocation without requiring pause", async () => {
   mocks.load.mockResolvedValue({
     ok: true,
     result: {
@@ -280,11 +297,18 @@ it("can pause CCCC access from the editor after the connector was revoked", asyn
       enabled: true,
       phase: "interrupted",
       active_turn_id: "task",
+      active_event_ids: ["input"],
     },
   });
   await render();
-  await act(async () => button("actors:dotsPause").click());
-  expect(mocks.stop).toHaveBeenCalledExactlyOnceWith("g", "bot");
+  await act(async () => button("nativeActor.endTurn").click());
+  await act(async () => button("nativeActor.confirmEndTurn").click());
+  expect(mocks.change).toHaveBeenCalledExactlyOnceWith("g", "bot", {
+    action: "resolve",
+    turn_id: "task",
+    event_ids: ["input"],
+  });
+  expect(mocks.stop).not.toHaveBeenCalled();
 });
 it("shows wake acceptance separately from confirmed completion", async () => {
   mocks.load.mockResolvedValue({
@@ -389,7 +413,7 @@ it.each([
     expect(host.querySelector('li[data-step="completed"]')?.getAttribute("data-state")).toBe(
       "todo",
     );
-    expect(Boolean(current.querySelector(".animate-spin"))).toBe(phase === "working");
+    expect(Boolean(current.querySelector(".animate-spin"))).toBe(false);
     expect(mocks.change).not.toHaveBeenCalled();
   },
 );
@@ -429,7 +453,7 @@ it.each(["ready", "delivered", "working", "interrupted"])(
     expect(host.querySelectorAll("input[type=password]")).toHaveLength(2);
     if (unfinished) {
       expect(host.textContent).toContain("grokWebhook.waitForTask");
-      expect(button("grokWebhook.resolve")).toBeDefined();
+      expect(button("nativeActor.endTurn")).toBeDefined();
     }
     expect(mocks.change).not.toHaveBeenCalled();
   },

@@ -625,16 +625,16 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if let Err(error) = runtime_session::native_acp::retire_all(home, &group_id, &actor_id) {
         tracing::warn!(%error,%group_id,%actor_id,"post-commit native ACP receipt cleanup failed");
     }
-    if let Err(error) = release_open_tasks(home, &group_id, &actor_id, &event.by) {
-        tracing::warn!(%error, %group_id, %actor_id, "post-commit task release failed");
+    if let Err(error) = retire_actor_context(home, &group_id, &actor_id, &event.by) {
+        tracing::warn!(%error, %group_id, %actor_id, "post-commit Actor context cleanup failed");
     }
     object(json!({"actor_id": actor_id, "event": event}))
 }
 
-/// Active and planned tasks assigned to a removed Actor return to the board
-/// unassigned; their notes and every finished task stay as they are. One
-/// `context.sync` event records the release.
-fn release_open_tasks(
+/// Retire open task references and working state belonging to a removed Actor.
+/// Task progress, content, other Actors and finished ownership stay unchanged.
+/// One `context.sync` event records the cleanup.
+fn retire_actor_context(
     home: &HomeLayout,
     group_id: &str,
     actor_id: &str,
@@ -644,11 +644,13 @@ fn release_open_tasks(
     // The version check retries when the board changes between read and write.
     for _ in 0..3 {
         let document = contexts.load(group_id)?;
-        let operations = document
+        let mut operations = document
             .tasks
             .iter()
             .filter(|task| {
-                task.get("assignee").and_then(Value::as_str) == Some(actor_id)
+                ["assignee", "handoff_to"]
+                    .iter()
+                    .any(|field| task.get(*field).and_then(Value::as_str) == Some(actor_id))
                     && matches!(
                         task.get("status")
                             .and_then(Value::as_str)
@@ -656,15 +658,26 @@ fn release_open_tasks(
                         "planned" | "active"
                     )
             })
-            .filter_map(|task| task.get("id").and_then(Value::as_str))
-            .map(|task_id| {
-                Map::from_iter([
+            .filter_map(|task| {
+                let task_id = task.get("id").and_then(Value::as_str)?;
+                let mut operation = Map::from_iter([
                     ("op".into(), json!("task.update")),
                     ("task_id".into(), json!(task_id)),
-                    ("assignee".into(), Value::Null),
-                ])
+                ]);
+                for field in ["assignee", "handoff_to"] {
+                    if task.get(field).and_then(Value::as_str) == Some(actor_id) {
+                        operation.insert(field.into(), Value::Null);
+                    }
+                }
+                Some(operation)
             })
             .collect::<Vec<_>>();
+        if document.agent_states.contains_key(actor_id) {
+            operations.push(Map::from_iter([
+                ("op".into(), json!("agent_state.clear")),
+                ("actor_id".into(), json!(actor_id)),
+            ]));
+        }
         if operations.is_empty() {
             return Ok(());
         }
@@ -686,7 +699,7 @@ fn release_open_tasks(
         );
     }
     Err(std::io::Error::other(
-        "tasks kept changing while releasing them",
+        "context kept changing during Actor retirement",
     ))
 }
 

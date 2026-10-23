@@ -94,16 +94,23 @@ async fn change(State(s): State<AppState>, Json(body): Json<Value>) -> ApiResult
     call(&s, op, args).await?;
     Ok(success(snapshot(&s, &g, &a).await?))
 }
-fn instructions() -> &'static str {
-    r#"In this selected Grok Bot, create or update one native Webhook Routine named CCCC. Use the existing connected CCCC MCP connector. By pasting these instructions I approve creating/updating this Routine, claiming its event-triggered CCCC turns, replying through CCCC and completing them. Respect Grok's normal permission flow and report blocked calls. Do not create a schedule or another Bot. Save exactly the handler below, with no literal credentials. Verify the saved Routine instructions; a chat confirmation alone is not proof. Do not run the handler during setup. If native tools or CCCC permissions are unavailable, report incomplete setup.
+fn instructions() -> String {
+    format!(
+        r#"In this selected Grok Bot, create or update one native Webhook Routine named CCCC. Use the existing connected CCCC MCP connector. By pasting these instructions I approve creating/updating this Routine, claiming its event-triggered CCCC turns, replying through CCCC and completing them. Respect Grok's normal permission flow and report blocked calls. Do not create a schedule or another Bot. Save exactly the handler below, with no literal credentials. Verify the saved Routine instructions; a chat confirmation alone is not proof. Do not run the handler during setup. If native tools or CCCC permissions are unavailable, report incomplete setup.
 
 BEGIN CCCC GROK HANDLER
 When a cccc.grok.ready Webhook event arrives, use only the actor_token in that event to call cccc_runtime_wait_next_turn once. Omit Group/Actor selectors and transport. This event credential authorizes a claim only.
-If the result is work_available, follow its turn.system_prompt and instructions. Use only the NEW execution actor_token returned by this claim for all CCCC business tools, including cccc_code_exec. Process the messages in the supplied order, reply through CCCC, then call cccc_runtime_complete_turn with the exact turn_id, event_ids and execution actor_token. A rejected or failed completion is not success: report it.
-If idle, stopped or turn_in_progress, exit. On a rejected call, report it and stop. Do not poll, retry business inputs, recover another task, or use credentials from chat history, memory or another event. Keep credentials only in tool arguments; never put them in messages, files, commands, code or saved instructions.
+If the result is work_available:
+{handoff}
+Follow its turn.system_prompt and instructions. Use only the NEW execution actor_token returned by this claim for all CCCC business tools, including cccc_code_exec. Process the messages in the supplied order, reply through CCCC, then call cccc_runtime_complete_turn with the exact turn_id, event_ids and execution actor_token. A rejected or failed completion is not success: report it.
+If idle, stopped or turn_in_progress, exit. On a rejected call, report it and stop. Do not poll, retry business inputs, recover another task, or use credentials from another event or run.
+{credential_usage}
 END CCCC GROK HANDLER
 
-After saving, open this Routine in the Grok desktop app. Copy its POST to URL and Key into this Actor's CCCC native Webhook settings, not into this chat. If Details/Routines navigation fails, open the named chip on the Created routine message. Keep the Routine until the user explicitly disables it. Stopping access in CCCC revokes execution authority but does not stop cloud work already running in Grok."#
+After saving, open this Routine in the Grok desktop app. Copy its POST to URL and Key into this Actor's CCCC native Webhook settings, not into this chat. If Details/Routines navigation fails, open the named chip on the Created routine message. Keep the Routine until the user explicitly disables it. Stopping access in CCCC revokes execution authority but does not stop cloud work already running in Grok."#,
+        handoff = session::NATIVE_EXECUTION_HANDOFF,
+        credential_usage = session::CREDENTIAL_ARGUMENT_USAGE
+    )
 }
 pub(super) async fn claim(s: &AppState, r: &Value, b: &Value) -> Value {
     let mut args = r["params"]["arguments"]

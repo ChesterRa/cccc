@@ -210,6 +210,9 @@ async fn native_http_claim_reply_complete_and_next_wake_use_scoped_authority() {
         .as_str()
         .expect("isolated Grok fixture");
     assert!(handler.contains("BEGIN CCCC GROK HANDLER"));
+    assert!(handler.contains("Host JavaScript orchestration"));
+    assert!(handler.contains("this same run's original claim tool result"));
+    assert!(handler.contains("cccc_code_exec source/code"));
     assert!(!handler.contains("synthetic-provider"));
     let (http,configured)=f.api(json!({"action":"configure","url":"https://api2.cursor.sh/automations/webhook/fixture","key":"synthetic-provider"})).await;
     assert_eq!(http, StatusCode::OK);

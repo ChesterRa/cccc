@@ -18,6 +18,9 @@ function reasonHint(reason: string | null): string {
     case "dots_binding_changed":
     case "dots_binding_unavailable":
     case "dots_pairing_changed":
+    case "paired_actor_unavailable":
+    case "paired_actor_identity_changed":
+    case "paired_actor_runtime_changed":
       return "bindingChanged";
     case "conversation_not_paired":
     case "conversation_pairing_changed":
@@ -28,6 +31,7 @@ function reasonHint(reason: string | null): string {
     case "dots_execution_token_required":
       return "executionToken";
     case "dots_actor_stopped":
+    case "paired_actor_stopped":
       return "actorStopped";
     case "rpc_-32601":
     case "rpc_-32602":
@@ -91,6 +95,24 @@ export function WebModelConnectorDiagnostics({
                 <p className="w-full text-xs text-[var(--color-text-secondary)]">
                   {t(`webModelDiagnostics.reasons.${reasonHint(call.reason)}`)}
                 </p>
+              )}
+              {call.host_identity && (
+                <details className="w-full text-xs text-[var(--color-text-secondary)]">
+                  <summary className="cursor-pointer">
+                    {t("webModelDiagnostics.identity.title")}
+                  </summary>
+                  <p className="mt-2">{t("webModelDiagnostics.identity.hint")}</p>
+                  <dl className="mt-2 grid gap-2">
+                    {(["session", "subject", "organization"] as const).map((field) => (
+                      <div key={field}>
+                        <dt>{t(`webModelDiagnostics.identity.${field}`)}</dt>
+                        <dd className="break-all font-mono">
+                          {call.host_identity?.[field] ?? t("webModelDiagnostics.identity.absent")}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </details>
               )}
             </li>
           ))}

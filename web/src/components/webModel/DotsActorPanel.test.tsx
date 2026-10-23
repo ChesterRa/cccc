@@ -88,6 +88,22 @@ const render = async (props: Partial<React.ComponentProps<typeof DotsActorPanel>
 };
 const button = (text: string) =>
   [...host.querySelectorAll("button")].find((b) => b.textContent === text)!;
+it("distinguishes a paired paused Dot from an incomplete pairing without enabling it", async () => {
+  mocks.load.mockResolvedValue(
+    state({ connected: true, paired: true, enabled: false, phase: "stopped" }),
+  );
+  await render({ setup: true });
+  expect(host.textContent).toContain("dotsActor.pairedPaused");
+  expect(host.textContent).toContain("dotsActor.status.paired");
+  expect(mocks.update).not.toHaveBeenCalled();
+  expect(mocks.stop).not.toHaveBeenCalled();
+  mocks.load.mockResolvedValue(
+    state({ connected: true, paired: true, enabled: true, phase: "waiting_subscription" }),
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(2_000));
+  expect(host.textContent).not.toContain("dotsActor.pairedPaused");
+});
+
 it("keeps Dot pairing setup visible when the native task subscribed before pairing", async () => {
   mocks.load.mockResolvedValue({
     ok: true,
@@ -258,9 +274,9 @@ it("waits for pause before disconnecting the same Actor and preserves a newly di
   });
   await act(async () => finish({ ok: true, result: {} }));
   expect(mocks.update).toHaveBeenCalledExactlyOnceWith("g_a", "dot", "disconnect", undefined);
-  expect(host.textContent).toContain("dotsActor.reviewUnfinished");
+  expect(host.textContent).toContain("nativeActor.connectionBusy");
   expect(button("dotsActor.disconnect").disabled).toBe(true);
-  expect(button("dotsActor.resolve")).toBeDefined();
+  expect(button("nativeActor.endTurn")).toBeDefined();
 });
 it("requires review confirmation and sends only the exact unfinished turn", async () => {
   mocks.load.mockResolvedValue(
@@ -268,12 +284,47 @@ it("requires review confirmation and sends only the exact unfinished turn", asyn
   );
   await render();
   vi.mocked(confirm).mockReturnValue(false);
-  await act(async () => button("dotsActor.resolve").click());
+  await act(async () => button("nativeActor.endTurn").click());
   expect(mocks.update).not.toHaveBeenCalled();
   vi.mocked(confirm).mockReturnValue(true);
-  await act(async () => button("dotsActor.resolve").click());
+  await act(async () => button("nativeActor.endTurn").click());
   expect(mocks.update).toHaveBeenCalledWith("g_a", "dot", "resolve", "turn_exact");
 });
+it.each([
+  { setup: false, compact: false },
+  { setup: false, compact: true },
+  { setup: true, compact: false },
+])("can explicitly end an enabled claimed turn without pausing (%j)", async (props) => {
+  mocks.load.mockResolvedValue(
+    state({
+      enabled: true,
+      connected: true,
+      subscribed: true,
+      phase: "working",
+      active_turn_id: "stuck-turn",
+    }),
+  );
+  await render({ ...props, onExpand: vi.fn() });
+  const end = button("nativeActor.endTurn");
+  expect(end).toBeDefined();
+  if (!props.setup)
+    expect(
+      host.querySelector('section[aria-label="nativeActor.deliveryTitle"]')?.contains(end),
+    ).toBe(true);
+  expect(mocks.update).not.toHaveBeenCalled();
+  vi.mocked(confirm).mockReturnValue(false);
+  await act(async () => end.click());
+  expect(mocks.update).not.toHaveBeenCalled();
+  vi.mocked(confirm).mockReturnValue(true);
+  mocks.load.mockResolvedValue(
+    state({ enabled: true, connected: true, subscribed: true, phase: "ready" }),
+  );
+  await act(async () => end.click());
+  expect(mocks.update).toHaveBeenCalledExactlyOnceWith("g_a", "dot", "resolve", "stuck-turn");
+  expect(mocks.stop).not.toHaveBeenCalled();
+  expect(button("nativeActor.endTurn")).toBeUndefined();
+});
+
 it("publishes slow reads without overlapping and never treats callback acceptance as completion", async () => {
   let finish!: (value: ReturnType<typeof state>) => void;
   mocks.load.mockImplementation(
@@ -369,7 +420,7 @@ it("localizes known delivery errors and shows only a concise completion summary"
   expect(host.textContent).toContain("dotsActor.errors.callbackRejected");
   expect(host.textContent).toContain("dotsActor.lastExecution.done");
   expect(host.textContent).toContain("dotsActor.notifyAgain");
-  expect(button("dotsActor.resolve")).toBeUndefined();
+  expect(button("nativeActor.endTurn")).toBeUndefined();
   expect(host.textContent).not.toContain("private-turn");
   expect(host.textContent).not.toContain("private-event");
   expect(mocks.update).not.toHaveBeenCalled();
@@ -630,7 +681,8 @@ it.each([
     expect(host.textContent).toContain(`dotsActor.phases.${phase}`);
     expect(host.textContent).toContain("dotsActor.subscriptionExpired");
     expect(host.textContent).not.toContain("dotsActor.adminSetup");
-    if (phase === "interrupted") expect(button("dotsActor.resolve").disabled).toBe(false);
+    if (!readOnly) expect(button("nativeActor.endTurn").disabled).toBe(false);
+    else expect(button("nativeActor.endTurn")).toBeUndefined();
     if (!readOnly) {
       expect(button("dotsActor.getInstructions")).toBeUndefined();
       await render({ setup: true });
@@ -641,12 +693,12 @@ it.each([
   },
 );
 
-it("shows the actual current stage and spins only while sending or working", async () => {
+it("shows the current stage and spins only while sending notifications", async () => {
   const cases = [
     ["pending", "notify", false],
     ["delivering", "notify", true],
     ["delivered", "waiting", false],
-    ["working", "working", true],
+    ["working", "working", false],
     ["interrupted", "working", false],
     ["failed", "notify", false],
   ] as const;
@@ -685,7 +737,7 @@ it.each(["partial", "cancelled", "failed"] as const)(
       state({
         connected: true,
         subscribed: true,
-        phase: "stopped",
+        phase: "waiting_subscription",
         last_execution: {
           turn_id: "historical-turn",
           event_ids: ["historical-source"],
@@ -997,7 +1049,7 @@ it.each(["ready", "delivered", "working", "interrupted"] as const)(
     expect(host.textContent).not.toContain(`dotsActor.phases.${phase}`);
     expect(button("dotsActor.getInstructions").disabled).toBe(unfinished);
     if (phase === "working") expect(host.textContent).toContain("nativeActor.connectionBusy");
-    if (phase === "interrupted") expect(button("dotsActor.resolve")).toBeDefined();
+    if (unfinished) expect(button("nativeActor.endTurn")).toBeDefined();
     expect(mocks.update).not.toHaveBeenCalled();
   },
 );
@@ -1055,7 +1107,7 @@ it("keeps compact setup and interrupted task recovery reachable without automati
   );
   await act(async () => vi.advanceTimersByTimeAsync(2000));
   expect(host.textContent).toContain("dotsActor.errors.executionInterrupted");
-  expect(button("dotsActor.resolve")).not.toBeUndefined();
-  await act(async () => button("dotsActor.resolve").click());
+  expect(button("nativeActor.endTurn")).not.toBeUndefined();
+  await act(async () => button("nativeActor.endTurn").click());
   expect(mocks.update).toHaveBeenCalledWith("g_a", "dot", "resolve", "unfinished");
 });

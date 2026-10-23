@@ -532,6 +532,7 @@ async fn stopped_deleted_replaced_and_revoked_actors_lose_access() {
     f.bind("alpha", "chat-a");
     f.bind("beta", "chat-b");
     let groups = GroupStore::new(f.home.clone()).expect("valid test fixture");
+    let original = groups.load(&f.group).expect("group").actors[0].clone();
     for mutation in ["stop", "generation", "runtime", "remove"] {
         groups
             .mutate(&f.group, |g| {
@@ -540,6 +541,7 @@ async fn stopped_deleted_replaced_and_revoked_actors_lose_access() {
                     .iter_mut()
                     .find(|a| a.id == "alpha")
                     .expect("valid test fixture");
+                *a = original.clone();
                 a.enabled = true;
                 match mutation {
                     "stop" => a.enabled = false,
@@ -559,6 +561,18 @@ async fn stopped_deleted_replaced_and_revoked_actors_lose_access() {
             .await;
         assert_eq!(
             response["result"]["isError"], true,
+            "{mutation}: {response}"
+        );
+        let reason = match mutation {
+            "stop" => "paired_actor_stopped",
+            "generation" => "paired_actor_identity_changed",
+            "runtime" => "paired_actor_runtime_changed",
+            _ => "paired_actor_unavailable",
+        };
+        assert!(
+            response["result"]["structuredContent"]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains(reason)),
             "{mutation}: {response}"
         );
         assert_eq!(

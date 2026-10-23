@@ -41,7 +41,7 @@ const requestErrorKeys: Record<string, string> = {
   connector_unavailable: "dotsActor.errors.connectorRequired",
   dots_binding_conflict: "dotsActor.errors.bindingConflict",
   actor_must_be_stopped: "dotsActor.pauseBeforeChanging",
-  delivery_unresolved: "dotsActor.reviewUnfinished",
+  delivery_unresolved: "nativeActor.connectionBusy",
   dots_state_unavailable: "dotsActor.readFailed",
 };
 
@@ -143,7 +143,11 @@ function ActorPanel({
     if (readOnly || !canAccessConnection || saving || action || pluginCreating || !state) return;
     const turnId = nextAction === "resolve" ? state.active_turn_id || undefined : undefined;
     if (nextAction !== "resolve" && state.active_turn_id) return;
-    if (nextAction === "resolve" && (!turnId || !window.confirm(t("dotsActor.resolveConfirm"))))
+    if (
+      nextAction === "resolve" &&
+      (!turnId ||
+        !window.confirm(t("nativeActor.endTurnConfirm", { provider: t("dotsActor.title") })))
+    )
       return;
     const pauseFirst = nextAction === "disconnect" && state.enabled;
     if (
@@ -197,7 +201,6 @@ function ActorPanel({
   const locked = readOnly || saving || Boolean(action) || pluginCreating || !state;
   const unresolved = Boolean(state?.active_turn_id);
   const hasDelivery = Boolean((state?.paired && state.subscribed) || unresolved);
-  const canResolve = unresolved && (state?.phase === "failed" || state?.phase === "interrupted");
   const dotsLink = (
     <a
       href="https://chatgpt.com/dots/home"
@@ -335,27 +338,23 @@ function ActorPanel({
       ) : null}
     </>
   );
-  const recovery = (
-    <>
-      {canResolve && !readOnly ? (
-        <div
-          className={`${compact ? "border-y border-[var(--glass-border-subtle)] py-2" : `${dotsCard} px-4 py-3`} flex flex-wrap items-center justify-between gap-3`}
+  const recovery =
+    unresolved && !readOnly ? (
+      <div className="flex flex-col items-start gap-2 @lg/nativeActor:flex-row @lg/nativeActor:items-center @lg/nativeActor:justify-between @lg/nativeActor:gap-3">
+        <p className="min-w-0 flex-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
+          {t("nativeActor.endTurnHint", { provider: t("dotsActor.title") })}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          className="shrink-0"
+          disabled={locked}
+          onClick={() => void update("resolve")}
         >
-          <p className="text-xs text-[var(--color-text-muted)]">
-            {t("dotsActor.reviewUnfinished")}
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={locked}
-            onClick={() => void update("resolve")}
-          >
-            {t("dotsActor.resolve")}
-          </Button>
-        </div>
-      ) : null}
-    </>
-  );
+          {t("nativeActor.endTurn")}
+        </Button>
+      </div>
+    ) : null;
   if (compact && onExpand)
     return (
       <section
@@ -378,9 +377,10 @@ function ActorPanel({
         </div>
         {notices}
         <NativeActorSummary cells={summaries} compact />
-        {recovery}
         {hasDelivery && state ? (
-          <NativeActorDelivery phase={state.phase} provider="dots" t={t} compact />
+          <NativeActorDelivery phase={state.phase} provider="dots" t={t} compact>
+            {recovery}
+          </NativeActorDelivery>
         ) : (
           <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
             {t(readOnly ? "dotsActor.adminSetup" : "dotsActor.nativeStepObserve")}
@@ -447,15 +447,22 @@ function ActorPanel({
         </div>
       </div>
       {notices}
+      {setup && state?.paired && !enabled && !unresolved && (
+        <p role="status" className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          {t("dotsActor.pairedPaused")}
+        </p>
+      )}
       {!setup && <NativeActorSummary cells={summaries} />}
-      {recovery}
-      {setup && unresolved && !canResolve && (
+      {setup && recovery}
+      {setup && unresolved && (
         <p role="status" className="text-xs text-[var(--color-text-muted)]">
           {t("nativeActor.connectionBusy")}
         </p>
       )}
       {!setup && state && hasDelivery && (
-        <NativeActorDelivery phase={state.phase} provider="dots" t={t} />
+        <NativeActorDelivery phase={state.phase} provider="dots" t={t}>
+          {recovery}
+        </NativeActorDelivery>
       )}
       {readOnly && state && !hasDelivery ? (
         <p className="text-xs text-[var(--color-text-secondary)]">{t("dotsActor.adminSetup")}</p>

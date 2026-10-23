@@ -1879,6 +1879,7 @@
     "nativeStepCopy": "Copy the setup instructions below.",
     "nativeStepPasteConfirm": "Paste into your Dot to complete pairing and save the native event task. Update the existing task rather than creating another; a chat reply alone does not save it.",
     "nativeStepObserve": "Return here. CCCC checks both pairing and subscription automatically. If CCCC access is paused, resume it after setup is complete.",
+    "pairedPaused": "This Dot is paired. CCCC access is paused; finish saving its event task, then resume access from Actor details to receive work. Pairing again is unnecessary.",
     "adminSetup": "An administrator needs to connect this Actor to a native Dots task.",
     "adminStatus": "Administrator-managed connection",
     "adminManaged": "An administrator manages this Actor’s Dots connection and task status.",
@@ -1891,9 +1892,6 @@
     "copied": "Copied",
     "pauseBeforeChanging": "Disconnecting first pauses this Actor’s CCCC access. Queued messages are kept.",
     "disconnectConfirm": "Disconnect this Actor from Dots? This removes CCCC access. The native task and ChatGPT history remain.",
-    "resolve": "Resolve unfinished delivery",
-    "resolveConfirm": "Have you reviewed the task in Dots? Mark this unfinished delivery as resolved without sending it again. A remote task may still be running.",
-    "reviewUnfinished": "Review this delivery in Dots before resolving it. CCCC will not resend it automatically.",
     "readFailed": "Status could not be updated. The last known state is retained.",
     "actionFailed": "The connection action failed. Try again.",
     "copyFailed": "Copy failed. Select and copy the instructions instead.",
@@ -1907,7 +1905,7 @@
       "ready": "Ready for tasks",
       "delivering": "Sending event",
       "delivered": "Waiting for the Dot to claim the task",
-      "working": "Dot is processing the task",
+      "working": "Claimed · awaiting completion",
       "interrupted": "Unfinished delivery · review required",
       "failed": "Delivery failed · review required",
       "stopped": "CCCC access paused",
@@ -1949,7 +1947,7 @@
       "notifyHint": "The message is saved and waiting for CCCC to notify the Dot.",
       "sendingHint": "CCCC is sending the event to ChatGPT.",
       "waitingHint": "ChatGPT accepted the event. Waiting for the Dot to claim this task.",
-      "workingHint": "The Dot has claimed this task. Waiting for its result."
+      "workingHint": "The Dot has claimed this task. CCCC is waiting for its completion receipt."
     },
     "settings": {
       "instructions": "Setup instructions",
@@ -2005,9 +2003,6 @@
     "runtimeHint": "CCCC claims and completes one turn at a time. Pausing access revokes CCCC authority; it does not stop cloud work already running in Grok.",
     "deliveryError": "Webhook delivery needs attention (HTTP {{status}}). Check the desktop Routine, key, limits and CCCC connector.",
     "retry": "Retry wake",
-    "resolveHint": "Review the Bot first. Resolving retires the unfinished turn without replaying its messages; later queued work can continue. This does not cancel Grok cloud work.",
-    "resolve": "Resolve unfinished turn",
-    "confirmResolve": "Confirm resolution",
     "phase": {
       "ready": "Ready for tasks",
       "stopped": "CCCC access paused",
@@ -2015,7 +2010,7 @@
       "delivering": "Sending wake",
       "delivered": "Wake accepted · waiting for claim",
       "unclaimed": "Wake accepted but not claimed · check Routine and connector",
-      "working": "Processing a claimed turn",
+      "working": "Claimed · awaiting completion",
       "interrupted": "Unfinished turn · review before continuing",
       "failed": "Wake failed · queued messages retained",
       "unconfigured": "Setup required"
@@ -2032,12 +2027,24 @@
     "steps": {
       "notify": "Queued / Sending",
       "sending": "Sending notification",
-      "working": "Working",
+      "working": "Awaiting completion",
       "completed": "Completed"
     },
-    "connectionBusy": "An unfinished task is using this connection. Connection changes must wait until it completes or is explicitly resolved."
+    "connectionBusy": "An unfinished turn is using this connection. Wait for it to finish, or explicitly end that turn before applying connection changes.",
+    "endTurn": "End this turn",
+    "confirmEndTurn": "Confirm end",
+    "endTurnHint": "If this turn cannot finish, review its work in {{provider}} before ending it. Ending the turn does not stop cloud work or resend its messages.",
+    "endTurnConfirm": "Have you reviewed this task in {{provider}}? Ending this turn revokes its CCCC access and records cancellation if no completion was recorded. Cloud work may still be running. Its messages will not be resent; other queued work may continue while CCCC access is enabled."
   },
   "webModelDiagnostics": {
+    "identity": {
+      "title": "Host identity fingerprints",
+      "hint": "Compare pairing and claim calls within this connector. These are salted hashes, not raw identities or credentials.",
+      "session": "Conversation",
+      "subject": "User",
+      "organization": "Organization",
+      "absent": "Not supplied by host"
+    },
     "refresh": "Refresh",
     "noCalls": "No recorded calls yet.",
     "callOk": "Call succeeded",
@@ -2052,6 +2059,6 @@
       "callFailed": "Check the failed call in the provider app before retrying; this record alone does not establish whether a turn completed."
     },
     "title": "Connector diagnostics",
-    "hint": "The latest 10 subscription and task-tool outcomes for this shared connector, newest first. These may involve multiple Actors. Only reason codes are kept, without credentials or call arguments."
+    "hint": "The latest 10 subscription and task-tool outcomes for this shared connector, newest first. These may involve multiple Actors. Records include fixed reasons and optional salted identity fingerprints, without credentials or call arguments."
   }
 }

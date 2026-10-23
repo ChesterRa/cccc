@@ -207,7 +207,12 @@ impl NoticeState {
             }
             _ => {}
         }
-        self.prune_mail_claims(group);
+        // Only notice/delivery facts need append-time pruning. Expiry is also
+        // reconciled in due(), without rescanning claims for every unrelated
+        // event in a cold history replay.
+        if matches!(event.kind.as_str(), "system.notify" | "runtime.delivery") {
+            self.prune_mail_claims(group);
+        }
     }
 
     fn prune_mail_claims(&mut self, group: &GroupDoc) {
