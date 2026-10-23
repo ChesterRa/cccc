@@ -16,6 +16,9 @@ pub enum ActorAction {
         actor_id: String,
         #[arg(long, default_value = "")]
         title: String,
+        /// The model this Actor runs, as a label (launching does not read it).
+        #[arg(long, default_value = "")]
+        model: String,
         #[arg(long, default_value = "codex")]
         runtime: String,
         #[arg(long, default_value = "default", value_parser = ["default", "acp"])]
@@ -43,6 +46,9 @@ pub enum ActorAction {
         group_id: Option<String>,
         #[arg(long)]
         title: Option<String>,
+        /// The model label; an empty value clears it.
+        #[arg(long)]
+        model: Option<String>,
         #[arg(long)]
         runtime: Option<String>,
         #[arg(long, value_parser = ["default", "acp"])]
