@@ -375,15 +375,9 @@ fn mail_notice_repeat_daemon_stops_after_actor_generation_change() {
 }
 
 #[test]
-fn mail_notice_repeat_daemon_stops_at_configured_max() {
+fn mail_notice_repeat_daemon_continues_while_the_same_mail_is_unread() {
     for replaced in [false, true] {
         let replay = Replay::captured(3610, Some(1));
-        let settings = request(
-            &replay.home,
-            "group_settings_update",
-            json!({"group_id":replay.group_id,"by":"user","patch":{"mail_notice_repeat_max":2}}),
-        );
-        assert_eq!(settings["settings"]["mail_notice_repeat_max"], 2);
         if replaced {
             // Keep a warm cache across removal/re-addition of the same Actor ID.
             replay.repeat();
@@ -402,16 +396,14 @@ fn mail_notice_repeat_daemon_stops_at_configured_max() {
         } else {
             replay.repeat(); // Initial notice for the two-Mail pending batch.
         }
-        for _ in 0..2 {
+        for _ in 0..4 {
             std::thread::sleep(Duration::from_millis(1200));
             let before = replay.notices().len();
             replay.tick();
             let notices = replay.notices();
             assert_eq!(notices.len(), before + 1);
-            replay.accepted(&notices.last().expect("bounded repeat").id);
+            replay.accepted(&notices.last().expect("repeat while unread").id);
         }
-        std::thread::sleep(Duration::from_millis(1200));
-        replay.expect_no_repeat();
     }
 }
 
@@ -427,7 +419,7 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
         request(
             &replay.home,
             "group_settings_update",
-            json!({"group_id":replay.group_id,"by":"user","patch":{"mail_notice_repeat_seconds":1,"mail_notice_repeat_max":1}}),
+            json!({"group_id":replay.group_id,"by":"user","patch":{"mail_notice_repeat_seconds":1}}),
         );
         // Bind the new settings to a warm projection before the lifecycle op,
         // without issuing a notice while its one-second claim may expire.
@@ -454,7 +446,7 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
         assert_eq!(
             notices.len(),
             before + 1,
-            "{op} preserves pending Mail and its repeat budget"
+            "{op} preserves pending Mail and repeat eligibility"
         );
         let notice = notices.last().expect("repeat after runtime lifecycle");
         assert_eq!(
@@ -463,7 +455,15 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
         );
         replay.accepted(&notice.id);
         std::thread::sleep(Duration::from_millis(1200));
-        replay.expect_no_repeat(); // A reset budget would allow another notice.
+        let before = replay.notices().len();
+        replay.tick();
+        let repeated = replay.notices();
+        assert_eq!(
+            repeated.len(),
+            before + 1,
+            "unread Mail remains eligible after {op}"
+        );
+        replay.accepted(&repeated.last().expect("subsequent repeat").id);
     }
 }
 

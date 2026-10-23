@@ -53,7 +53,7 @@ pub use command_session::CommandSession;
 pub use executable::{prepare_pty_command, resolve_command_executable, resolve_executable_in_path};
 pub use history_access::{
     active_history_replay, active_history_since, bracketed_paste_enabled, clear, history,
-    history_since, retained_history, retained_history_tail,
+    history_since, last_output, retained_history, retained_history_tail,
 };
 pub use manager::{
     reap, resize, start, start_with_history, status, stop, stop_all, stop_if_started_at, submit,
@@ -64,6 +64,7 @@ pub use output::HistoryPage;
 pub use process_tree::protect_owned_process_groups;
 pub use process_tree::{OwnedProcessTree, force_terminate_owned, owned_process_recovery_pending};
 pub use session::{LaunchSpec, SessionStatus};
+pub use session_history::OutputObservation;
 pub use terminal_attach::{TerminalAttachMode, TerminalAttachment, TerminalInput, TerminalOutput};
 pub use terminal_initial_output::{TerminalInitialOutput, TerminalInitialOutputKind};
 pub use terminal_manager::{

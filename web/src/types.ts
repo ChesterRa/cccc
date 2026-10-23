@@ -330,7 +330,7 @@ export type Actor = {
   has_custom_avatar?: boolean;
   enabled?: boolean;
   running?: boolean; // Actual process running status
-  idle_seconds?: number | null; // Seconds since last PTY output (null if not running/headless)
+  idle_seconds?: number | null; // Legacy idle duration, independent of terminal output activity.
   effective_working_state?: "stopped" | "idle" | "working" | "waiting" | "stuck" | string;
   effective_working_reason?: string;
   effective_working_updated_at?: string | null;

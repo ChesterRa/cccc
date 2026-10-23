@@ -432,8 +432,6 @@ fn due_unread_notices(
 ) -> io::Result<Option<(std::path::PathBuf, Vec<Event>)>> {
     let mail_after = delivery_timing_value(group, "mail_notice_after_seconds", 1_800);
     let mail_idle_after = delivery_timing_value(group, "mail_notice_idle_after_seconds", 60);
-    let mail_repeat = delivery_timing_value(group, "mail_notice_repeat_seconds", 0);
-    let mail_repeat_max = delivery_timing_value(group, "mail_notice_repeat_max", 3);
     if pass == UnreadPass::IdleMailNow && mail_idle_after <= 0 {
         return Ok(None);
     }
@@ -460,8 +458,6 @@ fn due_unread_notices(
         &eligible,
         MailDelays {
             busy: mail_after,
-            repeat: mail_repeat,
-            repeat_max: mail_repeat_max,
             idle: mail_idle_after,
             idle_actor_ids,
             now: pass == UnreadPass::IdleMailNow,
@@ -480,8 +476,6 @@ fn due_unread_notices(
                 &cursors,
                 MailDelays {
                     busy: mail_after,
-                    repeat: mail_repeat,
-                    repeat_max: mail_repeat_max,
                     idle: mail_idle_after,
                     idle_actor_ids,
                     now: pass == UnreadPass::IdleMailNow,
@@ -531,8 +525,6 @@ fn issue_notices(
 /// pass that runs as Mail is written.
 pub(crate) struct MailDelays<'a> {
     pub(crate) busy: i64,
-    pub(crate) repeat: i64,
-    pub(crate) repeat_max: i64,
     idle: i64,
     idle_actor_ids: &'a HashSet<String>,
     now: bool,
@@ -568,6 +560,7 @@ fn unread_notices(
     let mut notices = Vec::new();
     let generations = inbox::actor_generation_positions(events);
     let now = Utc::now().timestamp();
+    let mail_repeat = delivery_timing_value(group, "mail_notice_repeat_seconds", 0);
     let resume_at = events.iter().rev().find_map(|event| {
         let resumed = event.kind == "group.start"
             || (event.kind == "group.set_state"
@@ -771,31 +764,22 @@ fn unread_notices(
                 .iter()
                 .map(|event| event.id.clone())
                 .collect::<HashSet<_>>();
-            let pending_batch = mail_pending
-                .iter()
-                .map(|event| event.id.clone())
-                .collect::<Vec<_>>();
-            // Count the current exact batch from its most recent initial notice.
-            // Expired/withdrawn claims still consume the finite attempt budget.
-            let issued = mail_claims
-                .get(&(actor.id.clone(), actor.created_at.clone()))
-                .into_iter()
-                .flatten()
-                .rev()
-                .take_while(|(_, _, sources)| *sources == pending_batch)
-                .count();
-            let exhausted =
-                mail_delays.repeat > 0 && issued as u128 > mail_delays.repeat_max as u128;
             let active_claim = mail_claims
                 .get(&(actor.id.clone(), actor.created_at.clone()))
                 .into_iter()
                 .flatten()
                 .rev()
                 .filter(|(notice_id, claimed_at, _)| {
-                    (mail_delays.repeat <= 0 || now - claimed_at < mail_delays.repeat)
-                        && deliveries
-                            .get(&(notice_id.clone(), actor.id.clone()))
-                            .is_none_or(|(state, _, _)| state != "withdrawn")
+                    match deliveries
+                        .get(&(notice_id.clone(), actor.id.clone()))
+                        .map(|(state, _, _)| state.as_str())
+                    {
+                        Some("withdrawn") => false,
+                        Some("accepted" | "ambiguous") => {
+                            mail_repeat <= 0 || now - claimed_at < mail_repeat
+                        }
+                        _ => true,
+                    }
                 })
                 .any(|(_, _, claimed)| {
                     let claimed = claimed
@@ -824,7 +808,7 @@ fn unread_notices(
             let first_at = actor_resumes
                 .get(&actor.id)
                 .map_or(first_at, |resume| first_at.max(*resume));
-            if !active_claim && !exhausted && now - first_at >= mail_after {
+            if !active_claim && now - first_at >= mail_after {
                 let mut event = notice_event(
                     group,
                     actor,

@@ -104,25 +104,41 @@ impl Replay {
         }
     }
 
-    fn set_max(&mut self, max: i64) {
+    fn set_repeat(&mut self, repeat: i64) {
         self.group
             .extra
             .get_mut("delivery")
-            .expect("delivery settings")["mail_notice_repeat_max"] = json!(max);
+            .expect("delivery settings")["mail_notice_repeat_seconds"] = json!(repeat);
     }
 
-    fn issue_expired(&self, mut notice: Event) {
-        // Replay the production-issued output at the fixture's translated
-        // issue time, advancing one interval without a wall-clock sleep.
-        notice.ts = (Utc::now() - chrono::Duration::seconds(1)).to_rfc3339();
-        ledger::append(
-            &self
-                .store
-                .ledger_path(&self.group.group_id)
-                .expect("ledger"),
-            &notice,
-        )
-        .expect("issue replayed output");
+    fn issue_accepted_expired(&self, mut notice: Event) {
+        // These are explicit replay actions, not additional captured history.
+        // Advance a successful handoff beyond the interval without sleeping.
+        notice.ts = (Utc::now() - chrono::Duration::seconds(2)).to_rfc3339();
+        let path = self
+            .store
+            .ledger_path(&self.group.group_id)
+            .expect("ledger");
+        ledger::append(&path, &notice).expect("issue replayed output");
+        let created = &self.group.actors[0].created_at;
+        let delivery_id = format!(
+            "fixture:{}:recipient:{created}:{}",
+            self.group.group_id, notice.id
+        );
+        for state in ["claimed", "accepted"] {
+            let mut delivery = Event::new("runtime.delivery", &self.group.group_id);
+            delivery.by = "system".into();
+            delivery.ts = notice.ts.clone();
+            delivery.data = json!({
+                "actor_id":"recipient", "actor_created_at":created,
+                "source_event_id":notice.id, "delivery_id":delivery_id,
+                "transport":"pty", "state":state
+            })
+            .as_object()
+            .expect("controlled handoff")
+            .clone();
+            ledger::append(&path, &delivery).expect("replay handoff");
+        }
     }
 
     fn due(&self) -> Vec<Event> {
@@ -203,36 +219,16 @@ fn mail_notice_repeat_warm_projection_does_not_replay_history() {
 }
 
 #[test]
-fn mail_notice_repeat_stops_at_exact_batch_max_and_resets_for_later_mail() {
-    for max in [0, 1, 3] {
-        // A real prefix ending at accepted delivery, before the captured later Mail.
-        let mut replay = Replay::captured_records(10, Some(1), false);
-        replay.set_max(max);
-        for _ in 0..max {
-            let due = replay.due();
-            assert_eq!(due.len(), 1, "repeat budget {max}");
-            replay.issue_expired(due.into_iter().next().expect("repeat"));
-        }
-        assert!(
-            replay.due().is_empty(),
-            "exactly {max} repeats, excluding the captured initial notice"
-        );
-        assert!(
-            replay.due().is_empty(),
-            "pruning must not reset the counter"
-        );
-    }
+fn mail_notice_repeat_continues_after_multiple_successful_handoffs() {
     let replay = Replay::captured_records(10, Some(1), false);
-    for _ in 0..3 {
+    for _ in 0..8 {
         let due = replay.due();
-        assert_eq!(due.len(), 1, "default max is three");
-        replay.issue_expired(due.into_iter().next().expect("repeat"));
+        assert_eq!(due.len(), 1, "unread Mail remains notice-eligible");
+        replay.issue_accepted_expired(due.into_iter().next().expect("repeat"));
     }
-    assert!(replay.due().is_empty());
-    // The real later Mail changes the pending batch after its original
-    // one-Mail batch has used the max=0 budget (initial notice only).
-    let mut later = Replay::captured(3610, Some(3600));
-    later.set_max(0);
+    assert_eq!(replay.due().len(), 1);
+
+    let later = Replay::captured(3610, Some(3600));
     let due = later.due();
     assert_eq!(due.len(), 1, "a changed batch has an initial notice");
     assert_eq!(due[0].data["context"]["count"], 2);
@@ -241,7 +237,6 @@ fn mail_notice_repeat_stops_at_exact_batch_max_and_resets_for_later_mail() {
 #[test]
 fn mail_notice_repeat_prunes_claims_across_many_intervals_and_rebuilds() {
     let mut replay = Replay::captured_records(10, Some(1), false);
-    replay.set_max(64);
     for _ in 0..64 {
         let due = replay.due();
         assert_eq!(due.len(), 1);
@@ -250,18 +245,26 @@ fn mail_notice_repeat_prunes_claims_across_many_intervals_and_rebuilds() {
                 .expect("claim count")
                 <= 1
         );
-        replay.issue_expired(due.into_iter().next().expect("repeat"));
+        replay.issue_accepted_expired(due.into_iter().next().expect("repeat"));
     }
-    assert!(replay.due().is_empty());
+    assert_eq!(replay.due().len(), 1);
     assert!(
         inbox::projection::retained_mail_notice_claims(&replay.home, &replay.group)
             .expect("claim count")
             <= 1
     );
-    // A setting change rebuilds the production projection from real issued
-    // records; neither the finite budget nor pruned claim state can reset.
-    replay.set_max(63);
-    assert!(replay.due().is_empty(), "rebuild preserves exhaustion");
+    // Disabling repeats must reconstruct one-shot ownership after pruning.
+    replay.set_repeat(0);
+    assert!(
+        replay.due().is_empty(),
+        "historical handoffs still hold the batch"
+    );
+    replay.set_repeat(1);
+    assert_eq!(
+        replay.due().len(),
+        1,
+        "re-enabling restores repeat eligibility"
+    );
     assert!(
         inbox::projection::retained_mail_notice_claims(&replay.home, &replay.group)
             .expect("claim count")
@@ -294,10 +297,10 @@ fn mail_notice_repeat_captured_later_boundary_read_closes_earlier_mail() {
 }
 
 #[test]
-fn mail_notice_repeat_generation_change_keeps_new_batch_cap() {
+fn mail_notice_repeat_generation_change_refreshes_the_cached_group() {
     let mut replay = Replay::captured_records(10, Some(1), false);
-    replay.set_max(0);
-    assert!(replay.due().is_empty(), "warm the exhausted old generation");
+    assert_eq!(replay.due().len(), 1, "warm the old generation");
+    let old_generation = replay.group.actors[0].created_at.clone();
 
     // Exercise the core projection boundary without intervening daemon response
     // queries that can rebuild its cache while the Actor list is empty.
@@ -306,7 +309,7 @@ fn mail_notice_repeat_generation_change_keeps_new_batch_cap() {
         .expect("new Actor generation");
     // Inspect the exact cached Group consumed by append-time pruning before
     // any ledger mutation can independently trigger a snapshot rebuild.
-    assert_ne!(actor.created_at, "2026-09-22T19:18:35.569390Z");
+    assert_ne!(actor.created_at, old_generation);
     assert_eq!(
         inbox::projection::cached_actor_generation(&replay.home, &replay.group, "recipient")
             .expect("current projection metadata"),
@@ -338,9 +341,15 @@ fn mail_notice_repeat_generation_change_keeps_new_batch_cap() {
         initial[0].data["context"]["source_event_ids"],
         json!([mail.id])
     );
-    replay.issue_expired(initial.into_iter().next().expect("new initial notice"));
-    assert!(
-        replay.due().is_empty(),
-        "pruning must preserve the new generation's max=0 budget"
+    replay.issue_accepted_expired(initial.into_iter().next().expect("new initial notice"));
+    let repeated = replay.due();
+    assert_eq!(
+        repeated.len(),
+        1,
+        "the new generation can repeat after handoff"
+    );
+    assert_eq!(
+        repeated[0].data["context"]["source_event_ids"],
+        json!([mail.id])
     );
 }

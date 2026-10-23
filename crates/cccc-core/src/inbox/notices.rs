@@ -1,17 +1,11 @@
 //! Payload-free ordered notice facts, separate from the fixed inbox page.
-//! Repeat claims are pruned once expired or withdrawn. A separate current-batch
-//! counter preserves the finite repeat budget across pruning and rebuilds.
+//! Opt-in repeats prune expired handed-off claims and withdrawn notices.
+//! Pending handoffs retain their original delivery ownership.
 //! Other historical relations still grow with history; no payload is retained.
 use super::*;
 use std::collections::HashSet;
 
 type MailClaims = HashMap<(String, String), Vec<MailClaim>>;
-
-#[derive(Default)]
-struct MailBatch {
-    sources: Vec<String>,
-    issued: u64,
-}
 
 struct MailClaim {
     id: String,
@@ -33,7 +27,6 @@ pub(crate) struct NoticeState {
     deliveries: HashMap<(String, String), (String, String, usize)>,
     actor_resumes: HashMap<String, String>,
     mail_claims: MailClaims,
-    mail_batches: HashMap<(String, String), MailBatch>,
     reply_claims: HashSet<(String, String, String)>,
     resume_at: Option<String>,
 }
@@ -197,19 +190,14 @@ impl NoticeState {
                     .unwrap_or_default();
                 let ids = Self::reference_ids(event);
                 if kind == "mail_notice" {
-                    let key = (actor.to_owned(), created.to_owned());
-                    let batch = self.mail_batches.entry(key.clone()).or_default();
-                    if batch.sources == ids {
-                        batch.issued = batch.issued.saturating_add(1);
-                    } else {
-                        batch.sources.clone_from(&ids);
-                        batch.issued = 1;
-                    }
-                    self.mail_claims.entry(key).or_default().push(MailClaim {
-                        id: event.id.clone(),
-                        ts: event.ts.clone(),
-                        sources: ids,
-                    });
+                    self.mail_claims
+                        .entry((actor.to_owned(), created.to_owned()))
+                        .or_default()
+                        .push(MailClaim {
+                            id: event.id.clone(),
+                            ts: event.ts.clone(),
+                            sources: ids,
+                        });
                 } else {
                     self.reply_claims.extend(
                         ids.into_iter()
@@ -236,19 +224,19 @@ impl NoticeState {
                 .any(|a| a.id == *actor && a.created_at == *created);
             claims.retain(|claim| {
                 current
-                    && now - crate::automation::timestamp(&claim.ts, now) < repeat
-                    && self
+                    && match self
                         .deliveries
                         .get(&(claim.id.clone(), actor.clone()))
-                        .is_none_or(|v| v.0 != "withdrawn")
+                        .map(|value| value.0.as_str())
+                    {
+                        Some("withdrawn") => false,
+                        Some("accepted" | "ambiguous") => {
+                            now - crate::automation::timestamp(&claim.ts, now) < repeat
+                        }
+                        _ => true,
+                    }
             });
             !claims.is_empty()
-        });
-        self.mail_batches.retain(|(actor, created), _| {
-            group
-                .actors
-                .iter()
-                .any(|a| a.id == *actor && a.created_at == *created)
         });
     }
 
@@ -362,18 +350,6 @@ impl NoticeState {
                 }
             }
             if mail_delays.busy > 0 && !mail.is_empty() {
-                let pending_batch = mail
-                    .iter()
-                    .map(|source| source.id.clone())
-                    .collect::<Vec<_>>();
-                let exhausted = mail_delays.repeat > 0
-                    && self
-                        .mail_batches
-                        .get(&(actor.id.clone(), actor.created_at.clone()))
-                        .is_some_and(|batch| {
-                            batch.sources == pending_batch
-                                && batch.issued as u128 > mail_delays.repeat_max as u128
-                        });
                 let active = self
                     .mail_claims
                     .get(&(actor.id.clone(), actor.created_at.clone()))
@@ -381,14 +357,11 @@ impl NoticeState {
                     .flatten()
                     .rev()
                     .filter(|claim| {
-                        // A notice being accepted is not a read of its Mail.
-                        // Opt-in expiry releases only the notice's batching claim.
-                        (mail_delays.repeat <= 0
-                            || now - timestamp(&claim.ts, now) < mail_delays.repeat)
-                            && self
-                                .deliveries
-                                .get(&(claim.id.clone(), actor.id.clone()))
-                                .is_none_or(|v| v.0 != "withdrawn")
+                        // Expiry is handled by pruning, which keeps pending handoffs.
+                        // Zero/default retains historical single-notice claims.
+                        self.deliveries
+                            .get(&(claim.id.clone(), actor.id.clone()))
+                            .is_none_or(|v| v.0 != "withdrawn")
                     })
                     .any(|claim| {
                         let claimed = claim
@@ -415,7 +388,7 @@ impl NoticeState {
                     .actor_resumes
                     .get(&actor.id)
                     .map_or(first, |resume| first.max(timestamp(resume, now)));
-                if !active && !exhausted && now - first >= after {
+                if !active && now - first >= after {
                     let mut event = notice_event(
                         group,
                         actor,

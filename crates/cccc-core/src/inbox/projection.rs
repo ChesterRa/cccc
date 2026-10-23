@@ -84,7 +84,6 @@ fn routing(group: &GroupDoc) -> Value {
             ))
             .collect::<Vec<_>>(),
         crate::automation::delivery_timing_value(group, "mail_notice_repeat_seconds", 0),
-        crate::automation::delivery_timing_value(group, "mail_notice_repeat_max", 3),
     ))
 }
 impl Projection {

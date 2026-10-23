@@ -10,8 +10,9 @@ Only these two recipient Mail occur within the first 7,250 seconds after the
 notice, covering the one-hour repeat and an additional interval. The longer
 audit includes later arrivals, which are outside those assertion horizons.
 
-The short-interval cap cases use the captured prefix ending at acceptance.
-Their 65 one-second intervals fit before the captured later Mail arrives.
+The short-interval repeat and pruning cases use the captured prefix ending at
+acceptance. Their multi-interval replay fits before the captured later Mail
+arrives.
 Their additional notices are outputs of the tested policy replayed with an
 explicit issue-time translation, not claimed as captured historical repeats.
 

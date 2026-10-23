@@ -1,6 +1,7 @@
 use crate::RuntimeError;
 use crate::output::HistoryPage;
 use crate::registry::{completed_history, lookup, with_session};
+use crate::session_history::OutputObservation;
 
 pub fn history(
     group_id: &str,
@@ -63,6 +64,20 @@ pub fn active_history_since(
         .map_err(|_| RuntimeError::Poisoned)?
         .history_handle()
         .active_page_since(after, limit)
+}
+
+/// When the live session's process last wrote to its terminal, or `None` before
+/// its first output or while transcript access is busy. A new session starts
+/// without an observation.
+pub fn last_output(
+    group_id: &str,
+    actor_id: &str,
+) -> Result<Option<OutputObservation>, RuntimeError> {
+    lookup(group_id, actor_id)?
+        .lock()
+        .map_err(|_| RuntimeError::Poisoned)?
+        .history_handle()
+        .last_output()
 }
 
 pub fn active_history_replay(

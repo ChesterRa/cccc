@@ -690,3 +690,7 @@ mod tests {
 
 #[cfg(all(test, unix))]
 mod mail_notice_repeat_tests;
+
+#[cfg(all(test, unix))]
+#[path = "automation_mail_tests.rs"]
+mod automation_mail_tests;

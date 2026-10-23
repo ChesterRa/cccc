@@ -367,42 +367,12 @@ Result:
   compatibility?: string;
   build?: { source_id: string };
   executable?: string | null;
-  diagnostics?: {
-    disk: {
-      state: "unknown" | "healthy" | "low" | "unavailable";
-      sample_interval_seconds: number;
-      low_bytes: number;
-      recovery_bytes: number;
-      attempts: number;
-      last_attempt_at: string | null;
-      sampled_at: string | null;
-      space: { available_bytes: number; total_bytes: number } | null;
-      error: string | null;
-    } | null;
-  };
 }
 ```
 
 Notes:
 - SDK-compatible daemons MUST return `ipc_v: 1`; omitting it is interpreted as IPC version `0`.
 - The bundled daemon MUST identify its implementation as `rust`.
-- `diagnostics.disk` is passive host information for the filesystem containing
-  `CCCC_HOME`, sampled once on daemon startup and every 60 seconds thereafter.
-  One daemon-owned sampler runs independently of Groups, notice ticks and
-  status requests; missed intervals are skipped. Reading `ping` never samples.
-  Available bytes are those allocatable by the daemon's user, excluding
-  filesystem reservations that user cannot allocate. There is no disk Mail,
-  foreman notice, notification owner, ledger event or notice-policy change.
-- The diagnostic enters `low` below 3 GiB available and returns to `healthy`
-  at or above 4 GiB. The 1 GiB recovery margin prevents flapping near the low
-  boundary; these diagnostic constants and the cadence are exposed in every
-  sample. They impose no write admission or free-space requirement.
-  A failed probe sets `unavailable` with an error, retaining the last successful
-  sample, its `sampled_at`, and the previous low/recovery state. Only a successful
-  sample can establish recovery. `last_attempt_at` and `attempts` include failed
-  probes. Before the first result the state is `unknown`; timestamps and space
-  are null. A null disk object means no active sampler in that process/home.
-  Samples are in memory and reset when the daemon exits. No disk cache is written.
 - `compatibility`, when present, is an implementation-specific compatibility identity; clients MUST NOT infer compatibility from the implementation name alone.
 - SDK-compatible daemons MUST return a `capabilities` feature map. The native
   daemon advertises supported `events_stream`, `remote_access`, optional
@@ -1888,7 +1858,6 @@ Patch keys used by CCCC include:
 - Delivery: `mail_notice_after_seconds` (default 1800, zero disables all Mail notices),
   `mail_notice_idle_after_seconds` (default 60, zero disables only the early idle notice),
   `mail_notice_repeat_seconds` (default 0, zero keeps single-notice behavior),
-  `mail_notice_repeat_max` (default 3, maximum repeats per pending Mail batch; zero allows only its initial notice),
   `reply_notice_after_seconds` (default 900, zero disables)
 - Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
   `keepalive_max_per_actor`,
@@ -3394,6 +3363,17 @@ Result:
 { actors: Array<Record<string, unknown>> } // includes at least id/title/runtime/enabled + role/running
 ```
 
+Running terminal Actors also expose `pty_last_output_at: string | null` and
+`pty_quiet_seconds: number | null` as diagnostic observations. The timestamp is
+RFC 3339 UTC; the whole-second quiet duration uses a monotonic clock. Both MUST
+be null before that terminal session's first output, after stop, and for a
+non-terminal runner. A new terminal session MUST start without an observation;
+retained transcript history MUST NOT supply one. These values MUST NOT establish
+working/idle state, task completion or delivery acceptance. Managed-session
+state keeps precedence, and reading these fields MUST NOT start runtime work.
+If transcript access is busy, these optional observations MAY be null rather
+than waiting on transcript I/O; a later read can recover the same observation.
+
 #### `actor_add`
 
 Args:
@@ -4636,29 +4616,25 @@ notice established as unsent is withdrawn, not delivered or automatically retrie
 notice states only that Mail is waiting and directs the actor to `inbox_read`;
 it does not copy message bodies, escalate, or create another Inbox obligation.
 By default it is issued once per pending batch. With the opt-in
-`delivery.mail_notice_repeat_seconds` greater than zero, a notice stops holding
-back the next notice once that many seconds have elapsed since it was issued.
+`delivery.mail_notice_repeat_seconds` greater than zero, a notice with an
+`accepted` or `ambiguous` handoff stops holding back the next notice once that
+many seconds have elapsed since it was issued. Queued, claimed and failed
+handoffs retain their original delivery ownership, regardless of age.
 The clock starts at issue, not acceptance: delayed delivery can make two
 actor-visible notices arrive closer together than this interval.
 The next unread pass may issue a fresh notice containing every still-pending
-Mail, including later arrivals. `delivery.mail_notice_repeat_max` bounds each
-batch to its initial notice plus that many repeats (default 3). A batch is the
-ordered set of still-pending Mail IDs; a changed set starts a fresh budget.
-The cap is per pending batch, not per individual Mail: partial resolution
-also changes the batch and starts a new budget.
-Issued attempts, including withdrawn notices, consume this budget. A peer
-that stays busy can remain un-notified for that Mail after all max+1 attempts
-are withdrawn; the finite cap does not guarantee eventual notice delivery.
-The count
-is reconstructed from notice records after restart and survives claim pruning.
-A withdrawn notice does not hold back the next attempt for the repeat
-interval; the explicit batch attempt budget still applies. Expired and
-withdrawn claims are pruned from the repeat projection. The max
-setting has no effect when repeat seconds is omitted or zero. A read, reply, accepted/ambiguous delivery of
+Mail, including later arrivals. An unsent withdrawn notice releases its batching
+claim without waiting for the repeat interval. A later notice is a new source,
+not a retry of that withdrawn delivery. Repetition remains eligible at the
+configured interval while the Mail is pending; there is no attempt budget.
+With repetition enabled, expired handed-off claims and withdrawn claims are
+pruned from the projection; pending delivery ownership is never pruned by age.
+Changes to the interval or Actor generation rebuild the relevant cached state
+from the ledger. A read, reply, accepted/ambiguous delivery of
 the Mail itself, or Actor-generation change ends that Mail's eligibility as
 above; acceptance of the notice itself does not. Runtime restart and
-`actor_new_session` preserve the Actor generation, pending Mail and repeat
-budget; they only restart the ordinary post-resume notice delay. Each repeat starts its own
+`actor_new_session` preserve the Actor generation and pending Mail; they only
+restart the ordinary post-resume notice delay. Each repeat starts its own
 interval. Repeating a notice **does not repeat the underlying task execution**,
 promote Mail to Push, advance an Inbox cursor, or create a new Mail obligation. Bootstrap, the next explicit Push, and low-frequency coordination
 responses MAY carry a passive `mail_pending` count without writing a notice.
