@@ -1,3 +1,4 @@
+import { groupSidebarRowClass } from "./groupSidebarModel";
 import { Archive, ArchiveRestore, Link2 } from "lucide-react";
 import { GroupConnectionBadge } from "../../features/connect/GroupConnectionBadge";
 import type { GroupConnectionCount } from "../../features/connect/protocol";
@@ -164,7 +165,7 @@ export function SortableGroupItem({
         {...attributes}
         {...listeners}
         className={classNames(
-          "w-full px-3 py-3 rounded-xl transition-all min-h-[48px] flex items-center gap-2 relative",
+          groupSidebarRowClass,
           // The removed grip carried select-none; the row now hosts the touch
           // long press instead, so it needs the same protection. Without it a
           // hold over the group title starts the browser's own text selection
@@ -180,6 +181,7 @@ export function SortableGroupItem({
           isArchived && !isActive && "opacity-90",
         )}
         role="button"
+        aria-current={isActive ? "page" : undefined}
         tabIndex={0}
         onClick={onSelect}
         onContextMenu={menu.onContextMenu}
@@ -192,28 +194,33 @@ export function SortableGroupItem({
           onFocus={onWarm}
         >
           <div className="flex items-center gap-2 min-w-0">
-            <GroupStatusIndicator status={status} />
+            <GroupStatusIndicator status={status} subtle />
             <span
               className={classNames(
-                "text-sm font-medium truncate",
+                "text-sm truncate",
                 isActive
-                  ? "text-[rgb(35,36,37)] dark:text-white"
-                  : "text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]",
+                  ? "font-semibold text-[rgb(35,36,37)] dark:text-white"
+                  : "font-normal text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]",
               )}
+              title={group.title || gid}
             >
               {group.title || gid}
             </span>
           </div>
         </div>
-        <GroupConnectionBadge connection={connection} onClick={onOpenConnections} />
-        {menu.available && (
-          <GroupItemMenuTrigger
-            isActive={isActive}
-            label={menuAriaLabel || menuActionLabel || connectionsLabel || ""}
-            open={menu.open}
-            onToggle={menu.toggle}
-          />
-        )}
+        <div className="flex w-[44px] shrink-0 justify-end">
+          <GroupConnectionBadge connection={connection} onClick={onOpenConnections} compact />
+        </div>
+        <div className="flex w-8 shrink-0 justify-end pointer-coarse:w-[44px]">
+          {menu.available && (
+            <GroupItemMenuTrigger
+              isActive={isActive}
+              label={menuAriaLabel || menuActionLabel || connectionsLabel || ""}
+              open={menu.open}
+              onToggle={menu.toggle}
+            />
+          )}
+        </div>
       </div>
       {menu.menu}
     </div>

@@ -23,6 +23,43 @@ The Web UI has these main areas:
 - **Main Area**: Group message history or a paginated terminal view
 - **Input**: Message composer with @mention support
 
+The local Group list scrolls independently from the collapsible **CCCC Connect**
+section and the Voice dock below it. CCCC Connect starts collapsed; click its heading
+to expand or collapse the instance list. The section's information button opens the full
+local instance name and public address. Group rows are more compact, while their
+ordering stays unchanged; connection counts and action menus keep fixed positions,
+with menus visible on touchscreens.
+
+The composer uses one send control with an adjacent mode arrow. The primary action
+shows the selected mode; its tooltip includes the send shortcut. Recipient chips
+need no separate “To” caption. Quote text is the expand/collapse control, with a
+separate source-jump icon. Local messages addressed only to the user omit the
+redundant recipient label; cross-group routes and agent recipients remain explicit.
+User names remain accessible to screen readers without repeating a visible label
+above right-aligned local user messages. Message spacing is tighter, and the
+composer uses a subdued border that strengthens on focus.
+
+Image attachments in the composer show thumbnails before sending. Hovering or
+focusing a thumbnail opens a larger preview; the filename remains its accessible
+label and tooltip. Unsupported or unreadable images fall back to a filename chip,
+as do ordinary files. The attachment area scrolls when needed and local preview
+URLs are released when a file is replaced or removed.
+
+An empty, unfocused composer cycles through four localized typing hints for tasks,
+Skills (`/` and `/install`), Actors (`@`), and Groups (`#`). Focusing the composer
+pauses the hint; any draft text hides it, and a suggested reply takes precedence.
+Reduced-motion preferences show a static hint, and hidden tabs pause the animation.
+Hints are decorative and never become draft content or screen-reader live announcements.
+
+Message bubbles retain their framed surfaces. Sender, recipient routing, Mail mode
+and time share a compact header; delivery failures and reply/read status stay visible.
+Quoted replies show a two-line summary that can be expanded, with a separate jump
+to the original message. On hover-capable desktop screens, message actions appear
+on hover or keyboard focus; touch and narrow screens use a **More** menu. Read-only
+views retain status information without exposing these actions. The composer groups
+recipients, text and tools into one surface. Short, transform/opacity-only message
+entry feedback respects reduced-motion preferences.
+
 The header uses its existing Group status dot for page-connection health: red
 means disconnected, pulsing amber means reconnecting, and a connected page uses
 the normal Group lifecycle color. The badge text still describes the Group's

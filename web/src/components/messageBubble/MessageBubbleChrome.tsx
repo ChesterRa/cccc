@@ -1,117 +1,10 @@
+export { MessageMetadataHeader } from "./MessageMetadataHeader";
+import { MessageActions } from "./MessageActions";
 import { useTranslation } from "react-i18next";
 import type { ChatMessageData, LedgerEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import type { WebModelDeliveryStatus } from "../../utils/webModelDeliveryStatus";
-import { ActorAvatar } from "../ActorAvatar";
-import { InboxIcon } from "../Icons";
 import { WebModelDeliveryRecovery } from "../webModel/WebModelDeliveryRecovery";
-
-export function MessageMetadataHeader({
-  mobile,
-  isUserMessage,
-  isDark,
-  senderAccentTextClass,
-  senderDisplayName,
-  messageTimestamp,
-  fullMessageTimestamp,
-  senderAvatarUrl,
-  senderRuntime,
-  avatarRingClassName,
-  remoteBadgeLabel,
-}: {
-  mobile?: boolean;
-  isUserMessage: boolean;
-  isDark: boolean;
-  senderAccentTextClass?: string | null;
-  senderDisplayName: string;
-  messageTimestamp: string;
-  fullMessageTimestamp: string;
-  senderAvatarUrl?: string;
-  senderRuntime?: string;
-  avatarRingClassName?: string;
-  remoteBadgeLabel?: string;
-}) {
-  const senderTextClass = isUserMessage
-    ? isDark
-      ? "text-slate-300"
-      : "text-gray-700"
-    : senderAccentTextClass
-      ? senderAccentTextClass
-      : isDark
-        ? "text-slate-300"
-        : "text-gray-700";
-
-  if (mobile) {
-    return (
-      <div
-        className={classNames(
-          "mb-1 flex min-w-0 items-center gap-2 sm:hidden",
-          isUserMessage ? "justify-end" : "justify-start",
-        )}
-      >
-        <ActorAvatar
-          avatarUrl={senderAvatarUrl}
-          runtime={senderRuntime}
-          title={senderDisplayName}
-          isUser={isUserMessage}
-          isDark={isDark}
-          accentRingClassName={avatarRingClassName}
-          sizeClassName="h-6 w-6"
-          textClassName="text-xs"
-        />
-        <span
-          className={classNames("min-w-0 truncate text-xs font-medium", senderTextClass)}
-          title={senderDisplayName}
-        >
-          {senderDisplayName}
-        </span>
-        {remoteBadgeLabel ? (
-          <span
-            className="shrink-0 rounded-full border border-emerald-300/70 bg-emerald-50/85 px-1.5 py-0.5 text-xs font-semibold leading-none text-emerald-800 dark:border-emerald-300/30 dark:bg-emerald-950/35 dark:text-emerald-100"
-            title={remoteBadgeLabel}
-          >
-            {remoteBadgeLabel}
-          </span>
-        ) : null}
-        <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">
-          <span title={fullMessageTimestamp}>{messageTimestamp}</span>
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="hidden min-w-0 items-center gap-2 px-1 sm:flex">
-      <span
-        className={classNames(
-          "min-w-0 truncate text-xs font-semibold tracking-[0.01em]",
-          isUserMessage
-            ? isDark
-              ? "text-[var(--color-text-secondary)]"
-              : "text-gray-500"
-            : senderAccentTextClass
-              ? senderAccentTextClass
-              : isDark
-                ? "text-[var(--color-text-secondary)]"
-                : "text-gray-500",
-        )}
-      >
-        {senderDisplayName}
-      </span>
-      {remoteBadgeLabel ? (
-        <span
-          className="shrink-0 rounded-full border border-emerald-300/70 bg-emerald-50/80 px-1.5 py-0.5 text-xs font-semibold leading-none text-emerald-800 dark:border-emerald-300/30 dark:bg-emerald-950/35 dark:text-emerald-100"
-          title={remoteBadgeLabel}
-        >
-          {remoteBadgeLabel}
-        </span>
-      ) : null}
-      <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">
-        <span title={fullMessageTimestamp}>{messageTimestamp}</span>
-      </span>
-    </div>
-  );
-}
 
 export function MessageFooter({
   readOnly,
@@ -122,7 +15,6 @@ export function MessageFooter({
   readPreviewOverflow,
   displayNameMap,
   isDark,
-  isMail,
   replyRequested,
   copiedMessageText,
   copyableMessageText,
@@ -213,31 +105,26 @@ export function MessageFooter({
   return (
     <div
       className={classNames(
-        "mt-2 flex flex-wrap items-center gap-2 px-1 text-xs transition-opacity",
-        webModelDeliveryStatus ||
-          connectDelivery ||
-          connectCancellation ||
-          isMail ||
-          obligationSummary ||
-          visibleReadStatusEntries.length > 0 ||
-          replyRequested
-          ? "justify-between"
-          : "justify-end",
+        "mt-1 flex w-full min-w-0 flex-wrap items-center gap-2 px-1 text-xs",
+        "justify-start",
 
         "text-[var(--color-text-tertiary)]",
       )}
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-        {isMail ? (
-          <span
-            className="inline-flex items-center gap-1 rounded-full border border-sky-500/20 bg-sky-500/8 px-2 py-1 text-xs font-semibold tracking-tight text-sky-700 dark:text-sky-300"
-            title={t("mailMessageHint")}
-            aria-label={t("mailMessageHint")}
-          >
-            <InboxIcon size={11} aria-hidden="true" />
-            <span>{t("modeMail")}</span>
-          </span>
-        ) : null}
+      <MessageActions
+        readOnly={readOnly}
+        copiedMessageText={copiedMessageText}
+        copyableMessageText={copyableMessageText}
+        onCopyMessageText={onCopyMessageText}
+        onViewContext={onViewContext}
+        onCopyLink={onCopyLink}
+        onRelay={onRelay}
+        onReply={onReply}
+        canReply={canReply}
+        eventId={eventId}
+        event={event}
+      />
+      <div className="ml-auto flex min-w-0 flex-wrap items-center gap-1.5">
         {connectDelivery ? (
           <span
             className={classNames(
@@ -360,71 +247,6 @@ export function MessageFooter({
           </span>
         ) : null}
       </div>
-
-      {!readOnly ? (
-        <div className="flex flex-wrap items-center justify-end gap-1">
-          {copyableMessageText ? (
-            <button
-              type="button"
-              className={classNames(
-                "touch-target-sm rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
-                "text-[var(--color-text-secondary)] hover:bg-black/8 hover:text-[var(--color-text-primary)] dark:hover:bg-white/12",
-              )}
-              onClick={() => void onCopyMessageText()}
-              title={copiedMessageText ? t("common:copied") : t("copyText")}
-            >
-              {copiedMessageText ? t("common:copied") : t("copyText")}
-            </button>
-          ) : null}
-          {eventId && onViewContext ? (
-            <button
-              type="button"
-              className="touch-target-sm rounded-full px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-black/8 dark:hover:bg-white/12"
-              onClick={() => onViewContext(eventId)}
-            >
-              {t("viewMessageContext")}
-            </button>
-          ) : null}
-          {eventId && onCopyLink ? (
-            <button
-              type="button"
-              className={classNames(
-                "touch-target-sm rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
-                "text-[var(--color-text-secondary)] hover:bg-black/8 hover:text-[var(--color-text-primary)] dark:hover:bg-white/12",
-              )}
-              onClick={() => onCopyLink(eventId)}
-              title={t("copyLink")}
-            >
-              {t("copyLink")}
-            </button>
-          ) : null}
-          {eventId && onRelay ? (
-            <button
-              type="button"
-              className={classNames(
-                "touch-target-sm rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
-                "text-[var(--color-text-secondary)] hover:bg-black/8 hover:text-[var(--color-text-primary)] dark:hover:bg-white/12",
-              )}
-              onClick={() => onRelay(event)}
-              title={t("relayToGroup")}
-            >
-              {t("relay")}
-            </button>
-          ) : null}
-          {canReply ? (
-            <button
-              type="button"
-              className={classNames(
-                "touch-target-sm rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
-                "text-[var(--color-text-secondary)] hover:bg-black/8 hover:text-[var(--color-text-primary)] dark:hover:bg-white/12",
-              )}
-              onClick={onReply}
-            >
-              {t("reply")}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }

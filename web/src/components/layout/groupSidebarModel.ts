@@ -31,6 +31,10 @@ export function getSidebarSensorActivationConstraints(): SidebarSensorActivation
 export function groupSidebarScrollClass(isCollapsed: boolean): string {
   const padding = isCollapsed
     ? "px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]"
-    : "px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]";
+    : "px-2 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]";
   return `min-h-0 flex-1 overflow-auto overscroll-contain touch-pan-y scrollbar-hide ${padding}`;
 }
+
+// Shared density for sortable and read-only rows; touch targets stay at least 44px.
+export const groupSidebarRowClass =
+  "w-full px-2 py-1.5 md:py-0.5 !rounded-lg transition-colors min-h-[44px] md:min-h-9 pointer-coarse:min-h-[44px] pointer-coarse:py-1.5 flex items-center gap-1.5 relative";

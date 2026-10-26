@@ -1,9 +1,11 @@
+import { ComposerSendControl } from "./ComposerSendControl";
+import { ComposerTypingPlaceholder } from "./ComposerTypingPlaceholder";
 import { ComposerResizeHandle } from "./ComposerResizeHandle";
 import { useComposerHeightResize } from "./useComposerHeightResize";
 
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useId } from "react";
 import {
   Actor,
   GroupMeta,
@@ -13,15 +15,7 @@ import {
   VoiceDocumentMessageRef,
 } from "../../types";
 import { classNames } from "../../utils/classNames";
-import {
-  AttachmentIcon,
-  SendIcon,
-  ChevronDownIcon,
-  ReplyIcon,
-  CloseIcon,
-  InboxIcon,
-  SparklesIcon,
-} from "../../components/Icons";
+import { AttachmentIcon, ReplyIcon, CloseIcon, SparklesIcon } from "../../components/Icons";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { getVoiceDocumentRefLabel } from "../../utils/voiceDocumentRefs";
 import { useTranslation } from "react-i18next";
@@ -229,6 +223,9 @@ export function ChatComposer({
   const composerText = useComposerStore((s) => s.composerText);
   const composerHistoryRef = useRef<ComposerHistorySession | null>(null);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
+  const composerHelpId = useId();
+  const [hintMinHeight, setHintMinHeight] = useState(0);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [slashVisibleCount, setSlashVisibleCount] = useState(SLASH_COMMAND_PAGE_SIZE);
@@ -246,7 +243,6 @@ export function ChatComposer({
   const [composerScrollTop, setComposerScrollTop] = useState(0);
   const [sessionConsumedSuggestedUserMessageIds, setSessionConsumedSuggestedUserMessageIds] =
     useState<Set<string>>(() => new Set());
-  const modeMenuRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation("chat");
   const groupSettings = useGroupStore((state) => state.groupSettings);
   const groups = useGroupStore((state) => state.groups);
@@ -272,7 +268,7 @@ export function ChatComposer({
     ? Math.max(baseComposerHeight + 6, 52)
     : composerResize.minHeight;
   const maxComposerHeight = isSmallScreen ? 128 * rootFontScale : composerResize.maxHeight;
-  const composerFontSize = (isSmallScreen ? 15 : 14) * rootFontScale;
+  const composerFontSize = (isSmallScreen ? 15 : 13) * rootFontScale;
   const composerLineHeight = (isSmallScreen ? 24 : 20) * rootFontScale;
 
   useComposerTextareaAutoResize({
@@ -344,26 +340,6 @@ export function ChatComposer({
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    if (!showModeMenu) return;
-
-    const onPointerDown = (event: MouseEvent | TouchEvent) => {
-      const node = modeMenuRef.current;
-      if (!node) return;
-      const target = event.target;
-      if (target instanceof Node && !node.contains(target)) {
-        setShowModeMenu(false);
-      }
-    };
-
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("touchstart", onPointerDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("touchstart", onPointerDown);
-    };
-  }, [showModeMenu]);
 
   useEffect(() => {
     if (!selectedGroupId || groupSettings) return;
@@ -868,7 +844,6 @@ export function ChatComposer({
   const effectiveMessageMode: ComposerMessageMode = replyTarget
     ? normalizeReplyMessageMode(messageMode)
     : messageMode;
-  const activeMode = modeOptions.find((opt) => opt.key === effectiveMessageMode) || modeOptions[0];
   const requestReplyRecipientsReady = hasConcreteReplyRecipients(toTokens);
   const canSend = getComposerCanSend({
     composerText,
@@ -952,26 +927,35 @@ export function ChatComposer({
           shortcut: sendShortcutLabel,
           defaultValue: "Send message ({{shortcut}})",
         });
-  const composerPlaceholder = showSuggestedUserMessage
-    ? ""
-    : isSmallScreen
-      ? t("messagePlaceholder")
-      : t("messagePlaceholderDesktop");
+  const showTypingPlaceholder = Boolean(
+    selectedGroupId &&
+    composerGroupSettled &&
+    busy !== "send" &&
+    composerText.length === 0 &&
+    !showSuggestedUserMessage,
+  );
+  const composerPlaceholder =
+    showSuggestedUserMessage || showTypingPlaceholder
+      ? ""
+      : isSmallScreen
+        ? t("messagePlaceholder")
+        : t("messagePlaceholderDesktop");
 
   return (
     <footer
       ref={footerRef}
       className={classNames(
-        "relative z-40 flex-shrink-0 border-t px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom,0px)*0.6)] transition-colors sm:px-4 sm:pt-2 sm:pb-[calc(0.5rem+env(safe-area-inset-bottom,0px)*0.6)]",
-        // The panel background is 90%+ opaque: a backdrop blur under it is
-        // invisible but still re-filters the whole footer on every frame.
-        "border-[var(--glass-border)] bg-[var(--glass-panel-bg)]",
+        "relative z-40 flex-shrink-0 px-2 pt-2 pb-[calc(0.375rem+env(safe-area-inset-bottom,0px)*0.6)] sm:px-4 sm:pb-[calc(0.5rem+env(safe-area-inset-bottom,0px)*0.6)]",
+        "bg-[var(--color-chat-bg)]",
       )}
     >
       {!isSmallScreen ? (
         <ComposerResizeHandle {...composerResize} label={t("layout:resizeComposer")} />
       ) : null}
-      <div className="chat-reading-width">
+      <div
+        data-composer-surface
+        className="chat-reading-width rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-1 pt-1 shadow-sm transition-[border-color,box-shadow] duration-150 focus-within:border-[var(--color-border-secondary)] motion-reduce:transition-none"
+      >
         {/* Reply indicator */}
         {replyTarget && (
           <div
@@ -1097,7 +1081,7 @@ export function ChatComposer({
 
         {/* File list */}
         {composerFiles.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="mb-2 flex max-h-40 flex-wrap gap-2 overflow-y-auto px-2 pt-2 pb-1">
             {composerFiles.map((f, idx) => (
               <ComposerFilePreview
                 key={`${f.name}:${idx}`}
@@ -1169,9 +1153,11 @@ export function ChatComposer({
                   showSuggestedUserMessage ? "pl-11 pr-4" : "px-4",
                 )}
                 style={{
-                  minHeight: isSmallScreen
-                    ? `${minComposerHeight}px`
-                    : `var(--composer-min-height, ${minComposerHeight}px)`,
+                  minHeight: showTypingPlaceholder
+                    ? `max(${hintMinHeight}px, ${isSmallScreen ? `${minComposerHeight}px` : `var(--composer-min-height, ${minComposerHeight}px)`})`
+                    : isSmallScreen
+                      ? `${minComposerHeight}px`
+                      : `var(--composer-min-height, ${minComposerHeight}px)`,
                   maxHeight: isSmallScreen
                     ? `${maxComposerHeight}px`
                     : `var(--composer-max-height, ${maxComposerHeight}px)`,
@@ -1189,10 +1175,25 @@ export function ChatComposer({
                 onKeyDown={handleKeyDown}
                 onPointerDown={exitComposerHistory}
                 onScroll={(event) => setComposerScrollTop(event.currentTarget.scrollTop)}
-                onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => {
+                  setComposerFocused(false);
+                  setTimeout(() => setShowMentionMenu(false), 150);
+                }}
                 aria-label={t("messageInput")}
-                aria-describedby={suggestedUserMessageHelpId}
+                aria-describedby={[composerHelpId, suggestedUserMessageHelpId]
+                  .filter(Boolean)
+                  .join(" ")}
               />
+              {showTypingPlaceholder && (
+                <ComposerTypingPlaceholder
+                  key={selectedGroupId}
+                  focused={composerFocused}
+                  fontSize={composerFontSize}
+                  lineHeight={composerLineHeight}
+                  onHeightChange={setHintMinHeight}
+                />
+              )}
               {showSuggestedUserMessage && suggestedUserMessage ? (
                 <button
                   type="button"
@@ -1267,17 +1268,21 @@ export function ChatComposer({
                 />
               )}
             </div>
+            <span id={composerHelpId} className="sr-only">
+              {t("composerPromptSkill")} {t("composerPromptActor")} {t("composerPromptGroup")}{" "}
+              {t("composerSendShortcut", { shortcut: sendShortcutLabel })}
+            </span>
             {/* Row 3 — Action bar */}
             <div
               data-composer-action-bar
               className={classNames(
-                "grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem_2.75rem] items-center gap-2 px-2 pb-2 pt-1 sm:flex sm:justify-between",
+                "grid grid-cols-[2.75rem_minmax(0,1fr)_auto] items-center gap-2 px-2 pb-2 pt-1 sm:flex sm:justify-between",
               )}
             >
               <div className="contents sm:flex sm:min-w-0 sm:flex-1 sm:items-center sm:gap-1.5">
                 <button
                   className={classNames(
-                    "glass-btn flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60 sm:h-9 sm:w-9",
+                    "flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors duration-150 disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60 sm:h-9 sm:w-9",
                     busy !== "send" && selectedGroupId
                       ? isDark
                         ? "hover:bg-white/10 hover:text-[var(--color-text-primary)]"
@@ -1311,168 +1316,19 @@ export function ChatComposer({
                 </div>
               </div>
 
-              <div className="contents sm:flex sm:items-center sm:gap-1.5">
-                <div ref={modeMenuRef} className="relative z-20">
-                  <button
-                    type="button"
-                    className={classNames(
-                      "inline-flex h-11 w-11 items-center justify-center gap-0.5 rounded-lg px-0 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:h-9 sm:w-auto sm:gap-1.5 sm:px-2.5",
-                      busy === "send" || !selectedGroupId
-                        ? isDark
-                          ? "text-[var(--color-text-tertiary)]"
-                          : "text-gray-400"
-                        : effectiveMessageMode === "request_reply"
-                          ? isDark
-                            ? "bg-violet-500/18 text-violet-200 hover:bg-violet-500/26"
-                            : "bg-violet-100 text-violet-700 hover:bg-violet-200"
-                          : effectiveMessageMode === "mail"
-                            ? isDark
-                              ? "bg-sky-500/14 text-sky-200 hover:bg-sky-500/22"
-                              : "bg-sky-50 text-sky-700 hover:bg-sky-100"
-                            : isDark
-                              ? "text-slate-200 hover:bg-white/10"
-                              : "text-gray-700 hover:bg-black/5",
-                    )}
-                    disabled={busy === "send" || !selectedGroupId}
-                    onClick={() => setShowModeMenu((v) => !v)}
-                    aria-label={t("messageMode", { mode: activeMode.label })}
-                    aria-haspopup="menu"
-                    aria-expanded={showModeMenu}
-                    title={t("messageMode", { mode: activeMode.label })}
-                  >
-                    {effectiveMessageMode === "request_reply" ? (
-                      <ReplyIcon size={13} />
-                    ) : effectiveMessageMode === "mail" ? (
-                      <InboxIcon size={13} />
-                    ) : (
-                      <SendIcon size={13} />
-                    )}
-                    <span className="hidden sm:inline">{activeMode.label}</span>
-                    <ChevronDownIcon size={12} className="opacity-70" />
-                  </button>
-
-                  {showModeMenu && (
-                    <div
-                      className={classNames(
-                        "glass-panel absolute bottom-full right-0 mb-2 z-40 w-56 sm:w-64 rounded-2xl border p-1.5 shadow-2xl pointer-events-auto",
-                      )}
-                      role="menu"
-                      aria-label={t("messageTypeOptions")}
-                    >
-                      {modeOptions.map((opt) => {
-                        const active = effectiveMessageMode === opt.key;
-                        const unavailable =
-                          opt.key === "request_reply" && !requestReplyRecipientsReady;
-                        return (
-                          <button
-                            key={opt.key}
-                            type="button"
-                            className={classNames(
-                              "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                              active
-                                ? isDark
-                                  ? "bg-white/10"
-                                  : "bg-black/5"
-                                : isDark
-                                  ? "hover:bg-white/5"
-                                  : "hover:bg-black/5",
-                            )}
-                            role="menuitemradio"
-                            aria-checked={active}
-                            disabled={unavailable}
-                            aria-disabled={unavailable}
-                            title={
-                              unavailable ? t("modeSendReplyRequiresConcrete") : opt.description
-                            }
-                            onClick={() => {
-                              if (unavailable) return;
-                              setMessageMode(opt.key);
-                              setShowModeMenu(false);
-                            }}
-                          >
-                            <span
-                              className={classNames(
-                                "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
-                                opt.key === "request_reply"
-                                  ? isDark
-                                    ? "bg-violet-500/25 text-violet-200"
-                                    : "bg-violet-100 text-violet-700"
-                                  : opt.key === "mail"
-                                    ? isDark
-                                      ? "bg-sky-500/20 text-sky-200"
-                                      : "bg-sky-50 text-sky-700"
-                                    : isDark
-                                      ? "bg-slate-700 text-slate-200"
-                                      : "bg-gray-100 text-gray-700",
-                              )}
-                            >
-                              {opt.key === "request_reply" ? (
-                                <ReplyIcon size={13} />
-                              ) : opt.key === "mail" ? (
-                                <InboxIcon size={13} />
-                              ) : (
-                                <SendIcon size={13} />
-                              )}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span
-                                className={classNames(
-                                  "block text-sm font-semibold",
-                                  isDark ? "text-slate-100" : "text-gray-900",
-                                )}
-                              >
-                                {opt.label}
-                              </span>
-                              <span
-                                className={classNames(
-                                  "block text-xs",
-                                  isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500",
-                                )}
-                              >
-                                {opt.description}
-                              </span>
-                            </span>
-                            {active && (
-                              <span
-                                className={classNames(
-                                  "text-xs font-semibold",
-                                  isDark ? "text-emerald-300" : "text-emerald-600",
-                                )}
-                              >
-                                ✓
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  className={classNames(
-                    "flex h-11 w-11 items-center justify-center rounded-lg font-semibold transition-[background-color,box-shadow,transform] duration-150 disabled:cursor-not-allowed sm:h-9 sm:w-[5.5rem]",
-                    busy === "send" || !canSend
-                      ? isDark
-                        ? "bg-white/[0.06] text-[var(--color-text-tertiary)]"
-                        : "bg-gray-100 text-gray-400"
-                      : "bg-[var(--color-accent-primary)] text-[var(--color-text-inverse)] shadow-[var(--glass-accent-shadow)] hover:brightness-110 active:scale-[0.97]",
-                  )}
-                  onClick={onSendMessage}
-                  disabled={busy === "send" || !canSend}
-                  aria-label={t("sendMessage")}
-                  title={sendButtonTitle}
-                >
-                  {busy === "send" ? (
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      <SendIcon size={16} className="sm:hidden" />
-                      <span className="hidden sm:inline">{t("send")}</span>
-                    </>
-                  )}
-                </button>
-              </div>
+              <ComposerSendControl
+                mode={effectiveMessageMode}
+                options={modeOptions}
+                open={showModeMenu}
+                onOpenChange={setShowModeMenu}
+                onModeChange={setMessageMode}
+                onSend={onSendMessage}
+                busy={busy === "send"}
+                canSend={canSend}
+                modeDisabled={busy === "send" || !selectedGroupId}
+                requestReplyReady={requestReplyRecipientsReady}
+                title={sendButtonTitle}
+              />
             </div>
           </div>
         </div>

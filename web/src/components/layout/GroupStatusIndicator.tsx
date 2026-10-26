@@ -16,6 +16,7 @@ interface GroupStatusIndicatorProps {
   status: GroupStatus;
   variant?: "dot" | "badge";
   className?: string;
+  subtle?: boolean;
   connectionStatus?: "connected" | "connecting" | "disconnected";
 }
 
@@ -23,6 +24,7 @@ export function GroupStatusIndicator({
   status,
   variant = "dot",
   className,
+  subtle = false,
   connectionStatus,
 }: GroupStatusIndicatorProps) {
   const { t } = useTranslation("layout");
@@ -44,7 +46,11 @@ export function GroupStatusIndicator({
   if (variant === "dot") {
     return (
       <span
-        className={classNames(GROUP_STATUS_DOT_BASE_CLASS, dotClass, className)}
+        className={classNames(
+          subtle ? "size-[6px] shrink-0 rounded-full opacity-75" : GROUP_STATUS_DOT_BASE_CLASS,
+          dotClass,
+          className,
+        )}
         role="img"
         aria-label={description}
         title={description}

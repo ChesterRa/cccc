@@ -823,11 +823,11 @@ export function ChatTab({
                       data-message-filters
                     >
                       <div
-                        className="chat-reading-width flex min-h-11 flex-wrap items-center gap-x-3"
+                        className="chat-reading-width flex min-h-11 md:min-h-9 flex-wrap items-center gap-x-2"
                         role="group"
                         aria-label={t("chatFilters")}
                       >
-                        <div className="flex h-11 min-w-0 items-stretch gap-4 overflow-x-auto scrollbar-hide">
+                        <div className="flex h-11 md:h-9 min-w-0 items-stretch gap-3 overflow-x-auto scrollbar-hide">
                           {filterOptions.map(([key, label]) => {
                             const active = chatFilter === key;
                             return (

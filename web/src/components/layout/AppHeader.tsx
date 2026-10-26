@@ -105,7 +105,7 @@ export function AppHeader({
       : [],
   );
   return (
-    <header className="@container/group-header absolute inset-x-0 top-0 z-20 flex h-14 shrink-0 items-center px-3 glass-header md:relative md:inset-auto md:px-4">
+    <header className="@container/group-header absolute inset-x-0 top-0 z-20 flex h-14 shrink-0 items-center px-3 glass-header md:relative md:inset-auto md:h-11 md:px-3">
       <div
         className="@container/group-work-header flex min-w-0 flex-1 items-center gap-2 pr-2 md:pr-3"
         data-group-header-work
@@ -123,7 +123,7 @@ export function AppHeader({
           </IconButton>
           <div className="min-w-0">
             <h1
-              className="min-w-0 truncate text-base font-semibold leading-tight text-[var(--color-text-primary)] md:text-[1.125rem]"
+              className="min-w-0 truncate text-base font-semibold leading-tight text-[var(--color-text-primary)]"
               title={groupTitle}
             >
               {groupTitle}

@@ -16,6 +16,7 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+import { MessageReplyQuote } from "./MessageReplyQuote";
 import { MessageReferenceSections } from "./MessageReferenceSections";
 
 describe("MessageReferenceSections", () => {
@@ -83,5 +84,31 @@ describe("MessageReferenceSections", () => {
     await act(async () => buttons[1]?.click());
     expect(onOpenPresentationRef).toHaveBeenCalledWith(presentationRef, event);
     expect(onOpenTaskRef).toHaveBeenCalledWith(taskRef, event);
+  });
+  it("expands a quote without navigating and preserves the separate source jump", async () => {
+    const onOpenReplyTarget = vi.fn();
+    const text = "Quoted context\n".repeat(20);
+    await act(async () =>
+      root.render(
+        <MessageReplyQuote
+          text={text}
+          replyToEventId="source-event"
+          onOpenReplyTarget={onOpenReplyTarget}
+        />,
+      ),
+    );
+    const toggle = host.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+    expect(document.getElementById(toggle.getAttribute("aria-controls")!)?.textContent).toBe(text);
+    expect(toggle.textContent).toBe(text);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(onOpenReplyTarget).not.toHaveBeenCalled();
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="jumpToRepliedMessage"]')!.click(),
+    );
+    expect(onOpenReplyTarget).toHaveBeenCalledWith("source-event");
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
 });

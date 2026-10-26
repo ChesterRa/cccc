@@ -1,0 +1,25 @@
+/* Keep hover controls out of the reading path, with keyboard and touch access. */
+.message-actions-inline {
+  display: none;
+}
+@media (min-width: 640px) and (hover: hover) {
+  .message-actions-menu {
+    display: none;
+  }
+  .message-actions-inline {
+    display: flex;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 140ms ease-out;
+  }
+  .message-row:hover .message-actions-inline,
+  .message-row:focus-within .message-actions-inline {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .message-actions-inline {
+    transition: none;
+  }
+}
