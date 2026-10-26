@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { VISUAL_VIEWPORT_BOX } from "../../hooks/useViewportHeight";
 import { ModalFrame } from "./ModalFrame";
 import { getModalOverlayStyle } from "./modalOverlayStyle";
@@ -62,3 +62,42 @@ it("leaves inline frames to their host layout", () => {
   expect(getModalOverlayStyle({ inline: true, isOpen: true })).toBeUndefined();
   expect(render(true).getAttribute("style")).toBeNull();
 });
+
+it.each(["", "Native editor"])(
+  "preserves default close behavior and visibly blocks close while disabled (title=%s)",
+  (title) => {
+    const onClose = vi.fn();
+    const show = (closeDisabled?: boolean) =>
+      act(() =>
+        root.render(
+          <ModalFrame
+            isDark={false}
+            onClose={onClose}
+            titleId="native-editor"
+            title={title}
+            closeAriaLabel="Close"
+            closeDisabled={closeDisabled}
+            panelClassName=""
+          >
+            <p>Editable metadata</p>
+          </ModalFrame>,
+        ),
+      );
+    show();
+    const close = () => host.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!;
+    const overlay = () => host.querySelector(".glass-overlay")!;
+    expect(close().disabled).toBe(false);
+    act(() => close().click());
+    act(() => overlay().dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(onClose).toHaveBeenCalledTimes(2);
+    show(true);
+    expect(close().disabled).toBe(true);
+    expect(close().className).toContain("disabled:opacity-50");
+    act(() => close().click());
+    act(() => overlay().dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(onClose).toHaveBeenCalledTimes(2);
+    show(false);
+    act(() => close().click());
+    expect(onClose).toHaveBeenCalledTimes(3);
+  },
+);

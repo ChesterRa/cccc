@@ -15,16 +15,13 @@ pub(crate) struct PreparedFiles {
 
 pub(crate) fn read(
     group: &GroupDoc,
+    by: &str,
     paths: &[Value],
     maximum_bytes: u64,
 ) -> Result<PreparedFiles, OpError> {
-    let scope = group
-        .scopes
-        .iter()
-        .find(|scope| scope.scope_key == group.active_scope_key && !scope.url.trim().is_empty())
-        .ok_or_else(|| OpError::new("missing_scope", "group has no active scope"))?;
-    let root = fs::canonicalize(Path::new(&scope.url))
-        .map_err(|error| OpError::new("missing_scope", error.to_string()))?;
+    let scope = crate::ops::actor_runtime::caller_scope(group, by)?
+        .ok_or_else(|| OpError::new("missing_scope", "caller has no effective workspace"))?;
+    let root = scope.path;
 
     let mut sources: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(paths.len());
     let mut total = 0_u64;
@@ -53,7 +50,7 @@ pub(crate) fn read(
         if !source.starts_with(&root) {
             return Err(OpError::new(
                 "invalid_path",
-                "file path must be under the group's active scope root",
+                "file path must be under the caller's effective scope root",
             ));
         }
         if !source.is_file() {

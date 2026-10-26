@@ -2,8 +2,10 @@ use cccc_contracts::Event;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::Value;
 
+mod native_notice;
 mod references;
 mod reply_guidance;
+pub(super) use native_notice::claude_notice;
 #[cfg(test)]
 #[path = "actor_delivery_render/reply_guidance_tests.rs"]
 mod reply_guidance_tests;

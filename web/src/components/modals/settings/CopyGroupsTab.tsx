@@ -218,6 +218,10 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
         t("copyGroups.runtimeReset"),
         t("copyGroups.workspaceExcluded"),
         t("copyGroups.secretsExcluded"),
+        previewData.requires_reconnect?.native_sessions ||
+        actors.some((actor) => actor.native_session)
+          ? t("copyGroups.reconnectNativeSessions")
+          : "",
         previewData.requires_reconnect?.chatgpt_web_model ? t("copyGroups.reconnectChatGPT") : "",
         previewData.requires_reconnect?.grok_web_model ? t("copyGroups.reconnectGrok") : "",
         previewData.requires_reconnect?.notebooklm_group_space

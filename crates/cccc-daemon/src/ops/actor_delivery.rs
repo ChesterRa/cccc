@@ -104,6 +104,8 @@ pub(super) struct DeliveryJob {
     pub group: GroupDoc,
     pub actor: Actor,
     pub event: Event,
+    /// Native waiting work owns only its in-memory slot until handoff is ready.
+    pub claimed: bool,
 }
 
 /// A delivery outcome whose ledger record is still pending. It holds the
@@ -114,14 +116,36 @@ pub(super) struct DeliveryCompletion {
     pub actor_created_at: String,
     pub event_id: String,
     pub transport: String,
-    /// Set for a withdrawn delivery (never sent); otherwise it was accepted.
-    pub withdrawn_reason: Option<String>,
+    pub outcome: CompletedDelivery,
+}
+
+pub(super) enum CompletedDelivery {
+    Accepted,
+    Withdrawn(String),
+    Failed(String),
+    Unsubmitted(String),
+    Ambiguous(String),
+}
+
+impl CompletedDelivery {
+    fn ledger_outcome(&self) -> crate::ops::runtime_delivery::DeliveryOutcome<'_> {
+        use crate::ops::runtime_delivery::DeliveryOutcome;
+        match self {
+            Self::Accepted => DeliveryOutcome::Accepted,
+            Self::Withdrawn(reason) => DeliveryOutcome::Withdrawn(reason),
+            Self::Failed(reason) => DeliveryOutcome::Failed(reason),
+            Self::Unsubmitted(reason) => DeliveryOutcome::Unsubmitted(reason),
+            Self::Ambiguous(reason) => DeliveryOutcome::Ambiguous(reason),
+        }
+    }
 }
 
 struct DeliveryWorker {
     sender: Option<SyncSender<DeliveryJob>>,
     cancelled: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// Native pending work exceeded this worker's memory queue or query page.
+    needs_refill: bool,
 }
 
 impl DeliveryWorker {
@@ -178,6 +202,10 @@ pub(super) fn record_completion(completion: DeliveryCompletion) {
 }
 
 pub(super) fn complete_job(job: &DeliveryJob) {
+    finish_job(job, CompletedDelivery::Accepted);
+}
+
+pub(super) fn finish_job(job: &DeliveryJob, outcome: CompletedDelivery) {
     let transport = delivery_transport(&job.home, &job.group, &job.actor);
     match crate::ops::runtime_delivery::append_state(
         &job.home,
@@ -186,14 +214,14 @@ pub(super) fn complete_job(job: &DeliveryJob) {
         &job.actor.created_at,
         &job.event.id,
         transport,
-        crate::ops::runtime_delivery::DeliveryOutcome::Accepted,
+        outcome.ledger_outcome(),
     ) {
         Ok(_) => release_in_flight(job),
         Err(error) => {
             tracing::warn!(
                 message = %error.message,
                 event_id = %job.event.id,
-                "runtime accepted delivery but its ledger result is pending"
+                "runtime delivery outcome is awaiting its ledger record"
             );
             record_completion(DeliveryCompletion {
                 group_id: job.group.group_id.clone(),
@@ -201,7 +229,7 @@ pub(super) fn complete_job(job: &DeliveryJob) {
                 actor_created_at: job.actor.created_at.clone(),
                 event_id: job.event.id.clone(),
                 transport: transport.into(),
-                withdrawn_reason: None,
+                outcome,
             });
         }
     }
@@ -266,7 +294,7 @@ pub(super) fn withdraw_jobs(jobs: &[DeliveryJob], reason: &str) {
                     actor_created_at: job.actor.created_at.clone(),
                     event_id: job.event.id.clone(),
                     transport: transport.into(),
-                    withdrawn_reason: Some(reason.into()),
+                    outcome: CompletedDelivery::Withdrawn(reason.into()),
                 });
             }
         }
@@ -300,7 +328,8 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
         .actors
         .iter()
         .filter(|actor| {
-            (!crate::ops::actor_runtime::is_structured(actor)
+            (!actor.external_session_id.is_empty()
+                || !crate::ops::actor_runtime::is_structured(actor)
                 || crate::ops::local_headless::supports(actor)
                 || actor.runtime == ActorRuntime::Deepseek)
                 && event_targets_actor(group, event, &actor.id)
@@ -310,7 +339,7 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
     dispatch_to(home, group, event, &targets, false)
 }
 
-fn event_targets_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
+pub(super) fn event_targets_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
     if event.kind == "system.notify"
         && matches!(
             event.data.get("kind").and_then(serde_json::Value::as_str),
@@ -362,7 +391,9 @@ fn dispatch_to_inner(
         if !actor.enabled {
             continue;
         }
-        let actor_online = if actor.runtime == ActorRuntime::Deepseek {
+        let actor_online = if !actor.external_session_id.is_empty() {
+            super::local_sessions::connected(home, &actor.external_session_id)
+        } else if actor.runtime == ActorRuntime::Deepseek {
             crate::ops::deepseek_runtime::running(&group.group_id, &actor.id)
         } else if crate::ops::local_headless::uses_managed_delivery(&group.group_id, actor) {
             crate::ops::local_headless::running(&group.group_id, &actor.id)
@@ -379,7 +410,8 @@ fn dispatch_to_inner(
             queued += 1;
             continue;
         }
-        if !preclaimed {
+        let claimed = preclaimed || actor.external_session_id.is_empty() || force_ambiguous;
+        if claimed && !preclaimed {
             match crate::ops::runtime_delivery::claim(
                 home,
                 group,
@@ -407,19 +439,28 @@ fn dispatch_to_inner(
             group: group.clone(),
             actor: actor.clone(),
             event: event.clone(),
+            claimed,
         }) {
             queued += 1;
-        } else if let Err(error) = crate::ops::runtime_delivery::append_state(
-            home,
-            &group.group_id,
-            &actor.id,
-            &actor.created_at,
-            &event.id,
-            transport,
-            crate::ops::runtime_delivery::DeliveryOutcome::Failed(
-                "daemon delivery queue did not accept the event",
-            ),
-        ) {
+        } else if claimed
+            && let Err(error) = crate::ops::runtime_delivery::append_state(
+                home,
+                &group.group_id,
+                &actor.id,
+                &actor.created_at,
+                &event.id,
+                transport,
+                if actor.external_session_id.is_empty() {
+                    crate::ops::runtime_delivery::DeliveryOutcome::Failed(
+                        "daemon delivery queue did not accept the event",
+                    )
+                } else {
+                    crate::ops::runtime_delivery::DeliveryOutcome::Unsubmitted(
+                        "daemon delivery queue did not accept the event",
+                    )
+                },
+            )
+        {
             tracing::warn!(message = %error.message, "failed to record rejected runtime delivery");
         }
     }
@@ -435,6 +476,7 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
     };
     if !actor.enabled
         || (crate::ops::actor_runtime::is_structured(actor)
+            && actor.external_session_id.is_empty()
             && !crate::ops::local_headless::supports(actor)
             && actor.runtime != ActorRuntime::Deepseek)
     {
@@ -463,10 +505,23 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
             serde_json::json!({"group_id":group.group_id,"actor_index":actor_index,"selected":events.len()})
         );
     }
-    events
+    let native = !actor.external_session_id.is_empty();
+    let full_page = events.len() == QUEUE_CAPACITY;
+    if native {
+        // Only a successful read consumes the previous refill request. A full
+        // enqueue below can request another pass even for a partial page.
+        set_refill(&group.group_id, actor_id, false);
+    }
+    let queued = events
         .into_iter()
         .map(|event| dispatch_to(home, group, &event, std::slice::from_ref(actor), false).queued)
-        .sum()
+        .sum();
+    if native && full_page {
+        // The whole page may already be in flight. Its tail still needs a
+        // later ledger read after those deliveries settle.
+        set_refill(&group.group_id, actor_id, true);
+    }
+    queued
 }
 
 pub fn dispatch_group_unread(home: &HomeLayout, group: &GroupDoc) -> usize {
@@ -492,7 +547,9 @@ pub(super) fn delivery_transport(
     group: &GroupDoc,
     actor: &Actor,
 ) -> &'static str {
-    if actor.runtime == ActorRuntime::Deepseek {
+    if !actor.external_session_id.is_empty() {
+        "local_session"
+    } else if actor.runtime == ActorRuntime::Deepseek {
         "deepseek"
     } else if actor.runtime == ActorRuntime::ChatgptDots {
         "web_model_pull"
@@ -583,6 +640,14 @@ fn report(targeted: usize, online: usize, queued: usize) -> DispatchReport {
     }
 }
 
+fn set_refill(group_id: &str, actor_id: &str, needed: bool) {
+    if let Ok(mut workers) = workers().lock()
+        && let Some(worker) = workers.get_mut(&(group_id.into(), actor_id.into()))
+    {
+        worker.needs_refill = needed;
+    }
+}
+
 fn enqueue(job: DeliveryJob) -> bool {
     let key = (job.group.group_id.clone(), job.actor.id.clone());
     let delivery_key = (key.0.clone(), key.1.clone(), job.event.id.clone());
@@ -607,18 +672,22 @@ fn enqueue(job: DeliveryJob) -> bool {
     };
     match sender.try_send(job) {
         Ok(()) => true,
-        Err(TrySendError::Full(_)) => {
+        Err(TrySendError::Full(job)) => {
+            if !job.actor.external_session_id.is_empty() {
+                worker.needs_refill = true;
+            }
             clear_in_flight(|item| item == &delivery_key);
             tracing::warn!(group_id = %key.0, actor_id = %key.1, "PTY delivery queue is full");
             false
         }
         Err(TrySendError::Disconnected(job)) => {
-            let worker = spawn_worker(&key);
-            let result = worker
+            let mut replacement = spawn_worker(&key);
+            replacement.needs_refill = worker.needs_refill;
+            let result = replacement
                 .sender
                 .as_ref()
                 .is_some_and(|sender| sender.try_send(job).is_ok());
-            let stale = map.insert(key, worker);
+            let stale = map.insert(key, replacement);
             drop(map);
             if let Some(stale) = stale {
                 stale.shutdown();
@@ -738,12 +807,17 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 deferred_failures = 0;
             }
         }
-        fail_jobs(
-            &deferred,
-            "delivery worker stopped before runtime acceptance",
-        );
-        for job in receiver.try_iter() {
-            fail_job(&job, "delivery worker stopped before runtime acceptance");
+        for job in deferred.into_iter().chain(receiver.try_iter()) {
+            let reason = "delivery worker stopped before runtime acceptance".to_owned();
+            if job.actor.external_session_id.is_empty() {
+                fail_job(&job, &reason);
+            } else if !job.claimed {
+                release_in_flight(&job);
+            } else {
+                // Native processing removes every offered terminal outcome
+                // from the batch. Remaining work is known not to be submitted.
+                finish_job(&job, CompletedDelivery::Unsubmitted(reason));
+            }
         }
     });
     let thread = match thread {
@@ -757,6 +831,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
         sender: thread.as_ref().map(|_| sender),
         cancelled,
         thread,
+        needs_refill: false,
     }
 }
 
@@ -788,6 +863,7 @@ mod tests {
             group: group.clone(),
             actor: actor.clone(),
             event: event.clone(),
+            claimed: true,
         };
         let key = (group.group_id.clone(), actor.id.clone(), event.id.clone());
         in_flight().lock().expect("claims").insert(key.clone());
@@ -906,6 +982,7 @@ done"#;
                 group: group.clone(),
                 actor: actor.clone(),
                 event: event.clone(),
+                claimed: true,
             })
             .expect("enqueue");
         worker
@@ -917,6 +994,7 @@ done"#;
                 group: group.clone(),
                 actor: actor.clone(),
                 event: followup.clone(),
+                claimed: true,
             })
             .expect("enqueue follow-up behind failed delivery");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -1098,6 +1176,7 @@ done"#;
             sender: None,
             cancelled,
             thread: Some(thread),
+            needs_refill: false,
         };
         let (done_tx, done_rx) = mpsc::channel();
         let shutdown = std::thread::spawn(move || {
@@ -1150,6 +1229,7 @@ done"#;
             group: group.clone(),
             actor: actor.clone(),
             event: event.clone(),
+            claimed: true,
         }));
         shutdown_actor(&group.group_id, &actor.id);
 

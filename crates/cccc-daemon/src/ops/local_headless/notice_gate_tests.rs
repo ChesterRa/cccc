@@ -14,6 +14,7 @@ fn session(temp: &std::path::Path) -> (Session, super::control_fixture::ControlD
         home: HomeLayout::from_path(config.join("home")).expect("home"),
         group_id: "g_notice".into(),
         actor_id: "peer".into(),
+        workspace: Default::default(),
         managed: Arc::new(AnalystSession::claude_for_shutdown_test(
             &config,
             "abcdef09",

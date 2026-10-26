@@ -265,7 +265,8 @@ fn accepts_local_principal(method: &Method, path: &str) -> bool {
 }
 
 fn requires_admin(method: &Method, path: &str) -> bool {
-    path.starts_with("/api/v1/voice/asr/providers")
+    path.starts_with("/api/v1/local_sessions")
+        || path.starts_with("/api/v1/voice/asr/providers")
         || path.starts_with("/api/v1/voice/asr/models")
         || (path.contains("/assistants/voice_secretary/models/") && *method != Method::GET)
         || path.starts_with("/api/v1/voice-secretary/")
@@ -341,3 +342,18 @@ fn failure_text(status: StatusCode, code: &str, message: &str) -> Response {
 #[cfg(test)]
 #[path = "auth_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod local_session_access_tests {
+    #[test]
+    fn local_session_directory_and_creation_require_admin() {
+        for path in [
+            "/api/v1/local_sessions",
+            "/api/v1/local_sessions/conversations",
+            "/api/v1/local_sessions/join",
+        ] {
+            assert!(super::requires_admin(&axum::http::Method::GET, path));
+            assert!(super::requires_admin(&axum::http::Method::POST, path));
+        }
+    }
+}

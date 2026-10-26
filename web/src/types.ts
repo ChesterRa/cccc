@@ -321,6 +321,8 @@ export type WebModelDeliveryStatusPayload = {
 export type RuntimeMode = "default" | "acp";
 
 export type Actor = {
+  /** User-owned native runtime; CCCC manages collaboration access only. */
+  external_session_id?: string;
   id: string;
   generation?: string;
   role?: string;
@@ -339,6 +341,7 @@ export type Actor = {
   env?: Record<string, string>;
   capability_autoload?: string[];
   capability_hidden?: string[];
+  default_scope_key?: string;
   runner?: string;
   runner_effective?: string;
   runtime?: string;
@@ -1983,4 +1986,35 @@ export function supportsAcpMode(runtime?: string | null): boolean {
     "hermes",
     "droid",
   ].includes(runtime || "");
+}
+
+export interface LocalSessionSource {
+  source_id: string;
+  runtime: "codex" | "claude";
+  native_session_id: string;
+  cwd: string;
+  title: string;
+  origin?: string | null;
+  connected: boolean;
+}
+
+export interface LocalSessionRecovery {
+  group_id: string;
+  actor_id: string;
+  source_id: string;
+  /** Explicit qualification result; recovery data is revalidated independently. */
+  refresh_status?: "checked" | "unavailable" | "not_checked";
+  recovery: {
+    state:
+      | "connected"
+      | "disconnected"
+      | "host_exited"
+      | "session_ended"
+      | "integration_disabled"
+      | "unknown";
+    cwd: string | null;
+    shell: "posix" | "powershell";
+    /** Server-quoted command for the declared shell; manual use only. */
+    command: string;
+  };
 }

@@ -1,5 +1,5 @@
 use cccc_client::DaemonClient;
-use cccc_core::HomeLayout;
+use cccc_core::{GroupDoc, HomeLayout, group_scope};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
@@ -17,33 +17,56 @@ pub(crate) async fn build(
     client: &DaemonClient,
     args: Map<String, Value>,
 ) -> Result<Value, ToolCallError> {
+    crate::local_tools::revalidate(home, &args)?;
     let group_id = string_value(args.get("group_id"))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "group_id is required".to_owned())?;
-    let actor_id = string_value(args.get("actor_id"))
+    // actor_id can be a model-selected target on other tools. Bootstrap always
+    // reports and reads the authenticated caller, just like local execution.
+    let actor_id = string_value(args.get("by"))
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "user".into());
+    let binding = args.get("_cccc_web_binding");
+    let native_binding = args.get("_cccc_native_binding");
     let inbox_limit = args
         .get("inbox_limit")
         .and_then(Value::as_u64)
         .unwrap_or(50)
         .clamp(1, 200) as usize;
-    let group_result = daemon(client, "group_show", request_args(&group_id, &actor_id)).await?;
-    let group = group_result
-        .get("group")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "group_show returned no group".to_owned())?;
+    let group_result = daemon(
+        client,
+        "group_show",
+        request_args(&group_id, &actor_id, binding, native_binding),
+    )
+    .await?;
+    let group: GroupDoc = serde_json::from_value(
+        group_result
+            .get("group")
+            .cloned()
+            .ok_or("group_show returned no group")?,
+    )
+    .map_err(|error| format!("group_show returned an invalid group: {error}"))?;
 
-    let actors_result = daemon(client, "actor_list", request_args(&group_id, &actor_id)).await?;
+    let actors_result = daemon(
+        client,
+        "actor_list",
+        request_args(&group_id, &actor_id, binding, native_binding),
+    )
+    .await?;
     let actors = actors_result
         .get("actors")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default();
 
-    let context = daemon(client, "context_get", request_args(&group_id, &actor_id)).await?;
+    let context = daemon(
+        client,
+        "context_get",
+        request_args(&group_id, &actor_id, binding, native_binding),
+    )
+    .await?;
 
-    let mut inbox_args = request_args(&group_id, &actor_id);
+    let mut inbox_args = request_args(&group_id, &actor_id, binding, native_binding);
     inbox_args.insert(
         "limit".into(),
         json!(inbox_limit.saturating_add(1).min(200)),
@@ -56,11 +79,26 @@ pub(crate) async fn build(
         .get("context_hygiene")
         .cloned()
         .unwrap_or_else(|| missing_hygiene(&actor_id));
-    let memory_recall_gate =
-        build_memory_recall_gate(client, &group_id, &actor_id, &recovery_pack).await;
+    let memory_recall_gate = build_memory_recall_gate(
+        client,
+        &group_id,
+        &actor_id,
+        &recovery_pack,
+        binding,
+        native_binding,
+    )
+    .await;
 
     let mut payload = assemble_payload(
-        build_session(group, actors, &actor_id),
+        build_session(
+            &group,
+            actors,
+            &actor_id,
+            group_result
+                .get("effective_scope")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+        ),
         build_recovery(&recovery_pack),
         build_inbox_preview(&inbox, inbox_limit),
         context_hygiene,
@@ -72,6 +110,7 @@ pub(crate) async fn build(
     {
         payload["mail_pending"] = pending;
     }
+    crate::local_tools::revalidate(home, &args)?;
     Ok(payload)
 }
 
@@ -98,56 +137,75 @@ fn assemble_payload(
     })
 }
 
-fn request_args(group_id: &str, actor_id: &str) -> Map<String, Value> {
-    Map::from_iter([
+fn request_args(
+    group_id: &str,
+    actor_id: &str,
+    binding: Option<&Value>,
+    native_binding: Option<&Value>,
+) -> Map<String, Value> {
+    let mut args = Map::from_iter([
         ("group_id".into(), Value::String(group_id.to_owned())),
         ("actor_id".into(), Value::String(actor_id.to_owned())),
         ("by".into(), Value::String(actor_id.to_owned())),
-    ])
+    ]);
+    if let Some(binding) = binding {
+        args.insert("_cccc_web_binding".into(), binding.clone());
+    }
+    if let Some(binding) = native_binding {
+        args.insert("_cccc_native_binding".into(), binding.clone());
+    }
+    args
 }
 
-fn build_session(group: &Map<String, Value>, actors: &[Value], actor_id: &str) -> Value {
+fn build_session(
+    group: &GroupDoc,
+    actors: &[Value],
+    actor_id: &str,
+    effective_scope: Value,
+) -> Value {
     let actor = actors
         .iter()
         .filter_map(Value::as_object)
         .find(|actor| actor.get("id").and_then(Value::as_str) == Some(actor_id));
-    let scope = selected_scope(group);
-    let active_scope = scope.map_or_else(
+    let active_scope = group_scope::effective_scope(group, None).map_or_else(
         || json!({}),
         |scope| {
             json!({
-                "scope_key": string_value(scope.get("scope_key")).unwrap_or_default(),
-                "path": string_value(scope.get("url")).unwrap_or_default(),
+                "scope_key": scope.scope_key,
+                "path": scope.url,
             })
         },
     );
+    let members = actors
+        .iter()
+        .map(|member| {
+            let mut summary = json!({
+                "actor_id": member["id"],
+                "runtime": member["runtime"],
+                "role": member["role"],
+                "enabled": member["enabled"],
+            });
+            if let Some(source_id) = member
+                .get("external_session_id")
+                .and_then(Value::as_str)
+                .filter(|source_id| !source_id.is_empty())
+            {
+                summary["source_id"] = json!(source_id);
+            }
+            summary
+        })
+        .collect::<Vec<_>>();
 
     json!({
-        "group_id": string_value(group.get("group_id")).unwrap_or_default(),
-        "group_title": string_value(group.get("title"))
-            .filter(|value| !value.is_empty())
-            .or_else(|| string_value(group.get("group_id")))
-            .unwrap_or_default(),
+        "group_id": group.group_id,
+        "group_title": if group.title.trim().is_empty() { &group.group_id } else { group.title.trim() },
         "actor_id": actor_id,
         "role": actor.and_then(|item| string_value(item.get("role"))).unwrap_or_default(),
         "runner": actor.and_then(|item| string_value(item.get("runner"))).unwrap_or_default(),
+        "members": members,
         "active_scope": active_scope,
+        "effective_scope": effective_scope,
     })
-}
-
-fn selected_scope(group: &Map<String, Value>) -> Option<&Map<String, Value>> {
-    let active = group
-        .get("active_scope_key")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let scopes = group.get("scopes").and_then(Value::as_array)?;
-    scopes
-        .iter()
-        .filter_map(Value::as_object)
-        .find(|scope| {
-            !active.is_empty() && scope.get("scope_key").and_then(Value::as_str) == Some(active)
-        })
-        .or_else(|| scopes.iter().find_map(Value::as_object))
 }
 
 fn build_recovery_pack(
@@ -524,9 +582,11 @@ async fn build_memory_recall_gate(
     group_id: &str,
     actor_id: &str,
     recovery_pack: &Value,
+    binding: Option<&Value>,
+    native_binding: Option<&Value>,
 ) -> Value {
     let query = memory_recall_query(recovery_pack);
-    let mut args = request_args(group_id, actor_id);
+    let mut args = request_args(group_id, actor_id, binding, native_binding);
     args.insert("query".into(), Value::String(query.clone()));
     args.insert("max_results".into(), json!(3));
     args.insert("min_score".into(), json!(0.1));
@@ -976,6 +1036,33 @@ fn non_empty_array(value: Option<&Value>) -> bool {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn session_lists_recipients_without_runtime_configuration() {
+        let temp = tempfile::tempdir().expect("fixture directory");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let group = cccc_core::GroupStore::new(home)
+            .expect("groups")
+            .create("Recipients", "")
+            .expect("group");
+        let members = [
+            json!({"id":"lead","runtime":"codex","role":"foreman","enabled":true,
+                "external_session_id":"codex:thread-a","env":{"FIXTURE":"private"},
+                "command":["private-launcher"],"pid":123}),
+            json!({"id":"peer","runtime":"claude","role":"peer","enabled":false,
+                "external_session_id":"","env":{"FIXTURE":"private"}}),
+        ];
+        let session = build_session(&group, &members, "lead", json!({}));
+        assert_eq!(session["actor_id"], "lead");
+        assert_eq!(
+            session["members"],
+            json!([
+                {"actor_id":"lead","runtime":"codex","role":"foreman","enabled":true,
+                    "source_id":"codex:thread-a"},
+                {"actor_id":"peer","runtime":"claude","role":"peer","enabled":false},
+            ])
+        );
+    }
 
     fn fixture_context() -> Map<String, Value> {
         json!({

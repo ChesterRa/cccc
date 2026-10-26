@@ -56,7 +56,7 @@ fn prompt(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({
         "group_id":group.group_id,
         "actor_id":actor_id,
-        "prompt":cccc_core::system_prompt::render_session(home, &group, actor)
+        "prompt":actor_runtime::session_prompt(home, &group, actor)
     }))
 }
 
@@ -209,6 +209,14 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
     let original_actor = current.clone();
+    if !current.external_session_id.is_empty()
+        && (!profile_id.is_empty() || !profile_action.is_empty())
+    {
+        return Err(OpError::new(
+            "external_session_owned",
+            "Native runtime configuration belongs to the original session",
+        ));
+    }
     if actor_profile_runtime::rejects_linked_patch(current, &patch) {
         return Err(OpError::new(
             "actor_profile_linked_readonly",
@@ -244,6 +252,10 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         None
     };
     let enabled_patched = patch.contains_key("enabled");
+    let enabling_native = enabled_patched
+        && !original_actor.enabled
+        && final_preview.enabled
+        && !final_preview.external_session_id.is_empty();
     let was_running = actor_process_running(&group, &original_actor);
     let actor = store(home)?
         .mutate(&group_id, |doc| {
@@ -273,6 +285,15 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             doc.actors[index] = final_actor.clone();
             if enabled_patched && !final_actor.enabled {
                 doc.running = doc.running && doc.actors.iter().any(|actor| actor.enabled);
+            } else if enabling_native
+                && matches!(
+                    doc.state,
+                    cccc_contracts::GroupState::Active | cccc_contracts::GroupState::Idle
+                )
+            {
+                // Native access needs no provider launch, but must survive
+                // daemon restart just like an explicit Actor Start.
+                doc.running = true;
             }
             Ok(final_actor)
         })
@@ -329,7 +350,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
     } else if enabled_patched
         && actor.enabled
-        && group.running
+        && updated_group.running
         && matches!(
             group.state,
             cccc_contracts::GroupState::Active | cccc_contracts::GroupState::Idle
@@ -403,6 +424,9 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             ));
         }
     };
+    if enabling_native {
+        actor_delivery::dispatch_unread(home, &updated_group, &actor_id);
+    }
     object(json!({"actor": actor, "event": event}))
 }
 
@@ -795,7 +819,7 @@ fn remove_persisted_headless_state(
     }
 }
 
-fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
+pub(super) fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let actor_id = required_arg(request, "actor_id")?;
     let _timing_span = tracing::info_span!(
@@ -815,8 +839,18 @@ fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult
         .find(|actor| actor.id == actor_id)
         .cloned()
         .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
+    if !original_actor.external_session_id.is_empty()
+        && matches!(kind, "actor.restart" | "actor.new_session")
+    {
+        return Err(OpError::new(
+            "external_session_owned",
+            "Reset this session in its original runtime; CCCC only controls collaboration access",
+        ));
+    }
     let runtime_was_running = actor_process_running(&group, &original_actor);
-    let retry_runtime = if matches!(kind, "actor.start" | "actor.restart") {
+    let retry_runtime = if original_actor.external_session_id.is_empty()
+        && matches!(kind, "actor.start" | "actor.restart")
+    {
         Some(actor_profile_runtime::resolve(home, &original_actor)?.runtime)
     } else {
         None
@@ -1031,6 +1065,23 @@ fn rollback_actor_lifecycle(
 }
 
 fn actor_from_args(request: &DaemonRequest) -> Result<Actor, OpError> {
+    if request
+        .args
+        .get("external_session_id")
+        .and_then(Value::as_str)
+        .is_some_and(|id| !id.is_empty())
+        || request
+            .args
+            .get("actor")
+            .and_then(|actor| actor.get("external_session_id"))
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.is_empty())
+    {
+        return Err(OpError::new(
+            "unsupported_field",
+            "Create native-session Actors through local_session_conversation",
+        ));
+    }
     if let Some(value) = request.args.get("actor") {
         if value.get("runner").is_some() {
             return Err(OpError::new(

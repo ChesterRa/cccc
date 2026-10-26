@@ -40,6 +40,19 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     let actor_id = required_arg(request, "actor_id")?;
     authorize(&group, request, &actor_id)?;
+    if request.args.contains_key("event_id") {
+        let event_id = required_arg(request, "event_id")?;
+        if ["mode", "query", "before_event_id", "limit"]
+            .iter()
+            .any(|name| request.args.contains_key(*name))
+        {
+            return Err(OpError::new(
+                "invalid_args",
+                "event_id cannot be combined with history filters or pagination",
+            ));
+        }
+        return history_event(home, &group, &actor_id, &event_id);
+    }
     let mode = string_arg(request, "mode")
         .unwrap_or_else(|| "all".into())
         .replace('-', "_");
@@ -115,6 +128,53 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     })
     .map_err(OpError::io)??;
     object(json!({"messages":result.0,"has_more":result.1}))
+}
+
+fn history_event(home: &HomeLayout, group: &GroupDoc, actor_id: &str, event_id: &str) -> OpResult {
+    let path = crate::dispatch::store(home)?
+        .ledger_path(&group.group_id)
+        .map_err(OpError::io)?;
+    let event = ledger::inspect_status(&path, |events, positions, generations| {
+        let generation = if actor_id == "user" {
+            0
+        } else {
+            generations.get(actor_id).copied().unwrap_or(0)
+        };
+        positions
+            .get(event_id)
+            .filter(|index| **index >= generation)
+            .and_then(|index| events.get(*index))
+            .filter(|event| {
+                (event.kind == "chat.message" && event.by == actor_id)
+                    || super::actor_delivery::event_targets_actor(group, event, actor_id)
+            })
+            .cloned()
+    })
+    .map_err(OpError::io)?
+    .ok_or_else(|| {
+        OpError::new(
+            "event_not_found",
+            "Message is unavailable in this Actor's history",
+        )
+    })?;
+    // Render after releasing the ledger reader: Mail context may inspect the
+    // same ledger. This is a read, never a delivery claim or Mail consumption.
+    let mut delivery_text = super::actor_delivery_render::render_batch_with_mail_context(
+        home,
+        group,
+        actor_id,
+        std::slice::from_ref(&event),
+    );
+    if let Some(actor) = cccc_core::actors::find(group, actor_id)
+        .filter(|actor| !actor.external_session_id.is_empty())
+        && let Some(text) = delivery_text.as_mut()
+    {
+        *text = format!(
+            "{}\n\n{text}",
+            super::actor_delivery_preamble::render(home, group, actor)
+        );
+    }
+    object(json!({"messages":[event],"has_more":false,"delivery_text":delivery_text}))
 }
 
 fn limit(request: &DaemonRequest) -> Result<usize, OpError> {

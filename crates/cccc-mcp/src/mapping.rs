@@ -1,7 +1,9 @@
 use serde_json::{Map, Value};
 
 use crate::actions;
-use crate::argument_normalization::{alias, normalize_message_author, normalize_recipients};
+use crate::argument_normalization::{
+    alias, message_mode, normalize_message_author, normalize_recipients,
+};
 
 pub fn daemon_call(
     name: &str,
@@ -18,10 +20,7 @@ pub fn daemon_call(
         "cccc_message_send" => {
             alias(&mut args, "event_id", "reply_to");
             normalize_message_author(&mut args);
-            let mode = args
-                .remove("mode")
-                .and_then(|value| value.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "mail".into());
+            let mode = message_mode(&mut args, "mail")?;
             args.insert("message_mode".into(), Value::String(mode));
             if connect_destination(&mut args)? {
                 return Ok(("connect_send".into(), args));
@@ -51,10 +50,7 @@ pub fn daemon_call(
             alias(&mut args, "event_id", "reply_to");
             alias(&mut args, "idempotency_key", "client_id");
             normalize_message_author(&mut args);
-            let mode = args
-                .remove("mode")
-                .and_then(|value| value.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "send".into());
+            let mode = message_mode(&mut args, "send")?;
             args.insert("message_mode".into(), Value::String(mode));
             "reply"
         }
@@ -527,6 +523,50 @@ mod tests {
         assert_eq!(args["reply_to"], "event-1");
         assert_eq!(args["message_mode"], "mail");
         assert!(!args.contains_key("mode"));
+    }
+
+    #[test]
+    fn message_modes_preserve_explicit_choices_and_existing_defaults() {
+        for (tool, default, modes) in [
+            (
+                "cccc_message_send",
+                "mail",
+                vec!["mail", "send", "request_reply"],
+            ),
+            ("cccc_message_reply", "send", vec!["mail", "send"]),
+        ] {
+            for mode in std::iter::once(None).chain(modes.into_iter().map(Some)) {
+                let mut input =
+                    json!({"group_id":"g_test","to":["peer"],"text":"Synthetic message"});
+                if let Some(mode) = mode {
+                    input["mode"] = json!(mode);
+                }
+                let (_, args) = daemon_call(tool, input.as_object().expect("args").clone())
+                    .expect("valid mode");
+                assert_eq!(args["message_mode"], mode.unwrap_or(default), "{tool}");
+                assert!(!args.contains_key("mode"));
+            }
+        }
+    }
+
+    #[test]
+    fn message_modes_reject_wire_fields_and_invalid_values_instead_of_defaulting() {
+        for tool in ["cccc_message_send", "cccc_message_reply"] {
+            for input in [
+                json!({"message_mode":"mail"}),
+                json!({"mode":"send","message_mode":"mail"}),
+                json!({"mode":"mail","message_mode":"mail"}),
+                json!({"mode":null}),
+                json!({"mode":false}),
+                json!({"mode":42}),
+                json!({"mode":"invalid"}),
+            ] {
+                let error = daemon_call(tool, input.as_object().expect("args").clone())
+                    .expect_err("invalid mode");
+                assert!(error.starts_with("invalid_args:"), "{tool}: {error}");
+                assert!(error.contains("mode"));
+            }
+        }
     }
 
     #[test]

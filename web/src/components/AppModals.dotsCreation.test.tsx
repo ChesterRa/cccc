@@ -28,10 +28,14 @@ vi.mock("./modals/ActorConfigModal", () => ({
     isOpen,
     onCreate,
     onSave,
+    scopes,
+    activeScopeKey,
   }: {
     mode: string;
     isOpen: boolean;
-    onCreate?: () => Promise<boolean>;
+    onCreate?: (avatar?: File | null, mode?: "default", scope?: string) => Promise<boolean>;
+    scopes?: Array<{ scope_key?: string }>;
+    activeScopeKey?: string;
     onSave?: (payload: {
       mode: "custom";
       setVars: {};
@@ -42,7 +46,13 @@ vi.mock("./modals/ActorConfigModal", () => ({
     }) => Promise<void>;
   }) =>
     mode === "create" && isOpen ? (
-      <button onClick={() => void onCreate?.()}>Create Dot</button>
+      <>
+        <button onClick={() => void onCreate?.()}>Create Dot</button>
+        <button onClick={() => void onCreate?.(null, "default", scopes?.[1]?.scope_key)}>
+          Create in second scope
+        </button>
+        <span data-active-scope={activeScopeKey} />
+      </>
     ) : mode === "edit" && isOpen && mocks.editSaveTarget ? (
       <button
         onClick={() =>
@@ -174,12 +184,36 @@ it("opens the actual newly created enabled Dot's pane after Actors hydrate, with
     "chatgpt_dots",
     "",
     undefined,
-    { capabilityAutoload: [] },
+    { capabilityAutoload: [], defaultScopeKey: "" },
   );
   expect(useUIStore.getState().activeTab).toBe("dot-created");
   expect(getChatSession("g_a", useUIStore.getState().chatSessions).mobileSurface).toBe("messages");
   expect(useModalStore.getState().editingActor).toBeNull();
   expect(mocks.refresh).toHaveBeenCalledWith("g_a");
+});
+it("passes the selected attached scope through the creation action", async () => {
+  useGroupStore.setState({
+    groupDoc: {
+      group_id: "g_a",
+      active_scope_key: "s_a",
+      scopes: [
+        { scope_key: "s_a", url: "/fixture/a" },
+        { scope_key: "s_b", url: "/fixture/b" },
+      ],
+    },
+  });
+  await render();
+  expect(host.querySelector('[data-active-scope="s_a"]')).not.toBeNull();
+  await act(async () => host.querySelectorAll<HTMLButtonElement>("button")[1].click());
+  expect(mocks.add).toHaveBeenLastCalledWith(
+    "g_a",
+    "dot-created",
+    "peer",
+    "chatgpt_dots",
+    "",
+    undefined,
+    { capabilityAutoload: [], defaultScopeKey: "s_b" },
+  );
 });
 it("waits for the existing Actor refresh to publish the created identity rather than navigating to an unknown Actor", async () => {
   mocks.refresh.mockResolvedValue(undefined);

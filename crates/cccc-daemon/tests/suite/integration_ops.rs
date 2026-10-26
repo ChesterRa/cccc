@@ -871,7 +871,7 @@ fn scope_lifecycle_uses_canonical_receipts_state_and_events() {
     assert_eq!(group.active_scope_key, scope_b_key);
     assert_eq!(group.scopes.len(), 1);
     assert_eq!(group.scopes[0].scope_key, scope_b_key);
-    assert_eq!(group.actors[0].default_scope_key, scope_b_key);
+    assert_eq!(group.actors[0].default_scope_key, scope_a_key);
     let registry = cccc_core::Registry::load(&home).expect("registry");
     assert_eq!(registry.groups[group_id].default_scope_key, scope_b_key);
     assert!(!registry.defaults.contains_key(scope_a_key));

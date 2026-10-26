@@ -1,24 +1,28 @@
 use super::*;
 
 pub(crate) fn pending_group_ids() -> Vec<String> {
-    completions()
+    let mut groups = completions()
         .lock()
         .map(|queue| {
             queue
                 .iter()
                 .map(|completion| completion.group_id.clone())
                 .collect::<HashSet<_>>()
-                .into_iter()
-                .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Ok(workers) = workers().lock() {
+        groups.extend(
+            workers
+                .iter()
+                .filter(|(_, worker)| worker.needs_refill)
+                .map(|((group_id, _), _)| group_id.clone()),
+        );
+    }
+    groups.into_iter().collect()
 }
 
 pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
     let pending = take_group_completions(group_id);
-    if pending.is_empty() {
-        return;
-    }
     let mut deferred = VecDeque::new();
     for completion in pending {
         match crate::ops::runtime_delivery::append_state(
@@ -28,10 +32,7 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
             &completion.actor_created_at,
             &completion.event_id,
             &completion.transport,
-            completion.withdrawn_reason.as_deref().map_or(
-                crate::ops::runtime_delivery::DeliveryOutcome::Accepted,
-                crate::ops::runtime_delivery::DeliveryOutcome::Withdrawn,
-            ),
+            completion.outcome.ledger_outcome(),
         ) {
             Ok(_) => clear_in_flight(|item| {
                 item.0 == completion.group_id
@@ -50,6 +51,45 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
     }
     if let Ok(mut completions) = completions().lock() {
         completions.extend(deferred);
+    }
+
+    let actors = workers()
+        .lock()
+        .map(|workers| {
+            workers
+                .iter()
+                .filter(|((id, _), worker)| id == group_id && worker.needs_refill)
+                .map(|((_, actor_id), _)| actor_id.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if actors.is_empty() {
+        return;
+    }
+    let group =
+        match cccc_core::GroupStore::new(home.clone()).and_then(|store| store.load(group_id)) {
+            Ok(group) => group,
+            Err(error) => {
+                tracing::warn!(%error, %group_id, "failed to reload pending native deliveries");
+                return;
+            }
+        };
+    for actor_id in actors {
+        // Offline workers keep their bounded slots. Wait for space rather than
+        // repeatedly loading the same full page or probing the native provider.
+        let has_capacity = in_flight()
+            .lock()
+            .map(|pending| {
+                pending
+                    .iter()
+                    .filter(|(group, actor, _)| group == group_id && actor == &actor_id)
+                    .count()
+                    < QUEUE_CAPACITY
+            })
+            .unwrap_or(false);
+        if has_capacity {
+            dispatch_unread(home, &group, &actor_id);
+        }
     }
 }
 
@@ -105,7 +145,7 @@ mod tests {
             actor_created_at: actor.created_at.clone(),
             event_id: source.id.clone(),
             transport: "pty".into(),
-            withdrawn_reason: None,
+            outcome: CompletedDelivery::Accepted,
         });
 
         drain_group(&home, &group.group_id);
@@ -152,6 +192,7 @@ mod tests {
             group: group.clone(),
             actor: actor.clone(),
             event: notice.clone(),
+            claimed: true,
         };
         if let Ok(mut pending) = in_flight().lock() {
             pending.insert((group.group_id.clone(), actor.id.clone(), notice.id.clone()));

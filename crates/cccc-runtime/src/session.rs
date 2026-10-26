@@ -34,6 +34,15 @@ pub struct SessionStatus {
     pub runner: RunnerKind,
     pub running: bool,
     pub pid: Option<u32>,
+    /// Immutable canonical launch directory; saved Actor configuration does not
+    /// change the workspace of this registered process.
+    pub cwd: PathBuf,
+    /// Daemon-owned launch attribution, captured before child environment is
+    /// consumed. Generic non-Actor sessions leave these fields empty.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub scope_key: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub actor_generation: String,
     pub started_at: String,
     pub exit_code: Option<u32>,
     /// How the process ended, as `portable_pty::ExitStatus` renders it
@@ -61,6 +70,13 @@ impl Session {
         history_config: Option<HistoryConfig>,
         history_cursor_floor: u64,
     ) -> Result<Self, RuntimeError> {
+        let cwd = spec.cwd.canonicalize()?;
+        let scope_key = spec.env.get("CCCC_SCOPE_KEY").cloned().unwrap_or_default();
+        let actor_generation = spec
+            .env
+            .get("CCCC_ACTOR_GENERATION")
+            .cloned()
+            .unwrap_or_default();
         let prepared_command = crate::prepare_pty_command(&spec.command, &spec.env);
         let (program, args) = prepared_command
             .split_first()
@@ -75,7 +91,7 @@ impl Session {
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         let mut command = CommandBuilder::new(program);
         command.args(args);
-        command.cwd(spec.cwd);
+        command.cwd(&cwd);
         for (key, value) in spec.env {
             command.env(key, value);
         }
@@ -131,6 +147,9 @@ impl Session {
                 runner: spec.runner,
                 running: true,
                 pid,
+                cwd,
+                scope_key,
+                actor_generation,
                 started_at: utc_now(),
                 exit_code: None,
                 exit_detail: None,

@@ -4,6 +4,8 @@ CCCC can run multiple agent runtimes in the same working group. Each actor choos
 
 Use `cccc runtime list --all` to see the full supported list on your machine, and `cccc doctor` to check which CLI runtimes are installed.
 
+Independently started Codex and Claude sessions can also [connect as native sessions](./local-sessions), with native ownership preserved and no session-history import.
+
 ## First-Class Runtimes
 
 | Runtime | Runtime id | Entrypoint / surface | MCP setup |

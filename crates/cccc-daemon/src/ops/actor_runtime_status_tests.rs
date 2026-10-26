@@ -24,13 +24,16 @@ fn stopped_deepseek_supervisor_is_stopped_in_every_runtime_projection() {
     let group = store.load(&created.group_id).expect("stored group");
     let actor = &group.actors[0];
 
-    assert!(!actor_runtime_status::resolve(&group, actor).running);
-    assert_eq!(group_runtime::status(&group)["runtime_running"], false);
+    assert!(!actor_runtime_status::resolve(&home, &group, actor).running);
     assert_eq!(
-        group_runtime::group(group.clone())["actors"][0]["running"],
+        group_runtime::status(&home, &group)["runtime_running"],
         false
     );
-    assert!(actor_activity::running_payload(&home, &group, actor).is_none());
+    assert_eq!(
+        group_runtime::group(&home, group.clone())["actors"][0]["running"],
+        false
+    );
+    assert!(actor_activity::activity_payload(&home, &group, actor).is_none());
 
     let request = DaemonRequest {
         v: 1,

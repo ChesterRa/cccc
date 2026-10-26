@@ -26,6 +26,7 @@ pub(super) struct RuntimeEntry {
     pub(super) running: AtomicBool,
     pub(super) manual_restart_required: AtomicBool,
     pub(super) generation: String,
+    workspace: super::actor_runtime::LaunchWorkspace,
 }
 
 pub(super) fn sessions() -> &'static RwLock<HashMap<Key, Arc<RuntimeEntry>>> {
@@ -44,6 +45,7 @@ pub fn start(
     actor: &Actor,
     cwd: &Path,
 ) -> std::io::Result<()> {
+    let cwd = cwd.canonicalize()?;
     let key = (group.group_id.clone(), actor.id.clone());
     stop(&group.group_id, &actor.id);
     let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -71,9 +73,9 @@ pub fn start(
     let command = launch_command::resolve(actor, &env)?;
     let env = env.into_iter().collect::<Vec<_>>();
     supervisor
-        .start(&command, cwd, &env)
+        .start(&command, &cwd, &env)
         .map_err(std::io::Error::other)?;
-    if let Err(error) = supervisor.handshake(cwd, Duration::from_secs(5)) {
+    if let Err(error) = supervisor.handshake(&cwd, Duration::from_secs(5)) {
         let _ = supervisor.stop();
         return Err(std::io::Error::other(format!(
             "deepseek ACP handshake failed: {error}"
@@ -89,6 +91,7 @@ pub fn start(
                 running: AtomicBool::new(true),
                 manual_restart_required: AtomicBool::new(false),
                 generation: generation.clone(),
+                workspace: super::actor_runtime::LaunchWorkspace::capture(group, actor, &cwd),
             }),
         );
     cancel_flags()
@@ -166,20 +169,34 @@ pub fn running(group_id: &str, actor_id: &str) -> bool {
         .read()
         .ok()
         .and_then(|map| map.get(&key).cloned())
-        .is_some_and(|holder| {
-            if !holder.running.load(Ordering::Acquire) {
-                return false;
-            }
-            match holder.supervisor.try_lock() {
-                Ok(mut supervisor) => {
-                    let running = supervisor.is_running();
-                    holder.running.store(running, Ordering::Release);
-                    running
-                }
-                Err(std::sync::TryLockError::WouldBlock) => true,
-                Err(std::sync::TryLockError::Poisoned(_)) => false,
-            }
-        })
+        .is_some_and(|holder| entry_running(&holder))
+}
+
+pub(super) fn registered_workspace(
+    group_id: &str,
+    actor_id: &str,
+) -> Option<(bool, super::actor_runtime::LaunchWorkspace)> {
+    let holder = sessions()
+        .read()
+        .ok()?
+        .get(&(group_id.to_owned(), actor_id.to_owned()))
+        .cloned()?;
+    Some((entry_running(&holder), holder.workspace.clone()))
+}
+
+fn entry_running(holder: &RuntimeEntry) -> bool {
+    if !holder.running.load(Ordering::Acquire) {
+        return false;
+    }
+    match holder.supervisor.try_lock() {
+        Ok(mut supervisor) => {
+            let running = supervisor.is_running();
+            holder.running.store(running, Ordering::Release);
+            running
+        }
+        Err(std::sync::TryLockError::WouldBlock) => true,
+        Err(std::sync::TryLockError::Poisoned(_)) => false,
+    }
 }
 
 pub(super) fn manual_restart_required(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> bool {

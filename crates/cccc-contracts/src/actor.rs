@@ -34,6 +34,7 @@ pub enum RuntimeStateSource {
     Terminal,
     #[serde(rename = "managed_session", alias = "app_server")]
     ManagedSession,
+    ExternalSession,
 }
 
 /// Provider-supported execution path. Default preserves each Runtime's
@@ -215,6 +216,9 @@ pub struct Actor {
     pub runtime_mode: RuntimeMode,
     #[serde(default)]
     pub runtime_state_source: RuntimeStateSource,
+    /// User-owned native receiver; CCCC must never launch or stop its runtime.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub external_session_id: String,
     #[serde(default)]
     pub internal_kind: Option<String>,
     #[serde(default)]
@@ -256,6 +260,7 @@ impl Actor {
             runtime: ActorRuntime::default(),
             runtime_mode: RuntimeMode::default(),
             runtime_state_source: RuntimeStateSource::default(),
+            external_session_id: String::new(),
             internal_kind: None,
             avatar_asset_path: String::new(),
             profile_id: String::new(),
@@ -269,6 +274,12 @@ impl Actor {
     }
 
     pub fn normalize_runtime_constraints(&mut self) {
+        if !self.external_session_id.is_empty() {
+            self.runner = RunnerKind::Headless;
+            self.runtime_state_source = RuntimeStateSource::ExternalSession;
+            self.command.clear();
+            return;
+        }
         self.runner = self.runtime.runner_for(self.runtime_mode);
         self.runtime_state_source = self.runtime.state_source_for(self.runtime_mode);
         if self.runtime.is_web_model() {

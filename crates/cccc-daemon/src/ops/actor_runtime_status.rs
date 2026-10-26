@@ -7,7 +7,19 @@ pub(super) struct RuntimeStatus {
     pub pid: Option<u32>,
 }
 
-pub(super) fn resolve(group: &GroupDoc, actor: &Actor) -> RuntimeStatus {
+pub(super) fn resolve(
+    home: &cccc_core::HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) -> RuntimeStatus {
+    if !actor.external_session_id.is_empty() {
+        return RuntimeStatus {
+            running: actor.enabled
+                && !matches!(group.state, GroupState::Stopped | GroupState::Paused)
+                && super::local_sessions::connected(home, &actor.external_session_id),
+            pid: None,
+        };
+    }
     if super::deepseek_runtime::running(&group.group_id, &actor.id) {
         return RuntimeStatus {
             running: true,
@@ -86,7 +98,7 @@ mod tests {
         ] {
             actor.runtime = runtime;
             actor.normalize_runtime_constraints();
-            assert!(resolve(&group, &actor).running);
+            assert!(resolve(&home, &group, &actor).running);
         }
     }
 }

@@ -33,7 +33,10 @@ import { SidebarMobileOverlay } from "./SidebarMobileOverlay";
 import { ConnectSidebar } from "../../features/connect/ConnectSidebar";
 import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbench";
 
+import { LocalSessionsButton } from "../../features/localSessions/LocalSessionsButton";
+
 export interface GroupSidebarProps {
+  canAccessLocalSessions?: boolean;
   connect?: ConnectWorkbench;
   orderedGroups: GroupMeta[];
   archivedGroupIds: string[];
@@ -62,6 +65,7 @@ export interface GroupSidebarProps {
 
 export function GroupSidebar({
   connect,
+  canAccessLocalSessions,
   orderedGroups,
   archivedGroupIds,
   selectedGroupId,
@@ -475,6 +479,16 @@ export function GroupSidebar({
               )}
             </div>
           )}
+          {!readOnly && canAccessLocalSessions ? (
+            <LocalSessionsButton
+              collapsed={isCollapsed}
+              isDark={isDark}
+              onSelectGroup={(groupId) => {
+                onSelectGroup(groupId);
+                if (window.matchMedia("(max-width: 767px)").matches) onClose();
+              }}
+            />
+          ) : null}
         </div>
 
         {connect ? (

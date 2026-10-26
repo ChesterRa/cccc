@@ -133,6 +133,7 @@ export default defineConfig({
             { text: 'Operations Runbook', link: '/guide/operations' },
             { text: 'Web UI', link: '/guide/web-ui' },
             { text: 'Supported Runtimes', link: '/guide/runtimes' },
+            { text: 'Native sessions', link: '/guide/local-sessions' },
             { text: 'CCCC Connect', link: '/guide/connect' },
             { text: 'ChatGPT Web Model Runtime', link: '/guide/web-model-runtime' },
             { text: 'Grok Bot Web Model', link: '/guide/grok-web-model-runtime' },

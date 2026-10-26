@@ -482,6 +482,7 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 | [ユースケース](https://chesterra.github.io/cccc/guide/use-cases) | 実践的なマルチエージェントシナリオ |
 | [Web UI ガイド](https://chesterra.github.io/cccc/guide/web-ui) | ダッシュボードのナビゲーション |
 | [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | アカウント・Direct 接続、配信と権限境界 |
+| [ネイティブセッション](https://chesterra.github.io/cccc/guide/local-sessions) | 履歴を取り込まずに既存の Codex / Claude セッションを接続 |
 | [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | 音声入力、文書、入力欄のワークフロー |
 | [IM ブリッジ設定](https://chesterra.github.io/cccc/guide/im-bridge/) | Telegram、Slack、Discord、Mattermost、Feishu、DingTalk、WeCom、Weixin の接続 |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM ナレッジ統合 |

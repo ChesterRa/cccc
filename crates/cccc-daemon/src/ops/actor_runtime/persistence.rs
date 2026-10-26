@@ -24,9 +24,22 @@ pub fn persist_lifecycle(
             let mut patch = serde_json::Map::new();
             patch.insert("enabled".into(), serde_json::Value::Bool(enabled));
             let actor = cccc_core::actors::update(doc, actor_id, &patch)?;
-            doc.running = running;
-            if enabled && doc.state == cccc_contracts::GroupState::Stopped {
-                doc.state = cccc_contracts::GroupState::Active;
+            if !actor.external_session_id.is_empty() {
+                // Start/Stop manages native membership only, just like
+                // actor_update(enabled). It cannot release Group Stop/Pause.
+                if !enabled {
+                    doc.running = doc.running && doc.actors.iter().any(|actor| actor.enabled);
+                } else if matches!(
+                    doc.state,
+                    cccc_contracts::GroupState::Active | cccc_contracts::GroupState::Idle
+                ) {
+                    doc.running = true;
+                }
+            } else {
+                doc.running = running;
+                if enabled && doc.state == cccc_contracts::GroupState::Stopped {
+                    doc.state = cccc_contracts::GroupState::Active;
+                }
             }
             Ok(actor)
         })

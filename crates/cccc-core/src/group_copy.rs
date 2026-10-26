@@ -53,6 +53,7 @@ pub struct PreviewActor {
     pub runtime: String,
     pub runner: String,
     pub enabled: bool,
+    pub native_session: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -77,6 +78,7 @@ pub struct RequiresReconnect {
     pub chatgpt_web_model: bool,
     pub grok_web_model: bool,
     pub notebooklm_group_space: bool,
+    pub native_sessions: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -209,6 +211,14 @@ pub fn import(
         replace_active_scope(&mut group, detected, &old_scope);
     }
     scrub_group(&mut group);
+    group.extra.remove("local_session_conversation");
+    for actor in &mut group.actors {
+        if !actor.external_session_id.is_empty() {
+            // A copied binding retains its identity and history, not live access
+            // to the same native source in this CCCC_HOME.
+            actor.enabled = false;
+        }
+    }
     sanitize_import_profiles(store, &mut group)?;
     let imported = store.import(group.clone())?;
     let target = store.group_dir(&final_group_id)?;
@@ -387,7 +397,8 @@ fn preview_package(
                 .ok()
                 .and_then(|value| value.as_str().map(str::to_owned))
                 .unwrap_or_default(),
-            enabled: actor.enabled,
+            enabled: actor.enabled && actor.external_session_id.is_empty(),
+            native_session: !actor.external_session_id.is_empty(),
         })
         .collect::<Vec<_>>();
     let workspace = active_workspace(group);
@@ -406,6 +417,7 @@ fn preview_package(
                 .unwrap_or_default()
                 .to_ascii_lowercase()
                 .contains("notebooklm"),
+            native_sessions: actors.iter().any(|actor| actor.native_session),
         },
         actors,
         source_workspace_root: workspace.clone(),
@@ -878,6 +890,9 @@ mod tests {
         let inspected = preview(&store, &bytes).expect("preview");
         assert!(inspected.requires_reconnect.chatgpt_web_model);
         assert!(!inspected.requires_reconnect.grok_web_model);
+        assert!(!inspected.requires_reconnect.native_sessions);
+        assert!(!inspected.actors[0].native_session);
+        assert_eq!(inspected.actors[0].enabled, source.actors[0].enabled);
         let imported = import(&store, &bytes, "", "").expect("import");
         let imported_group = store.load(&imported.group_id).expect("imported");
         assert!(!imported_group.running);
@@ -906,6 +921,126 @@ mod tests {
                 &source.actors[0].generation
             ),
             Some(binding)
+        );
+    }
+
+    #[test]
+    fn import_pauses_native_access_but_keeps_bindings_configuration_and_history() {
+        use cccc_contracts::{Actor, ActorRuntime};
+        use serde_json::json;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let source = store.create("Native source", "keep topic").expect("source");
+        store
+            .mutate(&source.group_id, |group| {
+                group.active_scope_key = "s_native".into();
+                group.scopes.push(Scope {
+                    scope_key: "s_native".into(),
+                    url: temp.path().to_string_lossy().into_owned(),
+                    label: "native workspace".into(),
+                    git_remote: String::new(),
+                });
+                for (id, runtime, source_id, enabled) in [
+                    ("native-codex", ActorRuntime::Codex, "codex:copy", true),
+                    ("native-claude", ActorRuntime::Claude, "claude:copy", true),
+                    (
+                        "paused-native",
+                        ActorRuntime::Codex,
+                        "codex:paused-copy",
+                        false,
+                    ),
+                    ("managed-codex", ActorRuntime::Codex, "", true),
+                    ("paused-managed", ActorRuntime::Claude, "", false),
+                ] {
+                    let mut actor = Actor::new(id);
+                    actor.runtime = runtime;
+                    actor.external_session_id = source_id.into();
+                    actor.enabled = enabled;
+                    actor.title = format!("{id} title");
+                    actor.default_scope_key = group.active_scope_key.clone();
+                    actor.capability_hidden = vec!["fixture-capability".into()];
+                    crate::actors::add(group, actor)?;
+                }
+                group.running = true;
+                group.extra.insert(
+                    "local_session_conversation".into(),
+                    json!({"direct":true,"source_ids":["claude:copy","codex:copy"]}),
+                );
+                Ok(())
+            })
+            .expect("source configuration");
+        let source = store.load(&source.group_id).expect("configured source");
+        let source_directory = store.group_dir(&source.group_id).expect("source directory");
+        let mut history = Event::new("chat.message", &source.group_id);
+        history.by = "native-codex".into();
+        history.scope_key.clone_from(&source.active_scope_key);
+        history
+            .data
+            .insert("text".into(), json!("preserve native history"));
+        crate::ledger::append(&source_directory.join("ledger.jsonl"), &history).expect("history");
+        let source_yaml = fs::read(source_directory.join("group.yaml")).expect("source yaml");
+        let source_ledger = fs::read(source_directory.join("ledger.jsonl")).expect("source ledger");
+
+        let (bytes, _, _) = export(&store, &source.group_id).expect("export");
+        let inspected = preview(&store, &bytes).expect("preview");
+        assert!(inspected.group_id_conflict);
+        assert!(inspected.runtime_reset.actors_stopped);
+        assert_eq!(store.list().expect("groups after preview").len(), 1);
+        let imported = import(&store, &bytes, "", "").expect("same home import");
+        let imported_group = store.load(&imported.group_id).expect("imported group");
+        let mut expected_actors = source.actors.clone();
+        for actor in &mut expected_actors {
+            if !actor.external_session_id.is_empty() {
+                actor.enabled = false;
+            }
+        }
+        assert_eq!(imported_group.actors, expected_actors);
+        assert!(!imported_group.running);
+        assert_eq!(imported_group.state, GroupState::Idle);
+        assert!(
+            !imported_group
+                .extra
+                .contains_key("local_session_conversation"),
+            "import must not inherit the source Group's direct reuse index"
+        );
+        let events = crate::ledger::tail(
+            &store
+                .ledger_path(&imported.group_id)
+                .expect("imported ledger"),
+            2,
+        )
+        .expect("imported history");
+        let mut expected_history = history;
+        expected_history.group_id.clone_from(&imported.group_id);
+        assert_eq!(events[0], expected_history);
+        assert_eq!(events[1].kind, "group.create");
+
+        let inspected = serde_json::to_value(inspected).expect("serialized preview");
+        assert_eq!(inspected["requires_reconnect"]["native_sessions"], true);
+        assert_eq!(inspected["requires_reconnect"]["chatgpt_web_model"], false);
+        assert_eq!(inspected["requires_reconnect"]["grok_web_model"], false);
+        for (actor, expected) in inspected["actors"]
+            .as_array()
+            .expect("preview actors")
+            .iter()
+            .zip(&expected_actors)
+        {
+            assert_eq!(actor["id"], expected.id);
+            assert_eq!(
+                actor["native_session"],
+                !expected.external_session_id.is_empty()
+            );
+            assert_eq!(actor["enabled"], expected.enabled);
+        }
+        assert_eq!(
+            fs::read(source_directory.join("group.yaml")).expect("unchanged source yaml"),
+            source_yaml
+        );
+        assert_eq!(
+            fs::read(source_directory.join("ledger.jsonl")).expect("unchanged source ledger"),
+            source_ledger
         );
     }
 

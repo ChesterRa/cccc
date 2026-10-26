@@ -414,7 +414,7 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
         "latest_ts":latest.ts,
         "messages":messages,
         "coalesced_text":coalesced_text,
-        "system_prompt":cccc_core::system_prompt::render_session(home, &group, actor),
+        "system_prompt":super::actor_runtime::session_prompt(home, &group, actor),
         "delivery":{"mode":"runtime_delivery","transport":transport,"max_events":limit,"web_model_mode":web_model_mode},
         "instructions":"Process this coalesced CCCC turn and call cccc_runtime_complete_turn when finished."
     });
@@ -552,7 +552,7 @@ fn recover_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "latest_ts":latest.ts,
         "messages":messages,
         "coalesced_text":coalesced,
-        "system_prompt":cccc_core::system_prompt::render_session(home, &group, actor),
+        "system_prompt":super::actor_runtime::session_prompt(home, &group, actor),
         "delivery":{"mode":"recovery_no_delivery_mutation","web_model_mode":web_model_mode}
     });
     object(json!({"status":"recovered","turn":turn}))

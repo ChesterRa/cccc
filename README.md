@@ -488,6 +488,7 @@ For security reporting, see [SECURITY.md](SECURITY.md); for operational access c
 | [Use Cases](https://chesterra.github.io/cccc/guide/use-cases) | Practical multi-agent scenarios |
 | [Web UI Guide](https://chesterra.github.io/cccc/guide/web-ui) | Navigating the dashboard |
 | [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | Account and Direct connections, delivery and permissions |
+| [Native sessions](https://chesterra.github.io/cccc/guide/local-sessions) | Connect user-owned Codex and Claude sessions without importing history |
 | [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | Dictation, documents and composer workflows |
 | [IM Bridge Setup](https://chesterra.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Mattermost, Feishu, DingTalk, WeCom, Weixin |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM knowledge integration |

@@ -81,6 +81,15 @@ pub fn process_batch(
     if jobs.is_empty() {
         return BatchOutcome::Delivered;
     }
+    if !current_actor.external_session_id.is_empty() {
+        return process_external_batch(
+            jobs,
+            &current_group,
+            &current_actor,
+            preamble_session,
+            cancelled,
+        );
+    }
     if current_actor.runtime == ActorRuntime::Deepseek {
         return process_deepseek_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
     }
@@ -151,6 +160,176 @@ pub fn process_batch(
         preamble_session.clone_from(&status.started_at);
         finish_jobs(jobs);
         return BatchOutcome::Delivered;
+    }
+    BatchOutcome::Retry
+}
+
+fn process_external_batch(
+    jobs: &mut Vec<DeliveryJob>,
+    group: &cccc_core::GroupDoc,
+    actor: &Actor,
+    preamble_session: &mut String,
+    cancelled: &AtomicBool,
+) -> BatchOutcome {
+    use super::actor_delivery::{CompletedDelivery, finish_job};
+    use super::local_sessions::DeliveryOutcome;
+    while let Some(job) = jobs.first_mut() {
+        if cancelled.load(Ordering::Acquire) {
+            return BatchOutcome::Retry;
+        }
+        let Ok(group) =
+            GroupStore::new(job.home.clone()).and_then(|store| store.load(&group.group_id))
+        else {
+            return BatchOutcome::Retry;
+        };
+        let Some(actor) = group.actors.iter().find(|current| {
+            current.id == actor.id
+                && cccc_core::actors::generation_identity(current)
+                    == cccc_core::actors::generation_identity(&job.actor)
+                && current.external_session_id == job.actor.external_session_id
+                && current.enabled
+        }) else {
+            return BatchOutcome::Retry;
+        };
+        if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+            return BatchOutcome::Retry;
+        }
+        let Some(marker) =
+            super::local_sessions::session_marker(&job.home, &actor.external_session_id)
+        else {
+            return defer_external_job(job);
+        };
+        if !super::local_sessions::connected(&job.home, &actor.external_session_id) {
+            return defer_external_job(job);
+        }
+        let events = std::slice::from_ref(&job.event);
+        let Some(mut text) = super::actor_delivery_render::render_batch_with_mail_context(
+            &job.home, &group, &actor.id, events,
+        ) else {
+            return BatchOutcome::Terminal("Native delivery could not be rendered".into());
+        };
+        let first_delivery = *preamble_session != marker;
+        if actor.runtime == ActorRuntime::Claude {
+            let Some(notice) =
+                super::actor_delivery_render::claude_notice(&group, actor, &job.event)
+            else {
+                return BatchOutcome::Terminal(
+                    "Native notification routing context exceeds the Claude Monitor budget".into(),
+                );
+            };
+            text = notice;
+        } else if first_delivery {
+            text = format!(
+                "{}\n\n{text}",
+                super::actor_delivery_preamble::render(&job.home, &group, actor)
+            );
+        } else {
+            // One native session may serve several Groups. Later messages
+            // still identify their receiving member without repeating startup.
+            let scope = cccc_core::group_scope::effective_scope(&group, Some(actor));
+            let context = serde_json::json!({
+                "group_id":group.group_id,
+                "group_title":group.title,
+                "actor_id":actor.id,
+                "role":cccc_core::actors::effective_role(&group, &actor.id),
+                "scope_key":scope.map(|scope| &scope.scope_key),
+                "scope_root":scope.map(|scope| &scope.url),
+            });
+            text = format!("[CCCC] Receiving context: {context}\n\n{text}");
+        }
+        match super::local_sessions::preflight(&job.home, actor, &text) {
+            Ok(()) => {}
+            Err(super::local_sessions::PreflightError::Unavailable) => {
+                return defer_external_job(job);
+            }
+            Err(super::local_sessions::PreflightError::Rejected(reason)) => {
+                // No external I/O is possible for this payload. Settle before
+                // claiming, but do not replace another attempt's durable claim
+                // or terminal evidence with a newly rendered preflight failure.
+                if !job.claimed {
+                    match super::runtime_delivery::latest_state(
+                        &job.home,
+                        &group.group_id,
+                        &actor.id,
+                        &job.event.id,
+                    ) {
+                        Ok(Some((state, _)))
+                            if matches!(
+                                state.as_str(),
+                                "claimed" | "accepted" | "ambiguous" | "withdrawn"
+                            ) =>
+                        {
+                            super::actor_delivery::release_in_flight(job);
+                            jobs.remove(0);
+                            continue;
+                        }
+                        Err(_) => return BatchOutcome::Retry,
+                        _ => {}
+                    }
+                }
+                finish_job(job, CompletedDelivery::Failed(reason));
+                jobs.remove(0);
+                continue;
+            }
+        }
+        if !job.claimed {
+            match super::runtime_delivery::claim(
+                &job.home,
+                &group,
+                actor,
+                &job.event.id,
+                "local_session",
+                false,
+            ) {
+                Ok(super::runtime_delivery::ClaimResult::Claimed) => job.claimed = true,
+                Ok(super::runtime_delivery::ClaimResult::Terminal(_)) => {
+                    super::actor_delivery::release_in_flight(job);
+                    jobs.remove(0);
+                    continue;
+                }
+                Err(error) => {
+                    tracing::warn!(message = %error.message, "failed to claim native handoff");
+                    return BatchOutcome::Retry;
+                }
+            }
+        }
+        match super::local_sessions::submit(&job.home, &group, actor, events, text, cancelled) {
+            DeliveryOutcome::Unavailable => return defer_external_job(job),
+            DeliveryOutcome::Accepted => {
+                finish_job(job, CompletedDelivery::Accepted);
+                *preamble_session = marker;
+            }
+            DeliveryOutcome::Rejected(reason) => finish_job(job, CompletedDelivery::Failed(reason)),
+            DeliveryOutcome::Ambiguous(reason) => {
+                finish_job(job, CompletedDelivery::Ambiguous(reason))
+            }
+        }
+        // A rejected or uncertain handoff never holds the remaining jobs hostage.
+        jobs.remove(0);
+    }
+    BatchOutcome::Delivered
+}
+
+fn defer_external_job(job: &mut DeliveryJob) -> BatchOutcome {
+    if job.claimed {
+        // Unavailable proves this attempt never crossed the native handoff
+        // boundary. Keep the in-memory slot, but not an uncertain durable claim.
+        match super::runtime_delivery::append_state(
+            &job.home,
+            &job.group.group_id,
+            &job.actor.id,
+            &job.actor.created_at,
+            &job.event.id,
+            "local_session",
+            super::runtime_delivery::DeliveryOutcome::Unsubmitted(
+                "Native receive channel unavailable before submission",
+            ),
+        ) {
+            Ok(_) => job.claimed = false,
+            Err(error) => {
+                tracing::warn!(message = %error.message, "failed to release unsubmitted native claim");
+            }
+        }
     }
     BatchOutcome::Retry
 }
@@ -438,6 +617,7 @@ mod tests {
             group: group.clone(),
             actor: actor.clone(),
             event: notice.clone(),
+            claimed: true,
         };
         let state = || {
             crate::ops::runtime_delivery::latest_state(&home, &group.group_id, "peer1", &notice.id)
@@ -505,6 +685,7 @@ mod tests {
             group: group.clone(),
             actor: actor.clone(),
             event: event.clone(),
+            claimed: true,
         };
         let mut batch = vec![job(&notice), job(&send)];
 
@@ -552,6 +733,7 @@ mod tests {
                 group: group.clone(),
                 actor: actor.clone(),
                 event,
+                claimed: true,
             }
         };
         let state = |job: &DeliveryJob| {
@@ -615,6 +797,7 @@ mod tests {
             group: group.clone(),
             actor: actor.clone(),
             event,
+            claimed: true,
         };
 
         assert_eq!(
@@ -648,6 +831,7 @@ mod tests {
             group: group.clone(),
             actor,
             event,
+            claimed: true,
         };
 
         match process_batch(&mut vec![job], &mut String::new(), &AtomicBool::new(false)) {

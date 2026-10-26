@@ -2,6 +2,8 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
+import type { GroupCopyPreview } from "../../../services/api/groups";
+import enSettings from "../../../i18n/locales/en/settings.json";
 const api = vi.hoisted(() => ({
   previewGroupCopy: vi.fn(),
   fetchDirSuggestions: vi.fn(),
@@ -23,7 +25,14 @@ vi.mock("../../../stores/useGroupStore", () => ({
     { getState: () => groupStore },
   ),
 }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string) =>
+      key === "copyGroups.reconnectNativeSessions"
+        ? enSettings.copyGroups.reconnectNativeSessions
+        : key,
+  }),
+}));
 import { CopyGroupsTab } from "./CopyGroupsTab";
 
 it("keeps the last chosen directory when earlier navigation finishes late", async () => {
@@ -126,20 +135,59 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function choosePackage(host: HTMLElement, file: File) {
-  api.previewGroupCopy.mockResolvedValue({
-    ok: true,
-    result: {
-      upload_id: "upload-1",
-      preview: { source_workspace_root: "/src", source_title: "Source", actors: [] },
-    },
-  });
+async function choosePackage(
+  host: HTMLElement,
+  file: File,
+  preview: GroupCopyPreview = { source_workspace_root: "/src", source_title: "Source", actors: [] },
+) {
+  api.previewGroupCopy.mockResolvedValue({ ok: true, result: { upload_id: "upload-1", preview } });
   await act(async () => {
     const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
     Object.defineProperty(input, "files", { value: [file], configurable: true });
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
+
+it.each([
+  { name: "native Actor", nativeSession: true, requiresReconnect: false, visible: true },
+  {
+    name: "native reconnect summary",
+    nativeSession: false,
+    requiresReconnect: true,
+    visible: true,
+  },
+  { name: "managed Codex Actor", nativeSession: false, requiresReconnect: false, visible: false },
+])(
+  "previews paused native access from explicit flags, not runtime ($name)",
+  async ({ nativeSession, requiresReconnect, visible }) => {
+    const { host, unmount } = await mountTab("source-group");
+    try {
+      await choosePackage(host, new File(["zip"], "same-instance.zip"), {
+        source_group_id: "source-group",
+        source_title: "Source",
+        source_workspace_root: "/src",
+        actors: [{ id: "actor", runtime: "codex", native_session: nativeSession }],
+        requires_reconnect: { native_sessions: requiresReconnect },
+      });
+      const notices = [...host.querySelectorAll("[data-copy-groups-preview] li")].filter((node) =>
+        node.textContent?.includes("Native CCCC access imports paused"),
+      );
+      expect(notices).toHaveLength(visible ? 1 : 0);
+      if (visible) {
+        expect(notices[0].textContent).toContain("even in the same instance");
+        expect(notices[0].textContent).toContain(
+          "Explicitly resume access or connect native sessions",
+        );
+        expect(notices[0].textContent).toContain("source Group is unchanged");
+      }
+      expect(api.importGroupCopy).not.toHaveBeenCalled();
+      expect(groupStore.setSelectedGroupId).not.toHaveBeenCalled();
+      expect(groupStore.selectedGroupId).toBe("source-group");
+    } finally {
+      await unmount();
+    }
+  },
+);
 
 it("exports from the export card's actions and only inside a group", async () => {
   const outside = await mountTab();

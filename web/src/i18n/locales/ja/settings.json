@@ -1132,6 +1132,7 @@
     "workspaceExcluded": "ワークスペースファイルは含まれません。",
     "secretsExcluded": "システム認証情報、cookie、認証セッションは含まれません。チャット履歴、メモリ、添付にはユーザー由来の機密内容が含まれる場合があります。",
     "reconnectChatGPT": "インポート後に ChatGPT 接続の再設定が必要です。",
+    "reconnectNativeSessions": "同じインスタンスへのインポートでも、ネイティブ側の CCCC アクセスは一時停止されます。利用前に明示的にアクセスを再開するか、ネイティブセッションを接続してください。元の Group は変更されません。",
     "reconnectNotebookLM": "インポート後に NotebookLM / Group Space の再接続が必要な場合があります。",
     "importButton": "グループをインポート",
     "importConfirm": "グループコピー package「{{filename}}」をインポートしますか？",

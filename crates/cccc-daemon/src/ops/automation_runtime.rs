@@ -57,7 +57,7 @@ pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cance
             .map(|group| {
                 actors::visible(&group)
                     .filter(|actor| actor.enabled)
-                    .filter(|actor| actor_runtime_status::resolve(&group, actor).running)
+                    .filter(|actor| actor_runtime_status::resolve(home, &group, actor).running)
                     .map(|actor| actor.id.clone())
                     .collect::<HashSet<_>>()
             })
@@ -233,7 +233,7 @@ fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
                 let mut succeeded = true;
                 if state == "active"
                     && store.load(&group_id).is_ok_and(|group| {
-                        !group_runtime::status(&group)["runtime_running"]
+                        !group_runtime::status(home, &group)["runtime_running"]
                             .as_bool()
                             .unwrap_or(false)
                     })
@@ -400,6 +400,7 @@ mod tests {
             group: group.clone(),
             actor: peer.clone(),
             event: first.clone(),
+            claimed: true,
         };
         super::super::actor_delivery::withdraw_jobs(std::slice::from_ref(&job), "held");
 

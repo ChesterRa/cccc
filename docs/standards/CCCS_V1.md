@@ -65,6 +65,10 @@ Actors are identities within a group. CCCS v1 standardizes only:
 - `actor_id`: stable string identifier
 - `role`: `"foreman"` or `"peer"` (optional; the collaboration semantics do not require a role)
 
+A user-owned native session MAY participate through ordinary Group Actors. Source discovery MUST NOT manufacture collaboration history. An administrator MAY explicitly admit a new native source to an existing Group as a new Actor; this MUST NOT silently replace an earlier identity, transfer its role, or inherit its pending work. In-flight native requests MUST remain bound to their captured source, Actor generation and native lifecycle revision; reusing a textual Actor ID MUST NOT transfer that authority. Transport acceptance, model execution and explicit read/reply receipts remain distinct; a receiver failure MUST NOT indefinitely block later messages or unrelated recipients. Native session ownership and local adapter operations are defined in the daemon IPC contract.
+
+Copying or importing a Group MUST NOT implicitly activate its native memberships, even within the same local instance. Imported native Actors retain their source references and history with collaboration access disabled until an explicit user action; the source Group is unchanged. A native source reference is not a portable credential or a grant of live receiver authority.
+
 ## 4. Event Envelope (Normative)
 
 All events MUST use the envelope below. Field semantics are fixed.
@@ -326,6 +330,7 @@ data: {
   state: "claimed" | "accepted" | "failed" | "ambiguous" | "withdrawn"
   transport: string
   reason?: string | null
+  retryable?: boolean
 }
 ```
 
@@ -346,6 +351,19 @@ data: {
   headless API, or browser submission boundary). It does not claim that the
   model read, understood, or acted on it.
 - `failed` means the adapter established that handoff did not occur.
+- For `transport="local_session"`, a failed attempt MAY carry `retryable=true`
+  only when the daemon established that it stopped before native submission
+  (for example, a paused worker or a full daemon queue). This work remains
+  pending for normal recovery. A native rejection or a legacy failed receipt
+  without that evidence MUST NOT automatically retry. This flag never permits
+  replay after `accepted`, `ambiguous` or `withdrawn`.
+- Eligible native pending work MUST remain recoverable beyond an in-memory
+  queue or startup query page. The delivery owner MUST continue bounded ledger
+  refill as capacity becomes available, without requiring another message,
+  manual Actor Start or a receive-status refresh for each Group. Refill MUST
+  preserve membership, Actor generation, source binding, pause/stop and terminal
+  receipt boundaries. Status/discovery reads MUST NOT initiate refill or scan
+  native history.
 - `ambiguous` means external side effects may have occurred but cannot be
   proven. Automatic retry MUST NOT follow `accepted` or `ambiguous`.
 - `withdrawn` means the source became obsolete before handoff, and the owner

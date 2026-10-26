@@ -95,6 +95,16 @@ pub fn add(group: &mut GroupDoc, mut actor: Actor) -> io::Result<Actor> {
     }
 
     actor.id = validate_actor_id(&actor.id)?;
+    if !actor.external_session_id.is_empty()
+        && !matches!(
+            actor.runtime,
+            cccc_contracts::ActorRuntime::Codex | cccc_contracts::ActorRuntime::Claude
+        )
+    {
+        return Err(io::Error::other(
+            "Only Codex and Claude support native-session Actors",
+        ));
+    }
     actor
         .runtime_mode
         .validate(actor.runtime)
@@ -135,6 +145,13 @@ pub fn update(
         .position(|actor| actor.id == actor_id)
         .ok_or_else(|| io::Error::other(format!("actor not found: {actor_id}")))?;
     let mut value = serde_json::to_value(&group.actors[index]).map_err(io::Error::other)?;
+    if let Some(source) = patch.get("external_session_id")
+        && source.as_str() != Some(group.actors[index].external_session_id.as_str())
+    {
+        return Err(io::Error::other(
+            "Native session binding is managed by local-session access",
+        ));
+    }
     let object = value
         .as_object_mut()
         .ok_or_else(|| io::Error::other("invalid actor"))?;
@@ -152,6 +169,20 @@ pub fn update(
     }
     object.insert("updated_at".into(), Value::String(utc_now()));
     let mut actor: Actor = serde_json::from_value(value).map_err(io::Error::other)?;
+    let current = &group.actors[index];
+    if !current.external_session_id.is_empty()
+        && (actor.runtime != current.runtime
+            || actor.runtime_mode != current.runtime_mode
+            || actor.command != current.command
+            || actor.env != current.env
+            || actor.profile_id != current.profile_id
+            || actor.profile_scope != current.profile_scope
+            || actor.profile_owner != current.profile_owner)
+    {
+        return Err(io::Error::other(
+            "Native runtime configuration belongs to the original session",
+        ));
+    }
     actor.role = None;
     actor
         .runtime_mode

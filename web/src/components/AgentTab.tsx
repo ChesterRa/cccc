@@ -1,3 +1,4 @@
+import { NativeSessionPanel } from "../features/localSessions/NativeSessionPanel";
 import { isWebModelRuntime } from "../types";
 import { useTerminalTitlePaging } from "./agentTerminal/useTerminalTitlePaging";
 import {
@@ -172,7 +173,12 @@ export function AgentTab({
   const isDots = actor.runtime === "chatgpt_dots";
   const isGrok = actor.runtime === "grok_web_model";
   const isEventActor = isDots || isGrok;
-  const lifecycleActive = isWebModel ? Boolean(actor.enabled) : isRunning;
+  const isNativeSession = Boolean(actor.external_session_id);
+  const accessOnly = isWebModel || isNativeSession;
+  const lifecycleActive = accessOnly ? Boolean(actor.enabled) : isRunning;
+  const groupState = useGroupStore((state) =>
+    state.groupDoc?.group_id === groupId ? state.groupDoc.state : undefined,
+  );
   const openActorEditor = useModalStore((state) => state.openActorEditor);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const settingsOpen = useModalStore((state) => state.modals.settings);
@@ -203,9 +209,9 @@ export function AgentTab({
     eventSnapshot.actorId === actor.id &&
     eventSnapshot.runtime === actor.runtime;
   const eventState = eventVisit && canAccessGlobalSettings ? eventSnapshot.state : null;
-  const eventStartKey = eventState?.connected ? "dotsResume" : "dotsEnable";
+  const eventStartKey = isNativeSession || eventState?.connected ? "dotsResume" : "dotsEnable";
   const canStartNewSession =
-    !isEventActor && actorSupportsNewSession(actor.runtime, actor.runtime_mode);
+    !accessOnly && actorSupportsNewSession(actor.runtime, actor.runtime_mode);
   const hasRuntimeResumeFailure = actorHasRuntimeResumeFailure(actor);
   const runtimeResumeError = String(actor.runtime_session_last_resume_error || "").trim();
   const canControl = !readOnly;
@@ -376,17 +382,36 @@ export function AgentTab({
     overflow: "hidden",
   };
 
+  const nativeStatusKey = (() => {
+    if (actor.enabled === false) return "webAccessPaused";
+    if (groupState === "paused") return "nativeSession.groupPaused";
+    if (groupState === "stopped") return "nativeSession.groupStopped";
+    if (actor.running === true) return "nativeSession.available";
+    if (
+      actor.enabled === true &&
+      actor.running === false &&
+      (groupState === "active" || groupState === "idle")
+    )
+      return "nativeSession.unavailable";
+    return "common:loading";
+  })();
   const runtimeIndicator = getRuntimeIndicatorState({
-    isRunning: isEventActor
-      ? ["ready", "pending", "delivering", "delivered", "working"].includes(eventState?.phase || "")
-      : Boolean(isRunning),
-    workingState: isEventActor
-      ? eventState?.phase === "working"
-        ? "working"
-        : eventState?.phase === "failed" || eventState?.phase === "interrupted"
-          ? "stuck"
-          : "waiting"
-      : workingState,
+    isRunning: isNativeSession
+      ? nativeStatusKey === "nativeSession.available"
+      : isEventActor
+        ? ["ready", "pending", "delivering", "delivered", "working"].includes(
+            eventState?.phase || "",
+          )
+        : Boolean(isRunning),
+    workingState: isNativeSession
+      ? "waiting"
+      : isEventActor
+        ? eventState?.phase === "working"
+          ? "working"
+          : eventState?.phase === "failed" || eventState?.phase === "interrupted"
+            ? "stuck"
+            : "waiting"
+        : workingState,
   });
   const statusTone = (() => {
     switch (runtimeIndicator.tone) {
@@ -416,6 +441,7 @@ export function AgentTab({
   })();
 
   const runtimeStatusText = (() => {
+    if (isNativeSession) return t(nativeStatusKey);
     if (isEventActor)
       return t(
         !canAccessGlobalSettings
@@ -728,17 +754,18 @@ export function AgentTab({
   const actorGroupRole = normalizeActorGroupRole(actor.role);
   const titlePaging = useTerminalTitlePaging(isVisible && compact ? onPage : undefined);
 
-  const compactStatusText = isEventActor
-    ? runtimeStatusText
-    : !isRunning
+  const compactStatusText =
+    isNativeSession || isEventActor
       ? runtimeStatusText
-      : !isHeadless && connectionStatus !== "connected"
-        ? t(connectionStatus === "disconnected" ? "connectionLost" : "chat:workView.connecting")
-        : workingState === "waiting" || workingState === "stuck" || workingState === "error"
-          ? runtimeStatusText
-          : !isHeadless && terminalReady && !terminalWritable
-            ? t("readOnlyConnection")
-            : "";
+      : !isRunning
+        ? runtimeStatusText
+        : !isHeadless && connectionStatus !== "connected"
+          ? t(connectionStatus === "disconnected" ? "connectionLost" : "chat:workView.connecting")
+          : workingState === "waiting" || workingState === "stuck" || workingState === "error"
+            ? runtimeStatusText
+            : !isHeadless && terminalReady && !terminalWritable
+              ? t("readOnlyConnection")
+              : "";
 
   const compactIdentityTitle = [
     actor.title || actor.id,
@@ -818,8 +845,8 @@ export function AgentTab({
             connected={terminalReady && connectionStatus === "connected"}
             connectionFailed={connectionFailed}
             canStartNewSession={canStartNewSession}
-            pauseCcccAccess={isWebModel}
-            dotsConnected={Boolean(eventState?.connected)}
+            pauseCcccAccess={accessOnly}
+            dotsConnected={isNativeSession || Boolean(eventState?.connected)}
             unreadCount={unreadCount}
             onInterrupt={sendInterrupt}
             onLaunch={onLaunch}
@@ -1004,7 +1031,15 @@ export function AgentTab({
         className={classNames("flex-1 min-h-0 relative", "bg-[var(--color-bg-secondary)]")}
         style={{ contain: "layout", overflow: "hidden" }}
       >
-        {isHeadless ? (
+        {isNativeSession ? (
+          <NativeSessionPanel
+            actor={actor}
+            groupId={groupId}
+            statusText={runtimeStatusText}
+            isVisible={isVisible && !settingsOpen}
+            canAccessRecovery={canAccessGlobalSettings && !readOnly}
+          />
+        ) : isHeadless ? (
           <div
             className={classNames(
               "flex h-full min-h-0 flex-col",
@@ -1248,13 +1283,13 @@ export function AgentTab({
                 onClick={onQuit}
                 disabled={isBusy}
                 className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                aria-label={t(isWebModel ? "dotsPause" : "quitAgent")}
-                title={isWebModel ? t("dotsPauseHint") : undefined}
+                aria-label={t(accessOnly ? "dotsPause" : "quitAgent")}
+                title={accessOnly ? t("dotsPauseHint") : undefined}
               >
                 <StopIcon size={16} />
-                {!isSmallScreen && t(isWebModel ? "dotsPause" : "quit")}
+                {!isSmallScreen && t(accessOnly ? "dotsPause" : "quit")}
               </button>
-              {!isWebModel ? (
+              {!accessOnly ? (
                 <button
                   onClick={sendInterrupt}
                   disabled={connectionStatus !== "connected" || !terminalWritable}
@@ -1265,7 +1300,7 @@ export function AgentTab({
                   ⌃C
                 </button>
               ) : null}
-              {!isWebModel ? (
+              {!accessOnly ? (
                 <button
                   onClick={onRelaunch}
                   disabled={isBusy}
@@ -1303,10 +1338,10 @@ export function AgentTab({
                 onClick={onLaunch}
                 disabled={isBusy}
                 className={`${primaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                aria-label={t(isWebModel ? eventStartKey : "launchAgentLabel")}
+                aria-label={t(accessOnly ? eventStartKey : "launchAgentLabel")}
               >
                 <PlayIcon size={16} />
-                {isBusy ? t("common:loading") : t(isWebModel ? eventStartKey : "launch")}
+                {isBusy ? t("common:loading") : t(accessOnly ? eventStartKey : "launch")}
               </button>
               {canStartNewSession ? (
                 <button

@@ -41,6 +41,12 @@ cccc runtime list       # List detected runtimes
 cccc runtime list --all # List all supported runtimes
 ```
 
+## Local native sessions
+
+`cccc sessions enable|disable --runtime codex|claude` installs or removes the same-user native integration. Use `cccc sessions list [--include-offline]`, `send --to <source_id> --text <text>`, and `create --sources <ids...>` to collaborate without pairwise invitations.
+
+Use `cccc sessions join --group <group_id> --sources <ids...>` to add sources to an existing Group, or `leave --group <group_id> --from <source_id>` to pause one source's access without stopping its native process. `recovery --group <group_id> --actor <actor_id>` reads local recovery instructions; adding `--refresh` explicitly rechecks Codex's existing receive channel. Neither form starts or resumes the native application or replays messages. See [Native sessions](../guide/local-sessions) for requirements, reload steps and lifecycle semantics.
+
 ## Daemon Commands
 
 ### `cccc daemon`

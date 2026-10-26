@@ -479,6 +479,7 @@ CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层�
 | [场景示例](https://chesterra.github.io/cccc/guide/use-cases) | 实际多智能体场景 |
 | [Web UI 指南](https://chesterra.github.io/cccc/guide/web-ui) | 看板导航 |
 | [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | 账户与 Direct 连接、投递和权限边界 |
+| [原生会话](https://chesterra.github.io/cccc/guide/local-sessions) | 连接独立运行的 Codex 和 Claude 会话，无需导入历史 |
 | [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | 听写、文档与输入框工作流 |
 | [IM 桥接配置](https://chesterra.github.io/cccc/guide/im-bridge/) | 连接 Telegram、Slack、Discord、Mattermost、飞书、钉钉、企业微信、微信 |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM 知识集成 |

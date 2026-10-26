@@ -115,7 +115,7 @@ fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             error,
         ));
     }
-    object(json!({"group_id": group.group_id, "group": group_runtime::group(group)}))
+    object(json!({"group_id": group.group_id, "group": group_runtime::group(home, group)}))
 }
 
 fn list(home: &HomeLayout) -> OpResult {
@@ -128,14 +128,21 @@ fn list(home: &HomeLayout) -> OpResult {
             store
                 .load(&meta.group_id)
                 .ok()
-                .map(|group| group_runtime::summary(meta, &group))
+                .map(|group| group_runtime::summary(home, meta, &group))
         })
         .collect::<Vec<_>>();
     object(json!({"groups": groups}))
 }
 
 fn show(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    object(json!({"group": group_runtime::group(load(home, request)?)}))
+    let group = load(home, request)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    let scope = actor_runtime::caller_scope(&group, &by)?;
+    object(json!({
+        "group": group_runtime::group(home, group),
+        // A caller-scoped read projection, outside GroupDoc/Actor persistence.
+        "effective_scope": scope.map_or_else(|| json!({}), |scope| json!(scope)),
+    }))
 }
 
 fn preamble_get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -516,7 +523,9 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         json!({"patch": patch}),
     )?;
     let group_id = group.group_id.clone();
-    object(json!({"group_id": group_id, "group": group_runtime::group(group), "event": event}))
+    object(
+        json!({"group_id": group_id, "group": group_runtime::group(home, group), "event": event}),
+    )
 }
 
 fn group_update_patch(request: &DaemonRequest) -> Result<serde_json::Map<String, Value>, OpError> {
@@ -631,7 +640,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if matches!(updated.state, GroupState::Active | GroupState::Idle) {
         actor_delivery::dispatch_group_unread(home, &updated);
     }
-    object(json!({"group": group_runtime::group(updated)}))
+    object(json!({"group": group_runtime::group(home, updated)}))
 }
 
 fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult {
@@ -671,7 +680,9 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
     if value {
         actor_delivery::dispatch_group_unread(home, &updated);
     }
-    object(json!({"group": group_runtime::group(updated), "running": value, "runtimes": runtimes}))
+    object(
+        json!({"group": group_runtime::group(home, updated), "running": value, "runtimes": runtimes}),
+    )
 }
 
 fn load(home: &HomeLayout, request: &DaemonRequest) -> Result<GroupDoc, OpError> {

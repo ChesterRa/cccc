@@ -78,6 +78,7 @@ export async function addActor(
     profileScope?: ProfileScope;
     profileOwner?: string;
     title?: string;
+    defaultScopeKey?: string;
     capabilityAutoload?: string[];
     capabilityHidden?: string[];
   },
@@ -102,7 +103,7 @@ export async function addActor(
           : [],
         capability_hidden: Array.isArray(options?.capabilityHidden) ? options.capabilityHidden : [],
         title: options?.title || "",
-        default_scope_key: "",
+        default_scope_key: options?.defaultScopeKey || "",
         by: "user",
       }),
     });
@@ -126,6 +127,7 @@ export async function updateActor(
     enabled?: boolean;
     capabilityAutoload?: string[];
     capabilityHidden?: string[];
+    defaultScopeKey?: string;
   },
 ) {
   invalidateGroupActorsReads(groupId);
@@ -141,6 +143,7 @@ export async function updateActor(
   if (typeof opts?.enabled === "boolean") body.enabled = opts.enabled;
   if (Array.isArray(opts?.capabilityAutoload)) body.capability_autoload = opts.capabilityAutoload;
   if (Array.isArray(opts?.capabilityHidden)) body.capability_hidden = opts.capabilityHidden;
+  if (opts?.defaultScopeKey !== undefined) body.default_scope_key = opts.defaultScopeKey;
   try {
     return await apiJson(
       `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,

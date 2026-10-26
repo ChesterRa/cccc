@@ -20,6 +20,7 @@ standalone = ["dep:openssl-sys"]
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 cccc-client = { package = "cccc-pair-client", version = "=0.4.45", path = "../cccc-client" }
 cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.45", path = "../cccc-contracts" }
 cccc-core = { package = "cccc-pair-core", version = "=0.4.45", path = "../cccc-core" }
@@ -46,6 +47,7 @@ nix.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 cccc-windows-console = { path = "../cccc-windows-console" }
+cccc-windows-process = { path = "../cccc-windows-process" }
 
 [lints]
 workspace = true

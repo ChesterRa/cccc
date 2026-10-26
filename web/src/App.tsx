@@ -506,7 +506,7 @@ export default function App({
         onEditActor={editActor}
         onRemoveActor={removeActor}
         onOpenActorInbox={openActorInbox}
-        onRefreshActors={() => void refreshRuntimeActors(selectedGroupId)}
+        onRefreshActors={refreshRuntimeActors}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       />

@@ -513,8 +513,19 @@ Notes:
 #### `attach`
 
 Attach a directory scope to the supplied group, or create a new group when
-`group_id` is omitted. The attached group becomes the active CLI group. Omitting
-`group_id` does not select an existing group by project path.
+`group_id` is omitted. By default the attached directory becomes the Group's
+active/default scope, and the attached Group becomes the active CLI Group.
+Omitting `group_id` does not select an existing group by project path.
+
+`activate=false` requires an existing `group_id` and only adds or refreshes its
+attached directory. It MUST preserve the Group active scope, its registry default
+scope, every project's default Group mapping, and the global active Group. Actor
+creation/editing uses this mode to add another repository without changing other
+Actors' Follow Group directory. It does not save or restart an Actor. In this
+nonactivating mode, a scope identity already attached at a different physical root
+MUST fail with `scope_conflict` instead of rebinding existing Actors to another
+worktree. The default activating attachment retains its existing explicit rebind
+behavior.
 
 Attaching to an existing Group requires the user or that Group's foreman,
 using the same group-administration permission as other shared scope changes.
@@ -526,12 +537,17 @@ the daemon's working directory is not the CLI's project directory.
 
 Args:
 ```ts
-{ path: string; group_id?: string; by?: string }
+{ path: string; group_id?: string; by?: string; activate?: boolean } // default true
 ```
 
 Result:
 ```ts
-{ group_id: string; scope_key: string; title?: string }
+{
+  group_id: string
+  scope_key: string // the attached directory, even when activate=false
+  scope: { scope_key: string; url: string; label: string; git_remote: string }
+  title?: string
+}
 ```
 
 #### `groups`
@@ -1466,13 +1482,29 @@ Result:
 
 Args:
 ```ts
-{ group_id: string; detail?: "summary" | "full" }
+{ group_id: string; detail?: "summary" | "full"; by?: string }
 ```
 
 Result:
 ```ts
-{ group: Record<string, unknown> } // group.yaml content, redacted
+{
+  group: Record<string, unknown> // group.yaml content, redacted
+  effective_scope: {
+    scope_key: string
+    path: string // canonical existing local directory
+    source: "runtime_launch" | "actor_default" | "group_active"
+  } | Record<string, never> // {} when unavailable
+}
 ```
+
+`effective_scope` is a caller-scoped read projection, not persisted Group or
+Actor state. It uses the authoritative `by` after port identity binding
+(default `user`), never a target `actor_id`. A running managed owner supplies its
+immutable launch workspace; otherwise the Actor default or Group active
+configuration applies. An invalid pin, missing root or mismatched live Actor
+generation MUST yield an unavailable projection rather than another workspace.
+For a Native Actor without a managed owner, this describes CCCC tools only,
+not the original application's physical working directory.
 
 #### `group_preamble_get`
 
@@ -1668,6 +1700,7 @@ Notes:
 - After authorization and a successful stop of the Group's sessions, the daemon stops processes that escaped those process trees (for example a child that called `setsid`) and remain attributed to the Group: same user, `CCCC_GROUP_ID` equal to the Group ID, and canonical `CCCC_HOME` equal to the daemon's home. Processes observed in another home with the same Group ID are excluded. Each process is identified by `pid` and `start_time` and revalidated before SIGTERM and again before SIGKILL; a mismatch or unreadable identity prevents signalling. Signals use numeric PIDs, so revalidation narrows but does not eliminate the race between the last check and signal delivery. `exited` is confirmed termination; `running` means the process was still running after the final wait or could not be signalled. This is a one-shot cleanup with TERM and KILL wait budgets totalling about 2.5 s, plus scanning and identity-check overhead. On platforms other than Linux `reaped_processes` is always empty.
 - Cleanup runs before fallible settings or directory deletion, so a later deletion error does not skip this cleanup. As with the existing session stop, preserving Group configuration after a filesystem error does not restore its stopped processes. A failed authorization or session stop does not start this additional cleanup.
 - `group_reset` completes the same stop and cleanup for the old Group before switching the active Group or deleting the old directory. Its result reports `old_reaped_processes`, which may be nonempty even when `deleted_old` is false and `old_delete_error` is present. Directory cleanup can fail after the old Group has already been unregistered; that error does not imply the old Group is still available.
+- Reset MUST transfer only registry defaults that actually name the old Group, not claim every attached scope; rollback MUST restore only that transferred ownership before removing the replacement. Reset retains declared `extra.local_session_conversation.direct` and `source_ids` configuration so native direct reuse survives, while clearing other runtime/connector state and unknown nested fields.
 - Successful deletion MUST retire all Direct records and disposable catalogs owned by the deleted Group, preserve retired IDs, and release their relation quota. Reset uses the same deletion cleanup; it MUST NOT transfer those grants to the replacement Group.
 - Successful deletion MUST retire every Web Model conversation binding and pending pairing belonging to the deleted Group, without revoking the shared connector or other Groups’ authority. A failure that leaves the group registered and available MUST preserve its pre-delete connector authority.
 - Successful deletion MUST retire every local external-space binding, queued job, and referenced job payload owned by the deleted group. It MUST NOT delete the user's remote notebook or other provider space. A failure that leaves the group registered and available MUST restore the pre-delete local binding and queue state.
@@ -3400,6 +3433,9 @@ Notes:
 - `env_private` is restricted to `by="user"` and values are never returned.
 - If `env_private` is provided (even empty), it is treated as authoritative for this create: it clears any existing private keys for that actor_id, then sets the provided keys.
 - `profile_id` links the actor to a global Actor Profile and applies profile-controlled runtime fields + profile secrets.
+- `default_scope_key` is Actor-local next-start configuration, including for Profile-linked Actors. An empty value follows the Group active scope at startup; a nonempty value must resolve to an attached scope. A running managed owner retains its canonical launch workspace for tools, file sending, bootstrap and prompts until exit or explicit restart, including after saved backend changes, detach or an explicit same-key attachment rebind. Its existing runtime owner holds the snapshot; Group/Actor persistence and copies MUST NOT acquire live workspace authority. An invalid explicit selection MUST remain stored and unavailable after detach/normalization, not silently select another workspace. A live owner's missing root or mismatched generation MUST NOT fall back to saved configuration. Tools resolve the authenticated caller, not a target `actor_id` or caller-supplied identity override; human/no-Actor tools follow the Group active scope. Saving a selection does not restart a running Actor, change the Group active scope, or move an external native process's working directory.
+- MCP `cccc_bootstrap.session.active_scope` continues to describe the Group selection. `session.effective_scope` consumes the caller-scoped `group_show.effective_scope` projection, including `source: "runtime_launch"|"actor_default"|"group_active"`, or `{}` if unavailable. Native Actors without managed owners use CCCC tool configuration; an explicit Group scope change/rebind can change those tool roots without changing the original application's cwd. Neither this projection nor workspace fallback grants human/no-Actor callers access to the agent-only Inbox.
+- MCP `cccc_bootstrap.session.members` is a compact projection of the same authorized `actor_list` result already read by bootstrap: `{ actor_id, runtime, role, enabled, source_id? }[]`. `source_id` is present only for an external native membership. It MUST preserve that listing's Group boundary, internal-Actor visibility and effective roles, without exposing launch commands, environment, process details or credentials. It is a read-only membership snapshot, not receive/execution evidence or a grant of management authority. Ordinary member discovery and message addressing MUST NOT require enabling the Group runtime capability pack.
 - When `profile_id` is used, `env_private` is rejected (linked actor private env is profile-controlled).
 - The appended `actor.add` event starts that actor id's current generation. The daemon MUST initialize the new generation's read boundary at that append position, so events from before the add are not delivered as unread. Removing and later re-adding the same actor id starts a new generation at the later `actor.add` position.
 - Actor records also expose an opaque `generation` UUID for delayed remote recipient binding. Add assigns a fresh value, including when a supplied record came from an earlier Actor; update cannot overwrite it. Restart and ordinary edits preserve it. Existing records without this field use their original `created_at` identity (`legacy:<created_at>`) until they are recreated; browser ownership, pairing and tool routing MUST use that same identity and pairing MUST NOT assign a new generation after the browser opens. This does not replace the ledger-based inbox boundary above.
@@ -3455,6 +3491,13 @@ secret edits; those edits are cleared only after their private-env write succeed
 or the user leaves the editing session.
 Clients editing a command MUST preserve argument boundaries (including quotes,
 spaces and empty arguments) and SHOULD omit unchanged runtime fields.
+
+Changing a native Actor from `enabled=false` to `true` restores only that
+membership's access. In an active/idle Group it MUST persist desired-running
+state and reconcile that Actor's pending deliveries after committing the update,
+including for an imported Group. It MUST NOT resume a paused/stopped Group,
+launch another Actor, or start the user-owned native process. An unchanged
+`enabled=true` in an ordinary configuration save is not a new activation.
 
 Result:
 ```ts
@@ -3878,6 +3921,91 @@ Result:
 ```ts
 { group_id: string; actor_id: string; keys: string[] }
 ```
+
+#### Local native sessions
+
+Local sessions are same-OS-user sources connected to this `CCCC_HOME`, independent of Group membership. Source IDs are opaque routing identifiers, not credentials. Registration MUST NOT create Groups/Actors or change the global active Group. Native adapters MAY persist whitelisted lifecycle identity under `state/local_sessions/`; they MUST NOT scan or copy native conversation history. Current receive capability, rather than a loaded-thread cache or a stale MCP environment, determines directory presence.
+
+Explicit integration disablement MUST durably fence registration and native authority for that runtime in this `CCCC_HOME` before provider cleanup. Callbacks still loaded in a host MUST NOT remove that fence, including callbacks for a previously unregistered source. Cleanup failure MUST leave the fence closed. Provider-global MCP, hook and plugin cleanup MUST only change registrations proven to belong to this CCCC installation; a matching display name alone is insufficient. Claude enable/disable MUST recognize the structured `already_in_goal_state` outcome as idempotent, without suppressing real provider failures. Before changing Claude MCP configuration, enable MUST verify the marketplace source and installed plugin provenance; foreign or unreadable registrations MUST fail without changing provider configuration. Explicit enablement may reopen registration only after successful configuration and retirement of old identities; enablement alone MUST NOT resurrect retained identity. A fresh lifecycle callback is required. Recovery MUST report `integration_disabled` while this fence is closed even if the individual lifecycle record is missing or unreadable; an unreadable fence is an explicit recovery error.
+
+An Actor with nonempty `external_session_id` refers to a user-owned native source. Its `runtime` is `codex` or `claude`; `runner=headless` and `runtime_state_source=external_session` mean no CCCC-owned terminal, not a managed replacement process. Runtime/model/credential configuration remains native-owned. Start/stop toggle Group access; restart/new-session MUST fail without touching the native process. Removing or stopping a Group MUST NOT terminate its native sources.
+
+Ordinary `actor_list` and `actor.activity` projections reflect native receive readiness together with membership and Group access. Activity snapshots MUST include unavailable native members even when no connected tick was previously published; omission is not a stopped-state update. Unchanged availability MUST NOT append repeated activity events or start runtime work.
+
+`local_session_list` (read): `{ include_offline?: boolean, source_id?: string }` returns `{ sources: LocalSessionSource[], self_memberships?: LocalSessionMembership[] }`, where each source has `source_id`, `runtime`, `native_session_id`, `cwd`, `title`, and `connected`, plus optional `origin` (`cli` or `vscode`) for a known Codex creation origin. Origin is display metadata only; it MUST NOT establish identity, Group membership, receive readiness, or current window/process state. Supplying `source_id` additionally returns that source's existing memberships, including disabled memberships, with `group_id`, `group_title`, `actor_id`, `role`, `enabled`, `group_state`, and `group_running`. Membership discovery MUST NOT require a receive channel, mutate access, or create a Group. Native MCP `cccc_session list` supplies its current source identity and returns `self_source_id` (nullable) and `self_memberships` (empty if no identity is available). Disconnected or corrupt individual entries MUST NOT hide other sources; an unreadable individual Group MUST NOT hide valid memberships or prevent direct reuse elsewhere. Registry failures remain errors. This global private directory MUST NOT be exposed to Exhibit, Group-scoped Web principals, or remote model connectors. The private Web requests `include_offline=true` to show live, registered sources whose receive integration is not ready; retired, disabled and dead-host records remain excluded. This is a passive read and MUST NOT trigger qualification. Lifecycle registration MAY read official `thread/read` metadata with `includeTurns=false` on its existing qualification connection to capture `origin`. Only the whitelisted creation origin is retained; previews, turns and other provider details MUST NOT be retained or exposed. Missing/unknown fields, unsupported methods, provider errors and a bounded optional-read timeout MUST NOT discard a completed receive qualification. Ordinary readiness rechecks and directory reads MUST NOT add origin lookups.
+
+`local_session_recovery` (read, human only): `{ group_id: string, actor_id: string, by?: "user" }` returns `{ group_id, actor_id, source_id, recovery: { state: "connected"|"disconnected"|"host_exited"|"session_ended"|"integration_disabled"|"unknown", cwd: string|null, shell: "posix"|"powershell", command: string } }`. Resolve the native source from that Group's Actor binding; arbitrary `source_id`, non-user callers and remote connector bindings MUST be rejected. The private Web exposes administrator-only `GET /api/v1/local_sessions/recovery/{group_id}/{actor_id}`; Exhibit and Group-scoped principals MUST NOT receive this projection. Ordinary Actor listings, Group documents and activity events MUST NOT gain the recovery command or provider configuration directory.
+
+Recovery status describes the native source independently of Actor access and Group pause/stop. Recorded `integration_disabled` or `session_ended` takes precedence over later host absence; explicit disablement also covers retained ended/dead records and MUST NOT be overwritten by a late End. Otherwise, `host_exited` requires evidence that the captured process fingerprint is gone or replaced; a disconnected receiver, missing metadata or an inconclusive host lookup MUST NOT establish process exit. `session_ended` records a matching lifecycle End, not necessarily exit of a shared app-server. Missing metadata returns `unknown`; unreadable/corrupt metadata remains an explicit read error, not a guessed identity. Directory and recovery reads MUST NOT query provider queues/history, launch/resume processes, create delivery claims or append ledger events.
+
+`local_session_refresh` (resource-owned, human only) accepts the same binding and returns the recovery projection plus `refresh_status: "checked"|"unavailable"|"not_checked"`. The administrator-only Web endpoint is `POST /api/v1/local_sessions/recovery/{group_id}/{actor_id}/refresh`. For a live, non-retired Codex source it explicitly rechecks the existing app-server's loaded-thread and queue qualification, then updates only that same fenced registration's readiness. It MUST NOT revive ended, disabled or exited lifecycle identity, start/resume a native session, enqueue input, transfer membership or replay delivery.
+
+`checked` means qualification completed; it does not itself mean the channel is connected. Inconclusive qualification returns `unavailable`, retains previous readiness evidence, and still returns a freshly read recovery projection for the captured member. Claude and unavailable lifecycle records return `not_checked` without qualification. After qualification, the operation MUST recheck the Actor's source, generation and runtime before projecting its details; replacement fails with `local_session_changed`. Unreadable recovery metadata remains an error. The Web port MUST reconfirm administrator access after awaiting recovery/refresh and discard mismatched or stale results.
+
+Web recovery uses one explicit **Refresh status** action: Codex performs this POST; Claude performs the passive recovery GET. Initial/visibility and relevant Actor/Group changes perform passive GETs, not periodic polling. Expanding details does not make another request. Online details default to collapsed. Inconclusive qualification displays its result and the validated snapshot without a second GET or automatic qualification retry. Lost access, changed binding and failed reads clear private details. A stale offline pane is not proof that an End/disable has not occurred.
+
+Restored readiness lets the independent delivery owner continue previously
+authorized pending work in every eligible membership of that source. Its bounded
+ledger refill MUST survive memory-queue overflow and startup pagination; it does
+not require each Group's refresh endpoint to redispatch. This is not a guarantee
+that qualification refresh cannot be followed by native input or model work.
+
+PowerShell literals MUST escape every recognized single-quote delimiter, including U+2018–U+201B, not just ASCII apostrophes. Encoding the enclosing script MUST NOT substitute for safely quoting its embedded paths and IDs. This rule also applies to generated hook and Monitor commands.
+
+Retiring lifecycle identity MUST revoke ordinary tool and receiver authority while retaining the last CCCC-owned lifecycle record for local recovery. Dead-host records MAY also remain but MUST NOT appear as active directory sources or authorize work. Only the latest native ID, working directory and whitelisted provider configuration directory are used; this is not native conversation history or a transcript backup. A later lifecycle callback refreshes that same source's record and revision under the existing host/ID fencing rules. The command MUST safely quote native IDs and paths, select this `CCCC_HOME` and any captured `CODEX_HOME` / `CLAUDE_CONFIG_DIR`, and run in the last recorded directory when known. `shell` describes the CCCC host's command syntax, never the browser's OS: POSIX on Linux/macOS, PowerShell on native Windows. Codex's immutable source binding can supply its native thread ID if metadata is missing; a Claude host/source identifier MUST NOT be substituted for a conversation ID. Without a captured Claude native ID, offer only the original runtime's session picker. Commands are instructions for a human on the original host and configuration, not a Web execution capability or automatic membership transfer; native resume can consume queued work and model credits.
+
+`local_session_conversation` (global write): `{ source_ids: string[], source_id?: string, title?: string, direct?: boolean }` creates an ordinary Group for 1–16 selected connected sources, including the optional caller. Returns `{ group_id, group, reused }`. `direct=true` MAY reuse an existing Group with the exact source set and enabled memberships. The private Web **+ New Group** choice MUST pass `direct=false` for every selection size and explicitly create a new Group. Native direct-message reuse remains unchanged. The Web **Connect to Group** action adds selected sessions to the explicit Group; with zero selected sessions it MUST stay disabled rather than navigating or changing membership. Working directories become attached scopes without changing registry project defaults. Source-initiated Group/Actor creation events use `by=svc:cccc.local-session` and retain the initiating `source_id`; human-initiated creation uses `by=user`.
+
+`local_session_join` (Group write): `{ group_id: string, source_ids: string[] }` adds 1–16 explicitly selected connected sources to an existing Group. This is a human-administrator operation; native source-initiated admission and remote connector access MUST be rejected. Returns `{ group_id, group, reused }`, with `reused=true` when every selected source already has a membership. Existing memberships, including disabled access, MUST remain unchanged. New sources become new Actors appended to membership order and receive `actor.add` generation facts; they MUST NOT replace old Actors, inherit their pending messages, or automatically take over their roles. Attaching their scopes MUST NOT change the Group's active scope, state/running flag, registry defaults, or global active Group. The private Web exposes this through administrator-only `POST /api/v1/local_sessions/join`. Web MUST distinguish existing enabled and paused members of the selected Group. Resuming a paused membership is a separate explicit user action through `actor_update` with `enabled=true` and the selected unchanged `external_session_id`; a mismatched source MUST fail. Joining or resuming access MUST NOT resume the Group or the original application.
+
+Sources whose detected scopes share a `scope_key` but have different physical roots (such as separate clones/worktrees of one Git origin) MUST fail creation or joining with `local_session_scope_conflict`, before registering a Group or modifying its memberships/scopes. Joining MUST also check the Group's existing scopes. They MUST NOT silently bind one Actor to another checkout. Existing persisted scope identity MUST NOT change to accommodate this integration.
+
+For a new conversation, the caller source MUST be the first Actor when supplied; otherwise, preserve the explicit source selection order. Duplicate source IDs represent one member. Existing Group role semantics therefore make the caller or first selection foreman. For a new human-created Group, the Web MAY let the user choose Foreman among selected sources; it MUST place that source first in the submitted `source_ids`, preserving the relative order of the remaining selections. The default-directory preview MUST follow that source. One selected source is automatic; joining an existing Group MUST NOT expose this as a role-change control. This does not add an independent role field or change native-initiated caller ordering. Direct reuse compares the canonical source set independently of order and MUST NOT reorder existing Actors or change their roles.
+
+`local_session_send` (Group write with `group_id`, global write otherwise): `{ source_ids?: string[], source_id?: string, group_id?: string, text: string, to?: string[], message_mode?: "send"|"request_reply"|"mail", client_id?: string, insight?: string }`. Without `group_id`, creates/reuses a direct conversation from the selected sources; `to` MUST be rejected, and recipients MUST be the enabled Actors for the selected `source_ids`, not additional members of a reused Group. With `group_id`, `source_ids` MUST be rejected and sending requires the caller source to be an enabled member; absent `source_id` means human `user`, and absent `to` retains ordinary `@all` semantics. Uses ordinary messaging validation, ledger, delivery claims and receipts. Returns the normal send result plus `group_id`. Native MCP MUST supply the current source identity itself, require explicit Group IDs for ordinary Group tools, enforce membership, and apply normal peer-insight rules. Native `cccc_session send` and native-profile `cccc_message_send` default to Send; explicit Mail remains available. MCP `cccc_session send`, `cccc_message_send` and `cccc_message_reply` MUST expose `mode` and translate it to IPC `message_mode` at the MCP boundary. They MUST reject `message_mode` in MCP input, including duplicate or conflicting names, and invalid mode types/values before appending a message or creating a conversation; they MUST NOT silently replace the requested mode with a default. This port default MUST NOT change ordinary managed-Actor/IPC Mail defaults. Native Preamble and tool descriptions MUST agree and include the explicit Group ID for bootstrap and Group tools. Existing Group tools require valid live native lifecycle identity and enabled membership, not current receive readiness; a lost Monitor/queue MUST NOT by itself revoke read/reply/leave access. Explicitly disabled membership and ended native identity remain unauthorized for ordinary Group tools. Native MCP MUST capture `{ group_id, actor_id, actor_generation, source_id, session_revision }` from trusted lifecycle metadata and membership discovery, never tool arguments. The internal `_cccc_native_binding` snapshot MUST accompany Group operations and be revalidated under the daemon operation permit before execution. The current Actor must be enabled and match the captured source and generation; the live lifecycle record must match the captured revision. Local file/tool and bootstrap paths MUST preserve and revalidate the same snapshot. Source or Actor ID reuse MUST NOT transfer an in-flight request to a replacement membership. This metadata MUST NOT be persisted as message content.
+
+`local_session_leave` (Group write): `{ source_id, group_id }` stops only that membership's CCCC access.
+
+Codex MCP identity MUST come only from the host's direct `params._meta.threadId` nonempty string. Nested fields, aliases, `sessionId`, tool arguments and cwd MUST NOT establish that identity; missing identity permits anonymous discovery only, while malformed identity is an error. Claude's direct stdio executable MAY verify its actual native parent when no explicit adapter host PID is supplied; a nonempty `CLAUDE_CODE_SHELL_PREFIX` prevents automatic parent inference. Generated Claude lifecycle hooks and Monitor use the provider's `CLAUDE_PID` with native ancestry validation. Generated Codex hooks verify the actual native parent chain, including their known Windows shell bridge; MSYS `$PPID` and searching by process name MUST NOT establish a host. Native PID reuse MUST be fenced by boot/start identity on Linux and absolute process creation identity on macOS/Windows.
+
+Native MCP mutations MUST carry captured authority through daemon execution,
+not only a `source_id` checked at the MCP boundary. Ungrouped conversation creation
+and direct sends use the internal `_cccc_native_source_binding` with `source_id`
+and `session_revision`; Group selection/admission then occurs under the global
+write permit. Group-addressed send/leave use the existing `_cccc_native_binding`,
+including Actor ID and generation. The daemon MUST revalidate these snapshots
+after acquiring its permit, rejecting ended/changed lifecycle identity or replaced/
+disabled membership before any message, Group creation or leave side effect.
+Model-supplied internal bindings MUST be discarded. These snapshots are not
+credentials and do not change the human administrator's CLI/Web authority.
+
+Native `actor_start`/`actor_stop` manage membership access only, like
+`actor_update(enabled)`: they MUST preserve Group Stop/Pause and MUST NOT release
+pending delivery through either fence. Resuming access in an available Active/Idle
+Group retains desired-running state; stopping its last enabled member may clear it.
+The Web resume action MUST fence the selected source via `external_session_id`.
+Managed Actor Start retains its existing Group-start behavior.
+
+The Claude adapter uses an ephemeral receiver lease; Codex uses its official native queue. Adapter-only operations:
+
+- `local_session_receiver_attach` (global write) and `local_session_receiver_heartbeat` (resource-owned): `{ source_id, connection_id }` returns `{ source }`. A live different owner is rejected; heartbeat can reattach the same receiver after daemon restart. The adapter's lifecycle metadata supplies the current native conversation, including changes while the daemon was down.
+- `local_session_receiver_next` (resource-owned): same args; returns `{ source, handoff: null | { handoff_id, source_id, native_session_id, group_id, actor_id, event_ids, text } }`. Offers each physical handoff once. MUST recheck the Actor generation, access, receiver owner and native conversation revision before offering. Changed/replaced ownership MUST settle older handoffs without blocking future work.
+- `local_session_receiver_ack` (resource-owned): same owner args plus `{ handoff_id, state: "accepted"|"failed"|"ambiguous", reason?: string }`. Confirms only an offered handoff still owned by that receiver and conversation revision. An old acknowledgement MUST NOT confirm newer work.
+- `local_session_receiver_detach` (resource-owned): same owner args; clears only that owner and settles its pending physical handoffs. Old cleanup MUST NOT detach a replacement receiver.
+
+Every native message MUST carry its receiving Group ID, Actor ID, current role, and attached scope context in the model-visible text, even when the longer bootstrap is cached. Structured handoff fields alone are insufficient when an adapter forwards only `text`; one source can serve multiple Groups in alternating order. Codex receives the initial complete Preamble and subsequent concise receiving-context headers. Claude Monitor notifications MUST keep their routing identifiers, receiving role/scope key and an exact `message_history` read instruction inside the visible prefix. The complete JSON stdout record is bounded to 480 bytes, including escaping and its newline, based on the observed 500-character truncation in Claude Code 2.1.310; this is an adapter budget, not a guaranteed vendor limit. Full content and the Preamble remain available through the authorized exact read. The notification is a preview and MUST NOT truncate or duplicate the canonical ledger message.
+
+Receipts use existing `runtime.delivery` events with `transport=local_session`. Accepted means transport acceptance, not model execution/read/reply. Known rejection is failed; unknown submission is ambiguous and MUST NOT automatically replay. A failed attempt known to have stopped before native submission carries `retryable=true` and remains pending across access/Group pause and resume. Native rejection or an older failed receipt without this evidence stays out of automatic recovery. Accepted, ambiguous and withdrawn receipts MUST NOT replay, regardless of the flag. A missing acknowledgement is bounded to 30 seconds, after which later messages can proceed. Ordinary native delivery MUST keep offline work pending without a durable claim, claiming only when the receive channel is available and the adapter handoff is ready. A definitely unsubmitted unavailable attempt releases its claim with explicit retryable evidence. After a crash, remaining unsettled claims are still ambiguous; moving the claim boundary MUST NOT authorize replay of earlier ambiguous receipts. Other targets remain independent. Native callbacks and receiver polling MUST NOT start synthetic model work.
+
+Queue-process errors proven to occur before any child exists MUST remain retryable. Errors after a child starts, including post-spawn setup failure, MUST NOT be classified as unsubmitted without further evidence. Codex command-line admission MUST validate the complete rendered payload before claiming it, including context, bootstrap, platform encoding and argument limits. Unrepresentable payloads MUST fail explicitly without truncation or implicit splitting; they MUST NOT turn into ambiguous submissions or replay prior terminal work.
+
+Claude cancellation/expiry MUST withdraw a pending handoff and inspect whether it was offered in one critical section. A receiver MUST NOT offer it after it is classified as unsubmitted. If an acknowledgement already settled the handoff before withdrawal, that acknowledged outcome MUST win over cancellation/expiry.
+
+The native source lifetime is runtime-specific: Codex source identity is its native thread; Claude source identity is its physical host, with `/clear` updating the conversation revision while retaining Group memberships. Host identity MUST distinguish PID reuse. A lifecycle end MUST match both the registered host and native conversation ID; an older host's late end MUST NOT retire its replacement. A replacement Claude host MUST NOT silently take over old memberships. Explicit native Codex resume MAY reconnect the same thread source; another thread or a matching directory MUST NOT establish that identity.
+
+Codex receive readiness is a capability snapshot, not proof of consumption or future admission. Lifecycle callbacks MUST revalidate rather than permanently reuse an earlier positive result. Qualification checks use the existing native app-server, confirm loaded-thread membership and official queue availability, and MUST NOT enqueue a probe, resume a thread, start a model, or retain/log queue inputs. Best-effort negative qualification after failed handoff is bounded and asynchronous: it MUST NOT delay delivery receipts or Actor shutdown. An update MUST match the captured host, native ID, revision and endpoint fields (cwd, provider Home and executable), not just revision. Definitive negative qualification invalidates only that registration's readiness; an inconclusive lookup or business rejection alone MUST NOT retire identity, disconnect a replacement, or authorize replay. Directory polling MUST NOT perform these native queries. Explicit user refresh MAY restore positive readiness without a new lifecycle callback. Codex's `unix://` queue endpoint is also the provider's native Windows AF_UNIX transport; adapters MUST NOT substitute an invented named-pipe or WSL endpoint.
+
+An inconclusive lifecycle qualification MAY preserve the last readiness evidence only for the same non-retired host/native incarnation and unchanged endpoint. New, ended or replaced endpoints without positive evidence MUST remain unready. The merge MUST respect concurrent definitive negative evidence under the lifecycle registration lock.
 
 ### 8.5 Actor Profiles
 
@@ -4314,7 +4442,11 @@ Args:
 }
 ```
 
-Every resolved path MUST be a regular file beneath the group's active scope.
+Every resolved path MUST be a regular file beneath the authenticated caller's
+effective workspace, using the same projection as local tools. A running managed
+caller MAY send from its own verified launch root after detach or a same-key
+rebind; the source event retains that launch scope attribution. This exception
+MUST NOT expand another caller's root or destination-only scope validation.
 All paths are validated and read before any message is appended. The resulting
 event uses the selected `message_mode` recipient, permission, and delivery rules.
 If `client_id` already identifies an accepted message, the daemon MUST return
@@ -4764,18 +4896,27 @@ Args:
   mode?: "all" | "send" | "request_reply" | "mail"
   query?: string
   before_event_id?: string
+  event_id?: string // exact visible message/notice; exclusive with filters/pagination
   limit?: number
 }
 ```
 
 Result:
 ```ts
-{ messages: CCCSEventV1[]; has_more: boolean }
+{ messages: CCCSEventV1[]; has_more: boolean; delivery_text?: string | null }
 ```
 
 Results are newest-first, limited to the actor's current generation, and MUST
 contain only messages sent by or addressed to that actor. The operation is
 read-only and MUST NOT append `mail.read` or mutate any delivery state.
+
+With `event_id`, return exactly that visible `chat.message` or targeted
+`system.notify` from the Actor's current generation, with complete rendered
+`delivery_text`. Native Actors also receive their current Preamble in that text.
+Use the same visibility rules as delivery; unknown, invisible and prior-generation
+IDs all return `event_not_found`. Exact reads cannot be combined with `mode`,
+`query`, `before_event_id` or `limit`. They remain non-consuming and do not
+acknowledge execution, create a delivery or replay a handoff.
 
 ### 8.8 Context and Tasks
 
@@ -7543,12 +7684,12 @@ Result:
     source_group_id: string
     source_title: string
     actor_count: number
-    actors: Array<Record<string, unknown>>
+    actors: Array<{ id: string; title: string; runtime: string; runner: string; enabled: boolean; native_session: boolean }>
     source_workspace_root: string
     workspace_root_exists: boolean
     group_id_conflict: boolean
     target_default_scope_conflict?: boolean
-    requires_reconnect?: Record<string, boolean>
+    requires_reconnect?: { chatgpt_web_model: boolean; grok_web_model: boolean; notebooklm_group_space: boolean; native_sessions: boolean }
     workspace_included: false
     contains_secrets: false
     runtime_reset?: Record<string, unknown>
@@ -7559,6 +7700,7 @@ Result:
 Errors:
 - `invalid_group_copy` when the payload is not a valid supported CCCC group copy.
 - `contains_secrets: false` in the preview has the same meaning as export: system credentials are excluded, but user content in ledger history, memory, blobs, and attachments can still be sensitive.
+- Preview Actor `enabled` describes the imported state: native-session memberships are disabled, even within the same Home. `native_session` and `requires_reconnect.native_sessions` MUST identify these memberships without guessing from Runtime alone.
 
 #### `group_copy_import`
 
@@ -7592,6 +7734,7 @@ Notes:
 - Import MUST stage and validate copy package contents before moving them into `groups/<group_id>`.
 - If the source `group_id` conflicts in the target home, import MUST allocate a new group id.
 - Imported groups MUST start stopped: `running=false`, `state="idle"`.
+- Imported native Actors MUST retain their `external_session_id` and history but have `enabled=false`; ordinary managed Actors retain their configured enabled state. Import MUST clear the copied native direct-reuse index and MUST NOT change the source Group. Native memberships require an explicit user resume/admission before they can access tools or receive messages, including when the same Home already has that source alive. Copy packages do not carry lifecycle/receiver authority.
 - `workspace_root`, when supplied, remaps the active workspace root during import.
 - Import MUST reject unsupported copy package schema versions, workspace-including copy packages, secret-containing copy packages, path traversal, symlinks, duplicate entries, and unsafe package paths.
 

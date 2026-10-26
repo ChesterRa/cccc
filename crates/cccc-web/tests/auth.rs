@@ -874,6 +874,53 @@ async fn cannot_demote_the_last_admin_while_scoped_tokens_remain() {
     );
 }
 
+#[tokio::test]
+async fn native_recovery_is_denied_to_group_principals_and_exhibit_even_with_a_known_actor() {
+    let (_temp, home) = home();
+    let tokens = AccessTokenStore::new(home.clone()).expect("token store");
+    let admin = tokens
+        .create("admin", Vec::new(), true, None)
+        .expect("admin");
+    let member = tokens
+        .create("member", vec!["g_native".into()], false, None)
+        .expect("Group member");
+    for (mode, token) in [
+        (cccc_web::WebMode::Normal, member.token),
+        (cccc_web::WebMode::Exhibit, admin.token),
+    ] {
+        for request in [
+            Request::get("/api/v1/local_sessions/recovery/g_native/claude-1"),
+            Request::post("/api/v1/local_sessions/recovery/g_native/claude-1/refresh"),
+        ] {
+            let response = cccc_web::app_with_mode(home.clone(), mode)
+                .oneshot(
+                    request
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            let payload: Value = serde_json::from_slice(
+                &response
+                    .into_body()
+                    .collect()
+                    .await
+                    .expect("body")
+                    .to_bytes(),
+            )
+            .expect("JSON");
+            assert_eq!(payload["ok"], false);
+            assert!(
+                payload
+                    .get("result")
+                    .is_none_or(|result| result.get("recovery").is_none())
+            );
+        }
+    }
+}
+
 fn home() -> (tempfile::TempDir, HomeLayout) {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

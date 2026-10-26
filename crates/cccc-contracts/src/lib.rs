@@ -7,6 +7,7 @@ pub mod deepseek;
 pub mod direct;
 pub mod event;
 pub mod ipc;
+pub mod local_session;
 pub mod message;
 pub mod voice_notifications;
 pub mod voice_secretary;

@@ -24,6 +24,7 @@ mod headless;
 mod headless_store;
 mod im;
 mod im_authorization;
+mod local_sessions;
 mod membership;
 mod messaging;
 mod messaging_cross_group;
@@ -90,6 +91,7 @@ pub fn router() -> Router<AppState> {
         .merge(filesystem::routes())
         .merge(access_tokens::routes())
         .merge(groups::routes())
+        .merge(local_sessions::routes())
         .merge(group_copy::routes())
         .merge(actors::routes())
         .merge(assistants::routes())

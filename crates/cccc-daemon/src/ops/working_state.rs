@@ -24,7 +24,9 @@ pub fn runtime_actor_fields(
 ) -> Map<String, Value> {
     let actual = super::local_headless::structured_state(group_id, &actor.id);
     let retained_pty = cccc_runtime::status(group_id, &actor.id).is_ok_and(|status| status.running);
-    let runner_effective = if let Some(actual) = actual.as_ref() {
+    let runner_effective = if !actor.external_session_id.is_empty() {
+        "headless"
+    } else if let Some(actual) = actual.as_ref() {
         actual["runner"].as_str().unwrap_or("pty")
     } else if retained_pty {
         "pty"

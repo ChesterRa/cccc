@@ -2,6 +2,8 @@ mod actor;
 mod group;
 mod integrations;
 mod messaging;
+mod sessions;
+pub use sessions::{SessionsAction, SessionsArgs};
 
 pub use actor::{ActorAction, ActorArgs, ActorTarget};
 pub use group::{GroupAction, GroupArgs};
@@ -103,6 +105,8 @@ pub enum CommandKind {
     },
     Active,
     Actor(ActorArgs),
+    /// Work with user-owned native Codex and Claude sessions.
+    Sessions(SessionsArgs),
     Prompt(PromptArgs),
     Im(ImArgs),
     Space(SpaceArgs),
@@ -145,7 +149,13 @@ pub enum CommandKind {
     Update(UpdateArgs),
     Version,
     Home,
-    Mcp,
+    Mcp {
+        /// Bind this stdio port to an opted-in user-owned native session.
+        #[arg(long, value_parser = ["codex", "claude"])]
+        local_session_runtime: Option<String>,
+        #[arg(long, hide = true, requires = "local_session_runtime")]
+        local_session_host_pid: Option<u32>,
+    },
     Web(WebArgs),
 }
 

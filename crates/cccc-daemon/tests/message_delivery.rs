@@ -389,6 +389,109 @@ fn inbox_read_consumes_only_mail_in_append_order() {
 }
 
 #[test]
+fn exact_message_history_is_visible_generation_scoped_and_non_consuming() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group_id = stopped_peer_group(&home, "exact history");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"peer2","by":"user"}),
+    );
+    let body = "quoted \"message\" 界😀\n".repeat(1_000);
+    let old = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":body,"message_mode":"request_reply"}),
+    );
+    let private = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer2"],"text":"other Actor only","message_mode":"send"}),
+    );
+    let store = GroupStore::new(home.clone()).expect("store");
+    let path = store.ledger_path(&group_id).expect("ledger");
+    for _ in 0..110 {
+        let mut newer = Event::new("chat.message", &group_id);
+        newer.by = "user".into();
+        newer.data = json!({"to":["peer1"],"text":"newer","message_mode":"send"})
+            .as_object()
+            .expect("data")
+            .clone();
+        ledger::append(&path, &newer).expect("newer event");
+    }
+    let before = std::fs::read(&path).expect("ledger before read");
+    let exact = call(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":old.result["event"]["id"]}),
+    );
+    assert_eq!(exact.result["messages"].as_array().map(Vec::len), Some(1));
+    assert_eq!(exact.result["messages"][0]["data"]["text"], body);
+    assert!(
+        exact.result["delivery_text"]
+            .as_str()
+            .expect("rendered message")
+            .contains(&body)
+    );
+    assert_eq!(exact.result["has_more"], false);
+    assert_eq!(std::fs::read(&path).expect("ledger after read"), before);
+    let notice = call(
+        &home,
+        "system_notify",
+        json!({
+            "group_id":group_id,"by":"system","title":"notice","message":"Complete system guidance",
+            "target_actor_id":"peer1"
+        }),
+    );
+    let exact_notice = call(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":notice.result["event"]["id"]}),
+    );
+    assert_eq!(exact_notice.result["messages"][0]["kind"], "system.notify");
+    assert!(
+        exact_notice.result["delivery_text"]
+            .as_str()
+            .expect("notice text")
+            .contains("Complete system guidance")
+    );
+    for event_id in [private.result["event"]["id"].clone(), json!("missing")] {
+        let denied = call_raw(
+            &home,
+            "message_history",
+            json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":event_id}),
+        );
+        assert_eq!(denied.error.expect("not visible").code, "event_not_found");
+    }
+    let conflict = call_raw(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":old.result["event"]["id"],"limit":1}),
+    );
+    assert_eq!(
+        conflict.error.expect("exclusive exact lookup").code,
+        "invalid_args"
+    );
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    let stale = call_raw(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":old.result["event"]["id"]}),
+    );
+    assert_eq!(stale.error.expect("old generation").code, "event_not_found");
+}
+
+#[test]
 fn message_history_pages_and_filters_without_consuming_mail() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

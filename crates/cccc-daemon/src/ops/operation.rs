@@ -33,6 +33,58 @@ impl Operation {
     }
 
     pub(crate) fn execute(&self, home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+        if let Some(binding) = request.args.get("_cccc_native_source_binding") {
+            let valid = serde_json::from_value::<
+                cccc_contracts::local_session::LocalSessionSourceBinding,
+            >(binding.clone())
+            .is_ok_and(|captured| {
+                matches!(
+                    request.op.as_str(),
+                    "local_session_conversation" | "local_session_send"
+                ) && request
+                    .args
+                    .get("group_id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none_or(str::is_empty)
+                    && request.args.get("source_id") == binding.get("source_id")
+                    && !request.args.contains_key("_cccc_native_binding")
+                    && !request.args.contains_key("_cccc_web_binding")
+                    && cccc_core::local_sessions::validate_source(
+                        home,
+                        &captured.source_id,
+                        &captured.session_revision,
+                    )
+                    .is_ok()
+            });
+            if !valid {
+                return Err(OpError::new(
+                    "permission_denied",
+                    "The captured native session authority is no longer valid",
+                ));
+            }
+        }
+        if let Some(binding) = request.args.get("_cccc_native_binding") {
+            let valid =
+                serde_json::from_value::<cccc_contracts::local_session::LocalSessionBinding>(
+                    binding.clone(),
+                )
+                .is_ok_and(|captured| {
+                    request.args.get("group_id") == binding.get("group_id")
+                        && request.args.get("by") == binding.get("actor_id")
+                        && !request.args.contains_key("_cccc_web_binding")
+                        && (!matches!(
+                            request.op.as_str(),
+                            "local_session_send" | "local_session_leave"
+                        ) || request.args.get("source_id") == binding.get("source_id"))
+                        && cccc_core::local_sessions::validate_binding(home, &captured).is_ok()
+                });
+            if !valid {
+                return Err(OpError::new(
+                    "permission_denied",
+                    "The captured native session authority is no longer valid",
+                ));
+            }
+        }
         if let Some(binding) = request.args.get("_cccc_web_binding") {
             let stage = binding["grok_stage"]
                 .as_str()

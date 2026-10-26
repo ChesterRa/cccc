@@ -90,6 +90,7 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
         home: home.clone(),
         group_id: group.group_id.clone(),
         actor_id: "claude-1".into(),
+        workspace: Default::default(),
         managed: Arc::new(AnalystSession::claude_for_shutdown_test(
             &config,
             "abcdef01",

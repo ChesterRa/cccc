@@ -72,7 +72,7 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "old_delete_error":old_delete_error,
         "old_reaped_processes":old_reaped_processes,
         "active_group_id":was_active.then_some(&replacement.group_id),
-        "group":super::group_runtime::group(replacement),
+        "group":super::group_runtime::group(home, replacement),
     }))
 }
 
@@ -102,6 +102,26 @@ fn prepare_replacement(
             document.scopes.clone_from(&old.scopes);
             document.actors.clone_from(&old.actors);
             document.automation = reset_automation(old);
+            if let Some(conversation) = old
+                .extra
+                .get("local_session_conversation")
+                .and_then(Value::as_object)
+            {
+                let configuration = ["direct", "source_ids"]
+                    .into_iter()
+                    .filter_map(|key| {
+                        conversation
+                            .get(key)
+                            .map(|value| (key.into(), value.clone()))
+                    })
+                    .collect::<Map<String, Value>>();
+                if !configuration.is_empty() {
+                    document.extra.insert(
+                        "local_session_conversation".into(),
+                        Value::Object(configuration),
+                    );
+                }
+            }
             for actor in &mut document.actors {
                 actor.avatar_asset_path.clear();
             }
@@ -113,10 +133,10 @@ fn prepare_replacement(
             meta.default_scope_key
                 .clone_from(&replacement.active_scope_key);
         }
-        for scope in &replacement.scopes {
-            registry
-                .defaults
-                .insert(scope.scope_key.clone(), new_group_id.clone());
+        for owner in registry.defaults.values_mut() {
+            if owner == &old.group_id {
+                owner.clone_from(&new_group_id);
+            }
         }
         Ok(())
     })
@@ -150,18 +170,20 @@ fn rollback_new(store: &GroupStore, old: &GroupDoc, group_id: &str, original: Op
     if let Err(error) = super::actor_secrets::remove_group(store.home(), group_id) {
         failures.push(format!("private_env: {}", error.message));
     }
-    if let Err(error) = store.delete(group_id) {
-        failures.push(format!("group: {error}"));
-    }
+    // Restore only transferred defaults, before deleting the replacement
+    // unregisters them. Attached scopes may be unowned or owned by other Groups.
     if let Err(error) = Registry::mutate(store.home(), |registry| {
-        for scope in &old.scopes {
-            registry
-                .defaults
-                .insert(scope.scope_key.clone(), old.group_id.clone());
+        for owner in registry.defaults.values_mut() {
+            if owner == group_id {
+                owner.clone_from(&old.group_id);
+            }
         }
         Ok(())
     }) {
         failures.push(format!("scope_registry: {error}"));
+    }
+    if let Err(error) = store.delete(group_id) {
+        failures.push(format!("group: {error}"));
     }
     if failures.is_empty() {
         original
@@ -209,6 +231,14 @@ mod tests {
                         "default_send_to":"broadcast"
                     }),
                 );
+                group.extra.insert(
+                    "local_session_conversation".into(),
+                    json!({
+                        "direct":false,
+                        "source_ids":["claude:fixture"],
+                        "runtime_receiver":{"drop":true}
+                    }),
+                );
                 for key in [
                     "runtime_states",
                     "assistants",
@@ -236,7 +266,13 @@ mod tests {
             json!(777)
         );
         assert!(!replacement.automation.contains_key("runtime_last_tick"));
-        assert!(replacement.extra.is_empty());
+        assert_eq!(
+            Value::Object(replacement.extra),
+            json!({"local_session_conversation":{
+                "direct":false,
+                "source_ids":["claude:fixture"]
+            }})
+        );
     }
 
     #[test]

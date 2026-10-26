@@ -61,6 +61,7 @@ async fn file_send_with_only_a_destination_group_delivers_the_file_locally() {
         .expect("args")
         .clone(),
         Some(crate::RequestContext {
+            native_binding: None,
             binding: None,
             group_id: &source.group_id,
             actor_id: "worker",

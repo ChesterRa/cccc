@@ -27,6 +27,8 @@ pub enum DeliveryOutcome<'a> {
     Claimed,
     Accepted,
     Failed(&'a str),
+    /// This attempt stopped before any native transport submission.
+    Unsubmitted(&'a str),
     Ambiguous(&'a str),
     /// Never sent and not to be retried: a newer event supersedes it.
     Withdrawn(&'a str),
@@ -37,7 +39,7 @@ impl<'a> DeliveryOutcome<'a> {
         match self {
             Self::Claimed => ("claimed", ""),
             Self::Accepted => ("accepted", ""),
-            Self::Failed(reason) => ("failed", reason),
+            Self::Failed(reason) | Self::Unsubmitted(reason) => ("failed", reason),
             Self::Ambiguous(reason) => ("ambiguous", reason),
             Self::Withdrawn(reason) => ("withdrawn", reason),
         }
@@ -79,6 +81,9 @@ pub fn append_state(
     .as_object()
     .cloned()
     .expect("runtime delivery data");
+    if matches!(outcome, DeliveryOutcome::Unsubmitted(_)) {
+        event.data.insert("retryable".into(), json!(true));
+    }
     ledger::append(&store.ledger_path(group_id).map_err(OpError::io)?, &event)
         .map_err(OpError::io)?;
     Ok(event)
@@ -395,7 +400,10 @@ fn legacy_pending_sources(
                 event.data.get("source_event_id").and_then(Value::as_str),
                 event.data.get("state").and_then(Value::as_str),
             ) {
-                latest.insert(source.to_owned(), Value::String(state.to_owned()));
+                latest.insert(
+                    source.to_owned(),
+                    json!({"state":state,"retryable":event.data.get("retryable")}),
+                );
             }
         }
         let mut pending = Vec::new();
@@ -405,15 +413,20 @@ fn legacy_pending_sources(
             }
             let state = latest
                 .get(&event.id)
-                .and_then(Value::as_str)
+                .and_then(|value| value["state"].as_str())
                 .unwrap_or_default();
+            let retryable = state == "failed"
+                && latest
+                    .get(&event.id)
+                    .is_some_and(|value| value["retryable"] == true);
             let addressed = if event.kind == "chat.message" {
                 let mode = event
                     .data
                     .get("message_mode")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                (matches!(mode, "send" | "request_reply") || (mode == "mail" && state == "claimed"))
+                (matches!(mode, "send" | "request_reply")
+                    || (mode == "mail" && (state == "claimed" || retryable)))
                     && inbox::is_for_actor(group, event, &actor.id)
             } else if event.kind == "system.notify" {
                 if legacy_read_watermark.covers_notification(event) {
@@ -436,7 +449,12 @@ fn legacy_pending_sources(
             if !addressed {
                 continue;
             }
-            if !matches!(state, "accepted" | "ambiguous" | "withdrawn") {
+            // Native transport rejections are explicit failures, not an
+            // automatic retry loop that can starve subsequent messages.
+            // message_deliver still allows an operator to retry them.
+            if !matches!(state, "accepted" | "ambiguous" | "withdrawn")
+                && (state != "failed" || actor.external_session_id.is_empty() || retryable)
+            {
                 pending.push(event.clone());
                 if pending.len() >= limit.max(1) {
                     break;

@@ -281,6 +281,11 @@ export function useAppModalActorActions(args: {
       ? currentCommand
       : String(editActorCommand || "").trim();
     const nextTitle = String(editActorTitle || "").trim();
+    const currentDefaultScopeKey = savedActor.default_scope_key || "";
+    const nextDefaultScopeKey = savedActor.external_session_id
+      ? currentDefaultScopeKey
+      : (payload.defaultScopeKey ?? currentDefaultScopeKey);
+    const scopeChanged = nextDefaultScopeKey !== currentDefaultScopeKey;
     const nextCapabilityAutoload = Array.isArray(payload.capabilityAutoload)
       ? normalizeCapabilityIdList(payload.capabilityAutoload)
       : [];
@@ -312,6 +317,7 @@ export function useAppModalActorActions(args: {
       commandChanged ||
       titleChanged ||
       autoloadChanged ||
+      scopeChanged ||
       profileChanged;
 
     if (
@@ -360,7 +366,11 @@ export function useAppModalActorActions(args: {
           undefined,
           undefined,
           nextTitle,
-          { profileAction: "convert_to_custom", capabilityAutoload: nextCapabilityAutoload },
+          {
+            profileAction: "convert_to_custom",
+            capabilityAutoload: nextCapabilityAutoload,
+            ...(scopeChanged ? { defaultScopeKey: nextDefaultScopeKey } : {}),
+          },
         );
         if (!convertResp.ok) {
           throw new Error(`${convertResp.error.code}: ${convertResp.error.message}`);
@@ -376,7 +386,7 @@ export function useAppModalActorActions(args: {
       }
 
       if (mode === "profile") {
-        const needProfilePatch = profileChanged || titleChanged || autoloadChanged;
+        const needProfilePatch = profileChanged || titleChanged || autoloadChanged || scopeChanged;
         if (needProfilePatch) {
           const profileResp = await api.updateActor(
             targetGroupId,
@@ -389,6 +399,7 @@ export function useAppModalActorActions(args: {
               profileScope: (selectedProfile?.scope || "global") as api.ProfileScope,
               profileOwner: String(selectedProfile?.owner_id || "").trim() || undefined,
               capabilityAutoload: nextCapabilityAutoload,
+              ...(scopeChanged ? { defaultScopeKey: nextDefaultScopeKey } : {}),
             },
           );
           if (!profileResp.ok) {
@@ -407,11 +418,14 @@ export function useAppModalActorActions(args: {
         const snapshotRuntime = String(actorSnapshot.runtime || currentRuntime || "codex").trim();
         const snapshotCommand = formatRuntimeCommand(actorSnapshot.command);
         const snapshotTitle = String(actorSnapshot.title || "").trim();
+        const snapshotScopeChanged =
+          nextDefaultScopeKey !== (actorSnapshot.default_scope_key || "");
         const needCustomPatch =
           nextRuntime !== snapshotRuntime ||
           nextRuntimeMode !== (actorSnapshot.runtime_mode || "default") ||
           nextCommand !== snapshotCommand ||
           nextTitle !== snapshotTitle ||
+          snapshotScopeChanged ||
           autoloadChanged;
         if (needCustomPatch) {
           const customResp = await api.updateActor(
@@ -422,6 +436,7 @@ export function useAppModalActorActions(args: {
             nextTitle,
             {
               capabilityAutoload: nextCapabilityAutoload,
+              ...(snapshotScopeChanged ? { defaultScopeKey: nextDefaultScopeKey } : {}),
               ...(supportsAcpMode(nextRuntime) || actorSnapshot.runtime_mode === "acp"
                 ? { runtimeMode: nextRuntimeMode }
                 : {}),
@@ -496,6 +511,7 @@ export function useAppModalActorActions(args: {
             profileChanged ||
             runtimeChanged ||
             commandChanged ||
+            scopeChanged ||
             convertToCustom);
         if (restartRequired) {
           showNotice({ message: t("savedRestartRequired", { label }) });
@@ -703,6 +719,7 @@ export function useAppModalActorActions(args: {
   const handleAddActor = async (
     avatarFile?: File | null,
     runtimeMode?: "default" | "acp",
+    defaultScopeKey = "",
   ): Promise<boolean> => {
     if (!selectedGroupId) return false;
     const creationGroupId = selectedGroupId;
@@ -757,8 +774,13 @@ export function useAppModalActorActions(args: {
               profileScope: (selectedProfile?.scope || "global") as api.ProfileScope,
               profileOwner: String(selectedProfile?.owner_id || "").trim() || undefined,
               capabilityAutoload,
+              defaultScopeKey,
             }
-          : { capabilityAutoload, ...(supportsAcpMode(newActorRuntime) ? { runtimeMode } : {}) },
+          : {
+              capabilityAutoload,
+              defaultScopeKey,
+              ...(supportsAcpMode(newActorRuntime) ? { runtimeMode } : {}),
+            },
       );
       if (!resp.ok) {
         setAddActorError(resp.error?.message || t("failedToAddAgent"));

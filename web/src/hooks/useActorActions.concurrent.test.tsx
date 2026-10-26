@@ -5,7 +5,57 @@ import { expect, it, vi } from "vite-plus/test";
 import { useActorActions } from "./useActorActions";
 import { useUIStore, useGroupStore, useInboxStore, useModalStore } from "../stores";
 import * as api from "../services/api";
+import * as nativeApi from "../services/api/localSessions";
 import type { Actor, LedgerEvent } from "../types";
+import i18n, { i18nReady } from "../i18n";
+
+it("resumes native access with its captured source instead of starting the Group", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const originalGroup = useGroupStore.getState();
+  const originalUI = useUIStore.getState();
+  const refreshActors = vi.fn().mockResolvedValue(undefined);
+  const refreshGroups = vi.fn().mockResolvedValue(undefined);
+  useGroupStore.setState({ refreshActors, refreshGroups, clearStreamingEventsForActor: vi.fn() });
+  useUIStore.setState({ actorBusy: {} });
+  const start = vi.spyOn(api, "startActor");
+  const resume = vi
+    .spyOn(nativeApi, "resumeLocalSessionAccess")
+    .mockResolvedValue({ ok: true, result: { actor: { id: "native" } } } as Awaited<
+      ReturnType<typeof nativeApi.resumeLocalSessionAccess>
+    >);
+  let actions!: ReturnType<typeof useActorActions>;
+  function Probe() {
+    actions = useActorActions("g_native");
+    return null;
+  }
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Probe />));
+    await act(async () =>
+      actions.toggleActorEnabled(
+        {
+          id: "native",
+          external_session_id: "claude:captured-source",
+          enabled: false,
+          running: false,
+        },
+        false,
+      ),
+    );
+    expect(resume).toHaveBeenCalledExactlyOnceWith("g_native", "native", "claude:captured-source");
+    expect(start).not.toHaveBeenCalled();
+    expect(refreshActors).toHaveBeenCalledExactlyOnceWith("g_native");
+    expect(refreshGroups).toHaveBeenCalledOnce();
+    expect(useUIStore.getState().actorBusy).toEqual({});
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    vi.restoreAllMocks();
+    useGroupStore.setState(originalGroup);
+    useUIStore.setState(originalUI);
+  }
+});
 
 it("keeps overlapping Actor operations scoped while preserving unrelated global busy state", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -231,3 +281,88 @@ it("does not let a late inbox response replace a newly opened inbox", async () =
     useModalStore.setState(originalModal);
   }
 });
+
+it.each([
+  [
+    "en",
+    'Remove "Native fixture" from this Group? This removes its CCCC membership only; it does not stop the native application or session.',
+  ],
+  ["zh", "从本工作组移除“Native fixture”？此操作仅移除 CCCC 成员关系，不会停止原生应用或会话。"],
+  [
+    "ja",
+    "「Native fixture」をこのグループから削除しますか？CCCC のメンバー登録のみを解除し、元のアプリやセッションは停止しません。",
+  ],
+])(
+  "confirms non-terminating native membership removal and respects cancellation in %s",
+  async (language, message) => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    await i18nReady;
+    const originalLanguage = i18n.language;
+    await i18n.changeLanguage(language);
+    const originalGroup = useGroupStore.getState();
+    const originalUI = useUIStore.getState();
+    const refreshActors = vi.fn().mockResolvedValue(undefined);
+    const clearStreamingEventsForActor = vi.fn();
+    useGroupStore.setState({
+      selectedGroupId: "g_native",
+      refreshActors,
+      refreshGroups: vi.fn().mockResolvedValue(undefined),
+      loadGroup: vi.fn().mockResolvedValue(undefined),
+      clearStreamingEventsForActor,
+    });
+    useUIStore.setState({ activeTab: "native", actorBusy: {} });
+    const confirm = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirm);
+    const remove = vi
+      .spyOn(api, "removeActor")
+      .mockResolvedValue({ ok: true, result: {} } as Awaited<ReturnType<typeof api.removeActor>>);
+    const start = vi
+      .spyOn(api, "startActor")
+      .mockResolvedValue({ ok: true, result: {} } as Awaited<ReturnType<typeof api.startActor>>);
+    const stop = vi
+      .spyOn(api, "stopActor")
+      .mockResolvedValue({ ok: true, result: {} } as Awaited<ReturnType<typeof api.stopActor>>);
+    const restart = vi
+      .spyOn(api, "restartActor")
+      .mockResolvedValue({ ok: true, result: {} } as Awaited<ReturnType<typeof api.restartActor>>);
+    let actions!: ReturnType<typeof useActorActions>;
+    function Probe() {
+      actions = useActorActions("g_native");
+      return null;
+    }
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const actor: Actor = {
+      id: "native",
+      title: "Native fixture",
+      external_session_id: "codex:fixture",
+      enabled: true,
+      running: true,
+    };
+    try {
+      await act(async () => root.render(<Probe />));
+      await act(async () => actions.removeActor(actor, actor.id));
+      expect(confirm).toHaveBeenLastCalledWith(message);
+      expect(remove).not.toHaveBeenCalled();
+      expect(refreshActors).not.toHaveBeenCalled();
+      expect(useUIStore.getState().activeTab).toBe("native");
+      confirm.mockReturnValue(true);
+      await act(async () => actions.removeActor(actor, actor.id));
+      expect(remove).toHaveBeenCalledExactlyOnceWith("g_native", "native");
+      expect(clearStreamingEventsForActor).toHaveBeenCalledExactlyOnceWith("native", "g_native");
+      expect(refreshActors).toHaveBeenCalledExactlyOnceWith("g_native");
+      expect(start).not.toHaveBeenCalled();
+      expect(stop).not.toHaveBeenCalled();
+      expect(restart).not.toHaveBeenCalled();
+      expect(useUIStore.getState().actorBusy).toEqual({});
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+      useGroupStore.setState(originalGroup);
+      useUIStore.setState(originalUI);
+      await i18n.changeLanguage(originalLanguage);
+    }
+  },
+);

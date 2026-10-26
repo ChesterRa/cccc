@@ -1132,6 +1132,7 @@
     "workspaceExcluded": "Workspace files are not included.",
     "secretsExcluded": "System credentials, cookies, and auth sessions are not included. Chat history, memory, and attachments may still contain sensitive user content.",
     "reconnectChatGPT": "ChatGPT connections must be reconfigured after import.",
+    "reconnectNativeSessions": "Native CCCC access imports paused, even in the same instance. Explicitly resume access or connect native sessions before use; the source Group is unchanged.",
     "reconnectNotebookLM": "NotebookLM / Group Space may need reconnect after import.",
     "importButton": "Import Group",
     "importConfirm": "Import group copy package \"{{filename}}\"?",

@@ -33,7 +33,7 @@ pub(super) fn list(
         .map(|mut actor| -> Result<Value, OpError> {
             actor.normalize_runtime_constraints();
             actor.role = actors::effective_role(group, &actor.id);
-            let status = actor_runtime_status::resolve(group, &actor);
+            let status = actor_runtime_status::resolve(home, group, &actor);
             let mut value = serde_json::to_value(&actor).unwrap_or_else(|_| json!({}));
             if let Some(object) = value.as_object_mut() {
                 object.extend(runtime_session::actor_fields(

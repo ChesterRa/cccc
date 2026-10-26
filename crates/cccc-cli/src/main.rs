@@ -61,7 +61,17 @@ async fn main() -> Result<()> {
             };
             web_host::launch(home, cli.host, cli.port, mode).await
         }
-        Some(CommandKind::Mcp) => cccc_mcp::run_stdio(home).await,
+        Some(CommandKind::Mcp {
+            local_session_runtime,
+            local_session_host_pid,
+        }) => {
+            cccc_mcp::run_stdio_with_local_session(
+                home,
+                local_session_runtime.as_deref(),
+                local_session_host_pid,
+            )
+            .await
+        }
         Some(CommandKind::Version) => {
             println!("cccc {PRODUCT_VERSION}");
             Ok(())
@@ -90,6 +100,7 @@ async fn main() -> Result<()> {
         }
         Some(CommandKind::Active) => show_active(&client, &home).await,
         Some(CommandKind::Actor(args)) => commands::actor::run(&client, &home, args).await,
+        Some(CommandKind::Sessions(args)) => commands::sessions::run(&home, args.action).await,
         Some(CommandKind::Prompt(args)) => {
             commands::integrations::prompt(&client, &home, args).await
         }

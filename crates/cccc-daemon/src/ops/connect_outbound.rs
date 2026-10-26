@@ -205,7 +205,7 @@ fn send_with_reply(
                     "paths must contain 1–16 source-scope files",
                 )
             })?;
-        super::messaging::files::read(&source, paths, connect_delivery::MAX_ATTACHMENT_BYTES)?
+        super::messaging::files::read(&source, by, paths, connect_delivery::MAX_ATTACHMENT_BYTES)?
             .apply(home, &source, &mut data)?;
     }
     let attachments = if preflight {

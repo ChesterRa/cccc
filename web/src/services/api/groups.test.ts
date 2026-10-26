@@ -1,15 +1,95 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  attachScope,
   fetchVoiceAssistantStatus,
   fetchVoiceAssistantWorkspace,
+  previewGroupCopy,
   transcribeVoiceAssistantAudio,
   updateVoiceAssistantRecordingLease,
+  type GroupCopyPreview,
 } from "./groups";
+import { setAuthToken } from "./base";
 import {
   fetchVoiceAssistantDocumentContent,
   retryVoiceAssistantTranscriptPersistence,
 } from "./voiceSecretary";
+
+describe("scope attachment API", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    setAuthToken("");
+  });
+
+  it.each([undefined, true, false])(
+    "passes activation %s explicitly only when requested and keeps the added scope receipt",
+    async (activate) => {
+      vi.stubGlobal("window", { location: { search: "" } });
+      setAuthToken("");
+      const result = {
+        group_id: "group/fixture",
+        scope_key: "s_added",
+        scope: { scope_key: "s_added", url: "/project", label: "Project", git_remote: "" },
+      };
+      const fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response(JSON.stringify({ ok: true, result })));
+
+      expect(
+        await attachScope(
+          "group/fixture",
+          "/project/subdirectory",
+          activate === undefined ? undefined : { activate },
+        ),
+      ).toEqual({ ok: true, result });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const [url, init] = fetch.mock.calls[0];
+      expect(url).toBe("/api/v1/groups/group%2Ffixture/attach");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        path: "/project/subdirectory",
+        by: "user",
+        ...(activate === undefined ? {} : { activate }),
+      });
+    },
+  );
+});
+
+describe("group copy preview API", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    setAuthToken("");
+  });
+
+  it("preserves native-session flags independently of Codex runtime in an uploaded preview", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    setAuthToken("");
+    const preview: GroupCopyPreview = {
+      source_group_id: "g_source",
+      actors: [
+        { id: "native", runtime: "codex", enabled: true, native_session: true },
+        { id: "managed", runtime: "codex", enabled: true, native_session: false },
+      ],
+      requires_reconnect: { native_sessions: true },
+    };
+    const result = { upload_id: "fixture-upload", preview };
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true, result })));
+    const file = new File(["fixture zip"], "native-members.zip");
+
+    expect(await previewGroupCopy(file)).toEqual({ ok: true, result });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = fetch.mock.calls[0];
+    expect(url).toBe("/api/v1/groups/copy/preview_import");
+    expect(init?.method).toBe("POST");
+    const uploaded = (init!.body as FormData).get("file") as File;
+    expect(uploaded.name).toBe(file.name);
+    expect(uploaded.size).toBe(file.size);
+  });
+});
 
 describe("assistant API helpers", () => {
   afterEach(() => {

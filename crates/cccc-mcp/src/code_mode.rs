@@ -769,6 +769,7 @@ async fn call_nested(
         Some(crate::RequestContext {
             group_id: &owner.group_id,
             actor_id: &owner.actor_id,
+            native_binding: None,
             binding: owner.binding.as_ref(),
         }),
         false,

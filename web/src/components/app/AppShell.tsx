@@ -239,6 +239,7 @@ export function AppShell({
           sidebarWidth={sidebarWidth}
           isDark={isDark}
           readOnly={webReadOnly}
+          canAccessLocalSessions={canAccessAccount}
           codexVoice={canUseVoice ? codexVoice : undefined}
           onSelectGroup={(groupId) => {
             if (!remoteWorkspace && groupId === selectedGroupId) onSelectGroup(groupId);

@@ -21,6 +21,10 @@ mod slash_skill;
 mod stream;
 mod tracked_send;
 
+pub(super) fn send_local_session(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    send(home, request, "chat.message")
+}
+
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
         "send" | "message_send" => {
@@ -80,7 +84,7 @@ fn send_files(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         return duplicate_send(event);
     }
 
-    let files = files::read(&group, paths, u64::MAX)?;
+    let files = files::read(&group, &by, paths, u64::MAX)?;
 
     let mut preflight: Map<String, Value> = request
         .args
@@ -289,7 +293,7 @@ fn send_with_audience_policy(
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     if kind == "chat.message" {
-        message_validation::normalize(home, &group, &mut data)?;
+        message_validation::normalize(home, &group, &by, &mut data)?;
         super::messaging_recipients::normalize_chat_data(
             &group,
             &by,
@@ -369,7 +373,7 @@ fn preflight_upload_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult
         return preflight_duplicate(event);
     }
     let mut data = upload_preflight_data(request);
-    message_validation::normalize(home, &group, &mut data)?;
+    message_validation::normalize(home, &group, &by, &mut data)?;
     super::messaging_recipients::normalize_chat_preflight(&group, &by, &mut data, false)?;
     validate_upload_content(request, &data)?;
     object(json!({"ready":true}))
@@ -454,7 +458,7 @@ fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResul
         return cross_group_preflight::upload(home, &cross_group);
     }
     let mut data = upload_preflight_data(&forwarded);
-    message_validation::normalize(home, &group, &mut data)?;
+    message_validation::normalize(home, &group, &by, &mut data)?;
     super::messaging_recipients::normalize_chat_preflight(&group, &by, &mut data, false)?;
     validate_upload_content(request, &data)?;
     object(json!({"ready":true}))

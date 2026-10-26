@@ -372,7 +372,7 @@ pub(super) fn pending_deliveries(
 ) -> io::Result<Vec<Event>> {
     let state = load(home, &group.group_id)?;
     with_projection(home, group, &[], &state, |projection, snapshot| {
-        snapshot.events(&projection.deliveries.pending(actor, limit))
+        snapshot.events(&projection.deliveries.pending(group, actor, limit))
     })
 }
 pub(super) fn delivery_states(

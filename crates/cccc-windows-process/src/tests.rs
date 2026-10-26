@@ -52,3 +52,27 @@ fn child_cannot_execute_before_resume_and_drop_cleans_up_suspended_launch() {
         "aborted suspended launch executed child code"
     );
 }
+
+#[test]
+fn creation_observer_distinguishes_missing_program_from_suspended_child() {
+    let missing = std::env::temp_dir()
+        .join(format!("cccc-missing-program-{}", std::process::id()))
+        .join("absent.exe");
+    assert!(!missing.exists(), "fixture program must not exist");
+    let mut created = false;
+    let result =
+        spawn_suspended_with_creation_observer(&mut Command::new(missing), 0, || created = true);
+    assert!(result.is_err());
+    assert!(!created, "failed CreateProcess must not publish creation");
+    let suspended = spawn_suspended_with_creation_observer(
+        &mut Command::new(std::env::current_exe().expect("test binary")),
+        0,
+        || created = true,
+    )
+    .expect("create guarded suspended child");
+    assert!(
+        created,
+        "observe creation before primary-thread lookup/resume"
+    );
+    drop(suspended);
+}

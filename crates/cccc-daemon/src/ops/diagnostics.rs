@@ -39,7 +39,7 @@ fn snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .actors
             .iter()
             .map(|actor| {
-                let status = crate::ops::actor_runtime_status::resolve(&group, actor);
+                let status = crate::ops::actor_runtime_status::resolve(home, &group, actor);
                 json!({
                     "id":actor.id,
                     "role":actor.role,

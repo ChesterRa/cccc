@@ -363,6 +363,24 @@ export function AppModals({
   );
 
   const directoryBrowser = useCreateGroupDirectoryBrowser();
+  const handleActorScopeAttached = useCallback(
+    (groupId: string, scope: api.AttachScopeResult["scope"]) => {
+      useGroupStore.setState((state) => {
+        const doc = state.groupDoc;
+        if (state.selectedGroupId !== groupId || doc?.group_id !== groupId) return state;
+        const scopes = doc.scopes || [];
+        return {
+          groupDoc: {
+            ...doc,
+            scopes: scopes.some((item) => item.scope_key === scope.scope_key)
+              ? scopes.map((item) => (item.scope_key === scope.scope_key ? scope : item))
+              : [...scopes, scope],
+          },
+        };
+      });
+    },
+    [],
+  );
   const [presentationViewerCacheByGroup, setPresentationViewerCacheByGroup] = useState<
     Record<string, string[]>
   >({});
@@ -1439,6 +1457,13 @@ export function AppModals({
         isDark={isDark}
         busy={busy}
         groupId={selectedGroupId || groupDoc?.group_id || ""}
+        scopes={groupDoc?.group_id === selectedGroupId ? groupDoc.scopes : undefined}
+        activeScopeKey={
+          groupDoc?.group_id === selectedGroupId ? groupDoc.active_scope_key : undefined
+        }
+        onScopeAttached={
+          groupDoc?.group_id === selectedGroupId ? handleActorScopeAttached : undefined
+        }
         actorId={editingActor?.id || ""}
         groupRole={editingActor?.role || "peer"}
         avatarUrl={editingActor?.avatar_url || undefined}
@@ -1501,7 +1526,16 @@ export function AppModals({
       />
 
       <ActorConfigModal
+        key={`create-actor-${selectedGroupId}`}
         mode="create"
+        groupId={selectedGroupId || groupDoc?.group_id || ""}
+        scopes={groupDoc?.group_id === selectedGroupId ? groupDoc.scopes : undefined}
+        activeScopeKey={
+          groupDoc?.group_id === selectedGroupId ? groupDoc.active_scope_key : undefined
+        }
+        onScopeAttached={
+          groupDoc?.group_id === selectedGroupId ? handleActorScopeAttached : undefined
+        }
         isOpen={modals.addActor}
         isDark={isDark}
         busy={busy}

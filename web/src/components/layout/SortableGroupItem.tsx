@@ -208,19 +208,21 @@ export function SortableGroupItem({
             </span>
           </div>
         </div>
-        <div className="flex w-[44px] shrink-0 justify-end">
-          <GroupConnectionBadge connection={connection} onClick={onOpenConnections} compact />
-        </div>
-        <div className="flex w-8 shrink-0 justify-end pointer-coarse:w-[44px]">
-          {menu.available && (
+        {connection?.count && onOpenConnections ? (
+          <div className="flex w-[44px] shrink-0 justify-end">
+            <GroupConnectionBadge connection={connection} onClick={onOpenConnections} compact />
+          </div>
+        ) : null}
+        {menu.available && (
+          <div className="flex w-8 shrink-0 justify-end pointer-coarse:w-[44px]">
             <GroupItemMenuTrigger
               isActive={isActive}
               label={menuAriaLabel || menuActionLabel || connectionsLabel || ""}
               open={menu.open}
               onToggle={menu.toggle}
             />
-          )}
-        </div>
+          </div>
+        )}
       </div>
       {menu.menu}
     </div>

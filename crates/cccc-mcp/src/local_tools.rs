@@ -1,5 +1,6 @@
 use cccc_client::DaemonClient;
-use cccc_core::{GroupDoc, HomeLayout};
+use cccc_core::HomeLayout;
+use cccc_core::group_scope::EffectiveScope;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -57,6 +58,7 @@ pub async fn call(
     // still in flight. Keep using the captured identity, never a newer grant.
     revalidate(home, &args)?;
     let binding = args.get("_cccc_web_binding").cloned();
+    let native_binding = args.get("_cccc_native_binding").cloned();
     let payload = match name {
         "cccc_repo" | "cccc_repo_edit" => {
             let operation = action(&args).to_owned();
@@ -86,11 +88,13 @@ pub async fn call(
             )
             .await?;
             revalidate_binding(home, binding.as_ref())?;
+            revalidate_native_binding(home, native_binding.as_ref())?;
             return Ok(result);
         }
         _ => return Err(format!("unsupported local tool: {name}").into()),
     };
     revalidate_binding(home, binding.as_ref())?;
+    revalidate_native_binding(home, native_binding.as_ref())?;
     Ok(if matches!(name, "cccc_code_exec" | "cccc_code_wait") {
         crate::code_mode::tool_result(payload)
     } else {
@@ -99,6 +103,15 @@ pub async fn call(
 }
 
 pub(crate) fn revalidate(home: &HomeLayout, args: &Map<String, Value>) -> Result<(), String> {
+    if let Some(binding) = args.get("_cccc_native_binding") {
+        if args.get("group_id") != binding.get("group_id")
+            || args.get("by") != binding.get("actor_id")
+            || args.contains_key("_cccc_web_binding")
+        {
+            return Err("permission_denied: Native request identity mismatch".into());
+        }
+        revalidate_native_binding(home, Some(binding))?;
+    }
     let binding = args.get("_cccc_web_binding");
     if let Some(binding) = binding
         && (args.get("group_id") != binding.get("group_id")
@@ -107,6 +120,16 @@ pub(crate) fn revalidate(home: &HomeLayout, args: &Map<String, Value>) -> Result
         return Err(retired_authority());
     }
     revalidate_binding(home, binding)
+}
+
+fn revalidate_native_binding(home: &HomeLayout, binding: Option<&Value>) -> Result<(), String> {
+    let Some(binding) = binding else {
+        return Ok(());
+    };
+    let invalid =
+        || "permission_denied: The captured native session authority is no longer valid".to_owned();
+    let binding = serde_json::from_value(binding.clone()).map_err(|_| invalid())?;
+    cccc_core::local_sessions::validate_binding(home, &binding).map_err(|_| invalid())
 }
 
 pub(crate) fn revalidate_binding(home: &HomeLayout, binding: Option<&Value>) -> Result<(), String> {
@@ -133,22 +156,23 @@ async fn scope(client: &DaemonClient, args: &Map<String, Value>) -> Result<PathB
         .ok_or("group_id is required")?;
     let mut request = Map::new();
     request.insert("group_id".into(), group_id);
-    for key in ["by", "_cccc_web_binding"] {
+    for key in ["by", "_cccc_web_binding", "_cccc_native_binding"] {
         if let Some(value) = args.get(key) {
             request.insert(key.into(), value.clone());
         }
     }
     let result = daemon(client, "group_show", request).await?;
-    let group: GroupDoc = serde_json::from_value(result.get("group").cloned().unwrap_or_default())
-        .map_err(|error| error.to_string())?;
-    group
-        .scopes
-        .iter()
-        .find(|scope| scope.scope_key == group.active_scope_key)
-        .or_else(|| group.scopes.first())
-        .map(|scope| PathBuf::from(&scope.url))
+    // The daemon owns the running process. Re-resolving Actor configuration in
+    // this MCP process would move tools before the actual owner is restarted.
+    let scope: EffectiveScope =
+        serde_json::from_value(result.get("effective_scope").cloned().unwrap_or_default())
+            .map_err(|_| "caller has no effective local scope")?;
+    scope
+        .path
+        .canonicalize()
+        .ok()
         .filter(|path| path.is_dir())
-        .ok_or_else(|| "group has no active local scope".into())
+        .ok_or_else(|| "caller has no effective local scope".into())
 }
 
 async fn one_shot(root: &Path, cmd: Vec<String>, seconds: u64) -> Result<Value, String> {
@@ -345,7 +369,7 @@ async fn file(
     if action == "send" {
         let message_mode = file_message_mode(args)?;
         if raw.starts_with("state/blobs/") {
-            return Err("send expects a file under the active project scope".into());
+            return Err("send expects a file under the effective tool scope".into());
         }
         let mut request = args.clone();
         request.remove("action");
@@ -404,7 +428,7 @@ pub(super) fn command_cwd(root: &Path, args: &Map<String, Value>) -> Result<Path
     let cwd = first_non_blank(args, &["cwd", "workdir"]).unwrap_or(".");
     let path = crate::repo::resolve(root, cwd, false)?;
     if !path.is_dir() {
-        return Err("cwd must be a directory inside the active scope".into());
+        return Err("cwd must be a directory inside the effective tool scope".into());
     }
     Ok(path)
 }

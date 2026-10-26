@@ -1124,6 +1124,7 @@
     "workspaceExcluded": "不包含工作区文件。",
     "secretsExcluded": "不包含系统凭据、cookie 和认证会话。聊天历史、记忆和附件仍可能包含敏感用户内容。",
     "reconnectChatGPT": "导入后需要重新配置 ChatGPT 连接。",
+    "reconnectNativeSessions": "原生会话的 CCCC 访问在导入后保持暂停，即使导入到同一实例也不例外。使用前须显式恢复访问或接入原生会话；源 Group 不变。",
     "reconnectNotebookLM": "导入后 NotebookLM / Group Space 可能需要重新连接。",
     "importButton": "导入工作组",
     "importConfirm": "导入工作组复制包“{{filename}}”？",

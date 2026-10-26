@@ -389,3 +389,142 @@ done"#;
     drop(guard);
     stop(&group.group_id, &actor.id);
 }
+
+#[cfg(unix)]
+#[test]
+fn launch_workspace_projection_tracks_the_deepseek_owner_not_saved_settings() {
+    use cccc_contracts::DaemonRequest;
+    use serde_json::json;
+    let temp = tempfile::tempdir().expect("isolated DeepSeek fixture");
+    let home = HomeLayout::from_path(temp.path().join("cccc")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store
+        .create("DeepSeek launch workspace", "")
+        .expect("group");
+    let roots = [temp.path().join("A"), temp.path().join("B")];
+    for (root, key) in roots.iter().zip(["scope_a", "scope_b"]) {
+        std::fs::create_dir(root).expect("scope root");
+        std::fs::write(root.join("same.txt"), key).expect("scope bytes");
+        group.scopes.push(cccc_core::Scope {
+            scope_key: key.into(),
+            url: root.to_string_lossy().into_owned(),
+            label: key.into(),
+            git_remote: String::new(),
+        });
+    }
+    group.active_scope_key = "scope_a".into();
+    let mut actor = Actor::new("deepseek-scope");
+    actor.runtime = ActorRuntime::Deepseek;
+    actor.command = vec!["sh".into(), "-c".into(), r#"pwd > physical-cwd.txt
+while IFS= read -r line; do
+if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"isolated-fixture"}}}'
+else
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fixture-scope"}}'
+fi
+done"#.into()];
+    actor.env = std::collections::BTreeMap::from([
+        (
+            "HOME".into(),
+            temp.path().join("provider").to_string_lossy().into_owned(),
+        ),
+        (
+            "CODEX_HOME".into(),
+            temp.path()
+                .join("provider/codex")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        (
+            "CLAUDE_CONFIG_DIR".into(),
+            temp.path()
+                .join("provider/claude")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    ]);
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save fixture configuration");
+    struct Cleanup(String, String);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            stop(&self.0, &self.1);
+        }
+    }
+    let _cleanup = Cleanup(group.group_id.clone(), actor.id.clone());
+    start(&home, &group, &actor, &roots[0]).expect("fixture protocol launch");
+    actor.default_scope_key = "scope_b".into();
+    actor.runtime = ActorRuntime::Custom;
+    group.actors[0] = actor.clone();
+    store.save(&group).expect("save without restart");
+    let show = || {
+        crate::handle_request(
+            &home,
+            &DaemonRequest {
+                v: 1,
+                op: "group_show".into(),
+                args: json!({"group_id":group.group_id,"by":actor.id,"actor_id":"other"})
+                    .as_object()
+                    .expect("args")
+                    .clone(),
+            },
+        )
+    };
+    let projection = show();
+    assert!(projection.ok, "{:?}", projection.error);
+    assert_eq!(
+        projection.result["effective_scope"],
+        json!({"path":roots[0],"scope_key":"scope_a","source":"runtime_launch"})
+    );
+    assert_eq!(
+        std::fs::read_to_string(roots[0].join("physical-cwd.txt"))
+            .expect("physical launch cwd")
+            .trim(),
+        roots[0].to_string_lossy()
+    );
+    let prepared =
+        crate::ops::messaging::files::read(&group, &actor.id, &[json!("same.txt")], 1024)
+            .expect("owner source admission");
+    let mut data = serde_json::Map::new();
+    prepared
+        .apply(&home, &group, &mut data)
+        .expect("actual blob placement");
+    let blob = cccc_core::blobs::resolve(
+        &home,
+        &group.group_id,
+        data["attachments"][0]["path"].as_str().expect("blob path"),
+    )
+    .expect("blob");
+    assert_eq!(
+        std::fs::read_to_string(blob).expect("blob bytes"),
+        "scope_a"
+    );
+    let prompt = crate::ops::actor_runtime::session_prompt(&home, &group, &actor);
+    assert!(
+        prompt.contains(&format!("workspace: {}\n", roots[0].display())),
+        "{prompt}"
+    );
+    // A busy protocol lock must not make a read projection wait or switch roots.
+    let holder = sessions()
+        .read()
+        .expect("sessions")
+        .get(&(group.group_id.clone(), actor.id.clone()))
+        .cloned()
+        .expect("owner");
+    let turn = holder.supervisor.lock().expect("active turn");
+    assert_eq!(show().result["effective_scope"]["path"], json!(roots[0]));
+    drop(turn);
+    stop(&group.group_id, &actor.id);
+    assert_eq!(
+        show().result["effective_scope"],
+        json!({"path":roots[1],"scope_key":"scope_b","source":"actor_default"})
+    );
+    start(&home, &group, &actor, &roots[1]).expect("next fixture launch");
+    assert_eq!(show().result["effective_scope"]["path"], json!(roots[1]));
+    assert_eq!(
+        std::fs::read_to_string(roots[1].join("physical-cwd.txt"))
+            .expect("next physical cwd")
+            .trim(),
+        roots[1].to_string_lossy()
+    );
+}
