@@ -89,3 +89,11 @@ export function upsertRuntimeDockTickerCache(
   while (cache.entries.size > ACTOR_LIMIT) cache.entries.delete(cache.entries.keys().next().value!);
   return pruneRuntimeDockTickerCache(cache, nowMs);
 }
+
+export function nextRuntimeDockTickerExpiry(cache: RuntimeDockTickerCache): number | null {
+  let next = Infinity;
+  for (const { expiresAt } of cache.entries.values()) {
+    if (expiresAt > 0) next = Math.min(next, expiresAt);
+  }
+  return Number.isFinite(next) ? next : null;
+}

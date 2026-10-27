@@ -12,6 +12,11 @@ export function resizeComposerTextarea(
   minHeight: number,
   maxHeight: number,
 ): number {
+  if (minHeight === maxHeight) {
+    const height = `${minHeight}px`;
+    if (node.style.height !== height) node.style.height = height;
+    return minHeight;
+  }
   node.style.height = "auto";
   const nextHeight = Math.min(Math.max(node.scrollHeight, minHeight), maxHeight);
   node.style.height = `${nextHeight}px`;
@@ -24,9 +29,10 @@ export function useComposerTextareaAutoResize({
   minHeight,
   maxHeight,
 }: ComposerTextareaAutoResizeOptions): void {
+  const measuredValue = minHeight === maxHeight ? "" : value;
   useLayoutEffect(() => {
     const node = composerRef.current;
     if (!node) return;
     resizeComposerTextarea(node, minHeight, maxHeight);
-  }, [composerRef, maxHeight, minHeight, value]);
+  }, [composerRef, maxHeight, minHeight, measuredValue]);
 }

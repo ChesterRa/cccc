@@ -89,7 +89,7 @@ export function ConnectSidebar({
                     .join(" · ")}
                   aria-label={`${label} · ${status}`}
                   aria-current={active && !listing ? "page" : undefined}
-                  className={`flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-[var(--glass-panel-bg)] ${active ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-secondary)]"}`}
+                  className={`flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-[var(--glass-panel-bg)] ${collapsed ? "justify-center" : ""} ${active ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-secondary)]"}`}
                 >
                   <Monitor size={16} className="shrink-0" />
                   {!collapsed ? (

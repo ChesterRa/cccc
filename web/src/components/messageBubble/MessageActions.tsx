@@ -49,7 +49,7 @@ export function MessageActions(props: MessageActionsProps) {
   return (
     <>
       <div
-        className="message-actions-inline flex-wrap items-center justify-start gap-0.5"
+        className={`message-actions-inline flex-wrap items-center gap-0.5 ${props.event.by === "user" ? "justify-end" : "justify-start"}`}
         data-message-actions-inline
       >
         {actions.map((action) => (
@@ -78,7 +78,7 @@ export function MessageActions(props: MessageActionsProps) {
             </Button>
           </PopoverTrigger>
           <PopoverContent
-            align="start"
+            align={props.event.by === "user" ? "end" : "start"}
             side="top"
             className="min-w-36 p-1"
             onCloseAutoFocus={(event) => {

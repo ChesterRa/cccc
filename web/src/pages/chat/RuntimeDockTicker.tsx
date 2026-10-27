@@ -1,13 +1,8 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo } from "react";
 
 import { classNames } from "../../utils/classNames";
-import {
-  areRuntimeDockTickerEntriesEqual,
-  hasRuntimeDockTickerWork,
-  pruneRuntimeDockTickerCache,
-  upsertRuntimeDockTickerCache,
-} from "./runtimeDockTickerCache";
-import { runtimeDockTickerCacheRegistry } from "./runtimeDockTickerCacheRegistry";
+import { useRuntimeDockTickerEntries } from "./useRuntimeDockTickerEntries";
+import { areRuntimeDockTickerEntriesEqual } from "./runtimeDockTickerCache";
 import type { RuntimeDockTickerEntry } from "./runtimeDockTickerEntries";
 
 type RuntimeDockTickerProps = {
@@ -18,32 +13,7 @@ type RuntimeDockTickerProps = {
 };
 
 function RuntimeDockTickerView({ groupId, entries, isDark, suppressed }: RuntimeDockTickerProps) {
-  const cache = useMemo(() => runtimeDockTickerCacheRegistry.get(groupId), [groupId]);
-  const [visibleEntries, setVisibleEntries] = useState<RuntimeDockTickerEntry[]>([]);
-  const [tickerWorkPending, setTickerWorkPending] = useState(false);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const nextEntries = upsertRuntimeDockTickerCache(cache, entries, Date.now());
-      setVisibleEntries((current) =>
-        areRuntimeDockTickerEntriesEqual(current, nextEntries) ? current : nextEntries,
-      );
-      setTickerWorkPending(hasRuntimeDockTickerWork(cache));
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [cache, entries]);
-
-  useEffect(() => {
-    if (!tickerWorkPending) return;
-    const timer = window.setInterval(() => {
-      const nextEntries = pruneRuntimeDockTickerCache(cache, Date.now());
-      setVisibleEntries((current) =>
-        areRuntimeDockTickerEntriesEqual(current, nextEntries) ? current : nextEntries,
-      );
-      setTickerWorkPending(hasRuntimeDockTickerWork(cache));
-    }, 250);
-    return () => window.clearInterval(timer);
-  }, [cache, tickerWorkPending]);
+  const visibleEntries = useRuntimeDockTickerEntries(groupId, entries, suppressed);
 
   if (visibleEntries.length <= 0) return null;
   return (

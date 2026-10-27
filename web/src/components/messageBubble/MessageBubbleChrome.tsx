@@ -106,7 +106,7 @@ export function MessageFooter({
     <div
       className={classNames(
         "mt-1 flex w-full min-w-0 flex-wrap items-center gap-2 px-1 text-xs",
-        "justify-start",
+        event.by === "user" ? "flex-row-reverse" : "justify-start",
 
         "text-[var(--color-text-tertiary)]",
       )}
@@ -124,7 +124,12 @@ export function MessageFooter({
         eventId={eventId}
         event={event}
       />
-      <div className="ml-auto flex min-w-0 flex-wrap items-center gap-1.5">
+      <div
+        className={classNames(
+          "flex min-w-0 flex-wrap items-center gap-1.5",
+          event.by === "user" ? "mr-auto" : "ml-auto",
+        )}
+      >
         {connectDelivery ? (
           <span
             className={classNames(

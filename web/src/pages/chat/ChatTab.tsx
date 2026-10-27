@@ -931,7 +931,11 @@ export function ChatTab({
                       initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
                       initialScrollOffsetPx={chatInitialScrollOffsetPx}
                       highlightEventId={chatHighlightEventId}
-                      className={!chatWindowProps && runtimeActors.length > 0 ? "pb-24" : undefined}
+                      className={
+                        !chatWindowProps && runtimeActors.length > 0
+                          ? "pb-[calc(5rem_-_10px)] sm:pb-[calc(4rem_-_10px)]"
+                          : undefined
+                      }
                       scrollRef={scrollRef}
                       onReply={startReply}
                       onShowRecipients={showRecipients}
