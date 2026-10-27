@@ -18,6 +18,7 @@ import {
   type TaskDraft,
 } from "../model";
 import type { ContextModalUi } from "../ui";
+import { TaskSubtaskList } from "./TaskSubtaskList";
 
 interface TaskEditorPanelProps {
   tr: ContextTranslator;
@@ -27,6 +28,7 @@ interface TaskEditorPanelProps {
   hasTaskUnsaved: boolean;
   syncBusy: boolean;
   selectedTask: Task | null;
+  subtasks: readonly Task[];
   selectedTaskDeleteInfo: TaskDeleteInfo;
   selectedTaskDeleteHint: string;
   taskWorkflowCoverage: TaskWorkflowCoverage;
@@ -38,6 +40,7 @@ interface TaskEditorPanelProps {
   onClose: () => void;
   onDeleteSelectedTask: () => void;
   onSaveTask: () => void;
+  onOpenTask: (taskId: string) => void;
 }
 
 export function TaskEditorPanel({
@@ -48,6 +51,7 @@ export function TaskEditorPanel({
   hasTaskUnsaved,
   syncBusy,
   selectedTask,
+  subtasks,
   selectedTaskDeleteInfo,
   selectedTaskDeleteHint,
   taskWorkflowCoverage,
@@ -59,6 +63,7 @@ export function TaskEditorPanel({
   onClose,
   onDeleteSelectedTask,
   onSaveTask,
+  onOpenTask,
 }: TaskEditorPanelProps) {
   if (taskEditorMode === "none" || !taskDraft) {
     return null;
@@ -584,6 +589,10 @@ export function TaskEditorPanel({
             />
           </label>
         </div>
+
+        {isCreate ? null : (
+          <TaskSubtaskList tr={tr} ui={ui} subtasks={subtasks} onOpenTask={onOpenTask} />
+        )}
 
         <details className={classNames("rounded-xl border px-3 py-3", "glass-card")}>
           <summary

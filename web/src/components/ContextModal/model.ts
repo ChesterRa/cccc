@@ -160,6 +160,39 @@ export function getTaskDeleteInfo(task: Task | null | undefined, allTasks: Task[
   return { allowed: true, total: subtree.length, reason: "" };
 }
 
+export type SubtaskProgress = { done: number; total: number };
+
+function liveParentId(task: Task): string {
+  const parentId = String(task.parent_id || "").trim();
+  if (!parentId || parentId === String(task.id || "").trim()) return "";
+  return taskStatus(task) === "archived" ? "" : parentId;
+}
+
+// Direct, non-archived subtasks only; a grandchild counts for its own parent.
+export function subtaskProgressByParent(tasks: readonly Task[]): Map<string, SubtaskProgress> {
+  const progress = new Map<string, SubtaskProgress>();
+  for (const task of tasks) {
+    const parentId = liveParentId(task);
+    if (!parentId) continue;
+    const current = progress.get(parentId) || { done: 0, total: 0 };
+    progress.set(parentId, {
+      done: current.done + (taskStatus(task) === "done" ? 1 : 0),
+      total: current.total + 1,
+    });
+  }
+  return progress;
+}
+
+export function directSubtasks(taskId: string, tasks: readonly Task[]): Task[] {
+  const id = String(taskId || "").trim();
+  if (!id) return [];
+  return tasks
+    .filter((task) => liveParentId(task) === id)
+    .sort((left, right) =>
+      String(left.id || "").localeCompare(String(right.id || ""), undefined, { numeric: true }),
+    );
+}
+
 export function listToText(items: string[] | null | undefined): string {
   return Array.isArray(items) ? items.join("\n") : "";
 }

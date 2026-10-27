@@ -3,7 +3,13 @@ import type { SensorDescriptor, SensorOptions } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import type { TaskColumnPages } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
-import type { BoardColumns, BoardStatus, ContextTranslator, TaskFilterValue } from "../model";
+import type {
+  BoardColumns,
+  BoardStatus,
+  ContextTranslator,
+  SubtaskProgress,
+  TaskFilterValue,
+} from "../model";
 import type { ContextModalUi } from "../ui";
 import { TaskBoardGrid } from "./TaskBoardGrid";
 import { TaskBoardLoadNotice } from "./TaskBoardLoadNotice";
@@ -29,6 +35,7 @@ interface TaskBoardProps {
   taskLoading: boolean;
   taskLoadError: string;
   taskMap: Map<string, Task>;
+  subtaskProgress: ReadonlyMap<string, SubtaskProgress>;
   selectedTaskId: string;
   dragTaskId: string;
   sensors: SensorDescriptor<SensorOptions>[];
@@ -67,6 +74,7 @@ export function TaskBoard({
   taskLoading,
   taskLoadError,
   taskMap,
+  subtaskProgress,
   selectedTaskId,
   dragTaskId,
   sensors,
@@ -172,6 +180,7 @@ export function TaskBoard({
           board={filteredBoard}
           pages={columnPages}
           taskMap={taskMap}
+          subtaskProgress={subtaskProgress}
           selectedTaskId={selectedTaskId}
           dragTaskId={dragTaskId}
           sensors={sensors}

@@ -1,7 +1,7 @@
 import type { Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
 import { evaluateTaskWorkflow, type TaskAttemptVerdict } from "../../../utils/taskWorkflow";
-import { waitingLabel, type ContextTranslator } from "../model";
+import { waitingLabel, type ContextTranslator, type SubtaskProgress } from "../model";
 
 function latestAttemptTone(verdict: TaskAttemptVerdict): string {
   if (verdict === "keep") return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
@@ -22,10 +22,12 @@ export function TaskCardBadges({
   task,
   tr,
   compact = false,
+  subtasks,
 }: {
   task: Task;
   tr: ContextTranslator;
   compact?: boolean;
+  subtasks?: SubtaskProgress;
 }) {
   const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
   const waiting = String(task.waiting_on || "none").trim();
@@ -56,6 +58,17 @@ export function TaskCardBadges({
       {!compact && task.priority ? (
         <span className="rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]">
           {task.priority}
+        </span>
+      ) : null}
+      {subtasks && subtasks.total > 0 ? (
+        <span
+          className="rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]"
+          title={tr(
+            "context.subtasksHint",
+            "Counts direct subtasks; archived ones are excluded. Subtask status does not complete this task.",
+          )}
+        >
+          {tr("context.subtaskProgress", "Subtasks {{done}}/{{total}}", subtasks)}
         </span>
       ) : null}
       {blocked ? (

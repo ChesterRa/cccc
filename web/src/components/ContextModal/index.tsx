@@ -40,11 +40,13 @@ import { CapabilitiesTab } from "../modals/settings/CapabilitiesTab";
 import {
   briefDraftMatches,
   briefToDraft,
+  directSubtasks,
   emptyNoteDraft,
   emptyTaskDraft,
   parseChecklist,
   parseLineList,
   isVisibleContextAgent,
+  subtaskProgressByParent,
   taskDraftDirty,
   taskDraftMatches,
   taskStatus,
@@ -106,7 +108,12 @@ export function ContextModal({
   const [briefDraft, setBriefDraft] = useState<BriefDraft>(briefToDraft(null));
   const [taskEditorMode, setTaskEditorMode] = useState<"none" | "create" | "edit">("none");
   const [selectedTaskId, setSelectedTaskId] = useState("");
+  const selectedTaskIdRef = useRef(selectedTaskId);
+  selectedTaskIdRef.current = selectedTaskId;
   const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
+  const taskDraftRef = useRef(taskDraft);
+  taskDraftRef.current = taskDraft;
+  const taskOpenSeqRef = useRef(0);
   const [pendingTaskReadback, setPendingTaskReadback] = useState<{
     taskId: string;
     previousUpdatedAt: string;
@@ -227,6 +234,12 @@ export function ContextModal({
   const activeTaskOptions = useMemo(
     () => taskIndex.filter((task) => taskStatus(task) !== "archived"),
     [taskIndex],
+  );
+  // The index covers every live task regardless of board paging and filters.
+  const subtaskProgress = useMemo(() => subtaskProgressByParent(taskIndex), [taskIndex]);
+  const selectedSubtasks = useMemo(
+    () => directSubtasks(selectedTaskId, taskIndex),
+    [selectedTaskId, taskIndex],
   );
   const hasBriefUnsaved = useMemo(
     () => editingBrief && !briefDraftMatches(brief, briefDraft),
@@ -468,33 +481,40 @@ export function ContextModal({
     );
   }, [hasTaskUnsaved, tr]);
 
-  const openTaskEditorForTask = useCallback(
-    (task: Task, options?: { draft?: TaskDraft; error?: string }): boolean => {
-      const sameTask = selectedTaskId === task.id && taskEditorMode === "edit";
-      if (!sameTask && !confirmDiscardTaskChanges()) return false;
-      const nextDraft = options?.draft ?? taskToDraft(task);
-      if (!sameTask) {
-        setPendingTaskReadback(null);
-      }
-      setSelectedTaskId(task.id);
-      setTaskDraft(nextDraft);
-      setTaskEditorMode("edit");
-      setSyncError(options?.error || "");
-      setActiveView("tasks");
-      return true;
-    },
-    [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode],
-  );
+  const showTask = useCallback((task: Task, options?: { draft?: TaskDraft; error?: string }) => {
+    const nextDraft = options?.draft ?? taskToDraft(task);
+    setPendingTaskReadback(null);
+    setSelectedTaskId(task.id);
+    setTaskDraft(nextDraft);
+    setTaskEditorMode("edit");
+    setSyncError(options?.error || "");
+    setActiveView("tasks");
+  }, []);
 
   const moveTaskToStatus = useCallback(
     async (task: Task, nextStatus: BoardStatus) => {
       if (!groupId) return;
       if (taskStatus(task) === nextStatus) return;
+      const visit = modalVisitRef.current;
+      const isCurrent = () => modalVisitRef.current === visit;
+      let transitionTask = task;
       if (nextStatus === "done") {
-        const guardSource =
-          selectedTaskId === task.id && taskEditorMode === "edit" && taskDraft
+        const request = ++taskOpenSeqRef.current;
+        const selection = selectedTaskIdRef.current;
+        const draft = taskDraftRef.current;
+        const unsavedDraft =
+          selectedTaskId === task.id && taskEditorMode === "edit" && hasTaskUnsaved
             ? taskDraft
-            : taskToDraft(task);
+            : null;
+        let guardSource = unsavedDraft;
+        if (!guardSource) {
+          if (!confirmDiscardTaskChanges()) return;
+          const current = await loadTaskDetail(task.id);
+          if (!current || !isCurrent()) return;
+          transitionTask = current;
+          if (taskStatus(current) === nextStatus) return;
+          guardSource = taskToDraft(current);
+        }
         const blockers = getTaskDoneTransitionBlockers({
           parentId: guardSource.parentId,
           taskType: guardSource.taskType,
@@ -503,21 +523,30 @@ export function ContextModal({
           notes: guardSource.notes,
           checklist: guardSource.checklist,
         });
-        if (blockers.length > 0) {
-          openTaskEditorForTask(task, {
+        // Existing edits must be saved through the editor, rather than relying on
+        // unsaved closeout fields to authorize a status-only write.
+        if (blockers.length > 0 || unsavedDraft) {
+          if (
+            taskOpenSeqRef.current !== request ||
+            selectedTaskIdRef.current !== selection ||
+            taskDraftRef.current !== draft
+          ) {
+            return;
+          }
+          showTask(transitionTask, {
             draft: { ...guardSource, status: "done" },
-            error: formatDoneTransitionGuardMessage(blockers),
+            error: blockers.length > 0 ? formatDoneTransitionGuardMessage(blockers) : "",
           });
           return;
         }
       }
 
-      const visit = modalVisitRef.current;
-      const isCurrent = () => modalVisitRef.current === visit;
       setSyncBusy(true);
       setSyncError("");
       try {
-        const resp = await updateCoordinationTask(groupId, { ...task, status: nextStatus });
+        const resp = await contextSync(groupId, [
+          { op: "task.move", task_id: transitionTask.id, status: nextStatus },
+        ]);
         const nextResp = await applyContextWriteback(resp);
         if (!nextResp.ok) {
           if (isCurrent()) {
@@ -530,26 +559,29 @@ export function ContextModal({
           return;
         }
         if (!isCurrent()) return;
-        if (selectedTaskId === task.id && taskEditorMode === "edit") {
+        if (selectedTaskId === transitionTask.id && taskEditorMode === "edit") {
           setPendingTaskReadback({
-            taskId: task.id,
-            previousUpdatedAt: String(task.updated_at || ""),
+            taskId: transitionTask.id,
+            previousUpdatedAt: String(transitionTask.updated_at || ""),
           });
         }
         await refreshTasks();
-        if (isCurrent() && selectedTaskId === task.id) await loadTaskDetail(task.id);
+        if (isCurrent() && selectedTaskId === transitionTask.id)
+          await loadTaskDetail(transitionTask.id);
       } finally {
         if (isCurrent()) setSyncBusy(false);
       }
     },
     [
       applyContextWriteback,
+      confirmDiscardTaskChanges,
       formatDoneTransitionGuardMessage,
       groupId,
+      hasTaskUnsaved,
       loadTaskDetail,
-      openTaskEditorForTask,
       refreshTasks,
       selectedTaskId,
+      showTask,
       taskDraft,
       taskEditorMode,
       tr,
@@ -566,36 +598,56 @@ export function ContextModal({
       setDragTaskId("");
       const activeId = String(event.active.id || "");
       if (!activeId.startsWith("task:")) return;
-      const task = taskMap.get(activeId.slice(5));
+      const boardTasks = Object.values(board).flat();
+      const task = boardTasks.find((candidate) => candidate.id === activeId.slice(5));
       if (!task || !event.over) return;
       const overId = String(event.over.id || "");
       let nextStatus: BoardStatus | null = null;
       if (overId.startsWith("column:")) {
         nextStatus = overId.slice(7) as BoardStatus;
       } else if (overId.startsWith("task:")) {
-        const overTask = taskMap.get(overId.slice(5));
+        const overTask = boardTasks.find((candidate) => candidate.id === overId.slice(5));
         if (overTask) nextStatus = taskStatus(overTask) as BoardStatus;
       }
       if (nextStatus && nextStatus !== taskStatus(task)) {
         void moveTaskToStatus(task, nextStatus);
       }
     },
-    [moveTaskToStatus, taskMap],
+    [board, moveTaskToStatus],
   );
 
   const selectTask = useCallback(
     (task: Task) => {
       if (selectedTaskId === task.id && taskEditorMode === "edit") return;
       if (!confirmDiscardTaskChanges()) return;
-      const nextDraft = taskToDraft(task);
-      setPendingTaskReadback(null);
-      setSelectedTaskId(task.id);
-      setTaskDraft(nextDraft);
-      setTaskEditorMode("edit");
-      setSyncError("");
-      setActiveView("tasks");
+      showTask(task);
     },
-    [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode],
+    [confirmDiscardTaskChanges, selectedTaskId, showTask, taskEditorMode],
+  );
+
+  // Read fresh full details before drafting, since cached subtasks may have changed elsewhere.
+  // Unsaved edits are confirmed at click time; only the newest click applies, and a later edit,
+  // selection or modal visit cancels a pending one instead of being overwritten by it.
+  const openSubtask = useCallback(
+    (taskId: string) => {
+      const request = ++taskOpenSeqRef.current;
+      if (!confirmDiscardTaskChanges()) return;
+      const visit = modalVisitRef.current;
+      const parentId = selectedTaskIdRef.current;
+      const draft = taskDraftRef.current;
+      void loadTaskDetail(taskId).then((task) => {
+        if (
+          task &&
+          taskOpenSeqRef.current === request &&
+          modalVisitRef.current === visit &&
+          selectedTaskIdRef.current === parentId &&
+          taskDraftRef.current === draft
+        ) {
+          showTask(task);
+        }
+      });
+    },
+    [confirmDiscardTaskChanges, loadTaskDetail, showTask],
   );
 
   useEffect(() => {
@@ -1226,6 +1278,7 @@ export function ContextModal({
                         taskLoading={taskLoading}
                         taskLoadError={taskLoadError}
                         taskMap={taskMap}
+                        subtaskProgress={subtaskProgress}
                         selectedTaskId={selectedTaskId}
                         dragTaskId={dragTaskId}
                         sensors={sensors}
@@ -1309,6 +1362,7 @@ export function ContextModal({
                         hasTaskUnsaved={hasTaskUnsaved}
                         syncBusy={syncBusy}
                         selectedTask={selectedTask}
+                        subtasks={selectedSubtasks}
                         selectedTaskDeleteInfo={selectedTaskDeleteInfo}
                         selectedTaskDeleteHint={selectedTaskDeleteHint}
                         taskWorkflowCoverage={taskWorkflowCoverage}
@@ -1326,6 +1380,7 @@ export function ContextModal({
                           if (selectedTask) void handleDeleteTask(selectedTask);
                         }}
                         onSaveTask={() => void handleSaveTask()}
+                        onOpenTask={openSubtask}
                       />
                     </div>
                   </div>

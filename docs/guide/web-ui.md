@@ -927,6 +927,9 @@ Enter/Space. Switching sections retains summary/file drafts and task filters.
   Search and attention filters narrow the board. Open a task for requirements,
   steps, handoffs and completion details. Missing requirements or closeout records
   describe record completeness; they do not change an existing task's status.
+  A parent card shows how many of its direct, non-archived subtasks are done, even
+  when filters or paging hide some of them; the open task lists them, and each one
+  opens in the editor. Subtask progress never completes the parent.
 - **AGENTS.md** views and edits the file in the current workspace root, showing
   its actual path. A missing file can be created explicitly; existing documents
   are not renamed, merged, or overwritten as part of setup. Each runtime controls

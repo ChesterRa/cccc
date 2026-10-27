@@ -550,6 +550,14 @@ Result:
 }
 ```
 
+`url` is the canonical absolute directory recorded at attach time on the daemon
+host: the Git top-level when the path is inside a work tree, otherwise the path
+itself. Reads return it as recorded; workspace projections canonicalize it again
+and report a missing directory as unavailable instead of substituting another.
+`scope_key` derives from the normalized `origin` remote when one exists and from
+`url` otherwise, so separate clones or worktrees of one remote share a key and a
+Group binds each key to one directory at a time.
+
 #### `groups`
 
 List known groups (registry summaries).
@@ -3393,8 +3401,18 @@ Args:
 
 Result:
 ```ts
-{ actors: Array<Record<string, unknown>> } // includes at least id/title/runtime/enabled + role/running
+{ actors: Array<Record<string, unknown>> } // includes at least id/title/runtime/enabled + role/running/effective_scope
 ```
+
+Each row's `effective_scope` is the `group_show.effective_scope` projection
+evaluated for that row's Actor rather than the caller, with the same shape and
+`{}` when unavailable. For a running managed owner, `path` is its immutable
+launch workspace, not an observation of the process's current working directory
+or of directories its child processes use. Otherwise it is the Actor's
+next-start configuration; for a Native Actor it describes CCCC tools only, not
+the original application's working directory. It is an observation for display
+and external tooling: it MUST NOT be persisted, grant file or tool authority, or
+start runtime work.
 
 Running terminal Actors also expose `pty_last_output_at: string | null` and
 `pty_quiet_seconds: number | null` as diagnostic observations. The timestamp is

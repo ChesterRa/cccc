@@ -2,7 +2,7 @@ import { useDroppable } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import { TASK_PAGE_SIZE } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
-import type { BoardStatus, ContextTranslator } from "../model";
+import type { BoardStatus, ContextTranslator, SubtaskProgress } from "../model";
 import type { ContextModalUi } from "../ui";
 import { TaskCard } from "./TaskCard";
 
@@ -15,6 +15,7 @@ export function TaskBoardColumn({
   totalCount,
   hasMore,
   loading,
+  subtaskProgress,
   tr,
   ui,
   syncBusy,
@@ -29,6 +30,7 @@ export function TaskBoardColumn({
   totalCount: number;
   hasMore: boolean;
   loading: boolean;
+  subtaskProgress: ReadonlyMap<string, SubtaskProgress>;
   tr: ContextTranslator;
   ui: ContextModalUi;
   syncBusy: boolean;
@@ -71,6 +73,7 @@ export function TaskBoardColumn({
             <TaskCard
               key={task.id}
               task={task}
+              subtasks={subtaskProgress.get(task.id)}
               tr={tr}
               ui={ui}
               syncBusy={syncBusy}

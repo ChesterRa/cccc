@@ -10,12 +10,14 @@ import {
   taskTitle,
   type BoardStatus,
   type ContextTranslator,
+  type SubtaskProgress,
 } from "../model";
 import type { ContextModalUi } from "../ui";
 import { TaskCardBadges } from "./TaskCardBadges";
 
 interface TaskCardProps {
   task: Task;
+  subtasks?: SubtaskProgress;
   tr: ContextTranslator;
   ui: ContextModalUi;
   syncBusy: boolean;
@@ -46,6 +48,7 @@ function sameTaskRevision(left: Task, right: Task): boolean {
 
 function TaskCardComponent({
   task,
+  subtasks,
   tr,
   ui,
   syncBusy,
@@ -124,7 +127,7 @@ function TaskCardComponent({
           </div>
         ) : null}
 
-        <TaskCardBadges task={task} tr={tr} />
+        <TaskCardBadges task={task} tr={tr} subtasks={subtasks} />
 
         <div
           className="mt-3 flex items-center gap-2 border-t pt-3"
@@ -154,6 +157,8 @@ function TaskCardComponent({
 export const TaskCard = memo(TaskCardComponent, (previous, next) => {
   return (
     sameTaskRevision(previous.task, next.task) &&
+    previous.subtasks?.done === next.subtasks?.done &&
+    previous.subtasks?.total === next.subtasks?.total &&
     previous.tr === next.tr &&
     previous.ui === next.ui &&
     previous.syncBusy === next.syncBusy &&

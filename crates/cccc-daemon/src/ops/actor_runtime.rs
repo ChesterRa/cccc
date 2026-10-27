@@ -19,7 +19,7 @@ pub use persistence::persist_lifecycle;
 pub(crate) use reconcile::record_process_exit;
 pub use reconcile::{reap_exited, reconcile_exited};
 pub(crate) use workspace::LaunchWorkspace;
-pub(super) use workspace::{caller_scope, session_prompt};
+pub(super) use workspace::{caller_scope, effective_scope, session_prompt};
 
 /// Claude Code refused the Actor's workspace; only the operator can accept its trust prompt.
 pub(crate) const CLAUDE_WORKSPACE_UNTRUSTED: &str = "claude_workspace_untrusted";

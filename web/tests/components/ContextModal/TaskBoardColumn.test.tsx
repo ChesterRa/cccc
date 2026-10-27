@@ -57,6 +57,7 @@ describe("TaskBoardColumn", () => {
           totalCount={75}
           hasMore
           loading={false}
+          subtaskProgress={new Map()}
           tr={tr}
           ui={createContextModalUi(false)}
           syncBusy={false}
@@ -97,6 +98,7 @@ describe("TaskBoardColumn", () => {
           totalCount={75}
           hasMore={false}
           loading={false}
+          subtaskProgress={new Map()}
           tr={tr}
           ui={createContextModalUi(false)}
           syncBusy={false}

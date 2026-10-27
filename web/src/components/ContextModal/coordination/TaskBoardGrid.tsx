@@ -3,7 +3,7 @@ import type { SensorDescriptor, SensorOptions } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import type { TaskColumnPages } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
-import type { BoardColumns, BoardStatus, ContextTranslator } from "../model";
+import type { BoardColumns, BoardStatus, ContextTranslator, SubtaskProgress } from "../model";
 import type { ContextModalUi } from "../ui";
 import { TaskBoardColumn } from "./TaskBoardColumn";
 import { TaskGhostCard } from "./TaskGhostCard";
@@ -16,6 +16,7 @@ export function TaskBoardGrid({
   board,
   pages,
   taskMap,
+  subtaskProgress,
   selectedTaskId,
   dragTaskId,
   sensors,
@@ -33,6 +34,7 @@ export function TaskBoardGrid({
   board: BoardColumns;
   pages: TaskColumnPages;
   taskMap: Map<string, Task>;
+  subtaskProgress: ReadonlyMap<string, SubtaskProgress>;
   selectedTaskId: string;
   dragTaskId: string;
   sensors: SensorDescriptor<SensorOptions>[];
@@ -43,7 +45,16 @@ export function TaskBoardGrid({
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
   onLoadMore: (status: BoardStatus) => void;
 }) {
-  const shared = { tr, ui, syncBusy, selectedTaskId, onSelectTask, onMoveTaskToStatus, onLoadMore };
+  const shared = {
+    tr,
+    ui,
+    syncBusy,
+    subtaskProgress,
+    selectedTaskId,
+    onSelectTask,
+    onMoveTaskToStatus,
+    onLoadMore,
+  };
   const column = (status: BoardStatus, label: string) => (
     <TaskBoardColumn
       columnKey={status}
