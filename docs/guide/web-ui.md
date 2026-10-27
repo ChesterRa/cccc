@@ -75,6 +75,8 @@ Reordering or archiving Groups does not move an existing selection.
 
 ### Group message and terminal views
 
+Use **Connect existing sessions** in the sidebar to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
+
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
 **Group connections** is available under the current Group’s settings and in each Group’s sidebar **⋮** menu, including remote Groups
 in CCCC Connect. The settings entry manages the current Group; the sidebar menu manages the Group
@@ -601,13 +603,15 @@ For Codex, CCCC removes conflicting host flags and pins app-server,
 Grok, CCCC accepts a direct root command with supported global provider/model options, then owns the
 private leader socket, ACP controller, native TUI attachment, YOLO policy, workspace, and per-session
 MCP binding. Grok subcommands, wrappers, prompt tails, and user-owned topology/session flags are
-rejected rather than routed through a second PTY path. For OpenCode and Kilo, CCCC owns the ACP process,
-generation-scoped authenticated loopback backend, session/load boundary, one-time permission policy,
-per-session MCP injection, and native `opencode attach` or `kilo attach` command. It preserves supported model, agent,
-pure-mode, and logging choices. Kilo's official Windows npm entrypoint uses Node and the installed
-launcher for both ACP and TUI. Custom wrappers, subcommands, prompt tails, and user-owned topology
-or session flags likewise fail explicitly. CCCC validates the live ACP and authenticated backend
-behavior during startup instead of maintaining a separate legacy-version compatibility branch.
+rejected rather than routed through a second PTY path. OpenCode V2 uses a private `serve --stdio` HTTP/SSE backend with its native
+`--server --session` TUI. Kilo uses its own ACP process and `kilo attach`.
+CCCC owns the session, authenticated loopback backend, one-time permissions
+and scoped MCP injection. Supported model, agent and logging choices remain
+configurable; pure mode is Kilo-only. Kilo's official Windows npm entrypoint
+uses Node and the installed launcher. Custom wrappers, subcommands, prompt tails,
+and user-owned topology or session flags fail explicitly. OpenCode requires
+V2 2.1.4 or newer; old V1 receipts and history are retained for explicit migration
+or a deliberate New session.
 These CCCC-owned values cannot be overridden.
 
 For Claude Code, CCCC requires both the launcher and background worker to report version 2.1.259
@@ -627,8 +631,8 @@ app-server and remote TUI receive the same executable, model, Profile, supported
 policy, and private environment. Claude's Agent View controller, transcript follower, and native TUI
 share one background session and one effective launch identity. Grok's leader, ACP client, and TUI share one resolved provider
 configuration, private environment, and exact session; CCCC adds topology arguments only to the
-processes that accept them. OpenCode and Kilo each use a stdio ACP controller and authenticated native TUI attach sharing
-one provider backend and exact session. CCCC injects the scoped MCP binding when it creates the
+processes that accept them. OpenCode V2 uses its HTTP/SSE controller; Kilo uses ACP. Both attach a native TUI to
+one authenticated provider backend and exact session. CCCC injects the scoped MCP binding when it creates the
 managed session,
 so the model reached from either client has the same CCCC tools. Opening the embedded terminal
 therefore observes and controls the existing Analyst session instead of starting another model
@@ -715,10 +719,11 @@ external terminal commands are deliberately not part of the product surface.
 The embedded native TUI remains writable while managed work is active. The receiving Runtime owns
 whether new terminal input steers the current turn or queues for the next one; CCCC registers exact
 Voice input before writing it and uses the Runtime's authoritative echo to associate the result with
-the correct delegation. OpenCode Analyst results remain available to Realtime Voice when the provider omits a
-live ACP prompt echo: CCCC acknowledges the request from the matching user message on OpenCode's
-authenticated backend stream, then uses the ACP response as the exact completion fence. A completed
-Voice turn with no result is reported as failed instead of silently returning an empty answer.
+the correct delegation. OpenCode V2 Analyst results follow consumed inbox IDs, model output and terminal
+execution events on the same ordered backend stream. Prompt admission alone is
+not completion. Exact-turn interruption is unavailable in V2's public API; use
+the native terminal to interrupt, or stop the owning session. A completed Voice
+turn with no result is reported as failed instead of silently returning an empty answer.
 
 The session manager keeps at most one voice call and one warm Voice Analyst per interactive
 Web host. The normal launcher permits one such Web process per `CCCC_HOME`, while the call also uses

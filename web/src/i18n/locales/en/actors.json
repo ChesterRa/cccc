@@ -407,10 +407,12 @@
       "refreshFailed": "Could not confirm the receive channel. Any details shown are the latest available session record.",
       "runWarning": "Run in {{shell}} on the CCCC host with the original configuration. Resuming can process queued work and use model credits.",
       "codexReconnect": "Resuming the same Codex thread can reconnect this Actor. A different thread joins as a new Actor.",
-      "claudeReconnect": "After resuming Claude, use Connect existing sessions → Target → Join Group to add the new host. Retire the old Actor separately; its pending work is not transferred. If the session picker opens, select the original history.",
+      "claudeReconnect": "After resuming Claude, use Connect existing sessions → Group → Connect to Group to add the new host. Retire the old Actor separately; its pending work is not transferred. If the session picker opens, select the original history.",
       "refresh": "Refresh status",
       "sourceLabel": "Source",
-      "refreshHint": "Rechecks reception. Queued work may continue after reconnection."
+      "refreshHint": "Rechecks reception. Queued work may continue after reconnection.",
+      "piReconnect": "After resuming Pi, connect its new host to the intended Group. A different host joins as a new Actor; pending work is not transferred.",
+      "opencodeReconnect": "Resume the original OpenCode session with its local backend and CCCC plugin. A different session has its own CCCC source and must be connected to its intended Group."
     }
   },
   "workingDirectory": "Working directory",

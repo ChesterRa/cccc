@@ -277,11 +277,11 @@
     "unavailable": "Unavailable to receive",
     "selectionUnavailable": "Selected sessions unavailable to receive: {{count}}. Deselect them or wait for reconnection.",
     "loadFailed": "Could not refresh native sessions. Retrying automatically.",
-    "empty": "No registered native sessions. After loading the CCCC integration, send one message in the original terminal to register the session.",
+    "empty": "No registered native sessions. Load the CCCC integration in the original application; Codex and Claude Code also need one native prompt.",
     "setup": "Setup and troubleshooting",
-    "setupHint": "Experimental native session integration for Codex and Claude Code.",
+    "setupHint": "Experimental native session integration for Codex, Claude Code, Pi and OpenCode V2.",
     "setupHost": "Run the command for your runtime once on the machine running the CCCC daemon, as the same OS user and with the same CCCC_HOME.",
-    "setupReload": "Reload the native MCP/plugin integration, then submit one native prompt to register the session.",
+    "setupReload": "Reload the native MCP/plugin integration. Codex and Claude Code register after one native prompt; Pi registers on extension startup, and OpenCode registers open native sessions.",
     "setupCodex": "Codex: trust CCCC hooks in /hooks. Receiving requires the shared app-server; set daemon_auto_start = true under [features] in your Codex config.toml.",
     "setupClaude": "Claude Code requires Plugin Monitor support; make sure Monitor is enabled.",
     "setupCheck": "Confirm receive availability with the sessions list:",
@@ -294,6 +294,8 @@
     "memberPaused": "In this Group · access paused",
     "memberJoined": "Already in this Group",
     "originHint": "Session created from {{origin}}",
-    "foremanDirectoryHint": "The Group defaults to the Foreman’s working directory."
+    "foremanDirectoryHint": "The Group defaults to the Foreman’s working directory.",
+    "setupPi": "Pi: run /reload after enabling. The extension uses Pi’s follow-up queue without interrupting the current turn.",
+    "setupOpencode": "OpenCode V2: reload or reopen the original CLI session if the plugin has not loaded. A blank new-session screen needs a first prompt to obtain its session ID."
   }
 }

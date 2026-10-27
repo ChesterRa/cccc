@@ -4,7 +4,7 @@ CCCC can run multiple agent runtimes in the same working group. Each actor choos
 
 Use `cccc runtime list --all` to see the full supported list on your machine, and `cccc doctor` to check which CLI runtimes are installed.
 
-Independently started Codex and Claude sessions can also [connect as native sessions](./local-sessions), with native ownership preserved and no session-history import.
+Independently started Codex, Claude Code, Pi and OpenCode V2 CLI sessions can also [connect as native sessions](./local-sessions), with native ownership preserved and no session-history import.
 
 ## First-Class Runtimes
 
@@ -26,7 +26,7 @@ Independently started Codex and Claude sessions can also [connect as native sess
 | Grok Build | `grok` | CCCC-managed Grok leader + ACP + native TUI | Automatic native MCP registration; identity inherited per session |
 | Hermes Agent | `hermes` | Native TUI or official ACP | Native user profile for TUI; injected per ACP session |
 | Kimi Code | `kimi` | Native TUI or official ACP | Native registration for TUI; injected per ACP session |
-| OpenCode | `opencode` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
+| OpenCode | `opencode` | CCCC-managed V2 HTTP/SSE + authenticated native TUI | Injected into each managed session |
 | Pi | `pi` | Official RPC (headless; no native terminal attachment) | Injected per managed session |
 | ChatGPT Web Model | `web_model` | Bound ChatGPT Web conversation | Browser delivery + remote MCP connector |
 | ChatGPT Dots | `chatgpt_dots` | One explicitly bound Dot | MCP Events + task-scoped remote MCP; no browser message delivery |
@@ -56,10 +56,10 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | `hermes` | `hermes --tui --yolo` | Starts Hermes in TUI YOLO mode. |
 | `kimi` | `kimi --yolo` | Ask When Needed: routine actions are automatic; risky actions and questions can still ask. Use an explicit `kimi --auto` command for Never Ask mode. |
 | `pi` | `pi` | Uses official RPC; project trust and native-tool permissions remain Pi's responsibility. Extension decisions remain explicit user interactions. |
-| `opencode` | `opencode --auto` | CCCC owns the ACP permission boundary and selects only request-scoped one-time approval; it never writes a persistent provider approval. |
+| `opencode` | `opencode --auto` | CCCC owns the V2 permission boundary and selects only request-scoped one-time approval; it never writes a persistent provider approval. |
 | `amp` | `amp` | No extra CCCC launch flag; Amp's current CLI default is already direct tool execution. |
 | `auggie` | `auggie` | Use Auggie permissions or settings for per-tool approval policy; CCCC does not inject a broad wildcard permission rule. |
-| `kilo` | `kilo` | Same request-scoped ACP approval policy as OpenCode; no persistent provider approval is written. |
+| `kilo` | `kilo` | Request-scoped one-time ACP approval; no persistent provider approval is written. |
 | `web_model` | N/A | Browser-delivered runtime; local CLI launch flags do not apply. |
 | `chatgpt_dots` | N/A | Event-triggered cloud runtime; CCCC Actor permissions apply to each accepted task. |
 | `custom` | User command | CCCC preserves the user-provided command exactly. |
@@ -317,35 +317,36 @@ different saved/default selection despite the launch arguments. Rejected
 selections fail startup; CCCC does not silently choose another model. Unspecified
 selections remain owned by Grok and its saved session.
 
-Direct OpenCode Actors use one
-`opencode acp` process as both the structured controller endpoint and an
-authenticated loopback backend. CCCC injects the
-actor-scoped MCP server when it creates or loads the ACP session and attaches
-OpenCode's native writable TUI to that exact backend and session. CCCC observes
-input, output, and `session.status` through the authenticated workdir event stream,
-whose listener is ready before connection succeeds. New Actor
-messages are handed to the native TUI without waiting for an active turn to settle.
-Losing that non-replayable lifecycle stream invalidates the session rather than
-guessing that it is idle. Stop/start validates and loads a version-2 OpenCode
-receipt; `actor new-session` deliberately replaces it. CCCC owns ACP/server,
-session, attach, cwd, MCP, and permission arguments. It accepts documented
-model, agent, pure-mode, and logging options, but subcommands, wrappers, prompt
-tails, and user-owned topology/session flags fail explicitly with no raw-PTY
-fallback. OpenCode does not emit the accepted user prompt through ACP, so CCCC
-correlates protocol-originated requests on OpenCode's authenticated backend
-event stream before acknowledging admission. Native input is associated with the
-answer that consumes it, using the assistant message's parent user ID; queued
-input survives the preceding turn's completion. Text and terminal status follow
-the same ordered stream, so an earlier prompt's RPC response cannot complete a
-queued answer. Kilo shares these boundaries. OpenCode keeps a
-TUI model change local until that TUI submits its next message. CCCC observes the
-submitted message's provider, model, and variant and mirrors them into the same
-ACP session for later managed requests. Add `--model provider/model` to the
-Runtime command when the model must be selected at launch instead.
+Direct OpenCode Actors require official **OpenCode V2 2.1.4+**. CCCC starts a
+private `opencode serve --stdio` backend and attaches `opencode --server` to
+that exact session. The official V2 installation is available from
+[OpenCode's V2 guide](https://opencode.ai/v2/docs/); the older `opencode-ai` npm
+package and V1 GitHub releases are different distribution channels.
+
+CCCC injects the Actor-scoped MCP server into this backend's inline configuration,
+preserving unrelated provider settings. Messages use V2's durable HTTP prompt
+queue, including during TUI startup. An admission receipt is not completion:
+the ordered `/api/event` stream associates consumed inbox IDs, model steps,
+MCP results and terminal execution status. The stream is registered before input;
+a lost or malformed stream invalidates the owner without replaying uncertain
+work. Each encoded event line is bounded to 16 MiB. Native model/agent choices
+belong to the same provider session and remain authoritative for later input;
+an explicit runtime-command `--model provider/model` overrides the launch choice.
+
+Stop/start validates and reloads the same V2 managed receipt and workspace.
+A retained V1 ACP receipt is not automatically resumed as V2. Choose
+**New session** explicitly to start V2; original provider history remains available
+for migration using OpenCode's tools. CCCC does not convert the V1 receipt. CCCC owns server/session, authentication, cwd,
+MCP and permissions; it accepts model, agent and logging options. V1's `--pure`
+flag is no longer accepted. V2 exposes session-wide interruption without an
+expected-turn guard, so CCCC rejects exact-turn interrupt requests rather than
+risk stopping newer work. Use the native TUI to interrupt, or **Quit** to stop
+the Actor's owned backend. Each permission request is approved only once; no
+persistent provider approval is written. Kilo retains its separate ACP adapter.
 
 The Rust daemon also owns the lifetime of every process-backed actor. On Windows, the daemon host and each terminal actor use non-breakaway Job Objects with `KILL_ON_JOB_CLOSE`; Codex and actor-launched MCP descendants inherit containment when they are created, so an abrupt daemon or combined Web-process exit cannot leave them orphaned. On POSIX, each terminal actor is a separate session and normal stop/reap terminates its entire process group. Process cleanup never removes `group.yaml`, `ledger.jsonl`, or retained terminal history.
 
-Kilo shares the OpenCode ACP/HTTP adapter for both Actors and Voice Analyst.
+Kilo uses ACP control with its ordered HTTP event stream for both Actors and Voice Analyst.
 CCCC owns a private `kilo acp` backend and attaches `kilo attach` to that exact
 session; it does not reuse an unrelated global Kilo daemon. Kilo receives
 session-scoped MCP injection, and no setup or bootstrap prompt is sent merely

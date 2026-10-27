@@ -407,10 +407,12 @@
       "refreshFailed": "暂时无法确认接收通道；下方如有信息，来自当前可读取的会话记录。",
       "runWarning": "在 CCCC 所在机器的 {{shell}} 中使用原配置运行。恢复可能处理排队工作并消耗模型额度。",
       "codexReconnect": "恢复同一个 Codex 线程后可重新连接此 Actor；其他线程将作为新 Actor 接入。",
-      "claudeReconnect": "恢复 Claude 后，通过「接入已有会话 → 目标 → 加入工作组」添加新宿主，再单独移除旧 Actor；旧成员的待办不会转移。如果打开会话选择器，请选择原会话。",
+      "claudeReconnect": "恢复 Claude 后，通过「接入已有会话 → 接入到工作组 → 接入工作组」添加新宿主，再单独移除旧 Actor；旧成员的待办不会转移。如果打开会话选择器，请选择原会话。",
       "refresh": "刷新状态",
       "sourceLabel": "来源",
-      "refreshHint": "检查接收通道；恢复可用后，已授权的待办可能继续执行。"
+      "refreshHint": "检查接收通道；恢复可用后，已授权的待办可能继续执行。",
+      "piReconnect": "恢复 Pi 后，将新宿主接入所需工作组。不同宿主会作为新 Actor 接入，待办不会自动转移。",
+      "opencodeReconnect": "在原来的本地后端和 CCCC 插件配置下恢复 OpenCode 会话。不同会话有独立的 CCCC 来源，需要接入对应的工作组。"
     }
   },
   "workingDirectory": "工作目录",

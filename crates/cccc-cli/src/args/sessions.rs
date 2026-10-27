@@ -11,11 +11,11 @@ pub struct SessionsArgs {
 pub enum SessionsAction {
     /// Enable same-user native session collaboration once for this runtime.
     Enable {
-        #[arg(long,value_parser=["codex","claude"])]
+        #[arg(long,value_parser=["codex","claude","pi","opencode"])]
         runtime: String,
     },
     Disable {
-        #[arg(long,value_parser=["codex","claude"])]
+        #[arg(long,value_parser=["codex","claude","pi","opencode"])]
         runtime: String,
     },
     /// List native sources that can currently receive collaboration messages.
@@ -83,5 +83,21 @@ pub enum SessionsAction {
     Receive {
         #[arg(long)]
         host_pid: Option<u32>,
+    },
+    /// Extension-owned receive lease for one native context.
+    #[command(hide = true)]
+    ExtensionBridge {
+        #[arg(long,value_parser=["pi","opencode"])]
+        runtime: String,
+        #[arg(long)]
+        host_pid: u32,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        provider_home: PathBuf,
+        #[arg(long)]
+        backend_pid: Option<u32>,
     },
 }

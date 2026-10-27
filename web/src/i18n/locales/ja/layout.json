@@ -277,11 +277,11 @@
     "unavailable": "現在は受信不可",
     "selectionUnavailable": "選択したセッションのうち {{count}} 件が受信できません。選択を解除するか、再接続を待ってください。",
     "loadFailed": "ネイティブセッションを更新できません。自動で再試行しています。",
-    "empty": "登録済みのネイティブセッションがありません。CCCC 連携を読み込んだ後、元のターミナルで一度メッセージを送信して登録してください。",
+    "empty": "登録済みのネイティブセッションがありません。元のアプリで CCCC 連携を読み込んでください。Codex と Claude Code では、さらに一度プロンプトを送信してください。",
     "setup": "接続の設定と確認",
-    "setupHint": "Codex と Claude Code 向けの実験的なネイティブセッション連携です。",
+    "setupHint": "Codex、Claude Code、Pi、OpenCode V2 向けの実験的なネイティブセッション連携です。",
     "setupHost": "CCCC daemon と同じ端末で、同じ OS ユーザーと CCCC_HOME を使い、利用するランタイムのコマンドを一度実行してください。",
-    "setupReload": "ネイティブの MCP/プラグイン連携を再読み込みし、一度プロンプトを送信してセッションを登録します。",
+    "setupReload": "ネイティブの MCP/プラグイン連携を再読み込みします。Codex と Claude Code は一度プロンプトを送信すると登録され、Pi は拡張の起動時、OpenCode はネイティブセッションを開いた時に登録されます。",
     "setupCodex": "Codex：/hooks で CCCC hooks を信頼してください。受信には共有 app-server が必要です。Codex の config.toml の [features] で daemon_auto_start = true を設定してください。",
     "setupClaude": "Claude Code は Plugin Monitor への対応が必要です。Monitor が有効か確認してください。",
     "setupCheck": "セッション一覧で受信可能か確認してください：",
@@ -294,6 +294,8 @@
     "memberPaused": "この Group に参加済み · アクセス一時停止中",
     "memberJoined": "この Group に参加済み",
     "originHint": "セッションの作成元：{{origin}}",
-    "foremanDirectoryHint": "フォアマンの作業ディレクトリをグループの既定に使います。"
+    "foremanDirectoryHint": "フォアマンの作業ディレクトリをグループの既定に使います。",
+    "setupPi": "Pi：有効化後に /reload を実行してください。現在のターンを中断せず、Pi の follow-up キューで受信します。",
+    "setupOpencode": "OpenCode V2：プラグインが未読み込みの場合は、元の CLI セッションを再読み込みするか開き直してください。空の新規セッションは、最初のプロンプト送信でセッション ID が作成されます。"
   }
 }

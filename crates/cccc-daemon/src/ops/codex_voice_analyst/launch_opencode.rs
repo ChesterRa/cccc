@@ -96,7 +96,7 @@ impl AnalystSession {
             thread_id: launched.session_id,
             remote_tui_prefix: Vec::new(),
             environment: launched.environment,
-            protocol: ManagedProtocol::Acp(launched.protocol),
+            protocol: launched.protocol,
             process: Some(launched.process),
             auxiliary_processes: Vec::new(),
             native_tui_command: Some(launched.tui_command),

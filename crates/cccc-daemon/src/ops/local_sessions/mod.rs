@@ -130,6 +130,8 @@ fn recovery_actor(
     let runtime = match actor.runtime {
         ActorRuntime::Codex => LocalSessionRuntime::Codex,
         ActorRuntime::Claude => LocalSessionRuntime::Claude,
+        ActorRuntime::Pi => LocalSessionRuntime::Pi,
+        ActorRuntime::Opencode => LocalSessionRuntime::Opencode,
         _ => {
             return Err(OpError::new(
                 "invalid_actor",
@@ -229,14 +231,24 @@ fn recovery_for_actor(
     if let Some(provider_home) = session.as_ref().and_then(|session| match runtime {
         LocalSessionRuntime::Codex => session.codex_home.as_ref(),
         LocalSessionRuntime::Claude => session.claude_config_dir.as_ref(),
+        LocalSessionRuntime::Pi => session.pi_agent_dir.as_ref(),
+        LocalSessionRuntime::Opencode => session.opencode_config_dir.as_ref(),
     }) {
         environment.push((
             if runtime == LocalSessionRuntime::Codex {
                 "CODEX_HOME"
-            } else {
+            } else if runtime == LocalSessionRuntime::Claude {
                 "CLAUDE_CONFIG_DIR"
+            } else if runtime == LocalSessionRuntime::Opencode {
+                "XDG_CONFIG_HOME"
+            } else {
+                "PI_CODING_AGENT_DIR"
             },
-            provider_home.as_path(),
+            if runtime == LocalSessionRuntime::Opencode {
+                provider_home.parent().unwrap_or(provider_home)
+            } else {
+                provider_home.as_path()
+            },
         ));
     }
     for (name, path) in environment {
@@ -249,6 +261,8 @@ fn recovery_for_actor(
     command.push_str(match runtime {
         LocalSessionRuntime::Codex => "codex resume",
         LocalSessionRuntime::Claude => "claude --resume",
+        LocalSessionRuntime::Pi => "pi --session",
+        LocalSessionRuntime::Opencode => "opencode --session",
     });
     let native_id = session
         .as_ref()
@@ -384,7 +398,7 @@ fn detach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 pub(super) fn session_marker(home: &HomeLayout, source_id: &str) -> Option<String> {
     cccc_core::local_sessions::read(home, source_id)
         .ok()
-        .filter(|session| session.host.alive())
+        .filter(cccc_core::local_sessions::NativeSession::host_alive)
         .map(|session| session.revision)
 }
 
@@ -442,5 +456,7 @@ fn actor_runtime(runtime: LocalSessionRuntime) -> ActorRuntime {
     match runtime {
         LocalSessionRuntime::Codex => ActorRuntime::Codex,
         LocalSessionRuntime::Claude => ActorRuntime::Claude,
+        LocalSessionRuntime::Pi => ActorRuntime::Pi,
+        LocalSessionRuntime::Opencode => ActorRuntime::Opencode,
     }
 }

@@ -1276,7 +1276,7 @@ export function ChatComposer({
             <div
               data-composer-action-bar
               className={classNames(
-                "grid grid-cols-[2.75rem_minmax(0,1fr)_auto] items-center gap-2 px-2 pb-2 pt-1 sm:flex sm:justify-between",
+                "flex flex-wrap items-center gap-2 px-2 pb-2 pt-1 sm:flex-nowrap sm:justify-between",
               )}
             >
               <div className="contents sm:flex sm:min-w-0 sm:flex-1 sm:items-center sm:gap-1.5">
@@ -1297,7 +1297,7 @@ export function ChatComposer({
                   <AttachmentIcon size={18} />
                 </button>
 
-                <div className="min-w-0">
+                <div className="min-w-0 shrink-0 sm:shrink">
                   <LazyVoiceSecretaryComposerControl
                     isDark={isDark}
                     selectedGroupId={selectedGroupId}

@@ -5,6 +5,83 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[test]
+fn pi_native_receipts_require_exact_native_input_evidence() {
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("skipping Pi extension fixture: Node is unavailable");
+        return;
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let result = Command::new("node")
+        .arg(root.join("tests/fixtures/pi_native.mjs"))
+        .arg(root.join("resources/native/pi.ts"))
+        .output()
+        .expect("isolated Pi extension fixture");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+fn opencode_native_plugin_uses_current_sdk_results_and_fenced_queue_admission() {
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("skipping OpenCode plugin fixture: Node is unavailable");
+        return;
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let result = Command::new("node")
+        .arg(root.join("tests/fixtures/opencode_native.mjs"))
+        .arg(root.join("resources/native/opencode-tui.ts"))
+        .output()
+        .expect("isolated plugin fixture");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+fn pi_native_setup_preserves_actor_scoped_mcp_configuration() {
+    let temp = tempfile::tempdir().expect("isolated Home");
+    let root = temp.path();
+    let bin = root.join("bin");
+    let provider = root.join("pi");
+    std::fs::create_dir_all(&bin).expect("bin");
+    std::fs::create_dir_all(&provider).expect("provider");
+    let cli = bin.join("pi");
+    std::fs::write(
+        &cli,
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 1.4.0; exit 0; fi\nexit 91\n",
+    )
+    .expect("native CLI fixture");
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).expect("mode");
+    let expected = json!({"mcpServers":{"cccc":{
+        "command":env!("CARGO_BIN_EXE_cccc"),"args":["mcp"],
+        "env":{"CCCC_HOME":root.join("cccc"),"CCCC_ACTOR_ID":"fixture-managed-actor"}
+    }}});
+    let path = provider.join("mcp.json");
+    let original = serde_json::to_vec(&expected).expect("fixture config");
+    std::fs::write(&path, &original).expect("existing scoped MCP");
+    let result = Command::new(env!("CARGO_BIN_EXE_cccc"))
+        .args(["sessions", "enable", "--runtime", "pi"])
+        .env_clear()
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .env("HOME", root)
+        .env("CCCC_HOME", root.join("cccc"))
+        .env("CODEX_HOME", root.join("codex"))
+        .env("PI_CODING_AGENT_DIR", &provider)
+        .current_dir(root)
+        .output()
+        .expect("native setup");
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("scoped identity"));
+    assert_eq!(std::fs::read(path).expect("preserved MCP"), original);
+    assert!(!root.join("cccc/integrations/pi").exists());
+}
+
+#[test]
 fn failed_native_mcp_install_does_not_enable_receive_hooks_or_plugins() {
     for runtime in ["codex", "claude"] {
         let temp = tempfile::tempdir().expect("isolated installation");
@@ -2458,5 +2535,81 @@ async fn a_failed_codex_handoff_cannot_revoke_a_replacement_hosts_readiness() {
             .count(),
         1,
         "stale failure is never replayed"
+    );
+}
+
+#[test]
+fn opencode_native_plugin_enable_disable_preserves_jsonc_and_customizations() {
+    let temp = tempfile::tempdir().expect("isolated Home");
+    let root = temp.path();
+    let bin = root.join("bin");
+    let config = root.join("config/opencode");
+    std::fs::create_dir_all(&bin).expect("bin");
+    std::fs::create_dir_all(&config).expect("config");
+    let original = "{\n // Native user settings and comments stay byte-for-byte unchanged.\n \"model\": \"fixture/model\",\n}\n";
+    std::fs::write(config.join("opencode.jsonc"), original).expect("user config");
+    let cli = bin.join("opencode");
+    std::fs::write(&cli,r#"#!/bin/sh
+if [ "$1" = --version ]; then echo 'opencode v2.1.4'; exit 0; fi
+if [ "$1 $2" = 'debug paths' ]; then printf 'config     %s/opencode\n' "$XDG_CONFIG_HOME"; exit 0; fi
+exit 91
+"#).expect("official CLI fixture");
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).expect("mode");
+    let run = |action: &str| {
+        Command::new(env!("CARGO_BIN_EXE_cccc"))
+            .args(["sessions", action, "--runtime", "opencode"])
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("HOME", root)
+            .env("USERPROFILE", root)
+            .env("CCCC_HOME", root.join("cccc"))
+            .env("CODEX_HOME", root.join("codex"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .current_dir(root)
+            .output()
+            .expect("configure")
+    };
+    for _ in 0..2 {
+        let r = run("enable");
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    }
+    let plugin = config.join("plugins/cccc-native");
+    let manifest: Value =
+        serde_json::from_slice(&std::fs::read(plugin.join("package.json")).expect("manifest"))
+            .expect("JSON");
+    assert_eq!(manifest["name"], "@cccc/native-opencode");
+    assert!(
+        std::fs::read_to_string(plugin.join("tui.ts"))
+            .expect("TUI")
+            .contains("extension-bridge")
+    );
+    for _ in 0..2 {
+        let r = run("disable");
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    }
+    assert!(!plugin.exists());
+    assert_eq!(
+        std::fs::read_to_string(config.join("opencode.jsonc")).expect("preserved config"),
+        original
+    );
+    assert!(run("enable").status.success());
+    std::fs::write(plugin.join("tui.ts"), "user customization").expect("modified generated file");
+    assert!(!run("disable").status.success());
+    assert_eq!(
+        std::fs::read_to_string(plugin.join("tui.ts")).expect("preserved customization"),
+        "user customization"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &std::fs::read(root.join("cccc/state/local_sessions/opencode.disabled"))
+                .expect("durable fence")
+        )
+        .expect("fence"),
+        true
+    );
+    assert!(!run("enable").status.success());
+    assert_eq!(
+        std::fs::read_to_string(config.join("opencode.jsonc")).expect("native config"),
+        original
     );
 }

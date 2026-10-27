@@ -462,7 +462,12 @@ fn submit_admitted(
     ) else {
         return BatchSubmission::Deferred;
     };
-    if item.managed.structured_only() {
+    // OpenCode V2's terminal is a view of the owned HTTP session. Admit CCCC
+    // input through that session's durable queue, including during TUI startup.
+    // Writing the terminal can be acknowledged before its composer is ready.
+    if item.managed.structured_only()
+        || item.managed.runtime() == cccc_contracts::ActorRuntime::Opencode
+    {
         let id = format!(
             "actor-delivery:{}",
             source_events
@@ -486,7 +491,7 @@ fn submit_admitted(
                         }
                     } => Err(std::io::Error::new(
                         std::io::ErrorKind::Interrupted,
-                        "Actor stopped before ACP admission was confirmed",
+                        "Actor stopped before managed input admission was confirmed",
                     )),
                 }
             }) {
@@ -501,7 +506,7 @@ fn submit_admitted(
                         message = %diagnostic,
                         group_id = %group.group_id,
                         actor_id = %actor.id,
-                        "ACP delivery outcome is unconfirmed; quarantining the batch"
+                        "Managed delivery outcome is unconfirmed; quarantining the batch"
                     );
                     if error.kind() != io::ErrorKind::Interrupted {
                         super::output::emit(

@@ -271,6 +271,10 @@ function RecoveryGuidance({ actor, groupId }: { actor: Actor; groupId: string })
                 <p>{t("nativeSession.recovery.codexReconnect")}</p>
               ) : actor.runtime === "claude" ? (
                 <p>{t("nativeSession.recovery.claudeReconnect")}</p>
+              ) : actor.runtime === "pi" ? (
+                <p>{t("nativeSession.recovery.piReconnect")}</p>
+              ) : actor.runtime === "opencode" ? (
+                <p>{t("nativeSession.recovery.opencodeReconnect")}</p>
               ) : null}
               <p className="text-xs break-all">
                 {t("nativeSession.recovery.sourceLabel")}: {actor.external_session_id}

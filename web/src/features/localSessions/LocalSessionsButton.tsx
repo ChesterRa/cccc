@@ -473,12 +473,16 @@ function LocalSessionsDialog({
           <p className="my-2">{t("localSessions.setupHint")}</p>
           <p className="my-2">{t("localSessions.setupHost")}</p>
           <pre className="overflow-x-auto text-xs">
-            {"cccc sessions enable --runtime codex\ncccc sessions enable --runtime claude"}
+            {
+              "cccc sessions enable --runtime codex\ncccc sessions enable --runtime claude\ncccc sessions enable --runtime pi\ncccc sessions enable --runtime opencode"
+            }
           </pre>
           <ul className="my-2 list-disc space-y-2 pl-5">
             <li>{t("localSessions.setupReload")}</li>
             <li>{t("localSessions.setupCodex")}</li>
             <li>{t("localSessions.setupClaude")}</li>
+            <li>{t("localSessions.setupPi")}</li>
+            <li>{t("localSessions.setupOpencode")}</li>
           </ul>
           <p className="my-2">{t("localSessions.setupCheck")}</p>
           <pre className="overflow-x-auto text-xs">cccc sessions list</pre>

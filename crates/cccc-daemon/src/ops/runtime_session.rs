@@ -11,6 +11,7 @@ mod grok;
 mod grok_tests;
 pub(crate) mod native_acp;
 mod opencode;
+pub(crate) use opencode::valid_opencode_session_id;
 pub(crate) mod pi;
 pub(crate) mod resume_failure;
 pub use claude::{

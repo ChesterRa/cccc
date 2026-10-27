@@ -8,6 +8,8 @@ mod events;
 mod queue;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::collect_normalized_events_for_test;
 mod turn_wait;
 mod turns;
 

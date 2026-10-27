@@ -35,7 +35,7 @@ export function ComposerSendControl({
   return (
     <div
       data-composer-send-control
-      className="flex shrink-0 items-stretch rounded-xl bg-[var(--glass-tab-bg)]"
+      className="ml-auto flex shrink-0 items-stretch rounded-xl bg-[var(--glass-tab-bg)]"
     >
       <Button
         variant="ghost"

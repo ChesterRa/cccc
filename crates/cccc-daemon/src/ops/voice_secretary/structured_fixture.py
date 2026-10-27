@@ -84,7 +84,7 @@ def submit(context):
 
 
 if "--version" in args:
-    print("2.1.291" if runtime == "claude" else "1.18.33")
+    print("2.1.291" if runtime == "claude" else "2.1.4" if runtime == "opencode" else "1.18.33")
     sys.exit(0)
 
 # Claude's existing adapter uses Agent View's control socket and transcript.
@@ -197,10 +197,110 @@ if runtime == "grok":
         while True:
             signal.pause()
 
-# OpenCode/Kilo combine ACP control with an authenticated HTTP lifecycle stream.
+# OpenCode V2 uses one private HTTP/SSE backend. Kilo retains ACP below.
+if runtime == "opencode":
+    import base64
+
+    assert "serve" in args and "--stdio" in args and "acp" not in args
+    config = json.loads(os.environ["OPENCODE_CONFIG_CONTENT"])
+    mcp = config["mcp"]["servers"]["cccc"]
+    assert mcp["environment"]["CCCC_MCP_TOOL_PROFILE"] == "secretary-task"
+    assert "CCCC_SECRETARY_TASK_TOKEN" not in mcp["environment"]
+    session_id = "ses_" + uuid.uuid4().hex
+    authorization = "Basic " + base64.b64encode(("opencode:" + os.environ["OPENCODE_PASSWORD"]).encode()).decode()
+    events = []
+    event_lock = threading.Condition()
+
+    def v2_event(kind, data):
+        with event_lock:
+            events.append({"type": kind, "data": {"sessionID": session_id, **data}})
+            event_lock.notify_all()
+
+    def v2_prompt(body, message_id):
+        v2_event("session.inbox.enqueued", {"inboxID": message_id, "item": {"type": "user", "payload": {"text": body["text"]}, "delivery": "queue"}})
+        v2_event("session.inbox.delivered", {"inboxID": message_id})
+        assistant = "assistant-" + message_id
+        v2_event("session.step.started", {"assistantMessageID": assistant})
+        context = packet(body["text"])
+        if "DISCONNECT" in context["inputs"][0]["text"]:
+            os._exit(0)
+        if "HOLD" in context["inputs"][0]["text"]:
+            return
+        v2_event("session.tool.input.started", {"assistantMessageID": assistant, "id": "fixture-tool", "name": "cccc_cccc_voice_secretary_task"})
+        v2_event("session.tool.called", {"assistantMessageID": assistant, "id": "fixture-tool", "input": {"task_id": context["task_id"]}})
+        result = submit(context)
+        v2_event("session.tool.success", {"assistantMessageID": assistant, "id": "fixture-tool", "content": [{"type": "text", "text": json.dumps(result)}]})
+        v2_event("session.step.ended", {"assistantMessageID": assistant, "finish": "stop"})
+        v2_event("session.execution.succeeded", {})
+
+    class V2Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def reply(self, value):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(value).encode())
+
+        def authorized(self):
+            if self.headers.get("Authorization") == authorization:
+                return True
+            self.send_response(401)
+            self.end_headers()
+            return False
+
+        def do_GET(self):
+            if not self.authorized():
+                return
+            if self.path == "/api/info":
+                self.reply({"pid": os.getpid(), "version": "2.1.4"})
+                return
+            if self.path.startswith("/api/mcp?"):
+                self.reply({"data": [{"name": "cccc", "status": {"status": "connected"}}]})
+                return
+            assert self.path == "/api/event"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(b'data: {"type":"server.connected","data":{}}\n\n')
+            self.wfile.flush()
+            offset = 0
+            while True:
+                with event_lock:
+                    if len(events) == offset:
+                        event_lock.wait(timeout=1)
+                    batch = events[offset:]
+                    offset = len(events)
+                for event in batch:
+                    self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
+                self.wfile.flush()
+
+        def do_POST(self):
+            if not self.authorized():
+                return
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/api/session":
+                assert body["agent"] == "cccc-voice-secretary"
+                self.reply({"data": {"id": session_id, "location": {"directory": str(cwd)}}})
+                return
+            assert self.path == f"/api/session/{session_id}/prompt"
+            assert "id" not in body and body["delivery"] == "queue"
+            message_id = "msg_" + uuid.uuid4().hex
+            self.reply({"data": {"id": message_id, "sessionID": session_id, "delivery": "queue"}})
+            threading.Thread(target=v2_prompt, args=(body, message_id), daemon=True).start()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), V2Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(json.dumps({"url": f"http://127.0.0.1:{server.server_port}"}), flush=True)
+    sys.stdin.read()
+    sys.exit(0)
+
+# Kilo combines ACP control with an authenticated HTTP lifecycle stream.
 events = []
 event_lock = threading.Condition()
-if runtime in ("opencode", "kilo"):
+if runtime == "kilo":
     prefix = runtime.upper()
     port = int(args[args.index("--port") + 1])
     import base64

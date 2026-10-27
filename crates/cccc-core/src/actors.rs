@@ -98,11 +98,14 @@ pub fn add(group: &mut GroupDoc, mut actor: Actor) -> io::Result<Actor> {
     if !actor.external_session_id.is_empty()
         && !matches!(
             actor.runtime,
-            cccc_contracts::ActorRuntime::Codex | cccc_contracts::ActorRuntime::Claude
+            cccc_contracts::ActorRuntime::Codex
+                | cccc_contracts::ActorRuntime::Claude
+                | cccc_contracts::ActorRuntime::Pi
+                | cccc_contracts::ActorRuntime::Opencode
         )
     {
         return Err(io::Error::other(
-            "Only Codex and Claude support native-session Actors",
+            "This runtime does not support native-session Actors",
         ));
     }
     actor

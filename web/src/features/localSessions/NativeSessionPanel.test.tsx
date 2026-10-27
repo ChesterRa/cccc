@@ -277,6 +277,25 @@ it("announces loading without inventing a lifecycle state or a command", async (
   expect(host.querySelector("pre code")?.textContent).toBe(originalCommand);
 });
 
+it.each(["pi", "opencode"])("keeps %s recovery in the original application", async (runtime) => {
+  const actor = { ...nativeActor, runtime, external_session_id: `${runtime}:original-host` };
+  const command =
+    runtime === "pi"
+      ? "PI_CODING_AGENT_DIR='/synthetic/pi' pi --session 'original-session'"
+      : "XDG_CONFIG_HOME='/synthetic/config' opencode --session 'ses_original'";
+  mocks.load.mockResolvedValue(recoveryResponse({ state: "session_ended", command }, actor));
+  await render({ actor });
+  expect(host.textContent).toContain(
+    runtime === "pi"
+      ? enActors.nativeSession.recovery.piReconnect
+      : enActors.nativeSession.recovery.opencodeReconnect,
+  );
+  expect(host.textContent).not.toContain(enActors.nativeSession.recovery.claudeReconnect);
+  expect(host.querySelector("pre code")?.textContent).toBe(command);
+  await clickButton("Copy command");
+  expect(mocks.clipboard).toHaveBeenCalledExactlyOnceWith(command);
+});
+
 it.each(["API error", "rejected read"])(
   "reports %s honestly and offers a local retry",
   async (failure) => {

@@ -51,7 +51,7 @@ fn leases() -> &'static Mutex<HashMap<Key, Lease>> {
 
 fn metadata(home: &HomeLayout, source_id: &str) -> Result<native::NativeSession, OpError> {
     let session = native::read(home, source_id).map_err(OpError::io)?;
-    if !session.host.alive() {
+    if !session.host_alive() {
         return Err(OpError::new(
             "local_session_closed",
             "The native session host has exited",
@@ -78,7 +78,7 @@ pub(super) fn attach(
     connection_id: &str,
 ) -> Result<Receiver, OpError> {
     let session = metadata(home, source_id)?;
-    if session.runtime != LocalSessionRuntime::Claude {
+    if session.runtime == LocalSessionRuntime::Codex {
         return Err(OpError::new(
             "invalid_args",
             "Codex uses its official native queue rather than a receive lease",
@@ -158,7 +158,9 @@ pub(super) fn sources(home: &HomeLayout) -> Result<Vec<LocalSessionSource>, OpEr
         .map(|session| {
             let connected = match session.runtime {
                 LocalSessionRuntime::Codex => session.codex_can_receive,
-                LocalSessionRuntime::Claude => leases
+                LocalSessionRuntime::Claude
+                | LocalSessionRuntime::Pi
+                | LocalSessionRuntime::Opencode => leases
                     .get(&(home.root().to_owned(), session.source_id.clone()))
                     .is_some_and(|lease| lease.at.elapsed() < LEASE),
             };
@@ -173,7 +175,7 @@ pub(super) fn connected(home: &HomeLayout, source_id: &str) -> bool {
     };
     match session.runtime {
         LocalSessionRuntime::Codex => session.codex_can_receive,
-        LocalSessionRuntime::Claude => {
+        LocalSessionRuntime::Claude | LocalSessionRuntime::Pi | LocalSessionRuntime::Opencode => {
             by_source(home, source_id).is_ok_and(|value| value.is_some())
         }
     }

@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub enum LocalSessionRuntime {
     Codex,
     Claude,
+    Pi,
+    Opencode,
 }
 
 impl LocalSessionRuntime {
@@ -13,6 +15,8 @@ impl LocalSessionRuntime {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
+            Self::Pi => "pi",
+            Self::Opencode => "opencode",
         }
     }
 

@@ -1990,7 +1990,7 @@ export function supportsAcpMode(runtime?: string | null): boolean {
 
 export interface LocalSessionSource {
   source_id: string;
-  runtime: "codex" | "claude";
+  runtime: "codex" | "claude" | "pi" | "opencode";
   native_session_id: string;
   cwd: string;
   title: string;

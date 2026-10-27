@@ -105,7 +105,7 @@ pub enum CommandKind {
     },
     Active,
     Actor(ActorArgs),
-    /// Work with user-owned native Codex and Claude sessions.
+    /// Work with user-owned native Codex, Claude, Pi and OpenCode sessions.
     Sessions(SessionsArgs),
     Prompt(PromptArgs),
     Im(ImArgs),
@@ -151,7 +151,7 @@ pub enum CommandKind {
     Home,
     Mcp {
         /// Bind this stdio port to an opted-in user-owned native session.
-        #[arg(long, value_parser = ["codex", "claude"])]
+        #[arg(long, value_parser = ["codex", "claude", "pi", "opencode"])]
         local_session_runtime: Option<String>,
         #[arg(long, hide = true, requires = "local_session_runtime")]
         local_session_host_pid: Option<u32>,

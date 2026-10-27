@@ -3,8 +3,137 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use cccc_core::{fs, local_sessions::powershell_quote};
 use std::process::Command;
 
+#[path = "setup_opencode.rs"]
+mod opencode;
+
 const MARKER: &str = "CCCC local session connection";
 const PLUGIN: &str = "cccc-local-sessions@cccc-local";
+
+fn pi_mcp(home: &HomeLayout, executable: &std::path::Path) -> Value {
+    json!({"command":executable,"args":["mcp","--local-session-runtime","pi"],
+        "env":{"CCCC_HOME":home.root()},"exposure":"direct"})
+}
+
+fn configure_pi(home: &HomeLayout, enabled: bool) -> Result<()> {
+    platform()?;
+    home.initialize()?;
+    if !enabled {
+        local_sessions::set_integration_disabled(home, LocalSessionRuntime::Pi, true)?;
+    }
+    version("pi")?;
+    let executable = crate::commands::setup::public_executable()?;
+    let provider_home = native_home("PI_CODING_AGENT_DIR", ".pi/agent")?;
+    let mcp_path = provider_home.join("mcp.json");
+    let config = match fs::read_json::<Value>(&mcp_path) {
+        Ok(config) => config,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(error) => return Err(error.into()),
+    };
+    let existing = config
+        .pointer("/mcpServers/cccc")
+        .filter(|value| !value.is_null());
+    let expected = pi_mcp(home, &executable);
+    if enabled {
+        if let Some(entry) = existing {
+            anyhow::ensure!(
+                entry["command"] == expected["command"]
+                    && entry["env"]["CCCC_HOME"] == expected["env"]["CCCC_HOME"]
+                    && ![
+                        "CCCC_ACTOR_ID",
+                        "CCCC_SECRETARY_TASK_TOKEN",
+                        "CCCC_SECRETARY_TASK_TOKEN_FILE",
+                    ]
+                    .iter()
+                    .any(|key| entry["env"][key].as_str().is_some_and(|v| !v.is_empty()))
+                    && entry["env"]["CCCC_MCP_TOOL_PROFILE"] != "secretary-task",
+                "Pi has a conflicting cccc MCP entry (another installation or scoped identity); resolve it in Pi before enabling native access"
+            );
+        }
+        local_sessions::set_integration_disabled(home, LocalSessionRuntime::Pi, true)?;
+        let plugin = home.root().join("integrations/pi");
+        std::fs::create_dir_all(&plugin)?;
+        let source = include_str!("../../../resources/native/pi.ts")
+            .replace("__CCCC_EXECUTABLE__", &serde_json::to_string(&executable)?)
+            .replace("__CCCC_HOME__", &serde_json::to_string(home.root())?);
+        fs::atomic_write(&plugin.join("index.ts"), source.as_bytes())?;
+        fs::write_json(
+            &plugin.join("package.json"),
+            &json!({
+                "name":"@cccc/native-pi","version":env!("CARGO_PKG_VERSION"),"type":"module",
+                "pi":{"extensions":["./index.ts"]},
+            }),
+        )?;
+        checked(
+            "pi",
+            &[
+                "install".into(),
+                plugin.to_string_lossy().into_owned(),
+                "--no-approve".into(),
+            ],
+        )?;
+        checked(
+            "pi",
+            &[
+                "mcp".into(),
+                "add".into(),
+                "cccc".into(),
+                "--exposure".into(),
+                "direct".into(),
+                "--env".into(),
+                format!("CCCC_HOME={}", home.root().display()),
+                "--".into(),
+                executable.to_string_lossy().into_owned(),
+                "mcp".into(),
+                "--local-session-runtime".into(),
+                "pi".into(),
+            ],
+        )?;
+        local_sessions::set_integration_disabled(home, LocalSessionRuntime::Pi, false)?;
+    } else {
+        let plugin = home.root().join("integrations/pi");
+        let settings: Value = match fs::read_json(&provider_home.join("settings.json")) {
+            Ok(settings) => settings,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+            Err(error) => return Err(error.into()),
+        };
+        let installed = settings["packages"].as_array().is_some_and(|packages| {
+            packages.iter().any(|package| {
+                let Some(source) = package.as_str().or_else(|| package["source"].as_str()) else {
+                    return false;
+                };
+                let path = std::path::Path::new(source);
+                let path = if path.is_absolute() {
+                    path.to_owned()
+                } else {
+                    provider_home.join(path)
+                };
+                path.canonicalize()
+                    .is_ok_and(|path| plugin.canonicalize().is_ok_and(|plugin| path == plugin))
+            })
+        });
+        if installed {
+            checked(
+                "pi",
+                &[
+                    "remove".into(),
+                    plugin.to_string_lossy().into_owned(),
+                    "--no-approve".into(),
+                ],
+            )?;
+        }
+        if existing == Some(&expected) {
+            checked("pi", &["mcp".into(), "remove".into(), "cccc".into()])?;
+        } else if existing.is_some() {
+            eprintln!("Native Pi access is disabled; the modified cccc MCP entry was preserved.");
+        }
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({"runtime":"pi","enabled":enabled,
+        "note":if enabled {"Configuration saved. Run /reload in existing Pi sessions, or start Pi normally. Its native extension and MCP server load together; CCCC does not own the Pi terminal."} else {"Native access is disabled. Run /reload in Pi to unload the extension and MCP server. Original sessions are retained."}}))?
+    );
+    Ok(())
+}
 
 fn platform() -> Result<()> {
     NativeHost::capture(std::process::id()).context("Native process identity is unavailable")?;
@@ -40,10 +169,11 @@ fn version(runtime: &str) -> Result<()> {
         .split_whitespace()
         .find_map(|word| semver::Version::parse(word.trim_start_matches('v')).ok())
         .context("Native CLI version is unavailable")?;
-    let minimum = semver::Version::parse(if runtime == "codex" {
-        "0.163.0"
-    } else {
-        "2.1.306"
+    let minimum = semver::Version::parse(match runtime {
+        "codex" => "0.163.0",
+        "pi" => "1.4.0",
+        "opencode" => "2.1.4",
+        _ => "2.1.306",
     })?;
     anyhow::ensure!(
         version >= minimum,
@@ -484,6 +614,12 @@ fn claude_plugin(home: &HomeLayout, executable: &std::path::Path) -> Result<Path
 }
 
 pub(super) fn enable(home: &HomeLayout, runtime: &str) -> Result<()> {
+    if runtime == "opencode" {
+        return opencode::configure(home, true);
+    }
+    if runtime == "pi" {
+        return configure_pi(home, true);
+    }
     platform()?;
     version(runtime)?;
     // Native identity relies on direct process ancestry; a Python/npm launcher
@@ -568,6 +704,12 @@ pub(super) fn enable(home: &HomeLayout, runtime: &str) -> Result<()> {
 }
 
 pub(super) fn disable(home: &HomeLayout, runtime: &str) -> Result<()> {
+    if runtime == "opencode" {
+        return opencode::configure(home, false);
+    }
+    if runtime == "pi" {
+        return configure_pi(home, false);
+    }
     platform()?;
     local_sessions::set_integration_disabled(
         home,

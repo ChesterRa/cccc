@@ -277,11 +277,11 @@
     "unavailable": "暂不可接收消息",
     "selectionUnavailable": "所选会话中有 {{count}} 个暂不可接收消息。请取消选择，或等待重新连接。",
     "loadFailed": "无法刷新原生会话，正在自动重试。",
-    "empty": "暂无已登记的原生会话。加载 CCCC 集成后，请先在原终端发送一条消息，完成首次登记。",
+    "empty": "暂无已登记的原生会话。请在原应用中加载 CCCC 集成；Codex 和 Claude Code 还需提交一次原生 prompt。",
     "setup": "接入设置与排查",
-    "setupHint": "Codex 与 Claude Code 的实验性原生会话接入。",
+    "setupHint": "Codex、Claude Code、Pi 和 OpenCode V2 的实验性原生会话接入。",
     "setupHost": "请在运行 CCCC daemon 的机器上，以相同的系统用户、使用相同的 CCCC_HOME，为所用应用执行一次对应命令。",
-    "setupReload": "重新加载原生 MCP/插件接入，再提交一次原生 prompt，以注册会话。",
+    "setupReload": "重新加载原生 MCP/插件接入。Codex 和 Claude Code 需提交一次原生 prompt；Pi 在扩展启动时登记，OpenCode 在打开原生会话后登记。",
     "setupCodex": "Codex：在 /hooks 中信任 CCCC hooks。接收消息需要共享 app-server；请在 Codex config.toml 的 [features] 中设置 daemon_auto_start = true。",
     "setupClaude": "Claude Code 需要支持 Plugin Monitor，并确认 Monitor 已启用。",
     "setupCheck": "通过会话列表确认接收能力：",
@@ -294,6 +294,8 @@
     "memberPaused": "已在此工作组 · 访问已暂停",
     "memberJoined": "已在此工作组",
     "originHint": "会话创建来源：{{origin}}",
-    "foremanDirectoryHint": "新工作组默认使用领班会话的工作目录。"
+    "foremanDirectoryHint": "新工作组默认使用领班会话的工作目录。",
+    "setupPi": "Pi：启用后运行 /reload。扩展通过 Pi 的 follow-up 队列收信，不打断当前回合。",
+    "setupOpencode": "OpenCode V2：若插件未加载，请重新加载或重新打开原 CLI 会话。空白新会话需先发送一次 prompt，获得会话 ID。"
   }
 }

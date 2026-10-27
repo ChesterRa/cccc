@@ -10,14 +10,22 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_runtime(LocalSessionRuntime::Claude)
+    }
+    fn with_runtime(runtime: LocalSessionRuntime) -> Self {
         let temp = tempfile::tempdir().expect("fixture should succeed");
         let home = HomeLayout::from_path(temp.path().join("cccc")).expect("fixture should succeed");
         let host = NativeHost::capture(std::process::id()).expect("fixture should succeed");
+        let source_key = if runtime == LocalSessionRuntime::Opencode {
+            "ses_fixture".to_owned()
+        } else {
+            host.key()
+        };
         let source = NativeSession {
-            source_id: format!("claude:{}", host.key()),
-            runtime: LocalSessionRuntime::Claude,
+            source_id: runtime.source_id(&source_key),
+            runtime,
             native_session_id: "first-conversation".into(),
-            host,
+            host: host.clone(),
             cwd: temp.path().to_string_lossy().into(),
             title: "Claude native fixture".into(),
             origin: None,
@@ -26,6 +34,9 @@ impl Fixture {
             codex_can_receive: false,
             codex_program: None,
             claude_config_dir: None,
+            pi_agent_dir: None,
+            opencode_config_dir: None,
+            opencode_server: (runtime == LocalSessionRuntime::Opencode).then_some(host),
             retired: None,
         };
         native::write(&home, source.clone()).expect("fixture should succeed");
@@ -162,6 +173,75 @@ fn offered(home: &HomeLayout, receiver: &store::Receiver) -> transport::Handoff 
         }
         assert!(Instant::now() < deadline, "handoff must not stall");
         std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn extension_receive_lease_context_replacement_and_disable_preserve_authority() {
+    for runtime in [LocalSessionRuntime::Pi, LocalSessionRuntime::Opencode] {
+        let fixture = Fixture::with_runtime(runtime);
+        let group = fixture.conversation();
+        assert_eq!(
+            group.actors[0].runtime,
+            if runtime == LocalSessionRuntime::Pi {
+                ActorRuntime::Pi
+            } else {
+                ActorRuntime::Opencode
+            }
+        );
+        let receiver = fixture.attach();
+        let sent = fixture.call("message_send", json!({"group_id":group.group_id,"by":"user","to":[group.actors[0].id],"message_mode":"send","text":"Pi native receipt"}));
+        let handoff = offered(&fixture.home, &receiver);
+        assert!(handoff.text.contains("Pi native receipt"));
+        assert!(handoff.text.contains(&group.group_id));
+        let event_id = sent["event"]["id"].as_str().expect("event ID");
+        transport::acknowledge(
+            &fixture.home,
+            &receiver,
+            &handoff.handoff_id,
+            transport::Outcome::Accepted,
+        )
+        .expect("Pi admission");
+        fixture.wait_state(&group, event_id, "accepted");
+        let mut replacement = fixture.source.clone();
+        let binding = cccc_contracts::local_session::LocalSessionBinding {
+            group_id: group.group_id.clone(),
+            actor_id: group.actors[0].id.clone(),
+            actor_generation: cccc_core::actors::generation_identity(&group.actors[0]),
+            source_id: fixture.source.source_id.clone(),
+            session_revision: fixture.source.revision.clone(),
+        };
+        native::validate_binding(&fixture.home, &binding).expect("current Pi tool authority");
+        replacement.native_session_id = "new-conversation".into();
+        replacement.revision = "new-revision".into();
+        native::write(&fixture.home, replacement).expect("new Pi context");
+        assert!(
+            native::validate_binding(&fixture.home, &binding).is_err(),
+            "old MCP request cannot act in a new Pi context"
+        );
+        store::detach(
+            &fixture.home,
+            &fixture.source.source_id,
+            &receiver.connection_id,
+        )
+        .expect("unload old extension");
+        let new_receiver = store::attach(&fixture.home, &fixture.source.source_id, "new-receiver")
+            .expect("new Pi extension");
+        assert!(
+            transport::next(&fixture.home, &new_receiver)
+                .expect("accepted input never replays")
+                .is_none()
+        );
+        native::set_integration_disabled(&fixture.home, runtime, true).expect("disable Pi");
+        assert!(
+            store::attach(
+                &fixture.home,
+                &fixture.source.source_id,
+                "disabled-receiver"
+            )
+            .is_err()
+        );
+        assert!(store::sources(&fixture.home).expect("directory").is_empty());
     }
 }
 
@@ -1972,75 +2052,82 @@ fn explicit_resume_requires_the_selected_native_source_and_preserves_group_pause
 #[test]
 fn native_actor_start_and_stop_preserve_group_stop_and_pause() {
     use cccc_contracts::Event;
-    for (state, desired_running) in [
-        (GroupState::Stopped, false),
-        (GroupState::Paused, false),
-        (GroupState::Paused, true),
-        (GroupState::Idle, false),
-        (GroupState::Active, false),
+    for runtime in [
+        LocalSessionRuntime::Claude,
+        LocalSessionRuntime::Pi,
+        LocalSessionRuntime::Opencode,
     ] {
-        let fixture = Fixture::new();
-        let mut group = fixture.conversation();
-        let actor_id = group.actors[0].id.clone();
-        group.state = state;
-        group.running = desired_running;
-        group.actors[0].enabled = false;
-        let store = GroupStore::new(fixture.home.clone()).expect("store");
-        store.save(&group).expect("saved access state");
-        let mut event = Event::new("chat.message", &group.group_id);
-        event.by = "user".into();
-        event.data = json!({"to":[actor_id],"message_mode":"send","text":"Pending native work"})
-            .as_object()
-            .expect("event data")
-            .clone();
-        cccc_core::ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &event)
-            .expect("pending message");
-        fixture.call(
-            "actor_start",
-            json!({"group_id":group.group_id,"actor_id":actor_id,"by":"user"}),
-        );
-        let after = store.load(&group.group_id).expect("enabled member");
-        assert!(after.actors[0].enabled);
-        assert_eq!(after.state, state, "native Start cannot change Group state");
-        if matches!(state, GroupState::Stopped | GroupState::Paused) {
-            assert_eq!(
-                after.running, desired_running,
-                "native Start cannot release a Group lifecycle fence"
+        for (state, desired_running) in [
+            (GroupState::Stopped, false),
+            (GroupState::Paused, false),
+            (GroupState::Paused, true),
+            (GroupState::Idle, false),
+            (GroupState::Active, false),
+        ] {
+            let fixture = Fixture::with_runtime(runtime);
+            let mut group = fixture.conversation();
+            let actor_id = group.actors[0].id.clone();
+            group.state = state;
+            group.running = desired_running;
+            group.actors[0].enabled = false;
+            let store = GroupStore::new(fixture.home.clone()).expect("store");
+            store.save(&group).expect("saved access state");
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.by = "user".into();
+            event.data =
+                json!({"to":[actor_id],"message_mode":"send","text":"Pending native work"})
+                    .as_object()
+                    .expect("event data")
+                    .clone();
+            cccc_core::ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &event)
+                .expect("pending message");
+            fixture.call(
+                "actor_start",
+                json!({"group_id":group.group_id,"actor_id":actor_id,"by":"user"}),
             );
-            assert!(
-                super::super::runtime_delivery::latest_state(
+            let after = store.load(&group.group_id).expect("enabled member");
+            assert!(after.actors[0].enabled);
+            assert_eq!(after.state, state, "native Start cannot change Group state");
+            if matches!(state, GroupState::Stopped | GroupState::Paused) {
+                assert_eq!(
+                    after.running, desired_running,
+                    "native Start cannot release a Group lifecycle fence"
+                );
+                assert!(
+                    super::super::runtime_delivery::latest_state(
+                        &fixture.home,
+                        &group.group_id,
+                        &actor_id,
+                        &event.id
+                    )
+                    .expect("delivery state")
+                    .is_none()
+                );
+            } else {
+                assert!(
+                    after.running,
+                    "enabled native access retains desired running in available Groups"
+                );
+                let receiver = fixture.attach();
+                let handoff = offered(&fixture.home, &receiver);
+                assert_eq!(handoff.event_ids, [event.id.clone()]);
+                transport::acknowledge(
                     &fixture.home,
-                    &group.group_id,
-                    &actor_id,
-                    &event.id
+                    &receiver,
+                    &handoff.handoff_id,
+                    transport::Outcome::Accepted,
                 )
-                .expect("delivery state")
-                .is_none()
+                .expect("accept");
+                fixture.wait_state(&after, &event.id, "accepted");
+            }
+            fixture.call(
+                "actor_stop",
+                json!({"group_id":group.group_id,"actor_id":actor_id,"by":"user"}),
             );
-        } else {
-            assert!(
-                after.running,
-                "enabled native access retains desired running in available Groups"
-            );
-            let receiver = fixture.attach();
-            let handoff = offered(&fixture.home, &receiver);
-            assert_eq!(handoff.event_ids, [event.id.clone()]);
-            transport::acknowledge(
-                &fixture.home,
-                &receiver,
-                &handoff.handoff_id,
-                transport::Outcome::Accepted,
-            )
-            .expect("accept");
-            fixture.wait_state(&after, &event.id, "accepted");
+            let stopped = store.load(&group.group_id).expect("disabled member");
+            assert_eq!(stopped.state, state);
+            assert!(!stopped.running);
         }
-        fixture.call(
-            "actor_stop",
-            json!({"group_id":group.group_id,"actor_id":actor_id,"by":"user"}),
-        );
-        let stopped = store.load(&group.group_id).expect("disabled member");
-        assert_eq!(stopped.state, state);
-        assert!(!stopped.running);
     }
 }
 

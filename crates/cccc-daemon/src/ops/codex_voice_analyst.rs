@@ -242,6 +242,7 @@ impl std::error::Error for StartupCleanupFailure {}
 enum ManagedProtocol {
     Codex(ProtocolClient),
     Acp(AcpClient),
+    OpenCode(opencode::v2::OpenCodeClient),
     Claude(ClaudeClient),
     Pi(PiRpcClient),
 }
@@ -304,6 +305,7 @@ impl ManagedProtocol {
         match self {
             Self::Codex(protocol) => protocol.subscribe(),
             Self::Acp(protocol) => protocol.subscribe(),
+            Self::OpenCode(protocol) => protocol.subscribe(),
             Self::Claude(protocol) => protocol.subscribe(),
             Self::Pi(protocol) => protocol.subscribe(),
         }
@@ -313,7 +315,7 @@ impl ManagedProtocol {
         match self {
             Self::Codex(protocol) => protocol.respond(id, result).await,
             Self::Acp(protocol) => protocol.respond(id, result).await,
-            Self::Claude(_) | Self::Pi(_) => Err(io::Error::new(
+            Self::Claude(_) | Self::Pi(_) | Self::OpenCode(_) => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "This managed Runtime does not expose generic JSON-RPC responses",
             )),
@@ -324,7 +326,7 @@ impl ManagedProtocol {
         match self {
             Self::Codex(protocol) => protocol.respond_error(id, error).await,
             Self::Acp(protocol) => protocol.respond_error(id, error).await,
-            Self::Claude(_) | Self::Pi(_) => Err(io::Error::new(
+            Self::Claude(_) | Self::Pi(_) | Self::OpenCode(_) => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "This managed Runtime does not expose generic JSON-RPC responses",
             )),
@@ -342,6 +344,10 @@ impl ManagedProtocol {
                 Ok(())
             }
             Self::Claude(protocol) => protocol.close().await,
+            Self::OpenCode(protocol) => {
+                protocol.close().await;
+                Ok(())
+            }
             Self::Pi(protocol) => {
                 protocol.close().await;
                 Ok(())
@@ -350,10 +356,10 @@ impl ManagedProtocol {
     }
 
     /// Best-effort stop request for sessions that are not owned process trees.
-    /// Codex and ACP providers are child processes and die with this process.
+    /// Process-backed providers are children and die with this process.
     async fn kill_request(&self) -> io::Result<()> {
         match self {
-            Self::Codex(_) | Self::Acp(_) | Self::Pi(_) => Ok(()),
+            Self::Codex(_) | Self::Acp(_) | Self::Pi(_) | Self::OpenCode(_) => Ok(()),
             Self::Claude(protocol) => protocol.kill_request().await,
         }
     }
@@ -365,6 +371,7 @@ impl ManagedProtocol {
             // by the lifecycle owner.
             Self::Codex(_) => Ok(()),
             Self::Acp(protocol) => protocol.register_native_input(delegation_id, text).await,
+            Self::OpenCode(protocol) => protocol.register_native_input(delegation_id, text).await,
             Self::Claude(protocol) => protocol.register_native_input(delegation_id, text).await,
             Self::Pi(_) => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -377,6 +384,7 @@ impl ManagedProtocol {
         match self {
             Self::Codex(_) => Ok(()),
             Self::Acp(protocol) => protocol.forget_native_input(delegation_id).await,
+            Self::OpenCode(protocol) => protocol.forget_native_input(delegation_id).await,
             Self::Claude(protocol) => protocol.forget_native_input(delegation_id).await,
             Self::Pi(_) => Ok(()),
         }
@@ -386,6 +394,7 @@ impl ManagedProtocol {
         match self {
             Self::Claude(protocol) => protocol.running(),
             Self::Pi(protocol) => protocol.running(),
+            Self::OpenCode(protocol) => protocol.running(),
             Self::Codex(_) | Self::Acp(_) => true,
         }
     }
@@ -403,6 +412,7 @@ impl ManagedProtocol {
                 let _ = protocol.events.send(event);
             }
             Self::Pi(protocol) => protocol.publish_for_test(event),
+            Self::OpenCode(protocol) => protocol.publish_for_test(event),
         }
     }
 }

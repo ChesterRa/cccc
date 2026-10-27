@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod extension;
 mod setup;
 
 pub async fn run(home: &HomeLayout, action: SessionsAction) -> Result<()> {
@@ -95,6 +96,25 @@ pub async fn run(home: &HomeLayout, action: SessionsAction) -> Result<()> {
             hook(&home, &runtime, host_pid, host_shell_pid, provider_home).await
         }
         SessionsAction::Receive { host_pid } => receive(home, host_pid).await,
+        SessionsAction::ExtensionBridge {
+            runtime,
+            host_pid,
+            session_id,
+            cwd,
+            provider_home,
+            backend_pid,
+        } => {
+            extension::bridge(
+                home,
+                &runtime,
+                host_pid,
+                &session_id,
+                &cwd,
+                &provider_home,
+                backend_pid,
+            )
+            .await
+        }
     }
 }
 
@@ -307,6 +327,9 @@ async fn hook(
             } else {
                 None
             },
+            pi_agent_dir: None,
+            opencode_config_dir: None,
+            opencode_server: None,
             retired: None,
         },
         codex_can_receive,

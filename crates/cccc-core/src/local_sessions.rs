@@ -215,12 +215,25 @@ pub struct NativeSession {
     pub codex_program: Option<PathBuf>,
     #[serde(default)]
     pub claude_config_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub pi_agent_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub opencode_config_dir: Option<PathBuf>,
+    /// OpenCode shares one MCP process across native sessions. Match its
+    /// actual parent to the backend captured by the original TUI extension.
+    #[serde(default)]
+    pub opencode_server: Option<NativeHost>,
     /// Retained recovery metadata is not a live lifecycle identity.
     #[serde(default)]
     pub retired: Option<RetireReason>,
 }
 
 impl NativeSession {
+    pub fn host_alive(&self) -> bool {
+        self.host.alive()
+            && (self.runtime != LocalSessionRuntime::Opencode
+                || self.opencode_server.as_ref().is_some_and(NativeHost::alive))
+    }
     pub fn source(&self, connected: bool) -> LocalSessionSource {
         LocalSessionSource {
             source_id: self.source_id.clone(),
@@ -238,7 +251,7 @@ fn path(home: &HomeLayout, source_id: &str) -> io::Result<PathBuf> {
     let (runtime, key) = source_id
         .split_once(':')
         .ok_or_else(|| io::Error::other("Invalid native source identifier"))?;
-    if !matches!(runtime, "codex" | "claude")
+    if !matches!(runtime, "codex" | "claude" | "pi" | "opencode")
         || key.is_empty()
         || key.len() > 256
         || !key
@@ -341,7 +354,7 @@ pub fn validate_source(
     session_revision: &str,
 ) -> io::Result<NativeSession> {
     let session = read(home, source_id)?;
-    if session.revision != session_revision || !session.host.alive() {
+    if session.revision != session_revision || !session.host_alive() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "The captured native session authority is no longer valid",
@@ -369,7 +382,11 @@ pub fn validate_binding(
             ) | (
                 cccc_contracts::ActorRuntime::Claude,
                 LocalSessionRuntime::Claude
-            )
+            ) | (cccc_contracts::ActorRuntime::Pi, LocalSessionRuntime::Pi)
+                | (
+                    cccc_contracts::ActorRuntime::Opencode,
+                    LocalSessionRuntime::Opencode
+                )
         )
     {
         return Err(io::Error::new(
@@ -401,9 +418,22 @@ pub fn write_with_codex_readiness(
             ));
         }
         session.codex_can_receive = ready.unwrap_or(false);
+        if session.runtime == LocalSessionRuntime::Opencode
+            && let Ok(previous) = read(home, &session.source_id)
+            && previous.host != session.host
+            && previous.host.alive()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "This OpenCode session is already connected through another live terminal",
+            ));
+        }
         if let Ok(previous) = read(home, &session.source_id)
             && previous.native_session_id == session.native_session_id
             && previous.host == session.host
+            // One registration per extension incarnation. A reloaded TUI
+            // must not inherit authority from its previous receive bridge.
+            && session.runtime != LocalSessionRuntime::Opencode
         {
             session.revision.clone_from(&previous.revision);
             if ready.is_none()
@@ -436,6 +466,18 @@ pub fn retire(
     host: &NativeHost,
     reason: RetireReason,
 ) -> io::Result<()> {
+    retire_revision(home, source_id, native_id, host, None, reason)
+}
+
+/// An extension receiver ending after a reload must not retire its replacement.
+pub fn retire_revision(
+    home: &HomeLayout,
+    source_id: &str,
+    native_id: &str,
+    host: &NativeHost,
+    revision: Option<&str>,
+    reason: RetireReason,
+) -> io::Result<()> {
     fs::with_exclusive_lock(&home.root().join("state/local_sessions.lock"), || {
         let session = match read_record(home, source_id) {
             Ok(session) => session,
@@ -447,6 +489,7 @@ pub fn retire(
         // disable also covers ended records and cannot be undone by a late End.
         if session.native_session_id == native_id
             && session.host == *host
+            && revision.is_none_or(|revision| session.revision == revision)
             && session.retired != Some(reason)
             && session.retired != Some(RetireReason::IntegrationDisabled)
         {
@@ -523,12 +566,16 @@ pub fn scan(home: &HomeLayout) -> io::Result<(Vec<NativeSession>, Vec<String>)> 
     let (mut sessions, errors) = scan_records(home)?;
     let codex_disabled = integration_disabled(home, LocalSessionRuntime::Codex)?;
     let claude_disabled = integration_disabled(home, LocalSessionRuntime::Claude)?;
+    let pi_disabled = integration_disabled(home, LocalSessionRuntime::Pi)?;
+    let opencode_disabled = integration_disabled(home, LocalSessionRuntime::Opencode)?;
     sessions.retain(|session| {
         session.retired.is_none()
-            && session.host.alive()
+            && session.host_alive()
             && !match session.runtime {
                 LocalSessionRuntime::Codex => codex_disabled,
                 LocalSessionRuntime::Claude => claude_disabled,
+                LocalSessionRuntime::Pi => pi_disabled,
+                LocalSessionRuntime::Opencode => opencode_disabled,
             }
     });
     Ok((sessions, errors))
@@ -537,6 +584,50 @@ pub fn scan(home: &HomeLayout) -> io::Result<(Vec<NativeSession>, Vec<String>)> 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos", windows)))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pi_reload_cleanup_is_fenced_even_when_the_native_session_id_is_unchanged() {
+        let temp = tempfile::tempdir().expect("temp");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let host = NativeHost::capture(std::process::id()).expect("host");
+        let source_id = LocalSessionRuntime::Pi.source_id(&host.key());
+        let session: NativeSession = serde_json::from_value(serde_json::json!({
+            "source_id":source_id,"runtime":"pi","native_session_id":"same-conversation",
+            "host":host,"cwd":temp.path(),"title":"Pi fixture","revision":"before-reload"
+        }))
+        .expect("Pi lifecycle");
+        let before = write(&home, session.clone()).expect("register");
+        retire_revision(
+            &home,
+            &source_id,
+            &session.native_session_id,
+            &host,
+            Some(&before.revision),
+            RetireReason::SessionEnd,
+        )
+        .expect("unload");
+        let mut after = session.clone();
+        after.revision = "after-reload".into();
+        let after = write(&home, after).expect("reloaded extension");
+        retire_revision(
+            &home,
+            &source_id,
+            &session.native_session_id,
+            &host,
+            Some(&before.revision),
+            RetireReason::SessionEnd,
+        )
+        .expect("late old cleanup");
+        assert_eq!(
+            read(&home, &source_id).expect("replacement retained"),
+            after
+        );
+        set_integration_disabled(&home, LocalSessionRuntime::Pi, true).expect("disable");
+        assert!(
+            write(&home, session).is_err(),
+            "loaded extension cannot undo disable"
+        );
+    }
 
     #[test]
     fn powershell_path_literals_escape_ascii_and_smart_quote_delimiters() {
@@ -623,6 +714,9 @@ mod tests {
             codex_can_receive: false,
             codex_program: None,
             claude_config_dir: Some("/fixture/claude".into()),
+            pi_agent_dir: None,
+            opencode_config_dir: None,
+            opencode_server: None,
             retired: None,
         };
         write(&home, session.clone()).expect("write");
@@ -689,6 +783,9 @@ mod tests {
             codex_can_receive: false,
             codex_program: None,
             claude_config_dir: None,
+            pi_agent_dir: None,
+            opencode_config_dir: None,
+            opencode_server: None,
             retired: None,
         };
         write(&home, session.clone()).expect("first host");
@@ -746,6 +843,9 @@ mod tests {
                 codex_can_receive: true,
                 codex_program: Some("/fixture/codex".into()),
                 claude_config_dir: None,
+                pi_agent_dir: None,
+                opencode_config_dir: None,
+                opencode_server: None,
                 retired: None,
             };
             write(&home, original.clone()).expect("original");
@@ -819,6 +919,9 @@ mod tests {
                 codex_can_receive: true,
                 codex_program: Some("/fixture/codex".into()),
                 claude_config_dir: None,
+                pi_agent_dir: None,
+                opencode_config_dir: None,
+                opencode_server: None,
                 retired: None,
             };
             write(&home, original.clone()).expect("positive evidence");
@@ -855,5 +958,81 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod opencode_tests {
+    use super::*;
+    fn session() -> NativeSession {
+        let host = NativeHost::capture(std::process::id()).expect("host");
+        NativeSession {
+            source_id: "opencode:ses_fixture".into(),
+            runtime: LocalSessionRuntime::Opencode,
+            native_session_id: "ses_fixture".into(),
+            host: host.clone(),
+            cwd: "/tmp".into(),
+            title: "OpenCode".into(),
+            origin: None,
+            revision: "first".into(),
+            codex_home: None,
+            codex_can_receive: false,
+            codex_program: None,
+            claude_config_dir: None,
+            pi_agent_dir: None,
+            opencode_config_dir: None,
+            opencode_server: Some(host),
+            retired: None,
+        }
+    }
+    #[test]
+    fn reload_and_backend_loss_fence_original_opencode_authority() {
+        let temp = tempfile::tempdir().expect("home");
+        let home = HomeLayout::from_path(temp.path()).expect("layout");
+        let first = write(&home, session()).expect("initial registration");
+        let mut replacement = first.clone();
+        replacement.revision = "reloaded".into();
+        let replacement = write(&home, replacement).expect("reload");
+        assert_ne!(first.revision, replacement.revision);
+        retire_revision(
+            &home,
+            &first.source_id,
+            &first.native_session_id,
+            &first.host,
+            Some(&first.revision),
+            RetireReason::SessionEnd,
+        )
+        .expect("late cleanup");
+        assert_eq!(
+            read(&home, &first.source_id).expect("replacement"),
+            replacement
+        );
+        assert!(validate_source(&home, &first.source_id, &first.revision).is_err());
+        validate_source(&home, &replacement.source_id, &replacement.revision)
+            .expect("current authority");
+        let mut absent = replacement.clone();
+        absent.opencode_server.as_mut().expect("backend").pid = u32::MAX;
+        let absent = write(&home, absent).expect("backend replaced");
+        assert!(validate_source(&home, &absent.source_id, &absent.revision).is_err());
+        assert!(scan(&home).expect("directory").0.is_empty());
+    }
+    #[test]
+    fn a_second_live_terminal_cannot_steal_an_opencode_source() {
+        let temp = tempfile::tempdir().expect("home");
+        let home = HomeLayout::from_path(temp.path()).expect("layout");
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .expect("fixture host");
+        let mut first = session();
+        first.host = NativeHost::capture(child.id()).expect("fixture fingerprint");
+        let result = write(&home, first).and_then(|first| write(&home, session()).map(|_| first));
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(
+            result.expect_err("live ownership must be preserved").kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        write(&home, session()).expect("explicit reopen after original host exit");
     }
 }

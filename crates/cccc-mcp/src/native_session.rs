@@ -4,30 +4,39 @@ use std::collections::BTreeSet;
 
 pub(super) struct Context {
     runtime: String,
-    claude_source_id: Option<String>,
+    host_source_id: Option<String>,
+    opencode_server: Option<cccc_core::local_sessions::NativeHost>,
 }
 
 impl Context {
     pub fn new(runtime: &str, host_pid: Option<u32>) -> Result<Self> {
         anyhow::ensure!(
-            matches!(runtime, "codex" | "claude"),
+            matches!(runtime, "codex" | "claude" | "pi" | "opencode"),
             "Unsupported native session runtime"
         );
         Ok(Self {
             runtime: runtime.into(),
-            claude_source_id: if runtime == "claude" {
+            opencode_server: if runtime == "opencode" {
+                Some(cccc_core::local_sessions::NativeHost::parent(
+                    std::process::id(),
+                )?)
+            } else {
+                None
+            },
+            host_source_id: if !matches!(runtime, "codex" | "opencode") {
                 let host = match host_pid {
                     Some(pid) => cccc_core::local_sessions::NativeHost::capture(pid)?,
                     None => {
                         anyhow::ensure!(
-                            std::env::var_os("CLAUDE_CODE_SHELL_PREFIX")
-                                .is_none_or(|prefix| prefix.is_empty()),
+                            runtime != "claude"
+                                || std::env::var_os("CLAUDE_CODE_SHELL_PREFIX")
+                                    .is_none_or(|prefix| prefix.is_empty()),
                             "Native Claude automatic host inference is unavailable with CLAUDE_CODE_SHELL_PREFIX; launch the MCP executable directly without a shell prefix or supply an explicit host PID"
                         );
                         cccc_core::local_sessions::NativeHost::parent(std::process::id())?
                     }
                 };
-                Some(format!("claude:{}", host.key()))
+                Some(format!("{runtime}:{}", host.key()))
             } else {
                 None
             },
@@ -109,8 +118,10 @@ impl Context {
         args.remove("_cccc_native_binding");
         args.remove("_cccc_native_source_binding");
         args.remove("_cccc_web_binding");
-        let source_id = if self.runtime == "claude" {
-            self.claude_source_id.clone()
+        let source_id = if self.runtime == "opencode" {
+            opencode_session_id(&request["params"]["_meta"])?.map(|id| format!("opencode:{id}"))
+        } else if self.runtime != "codex" {
+            self.host_source_id.clone()
         } else {
             native_thread_id(&request["params"]["_meta"])?.map(|id| format!("codex:{id}"))
         };
@@ -133,6 +144,17 @@ impl Context {
             .map_err(|_| "Native lifecycle identity is unavailable; reload the integration and submit a native prompt")?;
         if session.runtime.as_str() != self.runtime || !session.host.alive() {
             return Err("This native session no longer has a live lifecycle identity".into());
+        }
+        if self.runtime == "opencode"
+            && (session.opencode_server.as_ref() != self.opencode_server.as_ref()
+                || self
+                    .opencode_server
+                    .as_ref()
+                    .is_none_or(|server| !server.alive()))
+        {
+            return Err(
+                "The OpenCode MCP process does not belong to this source's captured backend".into(),
+            );
         }
         let session_op = if name == "cccc_session" {
             args.insert("source_id".into(), json!(source_id));
@@ -251,6 +273,23 @@ fn native_thread_id(meta: &Value) -> std::result::Result<Option<String>, ToolCal
     }
 }
 
+fn opencode_session_id(meta: &Value) -> std::result::Result<Option<String>, ToolCallError> {
+    match meta.get("ai.opencode/sessionID") {
+        None => Ok(None),
+        Some(Value::String(id))
+            if id.starts_with("ses_")
+                && id.len() <= 256
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') =>
+        {
+            Ok(Some(id.clone()))
+        }
+        Some(_) => Err(
+            "OpenCode must supply params._meta[\"ai.opencode/sessionID\"] as a native session ID"
+                .into(),
+        ),
+    }
+}
+
 #[cfg(all(test, target_os = "linux"))]
 #[path = "native_session/authority_tests.rs"]
 mod authority_tests;
@@ -271,6 +310,33 @@ mod tests {
             None
         );
         assert!(native_thread_id(&json!({"threadId":7,"sessionId":"current"})).is_err());
+    }
+
+    #[test]
+    fn opencode_identity_uses_only_its_official_per_call_metadata() {
+        assert_eq!(
+            opencode_session_id(
+                &json!({"ai.opencode/sessionID":"ses_current","threadId":"ses_other"})
+            )
+            .expect("native metadata"),
+            Some("ses_current".into())
+        );
+        for meta in [
+            json!({"sessionID":"ses_current"}),
+            json!({"threadId":"ses_current"}),
+            json!({"provider":{"ai.opencode/sessionID":"ses_current"}}),
+        ] {
+            assert_eq!(opencode_session_id(&meta).expect("no native ID"), None);
+        }
+        for value in [
+            json!(null),
+            json!(17),
+            json!(""),
+            json!("ses_../other"),
+            json!("unrelated"),
+        ] {
+            assert!(opencode_session_id(&json!({"ai.opencode/sessionID":value})).is_err());
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -300,6 +366,9 @@ mod tests {
                     codex_can_receive: false,
                     codex_program: None,
                     claude_config_dir: None,
+                    pi_agent_dir: None,
+                    opencode_config_dir: None,
+                    opencode_server: None,
                     retired: None,
                 },
             )
@@ -753,6 +822,9 @@ mod tests {
                 codex_can_receive: false,
                 codex_program: None,
                 claude_config_dir: None,
+                pi_agent_dir: None,
+                opencode_config_dir: None,
+                opencode_server: None,
                 retired: None,
             },
         )

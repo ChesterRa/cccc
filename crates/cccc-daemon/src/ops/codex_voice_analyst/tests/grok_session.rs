@@ -337,7 +337,10 @@ async fn external_tui_activity_blocks_delivery_until_it_is_idle() {
     let mut events = analyst.subscribe();
     let lifecycle = match &analyst.protocol {
         ManagedProtocol::Acp(protocol) => protocol.lifecycle_control(),
-        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) | ManagedProtocol::Pi(_) => {
+        ManagedProtocol::Codex(_)
+        | ManagedProtocol::Claude(_)
+        | ManagedProtocol::Pi(_)
+        | ManagedProtocol::OpenCode(_) => {
             panic!("expected ACP protocol")
         }
     };
@@ -410,7 +413,10 @@ async fn busy_runtime_accepts_voice_input_for_its_native_steer_or_queue_policy()
     let mut events = lifecycle.subscribe();
     let control = match &session.protocol {
         ManagedProtocol::Acp(protocol) => protocol.lifecycle_control(),
-        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) | ManagedProtocol::Pi(_) => {
+        ManagedProtocol::Codex(_)
+        | ManagedProtocol::Claude(_)
+        | ManagedProtocol::Pi(_)
+        | ManagedProtocol::OpenCode(_) => {
             panic!("expected ACP protocol")
         }
     };
@@ -544,7 +550,10 @@ async fn voice_admission_falls_back_to_the_native_runtime_after_a_busy_race() {
     let mut events = lifecycle.subscribe();
     let control = match &session.protocol {
         ManagedProtocol::Acp(protocol) => protocol.lifecycle_control(),
-        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) | ManagedProtocol::Pi(_) => {
+        ManagedProtocol::Codex(_)
+        | ManagedProtocol::Claude(_)
+        | ManagedProtocol::Pi(_)
+        | ManagedProtocol::OpenCode(_) => {
             panic!("expected ACP protocol")
         }
     };
