@@ -47,6 +47,16 @@ import { useShallow } from "zustand/react/shallow";
 import { useConnectWorkbench } from "./features/connect/useConnectWorkbench";
 import { ConnectRemotePanel } from "./features/connect/ConnectRemotePanel";
 
+// Body already reserves the top safe area. Keep this flow box inside the
+// visual viewport; fixed overlays still use the complete VISUAL_VIEWPORT_BOX.
+const APP_VIEWPORT_HEIGHT =
+  "calc(var(--app-viewport-height, 100dvh) - env(safe-area-inset-top, 0px))";
+const APP_VIEWPORT_BOX = {
+  ...VISUAL_VIEWPORT_BOX,
+  height: APP_VIEWPORT_HEIGHT,
+  maxHeight: APP_VIEWPORT_HEIGHT,
+};
+
 // ============ Main App Component ============
 
 export default function App({
@@ -392,7 +402,7 @@ export default function App({
   return (
     <div
       className="relative min-h-0 w-full overflow-hidden bg-[var(--color-body-bg)] text-[var(--color-text-primary)]"
-      style={VISUAL_VIEWPORT_BOX}
+      style={APP_VIEWPORT_BOX}
       {...{ [VISUAL_VIEWPORT_BOX_ATTRIBUTE]: "" }}
     >
       <AppBackground isDark={isDark} />

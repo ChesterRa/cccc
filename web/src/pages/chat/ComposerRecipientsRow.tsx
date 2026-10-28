@@ -104,6 +104,7 @@ export function ComposerRecipientsRow({
       </ScrollFade>
 
       <RecipientPopover
+        anchorRef={popover.anchorRef}
         isDark={isDark}
         target={popover.visibleTarget}
         style={popover.style}

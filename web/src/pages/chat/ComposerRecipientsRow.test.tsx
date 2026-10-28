@@ -41,3 +41,58 @@ it("labels recipients accessibly without a visible caption and retains selection
     host.remove();
   }
 });
+
+it.each([true, false])(
+  "dismisses recipient details without relying on a blur (%s)",
+  async (isSmallScreen) => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    const outside = document.createElement("button");
+    document.body.append(host, outside);
+    const root = createRoot(host);
+    try {
+      await act(async () =>
+        root.render(
+          <ComposerRecipientsRow
+            isDark={false}
+            isSmallScreen={isSmallScreen}
+            selectedGroupId="g"
+            busy=""
+            actors={[{ id: "agent", title: "Agent", runtime: "codex" }]}
+            toTokens={["agent"]}
+            onToggleRecipient={vi.fn()}
+            onClearRecipients={vi.fn()}
+          />,
+        ),
+      );
+      const trigger = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent === "Agent",
+      )!;
+      const details = () =>
+        document.querySelector('[role="dialog"][aria-label="recipientDetails"]');
+      await act(async () => trigger.focus());
+      const copy = details()!.querySelector<HTMLButtonElement>("button")!;
+      await act(async () => copy.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+      expect(details()).not.toBeNull();
+      await act(async () => copy.focus());
+      await act(async () =>
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+      );
+      expect(details()).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+      await act(async () => {
+        outside.focus();
+        trigger.focus();
+      });
+      expect(details()).not.toBeNull();
+      // A touch outside need not move focus away from the recipient button.
+      await act(async () => outside.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+      expect(details()).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      outside.remove();
+    }
+  },
+);

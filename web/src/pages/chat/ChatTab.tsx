@@ -676,6 +676,25 @@ export function ChatTab({
   ];
   const hasChatFilter = chatFilter !== "all" || chatSenderFilter.length > 0;
   const showMessageFilters = !readOnly && !chatWindowProps && (hasAnyChatMessages || hasChatFilter);
+  const filterTabsRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!isSmallScreen || !showMessageFilters) return;
+    const tabs = filterTabsRef.current;
+    const active = tabs?.querySelector<HTMLButtonElement>('[aria-pressed="true"]');
+    if (!tabs || !active) return;
+    const reveal = () => {
+      if (!tabs.clientWidth) return;
+      const strip = tabs.getBoundingClientRect();
+      const selected = active.getBoundingClientRect();
+      if (selected.left < strip.left) tabs.scrollLeft += selected.left - strip.left;
+      else if (selected.right > strip.right) tabs.scrollLeft += selected.right - strip.right;
+    };
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(tabs);
+    observer.observe(active);
+    return () => observer.disconnect();
+  }, [chatFilter, isSmallScreen, showMessageFilters]);
   const showSetupNotice = !readOnly && (needsScope || needsActors) && chatMessages.length > 0;
 
   return (
@@ -823,11 +842,14 @@ export function ChatTab({
                       data-message-filters
                     >
                       <div
-                        className="chat-reading-width flex min-h-11 md:min-h-9 flex-wrap items-center gap-x-2"
+                        className="chat-reading-width flex min-h-11 md:min-h-9 flex-nowrap md:flex-wrap items-center gap-x-2"
                         role="group"
                         aria-label={t("chatFilters")}
                       >
-                        <div className="flex h-11 md:h-9 min-w-0 items-stretch gap-3 overflow-x-auto scrollbar-hide">
+                        <div
+                          ref={filterTabsRef}
+                          className="flex h-11 md:h-9 min-w-0 flex-1 md:flex-initial items-stretch gap-3 overflow-x-auto scrollbar-hide"
+                        >
                           {filterOptions.map(([key, label]) => {
                             const active = chatFilter === key;
                             return (
@@ -933,7 +955,9 @@ export function ChatTab({
                       highlightEventId={chatHighlightEventId}
                       className={
                         !chatWindowProps && runtimeActors.length > 0
-                          ? "pb-[calc(5rem_-_10px)] sm:pb-[calc(4rem_-_10px)]"
+                          ? isSmallScreen
+                            ? "pb-1"
+                            : "pb-[calc(4rem_-_10px)]"
                           : undefined
                       }
                       scrollRef={scrollRef}
@@ -963,7 +987,12 @@ export function ChatTab({
                   )}
 
                   {!chatWindowProps && runtimeActors.length > 0 ? (
-                    <div className="pointer-events-none absolute inset-x-0 bottom-1 z-20 sm:bottom-2">
+                    <div
+                      className={classNames(
+                        "pointer-events-none z-20",
+                        isSmallScreen ? "shrink-0" : "absolute inset-x-0 bottom-2",
+                      )}
+                    >
                       <RuntimeDock
                         groupId={selectedGroupId}
                         runtimeActors={runtimeActors}

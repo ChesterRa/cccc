@@ -312,12 +312,12 @@ export function RuntimeDock({
   if (items.length <= 0) return null;
 
   return (
-    <div className="pointer-events-none relative z-30 px-3 pt-2 sm:px-4 sm:pt-2.5">
+    <div className="pointer-events-none relative z-30 px-3 md:px-4 md:pt-2.5">
       <div className="mx-auto flex w-full max-w-[1400px] justify-center">
         <div
           className={classNames(
             "group/runtime-dock pointer-events-auto relative flex justify-center",
-            isSmallScreen ? "max-w-[calc(100vw-2.5rem)]" : "",
+            isSmallScreen ? "w-full max-w-[calc(100vw-2.5rem)] flex-col items-center" : "",
           )}
         >
           <RuntimeDockTicker
@@ -331,7 +331,7 @@ export function RuntimeDock({
             className={classNames(
               "flex items-end opacity-[0.72] transition-opacity delay-[3000ms] duration-200 ease-out group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0",
               isSmallScreen
-                ? "max-w-[calc(100vw-2.5rem)] gap-2 overflow-x-auto px-2 pt-2 pb-3 scrollbar-hide"
+                ? "max-w-[calc(100vw-2.5rem)] gap-2 overflow-x-auto px-2 py-1 scrollbar-hide"
                 : "gap-2",
             )}
           >

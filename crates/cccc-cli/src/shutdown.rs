@@ -208,6 +208,7 @@ enum ForceExitReason {
 /// Bound provider stop requests, then terminate owned process trees without
 /// entering normal cleanup or acquiring managed-session stop locks.
 pub(crate) async fn watch_for_interrupt(
+    controller: Controller,
     _home: Option<HomeLayout>,
     #[cfg(windows)] _detached_daemon: crate::detached_daemon_owner::SharedOwnedDetachedDaemon,
 ) {
@@ -215,6 +216,9 @@ pub(crate) async fn watch_for_interrupt(
         return;
     }
     eprintln!("Stopping CCCC... (press Ctrl-C again to force exit)");
+    // The Web library's own interrupt listener registers only once it serves,
+    // so an interrupt during its startup reaches this watcher alone.
+    controller.request();
 
     let reason = force_exit_reason(
         async {

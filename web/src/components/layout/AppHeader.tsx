@@ -98,16 +98,19 @@ export function AppHeader({
       : [],
   );
   return (
-    <header className="@container/group-header absolute inset-x-0 top-0 z-20 flex h-14 shrink-0 items-center px-3 glass-header md:relative md:inset-auto md:h-11 md:px-3">
+    <header className="@container/group-header absolute inset-x-0 top-0 z-20 flex h-[56px] shrink-0 items-center px-[12px] glass-header md:relative md:inset-auto md:h-11 md:px-3">
       <div
-        className="@container/group-work-header flex min-w-0 flex-1 items-center gap-2 pr-2 md:pr-3"
+        className="@container/group-work-header flex min-w-0 flex-1 items-center gap-1 pr-1 md:gap-2 md:pr-3"
         data-group-header-work
       >
-        <div className="flex min-w-0 flex-1 basis-0 items-center gap-2" data-group-header-identity>
+        <div
+          className="flex min-w-0 flex-1 basis-0 items-center gap-1 md:gap-2"
+          data-group-header-identity
+        >
           <IconButton
             type="button"
             variant="secondary"
-            className="-ml-1 text-[var(--color-text-secondary)] md:hidden"
+            className="-ml-1 h-[44px] w-[44px] text-[var(--color-text-secondary)] md:hidden"
             onClick={onOpenSidebar}
             data-sidebar-toggle="true"
             label={t("openSidebar")}
@@ -145,7 +148,7 @@ export function AppHeader({
                   data-group-run-control={selectedGroupId}
                   aria-label={statusControlLabel}
                   title={statusControlLabel}
-                  className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-full pointer-coarse:min-h-10 pointer-coarse:min-w-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)] @min-[480px]/group-work-header:relative"
+                  className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-full pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] md:pointer-coarse:min-h-10 md:pointer-coarse:min-w-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)] @min-[480px]/group-work-header:relative"
                   aria-haspopup="menu"
                   aria-expanded={runMenu.open}
                   onClick={(event) => runMenu.toggle(event.currentTarget)}
@@ -160,7 +163,7 @@ export function AppHeader({
                     status={selectedStatus}
                     connectionStatus={sseStatus}
                     variant="badge"
-                    className="min-h-8 min-w-8 justify-center pointer-coarse:min-h-10 pointer-coarse:min-w-10 [&>span:last-child]:hidden @min-[480px]/group-work-header:[&>span:last-child]:inline !border-transparent !bg-transparent @min-[480px]/group-work-header:!rounded-full @min-[480px]/group-work-header:!border-[var(--glass-border-subtle)] @min-[480px]/group-work-header:pr-6 cursor-pointer transition-colors hover:text-[var(--color-text-primary)]"
+                    className="min-h-8 min-w-8 justify-center pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] md:pointer-coarse:min-h-10 md:pointer-coarse:min-w-10 [&>span:last-child]:hidden @min-[480px]/group-work-header:[&>span:last-child]:inline !border-transparent !bg-transparent @min-[480px]/group-work-header:!rounded-full @min-[480px]/group-work-header:!border-[var(--glass-border-subtle)] @min-[480px]/group-work-header:pr-6 cursor-pointer transition-colors hover:text-[var(--color-text-primary)]"
                   />
                   <ChevronDownIcon
                     size={13}
@@ -218,7 +221,7 @@ export function AppHeader({
         </div>
       </div>
       <div
-        className="flex shrink-0 items-center justify-end gap-2 md:w-[max(7.5rem,calc(var(--group-side-panel-width,0px)-1rem+4px))]"
+        className="flex shrink-0 items-center justify-end gap-1 md:gap-2 md:w-[max(7.5rem,calc(var(--group-side-panel-width,0px)-1rem+4px))]"
         data-group-header-resources
       >
         <div
@@ -245,7 +248,7 @@ export function AppHeader({
             <IconButton
               type="button"
               variant="secondary"
-              className="shrink-0 text-[var(--color-text-secondary)] @min-[760px]/group-header:hidden"
+              className="shrink-0 max-md:h-[44px] max-md:w-[44px] text-[var(--color-text-secondary)] @min-[760px]/group-header:hidden"
               onClick={onOpenMobileMenu}
               label={t("menu")}
             >

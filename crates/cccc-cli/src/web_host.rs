@@ -213,19 +213,24 @@ pub(crate) async fn launch(
         (None, None)
     };
 
-    // The plain host retains its existing signal behavior. The TUI's controller
-    // also receives raw key events and keeps running through Web restarts.
+    // The plain host retains its existing signal behavior, except that its first
+    // interrupt requests the same stop as the TUI's controller. The TUI's
+    // controller also receives raw key events and keeps running through Web
+    // restarts.
     let owned_home = daemon_owned.then(|| home.clone());
+    let plain_stop = (!terminal).then(crate::shutdown::Controller::new);
     #[cfg(windows)]
-    let plain_watchdog = (!terminal).then(|| {
+    let plain_watchdog = plain_stop.clone().map(|controller| {
         tokio::spawn(crate::shutdown::watch_for_interrupt(
+            controller,
             owned_home,
             std::sync::Arc::clone(&detached_daemon),
         ))
     });
     #[cfg(not(windows))]
-    let plain_watchdog =
-        (!terminal).then(|| tokio::spawn(crate::shutdown::watch_for_interrupt(owned_home)));
+    let plain_watchdog = plain_stop.clone().map(|controller| {
+        tokio::spawn(crate::shutdown::watch_for_interrupt(controller, owned_home))
+    });
 
     let mode = web_mode.unwrap_or_else(cccc_web::WebMode::from_env);
     let mut result = if let Some(error) = startup_error {
@@ -236,7 +241,8 @@ pub(crate) async fn launch(
             let mut daemon_exited = daemon_exit_rx.clone();
             let controller = terminal_control
                 .as_ref()
-                .map(|control| control.controller.clone());
+                .map(|control| control.controller.clone())
+                .or_else(|| plain_stop.clone());
             if controller
                 .as_ref()
                 .is_some_and(|controller| controller.is_requested())
@@ -299,7 +305,9 @@ pub(crate) async fn launch(
                 Ok(cccc_web::ServeOutcome::RestartRequested) => {
                     if terminal_control
                         .as_ref()
-                        .is_some_and(|control| control.controller.is_requested())
+                        .map(|control| &control.controller)
+                        .or(plain_stop.as_ref())
+                        .is_some_and(|controller| controller.is_requested())
                     {
                         break Ok(());
                     }

@@ -43,7 +43,7 @@
   overflow-wrap: anywhere;
   text-align: left;
 }
-@media (min-width: 640px) {
+@container composer (min-width: 600px) {
   .voice-mobile-only,
   .voice-mobile-status {
     display: none;

@@ -19,7 +19,7 @@ function RuntimeDockTickerView({ groupId, entries, isDark, suppressed }: Runtime
   return (
     <div
       className={classNames(
-        "pointer-events-none absolute bottom-[calc(100%+0.8rem)] left-1/2 z-20 w-[min(92vw,560px)] -translate-x-1/2 transition-opacity duration-200 ease-out",
+        "pointer-events-none z-20 mb-1 w-full transition-opacity duration-200 ease-out md:absolute md:bottom-[calc(100%+0.8rem)] md:left-1/2 md:mb-0 md:w-[min(92vw,560px)] md:-translate-x-1/2",
         suppressed ? "invisible opacity-0" : "visible opacity-100",
       )}
       aria-hidden="true"
@@ -32,7 +32,7 @@ function RuntimeDockTickerView({ groupId, entries, isDark, suppressed }: Runtime
             <div
               key={entry.id}
               className={classNames(
-                "runtime-dock-ticker-entry break-words border shadow-[0_14px_36px_-30px_rgba(15,23,42,0.55)] backdrop-blur-xl transition-opacity duration-500 ease-out motion-reduce:animate-none motion-reduce:transition-none",
+                "runtime-dock-ticker-entry hidden last:block md:block break-words border shadow-[0_14px_36px_-30px_rgba(15,23,42,0.55)] backdrop-blur-xl transition-opacity duration-500 ease-out motion-reduce:animate-none motion-reduce:transition-none",
                 isMessage
                   ? "w-fit min-w-0 max-w-[min(84vw,380px)] rounded-2xl px-3 py-1.5 text-left text-[11px] leading-[1.28] whitespace-pre-wrap [overflow-wrap:anywhere] hyphens-auto"
                   : "w-fit max-w-full rounded-full px-2.5 py-1 text-[11px] leading-[1.15] whitespace-pre-wrap",
@@ -42,7 +42,7 @@ function RuntimeDockTickerView({ groupId, entries, isDark, suppressed }: Runtime
                   : "border-black/[0.08] bg-white/[0.78] text-gray-700",
               )}
             >
-              <div className="line-clamp-2">
+              <div className="line-clamp-1 md:line-clamp-2">
                 <span
                   className={classNames(
                     "font-semibold",

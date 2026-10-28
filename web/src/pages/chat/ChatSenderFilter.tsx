@@ -51,7 +51,7 @@ export function ChatSenderFilter({
             type="button"
             aria-label={filtered ? `${t("senderFilter")}: ${triggerLabel}` : t("senderFilter")}
             className={classNames(
-              "flex h-11 md:h-9 min-w-0 max-w-[min(16rem,65vw)] items-center gap-2 rounded-lg px-2 text-[13px] leading-5 focus-visible:outline-2 focus-visible:outline-offset-2",
+              "flex h-11 md:h-9 min-w-0 max-w-[35vw] md:max-w-[min(16rem,65vw)] items-center gap-2 rounded-lg px-2 text-[13px] leading-5 focus-visible:outline-2 focus-visible:outline-offset-2",
               filtered
                 ? "font-semibold text-[var(--color-text-primary)]"
                 : "font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]",

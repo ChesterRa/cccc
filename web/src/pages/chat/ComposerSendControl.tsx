@@ -39,7 +39,7 @@ export function ComposerSendControl({
     >
       <Button
         variant="ghost"
-        className="h-11 min-h-11 min-w-11 rounded-l-xl rounded-r-none px-3 text-xs shadow-none sm:h-9 sm:min-h-9"
+        className="h-[44px] min-h-[44px] min-w-[44px] rounded-l-xl rounded-r-none px-3 text-xs shadow-none @min-[600px]/composer:h-9 @min-[600px]/composer:min-h-9 @min-[600px]/composer:min-w-11"
         onClick={onSend}
         disabled={busy || !canSend}
         aria-label={mode === "send" ? t("sendMessage") : t("messageMode", { mode: active.label })}
@@ -50,13 +50,15 @@ export function ComposerSendControl({
         ) : (
           <Icon size={14} strokeWidth={1.25} />
         )}
-        <span className="hidden max-w-28 truncate sm:inline">{active.label}</span>
+        <span className="hidden max-w-28 truncate @min-[600px]/composer:inline">
+          {active.label}
+        </span>
       </Button>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger asChild>
           <Button
             variant="ghost"
-            className="h-11 min-h-11 w-11 rounded-l-none rounded-r-xl border-0 px-0 sm:h-9 sm:min-h-9 sm:w-8"
+            className="h-[44px] min-h-[44px] w-[44px] rounded-l-none rounded-r-xl border-0 px-0 @min-[600px]/composer:h-9 @min-[600px]/composer:min-h-9 @min-[600px]/composer:w-8"
             disabled={modeDisabled}
             aria-label={t("messageTypeOptions")}
             title={t("messageMode", { mode: active.label })}

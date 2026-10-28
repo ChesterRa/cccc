@@ -928,6 +928,7 @@ export function ChatComposer({
           defaultValue: "Send message ({{shortcut}})",
         });
   const showTypingPlaceholder = Boolean(
+    !isSmallScreen &&
     selectedGroupId &&
     composerGroupSettled &&
     busy !== "send" &&
@@ -945,7 +946,7 @@ export function ChatComposer({
     <footer
       ref={footerRef}
       className={classNames(
-        "relative z-40 flex-shrink-0 px-2 pt-2 pb-[calc(0.375rem+env(safe-area-inset-bottom,0px)*0.6)] sm:px-4 sm:pb-[calc(0.5rem+env(safe-area-inset-bottom,0px)*0.6)]",
+        "relative z-40 flex-shrink-0 px-2 pt-2 pb-[max(0.375rem,env(safe-area-inset-bottom,0px))] sm:px-4 sm:pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]",
         "bg-[var(--color-chat-bg)]",
       )}
     >
@@ -954,7 +955,7 @@ export function ChatComposer({
       ) : null}
       <div
         data-composer-surface
-        className="chat-reading-width rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-1 pt-1 shadow-sm transition-[border-color,box-shadow] duration-150 focus-within:border-[var(--color-border-secondary)] motion-reduce:transition-none"
+        className="@container/composer chat-reading-width rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-1 pt-1 shadow-sm transition-[border-color,box-shadow] duration-150 focus-within:border-[var(--color-border-secondary)] motion-reduce:transition-none"
       >
         {/* Reply indicator */}
         {replyTarget && (
@@ -1276,13 +1277,13 @@ export function ChatComposer({
             <div
               data-composer-action-bar
               className={classNames(
-                "flex flex-wrap items-center gap-2 px-2 pb-2 pt-1 sm:flex-nowrap sm:justify-between",
+                "flex flex-wrap items-center gap-2 px-2 pb-2 pt-1 @min-[600px]/composer:flex-nowrap @min-[600px]/composer:justify-between",
               )}
             >
-              <div className="contents sm:flex sm:min-w-0 sm:flex-1 sm:items-center sm:gap-1.5">
+              <div className="contents @min-[600px]/composer:flex @min-[600px]/composer:min-w-0 @min-[600px]/composer:flex-1 @min-[600px]/composer:items-center @min-[600px]/composer:gap-1.5">
                 <button
                   className={classNames(
-                    "flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors duration-150 disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60 sm:h-9 sm:w-9",
+                    "flex h-[44px] w-[44px] items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors duration-150 disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60 @min-[600px]/composer:h-9 @min-[600px]/composer:w-9",
                     busy !== "send" && selectedGroupId
                       ? isDark
                         ? "hover:bg-white/10 hover:text-[var(--color-text-primary)]"
@@ -1297,7 +1298,7 @@ export function ChatComposer({
                   <AttachmentIcon size={18} />
                 </button>
 
-                <div className="min-w-0 shrink-0 sm:shrink">
+                <div className="min-w-0 shrink-0 @min-[600px]/composer:shrink">
                   <LazyVoiceSecretaryComposerControl
                     isDark={isDark}
                     selectedGroupId={selectedGroupId}

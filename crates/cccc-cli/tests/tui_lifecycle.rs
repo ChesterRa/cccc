@@ -722,6 +722,106 @@ fn headless_ctrl_c_stops_owned_services_without_entering_the_tui() {
     fixture.assert_stopped();
 }
 
+#[cfg(unix)]
+#[test]
+fn headless_interrupt_while_the_web_starts_stops_without_the_forced_exit() {
+    use std::io::BufRead;
+    // As on Windows, the daemon is another process that never sees this
+    // interrupt, so only the host can stop the Web server. The Web library's own
+    // listener registers after its banner, so an interrupt sent on the banner
+    // line usually arrives before it.
+    let fixture = Fixture::new();
+    let mut daemon = fixture
+        .command(&["daemon", "run"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("isolated external daemon");
+    let mut host = None;
+    let mut stderr_reader = None;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let deadline = Instant::now() + WAIT;
+        while !fixture.home.join("daemon/ccccd.addr.json").exists() {
+            assert!(Instant::now() < deadline, "external daemon not ready");
+            assert!(
+                daemon.try_wait().expect("status").is_none(),
+                "external daemon failed"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let child = host.insert(
+            fixture
+                .command(&["--headless"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("headless host"),
+        );
+        // The reader signals the banner the moment it is read, keeping the
+        // interrupt inside the startup window while the wait stays bounded.
+        let stderr = child.stderr.take().expect("host stderr");
+        let (banner_tx, banner_rx) = std::sync::mpsc::channel();
+        stderr_reader = Some(std::thread::spawn(move || {
+            let mut banner_tx = Some(banner_tx);
+            for line in std::io::BufReader::new(stderr).lines() {
+                let Ok(line) = line else { break };
+                if line.contains("Local:")
+                    && let Some(banner_tx) = banner_tx.take()
+                {
+                    let _ = banner_tx.send(());
+                }
+            }
+        }));
+        banner_rx
+            .recv_timeout(WAIT)
+            .expect("headless host did not print its banner");
+        nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(child.id() as i32),
+            nix::sys::signal::Signal::SIGINT,
+        )
+        .expect("interrupt");
+        // Well inside the 60-second forced exit that an unanswered interrupt reaches.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("host status") {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the first interrupt did not stop the Web host"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(status.success(), "headless host failed: {status:?}");
+        assert!(
+            daemon.try_wait().expect("status").is_none(),
+            "interrupt stopped the external daemon"
+        );
+    }));
+    if let Some(mut host) = host {
+        let _ = host.kill();
+        let _ = host.wait();
+    }
+    // The host was the only writer of the pipe, so its exit ends the reader.
+    if let Some(stderr_reader) = stderr_reader {
+        let _ = stderr_reader.join();
+    }
+    let stopped = fixture
+        .command(&["daemon", "stop"])
+        .output()
+        .expect("stop fixture daemon");
+    if !stopped.status.success() {
+        let _ = daemon.kill();
+    }
+    let _ = daemon.wait();
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+    fixture.assert_stopped();
+}
+
 #[test]
 fn quit_preserves_an_existing_daemon() {
     let fixture = Fixture::new();

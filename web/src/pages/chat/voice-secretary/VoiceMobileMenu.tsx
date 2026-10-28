@@ -69,6 +69,7 @@ export function VoiceMobileMenu(props: Props) {
             ref={triggerRef}
             variant="ghost"
             size="iconTouch"
+            className="h-[44px] w-[44px]"
             disabled={props.disabled}
             aria-label={label}
           >

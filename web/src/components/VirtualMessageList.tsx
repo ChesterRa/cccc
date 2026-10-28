@@ -908,7 +908,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const nonVirtualTopMargin = getNonVirtualMessageListTopMargin({ topInset });
 
   return (
-    <div className="relative flex-1 min-h-0 flex flex-col">
+    <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
       <div
         ref={(el) => {
           parentRef.current = el;
