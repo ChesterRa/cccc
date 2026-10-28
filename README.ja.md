@@ -127,7 +127,17 @@ pip 管理下のコマンドは standalone 自己更新を引き続き拒否し�
 cccc
 ```
 
-**http://127.0.0.1:8848** を開く — デフォルトで daemon とローカル Web UI が一緒に起動します。
+対話的なターミナルで `cccc` を実行すると、シンプルなターミナル画面が開き、daemon とローカル Web UI も
+一緒に起動します。この画面はステータスパネルで、Web のアドレス、daemon がこの起動で開始されたかどうか、
+各グループの状態と実行中のメンバー、ネイティブセッションが表示されます。上下キーでグループを選び、Enter で開くと
+起動・停止できます。`/` を入力するとコマンドの一覧が表示されます。`/sessions` ですべてのネイティブセッションを確認でき、
+`/setup` で Codex、Claude Code、Pi、OpenCode のセッションを接続でき、`/quit`（または Ctrl+C）でこの起動で
+開始したものを停止します。それ以外の機能は Web UI にあります。
+
+Web UI 全体は **http://127.0.0.1:8848** で開けます。ターミナル画面が不要な場合（サーバー、コンテナ、
+サービスマネージャー、スクリプトなど）は `cccc --headless`（または `cccc web`）を使ってください。従来どおりの
+ログ出力のままです。入力または出力がターミナルでない場合や、読み取り専用（Exhibit）モードでも、
+`cccc` は headless で動作します。
 `localhost`／`127.0.0.1` から直接利用する場合はパスワード不要で、Access Token も作成しません。LAN、Remote Access、公開 URL、リバースプロキシ経由の利用には明示的な管理者 Token が必要です。
 
 ```bash
@@ -389,7 +399,8 @@ cccc im start
 
 ```bash
 # ライフサイクル
-cccc                           # daemon + Web UI を起動
+cccc                           # daemon + Web UI を起動し、ターミナル画面を開く
+cccc --headless                # ターミナル画面なしで daemon + Web UI を起動（cccc web と同じ）
 cccc daemon start|status|stop  # daemon 管理
 
 # グループ

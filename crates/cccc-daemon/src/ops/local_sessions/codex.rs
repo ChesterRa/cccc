@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::{runtime::Runtime, sync::Semaphore};
 
-// Queue I/O shares a runtime instead of building one for every message. A
+// Native I/O shares a runtime instead of building one for every message. A
 // single qualification slot bounds best-effort post-failure probes; no polling
 // or automatic positive requalification is introduced.
 static RUNTIME: OnceLock<io::Result<Runtime>> = OnceLock::new();
@@ -243,6 +243,33 @@ pub(super) fn submit(
     // An explicit endpoint prevents the queue client from starting another
     // native daemon after the original host has exited.
     let run = async {
+        if let (Some(program), Some(codex_home)) = (
+            session.codex_program.as_deref(),
+            session.codex_home.as_deref(),
+        ) {
+            match cccc_runtime::native_codex_try_steer(
+                program,
+                codex_home,
+                std::path::Path::new(&session.cwd),
+                &session.native_session_id,
+                text,
+                cancelled,
+            )
+            .await
+            {
+                cccc_runtime::NativeCodexSteerOutcome::Accepted => return Outcome::Accepted,
+                cccc_runtime::NativeCodexSteerOutcome::Ambiguous => {
+                    return Outcome::Ambiguous(
+                        "Native Codex did not confirm this handoff; it was not automatically repeated"
+                            .into(),
+                    );
+                }
+                cccc_runtime::NativeCodexSteerOutcome::NotSubmitted => {}
+            }
+        }
+        if cancelled.load(Ordering::Acquire) {
+            return Outcome::Unavailable;
+        }
         let capture = cccc_runtime::capture_command_with_start_evidence(
             &mut command,
             None,
@@ -250,32 +277,34 @@ pub(super) fn submit(
             4096,
         );
         tokio::pin!(capture);
-        loop {
+        let output = loop {
             tokio::select! {
                 biased;
                 // Poll capture first: a returned no-child error is authoritative;
                 // cancellation of an admitted/polled capture is not that proof.
-                output=&mut capture=>return output,
+                output=&mut capture=>break output,
                 ()=tokio::time::sleep(Duration::from_millis(50))=>{
-                    if cancelled.load(Ordering::Acquire){return Err(cccc_runtime::CommandError::Started(std::io::Error::new(std::io::ErrorKind::Interrupted,"Native handoff cancelled")))}
+                    if cancelled.load(Ordering::Acquire){break Err(cccc_runtime::CommandError::Started(std::io::Error::new(std::io::ErrorKind::Interrupted,"Native handoff cancelled")))}
                 }
             }
+        };
+        match output {
+            Ok(output) if output.status.success() => Outcome::Accepted,
+            Ok(_) => Outcome::Rejected(
+                "Native Codex rejected this handoff; check the original session".into(),
+            ),
+            Err(cccc_runtime::CommandError::NotStarted(_)) => Outcome::Unavailable,
+            Err(cccc_runtime::CommandError::Started(_)) => Outcome::Ambiguous(
+                "Native Codex did not confirm this handoff; it was not automatically repeated"
+                    .into(),
+            ),
         }
     };
     let runtime = match runtime() {
         Ok(runtime) => runtime,
         Err(_) => return Outcome::Unavailable,
     };
-    let outcome = match runtime.block_on(run) {
-        Ok(output) if output.status.success() => Outcome::Accepted,
-        Ok(_) => Outcome::Rejected(
-            "Native Codex rejected this handoff; check the original session".into(),
-        ),
-        Err(cccc_runtime::CommandError::NotStarted(_)) => Outcome::Unavailable,
-        Err(cccc_runtime::CommandError::Started(_)) => Outcome::Ambiguous(
-            "Native Codex did not confirm this handoff; it was not automatically repeated".into(),
-        ),
-    };
+    let outcome = runtime.block_on(run);
     if matches!(outcome, Outcome::Rejected(_) | Outcome::Ambiguous(_))
         && !cancelled.load(Ordering::Acquire)
         && let Ok(permit) = QUALIFICATION.try_acquire()

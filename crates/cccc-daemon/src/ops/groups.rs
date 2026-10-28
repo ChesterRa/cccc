@@ -602,6 +602,11 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     authorize(&group, request)?;
     let raw = required_arg(request, "state")?;
     let state: GroupState = serde_json::from_value(Value::String(raw)).map_err(OpError::invalid)?;
+    if state == GroupState::Stopped {
+        return Err(OpError::invalid(
+            "use group_stop to stop a Group and its runtimes",
+        ));
+    }
     let resumes_automation = matches!(group.state, GroupState::Paused)
         && matches!(state, GroupState::Active | GroupState::Idle)
         || matches!(group.state, GroupState::Idle) && matches!(state, GroupState::Active);
@@ -609,7 +614,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         cccc_core::automation::reset_rule_timers_on_resume(home, &group.group_id)
             .map_err(OpError::io)?;
     }
-    if matches!(state, GroupState::Paused | GroupState::Stopped) {
+    if state == GroupState::Paused {
         super::dots_events::invalidate_group(home, &group)?;
         super::grok_webhook::invalidate_group(home, &group)?;
         if group.actors.iter().any(|a| a.runtime.is_web_model()) {

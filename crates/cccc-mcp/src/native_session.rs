@@ -118,6 +118,23 @@ impl Context {
         args.remove("_cccc_native_binding");
         args.remove("_cccc_native_source_binding");
         args.remove("_cccc_web_binding");
+        let (session_action, session_mode) = if name == "cccc_session" {
+            // Identity comes from the native host, never the model's selector.
+            args.remove("source_id");
+            args.remove("by");
+            let action = session_action(&args)?;
+            let mode = if action == "send" {
+                Some(crate::argument_normalization::message_mode(
+                    &mut args, "send",
+                )?)
+            } else {
+                None
+            };
+            validate_session_args(action, &mut args)?;
+            (Some(action), mode)
+        } else {
+            (None, None)
+        };
         let source_id = if self.runtime == "opencode" {
             opencode_session_id(&request["params"]["_meta"])?.map(|id| format!("opencode:{id}"))
         } else if self.runtime != "codex" {
@@ -125,9 +142,7 @@ impl Context {
         } else {
             native_thread_id(&request["params"]["_meta"])?.map(|id| format!("codex:{id}"))
         };
-        if name == "cccc_session"
-            && args.get("action").and_then(Value::as_str).unwrap_or("list") == "list"
-        {
+        if session_action == Some("list") {
             let mut sources =
                 daemon(client, "local_session_list", json!({"source_id":source_id})).await?;
             sources["self_source_id"] = json!(source_id);
@@ -156,17 +171,12 @@ impl Context {
                 "The OpenCode MCP process does not belong to this source's captured backend".into(),
             );
         }
-        let session_op = if name == "cccc_session" {
+        let session_op = if let Some(action) = session_action {
             args.insert("source_id".into(), json!(source_id));
-            args.remove("by");
-            let action = args
-                .remove("action")
-                .and_then(|v| v.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "list".into());
-            let op = match action.as_str() {
+            args.remove("action");
+            let op = match action {
                 "send" => {
-                    let mode = crate::argument_normalization::message_mode(&mut args, "send")?;
-                    args.insert("message_mode".into(), json!(mode));
+                    args.insert("message_mode".into(), json!(session_mode));
                     args.insert("require_peer_insight".into(), json!(true));
                     "local_session_send"
                 }
@@ -203,10 +213,40 @@ impl Context {
             .and_then(|actors| {
                 actors
                     .iter()
-                    .find(|a| a["external_session_id"] == source_id && a["enabled"] == true)
+                    .find(|a| a["external_session_id"] == source_id)
             })
-            .ok_or("This native source is not an enabled member of that Group")?
+            .ok_or_else(|| {
+                let previous = actors["actors"].as_array().into_iter().flatten()
+                    .filter_map(|actor| actor["external_session_id"].as_str())
+                    .filter_map(|id| cccc_core::local_sessions::read_record(home,id).ok())
+                    .filter(|old| old.host != session.host && session.same_native_conversation(old)
+                        && old.retired != Some(cccc_core::local_sessions::RetireReason::IntegrationDisabled))
+                    .collect::<Vec<_>>();
+                let reload = if session.runtime == cccc_contracts::local_session::LocalSessionRuntime::Pi {"/reload"} else {"/reload-plugins"};
+                let next = if let Some(old)=previous.iter().find(|old|old.host_alive()) {
+                    format!("Another host of this conversation is still running as PID {}. If you intend to continue here, close that instance, then use {reload} in the original application to reload CCCC and retry recovery. ",old.host.pid)
+                } else if let [old]=previous.as_slice() && old.host.has_exited() {
+                    format!("This Group still references your conversation's previous host PID {}. Use {reload} in the original application to reload CCCC and retry recovery after closing any other live instance. ",old.host.pid)
+                } else {String::new()};
+                ToolCallError::new(
+                    "native_membership_missing",
+                    format!("Native source {source_id} is not a member of Group {group_id}. {next}If membership is still missing, ask the user to open Connect existing sessions, select this existing Group, and Connect to Group."),
+                    json!({"group_id":group_id,"source_id":source_id}).as_object().expect("membership details").clone(),
+                )
+            })?
             .clone();
+        if actor["enabled"] != true {
+            return Err(ToolCallError::new(
+                "native_membership_paused",
+                format!(
+                    "CCCC access for native source {source_id} in Group {group_id} is paused. Ask the user to choose Resume CCCC access for this member; restarting the native application does not enable paused access."
+                ),
+                json!({"group_id":group_id,"source_id":source_id,"actor_id":actor["id"]})
+                    .as_object()
+                    .expect("membership details")
+                    .clone(),
+            ));
+        }
         let actor: cccc_contracts::Actor = serde_json::from_value(actor)
             .map_err(|_| "Native membership identity is unavailable")?;
         let binding = cccc_contracts::local_session::LocalSessionBinding {
@@ -236,6 +276,63 @@ impl Context {
         )
         .await
     }
+}
+
+fn session_action(args: &Map<String, Value>) -> std::result::Result<&'static str, ToolCallError> {
+    match args.get("action") {
+        None => Ok("list"),
+        Some(Value::String(action)) => match action.as_str() {
+            "list" => Ok("list"),
+            "send" => Ok("send"),
+            "conversation" => Ok("conversation"),
+            "leave" => Ok("leave"),
+            _ => Err("invalid_args: action must be list, send, conversation or leave".into()),
+        },
+        _ => Err("invalid_args: action must be list, send, conversation or leave".into()),
+    }
+}
+
+fn validate_session_args(
+    action: &str,
+    args: &mut Map<String, Value>,
+) -> std::result::Result<(), ToolCallError> {
+    let allowed: &[&str] = match action {
+        "list" => &["action"],
+        // mode has already been validated and removed at the MCP boundary.
+        "send" => &[
+            "action",
+            "source_ids",
+            "group_id",
+            "to",
+            "text",
+            "client_id",
+            "insight",
+        ],
+        "conversation" => &["action", "source_ids", "title"],
+        "leave" => &["action", "group_id"],
+        _ => unreachable!("validated session action"),
+    };
+    let unused_default = |field: &str, value: &Value| {
+        // Some clients fill the shared catalog's optional fields. Ignore only
+        // unset values or its default mode, never actual message intent.
+        let known = matches!(
+            field,
+            "source_ids" | "group_id" | "text" | "title" | "to" | "mode" | "client_id" | "insight"
+        );
+        known
+            && (value.is_null()
+                || value.as_str().is_some_and(|value| value.trim().is_empty())
+                || value.as_array().is_some_and(Vec::is_empty)
+                || (field == "mode" && value == "send"))
+    };
+    if let Some((field, _)) = args
+        .iter()
+        .find(|(field, value)| !allowed.contains(&field.as_str()) && !unused_default(field, value))
+    {
+        return Err(format!("invalid_args: cccc_session action={action} does not use {field}. To send a message, use action=send with source_ids and text, or group_id and to; conversation only creates a Group.").into());
+    }
+    args.retain(|field, _| allowed.contains(&field.as_str()));
+    Ok(())
 }
 
 async fn daemon(
@@ -293,6 +390,10 @@ fn opencode_session_id(meta: &Value) -> std::result::Result<Option<String>, Tool
 #[cfg(all(test, target_os = "linux"))]
 #[path = "native_session/authority_tests.rs"]
 mod authority_tests;
+
+#[cfg(test)]
+#[path = "native_session/action_tests.rs"]
+mod action_tests;
 
 #[cfg(test)]
 mod tests {

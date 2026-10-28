@@ -1094,57 +1094,6 @@ select {
   content: none;
 }
 
-/* Glass status pill — premium badge */
-.glass-status-pill {
-  background-clip: padding-box;
-  border: 1px solid transparent;
-  letter-spacing: 0.05em;
-}
-
-.glass-status-pill-run {
-  background: rgba(16, 185, 129, 0.12);
-  border-color: rgba(16, 185, 129, 0.2);
-  color: #059669;
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.15);
-}
-
-.dark .glass-status-pill-run {
-  background: rgba(52, 211, 153, 0.1);
-  border-color: rgba(52, 211, 153, 0.2);
-  color: #34d399;
-  box-shadow: 0 0 10px rgba(52, 211, 153, 0.12);
-}
-
-.glass-status-pill-paused {
-  background: rgba(245, 158, 11, 0.1);
-  border-color: rgba(245, 158, 11, 0.2);
-  color: #d97706;
-}
-
-.dark .glass-status-pill-paused {
-  background: rgba(251, 191, 36, 0.1);
-  border-color: rgba(251, 191, 36, 0.2);
-  color: #fbbf24;
-}
-
-.glass-status-pill-stop {
-  background: var(--glass-tab-bg);
-  border-color: var(--glass-border-subtle);
-  color: var(--color-text-tertiary);
-}
-
-.glass-status-pill-idle {
-  background: rgba(35, 36, 37, 0.08);
-  border-color: rgba(35, 36, 37, 0.16);
-  color: rgb(35, 36, 37);
-}
-
-.dark .glass-status-pill-idle {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.16);
-  color: #ffffff;
-}
-
 /* Glow pulse — subtle premium animation */
 @keyframes glow-breathe {
   0%,

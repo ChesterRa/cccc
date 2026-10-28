@@ -2,6 +2,8 @@ mod cancellation;
 mod command;
 mod command_output;
 mod command_session;
+mod diagnostic;
+pub use diagnostic::{DiagnosticLog, diagnostic, log_diagnostics_to};
 pub mod deepseek_acp;
 pub mod deepseek_supervisor;
 mod executable;
@@ -9,7 +11,8 @@ mod history_access;
 mod manager;
 mod native_codex;
 pub use native_codex::{
-    NativeCodexSessionInfo, native_codex_can_receive, native_codex_session_info,
+    NativeCodexSessionInfo, NativeCodexSteerOutcome, native_codex_can_receive,
+    native_codex_session_info, native_codex_try_steer,
 };
 #[cfg(all(test, windows))]
 mod manager_windows_tests;

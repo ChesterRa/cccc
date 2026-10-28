@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+
+- A terminal interface for a bare `cccc` in an interactive terminal. Within at most 100 columns it shows the actual Web address, `CCCC_HOME`, whether this launch owns the daemon, a Group table with each Group's status and running count, and the native sessions this CCCC knows. Typing `/` lists the commands with their descriptions; Tab completes without running, and in terminals with bracketed paste, pasted newlines do not run a command. `/setup` connects Codex, Claude Code, Pi and OpenCode sessions through the existing enable step, with nothing picked by default and each app's next step shown afterwards. `/sessions` lists every native session and shows one session's details. `/quit` or Ctrl+C stops what the launch started and then reports what actually stopped. Tested on Linux; macOS and Windows terminals still need acceptance testing.
+- Groups in the terminal interface use the Web UI's status words. Up/Down and Enter on the main screen open a Group in `/groups`, which shows its recorded state, its actors and a link that opens it in the Web UI, and starts (`s`) or stops (`x`) it after a confirmation; a paused Group can be stopped directly. A start or stop whose answer never arrives is reported as unconfirmed, never as done.
+- `cccc --headless` starts the daemon and the Web UI without the terminal interface, with plain log output, for servers, containers, service managers and scripts. It is the same launch as `cccc web` and cannot be combined with a subcommand. `cccc --help` now describes the launch modes, the global options and every top-level command.
+
+### Changed
+
+- **Migration:** a bare `cccc` in an interactive terminal now opens the terminal interface instead of printing launch logs. Scripts and tmux automation that start `cccc` in a terminal should use `cccc --headless` (or `cccc web`), which keeps the plain output. Launches without a terminal or in read-only Exhibit mode stay plain. Options such as `--port` no longer select the plain output: `cccc --port 9000` in a terminal opens the interface on port 9000.
+- The Web UI and the terminal interface call a Group that was not stopped or paused, but has no running actor, Offline instead of Stopped; Stopped now means only that the Group was stopped. An Offline Group still offers Stop in the Web UI.
+- When the daemon a launch started cannot be confirmed stopped, `cccc` and `cccc web` now exit with an error instead of only printing a warning. Normal starts and stops are unchanged.
+- The Web native-session setup section leads with `/setup` and the four enable commands; registration checks and runtime troubleshooting moved into a collapsed section. With no session connected yet it opens by itself, and when a listed session cannot receive, a link opens its troubleshooting steps.
+- After an explicit Codex **Refresh status** in a native member's panel, the Web reads the Actor list again, so the status line above it no longer lags behind the check.
+- Messages to a native Codex session that is in the middle of a turn are now added to that turn, as pressing Enter does in the Codex CLI. Before, they were queued until the turn ended and then each opened a turn of its own, so one long turn could be followed by dozens of short turns re-reading messages Codex had already handled. While Codex is idle, compacting, or waiting for an approval or an answer, messages are queued as before. Your own input mode in Codex clients is unchanged.
+- Messages and system notices delivered to an actor show their original timestamp, as `sent=2026-10-28T01:45:03Z` (UTC) in the header. A runtime can show queued input long after CCCC handed it over, so an agent can tell an old instruction from a new one without looking up the history. Scripts that match the exact header text need updating.
+- Reading one message by `event_id` with the MCP `cccc_message_history` tool returns it once: `delivery_text` as before, plus a single `message` holding the event, instead of a `messages` list that repeated its text and insight. Quotes, attachments, references and source fields stay in `message`, and a text the delivery does not show in full, such as a typed `/install` command, is kept. History lists and the daemon `message_history` result are unchanged.
+
+### Fixed
+
+- Resuming the same Claude Code or Pi conversation after its former host exits reconnects its original Group memberships, retaining roles, paused access and pending-work receipts. Matching requires the original conversation and provider configuration; live duplicate hosts and conflicting memberships are not taken over. Claude's in-app resume also reattaches its long-lived Monitor.
+- Native `cccc_session` rejects message parameters on create-only, list or leave actions, instead of accepting them while discarding the message. Missing and paused memberships now identify the source and Group and explain the recovery action.
+- `cccc group set-state stopped` and the MCP `cccc_group` `set_state` action with `stopped` now stop the Group the way `group stop` does. Before, they recorded the stopped state while its actors kept running. The daemon's `group_set_state` now rejects `stopped`, as its IPC contract specifies; use `group_stop`. The Web API rejects `POST /api/v1/groups/<group_id>/state?state=stopped` the same way; use `POST /api/v1/groups/<group_id>/stop`.
+
 ## [0.4.45]
 
 ### Added

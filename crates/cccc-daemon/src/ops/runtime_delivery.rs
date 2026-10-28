@@ -132,10 +132,10 @@ pub fn claim_deliveries(
     force_ambiguous: bool,
 ) -> Result<(bool, HashMap<String, String>), OpError> {
     if std::env::var_os("CCCC_DELIVERY_QUERY_PROBE").is_some_and(|value| value == "1") {
-        eprintln!(
+        cccc_runtime::diagnostic(format_args!(
             "CCCC_DELIVERY_STATE_QUERY {}",
             json!({"group_id":group.group_id,"actors":deliveries.len()})
-        );
+        ));
     }
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;

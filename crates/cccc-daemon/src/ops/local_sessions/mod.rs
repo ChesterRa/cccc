@@ -14,6 +14,7 @@ use std::sync::atomic::AtomicBool;
 
 mod codex;
 mod conversations;
+mod resume;
 mod store;
 mod transport;
 
@@ -329,6 +330,14 @@ fn attach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         &required_arg(request, "source_id")?,
         &native_id(request, "connection_id")?,
     )?;
+    if let Err(error) = resume::restore_memberships(home, &receiver) {
+        // Recovery is an additional lifecycle action, not the receive lease.
+        // An unavailable registry must not disconnect already joined Groups.
+        cccc_runtime::diagnostic(format_args!(
+            "Could not inspect native conversation recovery: source_id={} error_code={}",
+            receiver.source_id, error.code
+        ));
+    }
     object(json!({"source":receiver.source()}))
 }
 

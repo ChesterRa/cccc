@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { GroupStatusIndicator } from "../../src/components/layout/GroupStatusIndicator";
 import { IconButton } from "../../src/components/ui/icon-button";
-import { getGroupStatusUnified } from "../../src/utils/groupStatus";
+import { getGroupStatus } from "../../src/utils/groupStatus";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -33,7 +33,7 @@ describe("shared UI primitives", () => {
 
   it("shows a localized group status instead of an internal status code", () => {
     const html = renderToStaticMarkup(
-      <GroupStatusIndicator status={getGroupStatusUnified(true, "active")} variant="badge" />,
+      <GroupStatusIndicator status={getGroupStatus(true, "active")} variant="badge" />,
     );
 
     expect(html).toContain("运行中");

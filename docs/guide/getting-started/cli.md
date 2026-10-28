@@ -201,8 +201,10 @@ In another terminal, start the Web UI:
 cccc web
 ```
 
-Running `cccc` with no subcommand does the same. Both reuse the daemon if it is
-already running, or start it if needed. Open http://127.0.0.1:8848/ with the
+`cccc` with no subcommand starts the same services; in an interactive terminal
+it also opens a status panel for this launch, and `cccc --headless` is identical
+to `cccc web`. Both reuse the daemon if it is already running, or start it if
+needed. Open http://127.0.0.1:8848/ with the
 default settings; if you configured a different binding, use the address shown
 at startup. Use `cccc web --port 9000` to choose another port.
 

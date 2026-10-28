@@ -130,7 +130,17 @@ that mismatch an explicit error. See the [upgrade FAQ](https://chesterra.github.
 cccc
 ```
 
-Open **http://127.0.0.1:8848** — by default, CCCC brings up the daemon and the local Web UI together.
+In an interactive terminal, `cccc` opens a small terminal interface and brings up the daemon and the
+local Web UI with it. The screen is a status panel: the Web address, whether this launch owns the
+daemon, your Groups with their status and running actors, and your native sessions. Up/Down picks a
+Group and Enter opens it to start or stop it. Type `/` to see the commands: `/sessions` lists every
+native session, `/setup` connects Codex, Claude Code, Pi or OpenCode sessions, and `/quit` (or
+Ctrl+C) stops what this launch started. Everything else stays in the Web UI.
+
+Open **http://127.0.0.1:8848** for the full Web UI. To run without the terminal interface — on a
+server, in a container, under a service manager or from scripts — use `cccc --headless` (or
+`cccc web`), which keeps the plain log output. `cccc` also runs headless when its input or output is
+not a terminal, or in read-only Exhibit mode.
 Direct `localhost` / `127.0.0.1` use stays passwordless and does not create an Access Token.
 Explicit Admin Access Tokens are required only when enabling LAN, Remote Access, public URL, or
 reverse-proxied access.
@@ -394,7 +404,8 @@ Use plain text or `/send @foreman <message>` for coordination, `/status` to insp
 
 ```bash
 # Lifecycle
-cccc                           # start daemon + web UI
+cccc                           # start daemon + Web UI with the terminal interface
+cccc --headless                # start daemon + Web UI without it (same as cccc web)
 cccc daemon start|status|stop  # daemon management
 
 # Groups

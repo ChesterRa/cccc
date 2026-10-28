@@ -67,6 +67,14 @@ Actors are identities within a group. CCCS v1 standardizes only:
 
 A user-owned native session MAY participate through ordinary Group Actors. Source discovery MUST NOT manufacture collaboration history. An administrator MAY explicitly admit a new native source to an existing Group as a new Actor; this MUST NOT silently replace an earlier identity, transfer its role, or inherit its pending work. In-flight native requests MUST remain bound to their captured source, Actor generation and native lifecycle revision; reusing a textual Actor ID MUST NOT transfer that authority. Transport acceptance, model execution and explicit read/reply receipts remain distinct; a receiver failure MUST NOT indefinitely block later messages or unrelated recipients. Native session ownership and local adapter operations are defined in the daemon IPC contract.
 
+Resuming the same admitted native conversation after its former host exits is
+distinct from admitting another conversation. At the receive-attachment boundary,
+the daemon MAY restore that conversation's existing Actor binding only with the
+exact conversation/configuration and exited-host evidence defined in the IPC
+contract. This MUST retain Actor generation, role and access, preserve Group
+pause/stop, and audit the changed source. It MUST NOT revive disabled integration,
+choose among conflicting memberships, or replay submitted or uncertain work.
+
 Copying or importing a Group MUST NOT implicitly activate its native memberships, even within the same local instance. Imported native Actors retain their source references and history with collaboration access disabled until an explicit user action; the source Group is unchanged. A native source reference is not a portable credential or a grant of live receiver authority.
 
 ## 4. Event Envelope (Normative)

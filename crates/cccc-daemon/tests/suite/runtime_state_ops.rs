@@ -63,7 +63,7 @@ fn web_model_actor_uses_the_structured_turn_contract_without_a_terminal() {
         .expect("event ids");
     for event_id in &event_ids {
         let event_id = event_id.as_str().expect("event id");
-        assert!(coalesced.contains(&format!("[event_id={event_id}]")));
+        assert!(coalesced.contains(&format!("[event_id={event_id} sent=")));
     }
     let turn_id = turn.result["turn"]["turn_id"]
         .as_str()

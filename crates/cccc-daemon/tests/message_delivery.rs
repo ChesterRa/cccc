@@ -106,7 +106,20 @@ async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
         .as_str()
         .expect("reply event id");
 
-    wait_for(&client, &group_id, &format!("[event_id={reply_event_id}]")).await;
+    // The envelope carries the event's original timestamp to the second.
+    let sent = |result: &Map<String, Value>| {
+        let ts = result["event"]["ts"].as_str().expect("event ts");
+        format!("{}Z", &ts[..19])
+    };
+    let (first_sent, second_sent) = (sent(&first.result), sent(&second.result));
+    let (notify_sent, reply_sent) = (sent(&notify.result), sent(&reply.result));
+
+    wait_for(
+        &client,
+        &group_id,
+        &format!("[event_id={reply_event_id} sent={reply_sent}]"),
+    )
+    .await;
     let tail = daemon_call(
         &client,
         "terminal_tail",
@@ -116,14 +129,16 @@ async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
     let text = tail.result["text"].as_str().unwrap_or_default();
     assert!(text.contains("PREAMBLE:[CCCC] You are peer1"));
     assert!(text.contains(&format!(
-        "FIRST:[cccc] user → peer1 [event_id={first_event_id}]: one"
+        "FIRST:[cccc] user → peer1 [event_id={first_event_id} sent={first_sent}]: one"
     )));
     assert!(text.contains(&format!(
-        "SECOND:[cccc] user → peer1 [event_id={second_event_id}]: two"
+        "SECOND:[cccc] user → peer1 [event_id={second_event_id} sent={second_sent}]: two"
     )));
-    assert!(text.contains("THIRD:[cccc] SYSTEM (info): notice"));
     assert!(text.contains(&format!(
-        "FOURTH:[cccc] user → peer1 (reply:{}) [event_id={reply_event_id}]",
+        "THIRD:[cccc] SYSTEM (info) [sent={notify_sent}]: notice"
+    )));
+    assert!(text.contains(&format!(
+        "FOURTH:[cccc] user → peer1 (reply:{}) [event_id={reply_event_id} sent={reply_sent}]",
         &first_event_id[..8]
     )));
     assert!(text.contains("> \"one\": fix it"));

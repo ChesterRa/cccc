@@ -88,6 +88,10 @@ async fn core_inbox_read_consumes_native_daemon_batches() {
         history["result"]["structuredContent"]["messages"][0]["id"],
         direct_event_id
     );
+    assert_eq!(
+        history["result"]["structuredContent"]["messages"][0]["data"]["text"],
+        "direct"
+    );
 
     let exact = mcp_call(
         &home,
@@ -97,12 +101,13 @@ async fn core_inbox_read_consumes_native_daemon_batches() {
         json!({"event_id":direct_event_id}),
     )
     .await;
-    assert_eq!(
-        exact["result"]["structuredContent"]["messages"][0]["id"],
-        direct_event_id
-    );
+    let exact = &exact["result"]["structuredContent"];
+    assert_eq!(exact["message"]["id"], direct_event_id);
+    assert!(exact.get("messages").is_none());
+    assert!(exact.get("has_more").is_none());
+    assert!(exact["message"]["data"].get("text").is_none());
     assert!(
-        exact["result"]["structuredContent"]["delivery_text"]
+        exact["delivery_text"]
             .as_str()
             .expect("full delivery")
             .contains("direct")
@@ -110,6 +115,124 @@ async fn core_inbox_read_consumes_native_daemon_batches() {
 
     daemon_task.abort();
     let _ = daemon_task.await;
+}
+
+#[tokio::test]
+async fn exact_history_read_returns_the_delivered_text_once_without_dropping_metadata() {
+    let _guard = daemon_fixture_guard().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("exact history", "").expect("group");
+    cccc_core::actors::add(&mut group, cccc_contracts::Actor::new("peer1")).expect("actor");
+    store.save(&group).expect("save group");
+    let daemon_home = home.clone();
+    let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = DaemonClient::new(home.clone());
+    wait_for_daemon(&client).await;
+
+    let original = "An original request that is longer than the quote shown in the delivery header, \
+                    so the stored reply quote keeps more of it than the rendered one.";
+    let body = "Line one of the reply.\nLine two of the reply.";
+    let insight = "The stored quote is longer than the rendered one.";
+    let original_id = send_message(&client, &group.group_id, original, "send").await;
+    let reply = daemon_call(
+        &client,
+        "reply",
+        json!({
+            "group_id":group.group_id,"by":"user","reply_to":original_id,"to":["peer1"],
+            "text":body,"insight":insight,
+        }),
+    )
+    .await;
+    let reply_id = reply["event"]["id"].as_str().expect("reply id");
+    let quote = reply["event"]["data"]["quote_text"]
+        .as_str()
+        .expect("stored quote");
+
+    let exact = mcp_call(
+        &home,
+        &group.group_id,
+        1,
+        "cccc_message_history",
+        json!({"event_id":reply_id}),
+    )
+    .await;
+    let exact = &exact["result"]["structuredContent"];
+    let delivery_text = exact["delivery_text"].as_str().expect("delivery text");
+    assert!(delivery_text.contains(body) && delivery_text.contains(insight));
+    assert!(
+        !delivery_text.contains(quote),
+        "the header abbreviates the quote"
+    );
+    let data = &exact["message"]["data"];
+    assert!(data.get("text").is_none() && data.get("insight").is_none());
+    assert_eq!(data["quote_text"], quote);
+    assert_eq!(data["reply_to"], original_id);
+    assert_eq!(data["to"], json!(["peer1"]));
+    assert_eq!(exact["message"]["kind"], "chat.message");
+    assert_eq!(exact["message"]["ts"], reply["event"]["ts"]);
+    let payload = serde_json::to_string(exact).expect("payload");
+    for value in [body, insight] {
+        let encoded = serde_json::to_string(value).expect("encoded");
+        assert_eq!(payload.matches(encoded.trim_matches('"')).count(), 1);
+    }
+
+    // The /install delivery shows capability instructions, not the typed text.
+    let install_id = send_message(&client, &group.group_id, "/install owner/repo", "mail").await;
+    let install = mcp_call(
+        &home,
+        &group.group_id,
+        2,
+        "cccc_message_history",
+        json!({"event_id":install_id}),
+    )
+    .await;
+    let install = &install["result"]["structuredContent"];
+    assert!(
+        install["delivery_text"]
+            .as_str()
+            .expect("install delivery")
+            .contains("[cccc] Slash command: /install")
+    );
+    assert_eq!(install["message"]["data"]["text"], "/install owner/repo");
+
+    // Reading the exact Mail item leaves it unread.
+    let inbox = mcp_call(&home, &group.group_id, 3, "cccc_inbox_read", json!({})).await;
+    assert_eq!(
+        inbox["result"]["structuredContent"]["messages"][0]["id"],
+        install_id
+    );
+
+    let unseen = mcp_call(
+        &home,
+        &group.group_id,
+        4,
+        "cccc_message_history",
+        json!({"event_id":"missing"}),
+    )
+    .await;
+    assert!(
+        unseen.get("error").is_some() || unseen["result"]["isError"] == json!(true),
+        "unknown events stay unavailable: {unseen}"
+    );
+
+    daemon_task.abort();
+    let _ = daemon_task.await;
+}
+
+async fn daemon_call(client: &DaemonClient, op: &str, args: Value) -> Value {
+    let response = client
+        .call(&DaemonRequest {
+            v: 1,
+            op: op.into(),
+            args: args.as_object().cloned().expect("daemon args"),
+        })
+        .await
+        .expect("daemon call");
+    assert!(response.ok, "{op}: {:?}", response.error);
+    Value::Object(response.result)
 }
 
 #[tokio::test]

@@ -76,7 +76,7 @@
   },
   {
     "name": "cccc_message_history",
-    "description": "Inspect actor-visible chat history without changing Mail read state. Pass event_id from a native notification to read that exact message or system notice and its full delivery_text/instructions; do not combine event_id with filters or pagination. Otherwise inspect past Send, Send + Reply, or Mail messages; routine Mail handling should use cccc_inbox_read instead.",
+    "description": "Inspect actor-visible chat history without changing Mail read state. Pass event_id from a native notification to read that exact message or system notice: delivery_text has its full text and instructions, and message has the event without a text or insight already shown there. Do not combine event_id with filters or pagination. Otherwise list past Send, Send + Reply, or Mail messages; routine Mail handling should use cccc_inbox_read instead.",
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -115,7 +115,7 @@
         },
         "event_id": {
           "type": "string",
-          "description": "Read this exact visible message or system notice, including full delivery_text. Exclusive with mode, query, before_event_id and limit."
+          "description": "Read this exact visible message or system notice, returned as full delivery_text plus message. Exclusive with mode, query, before_event_id and limit."
         },
         "limit": {
           "type": "integer",
@@ -1299,7 +1299,7 @@
             "paused",
             "stopped"
           ],
-          "description": "Required when action=set_state"
+          "description": "Required when action=set_state. stopped calls group_stop to stop managed runtimes and Group delivery."
         }
       },
       "required": []
@@ -3208,7 +3208,7 @@
   },
   {
     "name": "cccc_session",
-    "description": "Communicate with independently started, opted-in native Codex, Claude, Pi and OpenCode V2 sessions without pairwise invitations. List receive-ready sources and self_memberships (existing Group IDs/titles, your Actor ID/role, enabled access and Group state); use that read-only list after a context reset, then bootstrap the chosen explicit Group. Send directly using source_ids without broadcasting to other members of a reused Group; create an ordinary persistent multi-session Group; or leave a Group without stopping the original runtime. Only available in the native-session MCP integration.",
+    "description": "Communicate with independently started, opted-in native Codex, Claude, Pi and OpenCode V2 sessions without pairwise invitations. List receive-ready sources and self_memberships (existing Group IDs/titles, your Actor ID/role, enabled access and Group state); use that read-only list after a context reset, then bootstrap the chosen explicit Group. Use action=send with source_ids and text to contact selected sessions, creating or reusing a Group. action=conversation only creates a Group and accepts source_ids and optional title; it does not send a message and rejects nonempty message fields or non-default delivery modes. action=list only lists; action=leave accepts group_id. Unused optional fields with null/empty values and the default mode=send are ignored on these non-send actions. Only available in the native-session MCP integration.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": false,
@@ -3239,10 +3239,12 @@
           "type": "string"
         },
         "text": {
-          "type": "string"
+          "type": "string",
+          "description": "Message body for action=send only. conversation creates a Group without sending."
         },
         "title": {
-          "type": "string"
+          "type": "string",
+          "description": "Optional Group title for action=conversation only."
         },
         "to": {
           "description": "Group recipients for send with an explicit group_id; cannot be used with source_ids.",

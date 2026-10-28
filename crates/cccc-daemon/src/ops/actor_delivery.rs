@@ -500,10 +500,10 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
             .iter()
             .filter(|actor| actor.enabled)
             .position(|actor| actor.id == actor_id);
-        eprintln!(
+        cccc_runtime::diagnostic(format_args!(
             "CCCC_DELIVERY_QUERY {}",
             serde_json::json!({"group_id":group.group_id,"actor_index":actor_index,"selected":events.len()})
-        );
+        ));
     }
     let native = !actor.external_session_id.is_empty();
     let full_page = events.len() == QUEUE_CAPACITY;

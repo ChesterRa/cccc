@@ -2292,7 +2292,6 @@ async fn codex_handoff_failure_rechecks_only_channel_qualification_and_never_rep
             &json!({"outcome":outcome,"after":after}),
         )
         .expect("synthetic queue outcome");
-        let since = fixture.native_calls().len();
         let sent = fixture.request(&home, "message_send", json!({"group_id":group,"by":"user","to":[actor],"message_mode":"send","text":"SYNTHETIC_HANDOFF"})).await;
         let event_id = sent["event"]["id"].as_str().expect("source event");
         let receipt = fixture.wait_receipt(&home, group, event_id, expected).await;
@@ -2313,6 +2312,15 @@ async fn codex_handoff_failure_rechecks_only_channel_qualification_and_never_rep
             1,
             "the fake public queue was actually called once before the failure"
         );
+        // The send has its own read-only steer preflight. Qualification starts
+        // after the queue handoff; an exited preflight proxy is not evidence
+        // that the post-failure qualification has settled.
+        let since = fixture
+            .native_calls()
+            .iter()
+            .rposition(|call| call["method"] == "queue")
+            .expect("recorded queue handoff")
+            + 1;
         assert!(
             !serde_json::to_string(&receipt)
                 .expect("receipt")
@@ -2432,8 +2440,8 @@ async fn codex_handoff_failure_rechecks_only_channel_qualification_and_never_rep
                 .iter()
                 .map(|call| call["method"].as_str().expect("method"))
                 .collect::<Vec<_>>(),
-            ["queue"],
-            "accepted handoffs do not add a probe"
+            ["proxy", "initialize", "initialized", "thread/read", "queue"],
+            "accepted handoffs preflight the current turn but add no post-failure qualification"
         );
         assert_eq!(
             calls

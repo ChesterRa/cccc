@@ -465,11 +465,11 @@ mod tests {
         )
         .expect("speaker-window ASR");
         assert!(!transcript.segments.is_empty());
-        eprintln!(
+        cccc_runtime::diagnostic(format_args!(
             "native diarization: {} ranges, {} speakers, {} transcript rows",
             raw_segments.len(),
             diarization["num_speakers"].as_i64().unwrap_or(0),
             transcript.segments.len()
-        );
+        ));
     }
 }

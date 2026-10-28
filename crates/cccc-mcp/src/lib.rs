@@ -5,6 +5,7 @@ mod code_mode;
 mod context_projection;
 mod cross_group;
 mod file_read;
+mod history_projection;
 mod local_patch;
 mod local_sessions;
 mod local_tools;
@@ -172,8 +173,12 @@ pub async fn shutdown(home: &HomeLayout) {
     code_mode::shutdown(home).await;
     match commands.await {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => eprintln!("[cccc] local command shutdown failed: {error}"),
-        Err(error) => eprintln!("[cccc] local command cleanup worker failed: {error}"),
+        Ok(Err(error)) => cccc_runtime::diagnostic(format_args!(
+            "[cccc] local command shutdown failed: {error}"
+        )),
+        Err(error) => cccc_runtime::diagnostic(format_args!(
+            "[cccc] local command cleanup worker failed: {error}"
+        )),
     }
 }
 

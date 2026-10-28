@@ -13,13 +13,13 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 mod extension;
-mod setup;
+pub(crate) mod setup;
 
 pub async fn run(home: &HomeLayout, action: SessionsAction) -> Result<()> {
     let client = DaemonClient::new(home.clone());
     match action {
-        SessionsAction::Enable { runtime } => setup::enable(home, &runtime),
-        SessionsAction::Disable { runtime } => setup::disable(home, &runtime),
+        SessionsAction::Enable { runtime } => setup::enable(home, &runtime).await?.print(),
+        SessionsAction::Disable { runtime } => setup::disable(home, &runtime).await?.print(),
         SessionsAction::List { include_offline } => print(
             call(
                 &client,
@@ -365,6 +365,7 @@ async fn receive(home: &HomeLayout, host_pid: Option<u32>) -> Result<()> {
     let connection_id = uuid::Uuid::new_v4().to_string();
     let client = DaemonClient::new(home.clone()).with_timeout(Duration::from_secs(2));
     let mut attached = false;
+    let mut attached_revision = String::new();
     let mut heartbeat_at = tokio::time::Instant::now() - Duration::from_secs(5);
     let mut output = tokio::io::stdout();
     let mut stop = std::pin::pin!(stop_signal());
@@ -379,10 +380,19 @@ async fn receive(home: &HomeLayout, host_pid: Option<u32>) -> Result<()> {
             }
             // SessionEnd/SessionStart can temporarily retire lifecycle identity.
             // Waiting for the new native callback never starts a model turn.
-            match local_sessions::read(home, &source_id) {
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            let current = match local_sessions::read(home, &source_id) {
+                Ok(current) => current,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    attached = false;
+                    continue;
+                }
                 Err(error) => return Err(error.into()),
+            };
+            // A long-lived Claude Monitor survives /clear and /resume. A new
+            // conversation revision must cross the true attachment boundary,
+            // rather than only renewing its resource-owned heartbeat lease.
+            if current.revision != attached_revision {
+                attached = false;
             }
             if !attached || heartbeat_at.elapsed() >= Duration::from_secs(5) {
                 let op = if attached {
@@ -399,6 +409,7 @@ async fn receive(home: &HomeLayout, host_pid: Option<u32>) -> Result<()> {
                 {
                     Ok(_) => {
                         attached = true;
+                        attached_revision.clone_from(&current.revision);
                         heartbeat_at = tokio::time::Instant::now();
                     }
                     Err(_) => {

@@ -80,6 +80,13 @@ function LocalSessionsDialog({
     loaded: boolean;
     failed: boolean;
   }>({ groupId: "", actors: [], loaded: false, failed: false });
+  // Setup guidance opens by itself only when the first list is empty; after
+  // that the reader decides, except when asking to see troubleshooting.
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
+  const [troubleshootingRequest, setTroubleshootingRequest] = useState(0);
+  const setupDecided = useRef(false);
+  const troubleshootingRef = useRef<HTMLDetailsElement>(null);
   const targetRef = useRef(targetGroupId);
   targetRef.current = targetGroupId;
   const membersRequest = useRef(0);
@@ -133,6 +140,10 @@ function LocalSessionsDialog({
       if (response.ok) {
         setError("");
         setSources(response.result.sources);
+        if (!setupDecided.current) {
+          setupDecided.current = true;
+          if (!response.result.sources.length) setSetupOpen(true);
+        }
         setSelected((previous) =>
           previous.map(
             (source) =>
@@ -154,12 +165,22 @@ function LocalSessionsDialog({
       clearTimeout(timer);
     };
   }, []);
+  useEffect(() => {
+    if (!troubleshootingRequest) return;
+    troubleshootingRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [troubleshootingRequest]);
+  const showTroubleshooting = () => {
+    setSetupOpen(true);
+    setTroubleshootingOpen(true);
+    setTroubleshootingRequest((count) => count + 1);
+  };
   const selectedIds = selected.map((source) => source.source_id);
   const unavailableCount = selected.filter((source) => !source.connected).length;
   const displayedSources = [
     ...sources,
     ...selected.filter((source) => !sources.some((item) => item.source_id === source.source_id)),
   ];
+  const anyUnavailable = displayedSources.some((source) => !source.connected);
   const firstSelected = selected[0];
   const joining = !!targetGroupId;
   const membersReady =
@@ -326,6 +347,18 @@ function LocalSessionsDialog({
             {t("localSessions.selectionUnavailable", { count: unavailableCount })}
           </p>
         )}
+        {!loading && anyUnavailable ? (
+          <p className="mb-3 text-xs text-[var(--color-text-secondary)]">
+            {t("localSessions.unavailableHint")}{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2"
+              onClick={showTroubleshooting}
+            >
+              {t("localSessions.showTroubleshooting")}
+            </button>
+          </p>
+        ) : null}
         {loading ? (
           <p role="status">{t("common:loading")}</p>
         ) : displayedSources.length ? (
@@ -468,29 +501,47 @@ function LocalSessionsDialog({
             {selected.length > 1 ? <p>{t("localSessions.foremanDirectoryHint")}</p> : null}
           </section>
         ) : null}
-        <details className="mt-5 text-sm text-[var(--color-text-secondary)]">
+        <details
+          className="mt-5 text-sm text-[var(--color-text-secondary)]"
+          open={setupOpen}
+          onToggle={(event) => setSetupOpen(event.currentTarget.open)}
+        >
           <summary className="cursor-pointer">{t("localSessions.setup")}</summary>
           <p className="my-2">{t("localSessions.setupHint")}</p>
+          <p className="my-2">{t("localSessions.setupTerminal")}</p>
           <p className="my-2">{t("localSessions.setupHost")}</p>
           <pre className="overflow-x-auto text-xs">
             {
               "cccc sessions enable --runtime codex\ncccc sessions enable --runtime claude\ncccc sessions enable --runtime pi\ncccc sessions enable --runtime opencode"
             }
           </pre>
+          <p className="my-2">{t("localSessions.setupNext")}</p>
           <ul className="my-2 list-disc space-y-2 pl-5">
-            <li>{t("localSessions.setupReload")}</li>
             <li>{t("localSessions.setupCodex")}</li>
             <li>{t("localSessions.setupClaude")}</li>
             <li>{t("localSessions.setupPi")}</li>
             <li>{t("localSessions.setupOpencode")}</li>
           </ul>
-          <p className="my-2">{t("localSessions.setupCheck")}</p>
-          <pre className="overflow-x-auto text-xs">cccc sessions list</pre>
           <p className="my-2">{t("localSessions.setupStart")}</p>
           <blockquote className="break-words border-l-2 border-[var(--color-border-secondary)] pl-3">
             {t("localSessions.setupExample")}
           </blockquote>
           <p className="my-2">{t("localSessions.setupConversationHint")}</p>
+          <details
+            ref={troubleshootingRef}
+            className="my-2"
+            open={troubleshootingOpen}
+            onToggle={(event) => setTroubleshootingOpen(event.currentTarget.open)}
+          >
+            <summary className="cursor-pointer">{t("localSessions.troubleshooting")}</summary>
+            <p className="my-2">{t("localSessions.setupCheck")}</p>
+            <pre className="overflow-x-auto text-xs">cccc sessions list</pre>
+            <ul className="my-2 list-disc space-y-2 pl-5">
+              <li>{t("localSessions.setupReload")}</li>
+              <li>{t("localSessions.troubleshootCodex")}</li>
+              <li>{t("localSessions.troubleshootClaude")}</li>
+            </ul>
+          </details>
           <a
             className="mt-3 inline-block underline underline-offset-2"
             href="https://chesterra.github.io/cccc/guide/local-sessions"

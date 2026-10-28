@@ -7,6 +7,7 @@ use cccc_core::{
     local_sessions::{self as native, NativeHost, NativeSession},
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn opencode_metadata_cannot_select_a_source_from_another_backend() {
@@ -156,12 +157,18 @@ async fn session_mutations_revalidate_captured_authority_at_daemon_execution() {
                 cccc_core::fs::write_json(&home.daemon_dir().join("ccccd.addr.json"), &json!({"v":1,"transport":"tcp","path":"","host":"127.0.0.1","port":listener.local_addr().expect("proxy address").port(),"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"ts":"2026-10-26T00:00:00Z"})).expect("address");
                 let server_home = home.clone();
                 let captured_group = group.clone();
-                let server = tokio::spawn(async move {
+                let mut server = tokio::spawn(async move {
                     loop {
-                        let (stream, _) = listener.accept().await.expect("request");
+                        let (stream, _) = timeout(Duration::from_secs(3), listener.accept())
+                            .await
+                            .expect("native authority fixture never received the expected request")
+                            .expect("request");
                         let mut stream = BufReader::new(stream);
                         let mut line = String::new();
-                        stream.read_line(&mut line).await.expect("JSON line");
+                        timeout(Duration::from_secs(3), stream.read_line(&mut line))
+                            .await
+                            .expect("native authority fixture received an incomplete request")
+                            .expect("JSON line");
                         let request: DaemonRequest =
                             serde_json::from_str(&line).expect("request JSON");
                         let mutation = matches!(
@@ -242,8 +249,12 @@ async fn session_mutations_revalidate_captured_authority_at_daemon_execution() {
                 });
                 let mut context = Context::new(runtime, Some(host.pid)).expect("context");
                 let mut arguments = json!({"action":if action=="direct_send" {"send"} else {action},
-                "text":"Synthetic captured mutation", "mode":"mail", "insight":"Synthetic authority regression",
                 "source_id":"codex:forged", "_cccc_native_source_binding":{"source_id":"codex:forged","session_revision":"forged"}});
+                if matches!(action, "send" | "direct_send") {
+                    arguments["text"] = json!("Synthetic captured mutation");
+                    arguments["mode"] = json!("mail");
+                    arguments["insight"] = json!("Synthetic authority regression");
+                }
                 if grouped {
                     arguments["group_id"] = json!(group.group_id);
                     if action == "send" {
@@ -252,8 +263,24 @@ async fn session_mutations_revalidate_captured_authority_at_daemon_execution() {
                 } else {
                     arguments["source_ids"] = json!([peer_id]);
                 }
-                let response = context.handle(&home, &DaemonClient::new(home.clone()), &json!({"id":1,"method":"tools/call","params":{"name":"cccc_session","arguments":arguments,"_meta":if runtime=="opencode" {json!({"ai.opencode/sessionID":"ses_original"})} else {Value::Null}}})).await;
-                server.await.expect("proxy completion");
+                let client = DaemonClient::new(home.clone());
+                let message = json!({"id":1,"method":"tools/call","params":{"name":"cccc_session","arguments":arguments,"_meta":if runtime=="opencode" {json!({"ai.opencode/sessionID":"ses_original"})} else {Value::Null}}});
+                let response = timeout(
+                    Duration::from_secs(5),
+                    context.handle(&home, &client, &message),
+                )
+                .await;
+                let completed = timeout(Duration::from_secs(3), &mut server).await;
+                if completed.is_err() {
+                    // Dropping a JoinHandle does not cancel its task. Retire it
+                    // before the temporary Home disappears, including on failure.
+                    server.abort();
+                    let _ = server.await;
+                }
+                let response = response.expect("bounded native authority MCP call");
+                completed
+                    .expect("bounded native authority proxy completion")
+                    .expect("proxy completion");
                 let events = cccc_core::ledger::read_all(&ledger).expect("ledger");
                 if transition == "none" {
                     assert_ne!(response["result"]["isError"], true, "{action}: {response}");

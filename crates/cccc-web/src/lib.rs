@@ -53,6 +53,8 @@ pub enum ServeOutcome {
     RestartRequested,
 }
 
+pub type ListeningCallback = Arc<dyn Fn(SocketAddr) + Send + Sync>;
+
 #[derive(Clone)]
 pub(crate) struct LiveBinding {
     host: String,
@@ -402,8 +404,16 @@ where
     } else {
         RestartBehavior::Disabled
     };
-    match serve_until_mode_with_restart(home, host, port, web_mode, shutdown, restart_behavior)
-        .await?
+    match serve_until_mode_with_restart(
+        home,
+        host,
+        port,
+        web_mode,
+        shutdown,
+        restart_behavior,
+        None,
+    )
+    .await?
     {
         ServeOutcome::Stopped(address) => Ok(address),
         ServeOutcome::RestartRequested => unreachable!("process restart exits before returning"),
@@ -416,6 +426,7 @@ pub async fn serve_until_mode_supervised<F>(
     port: u16,
     web_mode: WebMode,
     shutdown: F,
+    on_listening: Option<ListeningCallback>,
 ) -> Result<ServeOutcome>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -427,6 +438,7 @@ where
         web_mode,
         shutdown,
         RestartBehavior::ReturnToSupervisor,
+        on_listening,
     )
     .await
 }
@@ -438,6 +450,7 @@ async fn serve_until_mode_with_restart<F>(
     web_mode: WebMode,
     shutdown: F,
     restart_behavior: RestartBehavior,
+    on_listening: Option<ListeningCallback>,
 ) -> Result<ServeOutcome>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -454,7 +467,11 @@ where
     ensure_listener_auth(&home, address)?;
     let runtime_id = new_web_runtime_id();
     let runtime_home = home.clone();
-    web_banner::print(host, address.port());
+    if let Some(on_listening) = on_listening {
+        on_listening(address);
+    } else {
+        web_banner::print(host, address.port());
+    }
     tracing::info!(%address, "CCCC Rust Web listening");
     let (web_shutdown, _) = broadcast::channel(1);
     let restart = (!matches!(restart_behavior, RestartBehavior::Disabled))

@@ -61,14 +61,17 @@ Agent consumes deferred Mail with cccc_inbox_read
 
 Delivery format:
 ```
-[cccc] user → peer-a [event_id=<full event id>]: Please implement the login feature
-[cccc] user → peer-a (reply:evt_abc) [event_id=<full event id>]: OK, please continue
+[cccc] user → peer-a [event_id=<full event id> sent=2026-10-28T01:45:03Z]: Please implement the login feature
+[cccc] user → peer-a (reply:evt_abc) [event_id=<full event id> sent=2026-10-28T01:46:10Z]: OK, please continue
 ```
 
 The full current `event_id` is the value passed to
 `cccc_message_reply(event_id=...)`. The short `reply:` marker only correlates the
 message with its parent; ordinary delivery omits non-actionable storage mode and
-full parent metadata.
+full parent metadata. `sent` is the message's original timestamp as recorded in
+the ledger (UTC). A runtime may show queued input long after it was accepted, so
+an old `sent` time marks an instruction that later messages may already have
+superseded.
 
 ## IM Bridge
 

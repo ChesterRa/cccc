@@ -309,19 +309,48 @@ fn setup_one(
 }
 
 pub(super) fn codex_mcp_entry(home: &HomeLayout, cwd: &Path) -> Result<Option<serde_json::Value>> {
-    let inspection_error = "Could not safely identify Codex's cccc MCP configuration; it was left unchanged. Inspect it with `codex mcp list --json` before retrying.";
-    let program =
-        cccc_core::runtime_mcp::resolve_program("codex", std::env::var_os("PATH").as_deref());
     let output = cccc_runtime::capture_command_blocking(
-        Command::new(program)
-            .args(["mcp", "list", "--json"])
-            .current_dir(cwd)
-            .env("CCCC_HOME", home.root()),
+        &mut codex_registry_command(home, cwd),
         None,
         std::time::Duration::from_secs(30),
         32_768,
     )
-    .context(inspection_error)?;
+    .context(CODEX_INSPECTION_ERROR)?;
+    parse_codex_registry(&output)
+}
+
+pub(super) async fn codex_mcp_entry_async(
+    home: &HomeLayout,
+    cwd: &Path,
+) -> Result<Option<serde_json::Value>> {
+    let output = cccc_runtime::capture_command(
+        &mut codex_registry_command(home, cwd),
+        None,
+        std::time::Duration::from_secs(30),
+        32_768,
+    )
+    .await
+    .context(CODEX_INSPECTION_ERROR)?;
+    parse_codex_registry(&output)
+}
+
+const CODEX_INSPECTION_ERROR: &str = "Could not safely identify Codex's cccc MCP configuration; it was left unchanged. Inspect it with `codex mcp list --json` before retrying.";
+
+fn codex_registry_command(home: &HomeLayout, cwd: &Path) -> Command {
+    let program =
+        cccc_core::runtime_mcp::resolve_program("codex", std::env::var_os("PATH").as_deref());
+    let mut command = Command::new(program);
+    command
+        .args(["mcp", "list", "--json"])
+        .current_dir(cwd)
+        .env("CCCC_HOME", home.root());
+    command
+}
+
+fn parse_codex_registry(
+    output: &cccc_runtime::CapturedOutput,
+) -> Result<Option<serde_json::Value>> {
+    let inspection_error = CODEX_INSPECTION_ERROR;
     anyhow::ensure!(
         output.status.success() && !output.stdout_truncated && !output.stderr_truncated,
         "{inspection_error}"

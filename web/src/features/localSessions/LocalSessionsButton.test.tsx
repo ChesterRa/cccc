@@ -228,6 +228,11 @@ it("explains an empty directory without creating a Group or enabling an empty su
   mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [] } });
   await open();
   expect(document.body.textContent).toContain(enLayout.localSessions.empty);
+  // With nothing connected yet, the setup steps are what the reader needs.
+  const [setupDetails, troubleshooting] = Array.from(document.querySelectorAll("details"));
+  expect(setupDetails?.open).toBe(true);
+  expect(troubleshooting?.open).toBe(false);
+  expect(document.body.textContent).not.toContain(enLayout.localSessions.unavailableHint);
   expect(document.querySelector('[role="alert"]')).toBeNull();
   expect(document.body.textContent).toContain("Selected sessions: 0 / 16");
   expect(button("Create & connect").disabled).toBe(true);
@@ -450,6 +455,16 @@ it("shows registered but unready sources without allowing their admission", asyn
   expect(checkbox(source.title).disabled).toBe(true);
   expect(document.body.textContent).not.toContain(enLayout.localSessions.empty);
   expect(button("Create & connect").disabled).toBe(true);
+  // The hint names no cause; it leads to the troubleshooting steps.
+  expect(document.body.textContent).toContain(enLayout.localSessions.unavailableHint);
+  const [setupDetails, troubleshooting] = Array.from(document.querySelectorAll("details"));
+  expect(setupDetails?.open).toBe(false);
+  await click(button(enLayout.localSessions.showTroubleshooting));
+  expect(setupDetails?.open).toBe(true);
+  expect(troubleshooting?.open).toBe(true);
+  // The reader can still close what was opened for them.
+  await click(setupDetails!.querySelector("summary"));
+  expect(setupDetails?.open).toBe(false);
 });
 
 it("marks existing members and resumes only a paused source on an explicit user action", async () => {
@@ -803,35 +818,55 @@ it.each(["new", "existing"])(
   },
 );
 
-it("provides the native setup prerequisites, registration check and full guide", async () => {
+it("offers the terminal /setup path, the enable commands and a collapsed troubleshooting section", async () => {
   await open();
+  // Sessions are already connected, so setup starts collapsed.
+  expect(document.querySelector("details")?.open).toBe(false);
+  expect(document.body.textContent).not.toContain(enLayout.localSessions.unavailableHint);
   await click(document.querySelector("summary"));
-  expect(document.querySelector("details")?.open).toBe(true);
-  const setup = document.querySelector("details")!.textContent!;
+  const [setupDetails, troubleshooting] = Array.from(document.querySelectorAll("details"));
+  expect(setupDetails?.open).toBe(true);
+  const setup = setupDetails!.textContent!;
   for (const text of [
-    "Experimental native session integration",
-    "Codex",
-    "Claude Code",
-    "CCCC_HOME",
+    "message each other and join Groups",
+    "Experimental",
+    "running cccc in a terminal, type /setup there",
     "same OS user",
+    "CCCC_HOME",
+    "cccc sessions enable --runtime codex",
+    "cccc sessions enable --runtime claude",
+    "cccc sessions enable --runtime pi",
+    "cccc sessions enable --runtime opencode",
+    "approve the CCCC hooks when asked (/hooks)",
+    "/reload-plugins",
+    "Pi: run /reload",
+    "OpenCode V2: reopen the original session",
+  ]) {
+    expect(setup).toContain(text);
+  }
+  expect(setup).not.toMatch(/\d+\.\d+\.\d+/);
+  const example = setupDetails!.querySelector("blockquote")?.textContent || "";
+  expect(example).toContain("/path/to/project");
+  expect(example).toContain("reply through CCCC using Send");
+  expect(example).toContain("If several sessions match, ask me to choose");
+  expect(setup).toContain("you do not need to create one first");
+
+  // Troubleshooting stays available without crowding the main steps.
+  expect(troubleshooting?.open).toBe(false);
+  const help = troubleshooting!.textContent!;
+  for (const text of [
+    "Troubleshooting",
+    "cccc sessions list",
     "native prompt",
-    "/hooks",
     "shared app-server",
     "daemon_auto_start = true",
     "[features]",
     "config.toml",
     "Monitor",
-    "cccc sessions list",
   ]) {
-    expect(setup).toContain(text);
+    expect(help).toContain(text);
   }
-  expect(setup).not.toMatch(/\d+\.\d+\.\d+/);
-  const example = document.querySelector("details blockquote")?.textContent || "";
-  expect(example).toContain("/path/to/project");
-  expect(example).toContain("reply through CCCC using Send");
-  expect(example).toContain("If several sessions match, ask me to choose");
-  expect(setup).toContain("you do not need to create one first");
-  expect(document.querySelector("details a")?.getAttribute("href")).toBe(
+  expect(setupDetails!.querySelector(":scope > a")?.getAttribute("href")).toBe(
     "https://chesterra.github.io/cccc/guide/local-sessions",
   );
 });

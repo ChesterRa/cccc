@@ -649,9 +649,12 @@ pub(super) fn log_error(
         "error": error.chars().take(4096).collect::<String>()
     })
     .to_string();
-    eprintln!("{line}");
+    cccc_runtime::diagnostic(format_args!("{line}"));
     if let Err(error) = append_log(home, group_id, &line) {
-        eprintln!("Mattermost group log write failed ({:?})", error.kind());
+        cccc_runtime::diagnostic(format_args!(
+            "Mattermost group log write failed ({:?})",
+            error.kind()
+        ));
     }
 }
 
@@ -672,7 +675,10 @@ impl MattermostApi {
             })
         });
         if let Err(error) = result {
-            eprintln!("Mattermost error state write failed ({:?})", error.kind());
+            cccc_runtime::diagnostic(format_args!(
+                "Mattermost error state write failed ({:?})",
+                error.kind()
+            ));
         }
     }
 }

@@ -6,12 +6,67 @@ Complete command reference for the CCCC CLI.
 
 ### `cccc`
 
-Start the Web UI, reusing an existing daemon or starting one if needed.
+Start the daemon and the Web UI, reusing an existing daemon or starting one if
+needed.
 
 ```bash
-cccc                    # Start daemon + Web UI
+cccc                    # In a terminal: daemon + Web UI, with the terminal interface
+cccc --headless         # Daemon + Web UI with plain log output (same as `cccc web`)
 cccc --help             # Show help
 ```
+
+In an interactive terminal, `cccc` opens a terminal interface for this launch.
+Its main screen is a status panel: the version, the actual Web address, the
+`CCCC_HOME` in use, whether this launch started the daemon, the Groups, and the
+native sessions this CCCC knows. Lists refresh every few seconds while they are
+on screen; a failed refresh keeps the last list and says how old it is.
+
+The Groups table has NAME, STATUS and RUNNING columns. STATUS uses the Web UI's
+words: Running, Idle, Paused, Offline and Stopped. Stopped means the Group was
+stopped. Offline means it was not stopped or paused, but no actor is running:
+for example a new Group, or one whose actors exited or whose native sessions are
+closed. RUNNING counts the managed actors that are running and the native
+members ready to receive from that Group; it is neither the number of members
+nor the number of busy models.
+
+On the main screen, Up/Down selects a Group and Enter opens it in `/groups`.
+Type `/` to list the commands: Up/Down moves through the list, Tab completes the
+selected command without running it, Enter runs it, and Esc closes the list.
+Left/Right, Home/End, Delete and Ctrl+A/E/U edit the command line. Pasting only
+inserts text: in terminals with bracketed paste, pasted newlines do not run a
+command. Commands:
+
+- `/groups` lists the Groups. Pick one with Up/Down (or j/k) to see its recorded
+  state, its actors and a link that opens it in the Web UI. `s` starts it
+  (resumes a paused one) and `x` stops it, each after a confirmation that names
+  the Group and what will happen. Starting runs the enabled actors and lets
+  enabled native members receive again; stopping stops the managed actors and
+  stops delivery to native members, whose apps stay open. `b` or Esc goes back.
+- `/sessions` lists every native session this CCCC knows. Enter shows the
+  selected session's details, and `b` or Esc goes back.
+- `/setup` connects Codex, Claude Code, Pi or OpenCode sessions; see
+  [Native sessions](../guide/local-sessions).
+- `/help` lists the commands and keys. It scrolls with Up/Down when the terminal
+  is short.
+- `/quit` (or `/exit`, or Ctrl+C on any page) stops what this launch started:
+  the Web server, and the daemon when this launch started it. A daemon that was
+  already running keeps running. If stopping takes too long, a second Ctrl+C
+  forces an exit (after `/quit`, press Ctrl+C twice). After the interface
+  closes, the terminal shows what actually stopped.
+
+The interface is English only and needs at least 60x16 characters; on a wider
+terminal it stays within 100 columns. In a smaller terminal it shows only a
+notice and accepts only Ctrl+C, so nothing can be confirmed unseen. It does not use the mouse; Ctrl+Z does not
+suspend it (use `/quit`), and Ctrl+L redraws the screen. `NO_COLOR` turns its
+colors off.
+
+`cccc` runs headless, with plain log output and no terminal interface, when
+given `--headless`, when its input or output is not a terminal, or when
+`CCCC_WEB_MODE` / `CCCC_WEB_READONLY` select read-only Exhibit mode. Use
+`--headless` on servers, in containers, under a service manager and in scripts.
+It applies only to this launch, so `cccc --headless` with a subcommand is an
+error. Other options keep the interface: `cccc --port 9000` in a terminal opens
+it on port 9000.
 
 ### `cccc doctor`
 
@@ -37,13 +92,13 @@ current launcher's directory to the front of PATH and open a new terminal.
 List available agent runtimes.
 
 ```bash
-cccc runtime list       # List detected runtimes
-cccc runtime list --all # List all supported runtimes
+cccc runtime list       # List supported runtimes and whether each is available
+cccc runtime list --all # Also include the custom runtime
 ```
 
 ## Local native sessions
 
-`cccc sessions enable|disable --runtime codex|claude` installs or removes the same-user native integration. Use `cccc sessions list [--include-offline]`, `send --to <source_id> --text <text>`, and `create --sources <ids...>` to collaborate without pairwise invitations.
+`cccc sessions enable|disable --runtime codex|claude|pi|opencode` installs or removes the same-user native integration; `/setup` in the terminal interface runs the same enable step for the apps you pick. Use `cccc sessions list [--include-offline]`, `send --to <source_id> --text <text>`, and `create --sources <ids...>` to collaborate without pairwise invitations.
 
 Use `cccc sessions join --group <group_id> --sources <ids...>` to add sources to an existing Group, or `leave --group <group_id> --from <source_id>` to pause one source's access without stopping its native process. `recovery --group <group_id> --actor <actor_id>` reads local recovery instructions; adding `--refresh` explicitly rechecks Codex's existing receive channel. Neither form starts or resumes the native application or replays messages. See [Native sessions](../guide/local-sessions) for requirements, reload steps and lifecycle semantics.
 
@@ -133,6 +188,9 @@ cccc group set-state idle --group <id>       # Set state: active/idle/paused/sto
 cccc group detach-scope <scope_key> --group <id>
 cccc group delete --group <id> --confirm <id>
 ```
+
+`set-state stopped` is the same as `group stop`: it stops the Group's actors and
+delivery to its native members, never only its recorded state.
 
 ## Actor Commands
 
@@ -451,7 +509,9 @@ Notes:
 ### `cccc web`
 
 Start the Web UI, reusing an existing daemon or starting one if needed, just
-like `cccc` with no subcommand.
+like `cccc --headless`: never with the terminal interface, always with plain log
+output. Unlike `cccc --headless`, it accepts `--exhibit` (or `--mode exhibit`)
+for a read-only Web UI.
 
 ```bash
 cccc web                           # Start Web UI

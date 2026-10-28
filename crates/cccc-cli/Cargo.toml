@@ -29,7 +29,9 @@ cccc-mcp = { package = "cccc-pair-mcp", version = "=0.4.45", path = "../cccc-mcp
 cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.45", path = "../cccc-runtime" }
 cccc-web = { package = "cccc-pair-web", version = "=0.4.45", path = "../cccc-web" }
 clap.workspace = true
+crossterm = "0.29"
 fs2.workspace = true
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 reqwest.workspace = true
 rustls.workspace = true
 semver.workspace = true
@@ -38,7 +40,15 @@ serde_json.workspace = true
 shell-words.workspace = true
 tokio.workspace = true
 tempfile.workspace = true
+unicode-width.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+portable-pty.workspace = true
+retach.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+nix = { workspace = true, features = ["term"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl-sys = { version = "0.9", features = ["vendored"], optional = true }
@@ -49,6 +59,7 @@ nix.workspace = true
 [target.'cfg(windows)'.dependencies]
 cccc-windows-console = { path = "../cccc-windows-console" }
 cccc-windows-process = { path = "../cccc-windows-process" }
+crossterm_winapi = "0.9"
 
 [lints]
 workspace = true

@@ -188,7 +188,9 @@ impl Registry {
                 .map(Resource::owned_group)
                 .collect::<Vec<_>>();
             if let Err(error) = guard::publish(&groups) {
-                eprintln!("could not record owned process groups: {error}");
+                crate::diagnostic(format_args!(
+                    "could not record owned process groups: {error}"
+                ));
             }
         }
     }

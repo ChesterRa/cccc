@@ -1,5 +1,7 @@
 const UTF8_CODE_PAGE: u32 = 65001;
 
+static ORIGINAL: std::sync::OnceLock<(Option<u32>, Option<u32>)> = std::sync::OnceLock::new();
+
 pub(crate) struct ConsoleEncoding {
     original_input: Option<u32>,
     original_output: Option<u32>,
@@ -12,20 +14,38 @@ pub(crate) fn use_utf8() -> ConsoleEncoding {
     let original_output = cccc_windows_console::output_code_page().filter(|code_page| {
         *code_page != UTF8_CODE_PAGE && cccc_windows_console::set_output_code_page(UTF8_CODE_PAGE)
     });
-    ConsoleEncoding {
+    let encoding = ConsoleEncoding {
         original_input,
         original_output,
+    };
+    let _ = ORIGINAL.set((original_input, original_output));
+    encoding
+}
+
+pub(crate) fn restore_original() {
+    if let Some(&(input, output)) = ORIGINAL.get() {
+        restore(input, output);
+    }
+}
+
+impl ConsoleEncoding {
+    fn restore(&self) {
+        restore(self.original_input, self.original_output);
+    }
+}
+
+fn restore(input: Option<u32>, output: Option<u32>) {
+    if let Some(code_page) = input {
+        let _ = cccc_windows_console::set_input_code_page(code_page);
+    }
+    if let Some(code_page) = output {
+        let _ = cccc_windows_console::set_output_code_page(code_page);
     }
 }
 
 impl Drop for ConsoleEncoding {
     fn drop(&mut self) {
-        if let Some(code_page) = self.original_input {
-            let _ = cccc_windows_console::set_input_code_page(code_page);
-        }
-        if let Some(code_page) = self.original_output {
-            let _ = cccc_windows_console::set_output_code_page(code_page);
-        }
+        self.restore();
     }
 }
 

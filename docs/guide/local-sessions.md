@@ -8,7 +8,9 @@ Antigravity App/CLI native attachment is deferred; see the [dated assessment and
 
 ## Enable once
 
-On the machine running CCCC, use the same OS user and `CCCC_HOME` as the daemon, then enable the runtimes you use:
+**From the terminal interface.** If you start CCCC with `cccc` in a terminal, type `/setup` there. It checks which of Codex, Claude Code, Pi and OpenCode are on `PATH`, their versions and whether this CCCC has already set them up. Nothing is picked by default: pick the apps whose sessions may work with each other, confirm once, and it runs the same enable step for each app in turn and shows what that app needs next. Reconfiguring Pi or OpenCode disconnects their open sessions until they reload, and the screen says so before you confirm. `configuration written` means only that; open sessions still load it as described below, and setup sends no test messages. Press `b` to cancel a running setup; an interrupted app may be partly configured, so retry with `/setup` or its enable command and resolve any conflict it reports. Once sessions work together, `/sessions` in the same interface lists every session this CCCC knows, with its details, and `/groups` lists the Groups they joined, with each member's state, and can start or stop a Group.
+
+**From the command line.** On the machine running CCCC, use the same OS user and `CCCC_HOME` as the daemon, then enable the runtimes you use. This also works where no terminal interface is running, such as a service or a remote host:
 
 ```sh
 cccc sessions enable --runtime codex
@@ -29,7 +31,7 @@ OpenCode V2 installs an owned plugin in its global configuration directory witho
 
 **For Codex and Claude, submit one message in the native session before checking CCCC.** With the current integration, Codex runs its startup hook when it first processes input, not merely when the terminal opens; you do not need to wait for the model's reply. An already registered session can remain visible while its shared app-server keeps it active, so another message is not required on every terminal reopen.
 
-Enable and disable can be repeated safely. Disable changes only registrations owned by this CCCC installation. Claude setup checks its local marketplace and installed plugin before changing MCP settings; if they point to another installation, setup reports the conflict without switching MCP to a different instance. Keep using the original installation, or explicitly remove its `cccc-local` marketplace before configuring another. Marketplace removal also uninstalls its plugins, so it is never performed automatically.
+Repeated enable and disable keep their ownership checks, but are not free of effects: re-enabling Pi or OpenCode disconnects their open sessions until they reload, and a retry after an interrupted run may stop at a reported conflict instead of finishing. Disable changes only registrations owned by this CCCC installation. Claude setup checks its local marketplace and installed plugin before changing MCP settings; if they point to another installation, setup reports the conflict without switching MCP to a different instance. Keep using the original installation, or explicitly remove its `cccc-local` marketplace before configuring another. Marketplace removal also uninstalls its plugins, so it is never performed automatically.
 
 An enable command configures the integration; it does not confirm that an existing session has loaded it. Run `cccc sessions list` after the native reload and prompt to check which sources can receive. If a source is absent, check the CLI version, native MCP/hooks/plugin loading, Codex hook trust and Claude Monitor availability. Use the same OS user and `CCCC_HOME` for both runtimes and the daemon.
 
@@ -50,12 +52,32 @@ The native runtime still owns tool permissions. In its default mode, a CCCC tool
 
 Updating CCCC and loading the update into an existing native session are separate steps:
 
-1. Run `cccc sessions enable --runtime codex`, `cccc sessions enable --runtime claude`, `cccc sessions enable --runtime pi` or `cccc sessions enable --runtime opencode` for the runtimes you use, with the new binary to regenerate the integration commands. Keep the same OS user, `CCCC_HOME` and provider configuration. Resolve any reported installation ownership conflict before retrying.
+1. Run `/setup` in the terminal interface and pick the runtimes you use, or run `cccc sessions enable --runtime codex`, `cccc sessions enable --runtime claude`, `cccc sessions enable --runtime pi` or `cccc sessions enable --runtime opencode`, with the new binary to regenerate the integration commands. Keep the same OS user, `CCCC_HOME` and provider configuration. Resolve any reported installation ownership conflict before retrying.
 2. Restart this CCCC instance through its normal service controls when adopting the new daemon. This does not reload MCP servers already running inside Codex, Claude, Pi or OpenCode.
-3. Reconnect the `cccc` MCP server through the native application's MCP controls so it loads the new executable and tool declarations. Reload Codex hooks through `/hooks`; in Claude, also reload the CCCC plugin/Monitor. Plugin disable/enable alone can leave the old Monitor process running. In Pi, run `/reload` to replace the extension and its MCP server together. OpenCode watches the owned plugin directory; reload or reopen the same native session if its plugin or MCP declaration remains old.
+3. Restart the `cccc` MCP server inside each native application so it loads the new executable and tool declarations:
+   - **Codex:** let active and queued work finish, then choose `/daemon` > **Restart background server** > **Restart**. This restarts the MCP processes of every chat on that background server; the TUI reconnects to the same thread. Check `cccc` with `/mcp`, and review changed hooks in `/hooks`.
+   - **Claude Code:** open `/mcp`, select `cccc` and choose **Reconnect**. Also reload the CCCC plugin/Monitor; plugin disable/enable alone can leave the old Monitor process running.
+   - **Pi:** run `/reload` to replace the extension and its MCP server together.
+   - **OpenCode:** it watches the owned plugin directory; reload or reopen the same native session if its plugin or MCP declaration remains old.
 4. Check the newly loaded tools: `cccc_message_history` must offer `event_id`, and `cccc_session send` must offer `mode`. `cccc sessions list` confirms receive readiness, not which tool declarations a native application has cached. If the tool fields are missing, finish reconnecting MCP before processing notifications that use them.
 
-If the native application cannot reload those processes, resume its original conversation after restarting it. Native history is retained. A replacement Claude or Pi host is a new source: explicitly connect it to the intended Groups; do not reuse the old Actor's identity. Restarting only the daemon, relisting tools from an old MCP process, or recreating a Group does not update that process's tool declarations.
+If the native application cannot reload those processes, resume its original
+conversation after restarting it. Native history is retained. When Claude or Pi
+resumes the last recorded conversation with the same provider configuration,
+CCCC reconnects its previous Group memberships when the receive integration
+attaches, provided the previous host has exited. Actor identity, role and paused
+access are retained; Group pause/stop and delivery receipts are unchanged. You
+do not need to join every Group again. Claude's in-app `/resume` also reattaches
+the existing Monitor when its conversation revision changes.
+
+If the original host is still open, CCCC does not transfer its memberships.
+Close that instance if you intend to continue elsewhere, then reload the CCCC
+receive integration. A different conversation, unknown configuration directory,
+explicitly disabled integration, or conflicting old/new members requires an
+explicit choice in **Connect existing sessions**. Only the host's last recorded
+conversation can be matched; CCCC does not scan native history. Restarting only
+the daemon or relisting tools from an old MCP process does not update that
+process's tool declarations.
 
 ### Codex shared app-server
 
@@ -78,7 +100,11 @@ Select at least one available session to submit. The count refers to sessions, n
 
 Connecting to an existing Group creates an Actor only for each new source. Existing Actors, roles, access settings, Group state and default directory remain unchanged. Already-connected sources are marked and cannot be selected again. Paused members have a separate **Resume CCCC access** action; resuming access does not start the original application or resume the Group. The primary button always connects selected sessions and remains disabled when none are selected.
 
-A new source does not take over an old Actor's tasks or pending messages. Pause the old membership separately if it should no longer receive work, and explicitly send any handoff context to the new Actor.
+A different native conversation does not take over an old Actor's tasks or
+pending messages. Pause the old membership separately if it should no longer
+receive work, and explicitly send any handoff context to the new Actor. Restoring
+the same conversation after its host exits follows the recovery rules above;
+this retains the original Actor instead of creating another member.
 
 ### Contact another native session
 
@@ -97,6 +123,12 @@ The session uses `cccc_session` underneath:
 ```
 
 `cccc_session send`, `cccc_message_send` and `cccc_message_reply` all use `mode` in MCP calls. `message_mode` is the daemon IPC/event field, not an MCP argument. These MCP tools reject it, including when both names are supplied, and reject invalid mode types or values rather than silently selecting a default.
+
+`action="conversation"` only creates a Group; it does not send a message. Use
+`action="send"` with `source_ids` and `text` to create/reuse a Group and deliver
+your request in one call. Nonempty message fields or non-default delivery modes on `conversation`, `list`
+or `leave` return an error with that guidance, rather than silently discarding
+your request.
 
 The MCP port supplies the sender's identity; the model cannot choose another source as itself. The first direct send creates or reuses an ordinary Group containing the sender and selected recipients. The response supplies `group_id`. Subsequent ordinary CCCC tools require that explicit Group ID: a native session can belong to multiple Groups, so it never falls back to the globally active Group. Existing message/reply and peer-insight rules apply.
 
@@ -161,15 +193,15 @@ An external Actor's Web pane identifies its native ownership instead of presenti
 
 Paused CCCC access, a paused/stopped Group, and an unavailable native receive channel are different states. Resume the access or Group you paused; reload the native integration only when its receive channel is unavailable. Removing the Actor removes its membership in that Group, not its original application or native history.
 
-Codex receives through its official `queue` command on the existing local app-server. Pi receives through its native extension and follow-up queue. OpenCode receives through its CLI plugin and existing backend queue. Claude receives through one persistent native Monitor, without model-driven polling or rearming. A transport acceptance confirms native handoff, not that the model executed or replied to the message. Pi requires its exact native user-message event because its public queue API has no admission receipt; the other integrations acknowledge their native queue/Monitor.
+Codex receives on its existing local app-server. While Codex is in the middle of a turn that can take direct input, CCCC adds the message to that turn, as pressing Enter does in the Codex CLI, allowing Codex to use it during that turn instead of in a separate turn after this one ends. When Codex is idle, compacting its context, or waiting for an approval or for your answer, CCCC uses Codex's official `queue` command as before. This applies only to messages CCCC hands over: your own input keeps each Codex client's Enter/Tab or follow-up setting, and a Codex hook can still decline a message after it is handed over. Pi receives through its native extension and follow-up queue. OpenCode receives through its CLI plugin and existing backend queue. Claude receives through one persistent native Monitor, without model-driven polling or rearming. A transport acceptance confirms native handoff, not that the model executed or replied to the message. Pi requires its exact native user-message event because its public queue API has no admission receipt; the other integrations acknowledge their native queue/Monitor.
 
 Enabling the integration is a one-time configuration step, not a per-conversation setup or Group handshake. New conversations and receive-channel reconnects do not require reinstalling the hooks or MCP server. Native identity, Group membership and model context have separate lifetimes:
 
 - **Resume the exact same Codex thread:** it reconnects the same source and retains its Group memberships, once the original application has loaded it and the integration is available.
 - **Create a different Codex thread:** it is a new source, even in the same terminal or directory. The old Actor stays bound to the old thread; it is not deleted, disabled or reassigned automatically. The old thread may still receive CCCC messages while the shared app-server keeps it loaded.
 - **OpenCode V2:** each open native session is a separate source. Switching or closing a session withdraws that TUI's receive lease when the session is no longer open in a tab. Reload and exit retire the captured revision; reopening the same session can reuse its Actor memberships after the original owner exits. A second live TUI does not take over the first receiver. New/forked sessions have their own sources and require explicit Group admission. The shared backend and native history remain owned by OpenCode.
-- **Start a new Pi conversation or reload within the same native host:** the source and Group memberships remain, while the captured lifecycle revision changes. An old extension cannot act for the replacement context. Exiting retires the source; a replacement Pi process requires explicit admission as a new Actor, even when it restores the same history with `pi --session <id>`.
-- **Clear Claude's conversation within the same native host:** the source and Group memberships remain; a lifecycle callback with a new native conversation ID updates the revision. Clearing context does not leave those Groups. A replacement Claude host is a new source, even if it resumes the same native conversation.
+- **Start a new Pi conversation or reload within the same native host:** the source and Group memberships remain, while the captured lifecycle revision changes. An old extension cannot act for the replacement context. Exiting retires the source. A replacement Pi process is a new source: when it restores the old host's last recorded conversation, for example with `pi --session <id>`, with the same provider configuration, its receive integration reconnects the previous Group memberships under the recovery rules above. Any other replacement requires explicit admission as a new Actor.
+- **Clear Claude's conversation within the same native host:** the source and Group memberships remain; a lifecycle callback with a new native conversation ID updates the revision. Clearing context does not leave those Groups. A replacement Claude host is a new source: when it resumes the old host's last recorded conversation with the same provider configuration after that host exited, its receive integration reconnects the previous Group memberships under the recovery rules above. Any other replacement requires explicit admission as a new Actor.
 
 The **Connect existing sessions** directory also shows registered live sessions whose receive channel is not ready; they cannot be selected for admission until ready. With an existing target Group, each source shows whether it is already a member or has paused access. Choose **Resume CCCC access** explicitly to restore a paused member; **Connect to Group** only adds selected new members. Group pause/stop remains independent.
 
@@ -200,9 +232,9 @@ If you do not know the native ID, use `codex resume`, `claude --resume` `pi --re
 
 CCCC retains its last lifecycle metadata after an End or host exit, without retaining live tool/receiver authority or copying provider history. Existing records from before this feature may lack recovery information: the pane reports unknown state/directory, keeps a known Codex thread ID, and otherwise uses the native session picker rather than guessing. A fresh native lifecycle callback captures the current information; unreadable metadata is a read error, not evidence of exit. This guidance cannot guarantee the provider still has the conversation or configuration directory.
 
-These are manual recovery commands, not availability checks: restoring a session can resume queued work and use the model. Resuming the same Codex thread can reconnect its existing memberships. Claude and Pi in a replacement host have a new CCCC identity even when its history is restored; explicitly join the intended Group as a new Actor. You do not need to reinstall hooks for either case.
+These are manual recovery commands, not availability checks: restoring a session can resume queued work and use the model. Resuming the same Codex thread can reconnect its existing memberships. Claude and Pi in a replacement host reconnect their previous memberships when they resume the old host's last recorded conversation with the same provider configuration after that host exited. A different conversation, a still-open original host or another provider configuration needs explicit admission as a new Actor. You do not need to reinstall hooks for any of these cases.
 
-For a replacement Claude or Pi host, use **Connect existing sessions** in the sidebar, choose the original **Group**, select the reconnected source, and choose **Connect to Group**. This adds a new Actor without taking over the old Actor, role or pending work. Resume paused membership access and paused/stopped Groups separately when you intend to continue delivery. If integration setup itself was disabled, re-enable it and reload native configuration first; merely resuming provider history does not reinstall the integration.
+When a replacement Claude or Pi host does not reconnect this way, use **Connect existing sessions** in the sidebar, choose the original **Group**, select the reconnected source, and choose **Connect to Group**. This adds a new Actor without taking over the old Actor, role or pending work. Resume paused membership access and paused/stopped Groups separately when you intend to continue delivery. If integration setup itself was disabled, re-enable it and reload native configuration first; merely resuming provider history does not reinstall the integration.
 
 ### Delivery across reconnects
 

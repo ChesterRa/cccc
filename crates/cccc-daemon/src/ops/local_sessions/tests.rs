@@ -3,6 +3,8 @@ use cccc_core::local_sessions::{self as native, NativeHost, NativeSession};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
+mod resume_tests;
+
 struct Fixture {
     _temp: tempfile::TempDir,
     home: HomeLayout,
@@ -242,6 +244,158 @@ fn extension_receive_lease_context_replacement_and_disable_preserve_authority() 
             .is_err()
         );
         assert!(store::sources(&fixture.home).expect("directory").is_empty());
+    }
+}
+
+#[test]
+fn overview_reads_do_not_qualify_native_sources_or_dispatch_pending_work() {
+    for runtime in [
+        LocalSessionRuntime::Codex,
+        LocalSessionRuntime::Claude,
+        LocalSessionRuntime::Pi,
+        LocalSessionRuntime::Opencode,
+    ] {
+        let fixture = Fixture::with_runtime(runtime);
+        let groups = GroupStore::new(fixture.home.clone()).expect("store");
+        let mut group = groups.create("Overview fixture", "").expect("Group");
+        let mut actor = Actor::new("native");
+        actor.runtime = actor_runtime(runtime);
+        actor.external_session_id = fixture.source.source_id.clone();
+        group.actors.push(actor);
+        group.running = true;
+        groups.save(&group).expect("save membership");
+        let path = groups.ledger_path(&group.group_id).expect("ledger");
+        let mut pending = cccc_contracts::Event::new("chat.message", &group.group_id);
+        pending.by = "user".into();
+        pending.data = json!({"to":["native"],"message_mode":"send","text":"Unclaimed fixture"})
+            .as_object()
+            .expect("event data")
+            .clone();
+        cccc_core::ledger::append(&path, &pending).expect("pending work");
+
+        for ready in [false, true] {
+            if ready {
+                if runtime == LocalSessionRuntime::Codex {
+                    let mut session = fixture.source.clone();
+                    session.codex_can_receive = true;
+                    native::write(&fixture.home, session).expect("qualification evidence");
+                } else {
+                    fixture.attach();
+                }
+            }
+            let before = std::fs::read(&path).expect("ledger before reads");
+            let lifecycle = native::read_record(&fixture.home, &fixture.source.source_id)
+                .expect("lifecycle before reads");
+            let configuration = groups.load(&group.group_id).expect("Group before reads");
+            for _ in 0..3 {
+                let directory = fixture.call("local_session_list", json!({"include_offline":true}));
+                assert_eq!(directory["sources"][0]["connected"], ready);
+                let overview = fixture.call("group_list", json!({}));
+                assert_eq!(overview["groups"][0]["running"], ready);
+                assert_eq!(
+                    overview["groups"][0]["runtime_status"]["running_actor_count"],
+                    usize::from(ready)
+                );
+                let actors = fixture.call("actor_list", json!({"group_id":group.group_id}));
+                assert_eq!(actors["actors"][0]["running"], ready);
+            }
+            assert_eq!(std::fs::read(&path).expect("ledger after reads"), before);
+            assert_eq!(
+                native::read_record(&fixture.home, &fixture.source.source_id)
+                    .expect("lifecycle after reads"),
+                lifecycle
+            );
+            assert_eq!(
+                serde_json::to_value(groups.load(&group.group_id).expect("Group after reads"))
+                    .expect("Group value"),
+                serde_json::to_value(configuration).expect("Group value")
+            );
+            assert!(
+                super::super::runtime_delivery::latest_state(
+                    &fixture.home,
+                    &group.group_id,
+                    "native",
+                    &pending.id,
+                )
+                .expect("delivery state")
+                .is_none(),
+                "an overview read must not claim pending native input"
+            );
+        }
+    }
+}
+
+#[test]
+fn group_controls_preserve_native_hosts_and_independent_membership_access() {
+    for runtime in [
+        LocalSessionRuntime::Codex,
+        LocalSessionRuntime::Claude,
+        LocalSessionRuntime::Pi,
+        LocalSessionRuntime::Opencode,
+    ] {
+        let fixture = Fixture::with_runtime(runtime);
+        if runtime == LocalSessionRuntime::Codex {
+            let mut session = fixture.source.clone();
+            session.codex_can_receive = true;
+            native::write(&fixture.home, session).expect("qualification evidence");
+        } else {
+            fixture.attach();
+        }
+        let groups = GroupStore::new(fixture.home.clone()).expect("store");
+        let mut first = groups.create("First membership", "").expect("first Group");
+        let mut actor = Actor::new("native");
+        actor.runtime = actor_runtime(runtime);
+        actor.external_session_id = fixture.source.source_id.clone();
+        first.actors.push(actor.clone());
+        first.state = GroupState::Stopped;
+        groups.save(&first).expect("first membership");
+        let mut other = groups.create("Paused membership", "").expect("other Group");
+        actor.enabled = false;
+        other.actors.push(actor);
+        other.state = GroupState::Paused;
+        other.running = true;
+        groups.save(&other).expect("paused membership");
+
+        let started = fixture.call(
+            "group_start",
+            json!({"group_id":first.group_id,"by":"user"}),
+        );
+        assert_eq!(started["group"]["state"], "active");
+        assert_eq!(started["group"]["running"], true);
+        fixture.call("group_stop", json!({"group_id":first.group_id,"by":"user"}));
+        let stopped = groups.load(&first.group_id).expect("stopped Group");
+        assert_eq!(stopped.state, GroupState::Stopped);
+        assert!(!stopped.running);
+        assert!(
+            stopped.actors[0].enabled,
+            "Stop must retain membership access"
+        );
+        let retained = groups.load(&other.group_id).expect("unaffected Group");
+        assert_eq!(retained.state, GroupState::Paused);
+        assert!(retained.running);
+        assert!(!retained.actors[0].enabled);
+        let resumed = fixture.call(
+            "group_start",
+            json!({"group_id":other.group_id,"by":"user"}),
+        );
+        assert_eq!(resumed["group"]["desired_running"], true);
+        assert_eq!(resumed["group"]["running"], false);
+        assert_eq!(resumed["group"]["actors"][0]["enabled"], false);
+        fixture.call("group_stop", json!({"group_id":other.group_id,"by":"user"}));
+        assert!(connected(&fixture.home, &fixture.source.source_id));
+        assert!(
+            fixture.source.host.alive(),
+            "Group controls do not own the native host"
+        );
+        for group in [&first, &other] {
+            let events =
+                cccc_core::ledger::read_all(&groups.ledger_path(&group.group_id).expect("ledger"))
+                    .expect("lifecycle events");
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].kind, "group.start");
+            assert_eq!(events[1].kind, "group.stop");
+            assert!(events.iter().all(|event| event.by == "user"));
+        }
     }
 }
 

@@ -83,7 +83,16 @@ pub fn daemon_call(
             alias(&mut args, "id", "capability_id");
             "capability_uninstall"
         }
-        "cccc_group" => return action(args, actions::group),
+        "cccc_group" => {
+            let (op, mut args) = action(args, actions::group)?;
+            if op == "group_set_state"
+                && args.get("state").and_then(Value::as_str) == Some("stopped")
+            {
+                args.remove("state");
+                return Ok(("group_stop".into(), args));
+            }
+            return Ok((op, args));
+        }
         "cccc_actor" => return action(args, actions::actor),
         "cccc_actor_notes" => return action(args, actions::actor_notes),
         "cccc_coordination" => return context_action(args, "coordination"),
@@ -371,6 +380,21 @@ mod tests {
     use super::daemon_call;
     use crate::argument_normalization::normalize_message_author;
     use serde_json::{Map, json};
+
+    #[test]
+    fn group_set_state_stopped_uses_the_stop_operation_with_authority_intact() {
+        let input = json!({"action":"set_state", "state":"stopped", "group_id":"g", "by":"foreman", "_cccc_native_source_binding":{"revision":7}});
+        let (op, args) = daemon_call(
+            "cccc_group",
+            input.as_object().expect("Group arguments").clone(),
+        )
+        .expect("Group mapping");
+        assert_eq!(op, "group_stop");
+        assert!(!args.contains_key("state"));
+        assert_eq!(args["by"], "foreman");
+        assert_eq!(args["group_id"], "g");
+        assert_eq!(args["_cccc_native_source_binding"]["revision"], 7);
+    }
 
     #[test]
     fn context_reads_never_ask_for_more_than_one_bounded_page() {

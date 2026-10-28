@@ -123,7 +123,15 @@ Windows 尤其如此。如果要在同一命令目录从 pip 切换到官网安�
 cccc
 ```
 
-打开 **http://127.0.0.1:8848** — 默认会一起拉起 daemon 和本地 Web UI。
+在交互式终端里运行 `cccc`，会打开一个简洁的终端界面，并同时拉起 daemon 和本地 Web UI。
+这个界面是一个状态面板：显示 Web 地址、daemon 是否由本次启动、各工作组的状态和运行中的成员，以及原生会话。
+用上下键选中工作组，按 Enter 打开，即可启动或停止它。输入 `/` 可查看全部命令：`/sessions` 列出所有原生会话，
+`/setup` 可接入 Codex、Claude Code、Pi 或 OpenCode 会话，`/quit`（或 Ctrl+C）会停止本次启动的服务。
+其余功能都在 Web UI 里。
+
+完整的 Web UI 在 **http://127.0.0.1:8848**。不需要终端界面时，例如在服务器、容器、服务管理器或
+脚本中启动，请使用 `cccc --headless`（或 `cccc web`），它保持纯日志输出。输入或输出不是终端时，
+以及只读（Exhibit）模式下，`cccc` 也会以 headless 方式运行。
 直接通过 `localhost` / `127.0.0.1` 使用时保持免密，也不会自动创建 Access Token。
 只有开启 LAN、Remote Access、公网 URL 或反向代理访问时才需要显式管理员 Token。
 
@@ -386,7 +394,8 @@ cccc im start
 
 ```bash
 # 生命周期
-cccc                           # 启动 daemon + Web UI
+cccc                           # 启动 daemon + Web UI，并打开终端界面
+cccc --headless                # 启动 daemon + Web UI，不打开终端界面（同 cccc web）
 cccc daemon start|status|stop  # daemon 管理
 
 # 协作组

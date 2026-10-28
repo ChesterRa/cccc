@@ -616,10 +616,10 @@ pub fn find_relay(path: &Path, source_event_id: &str) -> io::Result<Option<Event
 fn note_index_query(api: &str) {
     if std::env::var_os("CCCC_LEDGER_INDEX_PROBE").is_some_and(|value| value == "1") {
         let caller = std::panic::Location::caller();
-        eprintln!(
+        cccc_runtime::diagnostic(format_args!(
             "CCCC_EVENT_INDEX_QUERY {}",
             serde_json::json!({"api":api,"file":caller.file(),"line":caller.line()})
-        );
+        ));
     }
 }
 

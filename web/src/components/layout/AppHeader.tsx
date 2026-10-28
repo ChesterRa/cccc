@@ -1,7 +1,7 @@
 import { useUIStore } from "../../stores/useUIStore";
 import type { Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { getGroupStatusFromSource } from "../../utils/groupStatus";
+import { GROUP_STATUS_LABEL_KEYS, getGroupStatusFromSource } from "../../utils/groupStatus";
 import { GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import { ChevronDownIcon, ClipboardIcon, EditIcon, SearchIcon, MoreIcon, MenuIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
@@ -78,14 +78,7 @@ export function AppHeader({
   const runLabel = selectedStatus
     ? t("groupRun.control", {
         group: groupTitle,
-        state: t(
-          {
-            run: "statusRunning",
-            paused: "statusPaused",
-            idle: "statusIdle",
-            stop: "statusStopped",
-          }[selectedStatus.key],
-        ),
+        state: t(GROUP_STATUS_LABEL_KEYS[selectedStatus.key]),
       })
     : "";
   const sseErrorDetail = useSseErrorDetailText();

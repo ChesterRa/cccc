@@ -93,6 +93,7 @@ function RecoveryGuidance({ actor, groupId }: { actor: Actor; groupId: string })
       } else setLoading(true);
       setReadFailed(false);
       setCopyResult(null);
+      let confirmedRefresh = false;
       try {
         const response = await (refresh
           ? refreshLocalSessionRecovery(groupId, actor.id)
@@ -110,6 +111,7 @@ function RecoveryGuidance({ actor, groupId }: { actor: Actor; groupId: string })
           throw new Error("Recovery binding could not be confirmed");
         }
         setRecovery(response.result.recovery);
+        confirmedRefresh = refresh;
         const connected = response.result.recovery.state === "connected";
         if (!expansionChosen.current) setExpanded(!connected || qualificationUnavailable);
         const outcome = connected
@@ -133,6 +135,11 @@ function RecoveryGuidance({ actor, groupId }: { actor: Actor; groupId: string })
           if (active.current) setRefreshing(false);
         }
         if (active.current && request === requestSeq.current) setLoading(false);
+      }
+      // The status above comes from the Actor list, which the check may
+      // have changed; read it once rather than guessing the new state.
+      if (confirmedRefresh && active.current) {
+        void useGroupStore.getState().refreshActors(groupId);
       }
     },
     [groupId, actor.id, actor.external_session_id],

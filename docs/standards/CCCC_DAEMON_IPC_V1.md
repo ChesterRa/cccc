@@ -4001,9 +4001,21 @@ that qualification refresh cannot be followed by native input or model work.
 
 PowerShell literals MUST escape every recognized single-quote delimiter, including U+2018–U+201B, not just ASCII apostrophes. Encoding the enclosing script MUST NOT substitute for safely quoting its embedded paths and IDs. This rule also applies to generated hook and Monitor commands.
 
-Retiring lifecycle identity MUST revoke ordinary tool and receiver authority while retaining the last CCCC-owned lifecycle record for local recovery. Dead-host records MAY also remain but MUST NOT appear as active directory sources or authorize work. Only the latest native ID, working directory and whitelisted provider configuration directory are used; this is not native conversation history or a transcript backup. A later lifecycle callback refreshes that same source's record and revision under the existing host/ID fencing rules. The command MUST safely quote native IDs and paths, select this `CCCC_HOME` and any captured `CODEX_HOME` / `CLAUDE_CONFIG_DIR`, and run in the last recorded directory when known. `shell` describes the CCCC host's command syntax, never the browser's OS: POSIX on Linux/macOS, PowerShell on native Windows. Codex's immutable source binding can supply its native thread ID if metadata is missing; a Claude host/source identifier MUST NOT be substituted for a conversation ID. Without a captured Claude native ID, offer only the original runtime's session picker. Commands are instructions for a human on the original host and configuration, not a Web execution capability or automatic membership transfer; native resume can consume queued work and model credits.
+Retiring lifecycle identity MUST revoke ordinary tool and receiver authority while retaining the last CCCC-owned lifecycle record for local recovery. Dead-host records MAY also remain but MUST NOT appear as active directory sources or authorize work. Only the latest native ID, working directory and whitelisted provider configuration directory are used; this is not native conversation history or a transcript backup. A later lifecycle callback refreshes that same source's record and revision under the existing host/ID fencing rules. The command MUST safely quote native IDs and paths, select this `CCCC_HOME` and any captured `CODEX_HOME` / `CLAUDE_CONFIG_DIR`, and run in the last recorded directory when known. `shell` describes the CCCC host's command syntax, never the browser's OS: POSIX on Linux/macOS, PowerShell on native Windows. Codex's immutable source binding can supply its native thread ID if metadata is missing; a Claude host/source identifier MUST NOT be substituted for a conversation ID. Without a captured Claude native ID, offer only the original runtime's session picker. Returning these commands does not execute a native resume or transfer membership. A later native receive attachment follows the restoration rules below; native resume can consume queued work and model credits.
 
 `local_session_conversation` (global write): `{ source_ids: string[], source_id?: string, title?: string, direct?: boolean }` creates an ordinary Group for 1–16 selected connected sources, including the optional caller. Returns `{ group_id, group, reused }`. `direct=true` MAY reuse an existing Group with the exact source set and enabled memberships. The private Web **+ New Group** choice MUST pass `direct=false` for every selection size and explicitly create a new Group. Native direct-message reuse remains unchanged. The Web **Connect to Group** action adds selected sessions to the explicit Group; with zero selected sessions it MUST stay disabled rather than navigating or changing membership. Working directories become attached scopes without changing registry project defaults. Source-initiated Group/Actor creation events use `by=svc:cccc.local-session` and retain the initiating `source_id`; human-initiated creation uses `by=user`.
+
+Native MCP `cccc_session` MUST validate parameters for the selected action before
+any daemon side effect. `list` accepts only `action`; `conversation` accepts
+`source_ids` and optional `title`, and creates a Group without sending a message;
+`leave` accepts `group_id`. Message fields (`text`, `mode`, `insight`, `to`,
+`client_id`) belong to `send`; meaningful message content or a non-default mode
+MUST NOT be silently discarded by another action. Known unused optional fields
+set to null, empty strings/arrays, or the shared schema default `mode="send"`
+are treated as omitted on non-send actions. Unknown fields and invalid send
+modes remain errors. Rejected calls return `invalid_args` and point to `send` with `source_ids`
+and `text`. Invalid action types/names also fail. This does not permit model
+arguments to select the authenticated source or supply internal authority.
 
 `local_session_join` (Group write): `{ group_id: string, source_ids: string[] }` adds 1–16 explicitly selected connected sources to an existing Group. This is a human-administrator operation; native source-initiated admission and remote connector access MUST be rejected. Returns `{ group_id, group, reused }`, with `reused=true` when every selected source already has a membership. Existing memberships, including disabled access, MUST remain unchanged. New sources become new Actors appended to membership order and receive `actor.add` generation facts; they MUST NOT replace old Actors, inherit their pending messages, or automatically take over their roles. Attaching their scopes MUST NOT change the Group's active scope, state/running flag, registry defaults, or global active Group. The private Web exposes this through administrator-only `POST /api/v1/local_sessions/join`. Web MUST distinguish existing enabled and paused members of the selected Group. Resuming a paused membership is a separate explicit user action through `actor_update` with `enabled=true` and the selected unchanged `external_session_id`; a mismatched source MUST fail. Joining or resuming access MUST NOT resume the Group or the original application.
 
@@ -4035,9 +4047,9 @@ Group retains desired-running state; stopping its last enabled member may clear 
 The Web resume action MUST fence the selected source via `external_session_id`.
 Managed Actor Start retains its existing Group-start behavior.
 
-The Claude adapter uses an ephemeral receiver lease; Codex uses its official native queue. Adapter-only operations:
+The Claude adapter uses an ephemeral receiver lease; Codex hands deliveries to its existing app-server thread, steering an eligible active turn and otherwise using its official native queue, as specified below. Adapter-only operations:
 
-- `local_session_receiver_attach` (global write) and `local_session_receiver_heartbeat` (resource-owned): `{ source_id, connection_id }` returns `{ source }`. A live different owner is rejected; heartbeat can reattach the same receiver after daemon restart. The adapter's lifecycle metadata supplies the current native conversation, including changes while the daemon was down.
+- `local_session_receiver_attach` (global write) and `local_session_receiver_heartbeat` (resource-owned): `{ source_id, connection_id }` returns `{ source }`. A live different owner is rejected; heartbeat can renew the same receiver's lease. Only the true attach operation may restore proven Claude/Pi conversation memberships as specified below. Adapters MUST call it after daemon connection loss or a changed lifecycle revision; renewing a lease alone MUST NOT mutate Group membership. The adapter's lifecycle metadata supplies the current native conversation, including changes while the daemon was down.
 - `local_session_receiver_next` (resource-owned): same args; returns `{ source, handoff: null | { handoff_id, source_id, native_session_id, group_id, actor_id, event_ids, text } }`. Offers each physical handoff once. MUST recheck the Actor generation, access, receiver owner and native conversation revision before offering. Changed/replaced ownership MUST settle older handoffs without blocking future work.
 - `local_session_receiver_ack` (resource-owned): same owner args plus `{ handoff_id, state: "accepted"|"failed"|"ambiguous", reason?: string }`. Confirms only an offered handoff still owned by that receiver and conversation revision. An old acknowledgement MUST NOT confirm newer work.
 - `local_session_receiver_detach` (resource-owned): same owner args; clears only that owner and settles its pending physical handoffs. Old cleanup MUST NOT detach a replacement receiver.
@@ -4046,11 +4058,65 @@ Every native message MUST carry its receiving Group ID, Actor ID, current role, 
 
 Receipts use existing `runtime.delivery` events with `transport=local_session`. Accepted means transport acceptance, not model execution/read/reply. Known rejection is failed; unknown submission is ambiguous and MUST NOT automatically replay. A failed attempt known to have stopped before native submission carries `retryable=true` and remains pending across access/Group pause and resume. Native rejection or an older failed receipt without this evidence stays out of automatic recovery. Accepted, ambiguous and withdrawn receipts MUST NOT replay, regardless of the flag. A missing acknowledgement is bounded to 30 seconds, after which later messages can proceed. Ordinary native delivery MUST keep offline work pending without a durable claim, claiming only when the receive channel is available and the adapter handoff is ready. A definitely unsubmitted unavailable attempt releases its claim with explicit retryable evidence. After a crash, remaining unsettled claims are still ambiguous; moving the claim boundary MUST NOT authorize replay of earlier ambiguous receipts. Other targets remain independent. Native callbacks and receiver polling MUST NOT start synthetic model work.
 
+A Codex delivery is eligible for the active turn only when one read of the thread without turns reports `canAcceptDirectInput: true` and an `active` status with a known empty `activeFlags` list, and the newest page of turns, without items, shows an `inProgress` turn. `canAcceptDirectInput` alone is not eligibility: it stays true while Codex waits on an approval or on user input. The daemon then sends `turn/steer` with that turn as `expectedTurnId`. A reply that returns the same turn is accepted. An explicit invalid-request or method rejection, including no active turn, a different active turn and a compact turn, means the input was not admitted. So does an ineligible read. In either case the daemon uses the official native queue under the rules below, without chasing a newer turn. After the steer request is sent, a closed connection, timeout, cancellation, internal error or unreadable reply is ambiguous and MUST NOT fall back to the queue or replay.
+
+To make a delivery eligible, the daemon MUST NOT:
+- start, resume, interrupt or reconfigure a thread;
+- read its transcript;
+- answer approvals or questions;
+- persist or edit queued submissions, whether queued by CCCC, the user or another client.
+
+Accepted remains transport acceptance: steered input has joined the active turn, which does not prove the model has read it. Codex can still apply its own policy, such as a blocking `UserPromptSubmit` hook, to accepted input; the receipt stays accepted and the input is never re-queued. This governs only how CCCC hands over its own deliveries; it does not change the input mode a user selects in a Codex client.
+
 Queue-process errors proven to occur before any child exists MUST remain retryable. Errors after a child starts, including post-spawn setup failure, MUST NOT be classified as unsubmitted without further evidence. Codex command-line admission MUST validate the complete rendered payload before claiming it, including context, bootstrap, platform encoding and argument limits. Unrepresentable payloads MUST fail explicitly without truncation or implicit splitting; they MUST NOT turn into ambiguous submissions or replay prior terminal work.
 
 Claude cancellation/expiry MUST withdraw a pending handoff and inspect whether it was offered in one critical section. A receiver MUST NOT offer it after it is classified as unsubmitted. If an acknowledgement already settled the handoff before withdrawal, that acknowledged outcome MUST win over cancellation/expiry.
 
-The native source lifetime is runtime-specific: Codex source identity is its native thread; Claude source identity is its physical host, with `/clear` updating the conversation revision while retaining Group memberships. Host identity MUST distinguish PID reuse. A lifecycle end MUST match both the registered host and native conversation ID; an older host's late end MUST NOT retire its replacement. A replacement Claude host MUST NOT silently take over old memberships. Explicit native Codex resume MAY reconnect the same thread source; another thread or a matching directory MUST NOT establish that identity.
+The native source lifetime is runtime-specific: Codex source identity is its
+native thread; Claude and Pi source identity is the physical host, with in-host
+conversation switches updating the revision while retaining Group memberships.
+Host identity MUST distinguish PID reuse. A lifecycle end MUST match both the
+registered host and native conversation ID; an older host's late end MUST NOT
+retire its replacement. Explicit native Codex resume MAY reconnect the same
+thread source; another thread or a matching working directory MUST NOT establish
+that identity.
+
+Claude/Pi receive attachment MAY reconnect an existing Actor to a replacement
+host of its last recorded conversation. This requires the same runtime, exact
+nonempty native session ID, and the same canonical provider configuration
+directory, plus positive evidence that the former process fingerprint exited or
+was replaced. Permission errors or inconclusive process lookup MUST NOT count as
+exit. The integration must be enabled and neither lifecycle record may have been
+retired by explicit integration disablement. Another live host of that
+conversation, multiple matching former Actors in one Group, or an already
+admitted replacement in that Group MUST prevent automatic transfer there.
+Missing/unreadable matching evidence MUST NOT be guessed from titles or cwd.
+
+Restoration MUST run under the daemon's global mutation permit and revalidate
+the lifecycle revision/host and prior record under the lifecycle file lock.
+Retain Actor ID, generation, ordering, role and enabled access; retain Group
+state/running intent and scopes. Update only the source binding and an Actor
+title still equal to its old registered title, preserving custom titles. Update
+the existing direct-conversation source-set key consistently. Append an ordinary
+`actor.update` audit event by `svc:cccc.local-session`, with the source patch,
+`previous_external_session_id`, and `reason="native_session_resumed"`; provider
+directories MUST NOT enter the ledger. An audit failure MUST roll back that
+membership update. A failed Group restoration MUST NOT fail an otherwise valid
+receive attachment or prevent restoration/delivery for other Groups; record the
+Group ID and error in diagnostics. This is idempotent, not an Actor recreation
+or new admission.
+
+After releasing the lifecycle lock, retire the old member's delivery worker and
+reload pending work through the existing ledger projection. Preserve every
+claim/terminal receipt and its existing retry rules; do not replay accepted,
+ambiguous or withdrawn work. Paused/disabled access and stopped/paused Groups
+MUST remain fenced. Directory/recovery reads and resource-owned heartbeats MUST
+NOT restore membership. If another host later exits after attachment was
+declined, explicitly reload the receive integration to retry; no polling read
+may acquire membership as a side effect. Native MCP membership errors MUST name
+the source and Group, distinguish paused access from absent membership, and
+provide the existing receive-reload or human admission path instead of requiring
+a replacement Group.
 
 Codex receive readiness is a capability snapshot, not proof of consumption or future admission. Lifecycle callbacks MUST revalidate rather than permanently reuse an earlier positive result. Qualification checks use the existing native app-server, confirm loaded-thread membership and official queue availability, and MUST NOT enqueue a probe, resume a thread, start a model, or retain/log queue inputs. Best-effort negative qualification after failed handoff is bounded and asynchronous: it MUST NOT delay delivery receipts or Actor shutdown. An update MUST match the captured host, native ID, revision and endpoint fields (cwd, provider Home and executable), not just revision. Definitive negative qualification invalidates only that registration's readiness; an inconclusive lookup or business rejection alone MUST NOT retire identity, disconnect a replacement, or authorize replay. Directory polling MUST NOT perform these native queries. Explicit user refresh MAY restore positive readiness without a new lifecycle callback. Codex's `unix://` queue endpoint is also the provider's native Windows AF_UNIX transport; adapters MUST NOT substitute an invented named-pipe or WSL endpoint.
 
@@ -4371,10 +4437,18 @@ Every daemon-rendered `chat.message` handed to an actor runtime MUST expose the
 current ledger identity before the message body:
 
 ```text
-[cccc] <sender> → <recipients> [event_id=<current_event_id>]: <body>
-[cccc] <sender> → <recipients> (reply:<short_parent_id>) [event_id=<current_event_id>]: <body>
-[cccc] <sender> → <recipients> [event_id=<current_event_id> reply_required]: <body>
+[cccc] <sender> → <recipients> [event_id=<current_event_id> sent=<ledger_time>]: <body>
+[cccc] <sender> → <recipients> (reply:<short_parent_id>) [event_id=<current_event_id> sent=<ledger_time>]: <body>
+[cccc] <sender> → <recipients> [event_id=<current_event_id> sent=<ledger_time> reply_required]: <body>
 ```
+
+`sent` is the event's original `ts` as recorded in the ledger, in RFC 3339 UTC
+truncated to whole seconds (for example `2026-10-28T01:45:03Z`). It is not the
+handoff or presentation time: a runtime can present accepted input much later,
+for example when a native queue holds it until the current turn ends, and the
+marker lets the actor recognize an old instruction without a history lookup. An unreadable
+`ts` omits the marker. A delivered `system.notify` line carries the same value
+as `[cccc] SYSTEM (<kind>) [sent=<ledger_time>]: <body>`.
 
 `event_id` is the target an actor passes to `cccc_message_reply` when answering
 the delivered message. A reply MAY expose its parent as the existing short
@@ -4387,7 +4461,7 @@ next action. A `request_reply` message MUST instead add the actionable
 the same envelope in native-terminal, structured, and Web Model delivery. The metadata MUST
 remain in the existing first header line so adding it does not turn a one-line
 message into multiple runtime input lines. It does not add or mutate ledger
-fields, and it is not required for `system.notify`.
+fields, and the `event_id` metadata is not required for `system.notify`.
 Every delivered batch containing one or more `chat.message` events MUST append
 one concise instruction telling the actor to call `cccc_message_reply` with its
 `event_id` argument set to the target message's current `event_id`. The
@@ -4966,6 +5040,15 @@ Use the same visibility rules as delivery; unknown, invisible and prior-generati
 IDs all return `event_not_found`. Exact reads cannot be combined with `mode`,
 `query`, `before_event_id` or `limit`. They remain non-consuming and do not
 acknowledge execution, create a delivery or replay a handoff.
+
+The MCP `cccc_message_history` tool presents an exact read as
+`{ delivery_text, message }`, where `message` is the single returned event. From
+a `chat.message`, it omits `data.text` (compared without trailing line breaks)
+and the normalized `data.insight` only when that complete value appears in
+`delivery_text`; all other fields, including `quote_text`, attachments,
+references and source fields, are kept. A `system.notify` and an event without
+rendered text are returned whole. The IPC result above and history lists are
+unchanged.
 
 ### 8.8 Context and Tasks
 

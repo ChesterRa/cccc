@@ -1,16 +1,9 @@
 import { useTranslation } from "react-i18next";
 
 import { useSseErrorDetailText } from "../../hooks/useSseErrorDetailText";
-import type { GroupStatus, GroupStatusKey } from "../../utils/groupStatus";
-import { GROUP_STATUS_DOT_BASE_CLASS } from "../../utils/groupStatus";
+import type { GroupStatus } from "../../utils/groupStatus";
+import { GROUP_STATUS_DOT_BASE_CLASS, GROUP_STATUS_LABEL_KEYS } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
-
-const statusLabelKey: Record<GroupStatusKey, string> = {
-  run: "statusRunning",
-  paused: "statusPaused",
-  idle: "statusIdle",
-  stop: "statusStopped",
-};
 
 interface GroupStatusIndicatorProps {
   status: GroupStatus;
@@ -28,7 +21,7 @@ export function GroupStatusIndicator({
   connectionStatus,
 }: GroupStatusIndicatorProps) {
   const { t } = useTranslation("layout");
-  const label = t(statusLabelKey[status.key]);
+  const label = t(GROUP_STATUS_LABEL_KEYS[status.key]);
   const interrupted = connectionStatus && connectionStatus !== "connected";
   const errorDetail = useSseErrorDetailText();
   const connectionLabel = interrupted

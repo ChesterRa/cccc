@@ -7,7 +7,9 @@ mod daemon_lifecycle;
 mod daemon_takeover;
 #[cfg(any(windows, test))]
 mod detached_daemon_owner;
+mod host_state;
 mod shutdown;
+mod tui;
 mod web_endpoint;
 mod web_host;
 mod web_instance;
@@ -21,6 +23,7 @@ use cccc_daemon::{DetachedDaemon, StartOutcome};
 use clap::Parser;
 use commands::common::{call, print};
 use serde_json::json;
+use std::io::IsTerminal;
 
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -36,10 +39,20 @@ async fn main() -> Result<()> {
     // `mcp` run from this same binary -- so no process reaches TLS without one.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let cli = Cli::parse();
+    if cli.headless && cli.command.is_some() {
+        bail!("--headless is a launch option; use cccc --headless without a subcommand");
+    }
     let home = HomeLayout::resolve()?;
     let client = DaemonClient::new(home.clone());
     match cli.command {
-        None => web_host::launch(home, cli.host, cli.port, None).await,
+        None => {
+            let terminal = web_host::use_terminal_interface(
+                !cli.headless,
+                std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+                cccc_web::WebMode::from_env(),
+            );
+            web_host::launch(home, cli.host, cli.port, None, terminal).await
+        }
         Some(CommandKind::Web(args)) => {
             if args.reload {
                 eprintln!(
@@ -59,7 +72,7 @@ async fn main() -> Result<()> {
                     WebModeArg::Exhibit => cccc_web::WebMode::Exhibit,
                 })
             };
-            web_host::launch(home, cli.host, cli.port, mode).await
+            web_host::launch(home, cli.host, cli.port, mode, false).await
         }
         Some(CommandKind::Mcp {
             local_session_runtime,

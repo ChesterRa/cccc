@@ -172,6 +172,12 @@ jobs:
           daemon_self_launch::combined_web_bind_failure_stops_its_owned_daemon
           -- --test-threads=1
 
+      - name: Verify foreground terminal lifecycle in ConPTY
+        timeout-minutes: 10
+        run: >-
+          cargo test --package cccc --test tui_lifecycle --locked
+          -- --test-threads=1
+
       - name: Verify abrupt daemon process-tree cleanup
         timeout-minutes: 10
         run: >-
@@ -189,6 +195,26 @@ jobs:
         run: >-
           cargo test --package cccc-pair-daemon --lib --locked
           opencode::launch_tests:: -- --test-threads=1
+
+  tui-macos-smoke:
+    needs: web
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: bundled-web
+          path: web/dist
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify foreground terminal lifecycle on macOS
+        run: >-
+          cargo test --package cccc --test tui_lifecycle --locked
+          -- --test-threads=1
+      - name: Verify TUI rendering and input
+        run: >-
+          cargo test --package cccc --bin cccc --locked tui::
 
   rust-linux:
     needs: web
@@ -265,6 +291,7 @@ jobs:
       - web
       - package
       - windows-smoke
+      - tui-macos-smoke
       - rust-linux
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -278,6 +278,29 @@ it("turns the status badge into the Group run menu", async () => {
   expect(onControlGroup).toHaveBeenCalledWith("group-1", "pause");
 });
 
+it.each([
+  ["active", "statusOffline", ["launchAllAgents", "stopAllAgents"]],
+  ["stopped", "statusStopped", ["launchAllAgents"]],
+] as const)(
+  "names a Group with no running Actor and state %s as %s",
+  async (state, word, labels) => {
+    await mount({
+      groupDoc: { group_id: "group-1", state },
+      selectedGroupRunning: false,
+      onControlGroup: vi.fn(),
+    });
+    const trigger = host.querySelector<HTMLButtonElement>("[data-group-run-controls]")!;
+    expect(trigger.textContent).toContain(word);
+    await act(async () => trigger.click());
+    const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
+    expect(
+      Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item) =>
+        item.textContent?.trim(),
+      ),
+    ).toEqual(labels);
+  },
+);
+
 it("shows a plain status badge when the viewer cannot control the Group", async () => {
   await mount({
     groupDoc: { group_id: "group-1", state: "active" },

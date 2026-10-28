@@ -131,8 +131,20 @@ impl NativeHost {
     pub fn alive(&self) -> bool {
         Self::capture(self.pid).is_ok_and(|current| current == *self)
     }
+    /// Positive exit/replacement evidence only; inaccessible metadata is
+    /// inconclusive. `!alive()` cannot substitute for this recovery boundary.
+    pub fn has_exited(&self) -> bool {
+        exit_evidence(self, Self::capture(self.pid))
+    }
     pub fn key(&self) -> String {
         format!("{}:{}:{}", self.boot, self.pid, self.started)
+    }
+}
+
+fn exit_evidence(host: &NativeHost, observed: io::Result<NativeHost>) -> bool {
+    match observed {
+        Ok(current) => current != *host,
+        Err(error) => error.kind() == io::ErrorKind::NotFound,
     }
 }
 
@@ -229,6 +241,33 @@ pub struct NativeSession {
 }
 
 impl NativeSession {
+    /// Captured Claude/Pi conversation metadata for recovery and diagnostics.
+    /// This match alone grants no authority: the daemon must also fence the
+    /// lifecycle, prove the old host exited, and preserve membership access.
+    pub fn same_native_conversation(&self, other: &Self) -> bool {
+        if self.runtime != other.runtime
+            || self.native_session_id.is_empty()
+            || self.native_session_id != other.native_session_id
+        {
+            return false;
+        }
+        let directories = match self.runtime {
+            LocalSessionRuntime::Claude => (
+                self.claude_config_dir.as_ref(),
+                other.claude_config_dir.as_ref(),
+            ),
+            LocalSessionRuntime::Pi => (self.pi_agent_dir.as_ref(), other.pi_agent_dir.as_ref()),
+            _ => return false,
+        };
+        match directories {
+            (Some(left), Some(right)) => match (left.canonicalize(), right.canonicalize()) {
+                (Ok(left), Ok(right)) => left == right,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     pub fn host_alive(&self) -> bool {
         self.host.alive()
             && (self.runtime != LocalSessionRuntime::Opencode
@@ -583,6 +622,23 @@ pub fn scan(home: &HomeLayout) -> io::Result<(Vec<NativeSession>, Vec<String>)> 
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos", windows)))]
 mod tests {
+    #[test]
+    fn permission_and_unknown_process_errors_do_not_establish_exit() {
+        use super::*;
+        let host = NativeHost::capture(std::process::id()).expect("host");
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::Other,
+            io::ErrorKind::Interrupted,
+        ] {
+            assert!(!exit_evidence(&host, Err(io::Error::from(kind))));
+        }
+        assert!(!exit_evidence(&host, Ok(host.clone())));
+        assert!(exit_evidence(
+            &host,
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        ));
+    }
     use super::*;
 
     #[test]

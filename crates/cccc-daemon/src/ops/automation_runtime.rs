@@ -82,7 +82,7 @@ pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cance
             if include_unread
                 && std::env::var_os("CCCC_AUTOMATION_TICK_PROBE").is_some_and(|value| value == "1")
             {
-                eprintln!(
+                cccc_runtime::diagnostic(format_args!(
                     "CCCC_UNREAD_TICK {}",
                     json!({
                         "group_id":group_id,
@@ -90,7 +90,7 @@ pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cance
                         "eligible_actors":delivery_actor_ids.len(),
                         "success":unread_success && !cancelled.load(Ordering::Acquire),
                     })
-                );
+                ));
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

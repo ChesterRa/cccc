@@ -12,6 +12,38 @@ fn request(op: &str, args: Value) -> DaemonRequest {
 }
 
 #[test]
+fn set_state_stopped_rejects_without_changing_lifecycle_or_ledger() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("lifecycle", "").expect("group");
+    let before =
+        std::fs::read(store.ledger_path(&group.group_id).expect("ledger path")).unwrap_or_default();
+    let response = cccc_daemon::handle_request(
+        &home,
+        &request(
+            "group_set_state",
+            json!({"group_id":group.group_id,"state":"stopped","by":"user"}),
+        ),
+    );
+    assert!(!response.ok);
+    assert!(
+        response
+            .error
+            .expect("invalid state error")
+            .message
+            .contains("group_stop")
+    );
+    let current = store.load(&group.group_id).expect("unchanged Group");
+    assert_eq!(current.state, group.state);
+    assert_eq!(current.running, group.running);
+    assert_eq!(
+        std::fs::read(store.ledger_path(&group.group_id).expect("ledger path")).unwrap_or_default(),
+        before
+    );
+}
+
+#[test]
 fn create_response_keeps_group_and_exposes_top_level_group_id() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

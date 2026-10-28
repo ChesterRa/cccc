@@ -67,9 +67,9 @@ impl SessionHistory {
             Some(config) => match TranscriptArchive::create_at(config, cursor_floor) {
                 Ok(archive) => Some(archive),
                 Err(error) => {
-                    eprintln!(
+                    crate::diagnostic(format_args!(
                         "CCCC terminal transcript archive unavailable; using memory only: {error}"
-                    );
+                    ));
                     None
                 }
             },

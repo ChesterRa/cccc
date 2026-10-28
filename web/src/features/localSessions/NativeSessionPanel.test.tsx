@@ -16,6 +16,7 @@ import jaCommon from "../../i18n/locales/ja/common.json";
 const mocks = vi.hoisted(() => ({
   load: vi.fn(),
   refresh: vi.fn(),
+  refreshActors: vi.fn(),
   clipboard: vi.fn(),
   fallback: vi.fn(),
 }));
@@ -93,7 +94,8 @@ beforeEach(async () => {
       interpolation: { escapeValue: false },
     });
   vi.useFakeTimers();
-  useGroupStore.setState({ groupDoc: null });
+  useGroupStore.setState({ groupDoc: null, refreshActors: mocks.refreshActors });
+  mocks.refreshActors.mockResolvedValue(undefined);
   mocks.load.mockResolvedValue(recoveryResponse());
   mocks.refresh.mockResolvedValue(recoveryResponse({ state: "connected" }));
   mocks.clipboard.mockResolvedValue(undefined);
@@ -803,3 +805,31 @@ it.each(["binding", "permission"])(
     expect(host.querySelector('[role="alert"]')).toBeNull();
   },
 );
+
+it("reads the Actor list once after a confirmed Codex refresh, never after reads or failures", async () => {
+  await render();
+  expect(mocks.refreshActors).not.toHaveBeenCalled();
+  await clickButton("Refresh status");
+  expect(mocks.refreshActors).toHaveBeenCalledExactlyOnceWith(GROUP_ID);
+
+  mocks.refresh.mockResolvedValueOnce({
+    ok: false,
+    error: { code: "refresh_failed", message: "Synthetic error" },
+  });
+  await clickButton("Refresh status");
+  mocks.refresh.mockResolvedValueOnce(
+    recoveryResponse({ state: "connected" }, nativeActor, "g_wrong"),
+  );
+  await clickButton("Refresh status");
+  expect(mocks.refreshActors).toHaveBeenCalledOnce();
+
+  // Claude's Refresh is the passive read, which changes nothing to re-read.
+  await render({
+    actor: { ...nativeActor, runtime: "claude", external_session_id: "claude:host" },
+  });
+  mocks.load.mockResolvedValue(
+    recoveryResponse({}, { ...nativeActor, runtime: "claude", external_session_id: "claude:host" }),
+  );
+  await clickButton("Refresh status");
+  expect(mocks.refreshActors).toHaveBeenCalledOnce();
+});

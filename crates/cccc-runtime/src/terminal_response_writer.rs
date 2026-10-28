@@ -47,9 +47,9 @@ impl TerminalResponseSender {
         for response in responses {
             if state.responses.len() >= MAX_QUEUED_RESPONSES {
                 if !state.overflow_reported {
-                    eprintln!(
+                    crate::diagnostic(format_args!(
                         "CCCC terminal response queue full; dropping excess terminal responses"
-                    );
+                    ));
                     state.overflow_reported = true;
                 }
                 continue;
@@ -188,7 +188,9 @@ fn report_response_error(reported: &mut bool, error: String) {
     if *reported {
         return;
     }
-    eprintln!("CCCC terminal response write failed; continuing to drain PTY output: {error}");
+    crate::diagnostic(format_args!(
+        "CCCC terminal response write failed; continuing to drain PTY output: {error}"
+    ));
     *reported = true;
 }
 

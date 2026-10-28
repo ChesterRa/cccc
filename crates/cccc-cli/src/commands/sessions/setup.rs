@@ -6,21 +6,52 @@ use std::process::Command;
 #[path = "setup_opencode.rs"]
 mod opencode;
 
+#[path = "setup_inspect.rs"]
+mod inspection;
+pub(crate) use inspection::{SetupInspection, inspect};
+
 const MARKER: &str = "CCCC local session connection";
 const PLUGIN: &str = "cccc-local-sessions@cccc-local";
+
+const RESTART_REQUIRED: &str = "This running CCCC executable was replaced or removed. Restart CCCC before running setup again. No provider configuration was changed";
+
+fn running_executable() -> Result<PathBuf> {
+    let executable = std::env::current_exe().context(RESTART_REQUIRED)?;
+    // In particular, Linux current_exe retains a deleted inode's name after
+    // an atomic upgrade. Never install that name or guess its replacement.
+    anyhow::ensure!(executable.is_file(), RESTART_REQUIRED);
+    Ok(executable)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SetupResult {
+    pub provider_dir: PathBuf,
+    pub output: Value,
+    pub warnings: Vec<String>,
+}
+
+impl SetupResult {
+    pub(super) fn print(self) -> Result<()> {
+        for warning in self.warnings {
+            eprintln!("{warning}");
+        }
+        println!("{}", serde_json::to_string_pretty(&self.output)?);
+        Ok(())
+    }
+}
 
 fn pi_mcp(home: &HomeLayout, executable: &std::path::Path) -> Value {
     json!({"command":executable,"args":["mcp","--local-session-runtime","pi"],
         "env":{"CCCC_HOME":home.root()},"exposure":"direct"})
 }
 
-fn configure_pi(home: &HomeLayout, enabled: bool) -> Result<()> {
+async fn configure_pi(home: &HomeLayout, enabled: bool) -> Result<SetupResult> {
     platform()?;
     home.initialize()?;
     if !enabled {
         local_sessions::set_integration_disabled(home, LocalSessionRuntime::Pi, true)?;
     }
-    version("pi")?;
+    version("pi").await?;
     let executable = crate::commands::setup::public_executable()?;
     let provider_home = native_home("PI_CODING_AGENT_DIR", ".pi/agent")?;
     let mcp_path = provider_home.join("mcp.json");
@@ -33,6 +64,7 @@ fn configure_pi(home: &HomeLayout, enabled: bool) -> Result<()> {
         .pointer("/mcpServers/cccc")
         .filter(|value| !value.is_null());
     let expected = pi_mcp(home, &executable);
+    let mut warnings = Vec::new();
     if enabled {
         if let Some(entry) = existing {
             anyhow::ensure!(
@@ -70,7 +102,8 @@ fn configure_pi(home: &HomeLayout, enabled: bool) -> Result<()> {
                 plugin.to_string_lossy().into_owned(),
                 "--no-approve".into(),
             ],
-        )?;
+        )
+        .await?;
         checked(
             "pi",
             &[
@@ -87,7 +120,8 @@ fn configure_pi(home: &HomeLayout, enabled: bool) -> Result<()> {
                 "--local-session-runtime".into(),
                 "pi".into(),
             ],
-        )?;
+        )
+        .await?;
         local_sessions::set_integration_disabled(home, LocalSessionRuntime::Pi, false)?;
     } else {
         let plugin = home.root().join("integrations/pi");
@@ -119,20 +153,23 @@ fn configure_pi(home: &HomeLayout, enabled: bool) -> Result<()> {
                     plugin.to_string_lossy().into_owned(),
                     "--no-approve".into(),
                 ],
-            )?;
+            )
+            .await?;
         }
         if existing == Some(&expected) {
-            checked("pi", &["mcp".into(), "remove".into(), "cccc".into()])?;
+            checked("pi", &["mcp".into(), "remove".into(), "cccc".into()]).await?;
         } else if existing.is_some() {
-            eprintln!("Native Pi access is disabled; the modified cccc MCP entry was preserved.");
+            warnings.push(
+                "Native Pi access is disabled; the modified cccc MCP entry was preserved.".into(),
+            );
         }
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({"runtime":"pi","enabled":enabled,
-        "note":if enabled {"Configuration saved. Run /reload in existing Pi sessions, or start Pi normally. Its native extension and MCP server load together; CCCC does not own the Pi terminal."} else {"Native access is disabled. Run /reload in Pi to unload the extension and MCP server. Original sessions are retained."}}))?
-    );
-    Ok(())
+    Ok(SetupResult {
+        provider_dir: provider_home,
+        output: json!({"runtime":"pi","enabled":enabled,
+        "note":if enabled {"Configuration saved. Run /reload in existing Pi sessions, or start Pi normally. Its native extension and MCP server load together; CCCC does not own the Pi terminal."} else {"Native access is disabled. Run /reload in Pi to unload the extension and MCP server. Original sessions are retained."}}),
+        warnings,
+    })
 }
 
 fn platform() -> Result<()> {
@@ -140,21 +177,22 @@ fn platform() -> Result<()> {
     Ok(())
 }
 
-fn invoke(program: &str, args: &[String]) -> Result<cccc_runtime::CapturedOutput> {
+async fn invoke(program: &str, args: &[String]) -> Result<cccc_runtime::CapturedOutput> {
     let program =
         cccc_runtime::resolve_executable_in_path(program, std::env::var("PATH").ok().as_deref())
             .context("Native CLI is unavailable")?;
-    cccc_runtime::capture_command_blocking(
+    cccc_runtime::capture_command(
         Command::new(program).args(args),
         None,
         Duration::from_secs(30),
         32_768,
     )
+    .await
     .map_err(Into::into)
 }
 
-fn checked(program: &str, args: &[String]) -> Result<()> {
-    let output = invoke(program, args)?;
+async fn checked(program: &str, args: &[String]) -> Result<()> {
+    let output = invoke(program, args).await?;
     anyhow::ensure!(
         output.status.success(),
         "Native {program} configuration failed; check its CLI configuration before retrying"
@@ -162,8 +200,12 @@ fn checked(program: &str, args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn version(runtime: &str) -> Result<()> {
-    let output = invoke(runtime, &["--version".into()])?;
+async fn version(runtime: &str) -> Result<String> {
+    let output = invoke(runtime, &["--version".into()]).await?;
+    anyhow::ensure!(
+        output.status.success() && !output.stdout_truncated,
+        "Native CLI version is unavailable"
+    );
     let text = String::from_utf8(output.stdout)?;
     let version = text
         .split_whitespace()
@@ -173,13 +215,14 @@ fn version(runtime: &str) -> Result<()> {
         "codex" => "0.163.0",
         "pi" => "1.4.0",
         "opencode" => "2.1.4",
-        _ => "2.1.306",
+        "claude" => "2.1.306",
+        _ => bail!("Unsupported native runtime"),
     })?;
     anyhow::ensure!(
         version >= minimum,
         "{runtime} {minimum} or newer is required for native session integration"
     );
-    Ok(())
+    Ok(version.to_string())
 }
 
 fn prefix(home: &HomeLayout, executable: &std::path::Path) -> String {
@@ -268,18 +311,18 @@ fn claude_user_mcp(path: &std::path::Path) -> Result<Option<Value>> {
     Ok(servers.get("cccc").cloned())
 }
 
-fn remove_claude_native_mcp(home: &HomeLayout, executable: &std::path::Path) -> Result<()> {
+async fn remove_claude_native_mcp(
+    home: &HomeLayout,
+    executable: &std::path::Path,
+) -> Result<Vec<String>> {
     // `claude mcp get/list` can start servers and merges configuration scopes.
     // Inspect only the effective user file, without printing its private data.
     let path = claude_user_config_path()?;
     let Some(entry) = claude_user_mcp(&path)? else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if entry != claude_native_mcp(home, executable) {
-        eprintln!(
-            "Native integration disabled; the user MCP entry was left unchanged because it is not this installation's unmodified native registration"
-        );
-        return Ok(());
+        return Ok(vec!["Native integration disabled; the user MCP entry was left unchanged because it is not this installation's unmodified native registration".into()]);
     }
     // The official remove command has no compare-and-remove operation. Do not
     // hold Claude's file lock while invoking it or retry against a changed entry.
@@ -292,22 +335,23 @@ fn remove_claude_native_mcp(home: &HomeLayout, executable: &std::path::Path) -> 
             "user".into(),
             "cccc".into(),
         ],
-    )?;
+    )
+    .await?;
     anyhow::ensure!(
         claude_user_config_path()? == path && claude_user_mcp(&path)?.is_none(),
         "Claude user MCP removal was not confirmed; configuration may have changed and no further removal was attempted"
     );
     // Confirmed absence is idempotent even after a nonzero CLI exit. Do not
     // classify an English diagnostic as proof of absence or print provider output.
-    Ok(())
+    Ok(Vec::new())
 }
 
-fn configure_mcp(
+async fn configure_mcp(
     home: &HomeLayout,
     runtime: &str,
     executable: &std::path::Path,
     enabled: bool,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     if runtime == "codex" {
         let mut args = vec![
             "mcp".into(),
@@ -322,10 +366,11 @@ fn configure_mcp(
         if enabled {
             args.extend(["--local-session-runtime".into(), "codex".into()]);
         }
-        checked(runtime, &args)
+        checked(runtime, &args).await?;
+        Ok(Vec::new())
     } else {
         if !enabled {
-            return remove_claude_native_mcp(home, executable);
+            return remove_claude_native_mcp(home, executable).await;
         }
         let config = claude_native_mcp(home, executable);
         let args = vec![
@@ -336,9 +381,9 @@ fn configure_mcp(
             "cccc".into(),
             serde_json::to_string(&config)?,
         ];
-        let output = invoke(runtime, &args)?;
+        let output = invoke(runtime, &args).await?;
         if output.status.success() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let detail = format!(
             "{}{}",
@@ -359,8 +404,10 @@ fn configure_mcp(
                 "user".into(),
                 "cccc".into(),
             ],
-        )?;
-        checked(runtime, &args)
+        )
+        .await?;
+        checked(runtime, &args).await?;
+        Ok(Vec::new())
     }
 }
 
@@ -440,8 +487,9 @@ fn codex_hook(
     json!({"type":"command","command":command,"commandWindows":command_windows,"timeout":3,"statusMessage":MARKER})
 }
 
-fn codex_mcp_owned(home: &HomeLayout, executable: &std::path::Path) -> Result<bool> {
-    let Some(entry) = crate::commands::setup::codex_mcp_entry(home, &std::env::current_dir()?)?
+async fn codex_mcp_owned(home: &HomeLayout, executable: &std::path::Path) -> Result<bool> {
+    let Some(entry) =
+        crate::commands::setup::codex_mcp_entry_async(home, &std::env::current_dir()?).await?
     else {
         return Ok(false);
     };
@@ -463,7 +511,7 @@ fn codex_mcp_owned(home: &HomeLayout, executable: &std::path::Path) -> Result<bo
         .all(|key| entry[key].is_null()))
 }
 
-fn claude_registry(marketplaces: bool) -> Result<Vec<Value>> {
+async fn claude_registry(marketplaces: bool) -> Result<Vec<Value>> {
     let args = if marketplaces {
         vec!["plugin", "marketplace", "list", "--json"]
     } else {
@@ -472,7 +520,8 @@ fn claude_registry(marketplaces: bool) -> Result<Vec<Value>> {
     let output = invoke(
         "claude",
         &args.into_iter().map(str::to_owned).collect::<Vec<_>>(),
-    )?;
+    )
+    .await?;
     let error = "Could not inspect Claude plugin registration; configuration was left unchanged";
     anyhow::ensure!(
         output.status.success() && !output.stdout_truncated && !output.stderr_truncated,
@@ -489,8 +538,8 @@ fn claude_registry(marketplaces: bool) -> Result<Vec<Value>> {
     Ok(entries.clone())
 }
 
-fn claude_marketplace() -> Result<Option<Value>> {
-    let entries = claude_registry(true)?;
+async fn claude_marketplace() -> Result<Option<Value>> {
+    let entries = claude_registry(true).await?;
     let mut entries = entries
         .into_iter()
         .filter(|entry| entry["name"] == "cccc-local");
@@ -521,8 +570,8 @@ fn owned_claude_marketplace(home: &HomeLayout, entry: &Value) -> bool {
         )
 }
 
-fn claude_plugin_owned(home: &HomeLayout) -> Result<bool> {
-    let Some(marketplace) = claude_marketplace()? else {
+async fn claude_plugin_owned(home: &HomeLayout) -> Result<bool> {
+    let Some(marketplace) = claude_marketplace().await? else {
         return Ok(false);
     };
     if !owned_claude_marketplace(home, &marketplace) {
@@ -531,7 +580,7 @@ fn claude_plugin_owned(home: &HomeLayout) -> Result<bool> {
     let plugin = home
         .root()
         .join("integrations/local-sessions/plugins/cccc-local-sessions");
-    let entries = claude_registry(false)?;
+    let entries = claude_registry(false).await?;
     let owned = entries
         .iter()
         .filter(|entry| entry["id"] == PLUGIN && entry["scope"] == "user")
@@ -556,10 +605,10 @@ fn claude_plugin_owned(home: &HomeLayout) -> Result<bool> {
         }))
 }
 
-fn claude_plugin_command(args: &[String]) -> Result<()> {
+async fn claude_plugin_command(args: &[String]) -> Result<()> {
     let mut args = args.to_vec();
     args.push("--json".into());
-    let output = invoke("claude", &args)?;
+    let output = invoke("claude", &args).await?;
     anyhow::ensure!(
         !output.stdout_truncated && !output.stderr_truncated,
         "Claude plugin configuration response was incomplete"
@@ -579,23 +628,15 @@ fn claude_plugin_command(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn claude_plugin(home: &HomeLayout, executable: &std::path::Path) -> Result<PathBuf> {
-    let marketplace = home.root().join("integrations/local-sessions");
-    let plugin = marketplace.join("plugins/cccc-local-sessions");
-    fs::write_json(
-        &marketplace.join(".claude-plugin/marketplace.json"),
-        &json!({"name":"cccc-local","owner":{"name":"CCCC"},"plugins":[{"name":"cccc-local-sessions","source":"./plugins/cccc-local-sessions"}]}),
-    )?;
-    fs::write_json(
-        &plugin.join(".claude-plugin/plugin.json"),
-        &json!({"name":"cccc-local-sessions","version":env!("CARGO_PKG_VERSION"),"description":"Same-user native session collaboration through CCCC","license":"MIT"}),
-    )?;
-    let mut hooks = serde_json::Map::new();
+fn claude_plugin_documents(
+    home: &HomeLayout,
+    executable: &std::path::Path,
+) -> Result<[(&'static str, Value); 3]> {
     let provider_home = std::path::absolute(native_home("CLAUDE_CONFIG_DIR", ".claude")?)?;
+    let mut hooks = serde_json::Map::new();
     for event in ["SessionStart", "UserPromptSubmit", "SessionEnd"] {
         hooks.insert(event.into(),json!([{"hooks":[{"type":"command","command":executable,"args":["sessions","hook","--runtime","claude","--cccc-home",home.root(),"--provider-home",provider_home],"timeout":3}]}]));
     }
-    fs::write_json(&plugin.join("hooks/hooks.json"), &json!({"hooks":hooks}))?;
     let monitor = if cfg!(windows) {
         windows_command(&format!(
             "$env:CCCC_HOME = {}\n& {} sessions receive\nexit $LASTEXITCODE",
@@ -605,41 +646,63 @@ fn claude_plugin(home: &HomeLayout, executable: &std::path::Path) -> Result<Path
     } else {
         format!("{} sessions receive", prefix(home, executable))
     };
+    Ok([
+        (
+            ".claude-plugin/plugin.json",
+            json!({"name":"cccc-local-sessions","version":env!("CARGO_PKG_VERSION"),"description":"Same-user native session collaboration through CCCC","license":"MIT"}),
+        ),
+        ("hooks/hooks.json", json!({"hooks":hooks})),
+        (
+            "monitors/monitors.json",
+            json!([{"name":"cccc-incoming","command":monitor,"description":"Incoming CCCC collaboration messages","when":"always"}]),
+        ),
+    ])
+}
+
+fn claude_plugin(home: &HomeLayout, executable: &std::path::Path) -> Result<PathBuf> {
+    let marketplace = home.root().join("integrations/local-sessions");
+    let plugin = marketplace.join("plugins/cccc-local-sessions");
     fs::write_json(
-        &plugin.join("monitors/monitors.json"),
-        &json!([{"name":"cccc-incoming","command":monitor,"description":"Incoming CCCC collaboration messages","when":"always"}]),
+        &marketplace.join(".claude-plugin/marketplace.json"),
+        &json!({"name":"cccc-local","owner":{"name":"CCCC"},"plugins":[{"name":"cccc-local-sessions","source":"./plugins/cccc-local-sessions"}]}),
     )?;
+    for (path, value) in claude_plugin_documents(home, executable)? {
+        fs::write_json(&plugin.join(path), &value)?;
+    }
     fs::atomic_write(&plugin.join("README.md"),b"# CCCC local sessions\n\nConnects this user-owned native session to the local CCCC daemon. Uses official lifecycle hooks and the experimental persistent Plugin Monitor. CCCC does not import conversation history or own the native runtime.\n")?;
     Ok(marketplace)
 }
 
-pub(super) fn enable(home: &HomeLayout, runtime: &str) -> Result<()> {
+pub(crate) async fn enable(home: &HomeLayout, runtime: &str) -> Result<SetupResult> {
+    // Check before any provider command, write or integration fence change,
+    // including the Pi/OpenCode branches that use the public launcher.
+    let executable = running_executable()?;
     if runtime == "opencode" {
-        return opencode::configure(home, true);
+        return opencode::configure(home, true).await;
     }
     if runtime == "pi" {
-        return configure_pi(home, true);
+        return configure_pi(home, true).await;
     }
     platform()?;
-    version(runtime)?;
+    version(runtime).await?;
     // Native identity relies on direct process ancestry; a Python/npm launcher
     // may add wrappers, especially on Windows. Install this actual Rust binary.
-    let executable = std::env::current_exe()?;
     home.initialize()?;
     let marketplace = if runtime == "claude" {
         let path = home.root().join("integrations/local-sessions");
-        let registered = claude_marketplace()?;
+        let registered = claude_marketplace().await?;
         anyhow::ensure!(
             registered
                 .as_ref()
                 .is_none_or(|entry| owned_claude_marketplace(home, entry)),
             "The cccc-local marketplace belongs to another CCCC installation. Use that installation, or explicitly remove its marketplace with `claude plugin marketplace remove cccc-local` before enabling this one. No provider configuration was changed"
         );
-        let installed = claude_registry(false)?
+        let installed = claude_registry(false)
+            .await?
             .iter()
             .any(|entry| entry["id"] == PLUGIN && entry["scope"] == "user");
         anyhow::ensure!(
-            !installed || claude_plugin_owned(home)?,
+            !installed || claude_plugin_owned(home).await?,
             "The installed CCCC plugin does not match this installation. Inspect `claude plugin list --json` and explicitly reinstall it before enabling. No provider configuration was changed"
         );
         Some((path, registered.is_some()))
@@ -649,7 +712,7 @@ pub(super) fn enable(home: &HomeLayout, runtime: &str) -> Result<()> {
     // Establish source-aware tools before enabling callbacks/receiving. If
     // installation stops midway, an unregistered source stays unavailable
     // instead of receiving work through an old active-Group MCP identity.
-    configure_mcp(home, runtime, &executable, true)?;
+    let warnings = configure_mcp(home, runtime, &executable, true).await?;
     if runtime == "codex" {
         codex_hooks(home, &executable, true)?;
     } else {
@@ -661,7 +724,8 @@ pub(super) fn enable(home: &HomeLayout, runtime: &str) -> Result<()> {
                 "marketplace".into(),
                 "add".into(),
                 marketplace.to_string_lossy().into_owned(),
-            ])?;
+            ])
+            .await?;
         }
         claude_plugin_command(&[
             "plugin".into(),
@@ -669,16 +733,18 @@ pub(super) fn enable(home: &HomeLayout, runtime: &str) -> Result<()> {
             PLUGIN.into(),
             "--scope".into(),
             "user".into(),
-        ])?;
+        ])
+        .await?;
         claude_plugin_command(&[
             "plugin".into(),
             "enable".into(),
             PLUGIN.into(),
             "--scope".into(),
             "user".into(),
-        ])?;
+        ])
+        .await?;
         anyhow::ensure!(
-            claude_plugin_owned(home)?,
+            claude_plugin_owned(home).await?,
             "Claude installed plugin provenance was not confirmed; reload or repair the CCCC plugin before enabling native access"
         );
     }
@@ -692,23 +758,23 @@ pub(super) fn enable(home: &HomeLayout, runtime: &str) -> Result<()> {
         false,
     )?;
     let note = if runtime == "codex" {
-        "Configuration saved. In existing sessions, reconnect the cccc MCP server to load its current tools and reload/review hooks in /hooks, or resume the original native session. Restarting only the CCCC daemon does not update an already running MCP server."
+        "Configuration saved. After upgrading CCCC in existing Codex CLI sessions, let active and queued work finish, then use Codex /daemon > Restart background server > Restart to load the new MCP process; this affects other chats on that server. Check cccc with /mcp and reload/review hooks in /hooks. Restarting only CCCC does not update a running MCP server."
     } else {
-        "Configuration saved. In existing sessions, reconnect the cccc MCP server to load its current tools and reload the CCCC plugin/Monitor, or resume the original native session. Plugin disable/enable alone may leave an old Monitor running. A replacement Claude host must be connected to its intended Groups. Monitor availability is required."
+        "Configuration saved. In existing sessions, reconnect the cccc MCP server to load its current tools and reload the CCCC plugin/Monitor, or resume the original native session. Plugin disable/enable alone may leave an old Monitor running. Monitor availability is required."
     };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({"runtime":runtime,"enabled":true,"note":note}))?
-    );
-    Ok(())
+    Ok(SetupResult {
+        provider_dir: provider_directory(runtime)?,
+        output: json!({"runtime":runtime,"enabled":true,"note":note}),
+        warnings,
+    })
 }
 
-pub(super) fn disable(home: &HomeLayout, runtime: &str) -> Result<()> {
+pub(crate) async fn disable(home: &HomeLayout, runtime: &str) -> Result<SetupResult> {
     if runtime == "opencode" {
-        return opencode::configure(home, false);
+        return opencode::configure(home, false).await;
     }
     if runtime == "pi" {
-        return configure_pi(home, false);
+        return configure_pi(home, false).await;
     }
     platform()?;
     local_sessions::set_integration_disabled(
@@ -721,34 +787,47 @@ pub(super) fn disable(home: &HomeLayout, runtime: &str) -> Result<()> {
         true,
     )?;
     let executable = std::env::current_exe()?;
+    let mut warnings = Vec::new();
     if runtime == "codex" {
-        let owned = codex_mcp_owned(home, &executable)?;
+        let owned = codex_mcp_owned(home, &executable).await?;
         codex_hooks(home, &executable, false)?;
         if owned {
-            configure_mcp(
-                home,
-                runtime,
-                &crate::commands::setup::public_executable()?,
-                false,
-            )?;
+            warnings.extend(
+                configure_mcp(
+                    home,
+                    runtime,
+                    &crate::commands::setup::public_executable()?,
+                    false,
+                )
+                .await?,
+            );
         }
     } else {
-        if claude_plugin_owned(home)? {
+        if claude_plugin_owned(home).await? {
             claude_plugin_command(&[
                 "plugin".into(),
                 "disable".into(),
                 PLUGIN.into(),
                 "--scope".into(),
                 "user".into(),
-            ])?;
+            ])
+            .await?;
         }
-        configure_mcp(home, runtime, &executable, false)?;
+        warnings.extend(configure_mcp(home, runtime, &executable, false).await?);
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(
-            &json!({"runtime":runtime,"enabled":false,"note":"Reload native configuration to apply. Original sessions and conversation history are retained."})
-        )?
-    );
-    Ok(())
+    Ok(SetupResult {
+        provider_dir: provider_directory(runtime)?,
+        output: json!({"runtime":runtime,"enabled":false,"note":"Reload native configuration to apply. Original sessions and conversation history are retained."}),
+        warnings,
+    })
+}
+
+fn provider_directory(runtime: &str) -> Result<PathBuf> {
+    let (variable, fallback) = match runtime {
+        "codex" => ("CODEX_HOME", ".codex"),
+        "claude" => ("CLAUDE_CONFIG_DIR", ".claude"),
+        "pi" => ("PI_CODING_AGENT_DIR", ".pi/agent"),
+        _ => bail!("Unsupported native runtime"),
+    };
+    std::path::absolute(native_home(variable, fallback)?).map_err(Into::into)
 }

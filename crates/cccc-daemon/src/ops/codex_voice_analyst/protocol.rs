@@ -345,7 +345,9 @@ async fn protocol_loop<S>(
     if diagnostic["code"] != "client_closed" {
         // Packaged launches do not require a tracing subscriber. Keep this one-shot
         // report structural: no close reason, arbitrary error, protocol body or path.
-        eprintln!("[cccc] Managed Codex disconnected: {diagnostic}");
+        cccc_runtime::diagnostic(format_args!(
+            "[cccc] Managed Codex disconnected: {diagnostic}"
+        ));
     }
     for (_, pending_response) in pending {
         let _ = pending_response.response.send(Err(io::Error::new(
