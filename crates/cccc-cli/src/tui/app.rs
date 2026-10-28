@@ -7,6 +7,7 @@ use super::groups::{
 use super::refresh::Want;
 use super::sessions::SessionList;
 use super::setup::{InstallState, RUNTIMES, SetupCommand, SetupProgress, pickable};
+use super::tasks::{Request as TaskRequest, Selection as TaskSelection, Snapshot as TaskSnapshot};
 use super::text;
 use crate::commands::sessions::setup::SetupInspection;
 use crate::host_state::{HostIntent, HostPhase, HostState};
@@ -57,6 +58,7 @@ pub(super) enum Screen {
     Setup,
     Groups,
     Sessions,
+    Tasks,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,6 +159,35 @@ pub(super) struct SessionsView {
     pub(super) scroll: Scroll,
 }
 
+/// A task browser belongs to the Group explicitly opened, even if Groups
+/// re-sort while the reader is on a task's notes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct TasksView {
+    pub(super) group_id: String,
+    pub(super) group_name: String,
+    pub(super) done: bool,
+    pub(super) page: usize,
+    pub(super) selected: Option<String>,
+    pub(super) details: bool,
+    pub(super) scroll: Scroll,
+}
+
+impl TasksView {
+    pub(super) fn request(&self) -> TaskRequest {
+        TaskRequest {
+            group_id: self.group_id.clone(),
+            selection: if self.details {
+                TaskSelection::Detail(self.selected.clone().unwrap_or_default())
+            } else {
+                TaskSelection::Page {
+                    done: self.done,
+                    page: self.page,
+                }
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Notice {
     Info(String),
@@ -183,6 +214,8 @@ pub(super) struct App {
     pub(super) action: ActionProgress,
     pub(super) groups_view: GroupsView,
     pub(super) sessions_view: SessionsView,
+    pub(super) tasks: TaskSnapshot,
+    pub(super) tasks_view: TasksView,
     /// Help is taller than the smallest screen.
     pub(super) help: Scroll,
     pub(super) setup: SetupProgress,
@@ -218,6 +251,8 @@ impl App {
             action: ActionProgress::default(),
             groups_view: GroupsView::default(),
             sessions_view: SessionsView::default(),
+            tasks: TaskSnapshot::default(),
+            tasks_view: TasksView::default(),
             help: Scroll::default(),
             setup: SetupProgress::default(),
             flow: None,
@@ -252,7 +287,47 @@ impl App {
             members: shown(&[Screen::Groups])
                 .then(|| self.selected_group().map(|group| group.group_id.clone()))
                 .flatten(),
+            tasks: self.task_request(),
             nonce: self.nonce,
+        }
+    }
+
+    fn task_request(&self) -> Option<TaskRequest> {
+        if self.stopping() {
+            return None;
+        }
+        match self.screen {
+            Screen::Groups if self.groups_view.confirm.is_none() => self
+                .selected_group()
+                .map(|group| TaskRequest::open(group.group_id.clone())),
+            Screen::Tasks => Some(self.tasks_view.request()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn selected_tasks(&self) -> Option<&TaskSnapshot> {
+        (self.tasks.request == self.task_request())
+            .then_some(&self.tasks)
+            .filter(|snapshot| snapshot.request.is_some())
+    }
+
+    pub(super) fn set_tasks(&mut self, tasks: TaskSnapshot) {
+        self.tasks = tasks;
+        if self.screen == Screen::Tasks && !self.tasks_view.details {
+            let selection = self
+                .selected_tasks()
+                .and_then(TaskSnapshot::page)
+                .and_then(|page| {
+                    let selected = self.tasks_view.selected.as_deref();
+                    page.tasks
+                        .iter()
+                        .find(|task| Some(task.id.as_str()) == selected)
+                        .or_else(|| page.tasks.first())
+                        .map(|task| task.id.clone())
+                });
+            if self.selected_tasks().and_then(TaskSnapshot::page).is_some() {
+                self.tasks_view.selected = selection;
+            }
         }
     }
 
@@ -419,6 +494,7 @@ impl App {
             }
             Screen::Setup => self.setup_key(key.code, press),
             Screen::Groups => self.groups_key(key.code, press),
+            Screen::Tasks => self.tasks_key(key.code, press),
             Screen::Sessions => {
                 self.sessions_key(key.code, press);
                 None
@@ -808,10 +884,86 @@ impl App {
             code if is_back(code) => self.screen = Screen::Main,
             KeyCode::Char('s') if press => self.ask(false),
             KeyCode::Char('x') if press => self.ask(true),
+            KeyCode::Char('t') if press => self.open_tasks(),
             KeyCode::Char('j') => self.move_selection(KeyCode::Down),
             KeyCode::Char('k') => self.move_selection(KeyCode::Up),
             code => self.move_selection(code),
         }
+        None
+    }
+
+    fn open_tasks(&mut self) {
+        let Some(group) = self.selected_group() else {
+            self.notice = Some(Notice::Info(
+                "Choose a listed Group before reading its tasks.".into(),
+            ));
+            return;
+        };
+        self.tasks_view = TasksView {
+            group_id: group.group_id.clone(),
+            group_name: group.name().to_owned(),
+            ..TasksView::default()
+        };
+        self.screen = Screen::Tasks;
+        self.notice = None;
+        // The summary may already have this exact page.
+        self.set_tasks(self.tasks.clone());
+    }
+
+    fn tasks_key(&mut self, code: KeyCode, press: bool) -> Option<Effect> {
+        if self.tasks_view.details {
+            if is_back(code) && press {
+                self.tasks_view.details = false;
+                self.tasks_view.scroll = Scroll::default();
+            } else {
+                self.tasks_view.scroll.by(code);
+            }
+            return None;
+        }
+        if is_back(code) && press {
+            self.screen = Screen::Groups;
+            self.notice = None;
+            return None;
+        }
+        if code == KeyCode::Char('d') && press {
+            self.tasks_view.done = !self.tasks_view.done;
+            self.tasks_view.page = 0;
+            self.tasks_view.selected = None;
+            return None;
+        }
+        if code == KeyCode::PageUp && press && self.tasks_view.page > 0 {
+            self.tasks_view.page -= 1;
+            self.tasks_view.selected = None;
+            return None;
+        }
+        let page = self.selected_tasks().and_then(TaskSnapshot::page)?;
+        if code == KeyCode::PageDown && press && page.has_more {
+            self.tasks_view.page = self.tasks_view.page.saturating_add(1);
+            self.tasks_view.selected = None;
+            return None;
+        }
+        let selected = page
+            .tasks
+            .iter()
+            .position(|task| Some(task.id.as_str()) == self.tasks_view.selected.as_deref());
+        if code == KeyCode::Enter && press && selected.is_some() {
+            self.tasks_view.details = true;
+            self.tasks_view.scroll = Scroll::default();
+            return None;
+        }
+        let len = page.tasks.len();
+        if len == 0 {
+            return None;
+        }
+        let index = selected.unwrap_or(0);
+        let index = match code {
+            KeyCode::Up | KeyCode::Char('k') => index.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => index.saturating_add(1).min(len - 1),
+            KeyCode::Home => 0,
+            KeyCode::End => len - 1,
+            _ => return None,
+        };
+        self.tasks_view.selected = Some(page.tasks[index].id.clone());
         None
     }
 

@@ -16,6 +16,9 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
 
 fn snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
+    // Taking the ledger lock creates the Group's state directory, so a deleted
+    // Group must be rejected before maintenance touches the filesystem.
+    super::context::load_group(home, &group_id)?;
     let reason = string_arg(request, "reason").unwrap_or_else(|| "manual".into());
     let snapshot =
         ledger_archive::snapshot(home, &group_id, &reason).map_err(crate::dispatch::OpError::io)?;
@@ -24,6 +27,7 @@ fn snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 fn compact(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
+    super::context::load_group(home, &group_id)?;
     let reason = string_arg(request, "reason").unwrap_or_else(|| "manual".into());
     let segment =
         ledger_archive::compact(home, &group_id, &reason).map_err(crate::dispatch::OpError::io)?;

@@ -92,6 +92,7 @@ pub(super) fn render(frame: &mut Frame, app: &App, now: Instant) {
         Screen::Setup => super::setup_view::render(frame, app, theme),
         Screen::Groups => super::groups_view::render(frame, app, theme, now),
         Screen::Sessions => super::sessions_view::render(frame, app, theme, now),
+        Screen::Tasks => super::tasks_view::render(frame, app, theme, now),
     }
 }
 
@@ -639,6 +640,10 @@ fn help_screen(frame: &mut Frame, app: &App, theme: Theme) {
     // A command gets a line of its own, so wrapping never splits it.
     for (paragraph, command) in [
         (
+            "In /groups, t opens the selected Group's tasks. Up/Down chooses a task, Enter reads its complete notes and checklist, d switches between open and done tasks, and PgUp/PgDn changes pages. In details, arrows and paging keys scroll. b or Esc returns one level. Task views are read-only; editing stays in the Web UI.",
+            None,
+        ),
+        (
             "Main screen: Up/Down selects a group, Enter opens it. Type / to see commands. Tab completes without running; Enter runs the selected command. Esc closes the menu. Left/Right, Home/End, Delete and Ctrl+A/E/U edit the command. Bracketed pastes insert text without submitting.",
             None,
         ),
@@ -750,10 +755,14 @@ pub(super) fn shows_age(app: &App) -> bool {
     let members = app
         .selected_members()
         .is_some_and(|members| stale(&members.error, members.last_ok));
+    let tasks = app
+        .selected_tasks()
+        .is_some_and(|tasks| stale(&tasks.error, tasks.last_ok));
     app.host.phase == HostPhase::Running
         && match app.screen {
             Screen::Main => sessions || groups,
-            Screen::Groups => groups || members,
+            Screen::Groups => groups || members || tasks,
+            Screen::Tasks => tasks,
             Screen::Sessions => sessions,
             Screen::Help | Screen::Setup => false,
         }

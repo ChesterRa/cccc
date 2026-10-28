@@ -428,6 +428,40 @@ fn ids(response: &DaemonResponse) -> Vec<&str> {
         .collect()
 }
 
+#[test]
+fn ledger_maintenance_rejects_a_deleted_group_without_recreating_it() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"maintenance"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    append(&home, &group_id, "chat.message", "before-delete");
+    call(&home, "ledger_snapshot", json!({"group_id":group_id}));
+    call(&home, "ledger_compact", json!({"group_id":group_id}));
+
+    call(
+        &home,
+        "group_delete",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    let group_dir = home.groups_dir().join(&group_id);
+    assert!(!group_dir.exists());
+    for op in ["ledger_snapshot", "ledger_compact"] {
+        let response = call_raw(&home, op, json!({"group_id":group_id}));
+        assert_eq!(
+            response.error.map(|error| error.code).as_deref(),
+            Some("group_not_found"),
+            "{op} must reject a deleted Group"
+        );
+        assert!(
+            !group_dir.exists(),
+            "{op} must not recreate the deleted Group's directory"
+        );
+    }
+}
+
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     let response = call_raw(home, op, args);
     assert!(response.ok, "{op}: {:?}", response.error);

@@ -16,6 +16,8 @@ mod sessions;
 mod sessions_view;
 mod setup;
 mod setup_view;
+mod tasks;
+mod tasks_view;
 mod terminal;
 #[cfg(test)]
 mod test_support;
@@ -79,6 +81,7 @@ pub(crate) async fn start(
     let (sessions_tx, sessions) = watch::channel(SessionList::default());
     let (groups_tx, groups) = watch::channel(GroupList::default());
     let (members_tx, members) = watch::channel(MemberList::default());
+    let (tasks_tx, tasks) = watch::channel(tasks::Snapshot::default());
     let (want, want_rx) = watch::channel(Want::default());
     let (setup_commands, setup_commands_rx) = mpsc::unbounded_channel();
     let (progress_tx, progress) = watch::channel(SetupProgress::default());
@@ -96,6 +99,7 @@ pub(crate) async fn start(
         sessions,
         groups,
         members,
+        tasks,
         want,
         setup_commands,
         progress,
@@ -141,6 +145,7 @@ pub(crate) async fn start(
             sessions: sessions_tx,
             groups: groups_tx,
             members: members_tx,
+            tasks: tasks_tx,
         },
     ));
     let act = tokio::spawn(groups::act(
@@ -232,6 +237,7 @@ struct Ui {
     sessions: watch::Receiver<SessionList>,
     groups: watch::Receiver<GroupList>,
     members: watch::Receiver<MemberList>,
+    tasks: watch::Receiver<tasks::Snapshot>,
     want: watch::Sender<Want>,
     setup_commands: mpsc::UnboundedSender<SetupCommand>,
     progress: watch::Receiver<SetupProgress>,
@@ -313,6 +319,11 @@ impl Ui {
         }
         if self.members.has_changed().unwrap_or(false) {
             self.app.members = self.members.borrow_and_update().clone();
+            changed = true;
+        }
+        if self.tasks.has_changed().unwrap_or(false) {
+            let tasks = self.tasks.borrow_and_update().clone();
+            self.app.set_tasks(tasks);
             changed = true;
         }
         if self.progress.has_changed().unwrap_or(false) {

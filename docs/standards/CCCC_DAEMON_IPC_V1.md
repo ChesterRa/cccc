@@ -5942,6 +5942,11 @@ Notes:
 
 ### 8.12 Ledger Maintenance
 
+Both operations require an existing Group. For a Group that does not exist,
+including one removed by `group_delete`, they MUST fail with `group_not_found`
+before taking the ledger lock, and MUST NOT create the Group's directory, ledger
+lock, snapshot or segment files.
+
 #### `ledger_snapshot`
 
 Args:

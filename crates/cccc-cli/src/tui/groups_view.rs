@@ -46,7 +46,7 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
     } else {
         frame.render_widget(Paragraph::new(group_columns(theme, width)), row(area, 1, 1));
         let wanted = u16::try_from(app.groups.groups.len().max(1)).unwrap_or(u16::MAX);
-        let list_rows = wanted.min((room / 2).max(1));
+        let list_rows = wanted.min((room / 2).saturating_sub(1).max(1));
         list(frame, app, theme, row(area, 2, list_rows));
         details(
             frame,
@@ -80,7 +80,7 @@ fn keys(app: &App) -> String {
             text::fit(&text::one_line(&busy.name), 32)
         );
     }
-    " Up/Down choose   s start   x stop   b back".into()
+    " Up/Down group   t tasks   s start   x stop   b back".into()
 }
 
 // The window keeps the selected group in view, near the middle once the list
@@ -132,7 +132,7 @@ fn details(frame: &mut Frame, app: &App, theme: Theme, now: Instant, area: Rect)
     let title = text::one_line(group.name());
     let title_lines = text::wrap_exact(&title, room);
     // Keep identity, Web and a member row usable even for a very long name.
-    let title_rows = rows.saturating_sub(3).max(1);
+    let title_rows = rows.saturating_sub(5).max(1);
     let mut lines: Vec<Line> = title_lines
         .iter()
         .take(title_rows)
@@ -167,6 +167,7 @@ fn details(frame: &mut Frame, app: &App, theme: Theme, now: Instant, area: Rect)
             )),
         ]));
     }
+    lines.push(super::tasks_view::summary(app, theme, width));
     let room = rows.saturating_sub(lines.len());
     lines.extend(members(app, group, theme, now, width, room));
     lines.truncate(rows);

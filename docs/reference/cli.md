@@ -18,8 +18,10 @@ cccc --help             # Show help
 In an interactive terminal, `cccc` opens a terminal interface for this launch.
 Its main screen is a status panel: the version, the actual Web address, the
 `CCCC_HOME` in use, whether this launch started the daemon, the Groups, and the
-native sessions this CCCC knows. Lists refresh every few seconds while they are
-on screen; a failed refresh keeps the last list and says how old it is.
+native sessions this CCCC knows. Terminals that recognize URLs open the Web
+address directly, for example with Ctrl+click in Windows Terminal. Lists refresh
+every few seconds while they are on screen; a failed refresh keeps the last list
+and says how old it is.
 
 The Groups table has NAME, STATUS and RUNNING columns. STATUS uses the Web UI's
 words: Running, Idle, Paused, Offline and Stopped. Stopped means the Group was
@@ -37,11 +39,15 @@ inserts text: in terminals with bracketed paste, pasted newlines do not run a
 command. Commands:
 
 - `/groups` lists the Groups. Pick one with Up/Down (or j/k) to see its recorded
-  state, its actors and a link that opens it in the Web UI. `s` starts it
-  (resumes a paused one) and `x` stops it, each after a confirmation that names
-  the Group and what will happen. Starting runs the enabled actors and lets
-  enabled native members receive again; stopping stops the managed actors and
-  stops delivery to native members, whose apps stay open. `b` or Esc goes back.
+  state, how many tasks it has in each state, its actors and a link that opens
+  it in the Web UI. `s` starts it (resumes a paused one) and `x` stops it, each
+  after a confirmation that names the Group and what will happen. Starting runs
+  the enabled actors and lets enabled native members receive again; stopping
+  stops the managed actors and stops delivery to native members, whose apps stay
+  open. `t` lists the Group's tasks: the unfinished ones (Active, then Planned),
+  or the Done ones after `d`; PgUp/PgDn pages through a long list. Enter shows
+  one task read-only, with its status, assignee, checklist, notes and outcome;
+  tasks are edited in the Web UI. `b` or Esc goes back one level.
 - `/sessions` lists every native session this CCCC knows. Enter shows the
   selected session's details, and `b` or Esc goes back.
 - `/setup` connects Codex, Claude Code, Pi or OpenCode sessions; see

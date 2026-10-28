@@ -5,6 +5,7 @@
 
 use super::groups::{self, GroupList, MemberList};
 use super::sessions::{self, SessionList};
+use super::tasks::{self, Request as TaskRequest, Snapshot as TaskSnapshot};
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
 use std::time::{Duration, Instant};
@@ -22,13 +23,14 @@ pub(super) struct Want {
     pub(super) groups: bool,
     /// The group whose members are on screen.
     pub(super) members: Option<String>,
+    pub(super) tasks: Option<TaskRequest>,
     /// Raised to read again now instead of at the next interval.
     pub(super) nonce: u64,
 }
 
 impl Want {
     fn any(&self) -> bool {
-        self.sessions || self.groups || self.members.is_some()
+        self.sessions || self.groups || self.members.is_some() || self.tasks.is_some()
     }
 }
 
@@ -36,6 +38,7 @@ pub(super) struct Lists {
     pub(super) sessions: watch::Sender<SessionList>,
     pub(super) groups: watch::Sender<GroupList>,
     pub(super) members: watch::Sender<MemberList>,
+    pub(super) tasks: watch::Sender<TaskSnapshot>,
 }
 
 /// Read what `want` asks for, then again every few seconds or as soon as it
@@ -68,6 +71,12 @@ pub(super) async fn run(home: HomeLayout, mut want: watch::Receiver<Want>, lists
             lists
                 .members
                 .send_modify(|list| list.record(group_id, read, Instant::now()));
+        }
+        if let Some(request) = &wanted.tasks {
+            let read = tasks::read(&client, request).await;
+            lists
+                .tasks
+                .send_modify(|snapshot| snapshot.record(request, read, Instant::now()));
         }
         if lists.sessions.is_closed() {
             return;

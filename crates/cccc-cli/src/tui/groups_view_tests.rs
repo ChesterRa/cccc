@@ -115,17 +115,21 @@ fn groups_lists_states_and_the_selected_groups_members() {
     assert_eq!(rows[7], " g_dev  State active | 2 actors running");
     assert_eq!(rows[8], " Web  http://127.0.0.1:8848/?group=g_dev");
     assert!(
-        rows[9].starts_with("   codex-1")
-            && rows[9].contains("foreman")
-            && rows[9].contains("running")
+        rows[10].starts_with("   codex-1")
+            && rows[10].contains("foreman")
+            && rows[10].contains("running")
     );
     assert!(
-        rows[10].contains("claude-1")
-            && rows[10].contains("Claude Code")
-            && rows[10].ends_with("ready         native")
+        rows[11].contains("claude-1")
+            && rows[11].contains("Claude Code")
+            && rows[11].ends_with("ready         native")
     );
-    assert!(rows[11].contains("reviewer") && rows[11].contains("off"));
-    assert_eq!(rows[15], " Up/Down choose   s start   x stop   b back");
+    assert!(rows[9].contains("Tasks: reading"));
+    assert!(rows[12].contains("reviewer") && rows[12].contains("off"));
+    assert_eq!(
+        rows[15],
+        " Up/Down group   t tasks   s start   x stop   b back"
+    );
 }
 
 #[test]
@@ -137,7 +141,7 @@ fn an_empty_started_group_shows_its_state_beside_the_running_count() {
     assert!(rows[4].starts_with(" > empty"));
     assert_eq!(rows[6], " empty");
     assert_eq!(rows[7], " g_new  State active | 0 actors running");
-    assert_eq!(rows[9], "   No actors in this group.");
+    assert_eq!(rows[10], "   No actors in this group.");
 }
 
 #[test]
@@ -284,7 +288,10 @@ fn a_long_list_keeps_the_selection_in_view_on_the_smallest_screen() {
         list.iter().any(|row| row.starts_with(" > group-09")),
         "{list:#?}"
     );
-    assert_eq!(rows[15], " Up/Down choose   s start   x stop   b back");
+    assert_eq!(
+        rows[15],
+        " Up/Down group   t tasks   s start   x stop   b back"
+    );
 }
 
 #[test]

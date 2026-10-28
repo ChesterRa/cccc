@@ -133,7 +133,7 @@ cccc
 In an interactive terminal, `cccc` opens a small terminal interface and brings up the daemon and the
 local Web UI with it. The screen is a status panel: the Web address, whether this launch owns the
 daemon, your Groups with their status and running actors, and your native sessions. Up/Down picks a
-Group and Enter opens it to start or stop it. Type `/` to see the commands: `/sessions` lists every
+Group and Enter opens it, where you can read its tasks and start or stop it. Type `/` to see the commands: `/sessions` lists every
 native session, `/setup` connects Codex, Claude Code, Pi or OpenCode sessions, and `/quit` (or
 Ctrl+C) stops what this launch started. Everything else stays in the Web UI.
 

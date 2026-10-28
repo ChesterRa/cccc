@@ -417,6 +417,7 @@ fn small_terminal_retains_an_explicit_way_out() {
     for screen in [
         Screen::Groups,
         Screen::Sessions,
+        Screen::Tasks,
         Screen::Help,
         Screen::Setup,
     ] {

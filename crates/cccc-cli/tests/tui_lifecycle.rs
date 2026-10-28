@@ -54,6 +54,13 @@ impl Fixture {
             std::fs::create_dir_all(&path).expect("isolated directory");
             env.push((key.into(), path.to_string_lossy().into_owned()));
         }
+        // Windows resolves AppData through known folders and verifies that
+        // they exist, even when CCCC_HOME is an explicit absolute path.
+        #[cfg(windows)]
+        for leaf in ["Roaming", "Local"] {
+            std::fs::create_dir_all(self.root.path().join("user/AppData").join(leaf))
+                .expect("isolated Windows known folder");
+        }
         env.extend([
             ("CCCC_WEB_HOST".into(), "127.0.0.1".into()),
             ("CCCC_WEB_PORT".into(), self.port.to_string()),
@@ -272,6 +279,58 @@ fn terminal_modes(master: &dyn MasterPty) -> Option<String> {
 #[cfg(not(unix))]
 fn terminal_modes(_master: &dyn MasterPty) -> Option<String> {
     None
+}
+
+#[test]
+fn task_pages_and_completed_outcomes_are_readable_without_a_provider() {
+    use cccc_core::{HomeLayout, context::ContextStore};
+    use serde_json::{Map, Value, json};
+
+    let fixture = Fixture::new();
+    let (_store, group) = fixture.group("Task reader", cccc_contracts::GroupState::Active);
+    let home = HomeLayout::from_path(&fixture.home).expect("isolated Home");
+    let contexts = ContextStore::new(home).expect("contexts");
+    let notes = format!("{}\nLAST_NOTES_LINE", "Full task notes 日本語\n".repeat(90));
+    let mut operations: Vec<Map<String, Value>> = (1..=25)
+        .map(|index| {
+            json!({"op":"task.create","title":format!("Active task {index:02}"),
+            "status":"active","notes":notes,
+            "checklist":[{"text":"first","status":"done"},{"text":"second","status":"in_progress"}]
+        }).as_object().expect("task op").clone()
+        })
+        .collect();
+    for operation in [
+        json!({"op":"task.create","title":"Planned task","status":"planned"}),
+        json!({"op":"task.create","title":"Completed task","status":"done",
+            "notes":"Completed task description","outcome":"FINAL_COMPLETED_OUTCOME"}),
+    ] {
+        operations.push(operation.as_object().expect("task op").clone());
+    }
+    contexts
+        .sync(&group.group_id, &operations, None, "user", false)
+        .expect("seed tasks");
+    let mut terminal = fixture.start(&[], &[]);
+    terminal.until("Native sessions");
+    terminal.send(b"/groups\r");
+    terminal.until_screen("Tasks: 25 active  1 planned  1 done");
+    terminal.send(b"t");
+    terminal.until_screen("Active task 25");
+    terminal.send(b"\r");
+    terminal.until_screen("Checklist 1/2 done");
+    terminal.send(b"\x1b[F");
+    terminal.until_screen("LAST_NOTES_LINE");
+    terminal.send(b"bd");
+    terminal.until_screen("Completed task");
+    terminal.send(b"\r");
+    terminal.until_screen("FINAL_COMPLETED_OUTCOME");
+    terminal.send(b"bd");
+    terminal.until_screen("Active task 25");
+    terminal.send(b"\x1b[6~");
+    terminal.until_screen("Page 2");
+    terminal.until_screen("Active task 05");
+    terminal.send(b"bb/quit\r");
+    terminal.finish();
+    fixture.assert_stopped();
 }
 
 #[cfg(target_os = "linux")]
