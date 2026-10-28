@@ -11,12 +11,13 @@ it("remembers multiple sender identities and message types independently per Gro
   useUIStore.getState().setChatSenderFilter("a", ["peer", "leader"]);
   useUIStore.getState().setChatFilter("a", "mail");
   useUIStore.getState().setChatSenderFilter("b", ["worker"]);
+  useUIStore.getState().setChatFilter("b", "pending_user");
   expect(getChatSession("new", useUIStore.getState().chatSessions).chatSenderFilter).toEqual([]);
   vi.resetModules();
   const reloaded = await import("./useUIStore");
   const sessions = reloaded.useUIStore.getState().chatSessions;
   expect(sessions.a).toMatchObject({ chatSenderFilter: ["leader", "peer"], chatFilter: "mail" });
-  expect(sessions.b).toMatchObject({ chatSenderFilter: ["worker"], chatFilter: "all" });
+  expect(sessions.b).toMatchObject({ chatSenderFilter: ["worker"], chatFilter: "pending_user" });
   expect(sessions.a.scrollSnapshot).toBeNull();
 });
 

@@ -34,6 +34,7 @@ fn send_with_reply(
     reply: Option<ReplyContext>,
     preflight: bool,
 ) -> OpResult {
+    super::messaging::reply_questions::reject_fields(&request.args, "a Connect message")?;
     let group_id = connect_peer::authorize_local_source(home, request)?;
     if request
         .args

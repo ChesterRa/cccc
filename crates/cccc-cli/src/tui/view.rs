@@ -20,11 +20,13 @@ pub(super) const MIN_WIDTH: u16 = 60;
 pub(super) const MIN_HEIGHT: u16 = 16;
 // "Claude Code" plus room before the directory.
 const RUNTIME_COLUMN: usize = 13;
-// "not receiving", so both states end in the same column.
+// Status tables end alike: a status as long as "not receiving", then a short
+// right-aligned column for a group's running count, a session's id or a
+// member's native tag. Statuses then share one column, and every row ends
+// where the separator does.
 const STATUS_COLUMN: usize = 13;
-// Compact status and running-count columns; they do not stretch with the terminal.
-const GROUP_STATUS_COLUMN: usize = 10;
-const GROUP_DETAIL_COLUMN: usize = 8;
+const TRAIL_COLUMN: usize = 8;
+pub(super) const STATUS_BLOCK: usize = 2 + STATUS_COLUMN + 2 + TRAIL_COLUMN;
 pub(super) const INDENT: &str = "   ";
 // The main screen's header, the blank under it, two list titles with a blank
 // between the lists, and the notice, separator and command rows.
@@ -93,7 +95,15 @@ pub(super) fn render(frame: &mut Frame, app: &App, now: Instant) {
         Screen::Groups => super::groups_view::render(frame, app, theme, now),
         Screen::Sessions => super::sessions_view::render(frame, app, theme, now),
         Screen::Tasks => super::tasks_view::render(frame, app, theme, now),
+        Screen::Pending => super::pending_view::render(frame, app, theme),
     }
+}
+
+/// The columns left for a table's one flexible column, such as a name or a
+/// directory, once its fixed columns take theirs. Rows then fill the canvas
+/// and end in the separator's last column.
+pub(super) fn flexible(width: usize, fixed: usize) -> usize {
+    width.saturating_sub(fixed + 1)
 }
 
 /// A single bounded canvas: metadata and tables never drift to opposite
@@ -157,8 +167,10 @@ fn main_screen(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
         );
     } else {
         let table_rows = u16::from(!app.groups.groups.is_empty());
+        let session_columns_rows = u16::from(!app.sessions.sources.is_empty());
         let (group_rows, session_rows) = split(
-            area.height.saturating_sub(MAIN_FIXED_ROWS + table_rows),
+            area.height
+                .saturating_sub(MAIN_FIXED_ROWS + table_rows + session_columns_rows),
             rows_needed(
                 app.groups.groups.len(),
                 groups_message(app, theme),
@@ -183,7 +195,18 @@ fn main_screen(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
             Paragraph::new(sessions_title(app, theme, width, now)),
             row(area, sessions_at, 1),
         );
-        session_list(frame, app, theme, row(area, sessions_at + 1, session_rows));
+        if session_columns_rows > 0 {
+            frame.render_widget(
+                Paragraph::new(session_columns(theme, width)),
+                row(area, sessions_at + 1, 1),
+            );
+        }
+        session_list(
+            frame,
+            app,
+            theme,
+            row(area, sessions_at + 1 + session_columns_rows, session_rows),
+        );
     }
     bottom(frame, app, theme);
 }
@@ -298,14 +321,18 @@ fn group_list(frame: &mut Frame, app: &App, theme: Theme, area: Rect) {
         .enumerate()
         .skip(start)
         .take(shown)
-        .map(|(i, group)| group_row(group, Some(i) == selected, theme, width))
+        .map(
+            |(i, group)| match app.pending_summary.count(&group.group_id) {
+                Some(count) => {
+                    group_row_with_pending(group, Some(i) == selected, theme, width, Some(count))
+                }
+                None => group_row(group, Some(i) == selected, theme, width),
+            },
+        )
         .collect();
     let hidden = groups.len() - shown;
     if hidden > 0 {
-        lines.push(Line::styled(
-            format!("{INDENT}+{hidden} more   /groups shows all"),
-            theme.dim(),
-        ));
+        lines.push(Line::styled(format!("{INDENT}+{hidden} more"), theme.dim()));
     }
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -318,17 +345,15 @@ pub(super) fn window_start(count: usize, rows: usize, selected: Option<usize>) -
 }
 
 fn group_name_width(width: usize) -> usize {
-    width
-        .saturating_sub(INDENT.len() + 4 + GROUP_STATUS_COLUMN + GROUP_DETAIL_COLUMN + 1)
-        .min(44)
+    flexible(width, INDENT.len() + STATUS_BLOCK)
 }
 
 pub(super) fn group_columns(theme: Theme, width: usize) -> Line<'static> {
     let name = group_name_width(width);
     Line::styled(
         format!(
-            "{INDENT}{:<name$}  {:<GROUP_STATUS_COLUMN$}  {:>GROUP_DETAIL_COLUMN$}",
-            "NAME", "STATUS", "RUNNING"
+            "{INDENT}{:<name$}  {:<STATUS_COLUMN$}  {:>TRAIL_COLUMN$}",
+            "NAME / WAITING", "STATUS", "RUNNING"
         ),
         theme.dim(),
     )
@@ -340,32 +365,66 @@ pub(super) fn group_row(
     theme: Theme,
     width: usize,
 ) -> Line<'static> {
+    group_row_with_pending(group, selected, theme, width, None)
+}
+
+fn group_row_with_pending(
+    group: &GroupSummary,
+    selected: bool,
+    theme: Theme,
+    width: usize,
+    pending: Option<super::pending::Count>,
+) -> Line<'static> {
     let name_width = group_name_width(width);
-    let name = text::fit(&text::one_line(group.name()), name_width);
-    let pad = " ".repeat(name_width.saturating_sub(text::width(&name)));
+    let marker = match pending {
+        Some(super::pending::Count::Fresh(0)) | None => String::new(),
+        Some(super::pending::Count::Fresh(count)) => format!(" [{count}]"),
+        Some(super::pending::Count::Stale(count)) if count > 0 => format!(" [~{count}]"),
+        _ => " [?]".to_owned(),
+    };
+    let marker = text::fit(&marker, name_width);
+    let name = text::fit(
+        &text::one_line(group.name()),
+        name_width.saturating_sub(text::width(&marker)),
+    );
+    let pad = " ".repeat(name_width.saturating_sub(text::width(&name) + text::width(&marker)));
     let status_style = match group.status {
         _ if selected => Style::new(),
         GroupStatus::Running => theme.ok(),
         GroupStatus::Stopped | GroupStatus::Offline => theme.dim(),
         GroupStatus::Idle | GroupStatus::Paused => Style::new(),
     };
-    Line::from(vec![
+    let mut spans = vec![
         Span::raw(if selected { " > " } else { INDENT }),
-        Span::raw(format!("{name}{pad}  ")),
-        Span::styled(
-            format!("{:<GROUP_STATUS_COLUMN$}  ", group.status.label()),
-            status_style,
-        ),
-        Span::raw(format!(
-            "{:>GROUP_DETAIL_COLUMN$}",
-            text::fit(&group.running_actors.to_string(), GROUP_DETAIL_COLUMN)
-        )),
-    ])
-    .style(if selected {
+        Span::raw(format!("{name}{pad}{marker}")),
+    ];
+    spans.extend(status_block(
+        group.status.label(),
+        status_style,
+        &group.running_actors.to_string(),
+        Style::new(),
+    ));
+    Line::from(spans).style(if selected {
         theme.selected()
     } else {
         Style::new()
     })
+}
+
+/// The end of a status table row: the status, then a short value aligned
+/// right in the last column.
+pub(super) fn status_block(
+    status: &str,
+    status_style: Style,
+    trail: &str,
+    trail_style: Style,
+) -> [Span<'static>; 2] {
+    let trail = text::fit(trail, TRAIL_COLUMN);
+    let pad = " ".repeat(TRAIL_COLUMN.saturating_sub(text::width(&trail)));
+    [
+        Span::styled(format!("  {status:<STATUS_COLUMN$}  "), status_style),
+        Span::styled(format!("{pad}{trail}"), trail_style),
+    ]
 }
 
 /// "1 group", "2 groups".
@@ -437,7 +496,7 @@ pub(super) fn sessions_message(app: &App, theme: Theme) -> Option<(String, Style
             theme.error(),
         )),
         (_, Some(_)) => Some((
-            "No sessions yet. Type /setup to connect Codex, Claude Code, Pi or OpenCode."
+            "No sessions yet. Choose /setup in the Tab menu to connect Codex, Claude Code, Pi or OpenCode."
                 .to_owned(),
             Style::new(),
         )),
@@ -475,42 +534,67 @@ fn session_list(frame: &mut Frame, app: &App, theme: Theme, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
+/// The flexible column of a session table: the directory on the main screen,
+/// the session's name in `/sessions`.
+pub(super) fn session_place_width(width: usize) -> usize {
+    flexible(width, INDENT.len() + RUNTIME_COLUMN + STATUS_BLOCK)
+}
+
+pub(super) fn session_columns_named(place: &str, theme: Theme, width: usize) -> Line<'static> {
+    let room = session_place_width(width);
+    Line::styled(
+        format!(
+            "{INDENT}{:<RUNTIME_COLUMN$}{place:<room$}  {:<STATUS_COLUMN$}  {:>TRAIL_COLUMN$}",
+            "APP", "STATUS", "ID"
+        ),
+        theme.dim(),
+    )
+}
+
+fn session_columns(theme: Theme, width: usize) -> Line<'static> {
+    session_columns_named("DIRECTORY", theme, width)
+}
+
 pub(super) fn session_row(
     source: &LocalSessionSource,
     user_home: Option<&Path>,
     theme: Theme,
     width: usize,
 ) -> Line<'static> {
-    let (status, status_style) = if source.connected {
-        ("ready", theme.ok())
-    } else {
-        ("not receiving", theme.dim())
-    };
-    let room = width
-        .saturating_sub(INDENT.len() + RUNTIME_COLUMN + 2 + 7 + 2 + STATUS_COLUMN + 1)
-        .min(36);
+    let room = session_place_width(width);
     let place = text::fit(
         &text::home_relative(&text::one_line(&source.cwd), user_home),
         room,
     );
     let pad = " ".repeat(room.saturating_sub(text::width(&place)));
-    let source_id = text::one_line(&source.source_id);
-    let id = text::tail_within(&source_id, 6);
-    Line::from(vec![
+    let mut spans = vec![
         Span::raw(INDENT),
         Span::raw(format!(
             "{:<RUNTIME_COLUMN$}",
             runtime_label(source.runtime)
         )),
-        Span::raw(format!("{place}{pad}  ")),
-        Span::styled(format!("#{id:>6}  "), theme.dim()),
-        Span::styled(status, status_style),
-    ])
+        Span::raw(format!("{place}{pad}")),
+    ];
+    spans.extend(session_status(source, theme));
+    Line::from(spans)
+}
+
+/// A session's status block: readiness, then the end of its source id, the
+/// part `/sessions` shows in full.
+pub(super) fn session_status(source: &LocalSessionSource, theme: Theme) -> [Span<'static>; 2] {
+    let (status, status_style) = if source.connected {
+        ("ready", theme.ok())
+    } else {
+        ("not receiving", theme.dim())
+    };
+    let source_id = text::one_line(&source.source_id);
+    let id = format!("#{}", text::tail_within(&source_id, TRAIL_COLUMN - 2));
+    status_block(status, status_style, &id, theme.dim())
 }
 
 pub(super) fn runtime_label(runtime: LocalSessionRuntime) -> &'static str {
     match runtime {
-        LocalSessionRuntime::Codex => "Codex",
+        LocalSessionRuntime::Codex => "Codex CLI",
         LocalSessionRuntime::Claude => "Claude Code",
         LocalSessionRuntime::Pi => "Pi",
         LocalSessionRuntime::Opencode => "OpenCode",
@@ -523,9 +607,9 @@ fn bottom(frame: &mut Frame, app: &App, theme: Theme) {
     let hint = if !app.candidates().is_empty() {
         " Up/Down choose   Tab complete   Enter run   Esc close"
     } else if app.input.is_empty() && app.selected_group().is_some() {
-        " Up/Down select group   Enter details   / commands"
+        " Up/Down select   PgUp/PgDn page   Enter open   Tab menu"
     } else if app.input.is_empty() {
-        " / commands"
+        " Tab menu"
     } else {
         " Enter run   Ctrl+U clear   /help"
     };
@@ -604,7 +688,7 @@ fn command_line(frame: &mut Frame, app: &App, theme: Theme, area: Rect) {
         Span::raw(visible.to_owned()),
     ];
     if app.input.is_empty() {
-        spans.push(Span::styled("Type / for commands", theme.dim()));
+        spans.push(Span::styled("Tab for menu or type /", theme.dim()));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
     let column = prompt.len() + text::width(head);
@@ -640,11 +724,11 @@ fn help_screen(frame: &mut Frame, app: &App, theme: Theme) {
     // A command gets a line of its own, so wrapping never splits it.
     for (paragraph, command) in [
         (
-            "In /groups, t opens the selected Group's tasks. Up/Down chooses a task, Enter reads its complete notes and checklist, d switches between open and done tasks, and PgUp/PgDn changes pages. In details, arrows and paging keys scroll. b or Esc returns one level. Task views are read-only; editing stays in the Web UI.",
+            "On regular screens, use the arrow keys, Enter, Tab and Esc to browse and select actions. On a group's page, Up/Down chooses Tasks or an action such as Start or Stop, and Enter opens it or asks to confirm it. In the task list, Left/Right switches between open and done tasks, Enter reads a task's complete notes and checklist, and PgUp/PgDn changes pages. In details, arrows and paging keys scroll. Esc returns one level. Task views are read-only; editing stays in the Web UI.",
             None,
         ),
         (
-            "Main screen: Up/Down selects a group, Enter opens it. Type / to see commands. Tab completes without running; Enter runs the selected command. Esc closes the menu. Left/Right, Home/End, Delete and Ctrl+A/E/U edit the command. Bracketed pastes insert text without submitting.",
+            "Main screen: Up/Down selects a group, PgUp/PgDn moves by a page, and Enter opens it. Tab, or typing /, opens the command menu: Up/Down chooses, Tab completes without running, Enter runs the selected command and Esc closes the menu. Left/Right, Home/End, Delete and Ctrl+A/E/U edit a typed command. Bracketed pastes insert text without submitting.",
             None,
         ),
         (
@@ -686,9 +770,9 @@ fn help_screen(frame: &mut Frame, app: &App, theme: Theme) {
         row(area, area.height - 2, 1),
     );
     let keys = if scrolls {
-        " Up/Down scroll   b back"
+        " Up/Down scroll   Esc back"
     } else {
-        " b back"
+        " Esc back"
     };
     frame.render_widget(
         Paragraph::new(Line::styled(keys, theme.dim())),
@@ -763,6 +847,7 @@ pub(super) fn shows_age(app: &App) -> bool {
             Screen::Main => sessions || groups,
             Screen::Groups => groups || members || tasks,
             Screen::Tasks => tasks,
+            Screen::Pending => false,
             Screen::Sessions => sessions,
             Screen::Help | Screen::Setup => false,
         }

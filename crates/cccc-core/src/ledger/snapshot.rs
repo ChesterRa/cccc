@@ -100,6 +100,11 @@ impl Snapshot {
         })
     }
 
+    /// The source that is the rotating active file, which alone may grow.
+    pub fn active_index(&self) -> Option<usize> {
+        self.active.as_ref().map(|(index, _)| *index)
+    }
+
     pub fn extends(&self, previous: &[Source]) -> bool {
         self.sources.len() == previous.len()
             && self
@@ -118,6 +123,21 @@ impl Snapshot {
                         next == old
                     }
                 })
+    }
+
+    /// Whether the active file ends its last line at the captured length.
+    /// Sealed archives and an empty file have no unfinished line.
+    pub fn ends_with_newline(&self) -> io::Result<bool> {
+        let Some((index, _)) = &self.active else {
+            return Ok(true);
+        };
+        let len = self.sources[*index].len;
+        if len == 0 {
+            return Ok(true);
+        }
+        let mut last = [0_u8; 1];
+        self.reader(*index, len - 1)?.read_exact(&mut last)?;
+        Ok(last[0] == b'\n')
     }
 
     fn file(&self, source: usize) -> io::Result<File> {
@@ -159,6 +179,28 @@ impl Snapshot {
     pub fn visit(
         &self,
         offsets: &[u64],
+        visit: impl FnMut(Event, Location) -> ControlFlow<()>,
+    ) -> io::Result<Vec<u64>> {
+        self.walk(offsets, false, visit)
+    }
+
+    /// Like `visit`, but stored bytes that are not one complete, valid event
+    /// fail the read with `InvalidData` instead of being skipped, including an
+    /// unterminated tail: a damaged record may be the one that would change
+    /// what the caller concludes. A complete event that lacks only its final
+    /// newline is still read.
+    pub fn visit_validated(
+        &self,
+        offsets: &[u64],
+        visit: impl FnMut(Event, Location) -> ControlFlow<()>,
+    ) -> io::Result<Vec<u64>> {
+        self.walk(offsets, true, visit)
+    }
+
+    fn walk(
+        &self,
+        offsets: &[u64],
+        validated: bool,
         mut visit: impl FnMut(Event, Location) -> ControlFlow<()>,
     ) -> io::Result<Vec<u64>> {
         let mut ends = Vec::new();
@@ -180,6 +222,24 @@ impl Snapshot {
                 #[cfg(test)]
                 DECODED.with(|count| count.set(count.get() + 1));
                 let raw = trim_ascii(&line);
+                if validated {
+                    let end = offset + read as u64;
+                    if !raw.is_empty() {
+                        let event = super::decode_validated(raw, &token.path, line_no)
+                            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                        let location = Location {
+                            source,
+                            offset,
+                            end,
+                        };
+                        if visit(event, location).is_break() {
+                            return Ok(ends);
+                        }
+                    }
+                    offset = end;
+                    line.clear();
+                    continue;
+                }
                 if line.last() != Some(&b'\n')
                     && !raw.is_empty()
                     && serde_json::from_slice::<serde_json::Value>(raw).is_err()

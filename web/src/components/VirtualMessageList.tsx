@@ -96,6 +96,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   isLoadingHistory = false,
   hasMoreHistory = true,
   isFilteredEmpty = false,
+  emptyMessage,
   onLoadMore,
   resetKey,
 }: VirtualMessageListInnerProps) {
@@ -915,7 +916,11 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           if (scrollRef) scrollRef.current = el;
         }}
         className={classNames("flex-1 min-h-0 overflow-auto px-4 py-4 relative", className)}
-        style={{ overflowAnchor: "none", scrollbarGutter: "stable both-edges" }}
+        style={{
+          overflowAnchor: "none",
+          scrollbarGutter: "stable both-edges",
+          scrollPaddingTop: topInset || undefined,
+        }}
         onKeyDownCapture={cancelForcedFollowOnKey}
         onWheel={cancelForcedFollowForUserScroll}
         onPointerDown={(event) => {
@@ -932,6 +937,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
             isLoadingHistory={isLoadingHistory}
             hasMoreHistory={hasMoreHistory}
             isFilteredEmpty={isFilteredEmpty}
+            emptyMessage={emptyMessage}
             onLoadMore={onLoadMore}
           />
         ) : (

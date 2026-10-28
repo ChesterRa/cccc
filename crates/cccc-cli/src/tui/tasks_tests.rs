@@ -52,7 +52,7 @@ fn open() -> App {
     let mut snapshot = Snapshot::default();
     snapshot.record(&request, Ok(Data::Page(page())), Instant::now());
     app.set_tasks(snapshot);
-    press(&mut app, KeyCode::Char('t'));
+    press(&mut app, KeyCode::Enter);
     assert_eq!(app.screen, Screen::Tasks);
     app
 }
@@ -130,7 +130,7 @@ fn browsing_pages_done_and_details_is_read_only_and_fences_late_answers() {
     );
     press(&mut app, KeyCode::PageDown);
     assert_eq!(app.tasks_view.page, 1, "cannot skip unread pages");
-    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Right);
     assert!(app.tasks_view.done);
     assert_eq!(app.tasks_view.page, 0);
     assert!(app.selected_tasks().is_none());
@@ -169,10 +169,31 @@ fn browsing_pages_done_and_details_is_read_only_and_fences_late_answers() {
 }
 
 #[test]
+fn task_views_switch_during_loading_without_stale_counts_or_extra_writes() {
+    let mut app = open();
+    press(&mut app, KeyCode::PageDown);
+    assert_eq!(app.tasks_view.page, 1);
+    press(&mut app, KeyCode::Right);
+    assert!(app.tasks_view.done);
+    assert_eq!(app.tasks_view.page, 0);
+    assert!(app.selected_tasks().is_none());
+    let screen = rows(&app, 60, 16).join("\n");
+    assert!(screen.contains("Open ?") && screen.contains("Done ?"));
+    assert!(!screen.contains("Active 21"));
+    press(&mut app, KeyCode::Left);
+    assert!(!app.tasks_view.done);
+    press(&mut app, KeyCode::Tab);
+    assert!(app.tasks_view.done);
+    press(&mut app, KeyCode::Tab);
+    assert!(!app.tasks_view.done);
+}
+
+#[test]
 fn minimum_screen_has_one_focus_and_complete_scrolling_details() {
     let mut app = open();
     let shown = rows(&app, 60, 16).join("\n");
-    assert!(shown.contains("Active 21  Planned 1  Done 4"));
+    assert!(shown.contains("Open 22") && shown.contains("Done 4"));
+    assert!(shown.contains("Active 21  Planned 1"));
     assert!(shown.contains("Waiting user 1"));
     assert!(shown.contains("Enter details"));
     assert!(shown.contains("T001"));
@@ -198,7 +219,7 @@ fn minimum_screen_has_one_focus_and_complete_scrolling_details() {
     let last = rows(&app, 60, 16).join("\n");
     assert!(last.contains("LAST_NOTES_LINE"));
     assert!(last.contains("FINAL_OUTCOME"));
-    assert!(last.contains("b tasks"));
+    assert!(last.contains("Esc back"));
     for forbidden in [KeyCode::Char('s'), KeyCode::Char('x'), KeyCode::Char('d')] {
         press(&mut app, forbidden);
         assert!(app.tasks_view.details);

@@ -1,0 +1,77 @@
+/* The same controls stay mounted when the empty touch composer is compact. */
+[data-composer-compact="true"] [data-composer-inner] {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
+  align-items: center;
+}
+[data-composer-compact="true"] [data-composer-recipient-row],
+[data-composer-compact="true"] [data-voice-mobile-status-slot]:empty,
+[data-composer-compact="true"] [data-composer-send-options],
+[data-composer-compact="true"] [data-composer-voice] .voice-mobile-only,
+[data-composer-compact="true"] [data-composer-voice] .voice-desktop-controls {
+  display: none;
+}
+[data-composer-compact="true"] [data-voice-mobile-status-slot]:not(:empty) {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+[data-composer-compact="true"] [data-composer-action-bar],
+[data-composer-compact="true"] [data-composer-action-group] {
+  display: contents;
+}
+[data-composer-compact="true"] [data-composer-attach] {
+  grid-column: 1;
+  grid-row: 1;
+}
+[data-composer-compact="true"] [data-composer-input] {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+}
+[data-composer-compact="true"] [data-composer-input] textarea {
+  min-width: 0;
+  flex: 1;
+}
+[data-composer-compact="true"] [data-composer-voice] {
+  grid-column: 3;
+  grid-row: 1;
+}
+[data-composer-compact="true"] [data-voice-assistant-row-control] {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+}
+[data-composer-compact="true"] [data-composer-voice] > button {
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+  font-size: 0;
+}
+[data-composer-compact="true"] [data-composer-send-control] {
+  grid-column: 4;
+  grid-row: 1;
+  margin-left: 0;
+}
+[data-composer-compact="true"] [data-composer-send-control] > button:first-child {
+  border-radius: 0.75rem;
+}
+.compact-composer-recipients {
+  display: flex;
+  height: 44px;
+  max-width: 50%;
+  min-width: 44px;
+  flex: 0 1 auto;
+  align-items: center;
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: 0.5rem;
+  padding: 0 0.375rem;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+.compact-composer-recipients span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1,6 +1,6 @@
 import { useUIStore } from "../../stores/useUIStore";
 import { groupConnectionCount } from "../../features/connect/protocol";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { instanceName } from "../../features/connect/instanceName";
 import { useTranslation } from "react-i18next";
@@ -34,6 +34,9 @@ import { ConnectSidebar } from "../../features/connect/ConnectSidebar";
 import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbench";
 
 import { LocalSessionsButton } from "../../features/localSessions/LocalSessionsButton";
+import { PendingSummaryContext } from "../../features/pendingReplies/context";
+import { aggregatePendingIndicator } from "../../features/pendingReplies/indicator";
+import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndicator";
 
 export interface GroupSidebarProps {
   canAccessLocalSessions?: boolean;
@@ -89,6 +92,7 @@ export function GroupSidebar({
   onDeleteGroup,
 }: GroupSidebarProps) {
   const { t } = useTranslation("layout");
+  const pending = useContext(PendingSummaryContext);
   const controlsBusy = useUIStore((state) => state.busy.startsWith("group-"));
   const branding = useBrandingStore((s) => s.branding);
   const logoSrc = resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark);
@@ -104,6 +108,18 @@ export function GroupSidebar({
     () => orderedGroups.filter((g) => archivedSet.has(String(g.group_id || "").trim())),
     [archivedSet, orderedGroups],
   );
+  const archivedPending = pending
+    ? aggregatePendingIndicator(
+        pending.summaries,
+        archivedGroups.map((group) => group.group_id),
+      )
+    : null;
+  const totalPending = pending
+    ? aggregatePendingIndicator(
+        pending.summaries,
+        orderedGroups.map((group) => group.group_id),
+      )
+    : null;
   const collapsedGroups = useMemo(() => {
     if (!isCollapsed) return workingGroups;
     const selectedArchived = archivedGroups.find(
@@ -390,11 +406,20 @@ export function GroupSidebar({
               type="button"
               variant="secondary"
               size="touch"
-              className="text-[var(--color-text-primary)]"
+              className="relative text-[var(--color-text-primary)]"
               onClick={onToggleCollapse}
-              label={t("expandSidebar")}
+              label={
+                totalPending
+                  ? `${t("expandSidebar")} · ${t("pendingRepliesIndicator", { value: totalPending.text })}`
+                  : t("expandSidebar")
+              }
             >
               <ChevronRightIcon size={18} />
+              {totalPending && (
+                <span className="absolute -right-1 -top-1">
+                  <PendingIndicatorText indicator={totalPending} />
+                </span>
+              )}
             </IconButton>
             {!readOnly && onCreateGroup && (
               <IconButton
@@ -440,6 +465,7 @@ export function GroupSidebar({
                   <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
                     {archivedGroups.length}
                   </span>
+                  {archivedPending && <PendingIndicatorText indicator={archivedPending} />}
                 </div>
                 <ChevronDownIcon
                   size={16}

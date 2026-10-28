@@ -30,6 +30,7 @@ const noop = vi.hoisted(() => () => {});
 vi.mock("./hooks/useAppChrome", () => ({
   useAppChrome: () => ({
     canManageGroups: true,
+    webModeKnown: true,
     ccccHome: "",
     fetchDirSuggestions: noop,
     refreshWebAccessSession: async () => true,
@@ -171,6 +172,16 @@ async function serveRequest(input: string | URL | Request, init?: RequestInit): 
   if (method !== "GET") {
     unexpectedRequests.push(`${method} ${url.pathname}`);
     throw new Error(`Unexpected mutation: ${method} ${url.pathname}`);
+  }
+  if (url.pathname === "/api/v1/reply-requests/summary") {
+    return jsonResponse({
+      groups: Object.keys(actorsByGroup).map((group_id) => ({
+        group_id,
+        state: "fresh",
+        pending: 0,
+        revision: "fixture-revision",
+      })),
+    });
   }
   const groupMatch = /^\/api\/v1\/groups\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
   if (groupMatch && actorsByGroup[groupMatch[1]]) {

@@ -61,6 +61,7 @@ import {
 } from "../../utils/suggestedUserMessage";
 import { ComposerRecipientsRow } from "./ComposerRecipientsRow";
 import { useComposerTextareaAutoResize } from "./useComposerTextareaAutoResize";
+import { useShortTouchViewport } from "../../hooks/useShortTouchViewport";
 import {
   buildComposerHistoryEntries,
   canStartComposerHistory,
@@ -110,6 +111,7 @@ function buildRecentChatExcerptForVoicePrompt(events: LedgerEvent[]): string {
 export interface ChatComposerProps {
   isDark: boolean;
   isSmallScreen: boolean;
+  keepExpanded?: boolean;
   selectedGroupId: string;
   actors: Actor[];
   recipientActorsBusy?: boolean;
@@ -171,6 +173,7 @@ export interface ChatComposerProps {
 export function ChatComposer({
   isDark,
   isSmallScreen,
+  keepExpanded = false,
   selectedGroupId,
   actors,
   recipientActorsBusy,
@@ -224,6 +227,10 @@ export function ChatComposer({
   const composerHistoryRef = useRef<ComposerHistorySession | null>(null);
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
+  const [expandedGroup, setExpandedGroup] = useState("");
+  const [voiceBlocksCompact, setVoiceBlocksCompact] = useState(false);
+  const shortTouchViewport = useShortTouchViewport();
+  const compactViewport = isSmallScreen || shortTouchViewport;
   const composerHelpId = useId();
   const [hintMinHeight, setHintMinHeight] = useState(0);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -260,23 +267,32 @@ export function ChatComposer({
   const composerResize = useComposerHeightResize({
     footerRef,
     composerRef,
-    enabled: !isSmallScreen,
+    enabled: !compactViewport,
     scale: rootFontScale,
   });
-  const baseComposerHeight = (isSmallScreen ? 44 : 48) * rootFontScale;
-  const minComposerHeight = isSmallScreen
-    ? Math.max(baseComposerHeight + 6, 52)
-    : composerResize.minHeight;
-  const maxComposerHeight = isSmallScreen ? 128 * rootFontScale : composerResize.maxHeight;
   const composerFontSize = (isSmallScreen ? 15 : 13) * rootFontScale;
   const composerLineHeight = (isSmallScreen ? 24 : 20) * rootFontScale;
-
-  useComposerTextareaAutoResize({
-    composerRef,
-    value: composerText,
-    minHeight: minComposerHeight,
-    maxHeight: maxComposerHeight,
-  });
+  const minComposerHeight = compactViewport
+    ? Math.max(44, composerLineHeight + 16 * rootFontScale)
+    : composerResize.minHeight;
+  const maxComposerHeight = compactViewport ? 128 * rootFontScale : composerResize.maxHeight;
+  const expandedMinHeight = compactViewport
+    ? `${minComposerHeight}px`
+    : `var(--composer-min-height, ${minComposerHeight}px)`;
+  const expandedMaxHeight = compactViewport
+    ? `${maxComposerHeight}px`
+    : `var(--composer-max-height, ${maxComposerHeight}px)`;
+  useEffect(() => {
+    if (!compactViewport) return;
+    const closeWhenOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || footerRef.current?.contains(target)) return;
+      if (target.closest('[role="dialog"], [role="menu"], [role="listbox"]')) return;
+      setExpandedGroup("");
+    };
+    document.addEventListener("pointerdown", closeWhenOutside, true);
+    return () => document.removeEventListener("pointerdown", closeWhenOutside, true);
+  }, [compactViewport]);
 
   const exitComposerHistory = useCallback(() => {
     composerHistoryRef.current = null;
@@ -928,7 +944,7 @@ export function ChatComposer({
           defaultValue: "Send message ({{shortcut}})",
         });
   const showTypingPlaceholder = Boolean(
-    !isSmallScreen &&
+    !compactViewport &&
     selectedGroupId &&
     composerGroupSettled &&
     busy !== "send" &&
@@ -938,19 +954,99 @@ export function ChatComposer({
   const composerPlaceholder =
     showSuggestedUserMessage || showTypingPlaceholder
       ? ""
-      : isSmallScreen
+      : compactViewport
         ? t("messagePlaceholder")
         : t("messagePlaceholderDesktop");
+  const compact = Boolean(
+    compactViewport &&
+    selectedGroupId &&
+    composerGroupSettled &&
+    !keepExpanded &&
+    expandedGroup !== selectedGroupId &&
+    !composerFocused &&
+    !composerText &&
+    composerFiles.length === 0 &&
+    !replyTarget &&
+    !quotedPresentationRef &&
+    !quotedVoiceDocumentRef &&
+    !showSuggestedUserMessage &&
+    !showModeMenu &&
+    !showMentionMenu &&
+    !showSlashMenu &&
+    !voiceBlocksCompact &&
+    !busy &&
+    effectiveMessageMode === "send" &&
+    (!destGroupId || destGroupId === selectedGroupId),
+  );
+  const recipientTitles = toTokens.map(
+    (token) => actors.find((actor) => actor.id === token)?.title || token,
+  );
+  const compactRecipients = recipientTitles.length
+    ? `${recipientTitles[0]}${recipientTitles.length > 1 ? ` +${recipientTitles.length - 1}` : ""}`
+    : "";
+  useComposerTextareaAutoResize({
+    composerRef,
+    value: composerText,
+    minHeight: compact ? 44 : minComposerHeight,
+    maxHeight: compact ? 44 : maxComposerHeight,
+  });
+
+  const focusSelectedRecipient = () => {
+    requestAnimationFrame(() => {
+      const row = footerRef.current?.querySelector<HTMLElement>("[data-composer-recipient-row]");
+      (
+        row?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ||
+        row?.querySelector<HTMLButtonElement>("button")
+      )?.focus();
+    });
+  };
 
   return (
     <footer
       ref={footerRef}
+      data-composer-compact={compact ? "true" : undefined}
+      onPointerDownCapture={(event) => {
+        if (
+          compactViewport &&
+          event.target instanceof Element &&
+          event.currentTarget.contains(event.target) &&
+          event.target.closest("button")
+        ) {
+          // The compact chip leaves the DOM as soon as the row expands, before
+          // a touch click fires. Restore focus after that row is rendered.
+          if (compact && event.target.closest(".compact-composer-recipients")) {
+            setExpandedGroup(selectedGroupId);
+            focusSelectedRecipient();
+          } else if (!compact) {
+            // Keep an already expanded row open while focus moves from the
+            // textarea to a recipient, attachment, or voice control.
+            setExpandedGroup(selectedGroupId);
+          }
+        }
+      }}
+      onClickCapture={(event) => {
+        if (compact && event.target instanceof Element && event.target.closest("button")) {
+          // Let the first tap reach the compact control before the layout moves.
+          setExpandedGroup(selectedGroupId);
+        }
+      }}
+      onBlurCapture={(event) => {
+        const next = event.relatedTarget;
+        if (
+          next instanceof Element &&
+          !event.currentTarget.contains(next) &&
+          !next.closest('[role="dialog"], [role="menu"], [role="listbox"]')
+        ) {
+          setExpandedGroup("");
+        }
+      }}
       className={classNames(
-        "relative z-40 flex-shrink-0 px-2 pt-2 pb-[max(0.375rem,env(safe-area-inset-bottom,0px))] sm:px-4 sm:pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]",
+        "relative z-40 flex-shrink-0 px-2 pb-[max(0.375rem,env(safe-area-inset-bottom,0px))] sm:px-4 sm:pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]",
+        compactViewport ? "pt-1" : "pt-2",
         "bg-[var(--color-chat-bg)]",
       )}
     >
-      {!isSmallScreen ? (
+      {!compactViewport ? (
         <ComposerResizeHandle {...composerResize} label={t("layout:resizeComposer")} />
       ) : null}
       <div
@@ -1108,7 +1204,7 @@ export function ChatComposer({
 
         {/* Integrated composer */}
         <div className="flex flex-col">
-          <div className="relative flex min-w-0 flex-1 flex-col">
+          <div className="relative flex min-w-0 flex-1 flex-col" data-composer-inner>
             <ComposerRecipientsRow
               isDark={isDark}
               isSmallScreen={isSmallScreen}
@@ -1124,17 +1220,30 @@ export function ChatComposer({
             <div ref={setVoiceStatusTarget} data-voice-mobile-status-slot />
 
             {/* Row 2 — Textarea */}
-            <div className="relative min-w-0 flex-1">
+            <div className="relative min-w-0 flex-1" data-composer-input>
+              {compact && compactRecipients ? (
+                <button
+                  type="button"
+                  className="compact-composer-recipients"
+                  aria-label={`${t("to", "To")}: ${recipientTitles.join(", ")}`}
+                  title={recipientTitles.join(", ")}
+                  onClick={() => {
+                    setExpandedGroup(selectedGroupId);
+                    focusSelectedRecipient();
+                  }}
+                >
+                  <span>{compactRecipients}</span>
+                </button>
+              ) : null}
               {mentionOverlay ? (
                 <div
-                  className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words border-none px-4 py-3 text-transparent"
+                  className={classNames(
+                    "pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words border-none px-4 text-transparent",
+                    compactViewport ? "py-2" : "py-3",
+                  )}
                   style={{
-                    minHeight: isSmallScreen
-                      ? `${minComposerHeight}px`
-                      : `var(--composer-min-height, ${minComposerHeight}px)`,
-                    maxHeight: isSmallScreen
-                      ? `${maxComposerHeight}px`
-                      : `var(--composer-max-height, ${maxComposerHeight}px)`,
+                    minHeight: expandedMinHeight,
+                    maxHeight: expandedMaxHeight,
                     fontSize: `${composerFontSize}px`,
                     lineHeight: `${composerLineHeight}px`,
                     border: "none",
@@ -1150,23 +1259,23 @@ export function ChatComposer({
               <textarea
                 ref={composerRef as RefObject<HTMLTextAreaElement>}
                 className={classNames(
-                  "relative w-full bg-transparent border-none py-3 resize-none overflow-y-auto scrollbar-hide focus:outline-none focus:ring-0 focus-visible:shadow-none text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]",
+                  "relative w-full bg-transparent border-none resize-none overflow-y-auto scrollbar-hide focus:outline-none focus:ring-0 focus-visible:shadow-none text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]",
+                  compactViewport ? "py-2" : "py-3",
                   showSuggestedUserMessage ? "pl-11 pr-4" : "px-4",
                 )}
                 style={{
-                  minHeight: showTypingPlaceholder
-                    ? `max(${hintMinHeight}px, ${isSmallScreen ? `${minComposerHeight}px` : `var(--composer-min-height, ${minComposerHeight}px)`})`
-                    : isSmallScreen
-                      ? `${minComposerHeight}px`
-                      : `var(--composer-min-height, ${minComposerHeight}px)`,
-                  maxHeight: isSmallScreen
-                    ? `${maxComposerHeight}px`
-                    : `var(--composer-max-height, ${maxComposerHeight}px)`,
+                  minHeight: compact
+                    ? "44px"
+                    : showTypingPlaceholder
+                      ? `max(${hintMinHeight}px, ${expandedMinHeight})`
+                      : expandedMinHeight,
+                  maxHeight: compact ? "44px" : expandedMaxHeight,
                   fontSize: `${composerFontSize}px`,
                   lineHeight: `${composerLineHeight}px`,
                   border: "none",
                   outline: "none",
                   boxShadow: "none",
+                  ...(compact ? { padding: "6px" } : {}),
                 }}
                 placeholder={composerPlaceholder}
                 rows={1}
@@ -1218,9 +1327,7 @@ export function ChatComposer({
                     isDark ? "text-white/22" : "text-gray-400/80",
                   )}
                   style={{
-                    maxHeight: isSmallScreen
-                      ? `${maxComposerHeight}px`
-                      : `var(--composer-max-height, ${maxComposerHeight}px)`,
+                    maxHeight: expandedMaxHeight,
                     fontSize: `${composerFontSize}px`,
                     lineHeight: `${composerLineHeight}px`,
                   }}
@@ -1277,11 +1384,16 @@ export function ChatComposer({
             <div
               data-composer-action-bar
               className={classNames(
-                "flex flex-wrap items-center gap-2 px-2 pb-2 pt-1 @min-[600px]/composer:flex-nowrap @min-[600px]/composer:justify-between",
+                "flex flex-wrap items-center gap-2 px-2 @min-[600px]/composer:flex-nowrap @min-[600px]/composer:justify-between",
+                compactViewport ? "pb-1 pt-0" : "pb-2 pt-1",
               )}
             >
-              <div className="contents @min-[600px]/composer:flex @min-[600px]/composer:min-w-0 @min-[600px]/composer:flex-1 @min-[600px]/composer:items-center @min-[600px]/composer:gap-1.5">
+              <div
+                data-composer-action-group
+                className="contents @min-[600px]/composer:flex @min-[600px]/composer:min-w-0 @min-[600px]/composer:flex-1 @min-[600px]/composer:items-center @min-[600px]/composer:gap-1.5"
+              >
                 <button
+                  data-composer-attach
                   className={classNames(
                     "flex h-[44px] w-[44px] items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors duration-150 disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60 @min-[600px]/composer:h-9 @min-[600px]/composer:w-9",
                     busy !== "send" && selectedGroupId
@@ -1298,7 +1410,7 @@ export function ChatComposer({
                   <AttachmentIcon size={18} />
                 </button>
 
-                <div className="min-w-0 shrink-0 @min-[600px]/composer:shrink">
+                <div data-composer-voice className="min-w-0 shrink-0 @min-[600px]/composer:shrink">
                   <LazyVoiceSecretaryComposerControl
                     isDark={isDark}
                     selectedGroupId={selectedGroupId}
@@ -1313,6 +1425,7 @@ export function ChatComposer({
                     onQuoteDocument={onQuoteVoiceDocumentRef}
                     onPromptDraft={fillPromptDraftFromSpeech}
                     onFocusComposer={focusComposerAfterSpeech}
+                    onCompactBlockChange={setVoiceBlocksCompact}
                   />
                 </div>
               </div>

@@ -45,7 +45,8 @@ pub fn diagnostic(message: fmt::Arguments<'_>) {
         }
     } else {
         drop(log);
-        eprintln!("{message}");
+        // Diagnostics must not turn a closed stderr pipe into a process panic.
+        let _ = writeln!(io::stderr().lock(), "{message}");
     }
 }
 
@@ -53,7 +54,10 @@ impl Drop for DiagnosticLog {
     fn drop(&mut self) {
         let log = LOG.lock().unwrap_or_else(|error| error.into_inner()).take();
         if log.is_some_and(|log| log.failed) {
-            eprintln!("CCCC could not save some diagnostics to its log file");
+            let _ = writeln!(
+                io::stderr().lock(),
+                "CCCC could not save some diagnostics to its log file"
+            );
         }
     }
 }

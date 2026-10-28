@@ -9,6 +9,8 @@ pub const NEW_MESSAGE_MODE_GUIDANCE: &str = "New messages: use mode=\"mail\" unl
 pub const NATIVE_MESSAGE_MODE_GUIDANCE: &str = "Native collaboration defaults to mode=\"send\" for timely communication. Use mode=\"request_reply\" when a concrete reply is required; choose mode=\"mail\" explicitly for asynchronous Inbox work, whose notification may be delayed. Do not send routine noise. Mail is agent-only; keep user and agent audiences in separate messages.";
 pub const EXISTING_MESSAGE_REPLY_GUIDANCE: &str =
     "For an existing event, use cccc_message_reply instead of cccc_message_send.";
+/// A reply cannot carry a question, so this follows the reply rule.
+pub const USER_QUESTION_GUIDANCE: &str = "When the user's decision or information is needed, send a new request_reply message to user with a question (options for a choice, free text otherwise) unless the user asked for another channel. Do not ask what you can responsibly decide yourself.";
 
 #[must_use]
 pub fn render(group: &GroupDoc, actor: &Actor) -> String {
@@ -144,6 +146,7 @@ fn render_with_body(
         "CCCC Protocol:".into(),
         format!("- {}", if actor.external_session_id.is_empty() { NEW_MESSAGE_MODE_GUIDANCE } else { NATIVE_MESSAGE_MODE_GUIDANCE }),
         format!("- {EXISTING_MESSAGE_REPLY_GUIDANCE}"),
+        format!("- {USER_QUESTION_GUIDANCE}"),
         "- Before replying, verify `event_id`; before any message, verify `to` and make the audience explicit when it differs."
             .into(),
         "- Terminal output is not delivered.".into(),
@@ -181,7 +184,7 @@ fn enum_name(value: impl serde::Serialize) -> String {
 mod tests {
     use super::{
         EXISTING_MESSAGE_REPLY_GUIDANCE, NATIVE_MESSAGE_MODE_GUIDANCE, NEW_MESSAGE_MODE_GUIDANCE,
-        render, render_session,
+        USER_QUESTION_GUIDANCE, render, render_session,
     };
     use crate::GroupStore;
     use crate::home::HomeLayout;
@@ -201,6 +204,7 @@ mod tests {
         assert!(prompt.contains("use MCP tool `cccc_bootstrap`"));
         assert_eq!(prompt.matches(NEW_MESSAGE_MODE_GUIDANCE).count(), 1);
         assert_eq!(prompt.matches(EXISTING_MESSAGE_REPLY_GUIDANCE).count(), 1);
+        assert_eq!(prompt.matches(USER_QUESTION_GUIDANCE).count(), 1);
         assert!(prompt.contains("Before replying, verify `event_id`"));
         assert!(prompt.contains("Terminal output is not delivered."));
         assert!(!prompt.contains("Current Context Snapshot"));
@@ -310,6 +314,7 @@ mod tests {
         std::fs::write(prompt_dir.join("CCCC_PREAMBLE.md"), "custom startup").expect("custom body");
         let prompt = render_session(&home, &group, &actor);
         assert_eq!(prompt.matches(NATIVE_MESSAGE_MODE_GUIDANCE).count(), 1);
+        assert_eq!(prompt.matches(USER_QUESTION_GUIDANCE).count(), 1);
         assert!(!prompt.contains(NEW_MESSAGE_MODE_GUIDANCE));
         assert!(prompt.contains(&format!(
             "cccc_bootstrap({{\"group_id\":\"{}\"}})",

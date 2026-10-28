@@ -4,7 +4,8 @@ use super::app::App;
 use super::text;
 use super::view::{
     INDENT, Theme, content_area, list_message, notice_line, runtime_label, separator,
-    sessions_message, sessions_title, window_start,
+    session_columns_named, session_place_width, session_status, sessions_message, sessions_title,
+    window_start,
 };
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -81,7 +82,11 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
         let rows = usize::from(body.height);
         app.sessions_view.page.set(body.height);
         let start = window_start(app.sessions.sources.len(), rows, selected);
-        let name_width = width.saturating_sub(32).min(46);
+        let name_width = session_place_width(width);
+        frame.render_widget(
+            Paragraph::new(session_columns_named("NAME", theme, width)),
+            row(area, 1, 1),
+        );
         let lines: Vec<Line> = app
             .sessions
             .sources
@@ -98,18 +103,20 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
                 };
                 let name = text::fit(&text::one_line(name), name_width);
                 let pad = " ".repeat(name_width.saturating_sub(text::width(&name)));
-                let (status, style) = if source.connected {
-                    ("ready", theme.ok())
-                } else {
-                    ("not receiving", theme.dim())
-                };
-                Line::from(vec![
+                let mut spans = vec![
                     Span::raw(if selected { " > " } else { INDENT }),
                     Span::raw(format!("{:<13}", runtime_label(source.runtime))),
-                    Span::raw(format!("{name}{pad}  ")),
-                    Span::styled(status, if selected { Default::default() } else { style }),
-                ])
-                .style(if selected {
+                    Span::raw(format!("{name}{pad}")),
+                ];
+                // The selected row is one reversed bar, without status colors.
+                spans.extend(session_status(source, theme).into_iter().map(|span| {
+                    if selected {
+                        Span::raw(span.content)
+                    } else {
+                        span
+                    }
+                }));
+                Line::from(spans).style(if selected {
                     theme.selected()
                 } else {
                     Default::default()
@@ -149,9 +156,9 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
         row(area, area.height - 2, 1),
     );
     let keys = if app.sessions_view.details {
-        " Up/Down scroll   PgUp/PgDn   b back"
+        " Up/Down scroll   PgUp/PgDn   Esc back"
     } else {
-        " Up/Down choose   Enter details   b back"
+        " Up/Down choose   Enter details   Esc back"
     };
     frame.render_widget(
         Paragraph::new(Line::styled(keys, theme.dim())),

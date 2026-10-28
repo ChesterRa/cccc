@@ -48,9 +48,8 @@ describe("GroupSidebarSortableList mobile controls", () => {
       ),
     );
 
-    // Rows carry no drag handle any more, so every button in the list is an
-    // action-menu trigger — one per group, and nothing else.
-    expect(host.querySelectorAll("button")).toHaveLength(groups.length);
+    // Each row has an accessible Group button and a separate menu trigger.
+    expect(host.querySelectorAll("button")).toHaveLength(groups.length * 2);
 
     const actions = host.querySelector<HTMLButtonElement>('button[aria-label="Actions · Alpha"]');
     await act(async () => actions?.click());

@@ -2,10 +2,11 @@
 //! next step. Nothing here claims a session is connected; only the session
 //! list, read from the daemon, says what can receive.
 
-use super::app::{App, Notice, SetupFlow, SetupStep};
+use super::app::{App, ConfirmChoice, Notice, SetupFlow, SetupStep};
+use super::groups_view::choice_row;
 use super::setup::{InstallState, RUNTIMES, pickable};
 use super::text;
-use super::view::{Theme, runtime_label, separator, session_row, spread};
+use super::view::{Theme, runtime_label, separator, session_row, spread, window_start};
 use crate::commands::sessions::setup::SetupInspection;
 use cccc_contracts::local_session::LocalSessionRuntime;
 use ratatui::Frame;
@@ -24,10 +25,16 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme) {
     };
     let area = super::view::content_area(frame.area());
     let width = usize::from(area.width);
-    let (lines, keys) = match flow.step {
+    let (lines, keys, selected_line) = match flow.step {
         SetupStep::Select => select(app, flow, theme, width),
-        SetupStep::Confirm => confirm(app, flow, theme, width),
-        SetupStep::Finish => finish(app, theme, width),
+        SetupStep::Confirm => {
+            let (lines, keys) = confirm(app, flow, theme, width);
+            (lines, keys, None)
+        }
+        SetupStep::Finish => {
+            let (lines, keys) = finish(app, theme, width);
+            (lines, keys, None)
+        }
     };
     // A notice takes the row above the separator, as on the main screen.
     let notice = app.notice.as_ref().map(|notice| {
@@ -41,21 +48,58 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme) {
         )
     });
     let body = Rect {
-        height: area.height - 2 - u16::from(notice.is_some()),
+        height: area.height
+            - 2
+            - u16::from(notice.is_some())
+            - if flow.step == SetupStep::Confirm {
+                2
+            } else {
+                0
+            },
         ..area
     };
-    // Picking fits the smallest screen; the later steps scroll when an app's
-    // steps, warnings and new sessions run past the footer.
+    // Keep the selected app or Continue visible even when setup warnings take
+    // more rows than a small terminal can show.
     let mut keys = keys;
-    let mut top = 0;
-    if flow.step != SetupStep::Select {
+    let top;
+    if flow.step == SetupStep::Select {
+        top = u16::try_from(window_start(
+            lines.len(),
+            usize::from(body.height),
+            selected_line,
+        ))
+        .unwrap_or(u16::MAX);
+    } else {
         let scrolls;
         (top, scrolls) = flow.scroll.fit(lines.len(), body.height);
-        if scrolls {
+        if scrolls && flow.step == SetupStep::Finish {
             keys = format!("Up/Down scroll   {keys}");
         }
     }
     frame.render_widget(Paragraph::new(lines).scroll((top, 0)), body);
+    if flow.step == SetupStep::Confirm {
+        frame.render_widget(
+            Paragraph::new(vec![
+                choice_row(
+                    "Cancel",
+                    flow.confirm_choice == ConfirmChoice::Cancel,
+                    theme,
+                    width,
+                ),
+                choice_row(
+                    "Connect",
+                    flow.confirm_choice == ConfirmChoice::Proceed,
+                    theme,
+                    width,
+                ),
+            ]),
+            Rect {
+                y: area.y + body.height,
+                height: 2,
+                ..area
+            },
+        );
+    }
     if let Some(notice) = notice {
         frame.render_widget(
             Paragraph::new(notice),
@@ -92,7 +136,12 @@ fn title(name: &str, step: usize, theme: Theme, width: usize) -> Line<'static> {
     )
 }
 
-fn select(app: &App, flow: &SetupFlow, theme: Theme, width: usize) -> (Vec<Line<'static>>, String) {
+fn select(
+    app: &App,
+    flow: &SetupFlow,
+    theme: Theme,
+    width: usize,
+) -> (Vec<Line<'static>>, String, Option<usize>) {
     let mut lines = vec![
         title("Connect native sessions", 1, theme, width),
         Line::raw(format!(
@@ -109,10 +158,14 @@ fn select(app: &App, flow: &SetupFlow, theme: Theme, width: usize) -> (Vec<Line<
             " Checking Codex, Claude Code, Pi and OpenCode...",
             theme.dim(),
         ));
-        return (lines, "b back".into());
+        return (lines, "Esc back".into(), None);
     };
     let user_home = app.context.user_home.as_deref();
+    let mut selected_line = None;
     for (index, (runtime, check)) in RUNTIMES.iter().zip(checks).enumerate() {
+        if index == flow.cursor {
+            selected_line = Some(lines.len());
+        }
         let cursor = if index == flow.cursor { ">" } else { " " };
         let found = check.executable.is_some();
         let mark = match (pickable(check), flow.picked[index]) {
@@ -157,9 +210,34 @@ fn select(app: &App, flow: &SetupFlow, theme: Theme, width: usize) -> (Vec<Line<
             lines.push(Line::styled(format!(" {line}"), theme.dim()));
         }
     }
+    lines.push(Line::default());
+    if flow.cursor == RUNTIMES.len() {
+        selected_line = Some(lines.len());
+    }
+    let label = if flow.picked.contains(&true) {
+        "Continue"
+    } else {
+        "Continue (pick at least one app)"
+    };
+    lines.push(Line::styled(
+        format!(
+            " {} {label}",
+            if flow.cursor == RUNTIMES.len() {
+                ">"
+            } else {
+                " "
+            }
+        ),
+        if flow.picked.contains(&true) {
+            theme.bold()
+        } else {
+            theme.dim()
+        },
+    ));
     (
         lines,
-        "Up/Down move   Space pick   Enter continue   b back".into(),
+        "Up/Down choose   Enter select   Esc back".into(),
+        selected_line,
     )
 }
 
@@ -238,7 +316,10 @@ fn confirm(
     ) {
         lines.push(Line::styled(format!(" {line}"), theme.dim()));
     }
-    (lines, "Enter connect   b back".into())
+    (
+        lines,
+        "Up/Down choose   PgUp/PgDn   Enter select   Esc back".into(),
+    )
 }
 
 fn finish(app: &App, theme: Theme, width: usize) -> (Vec<Line<'static>>, String) {
@@ -318,7 +399,7 @@ fn finish(app: &App, theme: Theme, width: usize) -> (Vec<Line<'static>>, String)
         }
     }
     let keys = if app.install_running() {
-        "b cancel"
+        "Esc cancel"
     } else {
         "Enter back to status"
     };
@@ -348,7 +429,7 @@ fn next_steps(app: &App, runtime: LocalSessionRuntime, check: Option<&SetupInspe
             let mut steps = if was_set_up {
                 "In open sessions, reconnect the cccc MCP server and run /reload-plugins, or start a new session; then send any message.".to_owned()
             } else {
-                "Run /reload-plugins (or start a new session), then send any message.".to_owned()
+                "Restart Claude Code to load CCCC (claude --resume picks the conversation to continue), then send any message.".to_owned()
             };
             if stuck {
                 steps.push_str(

@@ -1190,6 +1190,7 @@
     "logTailHint": "ローカルログファイルの末尾を表示します（開発者モードのみ）。コンポーネント「im」はグループスコープです。",
     "imLogsRequireGroup": "IM ログには group_id が必要です。グループから設定を開きます。",
     "component": "コンポーネント",
+    "daemonDiagnostics": "デーモン診断",
     "lines": "行",
     "clearTruncate": "クリア（切り捨て）",
     "refresh": "リフレッシュ",

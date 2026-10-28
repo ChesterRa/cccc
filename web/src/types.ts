@@ -215,12 +215,20 @@ export type ConnectMessageRouting = {
   reply_to?: { event_id: string; delivery_id: string } | null;
 };
 
+export type UserReplyRequestStatus = {
+  question: "valid" | "none" | "unavailable";
+  requester: "available" | "unavailable" | "unknown" | "unsupported";
+  reply_event_id?: string;
+  reply_route?: "composer";
+};
+
 export type ChatMessageData = {
   connect_message?: ConnectMessageRouting;
   text?: string;
   insight?: string;
   to?: string[];
   message_mode?: MessageMode;
+  question?: unknown;
   sender_title?: string;
   sender_runtime?: string;
   sender_avatar_path?: string;
@@ -284,6 +292,7 @@ export type LedgerEvent = {
   _streaming?: boolean;
   _read_status?: Record<string, boolean>;
   _obligation_status?: Record<string, ObligationStatus>;
+  _user_request?: UserReplyRequestStatus;
   _retired_bridge?: boolean;
   _connect_delivery?: ConnectDeliveryStatus;
   _connect_cancellation?: ConnectDeliveryStatus;
@@ -304,6 +313,7 @@ export type HeadlessStreamEvent = {
 export type LedgerEventStatusPayload = {
   read_status?: Record<string, boolean>;
   obligation_status?: Record<string, ObligationStatus>;
+  user_request?: UserReplyRequestStatus;
   retired_bridge?: boolean;
   connect_delivery?: ConnectDeliveryStatus;
   connect_cancellation?: ConnectDeliveryStatus;

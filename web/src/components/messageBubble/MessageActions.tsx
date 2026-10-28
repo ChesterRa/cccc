@@ -74,7 +74,7 @@ export function MessageActions(props: MessageActionsProps) {
               aria-label={t("messageActions")}
             >
               <MoreIcon size={14} aria-hidden="true" />
-              {t("messageActions")}
+              <span className="message-actions-label">{t("messageActions")}</span>
             </Button>
           </PopoverTrigger>
           <PopoverContent

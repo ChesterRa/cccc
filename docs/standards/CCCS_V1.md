@@ -222,6 +222,10 @@ data: {
   attachments?: AttachmentRefV1[]
   refs?: ReferenceV1[]
 
+  // A choice put to the user, and the user's answer to it (see §6.4)
+  question?: ReplyQuestionV1
+  answer?: ReplyAnswerV1
+
   // Reserved for future threading
   thread?: string
 
@@ -325,7 +329,74 @@ A cancellation for an original absent after its delivery deadline may record
 `source_event_id:null, not_delivered:true`; it changes no obligation.
 See [CCCC_CONNECT_V1.md](CCCC_CONNECT_V1.md) for authority and recovery.
 
-### 6.4 `runtime.delivery`
+### 6.4 Questions to the user
+
+A `request_reply` message to the user alone MAY carry a structured `question`,
+so the user chooses an answer instead of composing one.
+
+```ts
+type ReplyQuestionV1 = {
+  v: 1
+  context?: string          // the sender's text; at most 4000 characters
+  prompt: string            // at most 500 characters
+  options?: {               // none (a free answer), or two or three
+    id: "A" | "B" | "C"     // in this order
+    label: string           // one line, at most 80 characters
+    consequence?: string    // one line, at most 240 characters
+  }[]
+  recommended?: { option_id: string; reason: string } // reason: one line, at most 240
+}
+
+type ReplyAnswerV1 =
+  | { v: 1; option_id: string }
+  | { v: 1; text: string }  // at most 4000 characters; kept exactly as written
+```
+
+**Rules**
+- Limits count Unicode scalar values. A value over a limit is rejected, never
+  truncated.
+- The structure is authoritative and `text` is generated from it: context,
+  prompt, one line per option, the recommendation, and a closing line naming
+  the option ids. A client that reads only `text` therefore sees the complete
+  question. A reader MUST accept a stored question only when its structure is
+  valid and regenerating the text reproduces the stored `text`; otherwise it
+  shows the text and treats the question as unavailable. Written records,
+  imports and appended events are all read under this rule.
+- `question` is valid only on a new message with `message_mode="request_reply"`
+  addressed to `user` alone by a sender other than `user`, so that every
+  stored question is one the user's open requests include. Replies,
+  cross-group and Connect messages cannot carry one.
+- The recommendation is advice. A client MUST NOT preselect it or treat it as
+  the user's choice.
+- `answer` appears only on the user's reply to a question, written by the
+  daemon's answer operation, never accepted from a caller's message fields.
+  Its `text` is generated for the requester: `Selected <id>: <label>` for a
+  choice, the user's words prefixed with `Other: ` when the question offered
+  options, and the user's words alone when it did not.
+- The user's obligation follows §6.3: the first reply by the user or a
+  cancellation after the request closes it. `user` is the Group's shared human
+  audience; one person's answer closes the request for everyone with access to
+  the Group.
+- An answer is accepted only while the request is open, from the user, for an
+  offered option, and only when the ledger proves the requester is still the
+  same Actor registration: its latest `actor.add` precedes the request and
+  records the identity the Group holds now. A removed, re-added or unproven
+  requester is reported as such, never resolved to an Actor that shares its
+  ID. Requests relayed from another Group or instance are answered with an
+  ordinary reply.
+- Closing the request and recording the answer do not mean the requester has
+  received it; delivery is reported separately (§6.5). Answering never
+  resumes a paused or stopped Group or re-enables an Actor; the answer waits
+  for delivery until the user does.
+- Deciding whether a request is open requires every stored record of the
+  Group's ledger to read as a complete event. A record that does not (a damaged
+  line or a cut tail) could be the reply or cancellation that closed it, so
+  that Group's requests are reported as unknown and in-place answers are
+  refused until the ledger is repaired. The same holds when a request's id is
+  used by more than one record (§4) or a reply or cancellation is stored
+  before the request it names. Ordinary replies stay available.
+
+### 6.5 `runtime.delivery`
 
 Daemon-authored evidence that one source message was handed to one recipient
 runtime transport.
@@ -382,7 +453,7 @@ data: {
   delivery of that existing message may create one without appending a second
   `chat.message`.
 
-### 6.5 `chat.reaction` (Optional)
+### 6.6 `chat.reaction` (Optional)
 
 ```ts
 data: {

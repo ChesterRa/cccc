@@ -12,7 +12,7 @@ pub fn prepare_exited() -> BTreeMap<String, Vec<cccc_runtime::SessionStatus>> {
     let exited = match actor_runtime::reap_exited() {
         Ok(exited) => exited,
         Err(error) => {
-            tracing::warn!(message = %error.message, "runtime reap failed");
+            tracing::warn!(diagnostic_action = "runtime_reap", diagnostic_code = %error.code, message = %error.message, "runtime reap failed");
             Vec::new()
         }
     };
@@ -33,7 +33,7 @@ pub fn pending_delivery_group_ids() -> Vec<String> {
 pub fn maintain_group(home: &HomeLayout, group_id: &str, exited: Vec<cccc_runtime::SessionStatus>) {
     actor_delivery::drain_group(home, group_id);
     if let Err(error) = actor_runtime::reconcile_exited(home, exited) {
-        tracing::warn!(message = %error.message, %group_id, "runtime reconciliation failed");
+        tracing::warn!(diagnostic_action = "runtime_reconcile", diagnostic_code = %error.code, message = %error.message, %group_id, "runtime reconciliation failed");
     }
 }
 
@@ -41,7 +41,7 @@ pub fn group_ids(home: &HomeLayout) -> Vec<String> {
     match cccc_core::automation::group_ids(home) {
         Ok(group_ids) => group_ids,
         Err(error) => {
-            tracing::warn!(%error, "automation group discovery failed");
+            tracing::warn!(diagnostic_action = "automation_group_discovery", diagnostic_code = crate::diagnostic_log::io_code(&error), %error, "automation group discovery failed");
             Vec::new()
         }
     }
@@ -94,7 +94,9 @@ pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cance
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => tracing::warn!(%error, %group_id, "automation group tick failed"),
+        Err(error) => {
+            tracing::warn!(diagnostic_action = "automation_group_tick", diagnostic_code = crate::diagnostic_log::io_code(&error), %error, %group_id, "automation group tick failed")
+        }
     }
 }
 

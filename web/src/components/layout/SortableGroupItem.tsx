@@ -11,6 +11,8 @@ import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import { useGroupMenu, type GroupMenuActionItem } from "./useGroupMenu";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
 import { GroupItemMenuTrigger } from "./GroupItemMenuTrigger";
+import { GroupPendingIndicator } from "../../features/pendingReplies/PendingIndicator";
+import { usePendingGroupLabel } from "../../features/pendingReplies/usePendingGroupLabel";
 
 interface SortableGroupItemProps {
   group: GroupMeta;
@@ -55,6 +57,7 @@ export function SortableGroupItem({
   onWarm,
 }: SortableGroupItemProps) {
   const gid = String(group.group_id || "");
+  const collapsedLabel = usePendingGroupLabel(gid, group.title || gid);
   const menu = useGroupMenu(menuAriaLabel || menuActionLabel || "", [
     ...(runActions ?? []),
     ...(onOpenConnections && connectionsLabel
@@ -128,6 +131,7 @@ export function SortableGroupItem({
           onMouseEnter={onWarm}
           onFocus={onWarm}
           title={group.title || gid}
+          aria-label={collapsedLabel}
         >
           <span
             className={classNames(
@@ -143,6 +147,7 @@ export function SortableGroupItem({
             status={status}
             className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[var(--color-bg-primary)]"
           />
+          <GroupPendingIndicator groupId={gid} groupName={group.title || gid} collapsed />
         </button>
         {menu.menu}
       </div>
@@ -161,9 +166,6 @@ export function SortableGroupItem({
         // here: Enter/Space keep selecting the group, and Alt+Arrow moves it.
         // dnd-kit's own aria-roledescription and aria-describedby survive the
         // override, so the row still announces itself as sortable.
-        ref={setItemActivatorRef}
-        {...attributes}
-        {...listeners}
         className={classNames(
           groupSidebarRowClass,
           // The removed grip carried select-none; the row now hosts the touch
@@ -180,16 +182,22 @@ export function SortableGroupItem({
           isActive ? "glass-group-item-active" : "glass-group-item",
           isArchived && !isActive && "opacity-90",
         )}
-        role="button"
-        aria-current={isActive ? "page" : undefined}
-        tabIndex={0}
-        onClick={onSelect}
         onContextMenu={menu.onContextMenu}
-        onKeyDown={handleItemKeyDown}
-        aria-keyshortcuts={keyboardReorder ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
       >
-        <div
-          className="flex-1 min-w-0 flex items-center justify-between gap-2 text-left"
+        <button
+          ref={setItemActivatorRef}
+          {...attributes}
+          {...listeners}
+          type="button"
+          role="button"
+          aria-current={isActive ? "page" : undefined}
+          aria-keyshortcuts={keyboardReorder ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
+          className={classNames(
+            "flex-1 min-w-0 min-h-[44px] md:min-h-8 pointer-coarse:min-h-[44px] flex items-center justify-between gap-2 text-left",
+            !dragDisabled && "!cursor-grab active:!cursor-grabbing",
+          )}
+          onClick={onSelect}
+          onKeyDown={handleItemKeyDown}
           onMouseEnter={onWarm}
           onFocus={onWarm}
         >
@@ -207,7 +215,8 @@ export function SortableGroupItem({
               {group.title || gid}
             </span>
           </div>
-        </div>
+        </button>
+        <GroupPendingIndicator groupId={gid} groupName={group.title || gid} />
         {connection?.count && onOpenConnections ? (
           <div className="flex w-[44px] shrink-0 justify-end">
             <GroupConnectionBadge connection={connection} onClick={onOpenConnections} compact />

@@ -73,6 +73,45 @@ the ledger (UTC). A runtime may show queued input long after it was accepted, so
 an old `sent` time marks an instruction that later messages may already have
 superseded.
 
+### Questions to the User
+
+When an agent needs the user's decision, it sends a `request_reply` message to
+`user` with a `question`: a prompt, two or three options with their
+consequences, and optionally a recommendation with its reason. The user picks
+an option or writes their own answer in place, under the message.
+
+- The daemon generates the message text from the question, so IM, the terminal
+  and older clients still show the whole question, and an agent receives the
+  answer as an ordinary reply such as `Selected B: <label>`.
+- A question without options asks for a value only the user knows; the answer
+  is delivered in the user's own words.
+- Requests without a question can also be answered in place, with text.
+- The CCCC Protocol lines of every Actor prompt and delivery, and the MCP
+  tool descriptions, tell agents to ask this way whenever they need the
+  user's decision or information, unless the user asked for another channel,
+  and not to ask what they can responsibly decide themselves.
+- The daemon accepts an answer only while the request is still open and only
+  when its sender is provably the same Actor that asked. A requester that was
+  removed, added again under the same ID, or cannot be confirmed is reported,
+  and the answer is not sent to whichever Actor now has that ID.
+- The open requests to the user are listed per Group and counted across Groups
+  from the daemon's ledger, not from what a client happens to have loaded.
+  Requests relayed from another Group or a Connect instance are listed and
+  counted, and answered with an ordinary reply.
+- Recording an answer closes the request; whether the agent has received it is
+  reported like any delivery. A paused or stopped Group records answers
+  without delivering them, and answering neither resumes the Group nor
+  re-enables a disabled Actor.
+- In the Web UI, while requests to the user are open in a Group, a Waiting
+  for you filter appears first on its messages page with their number and
+  lists all of them; it stays while it is being viewed. The Requests filter
+  lists every request, answered or not, between any members. The sidebar
+  shows each Group's count, including stopped and archived Groups. In the
+  terminal interface, a Group's page has a Waiting for you row. A count that
+  may be out of date is marked as such, one that cannot be confirmed is shown
+  as unknown rather than zero, and neither appears in read-only (exhibit)
+  mode.
+
 ## IM Bridge
 
 ### Streaming Events
@@ -306,14 +345,14 @@ CCCC Web supports Copy Groups export/import for durable group copy, migration, a
 ### MCP Management Surface
 
 ```text
-cccc_automation_state
-cccc_automation_manage(op=create|update|enable|disable|delete|replace_all, ...)
+cccc_automation(action=state)
+cccc_automation(action=manage, actions=[create_rule|update_rule|set_rule_enabled|delete_rule|replace_all_rules, ...])
 ```
 
-`cccc_automation_manage` is optimized for reminder management by agents:
-- Foreman can manage all notify reminders and full replace.
-- Peer can manage only own-personal or shared notify reminders.
-- Operational actions (`group_state`, `actor_control`) stay Web/Admin-facing.
+`cccc_automation` is how agents manage reminders. A `manage` request saves all of its actions or none of them:
+- A peer can manage its own reminders, which reach only itself. A rule it creates without `scope`, `owner_actor_id` or `to` is such a reminder.
+- The foreman can manage every notify reminder, including peers' reminders, and can replace the whole list.
+- Scheduled operations (`group_state`, `actor_control`) stay with the user in the Web UI. An agent's request that would change, disable, remove or reorder one is refused.
 
 ## Web UI
 

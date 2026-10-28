@@ -72,7 +72,7 @@ impl Context {
                             if !required.contains(&json!("group_id")) { required.push(json!("group_id")); }
                         }
                         if tool["name"] == "cccc_message_send" {
-                            tool["description"] = json!("Send a new message in this native collaboration Group. Defaults to mode=send for timely collaboration; choose mail explicitly for asynchronous Inbox work, or request_reply when a concrete reply is required. For an existing event, use cccc_message_reply with its event_id. Choose recipients deliberately; keep user and agent audiences separate, and avoid routine noise. Pass the explicit group_id from the received message or cccc_session list.");
+                            tool["description"] = json!("Send a new message in this native collaboration Group. Defaults to mode=send for timely collaboration; choose mail explicitly for asynchronous Inbox work, or request_reply when a concrete reply is required. When the user's decision or information is needed, send request_reply to user alone with a question they answer in place. For an existing event, use cccc_message_reply with its event_id. Choose recipients deliberately; keep user and agent audiences separate, and avoid routine noise. Pass the explicit group_id from the received message or cccc_session list.");
                             tool["inputSchema"]["properties"]["mode"]["default"] = json!("send");
                         }
                         if tool["name"] == "cccc_bootstrap" {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import type { Actor } from "../../../types";
 import * as api from "../../../services/api";
+import type { LogComponent } from "../../../services/api/diagnostics";
 import { useObservabilityStore } from "../../../stores";
 import { copyTextToClipboard } from "../../../utils/copy";
 import { loadedWebEntry, type RuntimeBuildInfo } from "../../../utils/runtimeBuildInfo";
@@ -69,7 +70,7 @@ export function useSettingsDiagnostics(args: {
   const [daemonVersion, setDaemonVersion] = useState("");
   const [runtimeInfoErr, setRuntimeInfoErr] = useState("");
 
-  const [logComponent, setLogComponent] = useState<"daemon" | "web" | "im">("daemon");
+  const [logComponent, setLogComponent] = useState<LogComponent>("daemon");
   const [logLines, setLogLines] = useState(200);
   const [logText, setLogText] = useState("");
   const [logErr, setLogErr] = useState("");

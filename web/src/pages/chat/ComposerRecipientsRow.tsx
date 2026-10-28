@@ -43,6 +43,7 @@ export function ComposerRecipientsRow({
     <div
       role="group"
       aria-label={t("to", "To")}
+      data-composer-recipient-row
       className="relative flex items-center gap-2 px-3 py-1"
     >
       <ScrollFade className="min-w-0 flex-1" innerClassName="w-full max-w-full" fadeWidth={20}>

@@ -32,6 +32,9 @@ fn group_states_read_the_way_the_web_shows_them() {
     // No running actors does not change the recorded lifecycle.
     assert_eq!(started_empty.status, GroupStatus::Offline);
     assert_eq!(started_empty.state, "active");
+    let stopped_with_running = summary(&row("g8", "stopped", "stopped", true, 1)).expect("summary");
+    assert_eq!(stopped_with_running.status, GroupStatus::Stopped);
+    assert_eq!(stopped_with_running.running_actors, 1);
 }
 
 #[test]
@@ -126,6 +129,7 @@ fn members_are_named_by_state_and_kind() {
         let member = member(&value).expect("member");
         assert_eq!((member.state, member.native), (state, native), "{value}");
     }
+    assert_eq!(runtime_label("codex"), "Codex CLI");
     assert_eq!(runtime_label("claude"), "Claude Code");
     assert_eq!(runtime_label("opencode"), "OpenCode");
     assert_eq!(runtime_label("grok_web_model"), "Grok Web");

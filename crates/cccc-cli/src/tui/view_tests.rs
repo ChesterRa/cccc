@@ -68,7 +68,7 @@ fn row_with<'a>(rows: &'a [String], needle: &str) -> &'a str {
 }
 
 #[test]
-fn main_screen_groups_host_facts_and_compact_columns() {
+fn main_screen_groups_host_facts_and_aligned_tables() {
     let now = Instant::now();
     let mut app = app();
     with_groups(
@@ -104,9 +104,32 @@ fn main_screen_groups_host_facts_and_compact_columns() {
     let offline = row_with(&rows, "docs");
     assert!(offline.contains("Offline") && offline.ends_with('0'));
     assert!(row_with(&rows, "Native sessions").contains("2 known, 1 can receive"));
-    assert!(row_with(&rows, "app-a").ends_with("ready"));
-    assert!(row_with(&rows, "app-b").ends_with("not receiving"));
-    assert!(rows[21].contains("Enter details") && rows[23].contains("Type / for commands"));
+    let columns = row_with(&rows, "DIRECTORY");
+    assert!(columns.starts_with("   APP") && columns.ends_with("ID"));
+    let ready = row_with(&rows, "app-a");
+    let not_receiving = row_with(&rows, "app-b");
+    assert!(ready.contains("Codex CLI"));
+    assert!(ready.contains("ready") && not_receiving.contains("not receiving"));
+    for row in [ready, not_receiving] {
+        let last = row.rsplit(' ').next().expect("last column");
+        assert!(last.starts_with('#'), "the session id ends the row: {row}");
+    }
+    // Both tables put their status in one column and end where the separator does.
+    let status = heading.find("STATUS");
+    for (row, word) in [
+        (selected, "Running"),
+        (offline, "Offline"),
+        (columns, "STATUS"),
+        (ready, "ready"),
+        (not_receiving, "not receiving"),
+    ] {
+        assert_eq!(row.find(word), status, "{row}");
+    }
+    let edge = row_with(&rows, "----").width();
+    for row in [heading, selected, offline, columns, ready, not_receiving] {
+        assert_eq!(row.width(), edge, "{row}");
+    }
+    assert!(rows[21].contains("Enter open") && rows[23].contains("Tab for menu"));
 }
 
 #[test]
@@ -118,16 +141,27 @@ fn wide_screens_keep_metadata_and_actions_in_one_bounded_canvas() {
         vec![group("g", "日本語プロジェクト", GroupStatus::Running, 2)],
         now,
     );
+    with_sessions(
+        &mut app,
+        vec![source(LocalSessionRuntime::Pi, "/home/me/日本語", "", true)],
+        now,
+    );
     for width in [100, 122, 180] {
         let rows = screen_rows(&draw(&app, width, 24, now));
         let margin = usize::from(width.saturating_sub(100) / 2);
         assert_eq!(rows[0].find("CCCC"), Some(margin + 1));
         assert!(rows.iter().all(|row| row.width() <= margin + 100));
-        assert!(
-            row_with(&rows, "Running")
-                .find("Running")
-                .expect("status column")
-                < margin + 60
+        // Tables fill the canvas: their rows end where the separator and the
+        // prompt's line do, however wide the terminal.
+        let edge = row_with(&rows, "----").width();
+        assert_eq!(edge, margin + 99);
+        for word in ["NAME", "Running", "DIRECTORY", "ready"] {
+            assert_eq!(row_with(&rows, word).width(), edge, "{word}");
+        }
+        let column = |row: &str, word: &str| row[..row.find(word).expect("word")].width();
+        assert_eq!(
+            column(row_with(&rows, "Running"), "Running"),
+            column(row_with(&rows, "ready"), "ready")
         );
     }
 }
@@ -198,10 +232,13 @@ fn overflowing_lists_keep_routes_and_controls_on_the_smallest_screen() {
         now,
     );
     let rows = screen_rows(&draw(&app, 60, 16, now));
-    assert!(row_with(&rows, "/groups shows all").contains("more"));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("more") && !row.contains("/sessions"))
+    );
     assert!(row_with(&rows, "/sessions shows all").contains("more"));
     assert!(row_with(&rows, "group-0").starts_with(" > "));
-    assert!(rows[13].contains("Enter details"));
+    assert!(rows[13].contains("Enter open"));
     assert!(rows[15].starts_with(" >"));
     for _ in 0..8 {
         app.handle(press(KeyCode::Down));
@@ -221,8 +258,8 @@ fn empty_lists_offer_setup_and_collaboration_without_faking_readiness() {
         assert!(row_with(&rows, "Groups").contains("0 groups, 0 running"));
         assert!(row_with(&rows, "No groups yet").contains("Web"));
         assert!(row_with(&rows, "Native sessions").contains("0 known, 0 can receive"));
-        assert!(row_with(&rows, "No sessions yet").contains("/setup"));
-        assert!(rows[15].contains("Type / for commands"));
+        assert!(row_with(&rows, "No sessions yet").contains("Tab menu"));
+        assert!(rows[15].contains("Tab for menu"));
     }
 }
 
@@ -297,7 +334,8 @@ fn unicode_and_terminal_controls_do_not_escape_their_columns() {
     );
     let rows = screen_rows(&draw(&app, 60, 16, now));
     let wide = row_with(&rows, "/srv/日本語");
-    assert!(wide.contains("...") && wide.ends_with("ready") && wide.width() <= 59);
+    assert!(wide.contains("...") && wide.contains("ready"));
+    assert_eq!(wide.width(), row_with(&rows, "----").width());
     assert!(!rows.join("\n").contains('\u{1b}'));
     for ch in "/sessions".chars() {
         app.handle(press(KeyCode::Char(ch)));
@@ -391,9 +429,9 @@ fn help_lists_commands_and_scrolls_to_the_headless_exit() {
     let mut app = app();
     app.screen = Screen::Help;
     let rows = screen_rows(&draw(&app, 60, 16, now));
-    assert!(row_with(&rows, "/groups").contains("Browse groups"));
+    assert!(row_with(&rows, "/groups").contains("Open the selected group"));
     assert!(row_with(&rows, "/sessions").contains("Browse native sessions"));
-    assert_eq!(rows[15], " Up/Down scroll   b back");
+    assert_eq!(rows[15], " Up/Down scroll   Esc back");
     app.handle(press(KeyCode::End));
     let rows = screen_rows(&draw(&app, 60, 16, now));
     assert_eq!(
@@ -498,5 +536,5 @@ fn source_details_scroll_to_the_complete_id_without_truncating_it() {
     app.handle(press(KeyCode::End));
     let rows = screen_rows(&draw(&app, 60, 16, now));
     assert!(row_with(&rows, "conversation-final-sentinel").contains("sentinel"));
-    assert!(rows[15].contains("b back"));
+    assert!(rows[15].contains("Esc back"));
 }

@@ -1182,6 +1182,7 @@
     "logTailHint": "查看本地日志文件（仅开发者模式）。\"im\" 组件为工作组范围。",
     "imLogsRequireGroup": "IM 日志需要 group_id；请从工作组打开设置。",
     "component": "组件",
+    "daemonDiagnostics": "守护进程诊断",
     "lines": "行数",
     "clearTruncate": "清除（截断）",
     "refresh": "刷新",

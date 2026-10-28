@@ -398,6 +398,46 @@ mod tests {
         );
     }
     #[test]
+    fn a_ledger_reader_during_deletion_cannot_block_its_rollback() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("followed", "").expect("group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+        crate::ledger::append(
+            &ledger_path,
+            &cccc_contracts::Event::new("chat.message", &group.group_id),
+        )
+        .expect("append event");
+
+        delete_with_steps(
+            &store,
+            &group.group_id,
+            |_| Ok(()),
+            |_, _| {
+                // A follower that still holds the ledger path polls after the rename.
+                let poll = crate::ledger::LedgerFollower::default().poll(&ledger_path);
+                assert_eq!(
+                    poll.expect_err("renamed ledger").kind(),
+                    io::ErrorKind::NotFound
+                );
+                Err(io::Error::other("injected registry failure"))
+            },
+        )
+        .expect_err("rollback");
+
+        assert!(
+            store.load(&group.group_id).is_ok(),
+            "rollback restores the Group"
+        );
+        assert!(!has_tombstone(&home, &group.group_id));
+        assert_eq!(
+            crate::ledger::tail(&ledger_path, 1).expect("ledger").len(),
+            1
+        );
+    }
+
+    #[test]
     fn retry_keeps_the_only_tombstone_when_unregister_still_fails() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

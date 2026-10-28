@@ -1,5 +1,6 @@
 import { groupMessagesVisible } from "../stores/useUIStore";
-import { useMemo, useCallback, useEffect, useRef, useState } from "react";
+import { useMemo, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { PendingSummaryContext } from "../features/pendingReplies/context";
 import { useTranslation } from "react-i18next";
 import {
   useGroupStore,
@@ -168,8 +169,17 @@ export function useChatTab({
     () => getChatSession(selectedGroupId, chatSessions),
     [selectedGroupId, chatSessions],
   );
-  const { chatFilter, chatSenderFilter, showScrollButton, chatUnreadCount, scrollSnapshot } =
-    chatSession;
+  const {
+    chatFilter: storedChatFilter,
+    chatSenderFilter,
+    showScrollButton,
+    chatUnreadCount,
+    scrollSnapshot,
+  } = chatSession;
+  const pendingContext = useContext(PendingSummaryContext);
+  // A filter persisted by a writable session must not hide ordinary messages in exhibit mode.
+  const chatFilter =
+    storedChatFilter === "pending_user" && !pendingContext ? "all" : storedChatFilter;
   const senders = chatSenderFilter;
 
   const {
@@ -446,6 +456,10 @@ export function useChatTab({
     chatEmptyState,
     senderHistoryError,
     loadSenderHistory,
+    pendingPageError,
+    loadPendingPage,
+    retryPendingPage,
+    pendingActive,
   } = useChatMessageView({
     selectedGroupId,
     events,
@@ -952,6 +966,9 @@ export function useChatTab({
     setChatSenderFilter: updateChatSenderFilter,
     senderHistoryError,
     retrySenderHistory: loadSenderHistory,
+    pendingPageError,
+    retryPendingPage,
+    pendingActive,
     viewMessageContext: (eventId: string) => openSourceMessage(selectedGroupId, eventId),
     chatViewKey,
     chatWindowProps,
@@ -963,11 +980,13 @@ export function useChatTab({
     inChatWindow,
     isLoadingHistory: effectiveIsLoadingHistory,
     hasMoreHistory: effectiveHasMoreHistory,
-    loadMoreHistory: inChatWindow
-      ? undefined
-      : senders.length > 0
-        ? loadSenderHistory
-        : loadCurrentGroupHistory,
+    loadMoreHistory: pendingActive
+      ? loadPendingPage
+      : inChatWindow
+        ? undefined
+        : senders.length > 0
+          ? loadSenderHistory
+          : loadCurrentGroupHistory,
     chatEmptyState,
 
     // UI state

@@ -58,6 +58,7 @@ export function ComposerSendControl({
         <PopoverTrigger asChild>
           <Button
             variant="ghost"
+            data-composer-send-options
             className="h-[44px] min-h-[44px] w-[44px] rounded-l-none rounded-r-xl border-0 px-0 @min-[600px]/composer:h-9 @min-[600px]/composer:min-h-9 @min-[600px]/composer:w-8"
             disabled={modeDisabled}
             aria-label={t("messageTypeOptions")}

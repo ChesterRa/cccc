@@ -74,7 +74,27 @@ fn tail_logs(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .unwrap_or(200)
         .clamp(1, 2_000) as usize;
     let path = log_path(home, &component, &group_id)?;
-    let output = if path.exists() {
+    let output = if component == "daemon_diagnostics" {
+        let previous = home.daemon_dir().join(crate::diagnostic_log::PREVIOUS);
+        if !path.exists() && !previous.exists() {
+            Vec::new()
+        } else {
+            crate::diagnostic_log::with_lock(&home.daemon_dir(), false, || {
+                let mut output = if previous.exists() {
+                    tail::read_last_lines(&previous, lines)?
+                } else {
+                    Vec::new()
+                };
+                if path.exists() {
+                    output.extend(tail::read_last_lines(&path, lines)?);
+                }
+                let extra = output.len().saturating_sub(lines);
+                output.drain(..extra);
+                Ok(output)
+            })
+            .map_err(OpError::io)?
+        }
+    } else if path.exists() {
         tail::read_last_lines(&path, lines).map_err(OpError::io)?
     } else {
         Vec::new()
@@ -90,7 +110,11 @@ fn clear_logs(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(OpError::io)?;
     }
-    fs::write(&path, []).map_err(OpError::io)?;
+    if component == "daemon_diagnostics" {
+        crate::diagnostic_log::clear(&home.daemon_dir()).map_err(OpError::io)?;
+    } else {
+        fs::write(&path, []).map_err(OpError::io)?;
+    }
     object(json!({"component":component,"group_id":group_id,"path":path,"cleared":true}))
 }
 
@@ -114,6 +138,7 @@ fn require_developer_mode(home: &HomeLayout) -> Result<(), OpError> {
 fn log_path(home: &HomeLayout, component: &str, group_id: &str) -> Result<PathBuf, OpError> {
     match component {
         "daemon" | "ccccd" => Ok(home.daemon_dir().join("ccccd.log")),
+        "daemon_diagnostics" => Ok(home.daemon_dir().join(crate::diagnostic_log::NAME)),
         "web" => Ok(home.daemon_dir().join("cccc-web.log")),
         "im" | "im_bridge" => {
             if group_id.is_empty() {

@@ -1962,6 +1962,28 @@ fn source_directed_send_does_not_broadcast_to_added_group_members() {
         }),
     );
     assert_eq!(broadcast["event"]["data"]["to"], json!(["@all"]));
+
+    // Clients that fill unused optional lists with [] keep the mode they chose.
+    let directed = fixture.call(
+        "local_session_send",
+        json!({
+            "source_ids":[fixture.source.source_id],"to":[],"text":"Direct with an empty to",
+            "message_mode":"mail"
+        }),
+    );
+    assert_eq!(directed["group_id"], group_id);
+    assert_eq!(directed["event"]["data"]["to"], json!([native_actor]));
+    for unused in [
+        json!({"source_ids":[],"to":[]}),
+        json!({"source_ids":null,"to":null}),
+    ] {
+        let mut args = unused.as_object().expect("unused lists").clone();
+        args.insert("group_id".into(), json!(group_id));
+        args.insert("text".into(), json!("Group send with unused lists"));
+        args.insert("message_mode".into(), json!("mail"));
+        let sent = fixture.call("local_session_send", Value::Object(args));
+        assert_eq!(sent["event"]["data"]["to"], json!(["@all"]));
+    }
 }
 
 #[test]

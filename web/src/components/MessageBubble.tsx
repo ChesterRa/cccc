@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { useTranslation } from "react-i18next";
 import { useCopyFeedback } from "../hooks/useCopyFeedback";
@@ -52,6 +52,10 @@ import { buildMessageCopyText } from "./messageBubble/messageCopyText";
 import { MessageRoutingMetadata } from "./messageBubble/MessageRoutingMetadata";
 import { MessageReplyQuote } from "./messageBubble/MessageReplyQuote";
 import { MessageReferenceSections } from "./messageBubble/MessageReferenceSections";
+import { PendingReplySlot } from "./messageBubble/PendingReplySlot";
+import { PendingReplyStoreContext } from "../features/pendingReplies/store";
+import { pendingReplyView, recordedQuestionText } from "../features/pendingReplies/model";
+import { LivePendingStatusContext } from "../features/pendingReplies/liveStatusContext";
 
 const ANIMATED_MESSAGE_BUBBLE_KEYS = new Set<string>();
 const NEW_MESSAGE_ANIMATION_WINDOW_MS = 12000;
@@ -249,6 +253,22 @@ export const MessageBubble = memo(
     const isStreaming = !!ev._streaming;
     const canReply = !!getReplyEventId(ev);
     const messageText = useMemo(() => formatEventLine(ev), [ev]);
+    const pendingStore = useContext(PendingReplyStoreContext);
+    const liveStatuses = useContext(LivePendingStatusContext);
+    const liveEntry = ev.id && liveStatuses ? liveStatuses[ev.id] : undefined;
+    const liveStatus = liveEntry?.status;
+    const replyEvent = useMemo(
+      () =>
+        liveEntry === undefined
+          ? ev
+          : {
+              ...ev,
+              _user_request: liveStatus?.user_request,
+              _obligation_status: liveStatus?.obligation_status,
+            },
+      [ev, liveEntry, liveStatus],
+    );
+    const replyView = !readOnly && pendingStore ? pendingReplyView(replyEvent) : null;
 
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
     const [copiedMessageText, setCopiedMessageText] = useState(false);
@@ -363,9 +383,17 @@ export const MessageBubble = memo(
     // status, not conversation content. Target-side inbound delegation still
     // shows the natural contact body while hiding the protocol comment.
     const bubbleBodyText = useMemo(() => {
+      if (replyView?.question) {
+        if (replyView.state === "pending")
+          return [replyView.question.context, replyView.question.prompt]
+            .filter(Boolean)
+            .join("\n\n");
+        if (replyView.state === "answered" || replyView.state === "withdrawn")
+          return recordedQuestionText(replyView.question, t("pendingReply.recommended"));
+      }
       if (delegationSourceOutbound) return getDelegationSourceOutboundStatus(displayMessageText);
       return getDelegationDisplayText(displayMessageText);
-    }, [delegationSourceOutbound, displayMessageText]);
+    }, [delegationSourceOutbound, displayMessageText, replyView?.state, replyView?.question, t]);
     const presentationRefs = useMemo(
       () => getPresentationMessageRefs(msgData?.refs),
       [msgData?.refs],
@@ -758,6 +786,13 @@ export const MessageBubble = memo(
                 onOpenTaskRef={onOpenTaskRef}
                 onOpenReplyTarget={onOpenReplyTarget}
               />
+              <PendingReplySlot
+                event={replyEvent}
+                groupId={groupId}
+                readOnly={readOnly}
+                checking={liveEntry?.checking}
+                onUseComposer={onReply}
+              />
             </MessageBubbleSurface>
           </div>
 
@@ -771,7 +806,6 @@ export const MessageBubble = memo(
             displayNameMap={displayNameMap}
             isDark={isDark}
             isMail={isMail}
-            replyRequested={replyRequested}
             copiedMessageText={copiedMessageText}
             copyableMessageText={copyableMessageText}
             onCopyMessageText={() => void handleCopyMessageText()}
@@ -796,6 +830,7 @@ export const MessageBubble = memo(
       prevProps.agentState === nextProps.agentState &&
       prevProps.taskById === nextProps.taskById &&
       prevProps.isDark === nextProps.isDark &&
+      prevProps.readOnly === nextProps.readOnly &&
       prevProps.groupId === nextProps.groupId &&
       prevProps.groupLabelById === nextProps.groupLabelById &&
       prevProps.webModelDeliveryStatus === nextProps.webModelDeliveryStatus &&

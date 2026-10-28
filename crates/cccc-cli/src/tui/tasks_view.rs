@@ -33,9 +33,8 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
         format!(" Group {}", view.group_id)
     } else {
         format!(
-            " {} | {} | Page {}  PgUp/PgDn pages",
+            " {} | Page {}  PgUp/PgDn pages",
             view.group_id,
-            if view.done { "Done" } else { "Open" },
             view.page.saturating_add(1)
         )
     };
@@ -55,11 +54,12 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
         }
     } else {
         let body = row(area, 5, area.height.saturating_sub(8));
+        let counts = snapshot.and_then(Snapshot::page).map(|page| &page.counts);
+        frame.render_widget(
+            Paragraph::new(tabs(view.done, counts, theme, width)),
+            row(area, 2, 1),
+        );
         if let Some(page) = snapshot.and_then(Snapshot::page) {
-            frame.render_widget(
-                Paragraph::new(Line::styled(counts(&page.counts), theme.dim())),
-                row(area, 2, 1),
-            );
             frame.render_widget(
                 Paragraph::new(Line::styled(
                     text::fit(&attention(&page.counts), width),
@@ -74,7 +74,7 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
                 } else if view.done {
                     " No completed tasks in this Group."
                 } else {
-                    " No active or planned tasks. Press d to read completed tasks."
+                    " No active or planned tasks. Right shows completed tasks."
                 };
                 frame.render_widget(
                     Paragraph::new(
@@ -120,12 +120,9 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
         row(area, area.height - 2, 1),
     );
     let keys = if view.details {
-        " Up/Down scroll   PgUp/PgDn   Home/End   b tasks".into()
+        " Up/Down scroll   PgUp/PgDn   Home/End   Esc back"
     } else {
-        format!(
-            " Up/Down task   Enter details   d {}   b groups",
-            if view.done { "open" } else { "done" }
-        )
+        " Up/Down task   Enter details   Left/Right tabs   Esc back"
     };
     frame.render_widget(
         Paragraph::new(Line::styled(keys, theme.dim())),
@@ -133,29 +130,50 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
     );
 }
 
-pub(super) fn summary(app: &App, theme: Theme, width: usize) -> Line<'static> {
+pub(super) fn summary(app: &App) -> String {
     let snapshot = app.selected_tasks();
-    let (label, style) = if let Some(page) = snapshot.and_then(Snapshot::page) {
+    if let Some(page) = snapshot.and_then(Snapshot::page) {
         let stale = snapshot.is_some_and(|s| s.error.is_some());
-        (
-            format!(
-                " Tasks: {} active  {} planned  {} done{}  t view",
-                page.counts.active,
-                page.counts.planned,
-                page.counts.done,
-                if stale { " (stale)" } else { "" }
-            ),
-            if stale { theme.error() } else { theme.dim() },
+        format!(
+            "Tasks: {} active  {} planned  {} done{}",
+            page.counts.active,
+            page.counts.planned,
+            page.counts.done,
+            if stale { " (stale)" } else { "" }
         )
     } else if snapshot.is_some_and(|s| s.error.is_some()) {
-        (
-            " Tasks unavailable; t opens details of the error".into(),
-            theme.error(),
-        )
+        "Tasks: unavailable (open for details)".into()
     } else {
-        (" Tasks: reading...  t view".into(), theme.dim())
-    };
-    Line::styled(text::fit(&label, width), style)
+        "Tasks: reading...".into()
+    }
+}
+
+fn tabs(done: bool, counts: Option<&Counts>, theme: Theme, width: usize) -> Line<'static> {
+    let open_count = counts.map(|c| c.active.saturating_add(c.planned).to_string());
+    let done_count = counts.map(|c| c.done.to_string());
+    let open = format!(" Open {} ", open_count.as_deref().unwrap_or("?"));
+    let done_label = format!(" Done {} ", done_count.as_deref().unwrap_or("?"));
+    let extra = counts.map(|c| format!("  Active {}  Planned {}", c.active, c.planned));
+    let mut spans = vec![
+        Span::raw(" "),
+        Span::styled(open, if done { theme.dim() } else { theme.selected() }),
+        Span::raw(" |"),
+        Span::styled(
+            done_label,
+            if done { theme.selected() } else { theme.dim() },
+        ),
+    ];
+    if let Some(extra) = extra {
+        let used = spans
+            .iter()
+            .map(|span| text::width(&span.content))
+            .sum::<usize>();
+        spans.push(Span::styled(
+            text::fit(&extra, width.saturating_sub(used + 1)),
+            theme.dim(),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn message(frame: &mut Frame, snapshot: Option<&Snapshot>, theme: Theme, area: Rect) {
@@ -193,13 +211,6 @@ fn stale(
         ),
         theme.error(),
     ))
-}
-
-fn counts(counts: &Counts) -> String {
-    format!(
-        " Active {}  Planned {}  Done {}",
-        counts.active, counts.planned, counts.done
-    )
 }
 
 fn attention(counts: &Counts) -> String {
@@ -246,8 +257,13 @@ fn task_row(task: &Task, selected: bool, theme: Theme, width: usize) -> Line<'st
         " ".repeat(name_width.saturating_sub(text::width(&name))),
         text::fit(&text::one_line(owner), 14)
     );
+    // Padded to the separator's last column, so the selection bar is as wide
+    // as the other tables' bars whatever the owner's length.
+    let row = width.saturating_sub(1);
+    let line = text::fit(&line, row);
+    let pad = " ".repeat(row.saturating_sub(text::width(&line)));
     Line::styled(
-        text::fit(&line, width),
+        format!("{line}{pad}"),
         if selected {
             theme.selected()
         } else {

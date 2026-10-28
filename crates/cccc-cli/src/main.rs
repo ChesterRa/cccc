@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
 
 async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -> Result<()> {
     match action {
-        DaemonAction::Run => cccc_daemon::run(home).await,
+        DaemonAction::Run => cccc_daemon::run_with_diagnostics(home).await,
         DaemonAction::Stop => {
             let response = daemon_lifecycle::stop(client, &home).await?;
             if response.ok {

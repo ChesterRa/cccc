@@ -665,6 +665,7 @@ dependencies = [
  "tokio-rustls 0.26.4",
  "tokio-tungstenite 0.29.0",
  "tracing",
+ "tracing-subscriber",
  "unicode-width",
  "url",
  "uuid",

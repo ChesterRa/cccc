@@ -14,6 +14,13 @@ fn press(app: &mut App, code: KeyCode) {
     app.handle(Event::Key(KeyEvent::from(code)));
 }
 
+fn continue_setup(app: &mut App) {
+    for _ in 0..RUNTIMES.len() {
+        press(app, KeyCode::Down);
+    }
+    press(app, KeyCode::Enter);
+}
+
 /// An app on the first setup step with the checks in.
 fn picking() -> App {
     let mut app = App::new(context(), running());
@@ -55,7 +62,7 @@ fn checking_shows_only_the_way_back() {
     assert!(rows[0].starts_with(" Connect native sessions"));
     assert!(rows[0].ends_with("1/3"));
     assert_eq!(rows[3], " Checking Codex, Claude Code, Pi and OpenCode...");
-    assert_eq!(rows[15], " b back");
+    assert_eq!(rows[15], " Esc back");
 }
 
 #[test]
@@ -65,7 +72,7 @@ fn every_app_is_listed_unpicked_with_what_the_check_found() {
     let sep = std::path::MAIN_SEPARATOR;
     assert_eq!(
         rows[3],
-        format!(" > [ ] Codex        0.164.0     ~{sep}.codex")
+        format!(" > [ ] Codex CLI    0.164.0     ~{sep}.codex")
     );
     assert_eq!(rows[4], "         needs setup or update");
     assert_eq!(
@@ -79,10 +86,7 @@ fn every_app_is_listed_unpicked_with_what_the_check_found() {
     assert_eq!(rows[8], "         set up by this CCCC");
     assert_eq!(rows[9], "   [-] OpenCode     not found on PATH");
     assert_eq!(rows[10], "");
-    assert_eq!(
-        rows[15],
-        " Up/Down move   Space pick   Enter continue   b back"
-    );
+    assert_eq!(rows[15], " Up/Down choose   Enter select   Esc back");
 }
 
 #[test]
@@ -106,7 +110,7 @@ fn confirming_names_the_directories_and_the_way_back_out() {
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Char(' '));
-    press(&mut app, KeyCode::Enter);
+    continue_setup(&mut app);
     assert_eq!(
         app.flow.as_ref().map(|flow| flow.step),
         Some(SetupStep::Confirm)
@@ -114,7 +118,7 @@ fn confirming_names_the_directories_and_the_way_back_out() {
     let rows = rows(&app, 80, 16);
     let sep = std::path::MAIN_SEPARATOR;
     assert!(rows[0].ends_with("2/3"));
-    assert!(rows.contains(&format!("   Codex        ~{sep}.codex")));
+    assert!(rows.contains(&format!("   Codex CLI    ~{sep}.codex")));
     assert!(rows.contains(&format!("   Pi           ~{sep}.pi{sep}agent")));
     assert!(rows.contains(
         &"                Open Pi sessions disconnect until you reload them.".to_owned()
@@ -124,7 +128,12 @@ fn confirming_names_the_directories_and_the_way_back_out() {
         rows.iter()
             .any(|row| row.contains("cccc sessions disable --runtime <app>"))
     );
-    assert_eq!(rows[15], " Enter connect   b back");
+    assert!(rows[12].starts_with(" > Cancel"));
+    assert!(rows[13].contains("Connect"));
+    assert_eq!(
+        rows[15],
+        " Up/Down choose   PgUp/PgDn   Enter select   Esc back"
+    );
 }
 
 #[test]
@@ -150,7 +159,8 @@ fn the_last_step_reports_each_outcome_and_new_sessions_only() {
     press(&mut flow_app, KeyCode::Char(' '));
     press(&mut flow_app, KeyCode::Down);
     press(&mut flow_app, KeyCode::Char(' '));
-    press(&mut flow_app, KeyCode::Enter);
+    continue_setup(&mut flow_app);
+    press(&mut flow_app, KeyCode::Down);
     press(&mut flow_app, KeyCode::Enter);
     flow_app.setup.installs = vec![
         (
@@ -179,7 +189,7 @@ fn the_last_step_reports_each_outcome_and_new_sessions_only() {
     let sep = std::path::MAIN_SEPARATOR;
     assert_eq!(
         rows[1],
-        format!("   Codex        configuration written to ~{sep}.codex")
+        format!("   Codex CLI    configuration written to ~{sep}.codex")
     );
     assert_eq!(
         rows[2],
@@ -211,14 +221,15 @@ fn the_last_step_reports_each_outcome_and_new_sessions_only() {
 fn a_running_install_offers_only_cancel() {
     let mut app = picking();
     press(&mut app, KeyCode::Char(' '));
-    press(&mut app, KeyCode::Enter);
+    continue_setup(&mut app);
+    press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
     let rows_before = rows(&app, 80, 16);
     assert_eq!(rows_before[1], "   Starting...");
-    assert_eq!(rows_before[15], " b cancel");
+    assert_eq!(rows_before[15], " Esc cancel");
     app.setup.installs = vec![(LocalSessionRuntime::Codex, InstallState::Installing)];
     let rows = rows(&app, 80, 16);
-    assert_eq!(rows[1], "   Codex        installing...");
+    assert_eq!(rows[1], "   Codex CLI    installing...");
     assert!(!rows.iter().any(|row| row.contains("Try it")));
     assert_eq!(app.screen, Screen::Setup);
 }
@@ -270,6 +281,7 @@ fn four_written() -> App {
         press(&mut app, KeyCode::Down);
     }
     press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
     app.setup.installs = [
         (LocalSessionRuntime::Codex, "/home/me/.codex"),
@@ -308,7 +320,7 @@ fn a_tall_last_step_scrolls_to_every_app_and_the_prompt() {
     let mut app = four_written();
     let top = rows(&app, 60, 16);
     assert!(top[0].starts_with(" Finish in each app"));
-    assert!(top[1].starts_with("   Codex        configuration written to"));
+    assert!(top[1].starts_with("   Codex CLI    configuration written to"));
     assert_eq!(top[15], " Up/Down scroll   Enter back to status");
     assert!(!top.iter().any(|row| row.contains("Try it")));
 
@@ -372,12 +384,80 @@ fn an_app_whose_directory_is_unknown_cannot_be_picked() {
 #[test]
 fn picking_nothing_explains_itself_above_the_keys() {
     let mut app = picking();
-    press(&mut app, KeyCode::Enter);
+    continue_setup(&mut app);
     let rows = rows(&app, 80, 16);
-    assert_eq!(rows[13], " Pick at least one app with Space.");
+    assert_eq!(rows[13], " Pick at least one app first.");
     assert_eq!(rows[14], format!(" {}", "-".repeat(78)));
-    press(&mut app, KeyCode::Char(' '));
+    for _ in 0..RUNTIMES.len() {
+        press(&mut app, KeyCode::Up);
+    }
+    press(&mut app, KeyCode::Enter);
     assert_eq!(app.notice, None);
+}
+
+#[test]
+fn small_screen_keeps_the_selected_app_and_continue_visible_with_warnings() {
+    let mut app = picking();
+    app.setup.checks[3] = found(
+        LocalSessionRuntime::Opencode,
+        "2.1.4",
+        "/home/me/.config/opencode",
+    );
+    for check in &mut app.setup.checks {
+        check.reconfigure_disconnects = true;
+    }
+    for _ in 0..RUNTIMES.len() {
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            rows(&app, 60, 16)
+                .iter()
+                .any(|line| line.starts_with(" > [x]"))
+        );
+        press(&mut app, KeyCode::Down);
+    }
+    assert!(
+        rows(&app, 60, 16)
+            .iter()
+            .any(|line| line.starts_with(" > Continue"))
+    );
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        app.flow.as_ref().map(|flow| flow.step),
+        Some(SetupStep::Confirm)
+    );
+}
+
+#[test]
+fn long_confirmation_keeps_cancel_and_connect_visible_while_scrolling() {
+    let mut app = picking();
+    app.setup.checks[3] = found(
+        LocalSessionRuntime::Opencode,
+        "2.1.4",
+        "/home/me/.config/opencode",
+    );
+    for check in &mut app.setup.checks {
+        check.reconfigure_disconnects = true;
+    }
+    for _ in 0..RUNTIMES.len() {
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Down);
+    }
+    press(&mut app, KeyCode::Enter);
+    let top = rows(&app, 60, 16);
+    assert!(top[12].starts_with(" > Cancel"));
+    assert!(top[13].contains("Connect"));
+    press(&mut app, KeyCode::End);
+    let bottom = rows(&app, 60, 16);
+    assert_ne!(top[0], bottom[0]);
+    assert!(bottom[12].starts_with(" > Cancel"));
+    assert!(bottom[13].contains("Connect"));
+    press(&mut app, KeyCode::Down);
+    assert!(rows(&app, 60, 16)[13].starts_with(" > Connect"));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        app.flow.as_ref().map(|flow| flow.step),
+        Some(SetupStep::Finish)
+    );
 }
 
 #[test]

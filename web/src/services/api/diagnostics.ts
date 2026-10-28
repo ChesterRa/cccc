@@ -1,5 +1,7 @@
 import { apiJson } from "./base";
 
+export type LogComponent = "daemon" | "daemon_diagnostics" | "web" | "im";
+
 export interface RegistryReconcileResult {
   dry_run: boolean;
   scanned_groups: number;
@@ -87,16 +89,12 @@ export async function clearTerminalTail(groupId: string, actorId: string) {
   );
 }
 
-export async function fetchLogTail(
-  component: "daemon" | "web" | "im",
-  groupId: string,
-  lines = 200,
-) {
+export async function fetchLogTail(component: LogComponent, groupId: string, lines = 200) {
   const params = new URLSearchParams({ component, group_id: groupId, lines: String(lines) });
   return apiJson<{ lines: string[] }>(`/api/v1/debug/tail_logs?${params.toString()}`);
 }
 
-export async function clearLogs(component: "daemon" | "web" | "im", groupId: string) {
+export async function clearLogs(component: LogComponent, groupId: string) {
   return apiJson("/api/v1/debug/clear_logs", {
     method: "POST",
     body: JSON.stringify({ component, group_id: groupId, by: "user" }),

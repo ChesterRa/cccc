@@ -210,6 +210,94 @@ async fn actor_command_uses_shell_quoting_like_python() {
     );
 }
 
+#[tokio::test]
+async fn reply_request_routes_act_as_the_user_within_the_principals_groups() {
+    let (_temp, home, group_id, daemon) = running_home("reply requests").await;
+    let other = GroupStore::new(home.clone())
+        .expect("store")
+        .create("another group", "")
+        .expect("group");
+    cccc_core::access_tokens::AccessTokenStore::new(home.clone())
+        .expect("tokens")
+        .create(
+            "member",
+            vec![group_id.clone()],
+            false,
+            Some("member-token"),
+        )
+        .expect("member token");
+    let app = auth_support::authenticated_app(home.clone());
+    let get = |path: String, token: Option<&'static str>| {
+        let app = app.clone();
+        async move {
+            let mut request = Request::get(path);
+            if let Some(token) = token {
+                request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+            }
+            let response = app
+                .oneshot(request.body(Body::empty()).expect("request"))
+                .await
+                .expect("response");
+            (response.status(), response_json(response).await)
+        }
+    };
+    let (pending_status, pending) = get(
+        format!("/api/v1/groups/{group_id}/reply-requests/pending?limit=10"),
+        None,
+    )
+    .await;
+    let (_, admin_summary) = get("/api/v1/reply-requests/summary".into(), None).await;
+    let (member_status, member_summary) = get(
+        "/api/v1/reply-requests/summary".into(),
+        Some("member-token"),
+    )
+    .await;
+    let answer = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/groups/{group_id}/messages/missing-event/reply-request/answer"
+            ))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"client_id":"c1","answer":{"v":1,"text":"yes"},"by":"lead"}"#,
+            ))
+            .expect("request"),
+        )
+        .await
+        .expect("response");
+    let answer_status = answer.status();
+    let exhibit =
+        auth_support::authenticated_app_with_mode(home.clone(), cccc_web::WebMode::Exhibit)
+            .oneshot(
+                Request::get("/api/v1/reply-requests/summary")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+    let exhibit_status = exhibit.status();
+    shutdown(home, daemon).await;
+
+    assert_eq!(pending_status, StatusCode::OK);
+    assert_eq!(pending["result"]["total"], 0);
+    let groups = |summary: &Value| {
+        summary["result"]["groups"]
+            .as_array()
+            .expect("groups")
+            .iter()
+            .map(|group| group["group_id"].as_str().expect("id").to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert!(groups(&admin_summary).contains(&other.group_id));
+    assert_eq!(member_status, StatusCode::OK);
+    assert_eq!(groups(&member_summary), [group_id]);
+    assert_eq!(member_summary["result"]["groups"][0]["state"], "fresh");
+    // The body cannot choose who answers.
+    assert_eq!(answer_status, StatusCode::BAD_REQUEST);
+    assert_eq!(exhibit_status, StatusCode::FORBIDDEN);
+}
+
 async fn running_home(
     title: &str,
 ) -> (

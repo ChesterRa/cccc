@@ -9,6 +9,7 @@ pub mod event;
 pub mod ipc;
 pub mod local_session;
 pub mod message;
+pub mod reply_question;
 pub mod voice_notifications;
 pub mod voice_secretary;
 

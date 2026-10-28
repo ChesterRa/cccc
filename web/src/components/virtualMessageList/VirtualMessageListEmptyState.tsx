@@ -6,11 +6,13 @@ export function VirtualMessageListEmptyState({
   isLoadingHistory,
   hasMoreHistory,
   isFilteredEmpty,
+  emptyMessage,
   onLoadMore,
 }: {
   isLoadingHistory: boolean;
   hasMoreHistory: boolean;
   isFilteredEmpty: boolean;
+  emptyMessage?: string;
   onLoadMore?: () => void;
 }) {
   const { t } = useTranslation("chat");
@@ -32,7 +34,7 @@ export function VirtualMessageListEmptyState({
         <MessageSquareTextIcon size={28} />
       </div>
       <p className="text-sm font-medium text-[var(--color-text-secondary)]">
-        {t(isFilteredEmpty ? "noResults" : "emptyStateTitle")}
+        {emptyMessage ?? t(isFilteredEmpty ? "noResults" : "emptyStateTitle")}
       </p>
       {!isFilteredEmpty ? (
         <>

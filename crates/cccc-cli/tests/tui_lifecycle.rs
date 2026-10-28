@@ -226,6 +226,55 @@ impl Terminal {
         }
     }
 
+    // A confirmation may be painted and replaced before the reader wakes.
+    // Inspect the terminal stream incrementally so ANSI fragments on ConPTY
+    // cannot hide a frame that really appeared between two queued keys.
+    fn until_screen_after(&mut self, text: &str, offset: usize) {
+        let deadline = Instant::now() + WAIT;
+        let mut screen = retach::screen::Screen::new(100, 24, 0);
+        let mut consumed = offset;
+        let needle: Vec<char> = text.chars().collect();
+        assert!(!needle.is_empty(), "a screen marker is required");
+        let contains = |screen: &retach::screen::Screen| {
+            screen.visible_rows().any(|row| {
+                row.windows(needle.len()).any(|cells| {
+                    cells
+                        .iter()
+                        .zip(&needle)
+                        .all(|(cell, expected)| cell.c == *expected)
+                })
+            })
+        };
+        {
+            let output = self.output.lock().expect("terminal output");
+            screen.process(&output[..offset.min(output.len())]);
+        }
+        assert!(
+            !contains(&screen),
+            "{text:?} was already visible before input"
+        );
+        loop {
+            let bytes = {
+                let output = self.output.lock().expect("terminal output");
+                let bytes = output[consumed..].to_vec();
+                consumed = output.len();
+                bytes
+            };
+            for byte in bytes {
+                screen.process(&[byte]);
+                if contains(&screen) {
+                    return;
+                }
+            }
+            assert!(
+                self.child.try_wait().expect("child status").is_none(),
+                "CCCC exited before displaying {text:?}"
+            );
+            assert!(Instant::now() < deadline, "CCCC did not display {text:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     fn send(&mut self, bytes: &[u8]) {
         self.writer.write_all(bytes).expect("terminal input");
         self.writer.flush().expect("flush");
@@ -311,24 +360,33 @@ fn task_pages_and_completed_outcomes_are_readable_without_a_provider() {
         .expect("seed tasks");
     let mut terminal = fixture.start(&[], &[]);
     terminal.until("Native sessions");
-    terminal.send(b"/groups\r");
+    terminal.until_screen("Task reader");
+    terminal.send(b"\r");
     terminal.until_screen("Tasks: 25 active  1 planned  1 done");
-    terminal.send(b"t");
+    terminal.send(b"\r");
     terminal.until_screen("Active task 25");
     terminal.send(b"\r");
     terminal.until_screen("Checklist 1/2 done");
     terminal.send(b"\x1b[F");
     terminal.until_screen("LAST_NOTES_LINE");
-    terminal.send(b"bd");
+    terminal.send(b"\x1b");
+    terminal.until_screen("Left/Right tabs");
+    terminal.send(b"\x1b[C");
     terminal.until_screen("Completed task");
     terminal.send(b"\r");
     terminal.until_screen("FINAL_COMPLETED_OUTCOME");
-    terminal.send(b"bd");
+    terminal.send(b"\x1b");
+    terminal.until_screen("Left/Right tabs");
+    terminal.send(b"\x1b[D");
     terminal.until_screen("Active task 25");
     terminal.send(b"\x1b[6~");
     terminal.until_screen("Page 2");
     terminal.until_screen("Active task 05");
-    terminal.send(b"bb/quit\r");
+    terminal.send(b"\x1b");
+    terminal.until_screen("Enter open");
+    terminal.send(b"\x1b");
+    terminal.until_screen("Native sessions");
+    terminal.send(b"/quit\r");
     terminal.finish();
     fixture.assert_stopped();
 }
@@ -467,20 +525,21 @@ fn group_controls_start_and_stop_an_empty_group_without_a_provider() {
     let mut terminal = fixture.start(&[], &[]);
     terminal.until("Native sessions");
     terminal.send(b"/groups\r");
-    terminal.until_screen("s start");
+    terminal.until_screen("Start group");
     terminal.until_screen(&group.group_id);
-    terminal.send(b"s");
+    terminal.send(b"\x1b[B\r");
     terminal.until_screen(&format!("Start {title}?"));
-    terminal.send(b"\r");
+    terminal.send(b"\x1b[B\r");
     terminal.until_screen(&format!("{title}: start done."));
     let started = store.load(&group.group_id).expect("started Group");
     assert!(started.running, "an empty Group still records Start intent");
     assert_eq!(started.state, GroupState::Active);
 
     // Observed running is still false: Stop must remain an explicit action.
-    terminal.send(b"x");
+    terminal.until_screen("Stop group");
+    terminal.send(b"\x1b[B\r");
     terminal.until_screen(&format!("Stop {title}?"));
-    terminal.send(b"\r");
+    terminal.send(b"\x1b[B\r");
     terminal.until_screen(&format!("{title}: stop done."));
     let stopped = store.load(&group.group_id).expect("stopped Group");
     assert!(!stopped.running);
@@ -506,12 +565,12 @@ fn a_paused_group_can_be_stopped_directly_and_confirmation_is_cancellable() {
     let mut terminal = fixture.start(&[], &[]);
     terminal.until("Native sessions");
     terminal.send(b"/groups\r");
-    terminal.until_screen("x stop");
+    terminal.until_screen("Stop group");
     terminal.until_screen(&group.group_id);
-    terminal.send(b"x");
+    terminal.send(b"\x1b[B\x1b[B\r");
     terminal.until_screen(&format!("Stop {title}?"));
     terminal.send(b"b");
-    terminal.until_screen("x stop");
+    terminal.until_screen("Stop group");
     assert_eq!(
         store.load(&group.group_id).expect("still paused").state,
         GroupState::Paused
@@ -521,7 +580,9 @@ fn a_paused_group_can_be_stopped_directly_and_confirmation_is_cancellable() {
             .expect("no cancelled mutation")
             .is_empty()
     );
-    terminal.send(b"x\r");
+    terminal.send(b"\r");
+    terminal.until_screen(&format!("Stop {title}?"));
+    terminal.send(b"\x1b[B\r");
     terminal.until_screen(&format!("{title}: stop done."));
     assert_eq!(
         store.load(&group.group_id).expect("stopped Group").state,
@@ -668,8 +729,10 @@ fn a_small_window_cannot_accept_an_invisible_stop_confirmation() {
     terminal.until("Native sessions");
     terminal.send(b"/groups\r");
     terminal.until_screen(&group.group_id);
-    terminal.send(b"x");
+    terminal.send(b"\x1b[B\x1b[B\r");
     terminal.until_screen("Stop Small confirmation fixture?");
+    terminal.send(b"\x1b[B");
+    terminal.until_screen("> Stop group");
     terminal
         .master
         .resize(PtySize {
@@ -691,6 +754,47 @@ fn a_small_window_cannot_accept_an_invisible_stop_confirmation() {
         store.load(&group.group_id).expect("untouched Group").state,
         GroupState::Active
     );
+    fixture.assert_stopped();
+}
+
+#[test]
+fn queued_group_confirmation_is_drawn_and_defaults_to_cancel() {
+    use cccc_contracts::GroupState;
+    let fixture = Fixture::new();
+    let title = "Burst safety fixture";
+    let (store, group) = fixture.group(title, GroupState::Active);
+    let mut terminal = fixture.start(&[], &[]);
+    terminal.until_screen(title);
+    terminal.send(b"\r");
+    terminal.until_screen(&group.group_id);
+    terminal.send(b"\x1b[B\x1b[B");
+    terminal.until_screen("> Stop group");
+
+    let before = terminal.output.lock().expect("output").len();
+    terminal.send(b"\r\r");
+    terminal.until_screen_after(&format!("Stop {title}?"), before);
+    terminal.until_screen("Enter open");
+    assert_eq!(
+        store.load(&group.group_id).expect("unchanged Group").state,
+        GroupState::Active
+    );
+    assert!(
+        cccc_core::ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger"))
+            .expect("no cancelled mutation")
+            .is_empty()
+    );
+
+    // Even deliberate queued input must paint the confirmation first.
+    let before = terminal.output.lock().expect("output").len();
+    terminal.send(b"\r\x1b[B\r");
+    terminal.until_screen_after(&format!("Stop {title}?"), before);
+    terminal.until_screen(&format!("{title}: stop done."));
+    assert_eq!(
+        store.load(&group.group_id).expect("stopped Group").state,
+        GroupState::Stopped
+    );
+    terminal.send(b"b/quit\r");
+    terminal.finish();
     fixture.assert_stopped();
 }
 
@@ -958,10 +1062,22 @@ exec /bin/sleep 60
         for _ in 0..index {
             terminal.send(b"\x1b[B");
         }
-        terminal.send(b" \r");
-        terminal.until("Enter connect");
-        terminal.send(b"\r");
+        terminal.send(b" ");
+        for _ in 0..4 {
+            terminal.send(b"\x1b[B");
+        }
+        let before = terminal.output.lock().expect("output").len();
+        terminal.send(b"\r\r");
+        terminal.until_screen_after("PgUp/PgDn   Enter select", before);
+        terminal.until_screen("> Continue");
         let pid_file = fixture.root.path().join("user/install-pid");
+        assert!(
+            !pid_file.exists(),
+            "double Enter must not start the installer"
+        );
+        terminal.send(b"\r");
+        terminal.until_screen("PgUp/PgDn   Enter select");
+        terminal.send(b"\x1b[B\r");
         let deadline = Instant::now() + WAIT;
         while !pid_file.exists() {
             assert!(

@@ -293,7 +293,7 @@ fn runtime_label(runtime: &str) -> String {
         ActorRuntime::Auggie => "Auggie",
         ActorRuntime::Claude => "Claude Code",
         ActorRuntime::Cline => "Cline",
-        ActorRuntime::Codex => "Codex",
+        ActorRuntime::Codex => "Codex CLI",
         ActorRuntime::Deepseek => "DeepSeek",
         ActorRuntime::Copilot => "Copilot",
         ActorRuntime::Cursor => "Cursor",

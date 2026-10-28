@@ -46,6 +46,7 @@ import { buildReplyComposerState } from "./utils/chatReply";
 import { useShallow } from "zustand/react/shallow";
 import { useConnectWorkbench } from "./features/connect/useConnectWorkbench";
 import { ConnectRemotePanel } from "./features/connect/ConnectRemotePanel";
+import { PendingReplyProvider } from "./features/pendingReplies/PendingReplyProvider";
 
 // Body already reserves the top safe area. Keep this flow box inside the
 // visual viewport; fixed overlays still use the complete VISUAL_VIEWPORT_BOX.
@@ -341,17 +342,18 @@ export default function App({
     },
   });
 
-  const { canManageGroups, ccccHome, fetchDirSuggestions, refreshWebAccessSession } = useAppChrome({
-    parseUrlDeepLink,
-    refreshGroups,
-    setWebReadOnly,
-    setSmallScreen,
-    showError,
-    setDirSuggestions,
-    groupEditOpen,
-    addActorOpen,
-    editingActor,
-  });
+  const { canManageGroups, webModeKnown, ccccHome, fetchDirSuggestions, refreshWebAccessSession } =
+    useAppChrome({
+      parseUrlDeepLink,
+      refreshGroups,
+      setWebReadOnly,
+      setSmallScreen,
+      showError,
+      setDirSuggestions,
+      groupEditOpen,
+      addActorOpen,
+      editingActor,
+    });
   const connect = useConnectWorkbench(!connectEmbedded && !webReadOnly, refreshWebAccessSession);
   const remoteSelected = Boolean(connect.selected);
 
@@ -407,119 +409,124 @@ export default function App({
     >
       <AppBackground isDark={isDark} />
 
-      <AppShell
-        codexVoice={codexVoice}
-        connectEmbedded={connectEmbedded}
-        connect={connectEmbedded ? undefined : connect}
-        remoteWorkspace={
-          remoteSelected ? (
-            <ConnectRemotePanel workbench={connect} onOpenSidebar={() => setSidebarOpen(true)} />
-          ) : undefined
-        }
-        canUseVoice={canManageGroups && !connectEmbedded}
-        onOpenVoiceSource={openMessageWindow}
-        orderedGroups={orderedGroups}
-        archivedGroupIds={archivedGroupIds}
-        selectedGroupId={selectedGroupId}
-        groupDoc={groupDoc}
-        groupContext={groupContext}
-        actors={actors}
-        runtimeActors={visibleRuntimeActors}
-        recipientActors={recipientActors}
-        recipientActorsBusy={recipientActorsBusy}
-        destGroupScopeLabel={destGroupScopeLabel}
-        activeTab={activeTab}
-        busy={busy}
-        isTransitioning={isTransitioning}
-        sidebarOpen={sidebarOpen}
-        sidebarCollapsed={sidebarCollapsed}
-        sidebarWidth={sidebarWidth}
-        isDark={isDark}
-        isSmallScreen={isSmallScreen}
-        webReadOnly={webReadOnly}
-        selectedGroupRunning={selectedGroupRunning}
-        selectedGroupRuntimeStatus={selectedGroupRuntimeStatus}
-        selectedGroupActorsHydrating={selectedGroupActorsHydrating}
-        selectedGroupActorStatusProvisional={selectedGroupActorStatusProvisional}
-        theme={theme}
-        textScale={textScale}
-        sseStatus={sseStatus}
-        groupLabelById={groupLabelById}
-        mentionFilter={mentionFilter}
-        mentionKind={mentionKind}
-        mentionActorScope={mentionActorScope}
-        mentionSelectedIndex={mentionSelectedIndex}
-        showMentionMenu={showMentionMenu}
-        composerRef={composerRef}
-        fileInputRef={fileInputRef}
-        eventContainerRef={eventContainerRef}
-        contentRef={contentRef}
-        chatAtBottomRef={chatAtBottomRef}
-        onThemeChange={setTheme}
-        onTextScaleChange={setTextScale}
-        onSelectGroup={(groupId) => {
-          connect.selectLocal();
-          setSelectedGroupId(groupId);
-        }}
-        onWarmGroup={(gid) => void warmGroup(gid)}
-        onCreateGroup={
-          !webReadOnly && canManageGroups
-            ? () => {
-                openModal("createGroup");
-                void fetchDirSuggestions();
-              }
-            : undefined
-        }
-        onCloseSidebar={() => setSidebarOpen(false)}
-        onToggleSidebar={toggleSidebarCollapsed}
-        onResizeSidebar={setSidebarWidth}
-        onReorderGroupsInSection={reorderGroupsInSection}
-        onArchiveGroup={archiveGroup}
-        onRestoreGroup={restoreGroup}
-        onControlGroup={handleGroupControl}
-        onDeleteGroup={handleDeleteGroup}
-        onOpenSidebar={onOpenParentSidebar || (() => setSidebarOpen(true))}
-        onOpenGroupEdit={
-          canManageGroups
-            ? () => {
-                if (groupDoc) {
-                  setEditGroupTitle(groupDoc.title || "");
-                  setEditGroupTopic(groupDoc.topic || "");
-                  openModal("groupEdit");
+      <PendingReplyProvider
+        enabled={webModeKnown && !webReadOnly && !connectEmbedded}
+        groupIds={orderedGroups.map((group) => group.group_id)}
+      >
+        <AppShell
+          codexVoice={codexVoice}
+          connectEmbedded={connectEmbedded}
+          connect={connectEmbedded ? undefined : connect}
+          remoteWorkspace={
+            remoteSelected ? (
+              <ConnectRemotePanel workbench={connect} onOpenSidebar={() => setSidebarOpen(true)} />
+            ) : undefined
+          }
+          canUseVoice={canManageGroups && !connectEmbedded}
+          onOpenVoiceSource={openMessageWindow}
+          orderedGroups={orderedGroups}
+          archivedGroupIds={archivedGroupIds}
+          selectedGroupId={selectedGroupId}
+          groupDoc={groupDoc}
+          groupContext={groupContext}
+          actors={actors}
+          runtimeActors={visibleRuntimeActors}
+          recipientActors={recipientActors}
+          recipientActorsBusy={recipientActorsBusy}
+          destGroupScopeLabel={destGroupScopeLabel}
+          activeTab={activeTab}
+          busy={busy}
+          isTransitioning={isTransitioning}
+          sidebarOpen={sidebarOpen}
+          sidebarCollapsed={sidebarCollapsed}
+          sidebarWidth={sidebarWidth}
+          isDark={isDark}
+          isSmallScreen={isSmallScreen}
+          webReadOnly={webReadOnly}
+          selectedGroupRunning={selectedGroupRunning}
+          selectedGroupRuntimeStatus={selectedGroupRuntimeStatus}
+          selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+          selectedGroupActorStatusProvisional={selectedGroupActorStatusProvisional}
+          theme={theme}
+          textScale={textScale}
+          sseStatus={sseStatus}
+          groupLabelById={groupLabelById}
+          mentionFilter={mentionFilter}
+          mentionKind={mentionKind}
+          mentionActorScope={mentionActorScope}
+          mentionSelectedIndex={mentionSelectedIndex}
+          showMentionMenu={showMentionMenu}
+          composerRef={composerRef}
+          fileInputRef={fileInputRef}
+          eventContainerRef={eventContainerRef}
+          contentRef={contentRef}
+          chatAtBottomRef={chatAtBottomRef}
+          onThemeChange={setTheme}
+          onTextScaleChange={setTextScale}
+          onSelectGroup={(groupId) => {
+            connect.selectLocal();
+            setSelectedGroupId(groupId);
+          }}
+          onWarmGroup={(gid) => void warmGroup(gid)}
+          onCreateGroup={
+            !webReadOnly && canManageGroups
+              ? () => {
+                  openModal("createGroup");
+                  void fetchDirSuggestions();
                 }
-              }
-            : undefined
-        }
-        onOpenSearch={() => openModal("search")}
-        onOpenContext={() => {
-          if (selectedGroupId && !groupContext) void fetchContext(selectedGroupId);
-          openModal("context");
-        }}
-        onStartGroup={handleStartGroup}
-        onOpenSettings={() => openModal("settings")}
-        canAccessAccount={canManageGroups}
-        accountLabel={connectEmbedded ? embeddedAccountLabel : connect.accountLabel}
-        onOpenAccount={() => openSettingsTarget({ scope: "global", tab: "account" })}
-        onOpenMobileMenu={() => openModal("mobileMenu")}
-        onTabChange={handleTabChange}
-        appendComposerFiles={handleAppendComposerFiles}
-        setMentionFilter={setMentionFilter}
-        setMentionKind={setMentionKind}
-        setMentionActorScope={setMentionActorScope}
-        setMentionTargetGroupId={setMentionTargetGroupId}
-        setMentionSelectedIndex={setMentionSelectedIndex}
-        setShowMentionMenu={setShowMentionMenu}
-        getTermEpoch={getTermEpoch}
-        onToggleActorEnabled={toggleActorEnabled}
-        onRelaunchActor={relaunchActor}
-        onNewActorSession={startNewActorSession}
-        onEditActor={editActor}
-        onRemoveActor={removeActor}
-        onOpenActorInbox={openActorInbox}
-        onRefreshActors={refreshRuntimeActors}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      />
+              : undefined
+          }
+          onCloseSidebar={() => setSidebarOpen(false)}
+          onToggleSidebar={toggleSidebarCollapsed}
+          onResizeSidebar={setSidebarWidth}
+          onReorderGroupsInSection={reorderGroupsInSection}
+          onArchiveGroup={archiveGroup}
+          onRestoreGroup={restoreGroup}
+          onControlGroup={handleGroupControl}
+          onDeleteGroup={handleDeleteGroup}
+          onOpenSidebar={onOpenParentSidebar || (() => setSidebarOpen(true))}
+          onOpenGroupEdit={
+            canManageGroups
+              ? () => {
+                  if (groupDoc) {
+                    setEditGroupTitle(groupDoc.title || "");
+                    setEditGroupTopic(groupDoc.topic || "");
+                    openModal("groupEdit");
+                  }
+                }
+              : undefined
+          }
+          onOpenSearch={() => openModal("search")}
+          onOpenContext={() => {
+            if (selectedGroupId && !groupContext) void fetchContext(selectedGroupId);
+            openModal("context");
+          }}
+          onStartGroup={handleStartGroup}
+          onOpenSettings={() => openModal("settings")}
+          canAccessAccount={canManageGroups}
+          accountLabel={connectEmbedded ? embeddedAccountLabel : connect.accountLabel}
+          onOpenAccount={() => openSettingsTarget({ scope: "global", tab: "account" })}
+          onOpenMobileMenu={() => openModal("mobileMenu")}
+          onTabChange={handleTabChange}
+          appendComposerFiles={handleAppendComposerFiles}
+          setMentionFilter={setMentionFilter}
+          setMentionKind={setMentionKind}
+          setMentionActorScope={setMentionActorScope}
+          setMentionTargetGroupId={setMentionTargetGroupId}
+          setMentionSelectedIndex={setMentionSelectedIndex}
+          setShowMentionMenu={setShowMentionMenu}
+          getTermEpoch={getTermEpoch}
+          onToggleActorEnabled={toggleActorEnabled}
+          onRelaunchActor={relaunchActor}
+          onNewActorSession={startNewActorSession}
+          onEditActor={editActor}
+          onRemoveActor={removeActor}
+          onOpenActorInbox={openActorInbox}
+          onRefreshActors={refreshRuntimeActors}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        />
+      </PendingReplyProvider>
 
       <AppFeedback
         isDark={isDark}

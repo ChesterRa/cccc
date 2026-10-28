@@ -2,7 +2,12 @@
 //! no terminal or channels, so screens and key rules are testable directly.
 
 use super::groups::{
-    ActionProgress, GroupAction, GroupCommand, GroupList, GroupSummary, MemberList, Outcome,
+    ActionProgress, GroupAction, GroupCommand, GroupList, GroupStatus, GroupSummary, MemberList,
+    Outcome,
+};
+use super::pending::{
+    self, Command as ReplyCommand, Count as ReplyCount, Outcome as ReplyOutcome,
+    Status as ReplyStatus,
 };
 use super::refresh::Want;
 use super::sessions::SessionList;
@@ -12,15 +17,16 @@ use super::text;
 use crate::commands::sessions::setup::SetupInspection;
 use crate::host_state::{HostIntent, HostPhase, HostState};
 use cccc_contracts::local_session::{LocalSessionRuntime, LocalSessionSource};
+use cccc_contracts::reply_question::{Answer, MAX_ANSWER_CHARS};
 use cccc_core::HomeLayout;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Completion candidates, in the order the command line lists them.
 pub(super) const COMMANDS: [(&str, &str); 5] = [
-    ("/groups", "Browse groups and start or stop one"),
+    ("/groups", "Open the selected group: tasks, start, stop"),
     ("/sessions", "Browse native sessions and their details"),
     ("/setup", "Connect Codex, Claude Code, Pi or OpenCode"),
     ("/help", "Commands and keyboard shortcuts"),
@@ -59,6 +65,7 @@ pub(super) enum Screen {
     Groups,
     Sessions,
     Tasks,
+    Pending,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,11 +75,21 @@ pub(super) enum SetupStep {
     Finish,
 }
 
+/// Confirmations default to the harmless choice, including after returning
+/// from a later setup step or opening a new group action.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ConfirmChoice {
+    #[default]
+    Cancel,
+    Proceed,
+}
+
 /// One `/setup` visit, as far as the screen is concerned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SetupFlow {
     pub(super) generation: u64,
     pub(super) step: SetupStep,
+    pub(super) confirm_choice: ConfirmChoice,
     pub(super) cursor: usize,
     /// Picked apps, in [`RUNTIMES`] order. Nothing starts picked.
     pub(super) picked: [bool; RUNTIMES.len()],
@@ -104,6 +121,7 @@ pub(super) struct ScrollRoom {
 impl SetupFlow {
     fn go(&mut self, step: SetupStep) {
         self.step = step;
+        self.confirm_choice = ConfirmChoice::Cancel;
         self.scroll = Scroll::default();
     }
 }
@@ -144,10 +162,55 @@ impl Scroll {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct GroupsView {
     pub(super) selected: Option<String>,
+    /// The selected entry is a kind, not an index: a refresh cannot turn a
+    /// selected stop into a different action when the group's state changes.
+    pub(super) choice: GroupChoice,
     /// The action waiting for Enter, fixed to the group and action asked for.
     pub(super) confirm: Option<GroupCommand>,
+    pub(super) confirm_choice: ConfirmChoice,
     /// Rows the list had when last drawn, for paging.
     pub(super) page: Cell<u16>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum GroupChoice {
+    #[default]
+    Tasks,
+    Start,
+    Resume,
+    Stop,
+    Pending,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct PendingView {
+    pub(super) group_id: String,
+    pub(super) group_name: String,
+    pub(super) cursors: Vec<Option<String>>,
+    pub(super) selected: Option<String>,
+    pub(super) detail: Option<pending::Row>,
+    pub(super) cursor: usize,
+    pub(super) editing: bool,
+    pub(super) scroll: Scroll,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ReplySelection {
+    Option(String),
+    Other,
+}
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct ReplyDraft {
+    pub(super) selection: Option<ReplySelection>,
+    pub(super) text: String,
+    /// A UTF-8 byte boundary; editing follows the same rules as the command line.
+    pub(super) input_cursor: usize,
+    pub(super) attempt: Option<ReplyCommand>,
+    pub(super) sending: bool,
+    pub(super) uncertain: bool,
+    pub(super) closed: Option<ReplyStatus>,
+    pub(super) confirmed: bool,
+    pub(super) error: Option<String>,
 }
 
 /// Read-only source browser. Identity survives list sorting and refreshes.
@@ -200,6 +263,7 @@ pub(super) enum Effect {
     Host(HostIntent),
     Setup(SetupCommand),
     Group(GroupCommand),
+    Reply(Box<ReplyCommand>),
     /// Repaint every cell, for when something else wrote over the screen.
     Repaint,
 }
@@ -216,6 +280,10 @@ pub(super) struct App {
     pub(super) sessions_view: SessionsView,
     pub(super) tasks: TaskSnapshot,
     pub(super) tasks_view: TasksView,
+    pub(super) pending_summary: pending::Summary,
+    pub(super) pending: pending::Snapshot,
+    pub(super) pending_view: PendingView,
+    pub(super) reply_drafts: HashMap<(String, String), ReplyDraft>,
     /// Help is taller than the smallest screen.
     pub(super) help: Scroll,
     pub(super) setup: SetupProgress,
@@ -253,6 +321,10 @@ impl App {
             sessions_view: SessionsView::default(),
             tasks: TaskSnapshot::default(),
             tasks_view: TasksView::default(),
+            pending_summary: pending::Summary::default(),
+            pending: pending::Snapshot::default(),
+            pending_view: PendingView::default(),
+            reply_drafts: HashMap::new(),
             help: Scroll::default(),
             setup: SetupProgress::default(),
             flow: None,
@@ -276,6 +348,20 @@ impl App {
         self.quit_requested || self.interrupts > 0 || self.host.phase != HostPhase::Running
     }
 
+    /// The input loop must paint a newly opened confirmation before it
+    /// handles any later input already waiting in the terminal queue.
+    pub(super) fn confirming(&self) -> bool {
+        match self.screen {
+            Screen::Groups => self.groups_view.confirm.is_some(),
+            Screen::Setup => self
+                .flow
+                .as_ref()
+                .is_some_and(|flow| flow.step == SetupStep::Confirm),
+            Screen::Pending => self.pending_view.detail.is_some(),
+            _ => false,
+        }
+    }
+
     /// What to read: only what a screen shows. Setup counts for sessions,
     /// since its last step lists the ones that appear.
     pub(super) fn want(&self) -> Want {
@@ -288,8 +374,119 @@ impl App {
                 .then(|| self.selected_group().map(|group| group.group_id.clone()))
                 .flatten(),
             tasks: self.task_request(),
+            pending_summary: shown(&[Screen::Main, Screen::Groups, Screen::Pending]),
+            pending: self.pending_request(),
             nonce: self.nonce,
         }
+    }
+
+    fn pending_request(&self) -> Option<pending::Request> {
+        if self.stopping() || self.screen != Screen::Pending {
+            return None;
+        }
+        Some(pending::Request {
+            group_id: self.pending_view.group_id.clone(),
+            before: self.pending_view.cursors.last().cloned().flatten(),
+            detail: self
+                .pending_view
+                .detail
+                .as_ref()
+                .map(|row| row.event.id.clone()),
+        })
+    }
+    pub(super) fn selected_pending(&self) -> Option<&pending::Snapshot> {
+        (self.pending.request == self.pending_request())
+            .then_some(&self.pending)
+            .filter(|snapshot| snapshot.request.is_some())
+    }
+    pub(super) fn set_pending(&mut self, snapshot: pending::Snapshot) {
+        let matches = snapshot.request == self.pending_request();
+        if matches
+            && snapshot
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("cursor_stale:"))
+        {
+            self.pending_view.cursors = vec![None];
+            self.pending_view.selected = None;
+            self.notice = Some(Notice::Info(
+                "Requests changed; showing the latest page.".into(),
+            ));
+            self.nonce = self.nonce.wrapping_add(1);
+        }
+        if matches && let Some(row) = self.pending_view.detail.as_mut() {
+            row.update(
+                snapshot
+                    .page
+                    .as_ref()
+                    .and_then(|page| page.detail_status.as_ref()),
+            );
+        }
+        self.pending = snapshot;
+        if matches
+            && self.pending_view.detail.is_none()
+            && let Some(page) = self.pending.page.as_ref()
+        {
+            let selected = self.pending_view.selected.as_deref();
+            self.pending_view.selected = page
+                .rows
+                .iter()
+                .find(|row| Some(row.event.id.as_str()) == selected)
+                .or_else(|| page.rows.first())
+                .map(|row| row.event.id.clone());
+        }
+    }
+
+    pub(super) fn set_pending_summary(&mut self, summary: pending::Summary) {
+        self.pending_summary = summary;
+        if self.screen == Screen::Groups && !self.group_choices().contains(&self.groups_view.choice)
+        {
+            self.groups_view.choice = GroupChoice::Tasks;
+        }
+    }
+    pub(super) fn current_reply_draft(&self) -> Option<&ReplyDraft> {
+        let row = self.pending_view.detail.as_ref()?;
+        self.reply_drafts
+            .get(&(self.pending_view.group_id.clone(), row.event.id.clone()))
+    }
+    pub(super) fn set_reply_progress(&mut self, progress: pending::Progress) {
+        let Some((command, outcome)) = progress.last else {
+            return;
+        };
+        let key = (command.group_id.clone(), command.event_id.clone());
+        let Some(draft) = self.reply_drafts.get_mut(&key) else {
+            return;
+        };
+        if draft.attempt.as_ref() != Some(&command) || !draft.sending {
+            return;
+        }
+        draft.sending = false;
+        match outcome {
+            ReplyOutcome::Recorded => {
+                draft.closed = Some(ReplyStatus::Answered);
+                draft.confirmed = true;
+                draft.attempt = None;
+                draft.uncertain = false;
+            }
+            ReplyOutcome::Closed(state) => {
+                draft.closed = Some(state);
+                draft.confirmed = false;
+                draft.attempt = None;
+                draft.uncertain = false;
+            }
+            ReplyOutcome::Rejected(code)
+                if !draft.uncertain || pending::after_idempotency_lookup(&code) =>
+            {
+                draft.error = Some(code);
+                draft.attempt = None;
+                draft.uncertain = false;
+            }
+            ReplyOutcome::Rejected(_) | ReplyOutcome::Uncertain => {
+                draft.uncertain = true;
+                draft.error = Some("Answer outcome unknown; retry the same answer.".into());
+            }
+        }
+        self.nonce = self.nonce.wrapping_add(1);
     }
 
     fn task_request(&self) -> Option<TaskRequest> {
@@ -340,11 +537,39 @@ impl App {
                 .first()
                 .map(|group| group.group_id.clone());
         }
+        if self.screen == Screen::Groups && !self.group_choices().contains(&self.groups_view.choice)
+        {
+            self.groups_view.choice = GroupChoice::Tasks;
+        }
     }
 
     /// The selected group, unless it has left the list.
     pub(super) fn selected_group(&self) -> Option<&GroupSummary> {
         self.groups.find(self.groups_view.selected.as_deref()?)
+    }
+
+    pub(super) fn group_choices(&self) -> Vec<GroupChoice> {
+        let Some(group) = self.selected_group() else {
+            return Vec::new();
+        };
+        let mut choices = match group.status {
+            GroupStatus::Stopped if group.running_actors > 0 => {
+                vec![GroupChoice::Tasks, GroupChoice::Start, GroupChoice::Stop]
+            }
+            GroupStatus::Stopped => vec![GroupChoice::Tasks, GroupChoice::Start],
+            GroupStatus::Paused => vec![GroupChoice::Tasks, GroupChoice::Resume, GroupChoice::Stop],
+            GroupStatus::Offline | GroupStatus::Running | GroupStatus::Idle => {
+                vec![GroupChoice::Tasks, GroupChoice::Start, GroupChoice::Stop]
+            }
+        };
+        if self
+            .pending_summary
+            .count(&group.group_id)
+            .is_some_and(|count| !matches!(count, ReplyCount::Fresh(0)))
+        {
+            choices.push(GroupChoice::Pending);
+        }
+        choices
     }
 
     /// The selected group's members, once read for that group.
@@ -462,6 +687,18 @@ impl App {
             Event::Paste(pasted) => {
                 if !self.stopping() && self.screen == Screen::Main {
                     self.insert(&text::one_line(&pasted));
+                } else if !self.stopping()
+                    && self.screen == Screen::Pending
+                    && self.pending_view.editing
+                {
+                    if let Some(row) = self.pending_view.detail.as_ref() {
+                        let draft = self
+                            .reply_drafts
+                            .entry((self.pending_view.group_id.clone(), row.event.id.clone()))
+                            .or_default();
+                        draft.text.insert_str(draft.input_cursor, &pasted);
+                        draft.input_cursor += pasted.len();
+                    }
                 }
                 None
             }
@@ -495,6 +732,7 @@ impl App {
             Screen::Setup => self.setup_key(key.code, press),
             Screen::Groups => self.groups_key(key.code, press),
             Screen::Tasks => self.tasks_key(key.code, press),
+            Screen::Pending => self.pending_key(key, press),
             Screen::Sessions => {
                 self.sessions_key(key.code, press);
                 None
@@ -528,6 +766,20 @@ impl App {
             'l' if press => Some(Effect::Repaint),
             'u' if !self.stopping() && self.screen == Screen::Main => {
                 self.clear_input();
+                None
+            }
+            'j' if !self.stopping()
+                && self.screen == Screen::Pending
+                && self.pending_view.editing =>
+            {
+                if let Some(row) = self.pending_view.detail.as_ref() {
+                    let draft = self
+                        .reply_drafts
+                        .entry((self.pending_view.group_id.clone(), row.event.id.clone()))
+                        .or_default();
+                    draft.text.insert(draft.input_cursor, '\n');
+                    draft.input_cursor += 1;
+                }
                 None
             }
             'a' if self.screen == Screen::Main => {
@@ -578,7 +830,11 @@ impl App {
             }
             KeyCode::Home => self.input_cursor = 0,
             KeyCode::End => self.input_cursor = self.input.len(),
-            KeyCode::Up | KeyCode::Down if self.input.is_empty() => self.move_selection(key.code),
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+                if self.input.is_empty() =>
+            {
+                self.move_selection(key.code)
+            }
             KeyCode::Up | KeyCode::Down => {
                 let count = self.candidates().len();
                 if count > 0 {
@@ -590,13 +846,16 @@ impl App {
                 }
             }
             KeyCode::Esc => {
-                if !self.candidates().is_empty() {
+                if self.input == "/" {
+                    self.clear_input();
+                } else if !self.candidates().is_empty() {
                     self.completion_hidden = true;
                 } else {
                     self.clear_input();
                 }
                 self.notice = None;
             }
+            KeyCode::Tab if self.input.is_empty() && press => self.insert("/"),
             KeyCode::Tab => self.complete(),
             _ => {}
         }
@@ -766,6 +1025,7 @@ impl App {
         self.flow = Some(SetupFlow {
             generation: self.generation,
             step: SetupStep::Select,
+            confirm_choice: ConfirmChoice::Cancel,
             cursor: 0,
             picked: [false; RUNTIMES.len()],
             known: self
@@ -784,7 +1044,15 @@ impl App {
 
     fn setup_key(&mut self, code: KeyCode, press: bool) -> Option<Effect> {
         let step = self.flow.as_ref()?.step;
-        if step != SetupStep::Select
+        let scroll_key = match step {
+            SetupStep::Select => false,
+            SetupStep::Confirm => matches!(
+                code,
+                KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End
+            ),
+            SetupStep::Finish => true,
+        };
+        if scroll_key
             && let Some(flow) = &mut self.flow
             && flow.scroll.by(code)
         {
@@ -794,6 +1062,10 @@ impl App {
             SetupStep::Select => self.select_key(code, press),
             SetupStep::Confirm => {
                 if code == KeyCode::Enter && press {
+                    if self.flow.as_ref()?.confirm_choice == ConfirmChoice::Cancel {
+                        self.flow.as_mut()?.go(SetupStep::Select);
+                        return None;
+                    }
                     let runtimes = self.picked();
                     let flow = self.flow.as_mut()?;
                     flow.go(SetupStep::Finish);
@@ -807,6 +1079,16 @@ impl App {
                     && let Some(flow) = &mut self.flow
                 {
                     flow.go(SetupStep::Select);
+                } else if let Some(flow) = &mut self.flow {
+                    match code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            flow.confirm_choice = ConfirmChoice::Cancel
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            flow.confirm_choice = ConfirmChoice::Proceed
+                        }
+                        _ => {}
+                    }
                 }
                 None
             }
@@ -836,17 +1118,19 @@ impl App {
         let flow = self.flow.as_mut()?;
         match code {
             KeyCode::Up => flow.cursor = flow.cursor.saturating_sub(1),
-            KeyCode::Down => flow.cursor = (flow.cursor + 1).min(RUNTIMES.len() - 1),
-            KeyCode::Char(' ') if press && selectable[flow.cursor] => {
+            KeyCode::Down => flow.cursor = (flow.cursor + 1).min(RUNTIMES.len()),
+            KeyCode::Enter | KeyCode::Char(' ')
+                if press && flow.cursor < RUNTIMES.len() && selectable[flow.cursor] =>
+            {
                 flow.picked[flow.cursor] = !flow.picked[flow.cursor];
                 self.notice = None;
             }
-            KeyCode::Enter if press => {
+            KeyCode::Enter if press && flow.cursor == RUNTIMES.len() => {
                 if flow.picked.contains(&true) {
                     flow.go(SetupStep::Confirm);
                     self.notice = None;
                 } else {
-                    self.notice = Some(Notice::Info("Pick at least one app with Space.".into()));
+                    self.notice = Some(Notice::Info("Pick at least one app first.".into()));
                 }
             }
             _ => {}
@@ -866,6 +1150,8 @@ impl App {
                 .map(|group| group.group_id.clone());
         }
         self.groups_view.confirm = None;
+        self.groups_view.confirm_choice = ConfirmChoice::Cancel;
+        self.groups_view.choice = GroupChoice::Tasks;
         self.screen = Screen::Groups;
     }
 
@@ -873,22 +1159,289 @@ impl App {
         if let Some(confirm) = self.groups_view.confirm.clone() {
             if code == KeyCode::Enter && press {
                 self.groups_view.confirm = None;
-                return self.send(confirm);
+                return if self.groups_view.confirm_choice == ConfirmChoice::Proceed {
+                    self.send(confirm)
+                } else {
+                    None
+                };
             }
             if is_back(code) {
                 self.groups_view.confirm = None;
+            } else {
+                match code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.groups_view.confirm_choice = ConfirmChoice::Cancel
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        self.groups_view.confirm_choice = ConfirmChoice::Proceed
+                    }
+                    _ => {}
+                }
             }
             return None;
         }
         match code {
             code if is_back(code) => self.screen = Screen::Main,
-            KeyCode::Char('s') if press => self.ask(false),
-            KeyCode::Char('x') if press => self.ask(true),
-            KeyCode::Char('t') if press => self.open_tasks(),
-            KeyCode::Char('j') => self.move_selection(KeyCode::Down),
-            KeyCode::Char('k') => self.move_selection(KeyCode::Up),
-            code => self.move_selection(code),
+            KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k') => {
+                let choices = self.group_choices();
+                if let Some(index) = choices
+                    .iter()
+                    .position(|choice| *choice == self.groups_view.choice)
+                {
+                    let next = match code {
+                        KeyCode::Up | KeyCode::Char('k') => index.saturating_sub(1),
+                        _ => (index + 1).min(choices.len() - 1),
+                    };
+                    self.groups_view.choice = choices[next];
+                }
+            }
+            KeyCode::Enter if press => match self.groups_view.choice {
+                GroupChoice::Tasks => self.open_tasks(),
+                GroupChoice::Start => self.ask(GroupAction::Start { resume: false }),
+                GroupChoice::Resume => self.ask(GroupAction::Start { resume: true }),
+                GroupChoice::Stop => self.ask(GroupAction::Stop),
+                GroupChoice::Pending => self.open_pending(),
+            },
+            _ => {}
         }
+        None
+    }
+
+    fn open_pending(&mut self) {
+        let Some(group) = self.selected_group() else {
+            return;
+        };
+        self.pending_view = PendingView {
+            group_id: group.group_id.clone(),
+            group_name: group.name().to_owned(),
+            cursors: vec![None],
+            ..PendingView::default()
+        };
+        self.screen = Screen::Pending;
+        self.notice = None;
+    }
+
+    fn pending_key(&mut self, key: KeyEvent, press: bool) -> Option<Effect> {
+        let code = key.code;
+        if self.pending_view.editing {
+            let row = self.pending_view.detail.as_ref()?;
+            let draft = self
+                .reply_drafts
+                .entry((self.pending_view.group_id.clone(), row.event.id.clone()))
+                .or_default();
+            match code {
+                KeyCode::Esc | KeyCode::Enter if press => self.pending_view.editing = false,
+                KeyCode::Backspace if draft.input_cursor > 0 => {
+                    let previous = draft.text[..draft.input_cursor]
+                        .char_indices()
+                        .next_back()
+                        .map_or(0, |(index, _)| index);
+                    draft.text.drain(previous..draft.input_cursor);
+                    draft.input_cursor = previous;
+                }
+                KeyCode::Delete if draft.input_cursor < draft.text.len() => {
+                    let next = draft.input_cursor
+                        + draft.text[draft.input_cursor..]
+                            .chars()
+                            .next()
+                            .expect("cursor precedes character")
+                            .len_utf8();
+                    draft.text.drain(draft.input_cursor..next);
+                }
+                KeyCode::Left => {
+                    draft.input_cursor = draft.text[..draft.input_cursor]
+                        .char_indices()
+                        .next_back()
+                        .map_or(0, |(index, _)| index);
+                }
+                KeyCode::Right if draft.input_cursor < draft.text.len() => {
+                    draft.input_cursor += draft.text[draft.input_cursor..]
+                        .chars()
+                        .next()
+                        .expect("cursor precedes character")
+                        .len_utf8();
+                }
+                KeyCode::Home => draft.input_cursor = 0,
+                KeyCode::End => draft.input_cursor = draft.text.len(),
+                KeyCode::Char(ch)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        || key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    draft.text.insert(draft.input_cursor, ch);
+                    draft.input_cursor += ch.len_utf8();
+                }
+                _ => {}
+            }
+            return None;
+        }
+        if self.pending_view.detail.is_some() {
+            if is_back(code) && press {
+                self.pending_view.detail = None;
+                self.pending_view.scroll = Scroll::default();
+                return None;
+            }
+            if matches!(
+                code,
+                KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End
+            ) {
+                self.pending_view.scroll.by(code);
+                return None;
+            }
+            let row = self.pending_view.detail.as_ref()?;
+            let key = (self.pending_view.group_id.clone(), row.event.id.clone());
+            let draft = self.reply_drafts.get(&key);
+            let status = draft.and_then(|draft| draft.closed).unwrap_or(row.status);
+            if status != ReplyStatus::Pending
+                && !draft.is_some_and(|draft| draft.uncertain || draft.sending)
+            {
+                self.pending_view.scroll.by(code);
+                return None;
+            }
+            let option_count = row
+                .question
+                .as_ref()
+                .map_or(0, |question| question.options.len());
+            let last = option_count + 1; // Other, then Send.
+            match code {
+                KeyCode::Up => {
+                    self.pending_view.cursor = self.pending_view.cursor.saturating_sub(1)
+                }
+                KeyCode::Down => {
+                    self.pending_view.cursor = self.pending_view.cursor.saturating_add(1).min(last)
+                }
+                KeyCode::Enter if press => {
+                    if self.pending_view.cursor == last
+                        && self.reply_drafts.values().any(|draft| draft.sending)
+                    {
+                        self.notice = Some(Notice::Info(
+                            "Wait for the current answer to finish.".into(),
+                        ));
+                        return None;
+                    }
+                    let draft = self.reply_drafts.entry(key).or_default();
+                    if draft.sending || draft.closed.is_some() {
+                        return None;
+                    }
+                    if draft.uncertain {
+                        if self.pending_view.cursor == last
+                            && let Some(command) = draft.attempt.clone()
+                        {
+                            draft.sending = true;
+                            draft.error = None;
+                            return Some(Effect::Reply(Box::new(command)));
+                        }
+                        return None;
+                    }
+                    if row.status != ReplyStatus::Pending {
+                        return None;
+                    }
+                    if self.pending_view.cursor < option_count {
+                        let id = row.question.as_ref()?.options[self.pending_view.cursor]
+                            .id
+                            .clone();
+                        draft.selection = Some(ReplySelection::Option(id));
+                        draft.error = None;
+                    } else if self.pending_view.cursor == option_count {
+                        draft.selection = Some(ReplySelection::Other);
+                        draft.error = None;
+                        self.pending_view.editing = true;
+                    } else {
+                        let answer = match &draft.selection {
+                            Some(ReplySelection::Option(id)) => Answer {
+                                v: 1,
+                                option_id: Some(id.clone()),
+                                text: None,
+                            },
+                            Some(ReplySelection::Other)
+                                if !draft.text.trim().is_empty()
+                                    && draft.text.chars().count() <= MAX_ANSWER_CHARS =>
+                            {
+                                Answer {
+                                    v: 1,
+                                    option_id: None,
+                                    text: Some(draft.text.clone()),
+                                }
+                            }
+                            Some(ReplySelection::Other)
+                                if draft.text.chars().count() > MAX_ANSWER_CHARS =>
+                            {
+                                draft.error = Some(format!(
+                                    "Answer is longer than {MAX_ANSWER_CHARS} characters; text kept."
+                                ));
+                                return None;
+                            }
+                            _ => {
+                                draft.error =
+                                    Some("Choose an option or enter an answer first.".into());
+                                return None;
+                            }
+                        };
+                        let command = ReplyCommand {
+                            group_id: self.pending_view.group_id.clone(),
+                            event_id: row.event.id.clone(),
+                            recipient: row.event.by.clone(),
+                            client_id: uuid::Uuid::new_v4().to_string(),
+                            answer,
+                            question: row.question.clone(),
+                        };
+                        draft.attempt = Some(command.clone());
+                        draft.sending = true;
+                        draft.error = None;
+                        return Some(Effect::Reply(Box::new(command)));
+                    }
+                }
+                _ => {}
+            }
+            return None;
+        }
+        if is_back(code) && press {
+            self.screen = Screen::Groups;
+            if !self.group_choices().contains(&self.groups_view.choice) {
+                self.groups_view.choice = GroupChoice::Tasks;
+            }
+            self.notice = None;
+            return None;
+        }
+        if code == KeyCode::PageUp && press && self.pending_view.cursors.len() > 1 {
+            self.pending_view.cursors.pop();
+            self.pending_view.selected = None;
+            return None;
+        }
+        let page = self
+            .selected_pending()
+            .and_then(|snapshot| snapshot.page.as_ref())?;
+        if code == KeyCode::PageDown && press && page.has_more {
+            if let Some(before) = &page.before {
+                self.pending_view.cursors.push(Some(before.clone()));
+                self.pending_view.selected = None;
+            }
+            return None;
+        }
+        let selected = page
+            .rows
+            .iter()
+            .position(|row| Some(row.event.id.as_str()) == self.pending_view.selected.as_deref());
+        if code == KeyCode::Enter
+            && press
+            && let Some(index) = selected
+        {
+            self.pending_view.detail = Some(page.rows[index].clone());
+            self.pending_view.cursor = 0;
+            self.pending_view.scroll = Scroll::default();
+            return None;
+        }
+        if page.rows.is_empty() {
+            return None;
+        }
+        let index = selected.unwrap_or(0);
+        let next = match code {
+            KeyCode::Up => index.saturating_sub(1),
+            KeyCode::Down => index.saturating_add(1).min(page.rows.len() - 1),
+            KeyCode::Home => 0,
+            KeyCode::End => page.rows.len() - 1,
+            _ => return None,
+        };
+        self.pending_view.selected = Some(page.rows[next].event.id.clone());
         None
     }
 
@@ -925,10 +1478,18 @@ impl App {
             self.notice = None;
             return None;
         }
-        if code == KeyCode::Char('d') && press {
-            self.tasks_view.done = !self.tasks_view.done;
-            self.tasks_view.page = 0;
-            self.tasks_view.selected = None;
+        let done = match code {
+            KeyCode::Left if press => Some(false),
+            KeyCode::Right if press => Some(true),
+            KeyCode::Tab if press => Some(!self.tasks_view.done),
+            _ => None,
+        };
+        if let Some(done) = done {
+            if done != self.tasks_view.done {
+                self.tasks_view.done = done;
+                self.tasks_view.page = 0;
+                self.tasks_view.selected = None;
+            }
             return None;
         }
         if code == KeyCode::PageUp && press && self.tasks_view.page > 0 {
@@ -968,7 +1529,7 @@ impl App {
     }
 
     // Opens the confirmation for the selected group; nothing is sent yet.
-    fn ask(&mut self, stop: bool) {
+    fn ask(&mut self, action: GroupAction) {
         if let Some(busy) = self.busy_action() {
             self.notice = Some(Notice::Info(format!(
                 "Wait for {} {} to finish.",
@@ -988,13 +1549,6 @@ impl App {
             self.notice = Some(Notice::Error(reason.into()));
             return;
         };
-        let action = if stop {
-            GroupAction::Stop
-        } else {
-            GroupAction::Start {
-                resume: group.state == "paused",
-            }
-        };
         let command = GroupCommand {
             serial: self.serial + 1,
             group_id: group.group_id.clone(),
@@ -1003,6 +1557,7 @@ impl App {
         };
         self.serial = command.serial;
         self.groups_view.confirm = Some(command);
+        self.groups_view.confirm_choice = ConfirmChoice::Cancel;
         self.notice = None;
     }
 

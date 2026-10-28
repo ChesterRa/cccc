@@ -4,6 +4,9 @@
 //! read leaves the others as they were.
 
 use super::groups::{self, GroupList, MemberList};
+use super::pending::{
+    self, Request as PendingRequest, Snapshot as PendingSnapshot, Summary as PendingSummary,
+};
 use super::sessions::{self, SessionList};
 use super::tasks::{self, Request as TaskRequest, Snapshot as TaskSnapshot};
 use cccc_client::DaemonClient;
@@ -24,13 +27,20 @@ pub(super) struct Want {
     /// The group whose members are on screen.
     pub(super) members: Option<String>,
     pub(super) tasks: Option<TaskRequest>,
+    pub(super) pending_summary: bool,
+    pub(super) pending: Option<PendingRequest>,
     /// Raised to read again now instead of at the next interval.
     pub(super) nonce: u64,
 }
 
 impl Want {
     fn any(&self) -> bool {
-        self.sessions || self.groups || self.members.is_some() || self.tasks.is_some()
+        self.sessions
+            || self.groups
+            || self.members.is_some()
+            || self.tasks.is_some()
+            || self.pending_summary
+            || self.pending.is_some()
     }
 }
 
@@ -39,6 +49,8 @@ pub(super) struct Lists {
     pub(super) groups: watch::Sender<GroupList>,
     pub(super) members: watch::Sender<MemberList>,
     pub(super) tasks: watch::Sender<TaskSnapshot>,
+    pub(super) pending_summary: watch::Sender<PendingSummary>,
+    pub(super) pending: watch::Sender<PendingSnapshot>,
 }
 
 /// Read what `want` asks for, then again every few seconds or as soon as it
@@ -76,6 +88,18 @@ pub(super) async fn run(home: HomeLayout, mut want: watch::Receiver<Want>, lists
             let read = tasks::read(&client, request).await;
             lists
                 .tasks
+                .send_modify(|snapshot| snapshot.record(request, read, Instant::now()));
+        }
+        if wanted.pending_summary {
+            let read = pending::summary(&client).await;
+            lists
+                .pending_summary
+                .send_modify(|summary| summary.record(read, Instant::now()));
+        }
+        if let Some(request) = &wanted.pending {
+            let read = pending::page(&client, request).await;
+            lists
+                .pending
                 .send_modify(|snapshot| snapshot.record(request, read, Instant::now()));
         }
         if lists.sessions.is_closed() {

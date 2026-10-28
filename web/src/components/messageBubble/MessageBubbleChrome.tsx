@@ -15,7 +15,6 @@ export function MessageFooter({
   readPreviewOverflow,
   displayNameMap,
   isDark,
-  replyRequested,
   copiedMessageText,
   copyableMessageText,
   onCopyMessageText,
@@ -37,7 +36,6 @@ export function MessageFooter({
   displayNameMap: Map<string, string>;
   isDark: boolean;
   isMail: boolean;
-  replyRequested: boolean;
   copiedMessageText: boolean;
   copyableMessageText: string;
   onCopyMessageText: () => void;
@@ -101,13 +99,20 @@ export function MessageFooter({
   const allRead =
     visibleReadStatusEntries.length > 0 &&
     visibleReadStatusEntries.every(([_, cleared]) => cleared);
+  const hasStatus = Boolean(
+    connectDelivery ||
+    connectCancellation ||
+    webModelDeliveryStatus ||
+    obligationSummary ||
+    visibleReadStatusEntries.length > 0,
+  );
 
   return (
     <div
       className={classNames(
         "mt-1 flex w-full min-w-0 flex-wrap items-center gap-2 px-1 text-xs",
         event.by === "user" ? "flex-row-reverse" : "justify-start",
-
+        !hasStatus && "message-footer-no-status",
         "text-[var(--color-text-tertiary)]",
       )}
     >
@@ -239,17 +244,6 @@ export function MessageFooter({
               {renderRecipientStatus()}
             </button>
           )
-        ) : null}
-
-        {!obligationSummary && replyRequested ? (
-          <span
-            className={classNames(
-              "rounded-full border border-violet-500/20 bg-violet-500/8 px-2.5 py-1 text-xs font-semibold tracking-tight",
-              "text-violet-700 dark:text-violet-300",
-            )}
-          >
-            {t("needReply")}
-          </span>
         ) : null}
       </div>
     </div>

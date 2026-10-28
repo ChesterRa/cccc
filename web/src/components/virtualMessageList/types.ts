@@ -50,5 +50,6 @@ export interface VirtualMessageListProps {
   isLoadingHistory?: boolean;
   hasMoreHistory?: boolean;
   isFilteredEmpty?: boolean;
+  emptyMessage?: string;
   onLoadMore?: () => void;
 }

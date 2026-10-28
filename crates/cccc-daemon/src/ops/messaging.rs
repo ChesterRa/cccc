@@ -17,6 +17,7 @@ pub(super) mod files;
 pub(crate) mod install_command;
 mod message_validation;
 mod message_wake;
+pub(crate) mod reply_questions;
 mod slash_skill;
 mod stream;
 mod tracked_send;
@@ -37,6 +38,9 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "reply" => Operation::new(Write, reply),
         "message_upload_preflight" => Operation::new(Read, message_upload_preflight),
         "reply_request_cancel" => Operation::new(Write, reply_request_cancel),
+        "reply_request_answer" => Operation::new(Write, super::reply_requests::answer),
+        "user_reply_requests" => Operation::new(Read, super::reply_requests::page),
+        "user_reply_requests_summary" => Operation::new(Read, super::reply_requests::summary),
         "message_deliver" => Operation::new(Write, message_deliver),
         "stream_emit" => Operation::new(Write, stream::emit),
         "relay_user_delegation" => Operation::new(Write, delegation::relay),
@@ -74,6 +78,9 @@ fn send_files(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "send_files owns attachments; do not provide attachment records",
         ));
     }
+    // A question is sent with `send`; refusing it here keeps this path's
+    // promise that a retry or a failed check reads and stores no file.
+    reply_questions::reject_fields(&request.args, "send_files")?;
     if string_arg(request, "dst_group_id").is_some_and(|value| !value.trim().is_empty()) {
         return cross_group_preflight::send_files(home, request, &group, paths);
     }
@@ -108,6 +115,7 @@ fn send_cross_group_with_reply(
     request: &DaemonRequest,
     source_reply_to: Option<&str>,
 ) -> OpResult {
+    reply_questions::reject_fields(&request.args, "a cross-group message")?;
     let source = load(home, request)?;
     let destination_id = required_arg(request, "dst_group_id")?;
     let by = string_arg(request, "by")
@@ -270,7 +278,24 @@ fn send_cross_group_with_reply(
 }
 
 pub(super) fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
-    send_with_audience_policy(home, request, kind, false)
+    send_with_audience_policy(home, request, kind, false, None)
+}
+
+/// The user's in-place answer, as `reply_request_answer` checked it.
+pub(super) enum InPlace {
+    /// The user's own words to a request without a readable question.
+    Text,
+    /// A structured answer, which travels outside the arguments so no other
+    /// caller can supply one.
+    Structured(Value),
+}
+
+/// Unlike an ordinary message to an Actor, an answer leaves the Group's state
+/// and its Actors' enabled flags as they are: answering never resumes a paused
+/// or stopped Group, or re-enables an Actor. The answer is delivered as any
+/// message is, once the user does that.
+pub(super) fn send_answer(home: &HomeLayout, request: &DaemonRequest, answer: InPlace) -> OpResult {
+    send_with_audience_policy(home, request, "chat.message", false, Some(answer))
 }
 
 fn send_with_audience_policy(
@@ -278,11 +303,20 @@ fn send_with_audience_policy(
     request: &DaemonRequest,
     kind: &str,
     allow_sender_only_audience: bool,
+    in_place: Option<InPlace>,
 ) -> OpResult {
     let mut group = load(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
-    if let Some(event) =
-        super::message_idempotency::find(home, &group.group_id, kind, &by, &request.args)
+    // A question checks its client_id against the whole normalized request,
+    // below; the key-only lookup would replay an unrelated message.
+    let asks_question = kind == "chat.message"
+        && request
+            .args
+            .get("question")
+            .is_some_and(|value| !value.is_null());
+    if !asks_question
+        && let Some(event) =
+            super::message_idempotency::find(home, &group.group_id, kind, &by, &request.args)
     {
         return duplicate_send(event);
     }
@@ -292,7 +326,17 @@ fn send_with_audience_policy(
         .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by"))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
+    match data.remove("answer") {
+        None | Some(Value::Null) => {}
+        Some(_) => {
+            return Err(OpError::new(
+                "invalid_args",
+                "answers are written only by reply_request_answer",
+            ));
+        }
+    }
     if kind == "chat.message" {
+        let asks = reply_questions::prepare(&mut data)?;
         message_validation::normalize(home, &group, &by, &mut data)?;
         super::messaging_recipients::normalize_chat_data(
             &group,
@@ -300,10 +344,25 @@ fn send_with_audience_policy(
             &mut data,
             allow_sender_only_audience,
         )?;
-        if data.get("message_mode").and_then(Value::as_str) != Some("mail") {
+        if asks {
+            reply_questions::require_user_request(&by, &data)?;
+            if let Some(event) = reply_questions::replay(home, &group.group_id, &by, &data)? {
+                return duplicate_send(event);
+            }
+        }
+        if let Some(InPlace::Structured(answer)) = &in_place {
+            data.insert("answer".into(), answer.clone());
+        }
+        if in_place.is_none() && data.get("message_mode").and_then(Value::as_str) != Some("mail") {
             group = message_wake::wake_message_targets(home, group, &by, &data)?;
         }
-    } else if kind == "system.notify" {
+    } else if data.get("question").is_some_and(|value| !value.is_null()) {
+        return Err(OpError::new(
+            "invalid_question",
+            "only chat messages can carry a question",
+        ));
+    }
+    if kind == "system.notify" {
         if data.contains_key("requires_ack") {
             return Err(OpError::new(
                 "unsupported_notify_field",
@@ -513,6 +572,7 @@ fn slash_skill_dispatch(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
 }
 
 fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    reply_questions::reject_fields(&request.args, "a reply")?;
     if ["priority", "reply_required", "requires_ack"]
         .iter()
         .any(|key| request.args.contains_key(*key))
@@ -729,7 +789,7 @@ fn reply_cross_group(
     Ok(result)
 }
 
-fn reject_retired_reply(home: &HomeLayout, target: &Event) -> Result<(), OpError> {
+pub(super) fn reject_retired_reply(home: &HomeLayout, target: &Event) -> Result<(), OpError> {
     use cccc_core::group_bridge_retirement::{is_retired_message, is_retired_receipt};
     let path = store(home)?
         .ledger_path(&target.group_id)

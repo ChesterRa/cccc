@@ -1712,6 +1712,7 @@ Notes:
 - Successful deletion MUST retire all Direct records and disposable catalogs owned by the deleted Group, preserve retired IDs, and release their relation quota. Reset uses the same deletion cleanup; it MUST NOT transfer those grants to the replacement Group.
 - Successful deletion MUST retire every Web Model conversation binding and pending pairing belonging to the deleted Group, without revoking the shared connector or other Groups’ authority. A failure that leaves the group registered and available MUST preserve its pre-delete connector authority.
 - Successful deletion MUST retire every local external-space binding, queued job, and referenced job payload owned by the deleted group. It MUST NOT delete the user's remote notebook or other provider space. A failure that leaves the group registered and available MUST restore the pre-delete local binding and queue state.
+- Deletion first renames the Group directory away. While the original Group path is absent, a ledger read, follow or append that opens the Group's ledger or ledger lock by that path, such as the next poll of an open event stream, MUST fail with not found. It MUST NOT recreate the Group directory or its ledger lock, which would leave an empty directory behind and block the rename that restores the Group when deletion fails. An operation that already held them open when the rename happened may complete.
 
 #### `group_use`
 
@@ -3284,9 +3285,41 @@ Notes:
 - New or changed cron expressions must parse before saving. An existing rule's
   unchanged expression may be preserved even if invalid, so it does not block
   edits to other rules; an invalid expression does not fire.
-- `group_state` and `actor_control` actions require an `at` trigger. Actor
-  callers may manage only `notify` rules; a peer may mutate only its own
-  personal notification rule targeting itself.
+- `group_state` and `actor_control` actions require an `at` trigger.
+- Writes (`group_automation_update`, `group_automation_manage` and
+  `group_automation_reset_baseline`) are authorized by their effect. `user` and
+  `system` may change any rule. An Actor caller acts in its effective role in
+  the Group. A foreman may change every `notify` rule. A peer may change only
+  its own reminders: `notify` rules with `scope: "personal"` and
+  `owner_actor_id` and `to` set to itself. Every rule that a request would add,
+  change or remove must be one the caller may change, in both its saved and its
+  submitted form, so a rule cannot be converted, disabled or dropped past the
+  check. The rules the caller may not change keep their relative order, because
+  rules due at the same time run in array order. Only `user`, `system` and the
+  foreman may change `snippets` or the `standup` override. A refused request
+  returns `permission_denied` and writes nothing. To a peer, the error names
+  only rules it can see and counts the others.
+- For a peer, a submitted rule without `scope` is `personal`, and a personal
+  rule without `owner_actor_id` or `to` is the peer's own. Values it sends are
+  kept and authorized as sent.
+- A Group that has never saved a rules list uses the built-in baseline, a
+  disabled `standup` rule. Writes start from the rules in force, so the
+  baseline stays listed after the first change. A saved empty list stays
+  empty.
+- `group_automation_update` and `replace_all_rules` save `snippets` the same
+  way. A `standup` text equal to the built-in one is not stored. A different
+  one becomes the `standup` override, which takes effect when the rule fires.
+- A saved `rules`, `snippets` or `snippet_overrides` value of the wrong type is
+  not treated as unsaved, and a saved rule that is not an object, has no id or
+  repeats another rule's id is not dropped. `group_automation_manage`, and the
+  writes of Actor callers, return `group_automation_state_invalid` instead of
+  replacing them. `user` and `system` can replace them with
+  `group_automation_update` or `group_automation_reset_baseline`.
+  `group_automation_state` reads a value of the wrong type as the baseline.
+- Rule ids are compared exactly as saved, surrounding spaces included, as the
+  scheduler keys each rule's state by its id. Only a blank id is refused.
+- `set_rule_enabled` requires `enabled` to be `true` or `false`. Any other
+  value, or none, fails the request with `invalid_request` and saves nothing.
 - The first tick of a newly enabled interval rule establishes its clock and
   does not fire immediately. A paused or stopped group runs no automation. An
   idle group runs user rules but suppresses the built-in `standup` rule.
@@ -4023,7 +4056,7 @@ Sources whose detected scopes share a `scope_key` but have different physical ro
 
 For a new conversation, the caller source MUST be the first Actor when supplied; otherwise, preserve the explicit source selection order. Duplicate source IDs represent one member. Existing Group role semantics therefore make the caller or first selection foreman. For a new human-created Group, the Web MAY let the user choose Foreman among selected sources; it MUST place that source first in the submitted `source_ids`, preserving the relative order of the remaining selections. The default-directory preview MUST follow that source. One selected source is automatic; joining an existing Group MUST NOT expose this as a role-change control. This does not add an independent role field or change native-initiated caller ordering. Direct reuse compares the canonical source set independently of order and MUST NOT reorder existing Actors or change their roles.
 
-`local_session_send` (Group write with `group_id`, global write otherwise): `{ source_ids?: string[], source_id?: string, group_id?: string, text: string, to?: string[], message_mode?: "send"|"request_reply"|"mail", client_id?: string, insight?: string }`. Without `group_id`, creates/reuses a direct conversation from the selected sources; `to` MUST be rejected, and recipients MUST be the enabled Actors for the selected `source_ids`, not additional members of a reused Group. With `group_id`, `source_ids` MUST be rejected and sending requires the caller source to be an enabled member; absent `source_id` means human `user`, and absent `to` retains ordinary `@all` semantics. Uses ordinary messaging validation, ledger, delivery claims and receipts. Returns the normal send result plus `group_id`. Native MCP MUST supply the current source identity itself, require explicit Group IDs for ordinary Group tools, enforce membership, and apply normal peer-insight rules. Native `cccc_session send` and native-profile `cccc_message_send` default to Send; explicit Mail remains available. MCP `cccc_session send`, `cccc_message_send` and `cccc_message_reply` MUST expose `mode` and translate it to IPC `message_mode` at the MCP boundary. They MUST reject `message_mode` in MCP input, including duplicate or conflicting names, and invalid mode types/values before appending a message or creating a conversation; they MUST NOT silently replace the requested mode with a default. This port default MUST NOT change ordinary managed-Actor/IPC Mail defaults. Native Preamble and tool descriptions MUST agree and include the explicit Group ID for bootstrap and Group tools. Existing Group tools require valid live native lifecycle identity and enabled membership, not current receive readiness; a lost Monitor/queue MUST NOT by itself revoke read/reply/leave access. Explicitly disabled membership and ended native identity remain unauthorized for ordinary Group tools. Native MCP MUST capture `{ group_id, actor_id, actor_generation, source_id, session_revision }` from trusted lifecycle metadata and membership discovery, never tool arguments. The internal `_cccc_native_binding` snapshot MUST accompany Group operations and be revalidated under the daemon operation permit before execution. The current Actor must be enabled and match the captured source and generation; the live lifecycle record must match the captured revision. Local file/tool and bootstrap paths MUST preserve and revalidate the same snapshot. Source or Actor ID reuse MUST NOT transfer an in-flight request to a replacement membership. This metadata MUST NOT be persisted as message content.
+`local_session_send` (Group write with `group_id`, global write otherwise): `{ source_ids?: string[], source_id?: string, group_id?: string, text: string, to?: string[], message_mode?: "send"|"request_reply"|"mail", client_id?: string, insight?: string }`. Without `group_id`, creates/reuses a direct conversation from the selected sources; a non-empty `to` MUST be rejected, and recipients MUST be the enabled Actors for the selected `source_ids`, not additional members of a reused Group. With `group_id`, a non-empty `source_ids` MUST be rejected and sending requires the caller source to be an enabled member; absent `source_id` means human `user`, and absent `to` retains ordinary `@all` semantics. A null or empty `to` or `source_ids` counts as absent, as CCCS does for an empty `to`, so a client that fills unused optional lists with `[]` keeps the addressing mode it chose. Uses ordinary messaging validation, ledger, delivery claims and receipts. Returns the normal send result plus `group_id`. Native MCP MUST supply the current source identity itself, require explicit Group IDs for ordinary Group tools, enforce membership, and apply normal peer-insight rules. Native `cccc_session send` and native-profile `cccc_message_send` default to Send; explicit Mail remains available. MCP `cccc_session send`, `cccc_message_send` and `cccc_message_reply` MUST expose `mode` and translate it to IPC `message_mode` at the MCP boundary. They MUST reject `message_mode` in MCP input, including duplicate or conflicting names, and invalid mode types/values before appending a message or creating a conversation; they MUST NOT silently replace the requested mode with a default. This port default MUST NOT change ordinary managed-Actor/IPC Mail defaults. Native Preamble and tool descriptions MUST agree and include the explicit Group ID for bootstrap and Group tools. Existing Group tools require valid live native lifecycle identity and enabled membership, not current receive readiness; a lost Monitor/queue MUST NOT by itself revoke read/reply/leave access. Explicitly disabled membership and ended native identity remain unauthorized for ordinary Group tools. Native MCP MUST capture `{ group_id, actor_id, actor_generation, source_id, session_revision }` from trusted lifecycle metadata and membership discovery, never tool arguments. The internal `_cccc_native_binding` snapshot MUST accompany Group operations and be revalidated under the daemon operation permit before execution. The current Actor must be enabled and match the captured source and generation; the live lifecycle record must match the captured revision. Local file/tool and bootstrap paths MUST preserve and revalidate the same snapshot. Source or Actor ID reuse MUST NOT transfer an in-flight request to a replacement membership. This metadata MUST NOT be persisted as message content.
 
 `local_session_leave` (Group write): `{ source_id, group_id }` stops only that membership's CCCC access.
 
@@ -4381,6 +4414,23 @@ need not match the sender filter. An unknown cursor returns `event_not_found`.
 For HTTP `GET /api/v1/groups/{group_id}/ledger/search`, `by_any` is a JSON-encoded
 array query parameter. Existing single-sender `by` queries retain their semantics.
 
+With `with_obligation_status`, `ledger_search`, `ledger_tail` and
+`ledger_window` decorate each event with the fields `ledger_statuses` reports
+for it, prefixed with `_` (`_obligation_status`, `_user_request`, and others).
+For a `request_reply` message that gives the user an obligation,
+`ledger_statuses` adds:
+
+```ts
+user_request: {
+  question: "valid" | "none" | "unavailable" // CCCS §6.4 reading rule
+  requester: "available" | "unavailable" | "unknown" | "unsupported"
+  reply_event_id?: string     // the user's reply, once it closed the request
+  reply_route?: "composer"    // with "unsupported": answer with an ordinary reply
+}
+```
+
+Whether the request is open remains `obligation_status.user`.
+
 
 #### `send`
 
@@ -4405,6 +4455,12 @@ Args (core):
   dst_group_id?: string         // optional "send record" metadata (source messages)
   dst_to?: string[]
   dst_message_mode?: "send" | "request_reply" | "mail"
+  question?: {                  // a choice for the user; see CCCS §6.4
+    v: 1
+    prompt: string
+    options?: { label: string; consequence?: string }[] // none, or 2-3; ids are assigned A, B, C
+    recommended?: { option_id: "A" | "B" | "C"; reason: string }
+  }
 }
 ```
 
@@ -4415,6 +4471,25 @@ Result:
   message_mode: "send" | "request_reply" | "mail"
 }
 ```
+
+With `question`, the message MUST use `message_mode="request_reply"`, address
+`user` alone after recipient normalization, come from a sender other than
+`user`, and have no destination Group, so that it is always one the user's
+open requests list (`user_reply_requests`). The daemon assigns option ids in
+order, keeps `text` as the question's `context`, stores the question and
+replaces `text` with the text generated from it (CCCS §6.4), all before any
+other validation or write. An invalid question fails with `invalid_question`
+and `details: { field, limit?, actual? }`, where limits count Unicode scalar
+values. A non-null `answer` is never accepted from `send` arguments
+(`invalid_args`); a null `question` or `answer` counts as absent.
+A `client_id` on a question is checked after the mode, audience and other
+normalization above, so a retry that a question cannot have still fails as
+such. It replays an earlier message from the same sender only when the
+normalized message is the same, apart from the sender's title, runtime and
+avatar recorded with it; any other message under that `client_id` fails with
+`idempotency_conflict`. The lookup requires every stored record to read as a
+complete event (see `user_reply_requests`), and a lookup that cannot complete
+fails with `idempotency_unavailable` instead of creating a second question.
 
 `send` and `request_reply` preflight the concrete runtime audience, append the
 message, and then attempt prompt delivery. `mail` appends only; it MUST NOT wake,
@@ -4628,6 +4703,11 @@ Args:
 }
 ```
 
+`reply`, `send_files`, `send_cross_group` and `connect_send` reject a non-null
+`question` with `invalid_question` and a non-null `answer` with `invalid_args`
+before any write (`send_files` also before reading any file); a question is
+sent with `send`, and the user answers it with `reply_request_answer`.
+
 Local cross-group replies route qualified recipients back to the parent message's
 source Group. Both ledger copies MUST reference their own Group's parent event:
 `reply_to` in the caller's Group and `dst_reply_to` for the destination parent on
@@ -4783,6 +4863,142 @@ Result:
 
 Only the source sender or `user` may cancel. The operation is idempotent for an
 already-cancelled source event.
+
+#### `reply_request_answer`
+
+Answer one open `request_reply` message to the user in place, as the user.
+
+Args:
+```ts
+{
+  group_id: string
+  source_event_id: string
+  by?: "user"                  // any other caller is refused (permission_denied)
+  client_id: string            // required; at most 200 characters
+  answer: { v: 1; option_id: string } | { v: 1; text: string }
+}
+```
+
+Result: the same as `send`, plus `duplicate: true` when it returns an earlier
+answer.
+
+The answer is appended as the user's `send` reply to the requester, with
+`reply_to`, `quote_text` and `client_id`, and is delivered like any reply. When
+the request carries a valid question (CCCS §6.4), the reply stores `answer`,
+its text is generated from it, and `quote_text` quotes the question's
+`prompt`, so the requester sees which question was answered even when a long
+context fills the start of the request's text. A request without one (or whose
+question is unavailable) accepts only `{ text }`, appended as an ordinary reply
+in the user's words without `answer` and quoting the request's text.
+
+Under the Group's write permit, in this order:
+- Every stored record of the Group's ledger MUST read as a complete event
+  (see `user_reply_requests`); otherwise the answer fails with
+  `ledger_unreadable`, because the unreadable record could be an earlier
+  answer or the request's closure.
+- A `client_id` already used by the user returns that earlier result when it
+  was this answer: a `send` reply to the same request, addressed to the
+  requester alone, with the same answer (free text compared exactly). It does
+  so even after the request closed or the requester left. Any other message
+  under that `client_id`, such as an ordinary reply to someone else or a Mail,
+  fails with `idempotency_conflict`. A lookup that cannot complete fails with
+  `idempotency_unavailable`; it is never treated as absent.
+- The source MUST be a `request_reply` message giving the user an obligation
+  (`invalid_source_event`), and that obligation MUST be open
+  (`reply_request_closed`, `details.state` = `answered` | `cancelled`).
+- The requester MUST be proven to be the Actor registration that asked, as in
+  CCCS §6.4: `requester_unavailable` when it was removed or added again since,
+  `requester_unknown` when the ledger cannot prove it, and
+  `unsupported_request_source` (`details.reply_route="composer"`) for requests
+  relayed from another Group or a Connect instance, which take an ordinary
+  `reply`.
+- An `option_id` MUST name an offered option (`invalid_answer`); on a question
+  that cannot be read reliably it fails with `question_unavailable`.
+- The body accepts only the arguments above (`invalid_args`).
+
+Recording the answer closes the obligation; delivery to the requester is
+reported separately, as for any message. Unlike an ordinary user message to
+an Actor, answering MUST NOT change the Group's state or any Actor's
+`enabled` flag: it does not resume a paused or stopped Group or re-enable the
+requester. In a paused or stopped Group, or for a disabled requester, the
+answer is recorded without being delivered, and delivery follows the ordinary
+behavior once the user resumes the Group or enables the Actor. Clients
+therefore report an answer as recorded, not as received.
+
+#### `user_reply_requests`
+
+Read the user's open requests in one Group, newest page first.
+
+Args:
+```ts
+{ group_id: string; by?: "user"; before?: string; limit?: number } // limit 1..200, default 50
+```
+
+Result:
+```ts
+{
+  events: CCCSEventV1[]                // this page, oldest first
+  statuses: Record<string, MessageStatus> // as ledger_statuses, for these events
+  total: number                        // open requests in the Group
+  has_more: boolean
+  before?: string                      // opaque cursor for the next, older page
+}
+```
+
+A request is open until the user replies to it or it is cancelled (CCCS §6.3).
+Pages and totals come from one projection of the ledger kept from committed
+byte offsets, so a request that closes or arrives between pages neither shifts
+nor hides another. Unlike ordinary ledger reads, which skip records that do not
+decode, the projection requires every stored record, including an unterminated
+last one, to be a complete event with its stored `id` and `ts`; a complete
+event that lacks only its final newline is read. Any other bytes fail the
+operation with `ledger_unreadable`, since the unreadable record could be a
+reply or cancellation that closed a request. So does a history that the
+per-event status in `ledger_statuses` would read differently: a request id
+used by more than one record, or a reply or cancellation stored before the
+request it names. Ordinary replies remain available; the in-place view
+returns once the ledger is repaired.
+
+The cursor records the identity, length and modification time of every
+ledger source at the time of its page. It remains valid while every source
+is unchanged except that the active ledger file may have grown. A source of
+the same length with another modification time, or a replaced, truncated,
+rotated or compacted source, fails the next page with `cursor_stale`; the
+caller reads again from the newest. This relies on the ledger's append-only
+invariant: an old byte edited in place without a change in file metadata is
+not detectable. A malformed cursor fails with `invalid_cursor`. A cursor
+only marks a position and is not authenticated, so an altered cursor that
+still parses reads from the position it names. Callers other than the user
+are refused (`permission_denied`).
+
+#### `user_reply_requests_summary`
+
+Count the user's open requests per Group.
+
+Args:
+```ts
+{ by?: "user"; group_ids?: string[] } // omitted: every Group
+```
+
+Result:
+```ts
+{
+  as_of: string
+  groups: (
+    | { group_id: string; state: "fresh"; pending: number; oldest_ts: string | null; revision: string; as_of: string }
+    | { group_id: string; state: "unknown"; pending: null; error: "group_not_found" | "unreadable"; as_of: string }
+  )[]
+}
+```
+
+Each Group is computed from its current ledger when queried, using the same
+incremental projection as `user_reply_requests`; polling reads only what was
+appended since the last query. `revision` changes whenever the Group's ledger
+sources change. A Group that cannot be read, including one with a damaged
+record, is `unknown`, never `pending: 0`.
+Callers other than the user are refused. The Web port passes the Groups the
+principal may open and refuses both reads, as well as the answer, in
+read-only (exhibit) mode.
 
 #### `message_deliver`
 
@@ -5800,11 +6016,11 @@ Result:
 
 #### `debug_tail_logs`
 
-Tail daemon/web/im-bridge log files (developer mode).
+Tail daemon/web/im-bridge log files or the daemon diagnostics log (developer mode).
 
 Args:
 ```ts
-{ component: "daemon" | "ccccd" | "web" | "im" | "im_bridge"; group_id?: string; by?: string; lines?: number }
+{ component: "daemon" | "ccccd" | "daemon_diagnostics" | "web" | "im" | "im_bridge"; group_id?: string; by?: string; lines?: number }
 ```
 
 Result:
@@ -5812,13 +6028,19 @@ Result:
 { component: string; group_id: string; path: string; lines: string[] }
 ```
 
+Notes:
+- `daemon_diagnostics` reads the diagnostics log of a daemon started by the `cccc` CLI: `ccccd-diagnostics.log` and its previous file `ccccd-diagnostics.log.1` in the daemon directory, each at most 1 MiB. `lines` counts across both files, oldest first. Reading, clearing and rotation hold the same lock. A daemon started through the library's `run()` does not install it; an embedding application may opt in with `run_with_diagnostics()`.
+- Each line is a JSON object whose `kind` is `start`, `rotation` or `event`, with `ts`, `version` and `source_id`. An `event` line adds `level`, `module` and `line`, and when known `file` (relative to the source tree), `group_id`, `actor_id`, `event_id`, `code` and `action`. Only WARN and ERROR events from the daemon, core and runtime crates are recorded. Message text, error text, paths and provider output are never recorded; `code` and `action` come from fixed allow-lists.
+- Repeats with the same level, source location, Group, Actor, code and action are written at most once a minute; the next written line carries `suppressed`, the number held back. Repeats held back when the repetition stops are not written.
+- Diagnostics are best effort: a write that finds the in-process writer or the file lock busy is skipped rather than waiting for it. A single write may still be delayed by the filesystem, and a write error does not change the result of any daemon operation. The `daemon` log (`ccccd.log`) is separate and not bounded by these limits.
+
 #### `debug_clear_logs`
 
-Truncate daemon/web/im-bridge log files (developer mode).
+Truncate daemon/web/im-bridge log files or the daemon diagnostics log (developer mode). `daemon_diagnostics` clears both of its files.
 
 Args:
 ```ts
-{ component: "daemon" | "ccccd" | "web" | "im" | "im_bridge"; group_id?: string; by?: string }
+{ component: "daemon" | "ccccd" | "daemon_diagnostics" | "web" | "im" | "im_bridge"; group_id?: string; by?: string }
 ```
 
 Result:

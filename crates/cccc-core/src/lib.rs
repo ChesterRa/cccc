@@ -60,6 +60,7 @@ pub mod scope;
 pub mod settings;
 pub mod space_credentials;
 pub mod system_prompt;
+pub mod user_requests;
 pub mod voice_notifications;
 pub mod voice_recording_lease;
 pub mod voice_secretary;

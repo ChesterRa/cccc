@@ -9,6 +9,46 @@ import { MessageActions } from "./MessageActions";
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 describe("message chrome", () => {
+  it("shows one reply-request label and preserves recipient progress", () => {
+    const props = {
+      actorById: new Map(),
+      actors: [],
+      displayNameMap: new Map(),
+      agentState: null,
+      taskById: new Map(),
+      isDark: false,
+      groupId: "g",
+      groupLabelById: {},
+      onReply: vi.fn(),
+      onShowRecipients: vi.fn(),
+    };
+    const host = document.createElement("div");
+    const message = {
+      id: "event-1",
+      kind: "chat.message",
+      by: "worker",
+      data: { text: "Question", to: ["user"], message_mode: "request_reply" },
+    };
+    host.innerHTML = renderToStaticMarkup(<MessageBubble {...props} event={message} />);
+    expect(host.textContent?.match(/needReply/g)).toHaveLength(1);
+    expect(host.querySelector(".message-footer-no-status")).not.toBeNull();
+
+    host.innerHTML = renderToStaticMarkup(
+      <MessageBubble
+        {...props}
+        event={{
+          ...message,
+          data: { ...message.data, to: ["other"] },
+          _obligation_status: {
+            other: { reply_requested: true, replied: false, cancelled: false, delivery_state: "" },
+          },
+        }}
+      />,
+    );
+    expect(host.textContent?.match(/needReply/g)).toHaveLength(1);
+    expect(host.textContent).toContain("reply 0/1");
+  });
+
   it("keeps Mail, recipients and failure evidence readable in a read-only grouped row", () => {
     const markup = renderToStaticMarkup(
       <MessageBubble
@@ -141,6 +181,37 @@ describe("message chrome", () => {
         ),
       );
       expect(host.querySelector("button")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+    }
+  });
+
+  it("removes message actions when an existing row becomes read-only", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const props = {
+      event: { id: "event-1", kind: "chat.message", by: "worker", data: { text: "hello" } },
+      actorById: new Map(),
+      actors: [],
+      displayNameMap: new Map(),
+      agentState: null,
+      taskById: new Map(),
+      isDark: false,
+      groupId: "g",
+      groupLabelById: {},
+      onReply: vi.fn(),
+      onShowRecipients: vi.fn(),
+    };
+    try {
+      await act(async () => root.render(<MessageBubble {...props} readOnly={false} />));
+      expect(host.querySelector('[aria-label="messageActions"]')).not.toBeNull();
+      await act(async () => root.render(<MessageBubble {...props} readOnly />));
+      expect(host.querySelector('[aria-label="messageActions"]')).toBeNull();
+      await act(async () => root.render(<MessageBubble {...props} readOnly={false} />));
+      expect(host.querySelector('[aria-label="messageActions"]')).not.toBeNull();
     } finally {
       await act(async () => root.unmount());
       host.remove();

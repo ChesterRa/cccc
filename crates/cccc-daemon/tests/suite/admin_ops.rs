@@ -480,6 +480,13 @@ fn diagnostics_are_developer_gated_and_logs_are_bounded() {
         .observability
         .insert("developer_mode".into(), Value::Bool(true));
     settings::save(&home, &global).expect("save");
+    let empty = ok(
+        &home,
+        "debug_tail_logs",
+        json!({"component":"daemon_diagnostics","lines":2}),
+    );
+    assert_eq!(empty.result["lines"], json!([]));
+    assert!(!home.daemon_dir().join("ccccd-diagnostics.lock").exists());
     std::fs::write(home.daemon_dir().join("ccccd.log"), "one\ntwo\nthree\n").expect("log");
     let tail = ok(
         &home,
@@ -495,6 +502,32 @@ fn diagnostics_are_developer_gated_and_logs_are_bounded() {
     assert!(
         std::fs::read_to_string(home.daemon_dir().join("ccccd.log"))
             .expect("log")
+            .is_empty()
+    );
+
+    let diagnostics = home.daemon_dir().join("ccccd-diagnostics.log");
+    let previous = home.daemon_dir().join("ccccd-diagnostics.log.1");
+    std::fs::write(&previous, "old-1\nold-2\n").expect("previous diagnostics");
+    std::fs::write(&diagnostics, "new-1\nnew-2\n").expect("current diagnostics");
+    let tail = ok(
+        &home,
+        "debug_tail_logs",
+        json!({"component":"daemon_diagnostics","lines":3}),
+    );
+    assert_eq!(tail.result["lines"], json!(["old-2", "new-1", "new-2"]));
+    ok(
+        &home,
+        "debug_clear_logs",
+        json!({"component":"daemon_diagnostics","by":"user"}),
+    );
+    assert!(
+        std::fs::read_to_string(diagnostics)
+            .expect("current")
+            .is_empty()
+    );
+    assert!(
+        std::fs::read_to_string(previous)
+            .expect("previous")
             .is_empty()
     );
 }

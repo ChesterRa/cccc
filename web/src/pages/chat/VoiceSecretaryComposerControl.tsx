@@ -243,6 +243,7 @@ export type VoiceSecretaryComposerControlProps = {
   composerContext?: Record<string, unknown>;
   onPromptDraft?: (text: string, opts?: { mode?: "replace" | "append" }) => void;
   onFocusComposer?: () => void;
+  onCompactBlockChange?: (blocked: boolean) => void;
   initiallyOpen?: boolean;
   statusPortalTarget?: HTMLElement | null;
 };
@@ -315,6 +316,7 @@ export function VoiceSecretaryComposerControl({
   composerContext = {},
   onPromptDraft,
   onFocusComposer,
+  onCompactBlockChange,
   initiallyOpen = false,
 }: VoiceSecretaryComposerControlProps) {
   const readCurrentComposerText = useCallback(
@@ -5104,6 +5106,19 @@ export function VoiceSecretaryComposerControl({
     askSummary: pendingAskFeedback && !askNotice.hidden ? pendingAskFeedbackSummaryText : "",
     transcriptSummary: liveTranscriptSummaryText,
   });
+  const compactBlocked = Boolean(
+    open ||
+    executionOpen ||
+    recording ||
+    recordingStarting ||
+    composerActivity ||
+    composerErrorText ||
+    speechErrorHint,
+  );
+  useEffect(() => {
+    onCompactBlockChange?.(compactBlocked);
+  }, [compactBlocked, onCompactBlockChange]);
+  useEffect(() => () => onCompactBlockChange?.(false), [onCompactBlockChange]);
   const composerAnnouncement =
     composerActivity === "recording"
       ? t("voiceSecretaryRecording")
@@ -5873,6 +5888,7 @@ export function VoiceSecretaryComposerControl({
             </div>
           ) : null}
           <div
+            data-voice-assistant-row-control
             className={classNames(
               "inline-flex h-[44px] min-w-0 max-w-full shrink items-center gap-0.5 rounded-lg border transition-colors @min-[600px]/composer:h-9 @min-[600px]/composer:shrink-0 @min-[600px]/composer:p-0.5",
               recording

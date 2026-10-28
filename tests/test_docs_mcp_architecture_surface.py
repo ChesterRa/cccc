@@ -10,7 +10,8 @@ class TestDocsMcpArchitectureSurface(unittest.TestCase):
 
         self.assertNotIn("MCP tools across 4 namespaces", text)
         self.assertIn("capability groups", text)
-        self.assertIn("cccc_automation_manage", text)
+        self.assertIn("`cccc_automation`", text)
+        self.assertNotIn("cccc_automation_manage", text)
         self.assertIn("cccc_terminal_tail", text)
         self.assertIn("cccc_debug_*", text)
         self.assertIn("message_mode", text)

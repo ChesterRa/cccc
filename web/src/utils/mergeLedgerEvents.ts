@@ -56,6 +56,9 @@ export function mergeEventWithExistingStatus(
       incoming._obligation_status,
       existing._obligation_status,
     ),
+    _user_request:
+      incoming._user_request ??
+      (incoming._obligation_status === undefined ? existing._user_request : undefined),
     _connect_delivery: mergeConnectDelivery(incoming._connect_delivery, existing._connect_delivery),
     _connect_cancellation: mergeConnectDelivery(
       incoming._connect_cancellation,

@@ -13,6 +13,6 @@ describe("responsiveLayout", () => {
   });
 
   it("reserves the absolute mobile app header once", () => {
-    expect(MOBILE_APP_HEADER_HEIGHT_PX).toBe(56);
+    expect(MOBILE_APP_HEADER_HEIGHT_PX).toBe(48);
   });
 });

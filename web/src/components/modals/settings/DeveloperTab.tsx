@@ -1,6 +1,7 @@
 // DeveloperTab configures developer mode and its diagnostics.
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { LogComponent } from "../../../services/api/diagnostics";
 import { copyTextToClipboard } from "../../../utils/copy";
 import { buildMismatch, type RuntimeBuildInfo } from "../../../utils/runtimeBuildInfo";
 import type { RuntimeVisibilityMode } from "../../../utils/runtimeVisibility";
@@ -43,8 +44,8 @@ interface DeveloperTabProps {
   onLoadDebugSnapshot: () => void;
   onClearDebugSnapshot: () => void;
   // Log tail
-  logComponent: "daemon" | "web" | "im";
-  setLogComponent: (v: "daemon" | "web" | "im") => void;
+  logComponent: LogComponent;
+  setLogComponent: (v: LogComponent) => void;
   logLines: number;
   setLogLines: (v: number) => void;
   logText: string;
@@ -381,6 +382,7 @@ export function DeveloperTab({
             value={logComponent}
             options={[
               { value: "daemon", label: "daemon" },
+              { value: "daemon_diagnostics", label: t("developer.daemonDiagnostics") },
               { value: "web", label: "web" },
               { value: "im", label: "im" },
             ]}

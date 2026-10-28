@@ -838,7 +838,7 @@ it("offers the terminal /setup path, the enable commands and a collapsed trouble
     "cccc sessions enable --runtime pi",
     "cccc sessions enable --runtime opencode",
     "approve the CCCC hooks when asked (/hooks)",
-    "/reload-plugins",
+    "claude --resume picks the conversation to continue",
     "Pi: run /reload",
     "OpenCode V2: reopen the original session",
   ]) {

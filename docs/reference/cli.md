@@ -29,27 +29,50 @@ stopped. Offline means it was not stopped or paused, but no actor is running:
 for example a new Group, or one whose actors exited or whose native sessions are
 closed. RUNNING counts the managed actors that are running and the native
 members ready to receive from that Group; it is neither the number of members
-nor the number of busy models.
+nor the number of busy models. The native sessions table has APP, DIRECTORY,
+STATUS and ID columns; ID is the end of the session's source id, which
+`/sessions` shows in full.
 
-On the main screen, Up/Down selects a Group and Enter opens it in `/groups`.
-Type `/` to list the commands: Up/Down moves through the list, Tab completes the
-selected command without running it, Enter runs it, and Esc closes the list.
-Left/Right, Home/End, Delete and Ctrl+A/E/U edit the command line. Pasting only
-inserts text: in terminals with bracketed paste, pasted newlines do not run a
-command. Commands:
+On the regular screens, browsing and every action use the arrow keys, Enter, Tab
+and Esc, without letter shortcuts. Up/Down moves the highlight, Enter opens or runs the highlighted
+row, and Esc goes back one level or cancels a confirmation. On the main screen, Up/Down selects a Group, PgUp/PgDn pages through a list
+longer than the screen, and Enter opens its page. Tab on an empty command line, or typing `/`, opens the command menu:
+Up/Down moves through it, Tab completes the selected command without running
+it, Enter runs it, and Esc closes it. Left/Right, Home/End, Delete and
+Ctrl+A/E/U edit a typed command. Pasting only inserts text: in terminals with
+bracketed paste, pasted newlines do not run a command.
 
-- `/groups` lists the Groups. Pick one with Up/Down (or j/k) to see its recorded
-  state, how many tasks it has in each state, its actors and a link that opens
-  it in the Web UI. `s` starts it (resumes a paused one) and `x` stops it, each
-  after a confirmation that names the Group and what will happen. Starting runs
-  the enabled actors and lets enabled native members receive again; stopping
-  stops the managed actors and stops delivery to native members, whose apps stay
-  open. `t` lists the Group's tasks: the unfinished ones (Active, then Planned),
-  or the Done ones after `d`; PgUp/PgDn pages through a long list. Enter shows
-  one task read-only, with its status, assignee, checklist, notes and outcome;
-  tasks are edited in the Web UI. `b` or Esc goes back one level.
+A Group's page shows its recorded state, how many tasks it has in each state,
+its actors and a link that opens it in the Web UI. Its rows are Tasks and the
+actions the Group's state allows: Start for a stopped Group (and Stop while it
+still reports running actors), Resume and Stop for a paused one, and Start and
+Stop otherwise. Each action asks for a confirmation
+that names the Group and what will happen. The confirmation starts on Cancel:
+choose the action with Up/Down and press Enter to run it, so pressing Enter
+twice changes nothing. Starting runs the enabled actors that
+are not running and lets enabled native members receive again, so Start also
+helps a running Group whose other actors have exited; stopping stops the managed
+actors and stops delivery to native members, whose apps stay open. Tasks lists the Group's tasks: Left/Right switches between the unfinished
+ones (Active, then Planned) and the Done ones, and PgUp/PgDn pages through a
+long list. Enter shows one task read-only, with its status, assignee,
+checklist, notes and outcome; tasks are edited in the Web UI.
+
+When agents wait for your answer in a Group, the main screen shows the number
+after its name (`[~3]` is from an earlier read, `[?]` cannot be confirmed), and
+its page adds a Waiting for you row. That row lists the open requests and
+PgUp/PgDn pages through them; Enter opens one. In a request, Up/Down moves
+between its options, Other and Send answer, and Enter selects the highlighted
+row: nothing is chosen until you press Enter on it. Other opens an editor where
+Ctrl+J starts a new line and Enter or Esc returns. Send answer records the
+answer; when the result is uncertain, only the same answer can be retried.
+Requests that cannot be answered here, such as ones from another Group, say so
+and are answered in the Web conversation.
+
+Commands:
+
+- `/groups` opens the page of the Group selected on the main screen.
 - `/sessions` lists every native session this CCCC knows. Enter shows the
-  selected session's details, and `b` or Esc goes back.
+  selected session's details.
 - `/setup` connects Codex, Claude Code, Pi or OpenCode sessions; see
   [Native sessions](../guide/local-sessions).
 - `/help` lists the commands and keys. It scrolls with Up/Down when the terminal

@@ -1190,6 +1190,7 @@
     "logTailHint": "Tails local log files (developer mode only). Component \"im\" is group-scoped.",
     "imLogsRequireGroup": "IM logs require a group_id; open Settings from a group.",
     "component": "Component",
+    "daemonDiagnostics": "Daemon diagnostics",
     "lines": "Lines",
     "clearTruncate": "Clear (truncate)",
     "refresh": "Refresh",

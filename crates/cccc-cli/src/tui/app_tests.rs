@@ -1,4 +1,4 @@
-use super::{App, Effect, Notice, Screen, SetupStep};
+use super::{App, ConfirmChoice, Effect, Notice, Screen, SetupStep};
 use crate::host_state::{HostIntent, HostPhase};
 use crate::tui::sessions::SessionList;
 use crate::tui::setup::{InstallState, SetupCommand, SetupProgress};
@@ -49,6 +49,43 @@ fn quit_asks_the_host_once_and_then_ignores_typing() {
     assert!(!app.want().sessions);
     assert_eq!(submit(&mut app, "/quit"), None);
     assert_eq!(app.input, "");
+}
+
+#[test]
+fn main_group_paging_uses_the_number_of_rows_drawn() {
+    use crate::tui::groups::{GroupStatus, GroupSummary};
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::time::Instant;
+
+    let mut app = app();
+    let groups = (0..20)
+        .map(|index| GroupSummary {
+            group_id: format!("g_{index:02}"),
+            title: format!("Group {index}"),
+            status: GroupStatus::Running,
+            state: "active".into(),
+            running_actors: 1,
+        })
+        .collect();
+    app.groups.record(Ok(groups), Instant::now());
+    app.groups_view.selected = Some("g_00".into());
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+    terminal
+        .draw(|frame| crate::tui::view::render(frame, &app, Instant::now()))
+        .expect("draw");
+    let page = usize::from(app.groups_view.page.get());
+    assert!(page > 1 && page < 20);
+    // The displayed list is sorted by title (Group 10 precedes Group 2),
+    // so take the expected row from that order, not from its numeric id.
+    let expected = app.groups.groups[page].group_id.clone();
+    app.handle(press(KeyCode::PageDown));
+    assert_eq!(app.groups_view.selected.as_deref(), Some(expected.as_str()));
+    app.handle(press(KeyCode::PageUp));
+    assert_eq!(app.groups_view.selected.as_deref(), Some("g_00"));
+    type_text(&mut app, "/help");
+    app.handle(press(KeyCode::PageDown));
+    assert_eq!(app.input, "/help");
+    assert_eq!(app.groups_view.selected.as_deref(), Some("g_00"));
 }
 
 #[test]
@@ -162,6 +199,31 @@ fn tab_completes_the_visible_selection_without_running_it() {
     app.handle(press(KeyCode::Tab));
     assert_eq!(app.input, "/sessions");
     assert_eq!(app.screen, Screen::Main);
+}
+
+#[test]
+fn the_main_menu_opens_and_navigates_without_typing_commands() {
+    let mut app = app();
+    app.handle(press(KeyCode::Tab));
+    assert_eq!(app.input, "/");
+    assert_eq!(app.candidates().len(), super::COMMANDS.len());
+    app.handle(press(KeyCode::Esc));
+    assert_eq!(app.input, "");
+    assert!(app.candidates().is_empty());
+
+    app.handle(press(KeyCode::Tab));
+    app.handle(press(KeyCode::Down));
+    app.handle(press(KeyCode::Enter));
+    assert_eq!(app.screen, Screen::Sessions);
+    app.handle(press(KeyCode::Esc));
+    assert_eq!(app.screen, Screen::Main);
+    app.handle(press(KeyCode::Tab));
+    app.handle(press(KeyCode::Down));
+    app.handle(press(KeyCode::Down));
+    assert!(matches!(
+        app.handle(press(KeyCode::Enter)),
+        Some(Effect::Setup(SetupCommand::Check { .. }))
+    ));
 }
 
 #[test]
@@ -281,21 +343,21 @@ fn only_found_apps_can_be_picked_and_one_is_needed() {
     open_setup(&mut app);
     checks_arrive(&mut app);
     assert_eq!(app.picked(), Vec::new());
+    for _ in 0..5 {
+        app.handle(key(KeyCode::Down, KeyEventKind::Repeat));
+    }
     app.handle(press(KeyCode::Enter));
     assert_eq!(step(&app), Some(SetupStep::Select));
     assert_eq!(
         app.notice,
-        Some(Notice::Info("Pick at least one app with Space.".into()))
+        Some(Notice::Info("Pick at least one app first.".into()))
     );
-
-    for _ in 0..5 {
-        app.handle(key(KeyCode::Down, KeyEventKind::Repeat));
-    }
-    app.handle(press(KeyCode::Char(' ')));
+    app.handle(press(KeyCode::Up));
+    app.handle(press(KeyCode::Enter));
     assert_eq!(app.picked(), Vec::new(), "OpenCode was not found");
     app.handle(press(KeyCode::Up));
-    app.handle(press(KeyCode::Char(' ')));
-    app.handle(key(KeyCode::Char(' '), KeyEventKind::Repeat));
+    app.handle(press(KeyCode::Enter));
+    app.handle(key(KeyCode::Enter, KeyEventKind::Repeat));
     assert_eq!(app.picked(), vec![LocalSessionRuntime::Pi]);
 }
 
@@ -308,12 +370,20 @@ fn confirming_installs_the_picked_apps_in_order() {
     app.handle(press(KeyCode::Char(' ')));
     app.handle(press(KeyCode::Up));
     app.handle(press(KeyCode::Char(' ')));
+    for _ in 0..4 {
+        app.handle(press(KeyCode::Down));
+    }
     app.handle(press(KeyCode::Enter));
     assert_eq!(step(&app), Some(SetupStep::Confirm));
+    assert_eq!(
+        app.flow.as_ref().map(|flow| flow.confirm_choice),
+        Some(ConfirmChoice::Cancel)
+    );
     app.handle(press(KeyCode::Char('b')));
     assert_eq!(step(&app), Some(SetupStep::Select));
     app.handle(press(KeyCode::Enter));
     assert_eq!(app.handle(key(KeyCode::Enter, KeyEventKind::Repeat)), None);
+    app.handle(press(KeyCode::Down));
     assert_eq!(
         app.handle(press(KeyCode::Enter)),
         Some(Effect::Setup(SetupCommand::Install {
@@ -331,7 +401,11 @@ fn a_running_install_can_only_be_cancelled_then_left_once_done() {
     open_setup(&mut app);
     checks_arrive(&mut app);
     app.handle(press(KeyCode::Char(' ')));
+    for _ in 0..4 {
+        app.handle(press(KeyCode::Down));
+    }
     app.handle(press(KeyCode::Enter));
+    app.handle(press(KeyCode::Down));
     app.handle(press(KeyCode::Enter));
 
     assert_eq!(app.handle(press(KeyCode::Enter)), None);
@@ -346,6 +420,28 @@ fn a_running_install_can_only_be_cancelled_then_left_once_done() {
     assert_eq!(app.handle(press(KeyCode::Enter)), None);
     assert_eq!(app.screen, Screen::Main);
     assert_eq!(app.flow, None);
+}
+
+#[test]
+fn setup_confirmation_defaults_to_cancel_and_needs_an_explicit_selection() {
+    let mut app = app();
+    open_setup(&mut app);
+    checks_arrive(&mut app);
+    app.handle(press(KeyCode::Enter));
+    for _ in 0..4 {
+        app.handle(press(KeyCode::Down));
+    }
+    app.handle(press(KeyCode::Enter));
+    assert_eq!(step(&app), Some(SetupStep::Confirm));
+    assert_eq!(app.handle(press(KeyCode::Enter)), None);
+    assert_eq!(step(&app), Some(SetupStep::Select));
+    assert!(!app.install_running());
+    app.handle(press(KeyCode::Enter));
+    app.handle(press(KeyCode::Down));
+    assert!(matches!(
+        app.handle(press(KeyCode::Enter)),
+        Some(Effect::Setup(SetupCommand::Install { .. }))
+    ));
 }
 
 #[test]
@@ -380,7 +476,7 @@ fn without_a_list_yet_the_first_one_read_is_the_baseline() {
 
 mod groups {
     use super::{app, control, press, submit};
-    use crate::tui::app::{App, Effect, Notice, Screen};
+    use crate::tui::app::{App, ConfirmChoice, Effect, GroupChoice, Notice, Screen};
     use crate::tui::groups::{
         ActionProgress, GroupAction, GroupCommand, GroupList, GroupStatus, GroupSummary,
         MemberList, Outcome,
@@ -451,24 +547,24 @@ mod groups {
         assert!(want.groups && !want.sessions);
         assert_eq!(want.members.as_deref(), Some("g_a"));
         app.handle(press(KeyCode::Down));
-        assert_eq!(app.want().members.as_deref(), Some("g_b"));
-        app.handle(press(KeyCode::End));
-        assert_eq!(selected(&app), Some("g_c"));
         app.handle(press(KeyCode::Down));
-        assert_eq!(selected(&app), Some("g_c"), "the last stays selected");
-        app.handle(press(KeyCode::Home));
-        assert_eq!(selected(&app), Some("g_a"));
-        app.handle(press(KeyCode::Char('b')));
+        assert_eq!(app.groups_view.choice, GroupChoice::Stop);
+        assert_eq!(app.want().members.as_deref(), Some("g_a"));
+        app.handle(press(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Main);
         assert_eq!(app.want().members, None);
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Enter));
+        assert_eq!(app.want().members.as_deref(), Some("g_b"));
+        assert_eq!(app.groups_view.choice, GroupChoice::Tasks);
     }
 
     #[test]
     fn the_selection_follows_its_group_when_the_list_re_sorts() {
         let mut app = app();
         with_groups(&mut app, three());
-        open(&mut app);
         app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Enter));
         assert_eq!(selected(&app), Some("g_b"));
         // beta starts running and moves to the top.
         with_groups(
@@ -483,21 +579,25 @@ mod groups {
     }
 
     #[test]
-    fn s_and_x_ask_first_and_enter_sends_the_pinned_action() {
+    fn visible_actions_ask_first_and_enter_sends_the_pinned_action() {
         let mut app = app();
         with_groups(&mut app, three());
-        open(&mut app);
         // A paused group is worded as resuming, and can be stopped directly.
         app.handle(press(KeyCode::Down));
-        assert_eq!(app.handle(press(KeyCode::Char('s'))), None);
+        app.handle(press(KeyCode::Enter));
+        app.handle(press(KeyCode::Down));
+        assert_eq!(app.groups_view.choice, GroupChoice::Resume);
+        assert_eq!(app.handle(press(KeyCode::Enter)), None);
         let confirm = app.groups_view.confirm.clone().expect("confirmation");
         assert_eq!(confirm.group_id, "g_b");
         assert_eq!(confirm.action, GroupAction::Start { resume: true });
-        assert_eq!(app.handle(press(KeyCode::Char('b'))), None);
+        assert_eq!(app.handle(press(KeyCode::Esc)), None);
         assert!(app.groups_view.confirm.is_none());
-        assert_eq!(app.screen, Screen::Groups, "b cancels only the question");
+        assert_eq!(app.screen, Screen::Groups, "Esc cancels only the question");
 
-        assert_eq!(app.handle(press(KeyCode::Char('x'))), None);
+        app.handle(press(KeyCode::Down));
+        assert_eq!(app.groups_view.choice, GroupChoice::Stop);
+        assert_eq!(app.handle(press(KeyCode::Enter)), None);
         // A refresh that re-sorts the list changes neither group nor action.
         with_groups(
             &mut app,
@@ -506,6 +606,7 @@ mod groups {
                 group("g_b", "beta", GroupStatus::Running, "active"),
             ],
         );
+        app.handle(press(KeyCode::Down));
         let Some(Effect::Group(sent)) = app.handle(press(KeyCode::Enter)) else {
             panic!("Enter sends the confirmed action");
         };
@@ -517,27 +618,102 @@ mod groups {
     }
 
     #[test]
-    fn a_shown_stopped_group_can_still_be_stopped_and_a_running_one_started() {
+    fn each_lifecycle_state_shows_its_available_actions() {
         let mut app = app();
         with_groups(&mut app, three());
         open(&mut app);
-        app.handle(press(KeyCode::End));
-        app.handle(press(KeyCode::Char('x')));
+        assert_eq!(
+            app.group_choices(),
+            [GroupChoice::Tasks, GroupChoice::Start, GroupChoice::Stop]
+        );
+        app.handle(press(KeyCode::Esc));
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Enter));
+        assert_eq!(
+            app.group_choices(),
+            [GroupChoice::Tasks, GroupChoice::Resume, GroupChoice::Stop]
+        );
+        app.handle(press(KeyCode::Esc));
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Enter));
+        assert_eq!(
+            app.group_choices(),
+            [GroupChoice::Tasks, GroupChoice::Start, GroupChoice::Stop]
+        );
+        with_groups(
+            &mut app,
+            vec![group("g_c", "gamma", GroupStatus::Stopped, "stopped")],
+        );
+        assert_eq!(
+            app.group_choices(),
+            [GroupChoice::Tasks, GroupChoice::Start]
+        );
+    }
+
+    #[test]
+    fn a_refresh_cannot_turn_a_selected_stop_into_start() {
+        let mut app = app();
+        with_groups(&mut app, vec![three()[2].clone()]);
+        open(&mut app);
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Down));
+        assert_eq!(app.groups_view.choice, GroupChoice::Stop);
+        with_groups(
+            &mut app,
+            vec![group("g_c", "gamma", GroupStatus::Stopped, "stopped")],
+        );
+        assert_eq!(app.groups_view.choice, GroupChoice::Tasks);
+        assert_eq!(app.handle(press(KeyCode::Enter)), None);
+        assert_eq!(app.screen, Screen::Tasks);
+        assert!(app.groups_view.confirm.is_none());
+    }
+
+    #[test]
+    fn a_stopped_group_with_running_actors_can_still_be_stopped() {
+        let mut app = app();
+        let mut group = group("g_stopped", "stopped", GroupStatus::Stopped, "stopped");
+        group.running_actors = 1;
+        with_groups(&mut app, vec![group.clone()]);
+        open(&mut app);
+        assert_eq!(
+            app.group_choices(),
+            [GroupChoice::Tasks, GroupChoice::Start, GroupChoice::Stop]
+        );
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Enter));
         assert_eq!(
             app.groups_view
                 .confirm
                 .as_ref()
-                .map(|confirm| confirm.action),
+                .map(|command| command.action),
             Some(GroupAction::Stop)
         );
         app.handle(press(KeyCode::Esc));
-        app.handle(press(KeyCode::Home));
-        app.handle(press(KeyCode::Char('s')));
+        group.running_actors = 0;
+        with_groups(&mut app, vec![group]);
+        assert_eq!(
+            app.group_choices(),
+            [GroupChoice::Tasks, GroupChoice::Start]
+        );
+        assert_eq!(app.groups_view.choice, GroupChoice::Tasks);
+        assert_eq!(app.handle(press(KeyCode::Enter)), None);
+        assert_eq!(app.screen, Screen::Tasks);
+    }
+
+    #[test]
+    fn a_running_group_can_still_start_its_enabled_actors() {
+        let mut app = app();
+        with_groups(&mut app, three());
+        open(&mut app);
+        app.handle(press(KeyCode::Down));
+        assert_eq!(app.groups_view.choice, GroupChoice::Start);
+        assert_eq!(app.handle(press(KeyCode::Enter)), None);
         assert_eq!(
             app.groups_view
                 .confirm
                 .as_ref()
-                .map(|confirm| confirm.action),
+                .map(|command| command.action),
             Some(GroupAction::Start { resume: false })
         );
     }
@@ -548,9 +724,11 @@ mod groups {
         with_groups(&mut app, three());
         open(&mut app);
         let repeat = |code| super::key(code, KeyEventKind::Repeat);
-        assert_eq!(app.handle(repeat(KeyCode::Char('x'))), None);
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Down));
+        assert_eq!(app.handle(repeat(KeyCode::Enter)), None);
         assert!(app.groups_view.confirm.is_none());
-        app.handle(press(KeyCode::Char('x')));
+        app.handle(press(KeyCode::Enter));
         assert_eq!(app.handle(repeat(KeyCode::Enter)), None);
         assert!(app.groups_view.confirm.is_some());
     }
@@ -560,27 +738,55 @@ mod groups {
         let mut app = app();
         with_groups(&mut app, three());
         open(&mut app);
-        app.handle(press(KeyCode::Char('x')));
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Enter));
         with_groups(&mut app, three()[1..].to_vec());
+        app.handle(press(KeyCode::Down));
         assert_eq!(app.handle(press(KeyCode::Enter)), None);
         assert!(
             matches!(&app.notice, Some(Notice::Error(message)) if message.contains("no longer listed"))
         );
         // The gone group stays selected rather than handing the keys to another.
         assert_eq!(selected(&app), Some("g_a"));
-        assert_eq!(app.handle(press(KeyCode::Char('x'))), None);
+        assert_eq!(app.handle(press(KeyCode::Enter)), None);
         assert!(app.groups_view.confirm.is_none());
-        // Moving picks a listed group again.
+        // Return to the main list to select a listed group again.
+        app.handle(press(KeyCode::Esc));
         app.handle(press(KeyCode::Down));
         assert_eq!(selected(&app), Some("g_b"));
     }
 
     fn sent(app: &mut App) -> GroupCommand {
-        app.handle(press(KeyCode::Char('x')));
+        if app.groups_view.choice != GroupChoice::Stop {
+            app.handle(press(KeyCode::Down));
+            app.handle(press(KeyCode::Down));
+        }
+        app.handle(press(KeyCode::Enter));
+        app.handle(press(KeyCode::Down));
         match app.handle(press(KeyCode::Enter)) {
             Some(Effect::Group(command)) => command,
             other => panic!("expected an action, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn group_confirmation_defaults_to_cancel_and_needs_an_explicit_selection() {
+        let mut app = app();
+        with_groups(&mut app, three());
+        open(&mut app);
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Enter));
+        assert_eq!(app.groups_view.confirm_choice, ConfirmChoice::Cancel);
+        assert_eq!(app.handle(press(KeyCode::Enter)), None);
+        assert!(app.groups_view.confirm.is_none());
+        app.handle(press(KeyCode::Enter));
+        app.handle(press(KeyCode::Down));
+        assert!(matches!(
+            app.handle(press(KeyCode::Enter)),
+            Some(Effect::Group(_))
+        ));
     }
 
     #[test]
@@ -590,7 +796,7 @@ mod groups {
         open(&mut app);
         let command = sent(&mut app);
         // Before the task even reports it, a second action cannot be asked.
-        app.handle(press(KeyCode::Char('s')));
+        app.handle(press(KeyCode::Enter));
         assert!(app.groups_view.confirm.is_none());
         assert!(
             matches!(&app.notice, Some(Notice::Info(message)) if message.starts_with("Wait for stopping alpha"))
@@ -657,7 +863,9 @@ mod groups {
         members.record("g_a", Ok(Vec::new()), Instant::now());
         app.members = members;
         assert!(app.selected_members().is_some());
+        app.handle(press(KeyCode::Esc));
         app.handle(press(KeyCode::Down));
+        app.handle(press(KeyCode::Enter));
         assert!(
             app.selected_members().is_none(),
             "g_a's members are not g_b's"
@@ -668,18 +876,22 @@ mod groups {
     fn without_a_selected_group_the_keys_say_why_nothing_happens() {
         let mut app = app();
         open(&mut app);
-        app.handle(press(KeyCode::Char('x')));
+        app.handle(press(KeyCode::Enter));
         assert!(app.groups_view.confirm.is_none());
         assert_eq!(
             app.notice,
-            Some(Notice::Error("Groups are still being read.".into()))
+            Some(Notice::Info(
+                "Choose a listed Group before reading its tasks.".into()
+            ))
         );
         with_groups(&mut app, Vec::new());
-        app.handle(press(KeyCode::Char('s')));
+        app.handle(press(KeyCode::Enter));
         assert!(app.groups_view.confirm.is_none());
         assert_eq!(
             app.notice,
-            Some(Notice::Error("There is no group to start or stop.".into()))
+            Some(Notice::Info(
+                "Choose a listed Group before reading its tasks.".into()
+            ))
         );
     }
 }
@@ -768,4 +980,404 @@ fn source_browser_preserves_identity_after_resort_and_removal() {
     assert!(!app.sessions_view.details);
     app.handle(press(KeyCode::Char('b')));
     assert_eq!(app.screen, Screen::Main);
+}
+
+fn pending_app() -> App {
+    use crate::tui::groups::{GroupStatus, GroupSummary};
+    use crate::tui::pending::{Count, Page, Row, Snapshot};
+    use cccc_contracts::Event as LedgerEvent;
+    use cccc_contracts::reply_question::Question;
+    use serde_json::json;
+    use std::time::Instant;
+
+    let mut app = app();
+    app.groups.record(
+        Ok(vec![GroupSummary {
+            group_id: "g1".into(),
+            title: "Group one".into(),
+            status: GroupStatus::Running,
+            state: "active".into(),
+            running_actors: 1,
+        }]),
+        Instant::now(),
+    );
+    app.groups_view.selected = Some("g1".into());
+    app.pending_summary
+        .groups
+        .insert("g1".into(), Count::Fresh(1));
+    app.handle(press(KeyCode::Enter));
+    for _ in 0..3 {
+        app.handle(press(KeyCode::Down));
+    }
+    app.handle(press(KeyCode::Enter));
+    assert_eq!(app.screen, Screen::Pending);
+    let question = Question::from_request(
+        &json!({"v":1,"prompt":"Which?","options":[{"label":"A choice"},{"label":"B choice"}]}),
+        "Context",
+    )
+    .expect("valid fixture question");
+    let mut event = LedgerEvent::new("chat.message", "g1");
+    event.by = "peer".into();
+    event.data = json!({"text":question.text(),"question":question,"to":["user"],"message_mode":"request_reply"}).as_object().expect("fixture event data").clone();
+    let status = json!({"obligation_status":{"user":{"reply_requested":true,"replied":false,"cancelled":false}},"user_request":{"question":"valid","requester":"available"}});
+    let row = Row::from_event(event, Some(&status));
+    let request = app.want().pending.expect("pending request");
+    app.set_pending(Snapshot {
+        request: Some(request),
+        page: Some(Page {
+            rows: vec![row],
+            before: None,
+            has_more: false,
+            total: 1,
+            detail_status: None,
+        }),
+        last_ok: Some(Instant::now()),
+        error: None,
+    });
+    app
+}
+
+#[test]
+fn pending_answer_requires_an_explicit_selection_and_send_and_retries_identically() {
+    use crate::tui::pending::{Outcome, Progress};
+    let mut app = pending_app();
+    app.handle(press(KeyCode::Enter));
+    assert!(
+        app.confirming(),
+        "the detail must be painted before queued input"
+    );
+    assert_eq!(app.handle(press(KeyCode::Enter)), None); // choose A
+    assert_eq!(app.handle(press(KeyCode::Enter)), None); // repeated Enter cannot send
+    for _ in 0..3 {
+        app.handle(press(KeyCode::Down));
+    }
+    let Some(Effect::Reply(command)) = app.handle(press(KeyCode::Enter)) else {
+        panic!("send must produce one reply")
+    };
+    let command = *command;
+    assert_eq!(command.answer.option_id.as_deref(), Some("A"));
+    assert_eq!(
+        app.handle(press(KeyCode::Enter)),
+        None,
+        "cannot send while the first is in flight"
+    );
+    app.set_reply_progress(Progress {
+        last: Some((command.clone(), Outcome::Uncertain)),
+    });
+    assert_eq!(
+        app.handle(press(KeyCode::Enter)),
+        Some(Effect::Reply(Box::new(command.clone())))
+    );
+    app.set_reply_progress(Progress {
+        last: Some((command, Outcome::Recorded)),
+    });
+    assert_eq!(
+        app.handle(press(KeyCode::Enter)),
+        None,
+        "a recorded answer cannot be sent again"
+    );
+}
+
+#[test]
+fn pending_retry_unlocks_only_when_the_daemon_checked_for_the_previous_answer() {
+    use crate::tui::pending::{Outcome, Progress};
+    for (code, resolves) in [
+        ("invalid_source_event", true),
+        ("requester_unavailable", true),
+        ("requester_unknown", true),
+        ("unsupported_request_source", true),
+        ("question_unavailable", true),
+        ("invalid_args", false),
+        ("invalid_answer", false),
+        ("permission_denied", false),
+        ("idempotency_conflict", false),
+    ] {
+        let mut app = pending_app();
+        app.handle(press(KeyCode::Enter));
+        app.handle(press(KeyCode::Enter));
+        for _ in 0..3 {
+            app.handle(press(KeyCode::Down));
+        }
+        let Some(Effect::Reply(command)) = app.handle(press(KeyCode::Enter)) else {
+            panic!("send expected")
+        };
+        let command = *command;
+        app.set_reply_progress(Progress {
+            last: Some((command.clone(), Outcome::Uncertain)),
+        });
+        assert_eq!(
+            app.handle(press(KeyCode::Enter)),
+            Some(Effect::Reply(Box::new(command.clone())))
+        );
+        app.set_reply_progress(Progress {
+            last: Some((command, Outcome::Rejected(code.into()))),
+        });
+        let draft = app.current_reply_draft().expect("draft");
+        assert_eq!(draft.uncertain, !resolves, "{code}");
+        assert_eq!(draft.attempt.is_none(), resolves, "{code}");
+        assert!(draft.selection.is_some(), "{code}: selection kept");
+    }
+}
+
+#[test]
+fn pending_details_mark_recommendations_and_name_a_saved_choice() {
+    use cccc_contracts::reply_question::Recommendation;
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::time::Instant;
+
+    let mut app = pending_app();
+    app.handle(press(KeyCode::Enter));
+    app.pending_view
+        .detail
+        .as_mut()
+        .expect("detail")
+        .question
+        .as_mut()
+        .expect("question")
+        .recommended = Some(Recommendation {
+        option_id: "A".into(),
+        reason: "The shorter path".into(),
+    });
+    let screen = |app: &App| {
+        let mut terminal = Terminal::new(TestBackend::new(60, 16)).expect("test terminal");
+        terminal
+            .draw(|frame| crate::tui::view::render(frame, app, Instant::now()))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        (0..16)
+            .map(|y| (0..60).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(screen(&app).contains("A. (recommended) A choice"));
+    app.handle(press(KeyCode::Enter));
+    app.pending_view.detail.as_mut().expect("detail").status =
+        crate::tui::pending::Status::Answered;
+    app.handle(press(KeyCode::End));
+    let rendered = screen(&app);
+    assert!(rendered.contains("Saved draft:"));
+    assert!(rendered.contains("A. A choice"));
+}
+
+#[test]
+fn pending_question_keeps_long_details_scrollable_without_moving_choices() {
+    use cccc_contracts::reply_question::Question;
+    use ratatui::{Terminal, backend::TestBackend};
+    use serde_json::json;
+    use std::time::Instant;
+
+    let mut app = pending_app();
+    app.handle(press(KeyCode::Enter));
+    let question = Question::from_request(
+        &json!({"v":1, "prompt":"Which direction should we take?", "options":[
+            {"label":"A".repeat(80), "consequence":"First consequence"},
+            {"label":"B".repeat(80), "consequence":"Second consequence"},
+            {"label":"C".repeat(80), "consequence":"Third consequence"}
+        ], "recommended":{"option_id":"B", "reason":"Recommendation reason"}}),
+        "Background for the decision",
+    )
+    .expect("question");
+    let detail = app.pending_view.detail.as_mut().expect("detail");
+    detail
+        .event
+        .data
+        .insert("text".into(), json!(question.text()));
+    detail.question = Some(question);
+
+    let mut terminal = Terminal::new(TestBackend::new(60, 16)).expect("test terminal");
+    let mut pages = String::new();
+    for _ in 0..12 {
+        terminal
+            .draw(|frame| crate::tui::view::render(frame, &app, Instant::now()))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let screen = (0..16)
+            .map(|y| (0..60).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(screen.contains("A. AAAAA"));
+        assert!(screen.contains("B. (recommended) BBBBB"));
+        assert!(screen.contains("C. CCCCC"));
+        assert!(screen.contains("Other (type answer)"));
+        assert!(screen.contains("Send answer"));
+        assert!(!screen.contains("Reply with"));
+        pages.push_str(&screen);
+        app.handle(press(KeyCode::PageDown));
+    }
+    for text in [
+        "Background for the decision",
+        "Which direction should we take?",
+        "First consequence",
+        "Second consequence",
+        "Third consequence",
+        "Recommendation reason",
+    ] {
+        assert!(pages.contains(text), "missing {text:?}");
+    }
+
+    app.pending_view.detail.as_mut().expect("detail").status =
+        crate::tui::pending::Status::Answered;
+    terminal
+        .draw(|frame| crate::tui::view::render(frame, &app, Instant::now()))
+        .expect("draw");
+    app.handle(press(KeyCode::End));
+    terminal
+        .draw(|frame| crate::tui::view::render(frame, &app, Instant::now()))
+        .expect("draw");
+    let screen = (0..16)
+        .map(|y| {
+            (0..60)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !screen.contains("Reply with"),
+        "closed questions have no answer prompt"
+    );
+    assert!(screen.contains("Third consequence"));
+}
+
+#[test]
+fn pending_detail_shows_sending_until_its_own_answer_is_confirmed() {
+    use crate::tui::pending::{Outcome, Progress, Status};
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::time::Instant;
+
+    let mut app = pending_app();
+    app.handle(press(KeyCode::Enter));
+    app.handle(press(KeyCode::Enter));
+    for _ in 0..3 {
+        app.handle(press(KeyCode::Down));
+    }
+    let Some(Effect::Reply(command)) = app.handle(press(KeyCode::Enter)) else {
+        panic!("send expected")
+    };
+    let command = *command;
+    app.pending_view.detail.as_mut().expect("detail").status = Status::Answered;
+    let mut terminal = Terminal::new(TestBackend::new(60, 16)).expect("test terminal");
+    let screen = |terminal: &mut Terminal<TestBackend>, app: &App| {
+        terminal
+            .draw(|frame| crate::tui::view::render(frame, app, Instant::now()))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        (0..16)
+            .map(|y| (0..60).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let pending = screen(&mut terminal, &app);
+    assert!(pending.contains("Sending..."));
+    assert!(!pending.contains("Answer recorded"));
+    app.set_reply_progress(Progress {
+        last: Some((command, Outcome::Recorded)),
+    });
+    assert!(screen(&mut terminal, &app).contains("Answer recorded: A. A choice"));
+}
+
+#[test]
+fn pending_free_text_preserves_newlines_and_refuses_overlength_without_truncating() {
+    let mut app = pending_app();
+    app.handle(press(KeyCode::Enter));
+    app.handle(press(KeyCode::Down));
+    app.handle(press(KeyCode::Down));
+    app.handle(press(KeyCode::Enter)); // Other opens editor
+    app.handle(Event::Paste("  日本語\nnext ".into()));
+    app.handle(control('j', KeyEventKind::Press));
+    type_text(&mut app, "end");
+    app.handle(press(KeyCode::Enter));
+    app.handle(press(KeyCode::Down));
+    let Some(Effect::Reply(command)) = app.handle(press(KeyCode::Enter)) else {
+        panic!("send expected")
+    };
+    assert_eq!(command.answer.text.as_deref(), Some("  日本語\nnext \nend"));
+
+    let mut app = pending_app();
+    app.handle(press(KeyCode::Enter));
+    app.handle(press(KeyCode::Down));
+    app.handle(press(KeyCode::Down));
+    app.handle(press(KeyCode::Enter));
+    app.handle(Event::Paste("😀".repeat(4001)));
+    app.handle(press(KeyCode::Enter));
+    app.handle(press(KeyCode::Down));
+    assert_eq!(app.handle(press(KeyCode::Enter)), None);
+    assert_eq!(
+        app.current_reply_draft()
+            .expect("draft")
+            .text
+            .chars()
+            .count(),
+        4001
+    );
+    assert!(app.current_reply_draft().expect("draft").error.is_some());
+}
+
+#[test]
+fn pending_editor_moves_and_deletes_on_utf8_boundaries() {
+    let mut app = pending_app();
+    app.handle(press(KeyCode::Enter));
+    app.handle(press(KeyCode::Down));
+    app.handle(press(KeyCode::Down));
+    app.handle(press(KeyCode::Enter));
+    app.handle(Event::Paste("ab😀cd".into()));
+    app.handle(press(KeyCode::Left));
+    app.handle(press(KeyCode::Left));
+    app.handle(press(KeyCode::Backspace));
+    app.handle(press(KeyCode::Char('日')));
+    app.handle(press(KeyCode::Delete));
+    assert_eq!(app.current_reply_draft().expect("draft").text, "ab日d");
+    assert_eq!(
+        app.current_reply_draft().expect("draft").input_cursor,
+        "ab日".len()
+    );
+}
+
+#[test]
+fn pending_editor_keeps_the_cursor_visible_in_a_long_multiline_answer() {
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::time::Instant;
+
+    let mut app = pending_app();
+    app.handle(press(KeyCode::Enter));
+    app.handle(press(KeyCode::Down));
+    app.handle(press(KeyCode::Down));
+    app.handle(press(KeyCode::Enter));
+    let answer = format!("first | 日本語\n{}last", "middle\n".repeat(30));
+    app.handle(Event::Paste(answer));
+    let screen = |app: &App| {
+        let mut terminal = Terminal::new(TestBackend::new(60, 16)).expect("test terminal");
+        terminal
+            .draw(|frame| crate::tui::view::render(frame, app, Instant::now()))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        (0..16)
+            .map(|y| (0..60).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(screen(&app).contains("last|"));
+    app.handle(press(KeyCode::Home));
+    assert!(screen(&app).contains("|first |"));
+    app.handle(press(KeyCode::End));
+    assert!(screen(&app).contains("last|"));
+}
+
+#[test]
+fn pending_entry_focus_returns_to_tasks_when_the_count_clears() {
+    use crate::tui::pending::Count;
+    let mut app = pending_app();
+    app.handle(press(KeyCode::Esc));
+    assert_eq!(app.groups_view.choice, super::GroupChoice::Pending);
+    let mut summary = app.pending_summary.clone();
+    summary.groups.insert("g1".into(), Count::Fresh(0));
+    app.set_pending_summary(summary);
+    assert_eq!(app.groups_view.choice, super::GroupChoice::Tasks);
+
+    let mut app = pending_app();
+    let mut summary = app.pending_summary.clone();
+    summary.groups.insert("g1".into(), Count::Fresh(0));
+    app.set_pending_summary(summary);
+    app.handle(press(KeyCode::Esc));
+    assert_eq!(app.groups_view.choice, super::GroupChoice::Tasks);
 }

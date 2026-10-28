@@ -171,7 +171,7 @@
   },
   {
     "name": "cccc_message_send",
-    "description": "Start a new visible chat message. Default to mode=mail for agents. Use mode=send only when delayed awareness costs more than interrupting the recipient, and mode=request_reply only when a concrete reply is also required. Mail is agent-only; messages to user must use send or request_reply. One message may address user alone or one/more agents, never both; send separate messages for separate audience domains. Do not send routine noise. Do not use this to answer an existing delivered message/event; use cccc_message_reply with that event_id instead. Choose `to` deliberately; request_reply requires concrete recipients and @all should be rare.",
+    "description": "Start a new visible chat message. Default to mode=mail for agents. Use mode=send only when delayed awareness costs more than interrupting the recipient, and mode=request_reply only when a concrete reply is also required. Mail is agent-only; messages to user must use send or request_reply. One message may address user alone or one/more agents, never both; send separate messages for separate audience domains. Do not send routine noise. Do not use this to answer an existing delivered message/event; use cccc_message_reply with that event_id instead. Choose `to` deliberately; request_reply requires concrete recipients and @all should be rare. When the user's decision or information is needed, add a question so they answer it in place.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -228,6 +228,74 @@
           "items": {
             "type": "object"
           }
+        },
+        "question": {
+          "type": "object",
+          "description": "Ask the user for a decision or information, answered in place. Only with mode=request_reply and to=\"user\" alone, in a new message (not a reply). Ask only for what you cannot responsibly supply yourself: the user's authority or judgment (a change of scope, an irreversible or outward action, spending money or credits, a product preference with a real tradeoff, or conflicting instructions) or information only the user has; otherwise decide and report. For a choice, offer 2-3 mutually exclusive, actionable options, each with its consequence, and recommend one with a reason when you know enough; the user can always answer in their own words instead. Omit options for a value only the user knows (a path, a number, a clarification). Never ask for secrets. text becomes the question's context (at most 4000 characters). Limits count characters. Keep working on what does not depend on the answer, and withdraw a question that is no longer needed with cccc_reply_request_cancel.",
+          "properties": {
+            "v": {
+              "type": "integer",
+              "enum": [
+                1
+              ]
+            },
+            "prompt": {
+              "type": "string",
+              "maxLength": 500,
+              "description": "The decision itself, in one or two sentences."
+            },
+            "options": {
+              "type": "array",
+              "maxItems": 3,
+              "description": "None for a free answer, otherwise 2-3. They are labelled A, B, C in this order.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "consequence": {
+                    "type": "string",
+                    "maxLength": 240,
+                    "description": "What choosing it means, in one line."
+                  }
+                },
+                "required": [
+                  "label"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "recommended": {
+              "type": "object",
+              "description": "Only when you know enough to recommend. It is shown as advice, never preselected.",
+              "properties": {
+                "option_id": {
+                  "type": "string",
+                  "enum": [
+                    "A",
+                    "B",
+                    "C"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              },
+              "required": [
+                "option_id",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "prompt"
+          ],
+          "additionalProperties": false
         },
         "suggested_user_message": {
           "type": "string",
@@ -366,7 +434,7 @@
   },
   {
     "name": "cccc_message_reply",
-    "description": "Reply to a visible chat message by its current event_id. Defaults to Send; choose Mail only when the recipient is an agent and the reply may wait in Inbox without an immediate prompt. Replies to user must use Send. One reply may address user alone or one/more agents, never both. Either mode fulfills the original reply request. Use only for the thread you are answering; set `to` explicitly if the audience differs. For Connect, use the received local event_id; omit to to address the original participants. Routing comes from that event, without looking up or passing a remote Group ID.",
+    "description": "Reply to a visible chat message by its current event_id. Defaults to Send; choose Mail only when the recipient is an agent and the reply may wait in Inbox without an immediate prompt. Replies to user must use Send. One reply may address user alone or one/more agents, never both. Either mode fulfills the original reply request. Use only for the thread you are answering; set `to` explicitly if the audience differs. For Connect, use the received local event_id; omit to to address the original participants. Routing comes from that event, without looking up or passing a remote Group ID. A reply cannot carry a question: when the user's decision or information is needed, send a new request_reply message to user with a question.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2184,7 +2252,7 @@
   },
   {
     "name": "cccc_automation",
-    "description": "Automation hub tool: action=state|manage.",
+    "description": "Scheduled reminders for this Group: action=state|manage. state lists the rules you can see, their timing status and the version. manage applies actions in order and saves all of them or none. A peer manages only its own reminders (scope personal, owner_actor_id and to set to itself; these are the defaults when it leaves them out). The foreman manages every notify rule. Scheduled group_state and actor_control rules belong to the user; a request that would change, remove or reorder them is refused.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2204,19 +2272,16 @@
           ],
           "default": "state"
         },
-        "op": {
-          "type": "string",
-          "description": "Simple mode op for manage"
-        },
         "actions": {
           "type": "array",
           "items": {
             "type": "object"
           },
-          "description": "Advanced manage actions"
+          "description": "manage only. Items: {type:create_rule|update_rule, rule}, {type:set_rule_enabled, rule_id, enabled}, {type:delete_rule, rule_id}, {type:replace_all_rules, ruleset:{rules, snippets}}. A rule is {id, enabled?, scope?: group|personal, owner_actor_id?, to?: [recipient], trigger: {kind:interval, every_seconds} | {kind:cron, cron, timezone?} | {kind:at, at:RFC3339}, action: {kind:notify, message or snippet_ref, title?, priority?: low|normal|high|urgent}}. A one-time reminder to yourself: {type:create_rule, rule:{id:check-ci, trigger:{kind:at, at:<RFC3339 time after server_now from state>}, action:{kind:notify, message:Check CI}}}. A fired one-time rule is disabled; an interval or cron rule keeps firing until it is disabled or deleted."
         },
         "expected_version": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The version from state; a stale value returns version_conflict instead of overwriting a newer change."
         }
       },
       "required": []

@@ -20,7 +20,7 @@ interface UINotice {
   onAction?: () => void;
 }
 
-export type ChatFilter = "all" | "user" | "mail" | "request_reply";
+export type ChatFilter = "all" | "user" | "mail" | "request_reply" | "pending_user";
 /** Empty means unrestricted; entries are concrete event.by identities. */
 export type ChatSenderFilter = string[];
 
@@ -291,7 +291,8 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
       chatFilter:
         session.chatFilter === "user" ||
         session.chatFilter === "mail" ||
-        session.chatFilter === "request_reply"
+        session.chatFilter === "request_reply" ||
+        session.chatFilter === "pending_user"
           ? session.chatFilter
           : "all",
       scrollSnapshot: null,

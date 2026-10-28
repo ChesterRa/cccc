@@ -11,6 +11,8 @@ mod app;
 mod daemon;
 mod groups;
 mod groups_view;
+mod pending;
+mod pending_view;
 mod refresh;
 mod sessions;
 mod sessions_view;
@@ -67,6 +69,7 @@ pub(crate) struct Session {
     refresh: Option<JoinHandle<()>>,
     setup: Option<JoinHandle<()>>,
     act: Option<JoinHandle<()>>,
+    reply: Option<JoinHandle<()>>,
 }
 
 /// Take over the terminal and show the interface. `host` carries this
@@ -82,11 +85,15 @@ pub(crate) async fn start(
     let (groups_tx, groups) = watch::channel(GroupList::default());
     let (members_tx, members) = watch::channel(MemberList::default());
     let (tasks_tx, tasks) = watch::channel(tasks::Snapshot::default());
+    let (pending_summary_tx, pending_summary) = watch::channel(pending::Summary::default());
+    let (pending_tx, pending) = watch::channel(pending::Snapshot::default());
     let (want, want_rx) = watch::channel(Want::default());
     let (setup_commands, setup_commands_rx) = mpsc::unbounded_channel();
     let (progress_tx, progress) = watch::channel(SetupProgress::default());
     let (group_commands, group_commands_rx) = mpsc::unbounded_channel();
     let (action_tx, action) = watch::channel(ActionProgress::default());
+    let (reply_commands, reply_commands_rx) = mpsc::unbounded_channel();
+    let (reply_progress_tx, reply_progress) = watch::channel(pending::Progress::default());
     let (stop, stop_rx) = watch::channel(false);
     let finish = Arc::new(AtomicBool::new(false));
     let (entered_tx, entered) = oneshot::channel();
@@ -100,11 +107,15 @@ pub(crate) async fn start(
         groups,
         members,
         tasks,
+        pending_summary,
+        pending,
         want,
         setup_commands,
         progress,
         group_commands,
         action,
+        reply_commands,
+        reply_progress,
         finish: Arc::clone(&finish),
     };
     std::thread::Builder::new()
@@ -146,6 +157,8 @@ pub(crate) async fn start(
             groups: groups_tx,
             members: members_tx,
             tasks: tasks_tx,
+            pending_summary: pending_summary_tx,
+            pending: pending_tx,
         },
     ));
     let act = tokio::spawn(groups::act(
@@ -153,6 +166,11 @@ pub(crate) async fn start(
         group_commands_rx,
         action_tx,
         stop_rx.clone(),
+    ));
+    let reply = tokio::spawn(pending::act(
+        home.clone(),
+        reply_commands_rx,
+        reply_progress_tx,
     ));
     let setup = tokio::spawn(setup::run(home, setup_commands_rx, progress_tx, stop_rx));
     Ok(Session {
@@ -162,6 +180,7 @@ pub(crate) async fn start(
         refresh: Some(refresh),
         setup: Some(setup),
         act: Some(act),
+        reply: Some(reply),
     })
 }
 
@@ -174,7 +193,10 @@ impl Session {
         let _ = self.stop.send(true);
         // Reads have nothing to finish, and a group action only stops being
         // waited for: a request already sent is the daemon's to complete.
-        for task in [self.refresh.take(), self.act.take()].into_iter().flatten() {
+        for task in [self.refresh.take(), self.act.take(), self.reply.take()]
+            .into_iter()
+            .flatten()
+        {
             task.abort();
             let _ = task.await;
         }
@@ -218,9 +240,14 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         let _ = self.stop.send(true);
-        for task in [self.refresh.take(), self.setup.take(), self.act.take()]
-            .into_iter()
-            .flatten()
+        for task in [
+            self.refresh.take(),
+            self.setup.take(),
+            self.act.take(),
+            self.reply.take(),
+        ]
+        .into_iter()
+        .flatten()
         {
             task.abort();
         }
@@ -238,11 +265,15 @@ struct Ui {
     groups: watch::Receiver<GroupList>,
     members: watch::Receiver<MemberList>,
     tasks: watch::Receiver<tasks::Snapshot>,
+    pending_summary: watch::Receiver<pending::Summary>,
+    pending: watch::Receiver<pending::Snapshot>,
     want: watch::Sender<Want>,
     setup_commands: mpsc::UnboundedSender<SetupCommand>,
     progress: watch::Receiver<SetupProgress>,
     group_commands: mpsc::UnboundedSender<GroupCommand>,
     action: watch::Receiver<ActionProgress>,
+    reply_commands: mpsc::UnboundedSender<pending::Command>,
+    reply_progress: watch::Receiver<pending::Progress>,
     finish: Arc<AtomicBool>,
 }
 
@@ -326,6 +357,21 @@ impl Ui {
             self.app.set_tasks(tasks);
             changed = true;
         }
+        if self.pending_summary.has_changed().unwrap_or(false) {
+            self.app
+                .set_pending_summary(self.pending_summary.borrow_and_update().clone());
+            changed = true;
+        }
+        if self.pending.has_changed().unwrap_or(false) {
+            let snapshot = self.pending.borrow_and_update().clone();
+            self.app.set_pending(snapshot);
+            changed = true;
+        }
+        if self.reply_progress.has_changed().unwrap_or(false) {
+            let progress = self.reply_progress.borrow_and_update().clone();
+            self.app.set_reply_progress(progress);
+            changed = true;
+        }
         if self.progress.has_changed().unwrap_or(false) {
             self.app.setup = self.progress.borrow_and_update().clone();
             changed = true;
@@ -349,8 +395,8 @@ impl Ui {
             .is_ok()
     }
 
-    // Wait up to a tick for input, then take whatever else is already queued
-    // so one burst costs one draw.
+    // Wait up to a tick for input, then take queued events in one draw except
+    // when an event opens a confirmation: it must be painted first.
     fn read_input(&mut self, screen: &mut terminal::Screen) -> std::io::Result<bool> {
         if !event::poll(TICK)? {
             return Ok(false);
@@ -367,6 +413,9 @@ impl Ui {
                 && painted.width == size.width
                 && painted.height == size.height;
             let allowed = accepts_input(&input, visible);
+            let was_confirming = self.app.confirming();
+            let was_answering =
+                self.app.screen == app::Screen::Pending && self.app.pending_view.detail.is_some();
             match allowed.then(|| self.app.handle(input)).flatten() {
                 Some(Effect::Host(intent)) => {
                     let _ = self.intents.send(intent);
@@ -377,8 +426,22 @@ impl Ui {
                 Some(Effect::Group(command)) => {
                     let _ = self.group_commands.send(command);
                 }
+                Some(Effect::Reply(command)) => {
+                    let command = *command;
+                    if self.reply_commands.send(command.clone()).is_err() {
+                        self.app.set_reply_progress(pending::Progress {
+                            last: Some((
+                                command,
+                                pending::Outcome::Rejected("Reply worker is unavailable.".into()),
+                            )),
+                        });
+                    }
+                }
                 Some(Effect::Repaint) => repaint(screen)?,
                 None => {}
+            }
+            if (!was_confirming && self.app.confirming()) || was_answering {
+                return Ok(true);
             }
             if !event::poll(Duration::ZERO)? {
                 return Ok(true);

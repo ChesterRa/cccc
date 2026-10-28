@@ -8,6 +8,8 @@ import { classNames } from "../../utils/classNames";
 import { GroupItemMenuTrigger } from "./GroupItemMenuTrigger";
 import { useGroupMenu, type GroupMenuActionItem } from "./useGroupMenu";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
+import { GroupPendingIndicator } from "../../features/pendingReplies/PendingIndicator";
+import { usePendingGroupLabel } from "../../features/pendingReplies/usePendingGroupLabel";
 
 interface GroupSidebarItemProps {
   group: GroupMeta;
@@ -45,6 +47,7 @@ export function GroupSidebarItem({
   onWarm,
 }: GroupSidebarItemProps) {
   const gid = String(group.group_id || "");
+  const collapsedLabel = usePendingGroupLabel(gid, group.title || gid);
   const menu = useGroupMenu(menuAriaLabel || menuActionLabel || "", [
     ...(runActions ?? []),
     ...(onOpenConnections && connectionsLabel
@@ -75,6 +78,7 @@ export function GroupSidebarItem({
         onMouseEnter={onWarm}
         onFocus={onWarm}
         title={group.title || gid}
+        aria-label={collapsedLabel}
       >
         {isActive && (
           <span className="absolute left-0 top-3 bottom-3 w-0.75 rounded-r bg-[rgb(35,36,37)] dark:bg-white animate-in slide-in-from-left-1 duration-200" />
@@ -93,6 +97,7 @@ export function GroupSidebarItem({
           status={status}
           className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[var(--color-bg-primary)]"
         />
+        <GroupPendingIndicator groupId={gid} groupName={group.title || gid} collapsed />
       </button>
     );
   }
@@ -105,20 +110,15 @@ export function GroupSidebarItem({
           isActive ? "glass-group-item-active" : "glass-group-item",
           isArchived && !isActive && "opacity-90",
         )}
-        role="button"
-        aria-current={isActive ? "page" : undefined}
-        tabIndex={0}
-        onClick={onSelect}
         onContextMenu={menu.onContextMenu}
-        onKeyDown={(event) => {
-          if (event.target !== event.currentTarget || menu.onKeyDown(event)) return;
-          if (event.key !== "Enter" && event.key !== " ") return;
-          event.preventDefault();
-          onSelect();
-        }}
       >
-        <div
-          className="flex-1 min-w-0 flex items-center justify-between gap-2 text-left"
+        <button
+          type="button"
+          role="button"
+          aria-current={isActive ? "page" : undefined}
+          className="flex-1 min-w-0 min-h-[44px] md:min-h-8 pointer-coarse:min-h-[44px] flex items-center justify-between gap-2 text-left"
+          onClick={onSelect}
+          onKeyDown={menu.onKeyDown}
           onMouseEnter={onWarm}
           onFocus={onWarm}
         >
@@ -136,8 +136,9 @@ export function GroupSidebarItem({
               {group.title || gid}
             </span>
           </div>
-        </div>
+        </button>
 
+        <GroupPendingIndicator groupId={gid} groupName={group.title || gid} />
         {connection?.count && onOpenConnections ? (
           <div className="flex w-[44px] shrink-0 justify-end">
             <GroupConnectionBadge connection={connection} onClick={onOpenConnections} compact />

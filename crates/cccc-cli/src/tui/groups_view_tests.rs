@@ -103,45 +103,95 @@ fn groups_lists_states_and_the_selected_groups_members() {
         ],
     );
     let rows = draw_rows(&app, 80, 16);
-    assert!(rows[0].starts_with(" Groups") && rows[0].ends_with("3 groups, 1 running"));
-    assert!(rows[2].starts_with(" > cccc-dev"));
-    assert!(rows[2].contains("Running") && rows[2].ends_with('2'));
-    assert!(rows[3].starts_with("   docs") && rows[3].contains("Paused"));
+    assert_eq!(rows[0], " cccc-dev");
+    assert_eq!(rows[1], " g_dev  Running | State active | 2 actors running");
+    assert_eq!(rows[2], " Web  http://127.0.0.1:8848/?group=g_dev");
+    assert!(rows[4].starts_with(" > Tasks: reading"));
+    assert_eq!(rows[5], "   Start group");
+    assert_eq!(rows[6], "   Stop group");
+    assert_eq!(rows[8], " Members");
     assert!(
-        rows[4].starts_with("   empty") && rows[4].contains("Offline") && rows[4].ends_with('0')
-    );
-    assert_eq!(rows[5], "");
-    assert_eq!(rows[6], " cccc-dev");
-    assert_eq!(rows[7], " g_dev  State active | 2 actors running");
-    assert_eq!(rows[8], " Web  http://127.0.0.1:8848/?group=g_dev");
-    assert!(
-        rows[10].starts_with("   codex-1")
-            && rows[10].contains("foreman")
-            && rows[10].contains("running")
+        rows[9].starts_with("   codex-1")
+            && rows[9].contains("foreman")
+            && rows[9].contains("running")
     );
     assert!(
-        rows[11].contains("claude-1")
-            && rows[11].contains("Claude Code")
-            && rows[11].ends_with("ready         native")
+        rows[10].contains("claude-1")
+            && rows[10].contains("Claude Code")
+            && rows[10].ends_with("native")
     );
-    assert!(rows[9].contains("Tasks: reading"));
-    assert!(rows[12].contains("reviewer") && rows[12].contains("off"));
+    // Members retain one aligned status column and the right edge.
+    assert_eq!(rows[9].find("running"), rows[10].find("ready"));
+    let edge = rows[14].len();
+    assert!(rows[14].starts_with(" ---"));
+    assert_eq!(rows[10].len(), edge);
+    assert!(rows[11].contains("reviewer") && rows[11].contains("off"));
+    assert_eq!(rows[15], " Up/Down choose   Enter open   Esc back");
+}
+
+#[test]
+fn long_group_identity_and_stale_state_remain_visible_on_a_small_screen() {
+    let title = "long-group-".repeat(9);
+    let mut app = app_with(vec![group(
+        "g_long",
+        &title,
+        GroupStatus::Running,
+        "active",
+        2,
+    )]);
+    with_members(
+        &mut app,
+        "g_long",
+        vec![
+            member("one", "Codex", "foreman", false, MemberState::Running),
+            member("two", "Claude Code", "peer", true, MemberState::Ready),
+            member("three", "Pi", "peer", true, MemberState::Ready),
+        ],
+    );
+    app.groups.record(Err("offline".into()), Instant::now());
+    let rows = draw_rows(&app, 60, 16);
     assert_eq!(
-        rows[15],
-        " Up/Down group   t tasks   s start   x stop   b back"
+        format!("{}{}", rows[0].trim_start(), rows[1].trim_start()),
+        title
     );
+    assert!(rows[2].contains("not updated (last ok"));
+    assert!(rows[3].contains("g_long"));
+    assert!(rows.iter().any(|line| line.contains("Start group")));
+    assert!(rows.iter().any(|line| line.contains("Stop group")));
+    assert!(rows.iter().any(|line| line.contains("one")));
+    assert!(rows.iter().any(|line| line.contains("+2 more")));
+
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
+    let confirmation = draw_rows(&app, 60, 16);
+    assert!(confirmation[0].contains("not updated (last ok"));
+    assert!(confirmation[2].contains("Stop"));
+    assert!(confirmation[3].contains("g_long"));
+}
+
+#[test]
+fn opening_groups_while_the_first_list_is_loading_says_so() {
+    let mut app = App::new(context(), running());
+    type_command(&mut app, "/groups");
+    let rows = draw_rows(&app, 60, 16);
+    assert!(rows.iter().any(|line| line.contains("Reading groups...")));
 }
 
 #[test]
 fn an_empty_started_group_shows_its_state_beside_the_running_count() {
     let mut app = app_with(demo());
-    press(&mut app, KeyCode::End);
+    press(&mut app, KeyCode::Esc);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
     with_members(&mut app, "g_new", Vec::new());
     let rows = draw_rows(&app, 80, 16);
-    assert!(rows[4].starts_with(" > empty"));
-    assert_eq!(rows[6], " empty");
-    assert_eq!(rows[7], " g_new  State active | 0 actors running");
-    assert_eq!(rows[10], "   No actors in this group.");
+    assert_eq!(rows[0], " empty");
+    assert_eq!(rows[1], " g_new  Offline | State active | 0 actors running");
+    assert_eq!(rows[5], "   Start group");
+    assert_eq!(rows[6], "   Stop group");
+    assert_eq!(rows[9], "   No actors in this group.");
 }
 
 #[test]
@@ -158,7 +208,9 @@ fn confirmations_name_the_group_and_the_effect() {
             MemberState::Running,
         )],
     );
-    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
     let rows = draw_rows(&app, 80, 16);
     assert_eq!(rows[2], " Stop cccc-dev?");
     assert_eq!(rows[3], " g_dev  State active | 2 actors running");
@@ -166,11 +218,16 @@ fn confirmations_name_the_group_and_the_effect() {
     // No native members, so nothing is said about them.
     assert_eq!(rows[5], " Its managed actors stop.");
     assert_eq!(rows[6], "");
-    assert_eq!(rows[15], " Enter stop   b cancel");
+    assert!(rows[11].starts_with(" > Cancel"));
+    assert!(rows[12].contains("Stop group"));
+    assert_eq!(rows[15], " Up/Down choose   Enter select   Esc cancel");
 
-    press(&mut app, KeyCode::Char('b'));
+    press(&mut app, KeyCode::Esc);
+    press(&mut app, KeyCode::Esc);
     press(&mut app, KeyCode::Down);
-    press(&mut app, KeyCode::Char('s'));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
     let rows = draw_rows(&app, 60, 16);
     assert_eq!(rows[2], " Resume docs?");
     // Members not read yet: they may be native, so they are covered.
@@ -183,7 +240,41 @@ fn confirmations_name_the_group_and_the_effect() {
         body.contains("native members can receive from this group again"),
         "{body}"
     );
-    assert_eq!(rows[15], " Enter resume   b cancel");
+    assert!(rows[11].starts_with(" > Cancel"));
+    assert!(rows[12].contains("Resume group"));
+    assert_eq!(rows[15], " Up/Down choose   Enter select   Esc cancel");
+}
+
+#[test]
+fn starting_a_running_group_explains_the_effect_on_enabled_actors() {
+    let mut app = app_with(demo());
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
+    let rows = draw_rows(&app, 60, 16);
+    assert_eq!(rows[2], " Start cccc-dev?");
+    assert!(words(&rows[5..13]).contains("enabled actors that are not running start"));
+}
+
+#[test]
+fn stopped_group_with_a_running_actor_offers_a_confirmed_stop() {
+    let mut app = app_with(vec![group(
+        "g_stopped",
+        "stopped",
+        GroupStatus::Stopped,
+        "stopped",
+        1,
+    )]);
+    let rows = draw_rows(&app, 60, 16);
+    assert!(rows[1].contains("Stopped | State stopped | 1 actor running"));
+    assert!(rows.iter().any(|line| line.contains("Stop group")));
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
+    let confirm = draw_rows(&app, 60, 16);
+    assert_eq!(confirm[2], " Stop stopped?");
+    assert!(confirm[3].contains("g_stopped"));
+    assert!(confirm[11].starts_with(" > Cancel"));
+    assert_eq!(confirm[15], " Up/Down choose   Enter select   Esc cancel");
 }
 
 fn words(rows: &[String]) -> String {
@@ -224,7 +315,9 @@ fn the_whole_question_fits_the_smallest_screen_with_many_groups_and_a_long_name(
             MemberState::Ready,
         )],
     );
-    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
     let rows = draw_rows(&app, 60, 16);
     assert!(
         rows[2].starts_with(" Stop a group with a very long"),
@@ -233,7 +326,7 @@ fn the_whole_question_fits_the_smallest_screen_with_many_groups_and_a_long_name(
     assert!(rows[2].ends_with("...?"), "{rows:#?}");
     assert!(rows[2].chars().count() <= 60);
     assert!(rows[3].starts_with(" g_long_id_0001"), "{rows:#?}");
-    let body = words(&rows[5..13]);
+    let body = words(&rows[5..11]);
     assert!(
         body.ends_with(
             "Its managed actors stop. Native members stop receiving from this group. \
@@ -241,13 +334,16 @@ fn the_whole_question_fits_the_smallest_screen_with_many_groups_and_a_long_name(
         ),
         "{body}"
     );
-    assert_eq!(rows[15], " Enter stop   b cancel");
+    assert_eq!(rows[15], " Up/Down choose   Enter select   Esc cancel");
 }
 
 #[test]
 fn a_running_action_is_shown_and_reported_if_cccc_stops_first() {
     let mut app = app_with(demo());
-    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Down);
     let Some(crate::tui::app::Effect::Group(command)) = app.handle(Event::Key(
         KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Press),
     )) else {
@@ -258,7 +354,7 @@ fn a_running_action_is_shown_and_reported_if_cccc_stops_first() {
         last: None,
     });
     let rows = draw_rows(&app, 80, 16);
-    assert_eq!(rows[15], " Stopping cccc-dev...   b back");
+    assert_eq!(rows[15], " Stopping cccc-dev...   Esc back");
     assert_eq!(
         super::unanswered_receipt(&app).as_deref(),
         Some("Stopping cccc-dev had not finished when CCCC stopped; check the group's state.")
@@ -279,19 +375,14 @@ fn a_long_list_keeps_the_selection_in_view_on_the_smallest_screen() {
         })
         .collect();
     let mut app = app_with(groups);
+    press(&mut app, KeyCode::Esc);
     for _ in 0..9 {
         press(&mut app, KeyCode::Down);
     }
+    press(&mut app, KeyCode::Enter);
     let rows = draw_rows(&app, 60, 16);
-    let list = &rows[2..7];
-    assert!(
-        list.iter().any(|row| row.starts_with(" > group-09")),
-        "{list:#?}"
-    );
-    assert_eq!(
-        rows[15],
-        " Up/Down group   t tasks   s start   x stop   b back"
-    );
+    assert_eq!(rows[0], " group-09");
+    assert_eq!(rows[15], " Up/Down choose   Enter open   Esc back");
 }
 
 #[test]
@@ -302,7 +393,7 @@ fn a_gone_group_is_said_to_be_gone() {
     app.set_groups(list);
     let rows = draw_rows(&app, 80, 16);
     assert!(
-        rows[5].contains("The selected group is no longer listed"),
+        rows[0].contains("The selected group is no longer listed"),
         "{rows:#?}"
     );
 }
@@ -310,7 +401,10 @@ fn a_gone_group_is_said_to_be_gone() {
 #[test]
 fn the_main_screen_shows_an_action_still_running_and_members_are_not_read_for_a_gone_group() {
     let mut app = app_with(demo());
-    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Down);
     let Some(crate::tui::app::Effect::Group(command)) = app.handle(Event::Key(
         KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Press),
     )) else {

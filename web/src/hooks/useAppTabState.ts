@@ -3,6 +3,7 @@ import { useGroupStore, useUIStore, useModalStore } from "../stores";
 import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
 import { groupMessagesVisible } from "../stores/useUIStore";
 import type { Actor } from "../types";
+import { useShortTouchViewport } from "./useShortTouchViewport";
 
 export function isChatViewportAtBottom(
   scrollHeight: number,
@@ -52,6 +53,7 @@ export function useAppTabState({
   setShowScrollButton,
   setChatUnreadCount,
 }: UseAppTabStateOptions): UseAppTabStateResult {
+  const shortTouchViewport = useShortTouchViewport();
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const eventContainerRef = useRef<HTMLDivElement | null>(null);
@@ -133,9 +135,10 @@ export function useAppTabState({
 
   useEffect(() => {
     if (!messagesVisible) return;
-    if (isSmallScreen) return;
-    requestAnimationFrame(() => composerRef.current?.focus());
-  }, [activeTab, messagesVisible, isSmallScreen]);
+    if (isSmallScreen || shortTouchViewport) return;
+    const frame = requestAnimationFrame(() => composerRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [activeTab, messagesVisible, isSmallScreen, shortTouchViewport]);
 
   useEffect(() => {
     actorsRef.current = runtimeActors;

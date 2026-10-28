@@ -138,7 +138,7 @@ pub(crate) async fn launch(
     if daemon_missing {
         let daemon_home = home.clone();
         embedded_daemon = Some(tokio::spawn(async move {
-            let result = cccc_daemon::run(daemon_home).await;
+            let result = cccc_daemon::run_with_diagnostics(daemon_home).await;
             let _ = daemon_exit_tx.send(true);
             result
         }));

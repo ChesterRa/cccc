@@ -1,59 +1,74 @@
-//! The `/groups` screen: every group with its state, the selected group's
-//! members, and starting or stopping that group once confirmed. Nothing here
+//! The selected group's details, tasks, members and confirmed actions. Nothing here
 //! says more than the daemon's last answer: a done action only means the
 //! daemon accepted it, and the rows below show what it reports afterwards.
 
-use super::app::App;
+use super::app::{App, ConfirmChoice, GroupChoice};
 use super::groups::{GroupAction, GroupCommand, GroupSummary, Member, MemberState};
 use super::text;
 use super::view::{
-    INDENT, Theme, count, group_columns, group_row, groups_message, groups_title, list_message,
-    notice_line, separator, spread,
+    INDENT, STATUS_BLOCK, Theme, count, flexible, groups_message, list_message, notice_line,
+    separator, status_block,
 };
 use crate::host_state::WebState;
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use std::time::Instant;
 
-// "Claude Code" and "foreman", each with room after it.
+// The longest runtime label, "ChatGPT Dots", and "foreman", each with room
+// after it. On the narrowest screens the runtime gives way before an id gets
+// shorter than ID_COLUMN_MIN.
 const RUNTIME_COLUMN: usize = 13;
 const ROLE_COLUMN: usize = 9;
-// "not receiving" and "access paused".
-const STATE_COLUMN: usize = 13;
-const NATIVE_TAG: &str = " native";
-const ID_COLUMN_MAX: usize = 24;
-// Rows besides the list and the details: the title and the blank under it,
-// the blank between list and details, and the notice, separator and keys.
-const FIXED_ROWS: u16 = 6;
-
+const ID_COLUMN_MIN: usize = 10;
 pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
     let area = super::view::content_area(frame.area());
     let width = usize::from(area.width);
-    frame.render_widget(
-        Paragraph::new(groups_title(app, theme, width, now)),
-        row(area, 0, 1),
-    );
-    let room = area.height.saturating_sub(FIXED_ROWS);
     if let Some(confirm) = &app.groups_view.confirm {
+        frame.render_widget(
+            Paragraph::new(
+                freshness(app, theme, now, width)
+                    .unwrap_or_else(|| Line::styled(" Group", theme.bold())),
+            ),
+            row(area, 0, 1),
+        );
         // The question takes the whole body, so even the smallest screen
         // shows all of what Enter would do.
         frame.render_widget(
             Paragraph::new(confirmation(app, confirm, theme, width)),
-            row(area, 2, room + 1),
+            row(area, 2, area.height.saturating_sub(7)),
+        );
+        let action = match confirm.action {
+            GroupAction::Start { resume: false } => "Start group",
+            GroupAction::Start { resume: true } => "Resume group",
+            GroupAction::Stop => "Stop group",
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                choice_row(
+                    "Cancel",
+                    app.groups_view.confirm_choice == ConfirmChoice::Cancel,
+                    theme,
+                    width,
+                ),
+                choice_row(
+                    action,
+                    app.groups_view.confirm_choice == ConfirmChoice::Proceed,
+                    theme,
+                    width,
+                ),
+            ]),
+            row(area, area.height - 5, 2),
         );
     } else {
-        frame.render_widget(Paragraph::new(group_columns(theme, width)), row(area, 1, 1));
-        let wanted = u16::try_from(app.groups.groups.len().max(1)).unwrap_or(u16::MAX);
-        let list_rows = wanted.min((room / 2).saturating_sub(1).max(1));
-        list(frame, app, theme, row(area, 2, list_rows));
         details(
             frame,
             app,
             theme,
             now,
-            row(area, 3 + list_rows, room.saturating_sub(list_rows)),
+            row(area, 0, area.height.saturating_sub(3)),
         );
     }
     if let Some(notice) = notice_line(app, theme, width) {
@@ -70,91 +85,73 @@ pub(super) fn render(frame: &mut Frame, app: &App, theme: Theme, now: Instant) {
 }
 
 fn keys(app: &App) -> String {
-    if let Some(confirm) = &app.groups_view.confirm {
-        return format!(" Enter {}   b cancel", confirm.action.verb());
+    if app.groups_view.confirm.is_some() {
+        return " Up/Down choose   Enter select   Esc cancel".into();
     }
     if let Some(busy) = app.busy_action() {
         return format!(
-            " {} {}...   b back",
+            " {} {}...   Esc back",
             busy.action.doing(),
             text::fit(&text::one_line(&busy.name), 32)
         );
     }
-    " Up/Down group   t tasks   s start   x stop   b back".into()
-}
-
-// The window keeps the selected group in view, near the middle once the list
-// is longer than the window.
-fn list(frame: &mut Frame, app: &App, theme: Theme, area: Rect) {
-    let groups = &app.groups.groups;
-    app.groups_view.page.set(area.height);
-    if groups.is_empty() {
-        if let Some(message) = groups_message(app, theme) {
-            list_message(frame, message, area);
-        }
-        return;
-    }
-    let rows = usize::from(area.height);
-    let selected = app
-        .groups_view
-        .selected
-        .as_deref()
-        .and_then(|group_id| app.groups.position(group_id));
-    let start = selected
-        .unwrap_or(0)
-        .saturating_sub(rows / 2)
-        .min(groups.len().saturating_sub(rows));
-    let width = usize::from(area.width);
-    let lines: Vec<Line> = groups
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(rows)
-        .map(|(index, group)| group_row(group, Some(index) == selected, theme, width))
-        .collect();
-    frame.render_widget(Paragraph::new(lines), area);
+    " Up/Down choose   Enter open   Esc back".into()
 }
 
 fn details(frame: &mut Frame, app: &App, theme: Theme, now: Instant, area: Rect) {
     let width = usize::from(area.width);
     let rows = usize::from(area.height);
     let Some(group) = app.selected_group() else {
-        if app.groups_view.selected.is_some() && !app.groups.groups.is_empty() {
+        if app.groups_view.selected.is_some() {
             let message = (
-                "The selected group is no longer listed. Choose another with Up/Down.".to_owned(),
+                "The selected group is no longer listed. Esc returns to the group list.".to_owned(),
                 theme.error(),
             );
             list_message(frame, message, area);
+        } else if let Some(message) = groups_message(app, theme) {
+            list_message(frame, message, area);
+        } else {
+            list_message(frame, ("Reading groups...".into(), theme.dim()), area);
         }
         return;
     };
-    let room = width.saturating_sub(2);
-    let title = text::one_line(group.name());
-    let title_lines = text::wrap_exact(&title, room);
-    // Keep identity, Web and a member row usable even for a very long name.
-    let title_rows = rows.saturating_sub(5).max(1);
+    let choices = app.group_choices();
+    let stale = freshness(app, theme, now, width);
+    // Reserve the identity, Web address, all actions and room for a member
+    // and an overflow indicator before spending rows on a long group name.
+    let reserved = 1
+        + usize::from(matches!(&app.host.web, WebState::Listening { .. }))
+        + usize::from(stale.is_some())
+        + choices.len()
+        + 5;
+    let title_rows = rows.saturating_sub(reserved).max(1);
+    let title_lines = text::wrap_exact(&text::one_line(group.name()), width.saturating_sub(2));
     let mut lines: Vec<Line> = title_lines
         .iter()
         .take(title_rows)
         .enumerate()
         .map(|(index, line)| {
             let line = if index + 1 == title_rows && title_lines.len() > title_rows {
-                text::fit(&format!("{line}..."), room)
+                text::fit(&format!("{line}..."), width.saturating_sub(2))
             } else {
                 line.clone()
             };
             Line::styled(format!(" {line}"), theme.bold())
         })
         .collect();
+    if let Some(stale) = stale {
+        lines.push(stale);
+    }
     lines.push(Line::raw(text::fit(
         &format!(
-            " {}  State {} | {} running",
+            " {}  {} | State {} | {} running",
             text::one_line(&group.group_id),
+            group.status.label(),
             text::one_line(&group.state),
             count(
                 usize::try_from(group.running_actors).unwrap_or(usize::MAX),
                 "actor"
-            )
+            ),
         ),
         width,
     )));
@@ -167,11 +164,62 @@ fn details(frame: &mut Frame, app: &App, theme: Theme, now: Instant, area: Rect)
             )),
         ]));
     }
-    lines.push(super::tasks_view::summary(app, theme, width));
+    lines.push(Line::default());
+    for choice in choices {
+        let label = match choice {
+            GroupChoice::Tasks => super::tasks_view::summary(app),
+            GroupChoice::Start => "Start group".into(),
+            GroupChoice::Resume => "Resume group".into(),
+            GroupChoice::Stop => "Stop group".into(),
+            GroupChoice::Pending => match app.pending_summary.count(&group.group_id) {
+                Some(super::pending::Count::Fresh(count)) => format!("Waiting for you: {count}"),
+                Some(super::pending::Count::Stale(count)) if count > 0 => {
+                    format!("Waiting for you: ~{count} (stale)")
+                }
+                _ => "Waiting for you: unknown".into(),
+            },
+        };
+        lines.push(choice_row(
+            &label,
+            choice == app.groups_view.choice,
+            theme,
+            width,
+        ));
+    }
+    lines.push(Line::default());
+    lines.push(Line::styled(" Members", theme.bold()));
     let room = rows.saturating_sub(lines.len());
     lines.extend(members(app, group, theme, now, width, room));
     lines.truncate(rows);
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn freshness(app: &App, theme: Theme, now: Instant, width: usize) -> Option<Line<'static>> {
+    app.groups.error.as_ref()?;
+    let status = match app.groups.last_ok {
+        Some(last_ok) => format!(
+            "Group not updated (last ok {})",
+            text::ago(now.saturating_duration_since(last_ok))
+        ),
+        None => "Group data not available".into(),
+    };
+    Some(Line::styled(
+        format!(" {}", text::fit(&status, width.saturating_sub(2))),
+        theme.error(),
+    ))
+}
+
+pub(super) fn choice_row(label: &str, selected: bool, theme: Theme, width: usize) -> Line<'static> {
+    let label = text::fit(label, width.saturating_sub(4));
+    let padding = " ".repeat(width.saturating_sub(4 + text::width(&label)));
+    Line::styled(
+        format!(" {} {label}{padding}", if selected { ">" } else { " " }),
+        if selected {
+            theme.selected()
+        } else {
+            Style::new()
+        },
+    )
 }
 
 // What the action does, said before Enter sends it. A group that may have
@@ -196,7 +244,7 @@ fn confirmation(
     );
     let (effect, native) = match confirm.action {
         GroupAction::Start { resume: false } => (
-            "Its enabled actors start; actors that are off stay off.",
+            "Its enabled actors that are not running start; actors that are off stay off.",
             "Its enabled native members can receive from this group again.",
         ),
         GroupAction::Start { resume: true } => (
@@ -317,12 +365,18 @@ fn members(
 }
 
 fn member_row(member: &Member, theme: Theme, width: usize) -> Line<'static> {
-    let fixed =
-        INDENT.len() + 2 + RUNTIME_COLUMN + ROLE_COLUMN + STATE_COLUMN + NATIVE_TAG.len() + 1;
-    let id_column = width.saturating_sub(fixed).min(ID_COLUMN_MAX);
+    // The id and runtime share what the role and status block leave, so
+    // member states use the same column as statuses on the main screen.
+    let room = flexible(width, INDENT.len() + 2 + ROLE_COLUMN + STATUS_BLOCK);
+    let runtime_column = RUNTIME_COLUMN.min(room.saturating_sub(ID_COLUMN_MIN));
+    let id_column = room - runtime_column;
     let id = text::fit(&text::one_line(&member.id), id_column);
     let pad = " ".repeat(id_column.saturating_sub(text::width(&id)) + 2);
-    let runtime = text::fit(&text::one_line(&member.runtime), RUNTIME_COLUMN - 1);
+    let runtime = text::fit(
+        &text::one_line(&member.runtime),
+        runtime_column.saturating_sub(1),
+    );
+    let runtime_pad = " ".repeat(runtime_column.saturating_sub(text::width(&runtime)));
     let role = text::fit(&text::one_line(&member.role), ROLE_COLUMN - 1);
     let state_style = match member.state {
         MemberState::Running | MemberState::Ready => theme.ok(),
@@ -331,30 +385,18 @@ fn member_row(member: &Member, theme: Theme, width: usize) -> Line<'static> {
         | MemberState::NotReceiving
         | MemberState::AccessPaused => theme.dim(),
     };
-    spread(
-        vec![
-            Span::raw(INDENT),
-            Span::raw(format!("{id}{pad}")),
-            Span::raw(format!("{runtime:<RUNTIME_COLUMN$}")),
-            Span::styled(format!("{role:<ROLE_COLUMN$}"), theme.dim()),
-        ],
-        vec![
-            Span::styled(
-                format!("{:<STATE_COLUMN$}", member.state.label()),
-                state_style,
-            ),
-            Span::styled(
-                if member.native {
-                    NATIVE_TAG.to_owned()
-                } else {
-                    " ".repeat(NATIVE_TAG.len())
-                },
-                theme.dim(),
-            ),
-            Span::raw(" "),
-        ],
-        width,
-    )
+    let mut spans = vec![
+        Span::raw(INDENT),
+        Span::raw(format!("{id}{pad}{runtime}{runtime_pad}")),
+        Span::styled(format!("{role:<ROLE_COLUMN$}"), theme.dim()),
+    ];
+    spans.extend(status_block(
+        member.state.label(),
+        state_style,
+        if member.native { "native" } else { "" },
+        theme.dim(),
+    ));
+    Line::from(spans)
 }
 
 /// What the terminal says, once the interface has closed, about a group

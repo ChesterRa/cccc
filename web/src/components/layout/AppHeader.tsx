@@ -1,5 +1,5 @@
 import { useUIStore } from "../../stores/useUIStore";
-import type { Ref } from "react";
+import { useContext, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { GROUP_STATUS_LABEL_KEYS, getGroupStatusFromSource } from "../../utils/groupStatus";
 import { GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
@@ -11,6 +11,9 @@ import { groupRunMenuActions } from "./groupRunMenuActions";
 import { useGroupMenu } from "./useGroupMenu";
 import type { GroupControl } from "../../utils/groupControls";
 import { AppSettingsMenu } from "./AppSettingsMenu";
+import { PendingSummaryContext } from "../../features/pendingReplies/context";
+import { aggregatePendingIndicator } from "../../features/pendingReplies/indicator";
+import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndicator";
 
 export interface AppHeaderProps {
   theme: Theme;
@@ -36,6 +39,8 @@ export interface AppHeaderProps {
   onOpenMobileMenu: () => void;
   workControlsRef?: Ref<HTMLDivElement>;
   sidePanelControlsRef?: Ref<HTMLDivElement>;
+  mobileReadingHidden?: boolean;
+  mobileReadingOverlay?: boolean;
 }
 
 export function AppHeader({
@@ -61,8 +66,14 @@ export function AppHeader({
   sseStatus,
   workControlsRef,
   sidePanelControlsRef,
+  mobileReadingHidden = false,
+  mobileReadingOverlay = false,
 }: AppHeaderProps) {
   const { t } = useTranslation("layout");
+  const pending = useContext(PendingSummaryContext);
+  const totalPending = pending
+    ? aggregatePendingIndicator(pending.summaries, Object.keys(pending.summaries))
+    : null;
   const controlsBusy = useUIStore((state) => state.busy.startsWith("group-"));
   const groupTitle = groupDoc?.title || (selectedGroupId ? selectedGroupId : t("selectGroup"));
   const canEditGroup = !!selectedGroupId && !webReadOnly && !!onOpenGroupEdit;
@@ -98,7 +109,20 @@ export function AppHeader({
       : [],
   );
   return (
-    <header className="@container/group-header absolute inset-x-0 top-0 z-20 flex h-[56px] shrink-0 items-center px-[12px] glass-header md:relative md:inset-auto md:h-11 md:px-3">
+    <header
+      className={`@container/group-header absolute inset-x-0 top-0 z-20 flex h-[48px] shrink-0 items-center px-[12px] glass-header transition-transform duration-150 motion-reduce:transition-none md:relative md:inset-auto md:h-11 md:px-3 ${mobileReadingHidden ? "pointer-events-none -translate-y-full" : ""}`}
+      inert={mobileReadingHidden || undefined}
+      aria-hidden={mobileReadingHidden || undefined}
+      data-mobile-reading-hidden={mobileReadingHidden || undefined}
+      style={
+        mobileReadingOverlay
+          ? {
+              backgroundColor: "var(--color-bg-primary)",
+              backgroundImage: "linear-gradient(var(--color-chat-bg), var(--color-chat-bg))",
+            }
+          : undefined
+      }
+    >
       <div
         className="@container/group-work-header flex min-w-0 flex-1 items-center gap-1 pr-1 md:gap-2 md:pr-3"
         data-group-header-work
@@ -110,12 +134,21 @@ export function AppHeader({
           <IconButton
             type="button"
             variant="secondary"
-            className="-ml-1 h-[44px] w-[44px] text-[var(--color-text-secondary)] md:hidden"
+            className="relative -ml-1 h-[44px] w-[44px] text-[var(--color-text-secondary)] md:hidden"
             onClick={onOpenSidebar}
             data-sidebar-toggle="true"
-            label={t("openSidebar")}
+            label={
+              totalPending
+                ? `${t("openSidebar")} · ${t("pendingRepliesIndicator", { value: totalPending.text })}`
+                : t("openSidebar")
+            }
           >
             <MenuIcon size={18} />
+            {totalPending && (
+              <span className="absolute -right-1 -top-1">
+                <PendingIndicatorText indicator={totalPending} />
+              </span>
+            )}
           </IconButton>
           <div className="min-w-0">
             <h1

@@ -45,7 +45,7 @@ label and tooltip. Unsupported or unreadable images fall back to a filename chip
 as do ordinary files. The attachment area scrolls when needed and local preview
 URLs are released when a file is replaced or removed.
 
-An empty, unfocused composer cycles through four localized typing hints for tasks,
+On wider screens, an empty, unfocused composer cycles through four localized typing hints for tasks,
 Skills (`/` and `/install`), Actors (`@`), and Groups (`#`). Focusing the composer
 pauses the hint; any draft text hides it, and a suggested reply takes precedence.
 Reduced-motion preferences show a static hint, and hidden tabs pause the animation.
@@ -59,6 +59,14 @@ on hover or keyboard focus; touch and narrow screens use a **More** menu. Read-o
 views retain status information without exposing these actions. The composer groups
 recipients, text and tools into one surface. Short, transform/opacity-only message
 entry feedback respects reduced-motion preferences.
+
+On phones, the chat keeps as much of the screen as possible for messages. An empty
+composer that is not in use is a single row with the attachment button, the message
+box, voice and Send, plus a short label for a chosen recipient; tapping it or one of
+its controls expands it. Scrolling the messages by touch toward newer ones slides the
+header, the filter row and the runtime dock out of view. They return when you scroll
+back, tap the messages, reach the newest message or touch the composer. The **More**
+button sits beside each message. Phones in landscape also use the single-row composer.
 
 The header uses its existing Group status dot for page-connection health: red
 means disconnected, pulsing amber means reconnecting, and a connected page uses

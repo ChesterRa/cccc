@@ -18,6 +18,7 @@ type UseAppChromeOptions = {
 
 type UseAppChromeResult = {
   canManageGroups: boolean;
+  webModeKnown: boolean;
   ccccHome: string;
   fetchDirSuggestions: () => Promise<void>;
   refreshWebAccessSession: () => Promise<boolean | null>;
@@ -35,6 +36,7 @@ export function useAppChrome({
   editingActor,
 }: UseAppChromeOptions): UseAppChromeResult {
   const [ccccHome, setCcccHome] = useState("");
+  const [webModeKnown, setWebModeKnown] = useState(false);
   const canAccessGlobalSettings = useUIStore((state) => state.canAccessGlobalSettings);
   const setCanAccessGlobalSettings = useUIStore((state) => state.setCanAccessGlobalSettings);
 
@@ -75,16 +77,25 @@ export function useAppChrome({
   useEffect(() => {
     parseUrlDeepLink();
     refreshGroups();
-    void api
-      .fetchPing()
-      .then((resp) => {
-        if (resp.ok) {
-          setWebReadOnly(Boolean(resp.result?.web?.read_only));
-        }
-      })
-      .catch(() => {
-        /* ignore */
-      });
+    let stopped = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const readWebMode = async () => {
+      const response = await api.fetchPing().catch(() => null);
+      if (stopped) return;
+      const readOnly = response?.ok ? response.result?.web?.read_only : undefined;
+      if (typeof readOnly === "boolean") {
+        setWebReadOnly(readOnly);
+        setWebModeKnown(true);
+      } else {
+        // Do not expose user-only controls until the mode is confirmed.
+        retry = setTimeout(() => void readWebMode(), 5000);
+      }
+    };
+    void readWebMode();
+    return () => {
+      stopped = true;
+      if (retry !== undefined) clearTimeout(retry);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -138,6 +149,7 @@ export function useAppChrome({
 
   return {
     canManageGroups: canAccessGlobalSettings === true,
+    webModeKnown,
     ccccHome,
     fetchDirSuggestions,
     refreshWebAccessSession,

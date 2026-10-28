@@ -318,9 +318,15 @@ pub(super) fn send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let explicit_group = string_arg(request, "group_id").filter(|id| !id.is_empty());
     let source_directed = explicit_group.is_none();
-    if (source_directed && request.args.contains_key("to"))
-        || (!source_directed && request.args.contains_key("source_ids"))
-    {
+    // CCCS treats an empty `to` as absent, and an empty `source_ids` selects
+    // no one. Some clients fill unused optional lists with [], so only a
+    // non-empty list chooses an addressing mode.
+    let addressed = |key: &str| {
+        request.args.get(key).is_some_and(|value| {
+            !value.is_null() && value.as_array().is_none_or(|items| !items.is_empty())
+        })
+    };
+    if (source_directed && addressed("to")) || (!source_directed && addressed("source_ids")) {
         return Err(OpError::new(
             "invalid_args",
             "Use source_ids for a direct send, or group_id with optional to for a Group send; do not combine addressing modes",
@@ -367,7 +373,7 @@ pub(super) fn send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             !matches!(
                 k.as_str(),
                 "source_id" | "source_ids" | "direct" | "title" | "by" | "group_id"
-            )
+            ) && (k.as_str() != "to" || addressed("to"))
         })
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect::<Map<_, _>>();
