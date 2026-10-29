@@ -6,6 +6,29 @@ use serde_json::{Value, json};
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
 use crate::ops::messaging::load;
 
+pub fn summary(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group = load(home, request)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    // A Group-wide view must also reject peers in an empty Group; checking
+    // only each returned row would accidentally make that permission vacuous.
+    permissions::require_group(&group, &by).map_err(OpError::invalid)?;
+    let cutoff = required_arg(request, "cutoff")?;
+    let cutoff = chrono::DateTime::parse_from_rfc3339(&cutoff)
+        .map_err(|_| OpError::invalid("cutoff must be an RFC3339 timestamp"))?
+        .with_timezone(&chrono::Utc);
+    let observed_at = chrono::Utc::now();
+    if cutoff > observed_at {
+        return Err(OpError::invalid("cutoff must not be in the future"));
+    }
+    let summary = inbox::overdue_summary(home, &group, cutoff, observed_at).map_err(OpError::io)?;
+    object(json!({
+        "group_id": group.group_id,
+        "observed_at": observed_at.to_rfc3339(),
+        "cutoff": cutoff.to_rfc3339(),
+        "actors": summary,
+    }))
+}
+
 pub fn peek(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     let actor_id = required_arg(request, "actor_id")?;

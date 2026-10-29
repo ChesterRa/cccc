@@ -184,6 +184,66 @@ pub fn consume_unread(
     })
 }
 
+/// Payload-free current awaiting state filtered by an inclusive original-Mail
+/// timestamp cutoff. This is not historical Inbox reconstruction.
+#[derive(Debug, Serialize)]
+pub struct OverdueMailSummary {
+    pub actor_id: String,
+    pub awaiting_count: usize,
+    pub overdue_count: usize,
+    pub oldest_awaiting_at: Option<String>,
+    pub oldest_age_seconds: Option<i64>,
+}
+
+impl OverdueMailSummary {
+    fn from_timestamps<'a>(
+        actor_id: &str,
+        timestamps: impl Iterator<Item = &'a str>,
+        cutoff: DateTime<Utc>,
+        observed_at: DateTime<Utc>,
+    ) -> Self {
+        let mut result = Self {
+            actor_id: actor_id.to_owned(),
+            awaiting_count: 0,
+            overdue_count: 0,
+            oldest_awaiting_at: None,
+            oldest_age_seconds: None,
+        };
+        let mut oldest: Option<DateTime<Utc>> = None;
+        let mut unknown_age = false;
+        for timestamp in timestamps {
+            result.awaiting_count += 1;
+            let Ok(created) = DateTime::parse_from_rfc3339(timestamp) else {
+                unknown_age = true;
+                continue;
+            };
+            let created = created.with_timezone(&Utc);
+            if created > observed_at {
+                unknown_age = true;
+                continue;
+            }
+            if created <= cutoff {
+                result.overdue_count += 1;
+            }
+            oldest = Some(oldest.map_or(created, |oldest| oldest.min(created)));
+        }
+        if !unknown_age && let Some(oldest) = oldest {
+            result.oldest_awaiting_at = Some(oldest.to_rfc3339());
+            result.oldest_age_seconds = Some((observed_at - oldest).num_seconds());
+        }
+        result
+    }
+}
+
+pub fn overdue_summary(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    cutoff: DateTime<Utc>,
+    observed_at: DateTime<Utc>,
+) -> io::Result<Vec<OverdueMailSummary>> {
+    projection::overdue_summary(home, group, cutoff, observed_at)
+}
+
 pub fn mail_pending_summary(
     home: &HomeLayout,
     group: &GroupDoc,
@@ -589,6 +649,41 @@ mod tests {
     use super::*;
     use cccc_contracts::Actor;
     use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn overdue_timestamp_boundary_and_unknown_ages() {
+        // Pure timestamp unit controls, not captured or daemon-produced Mail.
+        let cutoff = DateTime::parse_from_rfc3339("2026-01-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let observed = cutoff + chrono::Duration::seconds(60);
+        let known = OverdueMailSummary::from_timestamps(
+            "reader",
+            [
+                "2026-01-01T11:59:59.999999Z",
+                "2026-01-01T12:00:00Z",
+                "2026-01-01T12:00:00.000001Z",
+            ]
+            .into_iter(),
+            cutoff,
+            observed,
+        );
+        assert_eq!(known.awaiting_count, 3);
+        assert_eq!(known.overdue_count, 2);
+        assert_eq!(known.oldest_age_seconds, Some(60));
+        for unknown in ["invalid", "2026-01-01T12:01:00.000001Z"] {
+            let summary = OverdueMailSummary::from_timestamps(
+                "reader",
+                ["2026-01-01T12:00:00Z", unknown].into_iter(),
+                cutoff,
+                observed,
+            );
+            assert_eq!(summary.awaiting_count, 2);
+            assert_eq!(summary.overdue_count, 1);
+            assert!(summary.oldest_awaiting_at.is_none());
+            assert!(summary.oldest_age_seconds.is_none());
+        }
+    }
 
     #[test]
     fn concurrent_consumers_return_each_message_once() {

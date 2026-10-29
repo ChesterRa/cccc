@@ -332,6 +332,20 @@ pub(super) fn pending(
             .map(|mail| (mailbox.count, mail.ts.clone())))
     })
 }
+pub(super) fn overdue_summary(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    cutoff: DateTime<Utc>,
+    observed_at: DateTime<Utc>,
+) -> io::Result<Vec<OverdueMailSummary>> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, _| {
+        Ok(projection
+            .notices
+            .overdue_summary(group, &projection.cursors, cutoff, observed_at))
+    })
+}
+
 pub(crate) fn due(
     home: &HomeLayout,
     group: &GroupDoc,

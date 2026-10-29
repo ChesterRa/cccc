@@ -4,8 +4,8 @@ use cccc_core::HomeLayout;
 use serde_json::json;
 
 use crate::args::{
-    CancelReplyArgs, ConnectArgs, DeliverArgs, InboxArgs, LedgerAction, LedgerArgs, ReplyArgs,
-    SendArgs, TailArgs, TrackedSendArgs,
+    CancelReplyArgs, ConnectArgs, DeliverArgs, InboxArgs, InboxSummaryArgs, LedgerAction,
+    LedgerArgs, ReplyArgs, SendArgs, TailArgs, TrackedSendArgs,
 };
 use crate::commands::common::{call, group, print};
 
@@ -207,6 +207,21 @@ pub async fn tail(client: &DaemonClient, home: &HomeLayout, args: TailArgs) -> R
             ()=tokio::time::sleep(std::time::Duration::from_secs(1))=>{}
         }
     }
+}
+
+pub async fn inbox_summary(
+    client: &DaemonClient,
+    home: &HomeLayout,
+    args: InboxSummaryArgs,
+) -> Result<()> {
+    let group_id = group(home, args.group_id)?;
+    let response = call(
+        client,
+        "inbox_summary",
+        json!({"group_id":group_id,"cutoff":args.cutoff,"by":args.by}),
+    )
+    .await?;
+    print(response)
 }
 
 pub async fn inbox(client: &DaemonClient, home: &HomeLayout, args: InboxArgs) -> Result<()> {

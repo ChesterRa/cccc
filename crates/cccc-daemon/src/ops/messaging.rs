@@ -55,6 +55,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "message_read_status" => Operation::new(Read, super::messaging_status::read_status),
         "inbox_peek" => Operation::new(Write, messaging_inbox::peek),
         "inbox_read" => Operation::new(Write, messaging_inbox::read),
+        "inbox_summary" => Operation::new(Read, messaging_inbox::summary),
         "message_history" => Operation::new(Read, messaging_inbox::history),
         _ => return None,
     })
