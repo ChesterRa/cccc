@@ -70,6 +70,7 @@ export type DotsActorState = {
   phase: DotsPhase;
   pending_count: number;
   active_turn_id?: string | null;
+  active_turn_elapsed_seconds?: number | null;
   active_event_ids?: string[];
   last_execution?: {
     turn_id: string;
@@ -283,6 +284,7 @@ export type GrokActorState = {
   pending_count: number;
   bot_url?: string | null;
   active_turn_id?: string;
+  active_turn_elapsed_seconds?: number | null;
   active_event_ids?: string[];
   error_code?: string | null;
   http_status?: number | null;

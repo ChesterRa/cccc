@@ -40,6 +40,13 @@ export function useTaskBoardData(options: UseTaskBoardDataOptions) {
   const [taskIndex, setTaskIndex] = useState<Task[]>([]);
   const [tasksVersion, setTasksVersion] = useState("");
   const [error, setError] = useState("");
+  // A selected task can be retained in a column even when it is outside the
+  // filter. Keep the count from the server page, not the augmented columns.
+  const [matchResult, setMatchResult] = useState<{
+    key: string;
+    count: number;
+    tasksVersion: string;
+  } | null>(null);
   const tasksVersionRef = useRef("");
   const generationRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -63,6 +70,20 @@ export function useTaskBoardData(options: UseTaskBoardDataOptions) {
   });
   const attention = options.filter === "all" ? undefined : options.filter;
   const assignee = options.assignee === "__all__" ? "" : options.assignee;
+  const requestKey = JSON.stringify([
+    options.groupId,
+    query,
+    options.assignee,
+    options.filter,
+    options.includeArchived,
+  ]);
+  const currentKey = JSON.stringify([
+    options.groupId,
+    options.query.trim(),
+    options.assignee,
+    options.filter,
+    options.includeArchived,
+  ]);
 
   const rememberVersion = useCallback((value: string) => {
     tasksVersionRef.current = value;
@@ -78,6 +99,7 @@ export function useTaskBoardData(options: UseTaskBoardDataOptions) {
     setTaskIndex([]);
     setTasksVersion("");
     setError("");
+    setMatchResult(null);
   }, [options.groupId]);
 
   const reload = useCallback(async () => {
@@ -125,6 +147,13 @@ export function useTaskBoardData(options: UseTaskBoardDataOptions) {
     });
     setFacets(response.result.facets);
     setTaskIndex(response.result.taskIndex);
+    const counts = statuses.map((status) => response.result.pages[status]);
+    const count = counts.reduce((total, page) => total + (page?.totalCount ?? 0), 0);
+    setMatchResult(
+      counts.every((page) => page?.totalCountKnown) && Number.isSafeInteger(count)
+        ? { key: requestKey, count, tasksVersion: response.result.tasksVersion }
+        : null,
+    );
     rememberVersion(response.result.tasksVersion);
   }, [
     assignee,
@@ -135,6 +164,7 @@ export function useTaskBoardData(options: UseTaskBoardDataOptions) {
     getLoadedTask,
     mergeRetainedTasks,
     query,
+    requestKey,
     rememberVersion,
     retainSelectedTask,
   ]);
@@ -150,6 +180,7 @@ export function useTaskBoardData(options: UseTaskBoardDataOptions) {
     lastReloadGroupIdRef.current = "";
     setColumns(createTaskColumnPages());
     setError("");
+    setMatchResult(null);
   }, [options.isOpen]);
 
   useEffect(() => {
@@ -210,6 +241,14 @@ export function useTaskBoardData(options: UseTaskBoardDataOptions) {
     taskIndex,
     facets,
     error,
+    matchingCount:
+      options.isOpen &&
+      !error &&
+      matchResult?.key === currentKey &&
+      !shouldRefreshTaskRevision(matchResult.tasksVersion, options.contextTasksVersion || "") &&
+      !TASK_PAGE_STATUSES.some((status) => columns[status].loading)
+        ? matchResult.count
+        : null,
     deleteInfoById,
     loading: TASK_PAGE_STATUSES.some((status) => columns[status].loading),
     refresh: reload,

@@ -145,6 +145,12 @@ export function taskStatus(task: Task | null | undefined): string {
   return String(task?.status || "planned").toLowerCase();
 }
 
+/** Completed and archived tasks retain their fields for a later reopen. */
+export function taskIsLive(task: Task | null | undefined): boolean {
+  const status = taskStatus(task);
+  return status !== "done" && status !== "archived";
+}
+
 export function taskArchivedFrom(task: Task | null | undefined): string {
   return String(task?.archived_from || "")
     .trim()
@@ -266,6 +272,11 @@ export function nextChecklistItemId(items: readonly TaskChecklistItem[]): string
 /** The items worth keeping: those with any text, kept as written. */
 export function checklistToSave(items: readonly TaskChecklistItem[]): TaskChecklistItem[] {
   return items.filter((item) => item.text.trim());
+}
+
+/** Custom statuses are retained as written and are not classified as open. */
+export function checklistItemOpen(item: TaskChecklistItem): boolean {
+  return !item.status || item.status === "pending" || item.status === "in_progress";
 }
 
 function draftChecklist(items: TaskChecklistItem[] | null | undefined): TaskChecklistItem[] {

@@ -23,6 +23,7 @@ export function TaskBoardToolbar({
   unassignedCount,
   hasArchivedTasks,
   archivedExpanded,
+  matchingCount,
   onTaskQueryChange,
   onAssigneeFilterChange,
   onTaskFilterChange,
@@ -41,6 +42,7 @@ export function TaskBoardToolbar({
   unassignedCount: number;
   hasArchivedTasks: boolean;
   archivedExpanded: boolean;
+  matchingCount?: number | null;
   onTaskQueryChange: (value: string) => void;
   onAssigneeFilterChange: (value: string) => void;
   onTaskFilterChange: (value: TaskFilterValue) => void;
@@ -77,7 +79,7 @@ export function TaskBoardToolbar({
           className={classNames(ui.inputClass, "w-full px-2 lg:w-[14rem] lg:px-4")}
           searchable
         />
-        {taskQuery || assigneeFilter !== "__all__" || taskFilter !== "all" ? (
+        {taskQuery.trim() || assigneeFilter !== "__all__" || taskFilter !== "all" ? (
           <button
             type="button"
             onClick={onClearFilters}
@@ -125,6 +127,11 @@ export function TaskBoardToolbar({
           </span>
         ) : null}
       </div>
+      {typeof matchingCount === "number" ? (
+        <p className={classNames("text-xs", ui.mutedTextClass)} role="status">
+          {tr("context.matchingTasks", "{{count}} matching tasks", { count: matchingCount })}
+        </p>
+      ) : null}
     </div>
   );
 }

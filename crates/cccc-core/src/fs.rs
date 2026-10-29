@@ -163,7 +163,7 @@ pub fn with_exclusive_lock<T>(
 }
 
 #[cfg(unix)]
-fn sync_dir(path: &Path) -> io::Result<()> {
+pub(crate) fn sync_dir(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
 }
 
@@ -179,7 +179,7 @@ fn protect(_path: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn sync_dir(_path: &Path) -> io::Result<()> {
+pub(crate) fn sync_dir(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 

@@ -27,3 +27,23 @@ it("only sums known counts and keeps unknown Groups visible", () => {
   expect(aggregatePendingIndicator(summaries, ["a", "a"])?.text).toBe("2");
   expect(aggregatePendingIndicator(summaries, [])).toBeNull();
 });
+
+it("says when the running daemon cannot give a count, still without a zero", () => {
+  const unsupported = { state: "unknown" as const, pending: null, daemonUnsupported: true };
+  expect(pendingIndicator(unsupported)).toEqual({
+    text: "?",
+    state: "unknown",
+    count: null,
+    daemonUnsupported: true,
+  });
+  expect(pendingIndicator({ state: "unknown", pending: null })?.daemonUnsupported).toBeUndefined();
+  expect(pendingFilterIndicator(unsupported, true)?.text).toBe("?");
+  const summaries = { a: { state: "fresh" as const, pending: 2 }, b: unsupported };
+  expect(aggregatePendingIndicator(summaries, ["a", "b"])).toEqual({
+    text: "2+?",
+    state: "unknown",
+    count: null,
+    daemonUnsupported: true,
+  });
+  expect(aggregatePendingIndicator(summaries, ["a"])?.daemonUnsupported).toBeUndefined();
+});

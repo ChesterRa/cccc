@@ -6,7 +6,10 @@ import { NotificationsTab } from "./NotificationsTab";
 import * as push from "../../../features/pushNotifications/subscription";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock("../../../features/pushNotifications/subscription", () => ({
+vi.mock("../../../features/pushNotifications/subscription", async (importOriginal) => ({
+  // The status table itself is pure; the tab is tested through it.
+  PUSH_STATUS_EVENT: (await importOriginal<typeof push>()).PUSH_STATUS_EVENT,
+  pushSetupStatus: (await importOriginal<typeof push>()).pushSetupStatus,
   pushSupported: vi.fn(),
   findBrowserSubscription: vi.fn(),
   readPushConfig: vi.fn(),
@@ -182,11 +185,16 @@ it("subscribes in one gesture when permission, key and manager are already avail
 
 it("does not prepare a key or subscribe when permission is denied", async () => {
   requestPermission.mockResolvedValue("denied");
+  const announced = vi.fn();
+  window.addEventListener("cccc:push-status", announced);
   await act(async () => button("notifications.enable").click());
+  window.removeEventListener("cccc:push-status", announced);
   expect(push.preparePush).not.toHaveBeenCalled();
   expect(push.subscribeFromGesture).not.toHaveBeenCalled();
   expect(status()).toBe("notifications.status.blocked");
   expect(alert()).toBe("notifications.error.permission");
+  // The offer on the messages page rereads the status and stops offering.
+  expect(announced).toHaveBeenCalled();
 });
 
 it("reports blocked permission before enabling without a subscription", async () => {

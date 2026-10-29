@@ -15,7 +15,8 @@ it("distinguishes an empty board from a filtered, loading, or failed one", () =>
   const clear = vi.fn();
   const retry = vi.fn();
   const props: ComponentProps<typeof TaskBoard> = {
-    tr: (_key, fallback) => fallback,
+    tr: (_key, fallback, values) =>
+      fallback.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => String(values?.[key] ?? "")),
     ui: createContextModalUi(false),
     syncBusy: false,
     taskQuery: "",
@@ -83,6 +84,14 @@ it("distinguishes an empty board from a filtered, loading, or failed one", () =>
     expect(host.querySelector('[data-task-column="active"]')?.getAttribute("aria-label")).toBe(
       "Active",
     );
+    render({ taskQuery: "review", matchingCount: 3 });
+    expect(host.textContent).toContain("3 matching tasks");
+    render({ taskQuery: "review", matchingCount: 3, taskLoading: true });
+    expect(host.textContent).not.toContain("matching tasks");
+    render({ taskQuery: "review", matchingCount: 3, taskLoadError: "offline" });
+    expect(host.textContent).not.toContain("matching tasks");
+    render({ taskQuery: "   ", matchingCount: 3 });
+    expect(host.textContent).not.toContain("matching tasks");
   } finally {
     act(() => root.unmount());
     host.remove();

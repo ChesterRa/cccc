@@ -4,6 +4,8 @@ export type PendingIndicator = {
   text: string;
   state: "fresh" | "stale" | "unknown";
   count: number | null;
+  /** Unknown because the running daemon does not support the count. */
+  daemonUnsupported?: true;
 };
 
 function countText(count: number): string {
@@ -12,7 +14,9 @@ function countText(count: number): string {
 
 export function pendingIndicator(summary: Summary | undefined): PendingIndicator | null {
   if (!summary || summary.state === "unknown" || summary.pending === null)
-    return { text: "?", state: "unknown", count: null };
+    return summary?.daemonUnsupported
+      ? { text: "?", state: "unknown", count: null, daemonUnsupported: true }
+      : { text: "?", state: "unknown", count: null };
   if (summary.state === "stale")
     return {
       text: summary.pending > 0 ? `~${countText(summary.pending)}` : "?",
@@ -39,12 +43,18 @@ export function aggregatePendingIndicator(
   if (!groupIds.length) return null;
   let known = 0;
   let unknown = false;
+  let daemonUnsupported = false;
   for (const id of new Set(groupIds)) {
     const summary = summaries[id];
+    if (summary?.daemonUnsupported) daemonUnsupported = true;
     if (!summary || summary.state !== "fresh" || summary.pending === null) unknown = true;
     else known = Math.min(Number.MAX_SAFE_INTEGER, known + summary.pending);
   }
-  if (unknown)
-    return { text: known ? `${countText(known)}+?` : "?", state: "unknown", count: null };
+  if (unknown) {
+    const text = known ? `${countText(known)}+?` : "?";
+    return daemonUnsupported
+      ? { text, state: "unknown", count: null, daemonUnsupported: true }
+      : { text, state: "unknown", count: null };
+  }
   return known ? { text: countText(known), state: "fresh", count: known } : null;
 }

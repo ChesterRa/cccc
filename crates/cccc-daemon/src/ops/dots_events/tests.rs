@@ -730,6 +730,10 @@ fn dots_stop_start_fences_late_work_and_requires_explicit_resolution_without_rep
     let delivery = f.delivery();
     let original_claim = f.claim_capture();
     let turn = f.claim(&original_claim)["turn"].clone();
+    assert!(f.call("dots_events_status", json!({}))["active_turn_elapsed_seconds"].is_u64());
+    let reopened = HomeLayout::from_path(f.home.root()).expect("reopen isolated home");
+    super::super::runtime_restore::restore_running(&reopened).expect("daemon startup restore");
+    assert!(f.call("dots_events_status", json!({}))["active_turn_elapsed_seconds"].is_u64());
     let live = f.captured(&delivery, "cccc_runtime_complete_turn");
     let subscription = f.private()["dots"]["subscription"].clone();
     f.call("actor_stop", json!({}));
@@ -751,10 +755,9 @@ fn dots_stop_start_fences_late_work_and_requires_explicit_resolution_without_rep
     let epoch = f.private()["dots"]["epoch"].clone();
     f.call("actor_start", json!({}));
     assert_eq!(f.private()["dots"]["epoch"], epoch);
-    assert_eq!(
-        f.call("dots_events_status", json!({}))["phase"],
-        "interrupted"
-    );
+    let interrupted = f.call("dots_events_status", json!({}));
+    assert_eq!(interrupted["phase"], "interrupted");
+    assert!(interrupted["active_turn_elapsed_seconds"].is_u64());
     assert!(f.delivery().is_null());
     assert!(
         !f.response(
@@ -771,6 +774,7 @@ fn dots_stop_start_fences_late_work_and_requires_explicit_resolution_without_rep
     let current = f.call("dots_events_status", json!({}));
     assert_eq!(current["last_execution"]["status"], "cancelled");
     assert_eq!(current["active_turn_id"], "");
+    assert!(current["active_turn_elapsed_seconds"].is_null());
     f.source("new independent input");
     assert!(f.delivery().is_object());
 }

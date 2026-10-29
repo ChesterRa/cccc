@@ -54,3 +54,36 @@ it("opens the Group's waiting view without selecting or dragging its row", async
     host.remove();
   }
 });
+
+it("tells the user when the running daemon cannot count waiting replies", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const summary = { state: "unknown" as const, pending: null, daemonUnsupported: true };
+  try {
+    await act(async () =>
+      root.render(
+        <PendingSummaryContext.Provider value={{ summaries: { g: summary }, refresh: () => {} }}>
+          <PendingReplyNavigationContext.Provider value={vi.fn()}>
+            <GroupSidebarItem
+              group={{ group_id: "g", title: "Alpha" } as GroupMeta}
+              isActive={false}
+              isCollapsed={false}
+              onSelect={vi.fn()}
+            />
+          </PendingReplyNavigationContext.Provider>
+        </PendingSummaryContext.Provider>,
+      ),
+    );
+    const badge = host.querySelector("[data-pending-state]")!;
+    expect(badge.textContent).toBe("?");
+    const button = host.querySelector<HTMLButtonElement>("button:has([data-pending-state])")!;
+    expect(button.getAttribute("aria-label")).toMatch(
+      /^Alpha · (openPendingRepliesDaemonUnsupported|.*not supported by the running CCCC daemon)/,
+    );
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});

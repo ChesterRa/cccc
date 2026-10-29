@@ -1759,7 +1759,10 @@ async fn native_backlogs_drain_past_the_queue_and_startup_page_without_manual_re
             .expect("store")
             .ledger_path(group)
             .expect("ledger");
-        let deadline = Instant::now() + Duration::from_secs(45);
+        // Messages drain one at a time (about 33 s for 400 locally, longer on
+        // CI runners), so fail on a stalled drain rather than a fixed duration.
+        let started = Instant::now();
+        let mut progress = (0, started);
         loop {
             let events = cccc_core::ledger::read_all(&ledger).expect("delivery ledger");
             let accepted = events
@@ -1780,8 +1783,12 @@ async fn native_backlogs_drain_past_the_queue_and_startup_page_without_manual_re
                 assert_eq!(accepted.into_iter().collect::<HashSet<_>>(), expected);
                 break;
             }
+            if accepted.len() > progress.0 {
+                progress = (accepted.len(), Instant::now());
+            }
             assert!(
-                Instant::now() < deadline,
+                progress.1.elapsed() < Duration::from_secs(30)
+                    && started.elapsed() < Duration::from_secs(180),
                 "backlog={count}, restart={restart}: only {} of {} messages accepted",
                 accepted.len(),
                 expected.len()

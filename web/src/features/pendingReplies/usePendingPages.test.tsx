@@ -133,7 +133,40 @@ it("does not leak late data from a previous Group, or claim a failed status is c
     mocks.page.mockResolvedValueOnce({ ok: false, error: { code: "network_error" } });
     await act(async () => latest.refresh());
     expect(latest.error).toBe(true);
+    expect(latest.daemonUnsupported).toBe(false);
     expect(pendingReplyView(latest.events[0])?.state).toBe("unknown");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
+it("reports a daemon without the operation apart from other failures, until a read succeeds", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.page.mockReset();
+  mocks.statuses.mockReset();
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  let latest!: Result;
+  const update = (value: Result) => {
+    latest = value;
+  };
+  mocks.page.mockResolvedValueOnce({
+    ok: false,
+    error: { code: "unknown_op", message: "unknown operation: user_reply_requests" },
+  });
+  try {
+    await act(async () => root.render(<Wrapper group="g" update={update} />));
+    expect(latest.error).toBe(true);
+    expect(latest.daemonUnsupported).toBe(true);
+    expect(latest.events).toEqual([]);
+
+    mocks.page.mockResolvedValueOnce(page(["r1"], null));
+    await act(async () => latest.refresh());
+    expect(latest.error).toBe(false);
+    expect(latest.daemonUnsupported).toBe(false);
+    expect(latest.events.map((event) => event.id)).toEqual(["r1"]);
   } finally {
     await act(async () => root.unmount());
     host.remove();

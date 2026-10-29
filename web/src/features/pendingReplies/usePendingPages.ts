@@ -14,6 +14,8 @@ type PageState = {
   loaded: boolean;
   loading: boolean;
   error: boolean;
+  /** The error is the running daemon not having this operation. */
+  daemonUnsupported: boolean;
 };
 
 type Visit = {
@@ -34,6 +36,7 @@ function empty(key: string): PageState {
     loaded: false,
     loading: false,
     error: false,
+    daemonUnsupported: false,
   };
 }
 
@@ -124,8 +127,9 @@ export function usePendingPages(groupId: string, enabled: boolean) {
     }
     if (direction === "older" && (!visit.state.hasMore || !visit.state.before)) return;
     visit.pending = true;
-    visit.state = { ...visit.state, loading: true, error: false };
+    visit.state = { ...visit.state, loading: true, error: false, daemonUnsupported: false };
     setState(visit.state);
+    let daemonUnsupported = false;
     try {
       const existingIds = new Set(visit.state.events.map((event) => event.id));
       const result = await fetchPendingReplies(
@@ -140,6 +144,7 @@ export function usePendingPages(groupId: string, enabled: boolean) {
           await readRef.current(visit, "head", true);
           return;
         }
+        daemonUnsupported = result.error.code === "unknown_op";
         throw new Error("read failed");
       }
       const page = result.result;
@@ -205,6 +210,7 @@ export function usePendingPages(groupId: string, enabled: boolean) {
         })),
         loading: false,
         error: true,
+        daemonUnsupported,
       };
       setState(visit.state);
     } finally {

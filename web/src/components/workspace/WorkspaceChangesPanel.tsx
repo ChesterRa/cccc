@@ -61,7 +61,7 @@ export function WorkspaceChangesPanel({ files }: { files: WorkspaceFilesControll
           {t("workspaceGit.limited")}
         </p>
       )}
-      {!status.entries.length && (
+      {!status.entries.length && !status.limited && (
         <p className="px-3 py-4 text-sm text-[var(--color-text-secondary)]">
           {t("workspaceGit.clean")}
         </p>

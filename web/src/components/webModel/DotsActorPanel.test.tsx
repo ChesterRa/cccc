@@ -15,8 +15,12 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { time?: string }) =>
-      options?.time ? `${key}: ${options.time}` : key,
+    t: (key: string, options?: { time?: string; elapsed?: string }) =>
+      options?.time
+        ? `${key}: ${options.time}`
+        : options?.elapsed
+          ? `${key}: ${options.elapsed}`
+          : key,
     i18n: { language: mocks.language },
   }),
 }));
@@ -88,6 +92,41 @@ const render = async (props: Partial<React.ComponentProps<typeof DotsActorPanel>
 };
 const button = (text: string) =>
   [...host.querySelectorAll("button")].find((b) => b.textContent === text)!;
+it("shows a matching turn's claim age and leaves unrelated status alone", async () => {
+  mocks.load.mockResolvedValue(
+    state({
+      connected: true,
+      subscribed: true,
+      phase: "working",
+      active_turn_id: "turn",
+      active_turn_elapsed_seconds: 3600,
+      pending_count: 3,
+    }),
+  );
+  await render();
+  const age = host.querySelector("[data-active-turn-age]");
+  expect(age?.textContent).toBe("nativeActor.claimedAgo: 1 hour ago");
+  expect(age?.closest('[role="status"]')).toBeNull();
+  expect(host.textContent).toContain("dotsActor.status.pending");
+});
+it("shows unknown when an unfinished turn has no claim time", async () => {
+  mocks.load.mockResolvedValue(state({ phase: "interrupted", active_turn_id: "turn" }));
+  await render();
+  expect(host.querySelector("[data-active-turn-age]")?.textContent).toBe(
+    "nativeActor.claimTimeUnknown",
+  );
+});
+it("hides the relative claim age when refreshing status fails", async () => {
+  mocks.load.mockResolvedValue(
+    state({ phase: "working", active_turn_id: "turn", active_turn_elapsed_seconds: 3600 }),
+  );
+  await render();
+  expect(host.querySelector("[data-active-turn-age]")).not.toBeNull();
+  mocks.load.mockResolvedValue({ ok: false, error: { message: "offline" } });
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(host.querySelector("[data-active-turn-age]")).toBeNull();
+  expect(host.textContent).toContain("offline");
+});
 it("distinguishes a paired paused Dot from an incomplete pairing without enabling it", async () => {
   mocks.load.mockResolvedValue(
     state({ connected: true, paired: true, enabled: false, phase: "stopped" }),

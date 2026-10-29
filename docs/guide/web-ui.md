@@ -297,7 +297,12 @@ replaced with another file's path.
 
 Select **Changes** next to **Files** to inspect the active workspace's Git changes.
 The list separates working-tree modifications, staged changes, conflicts and untracked
-items. Select a tracked change to see its diff in the main area; use **Unified** or
+items. A new folder is listed file by file, as code editors list it; it stays a single
+item when it holds a separate repository. It also stays one item when listing its files
+would exceed the time or size limit, and a note then says the list is incomplete. In
+Files, the contents of a new folder are marked untracked too. This also applies when the
+workspace itself is a new folder of its repository.
+Select a tracked change to see its diff in the main area; use **Unified** or
 **Side by side** when the viewer is wide enough. Untracked files open in Files,
 untracked folders reveal their contents, and conflicts open the current file for
 inspection. The view uses saved content; unsaved drafts remain intact when switching
@@ -937,11 +942,20 @@ Enter/Space. Switching sections retains summary/file drafts and task filters.
   card to a column moves the task there; **Restore** on an archived card returns
   it to the status it had before it was archived. A parent card shows how many of
   its direct, non-archived subtasks are done, even when filters or paging hide
-  some of them. Subtask progress never completes the parent.
+  some of them. Subtask progress never completes the parent. Each card shows how
+  long ago the task last changed, by this device's clock, and a Planned or Active
+  card without a summary shows its first open checklist item. Done and archived
+  cards no longer show blocking, waiting or handoff marks; reopening the task
+  shows them again. A Done card whose checklist still has open items says how
+  many remain. While a search or filter is active, the board says how many tasks
+  match.
 
   Opening a task shows its editor: title, status, assignee, priority and waiting
   on first, then the outcome, checklist, notes and subtasks, with **Add subtask**.
   Parent, handoff, blocking tasks and task type are under **Advanced details**.
+  The outcome, notes and checklist items grow with their text, so a long record
+  scrolls with the editor and long items are not cut off. Text taller than
+  10,000 pixels scrolls inside its own box instead.
   A checklist item in progress shows as partly ticked, and any other status an
   agent set is shown beside the item and kept until the item is ticked. Moving a
   task to Done needs no particular notes; a done task without an outcome only
@@ -987,7 +1001,13 @@ Open settings from **Settings and more** in the header:
 Use **Settings → This instance → Notifications** to enable notifications in
 each browser or installed app where you want them. This is available in the
 private Web UI, not exhibit mode. Keep the CCCC Web service running; closing
-the CCCC page does not stop the service on your server.
+the CCCC page does not stop the service on your server. While requests wait
+for you in a Group, and this browser could show notifications for your account
+but they are not on yet, its messages page also offers them above the message
+box: **Turn on…** opens this settings page, and **Not now** hides the offer in
+that browser. No offer appears when the browser cannot use notifications, when
+they are blocked, when the server cannot send them, or when their state cannot
+be confirmed.
 
 1. Open CCCC over HTTPS, or use localhost on the same computer. On iPhone or
    iPad, first add CCCC to the Home Screen and open it from there; Web Push

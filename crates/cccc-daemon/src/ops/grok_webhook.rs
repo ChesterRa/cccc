@@ -113,6 +113,11 @@ fn project(home: &HomeLayout, g: &GroupDoc, a: &Actor) -> Result<Value, OpError>
     )
     .unwrap_or(Value::Null);
     let runtime = super::runtime_state::actor_state(home, &g.group_id, &a.id)?;
+    let elapsed = super::runtime_state::active_turn_elapsed_seconds(
+        &runtime,
+        &s["execution"],
+        chrono::Utc::now(),
+    );
     let has_turn = runtime["active_turn_id"]
         .as_str()
         .is_some_and(|s| !s.is_empty());
@@ -154,6 +159,7 @@ fn project(home: &HomeLayout, g: &GroupDoc, a: &Actor) -> Result<Value, OpError>
         json!({"group_id":g.group_id,"actor_id":a.id,"connected":c.is_object(),"bound":b.is_object(),
         "configured":configured,"phase":phase,"enabled":a.enabled,
         "pending_count":pending,"bot_url":b["url"],"active_turn_id":runtime["active_turn_id"],
+        "active_turn_elapsed_seconds":elapsed,
         "active_event_ids":runtime["active_event_ids"],"error_code":s["wake"]["error_code"],
         "http_status":s["wake"]["http_status"],"attempt":s["wake"]["attempt"],"last_execution":s["last_execution"]}),
     )

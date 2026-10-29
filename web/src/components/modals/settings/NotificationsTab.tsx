@@ -6,6 +6,8 @@ import {
   existingPushSetup,
   findBrowserSubscription,
   preparePush,
+  PUSH_STATUS_EVENT,
+  pushSetupStatus,
   pushSupported,
   readPushConfig,
   removeSubscription,
@@ -53,6 +55,12 @@ export function NotificationsTab() {
   const focusCheckingRef = useRef(false);
   const focusRecheckRef = useRef(false);
 
+  // Other views, such as the offer on the messages page, follow every status
+  // this tab settles on, including a permission the user just denied.
+  useEffect(() => {
+    if (status !== "checking") window.dispatchEvent(new Event(PUSH_STATUS_EVENT));
+  }, [status]);
+
   const refresh = useCallback(async () => {
     const version = ++refreshVersionRef.current;
     const current = () => mountedRef.current && refreshVersionRef.current === version;
@@ -74,20 +82,13 @@ export function NotificationsTab() {
         setBound(matches);
         setAvailable(ready);
         setStatus(
-          Notification.permission === "denied"
-            ? "blocked"
-            : config.sender === "starting" || config.sender === "unavailable"
-              ? "senderUnavailable"
-              : needsReconnect
-                ? "keyMismatch"
-                : matches
-                  ? Notification.permission === "granted"
-                    ? "enabled"
-                    : // Permission was reset to ask: enabling asks again.
-                      "disabled"
-                  : local
-                    ? "unbound"
-                    : "disabled",
+          pushSetupStatus({
+            permission: Notification.permission,
+            sender: config.sender,
+            needsReconnect: !!needsReconnect,
+            bound: matches,
+            hasSubscription: !!local,
+          }),
         );
       }
       return current() && matches;

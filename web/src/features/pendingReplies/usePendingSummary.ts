@@ -11,6 +11,8 @@ export type Summary = {
   oldestTs?: string | null;
   asOf?: string;
   accessDenied?: boolean;
+  /** The running daemon has no such operation, as one from another build may not. */
+  daemonUnsupported?: boolean;
 };
 
 const UNKNOWN: Summary = { state: "unknown", pending: null };
@@ -89,6 +91,7 @@ export function usePendingSummary(enabled: boolean, groupIds: readonly string[])
             "forbidden",
             "read_only",
           ].includes(code);
+          const daemonUnsupported = code === "unknown_op";
           setEntries((current) =>
             Object.fromEntries(
               ids.map((id) => {
@@ -97,11 +100,13 @@ export function usePendingSummary(enabled: boolean, groupIds: readonly string[])
                   id,
                   denied
                     ? { ...UNKNOWN, accessDenied: true }
-                    : previous?.accessDenied
-                      ? previous
-                      : previous?.pending != null
-                        ? { ...previous, state: "stale" as const }
-                        : UNKNOWN,
+                    : daemonUnsupported
+                      ? { ...UNKNOWN, daemonUnsupported: true }
+                      : previous?.accessDenied
+                        ? previous
+                        : previous?.pending != null
+                          ? { ...previous, state: "stale" as const }
+                          : UNKNOWN,
                 ];
               }),
             ),

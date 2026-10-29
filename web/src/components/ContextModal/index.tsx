@@ -187,6 +187,7 @@ export function ContextModal({
     facets: taskFacets,
     error: taskLoadError,
     loading: taskLoading,
+    matchingCount: taskMatchingCount,
     deleteInfoById,
     refresh: refreshTasks,
     loadMore: loadMoreTasks,
@@ -1482,6 +1483,7 @@ export function ContextModal({
                         columnPages={taskColumnPages}
                         taskLoading={taskLoading}
                         taskLoadError={taskLoadError}
+                        matchingCount={taskMatchingCount}
                         taskMap={taskMap}
                         subtaskProgress={subtaskProgress}
                         selectedTaskId={selectedTaskId}

@@ -1,11 +1,14 @@
 import {
+  useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   type Dispatch,
   type ReactNode,
   type RefObject,
   type SetStateAction,
+  type TextareaHTMLAttributes,
 } from "react";
 import { Plus, X } from "lucide-react";
 import type { Task, TaskChecklistItem, TaskWaitingOn } from "../../../types";
@@ -167,7 +170,10 @@ export function TaskEditorPanel({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
+      <div
+        data-task-editor-scroll
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+      >
         {error ? (
           <div
             role="alert"
@@ -289,7 +295,7 @@ export function TaskEditorPanel({
 
         {field(
           tr("context.outcome", "Outcome"),
-          <textarea
+          <GrowingTextarea
             value={taskDraft.outcome}
             readOnly={locked}
             onChange={(event) => update({ outcome: event.target.value })}
@@ -313,7 +319,7 @@ export function TaskEditorPanel({
 
         {field(
           tr("context.notes", "Notes"),
-          <textarea
+          <GrowingTextarea
             value={taskDraft.notes}
             readOnly={locked}
             onChange={(event) => update({ notes: event.target.value })}
@@ -478,6 +484,61 @@ export function TaskEditorPanel({
   );
 }
 
+// Many screens tall. Past it the box scrolls inside, so huge text cannot push
+// the controls below it beyond the browser's height limit.
+const MAX_GROWN_HEIGHT_PX = 10_000;
+
+/** As tall as its text, so a long record scrolls with the editor instead of inside a box. */
+function GrowingTextarea({
+  className,
+  ref: outer,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  ref?: (element: HTMLTextAreaElement | null) => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  const fit = useCallback(() => {
+    const node = ref.current;
+    if (!node) return;
+    // Measuring collapses the box for a moment, which can pull the editor's scroll back.
+    const scroller = node.closest<HTMLElement>("[data-task-editor-scroll]");
+    const top = scroller?.scrollTop ?? 0;
+    // Measure without a scrollbar, which would narrow the text and overstate its height.
+    node.style.overflowY = "hidden";
+    node.style.height = "auto";
+    const height = node.scrollHeight + node.offsetHeight - node.clientHeight;
+    node.style.height = `${Math.min(height, MAX_GROWN_HEIGHT_PX)}px`;
+    if (height > MAX_GROWN_HEIGHT_PX) node.style.overflowY = "auto";
+    if (scroller) scroller.scrollTop = top;
+  }, []);
+  useLayoutEffect(fit, [fit, props.value]);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    // Text wraps again when the editor's width changes.
+    let width = node.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (node.clientWidth === width) return;
+      width = node.clientWidth;
+      fit();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [fit]);
+  return (
+    <textarea
+      ref={(element) => {
+        ref.current = element;
+        outer?.(element);
+      }}
+      {...props}
+      className={className}
+      // Inline, so no resize class in `className` can let the box be dragged over its text.
+      style={{ ...props.style, resize: "none" }}
+    />
+  );
+}
+
 function ChecklistEditor({
   tr,
   ui,
@@ -491,7 +552,7 @@ function ChecklistEditor({
   locked: boolean;
   onChange: (items: TaskChecklistItem[]) => void;
 }) {
-  const inputs = useRef(new Map<string, HTMLInputElement>());
+  const inputs = useRef(new Map<string, HTMLTextAreaElement>());
   const focusId = useRef("");
   const statusId = useId();
   useEffect(() => {
@@ -544,7 +605,7 @@ function ChecklistEditor({
                 ? String(item.status)
                 : "";
             return (
-              <li key={`${item.id}:${index}`} className="flex items-center gap-1">
+              <li key={`${item.id}:${index}`} className="flex items-start gap-1">
                 <label
                   className="flex size-10 shrink-0 cursor-pointer items-center justify-center"
                   title={
@@ -570,11 +631,12 @@ function ChecklistEditor({
                     aria-describedby={other ? `${statusId}-${index}` : undefined}
                   />
                 </label>
-                <input
+                <GrowingTextarea
                   ref={(element) => {
                     if (element) inputs.current.set(item.id, element);
                     else inputs.current.delete(item.id);
                   }}
+                  rows={1}
                   value={item.text}
                   readOnly={locked}
                   aria-label={label}

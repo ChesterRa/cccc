@@ -89,21 +89,60 @@ function button(label: string): HTMLButtonElement {
   return found;
 }
 
-function itemInput(n: number): HTMLInputElement {
-  const input = host.querySelector<HTMLInputElement>(
-    `input:not([type="checkbox"])[aria-label="Checklist item ${n}"]`,
+function itemInput(n: number): HTMLTextAreaElement {
+  // A text area, so a long item wraps instead of running off the edge.
+  const input = host.querySelector<HTMLTextAreaElement>(
+    `textarea[aria-label="Checklist item ${n}"]`,
   );
   if (!input) throw new Error(`Missing checklist item ${n}`);
   return input;
 }
 
-function type(input: HTMLInputElement, value: string) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+function type(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const prototype =
+    input instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
   act(() => {
     setter?.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+
+it("lets long text grow with the editor rather than be dragged over", () => {
+  render();
+  const fields = [...host.querySelectorAll("label")]
+    .filter((label) =>
+      ["Outcome", "Notes"].includes(label.querySelector("span")?.textContent || ""),
+    )
+    .map((label) => label.querySelector("textarea"));
+  // Inline, so the stylesheet order of resize classes cannot bring the handle back.
+  for (const field of [...fields, itemInput(1)]) {
+    expect(field?.style.resize).toBe("none");
+    expect(field?.style.overflowY).toBe("hidden");
+  }
+  expect(fields).toHaveLength(2);
+});
+
+it("lets huge text scroll inside its box so later controls stay within reach", () => {
+  render();
+  const notes = [...host.querySelectorAll("label")]
+    .find((label) => label.querySelector("span")?.textContent === "Notes")
+    ?.querySelector("textarea");
+  if (!notes) throw new Error("Missing notes");
+  let contentHeight = 25_000;
+  Object.defineProperty(notes, "scrollHeight", { configurable: true, get: () => contentHeight });
+  type(notes, "x".repeat(500_000));
+  expect(notes.style.height).toBe("10000px");
+  expect(notes.style.overflowY).toBe("auto");
+
+  // Back under the limit, it grows with the editor again.
+  contentHeight = 320;
+  type(notes, "Short again");
+  expect(notes.style.height).toBe("320px");
+  expect(notes.style.overflowY).toBe("hidden");
+});
 
 it("edits the checklist as items that keep their ids", () => {
   render();

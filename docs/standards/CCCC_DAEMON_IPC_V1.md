@@ -1833,9 +1833,14 @@ returns `{repository, branch, entries, limited}`. Entries contain workspace-rela
 `path`, index/worktree status characters, optional in-scope `previous_path`, and
 `untracked`, `conflicted`, `directory` flags. Native Git status is bounded to the
 active workspace, including when it is a repository subdirectory. A non-repository
-is distinct from a failed or timed-out query. At most 2,000 entries are returned;
-`limited` explicitly marks a shortened list. Queries are user-driven, without
-background scans or daemon work.
+is distinct from a failed or timed-out query. Git reports a new directory as one
+entry; its untracked files are listed instead when that listing fits in the same time
+and output bounds, and a nested repository remains one entry. A workspace that is
+itself a new directory of its repository lists its files the same way. At most 2,000
+entries are returned; `limited` explicitly marks a shortened list, including one that
+keeps a new directory as one entry, or omits the files of a new workspace directory,
+because they did not fit. Queries are user-driven, without background scans or daemon
+work.
 
 `GET /api/v1/groups/{group_id}/workspace/diff` additionally takes `path` and
 `side: "worktree" | "staged"`, returning `{patch, limited}`. Only a currently listed
@@ -8092,6 +8097,8 @@ Result:
 Notes:
 - Import MUST stage and validate copy package contents before moving them into `groups/<group_id>`.
 - If the source `group_id` conflicts in the target home, import MUST allocate a new group id.
+- In the active ledger and archived ledger segments, a history line whose top-level `group_id` identifies the source Group MUST use the imported `group_id`. Its nonempty source active `scope_key`, when present, MUST be mapped to the imported active scope. Other Groups' identities, unidentified records, event ordering, IDs, and event data MUST be preserved. Mapping an identity does not certify an otherwise damaged record as readable.
+- When neither Group nor active scope identity changes, archived segment bytes MUST be preserved. Import MUST NOT make later gzip members visible as history when the ledger reader would only read the first member; it MAY reject such a segment when identity rewriting is needed.
 - Imported groups MUST start stopped: `running=false`, `state="idle"`.
 - Imported native Actors MUST retain their `external_session_id` and history but have `enabled=false`; ordinary managed Actors retain their configured enabled state. Import MUST clear the copied native direct-reuse index and MUST NOT change the source Group. Native memberships require an explicit user resume/admission before they can access tools or receive messages, including when the same Home already has that source alive. Copy packages do not carry lifecycle/receiver authority.
 - `workspace_root`, when supplied, remaps the active workspace root during import.
@@ -8325,6 +8332,15 @@ Actor stop/restart/new-session and Group pause/stop retire native epoch authorit
 | `grok_work_claim` | bound Actor only; captured claim authority from the authenticated Web MCP port. Runtime wait MUST NOT bypass this path for any Grok Actor. |
 | `grok_work_resolve` | user only; exact active turn_id and event_ids; retires old execution authority without changing enabled state, replay or provider cancellation. |
 
+`grok_webhook_status` includes nullable `active_turn_elapsed_seconds`: seconds
+since the matching private execution was claimed, calculated by the daemon at
+the time of the read. It is available only when the private execution belongs
+to the current canonical active turn and has a valid claim time that is not in
+the future. An unavailable time, including an older execution without a stored
+claim time, is null. This value does not establish that provider work is still
+running, has succeeded or failed, or may be replayed; reading status performs no
+runtime work.
+
 Private Web `GET /api/v1/web-model/grok-webhook` returns the native state directly from the daemon. POST accepts `instructions`, `bind`, `disconnect`, `configure`, `retry`, or `resolve`. `bind` and `disconnect` call the existing provider-isolated binding operations; `configure` accepts only URL/key, with no delivery mode. Instructions are credential-free and describe creating/updating one native Routine, not a timed poll. The desktop Routine URL/key belong only in the private setup UI. The native viewer MUST NOT use browser-session status or open a browser surface. Setup/connection controls require the same private administrator access as Dots. Routine permissions, provider limits and provider-side pauses remain external constraints.
 
 ### ChatGPT Dots event execution
@@ -8475,6 +8491,10 @@ connection, network receipt and resolution operations require `by="user"`.
 | `dots_events_delivery_record` | Exact connector, epoch, event and attempt; records HTTP handoff or a safe error. Bounded retries reuse the same event; HTTP 410/413 are not retried. |
 | `dots_work_claim` | Captured binding, epoch and current wake identity; accepts at most one existing canonical turn and returns its private execution `actor_token` only after persistence. Idle, duplicate or competing claims expose no business body or execution credential and do not recover another execution. |
 | `dots_work_control` | User `action="resolve"` with exact canonical `turn_id` and `event_ids`; reconciles an existing terminal receipt, or cancels unfinished work without replay. Retires old execution authority while preserving the Actor's enabled state; does not terminate ChatGPT cloud work. |
+
+`dots_events_status` exposes the same nullable `active_turn_elapsed_seconds`
+semantics as `grok_webhook_status`, using the matching Dots execution's stored
+claim time.
 
 After a notification fails before any turn is accepted, explicit Actor stop/start
 invalidates the old event and permits a fresh notification of still-pending

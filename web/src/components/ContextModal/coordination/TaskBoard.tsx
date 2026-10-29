@@ -34,6 +34,7 @@ interface TaskBoardProps {
   columnPages: TaskColumnPages;
   taskLoading: boolean;
   taskLoadError: string;
+  matchingCount?: number | null;
   taskMap: Map<string, Task>;
   subtaskProgress: ReadonlyMap<string, SubtaskProgress>;
   selectedTaskId: string;
@@ -74,6 +75,7 @@ export function TaskBoard({
   columnPages,
   taskLoading,
   taskLoadError,
+  matchingCount,
   taskMap,
   subtaskProgress,
   selectedTaskId,
@@ -95,7 +97,7 @@ export function TaskBoard({
   onRetryLoad,
 }: TaskBoardProps) {
   const hasActiveFilters = Boolean(
-    taskQuery || assigneeFilter !== "__all__" || taskFilter !== "all",
+    taskQuery.trim() || assigneeFilter !== "__all__" || taskFilter !== "all",
   );
   const showEmpty = !hasVisibleTasks && !taskLoading && !taskLoadError;
   const hasRenderedTasks =
@@ -136,6 +138,9 @@ export function TaskBoard({
           unassignedCount={unassignedCount}
           hasArchivedTasks={hasArchivedTasks}
           archivedExpanded={archivedExpanded}
+          matchingCount={
+            hasActiveFilters && !syncBusy && !taskLoading && !taskLoadError ? matchingCount : null
+          }
           onTaskQueryChange={onTaskQueryChange}
           onAssigneeFilterChange={onAssigneeFilterChange}
           onTaskFilterChange={onTaskFilterChange}

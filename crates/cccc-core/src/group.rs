@@ -339,7 +339,10 @@ impl GroupStore {
         let stage = tempfile::Builder::new()
             .prefix(".importing-")
             .tempdir_in(self.home.groups_dir())?;
-        for child in ["context", "scopes", "state", "state/blobs"] {
+        // Create state/ledger under its own name before any package entry can
+        // spell it differently: on a case-insensitive filesystem the entry then
+        // lands in this directory, which move_import_contents finds by name.
+        for child in ["context", "scopes", "state", "state/blobs", "state/ledger"] {
             fs::create_dir_all(stage.path().join(child))?;
         }
         group.generation = Uuid::new_v4().to_string();

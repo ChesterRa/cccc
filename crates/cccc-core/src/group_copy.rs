@@ -1,22 +1,28 @@
 use cccc_contracts::{Event, GroupState, utc_now};
+use flate2::Compression;
+use flate2::bufread::GzDecoder;
+use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::io::{self, Cursor, Read, Write};
+use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::fs::atomic_write;
 use crate::{GroupDoc, GroupStore, Registry, Scope, scope};
 
 const KIND: &str = "cccc.group_copy";
 const VERSION: u8 = 1;
 pub const MAX_PACKAGE_BYTES: usize = 1024 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+// IPC requests are limited to 16 MiB; leave room for older or locally written
+// events while bounding the extra memory needed to rewrite one history line.
+const MAX_REWRITE_LINE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_FILE_COUNT: usize = 20_000;
 const MAX_COMPRESSION_RATIO: f64 = 200.0;
 
@@ -223,6 +229,10 @@ pub fn import(
     }
     sanitize_import_profiles(store, &mut group)?;
     let mut files = package.files;
+    let identity_changes = source_group_id != final_group_id || old_scope != group.active_scope_key;
+    // Outer ZIP entries have already been expanded into memory. Charge each
+    // nested gzip member's decoded bytes to that same total as well.
+    let mut decoded_bytes = package.uncompressed_bytes;
     let imported = store.import_prepared(group, |target, imported| {
         let mut event = Event::new("group.create", &final_group_id);
         event.by = "system".into();
@@ -235,22 +245,34 @@ pub fn import(
         event.data.insert("imported".into(), true.into());
         // The marker follows the copied history and precedes any future append.
         // The staged Group is not visible while this ledger is constructed.
-        let mut ledger = match files.remove("ledger.jsonl") {
-            Some(history) => rewritten_ledger(
-                history,
-                &source_group_id,
-                &final_group_id,
-                &old_scope,
-                &imported.active_scope_key,
-            )?,
-            None => Vec::new(),
-        };
-        if ledger.last().is_some_and(|last| *last != b'\n') {
-            ledger.push(b'\n');
+        let history = files.remove("ledger.jsonl").unwrap_or_default();
+        let ledger_path = target.join("ledger.jsonl");
+        // import_prepared created this empty file in our private stage. Create
+        // the real ledger with private permissions, still respecting umask.
+        fs::remove_file(&ledger_path)?;
+        let mut ledger = staged_private_file(&ledger_path)?;
+        if identity_changes {
+            rewrite_history_lines(
+                &mut BufReader::new(history.as_slice()),
+                &mut ledger,
+                &HistoryIdentityRewrite {
+                    old_group: &source_group_id,
+                    new_group: &final_group_id,
+                    old_scope: &old_scope,
+                    new_scope: &imported.active_scope_key,
+                },
+                MAX_REWRITE_LINE_BYTES,
+                u64::MAX,
+            )?;
+        } else {
+            ledger.write_all(&history)?;
         }
-        ledger.extend(serde_json::to_vec(&event).map_err(io::Error::other)?);
-        ledger.push(b'\n');
-        atomic_write(&target.join("ledger.jsonl"), &ledger)?;
+        if history.last().is_some_and(|last| *last != b'\n') {
+            ledger.write_all(b"\n")?;
+        }
+        serde_json::to_writer(&mut ledger, &event).map_err(io::Error::other)?;
+        ledger.write_all(b"\n")?;
+        ledger.sync_all()?;
         for (relative, data) in files {
             if relative == "group.yaml" || excluded(&relative, false) {
                 continue;
@@ -259,7 +281,35 @@ pub fn import(
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            atomic_write(&path, &data)?;
+            let history_segment = is_history_segment(target, &relative)?;
+            if identity_changes && history_segment {
+                rewrite_segment(
+                    &path,
+                    &relative,
+                    &data,
+                    &HistoryIdentityRewrite {
+                        old_group: &source_group_id,
+                        new_group: &final_group_id,
+                        old_scope: &old_scope,
+                        new_scope: &imported.active_scope_key,
+                    },
+                    &mut decoded_bytes,
+                )?;
+            } else {
+                if history_segment && relative.ends_with(".gz") {
+                    count_unchanged_gzip(&data, &mut decoded_bytes)?;
+                }
+                // The stage is private and is published as a unit. Never
+                // replace a file: filesystem aliases (including NTFS 8.3
+                // names) can otherwise overwrite an earlier entry or ledger.
+                let mut file = staged_private_file(&path)?;
+                file.write_all(&data)?;
+                file.sync_all()?;
+                let parent = path
+                    .parent()
+                    .ok_or_else(|| io::Error::other("path has no parent"))?;
+                crate::fs::sync_dir(parent)?;
+            }
         }
         Ok(())
     })?;
@@ -283,6 +333,7 @@ struct Package {
     manifest: Manifest,
     files: HashMap<String, Vec<u8>>,
     group: GroupDoc,
+    uncompressed_bytes: u64,
 }
 
 fn read_package(bytes: &[u8]) -> io::Result<Package> {
@@ -316,25 +367,36 @@ fn read_package(bytes: &[u8]) -> io::Result<Package> {
         if entry.is_dir() {
             continue;
         }
-        total = total.saturating_add(entry.size());
-        if total > MAX_UNCOMPRESSED_BYTES {
+        let declared_size = entry.size();
+        if declared_size > MAX_UNCOMPRESSED_BYTES - total {
             return Err(io::Error::other("group copy expands beyond 2 GiB"));
         }
         total_compressed = total_compressed.saturating_add(entry.compressed_size());
         let compressed = entry.compressed_size().max(1);
-        if entry.size() > 1024 * 1024
-            && entry.size() as f64 / compressed as f64 > MAX_COMPRESSION_RATIO
+        if declared_size > 1024 * 1024
+            && declared_size as f64 / compressed as f64 > MAX_COMPRESSION_RATIO
         {
             return Err(io::Error::other("suspicious group copy compression ratio"));
         }
-        let mut data = Vec::with_capacity(entry.size().min(8 * 1024 * 1024) as usize);
-        entry.read_to_end(&mut data)?;
+        let mut data = Vec::with_capacity(declared_size.min(8 * 1024 * 1024) as usize);
+        // ZIP metadata is untrusted: the decoder may yield more than the
+        // declared size. Limit the actual read before allocating the output.
+        entry
+            .by_ref()
+            .take(declared_size + 1)
+            .read_to_end(&mut data)?;
+        if data.len() as u64 != declared_size {
+            return Err(io::Error::other(
+                "group copy entry size does not match its contents",
+            ));
+        }
+        total += data.len() as u64;
         if name == "manifest.json" {
             manifest = Some(serde_json::from_slice::<Manifest>(&data).map_err(io::Error::other)?);
         } else if let Some(relative) = name.strip_prefix("group/") {
             if ["ledger.jsonl", "group.yaml"]
                 .iter()
-                .any(|reserved| relative != *reserved && relative.eq_ignore_ascii_case(reserved))
+                .any(|reserved| relative != *reserved && unicase::eq(relative, *reserved))
             {
                 return Err(io::Error::other("noncanonical reserved group copy entry"));
             }
@@ -359,6 +421,7 @@ fn read_package(bytes: &[u8]) -> io::Result<Package> {
         manifest,
         files,
         group,
+        uncompressed_bytes: total,
     })
 }
 
@@ -487,7 +550,9 @@ fn collect_dir(
 }
 
 fn excluded(relative: &str, _is_dir: bool) -> bool {
-    let lower = relative.to_ascii_lowercase();
+    // Sensitive names are ASCII. Unicode case folding also catches aliases on
+    // case-insensitive filesystems without rejecting unrelated Unicode names.
+    let lower = unicase::UniCase::new(relative).to_folded_case();
     let parts = lower.split('/').collect::<Vec<_>>();
     let sensitive = [
         "secret",
@@ -604,36 +669,186 @@ fn replace_active_scope(group: &mut GroupDoc, scope: Scope, old_key: &str) {
     }
 }
 
-fn rewritten_ledger(
-    history: Vec<u8>,
-    old_group: &str,
-    new_group: &str,
-    old_scope: &str,
-    new_scope: &str,
-) -> io::Result<Vec<u8>> {
-    if old_group == new_group && old_scope == new_scope {
-        return Ok(history);
+// The reader looks only at immediate children of this directory and accepts
+// both physical representations of a segment. Rewrite both if both exist.
+fn is_history_segment(target: &Path, relative: &str) -> io::Result<bool> {
+    let parts = relative.split('/').collect::<Vec<_>>();
+    if parts.len() != 4 || !(parts[3].ends_with(".jsonl") || parts[3].ends_with(".jsonl.gz")) {
+        return Ok(false);
     }
-    let raw = String::from_utf8(history).map_err(io::Error::other)?;
-    let mut output = String::new();
-    for line in raw.lines() {
-        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(line) else {
-            output.push_str(line);
-            output.push('\n');
-            continue;
-        };
-        if value.get("group_id").and_then(|value| value.as_str()) == Some(old_group) {
-            value["group_id"] = serde_json::Value::String(new_group.into());
-        }
-        if !old_scope.is_empty()
-            && value.get("scope_key").and_then(|value| value.as_str()) == Some(old_scope)
-        {
-            value["scope_key"] = serde_json::Value::String(new_scope.into());
-        }
-        output.push_str(&serde_json::to_string(&value).map_err(io::Error::other)?);
-        output.push('\n');
+    let parent = target.join(parts[0]).join(parts[1]).join(parts[2]);
+    let segments = target.join("state/ledger/segments");
+    // Filesystem identity, not the OS, determines whether differing case is an
+    // alias. The stage is private and the candidate parent was just created.
+    match same_file::is_same_file(parent, segments) {
+        Ok(same) => Ok(same),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
     }
-    Ok(output.into_bytes())
+}
+
+struct HistoryIdentityRewrite<'a> {
+    old_group: &'a str,
+    new_group: &'a str,
+    old_scope: &'a str,
+    new_scope: &'a str,
+}
+
+#[derive(Deserialize)]
+struct HistoryIdentity<'a> {
+    #[serde(borrow)]
+    group_id: Option<&'a RawValue>,
+    #[serde(borrow)]
+    scope_key: Option<&'a RawValue>,
+}
+
+fn count_unchanged_gzip(data: &[u8], decoded_bytes: &mut u64) -> io::Result<()> {
+    // Validate the same first gzip member the ledger reader would read, while
+    // retaining the compressed input byte-for-byte when identity is unchanged.
+    let remaining = MAX_UNCOMPRESSED_BYTES - *decoded_bytes;
+    let mut decoder = GzDecoder::new(data).take(remaining.saturating_add(1));
+    let count = io::copy(&mut decoder, &mut io::sink())?;
+    if count > remaining {
+        return Err(io::Error::other("group copy expands beyond 2 GiB"));
+    }
+    *decoded_bytes += count;
+    Ok(())
+}
+
+fn staged_private_file(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+fn rewrite_segment(
+    path: &Path,
+    relative: &str,
+    data: &[u8],
+    identity: &HistoryIdentityRewrite<'_>,
+    decoded_bytes: &mut u64,
+) -> io::Result<()> {
+    // The destination lives in the private staging directory. Sync it before
+    // publication; errors leave the destination unpublished and staging is
+    // removed by import_prepared.
+    let output = staged_private_file(path)?;
+    if relative.ends_with(".gz") {
+        // The ledger reader uses a single-member decoder. A concatenated member
+        // or trailing data must not become newly visible after rewriting.
+        let decoder = GzDecoder::new(data);
+        let mut reader = BufReader::new(decoder);
+        let mut encoder = GzEncoder::new(output, Compression::default());
+        let decoded = rewrite_history_lines(
+            &mut reader,
+            &mut encoder,
+            identity,
+            MAX_REWRITE_LINE_BYTES,
+            MAX_UNCOMPRESSED_BYTES - *decoded_bytes,
+        )?;
+        if !reader.into_inner().into_inner().is_empty() {
+            return Err(io::Error::other(
+                "group copy history gzip has more than one member or trailing data",
+            ));
+        }
+        encoder.finish()?.sync_all()?;
+        *decoded_bytes += decoded;
+    } else {
+        let mut reader = BufReader::new(data);
+        let mut output = output;
+        rewrite_history_lines(
+            &mut reader,
+            &mut output,
+            identity,
+            MAX_REWRITE_LINE_BYTES,
+            u64::MAX,
+        )?;
+        output.sync_all()?;
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("path has no parent"))?;
+    crate::fs::sync_dir(parent)
+}
+
+fn rewrite_history_lines(
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+    identity: &HistoryIdentityRewrite<'_>,
+    line_limit: usize,
+    decoded_limit: u64,
+) -> io::Result<u64> {
+    let mut line = Vec::new();
+    let mut decoded = 0_u64;
+    loop {
+        line.clear();
+        let read = reader
+            .by_ref()
+            .take((line_limit as u64).saturating_add(1))
+            .read_until(b'\n', &mut line)?;
+        if read == 0 {
+            return Ok(decoded);
+        }
+        if read > line_limit {
+            return Err(io::Error::other(
+                "group copy history line exceeds 64 MiB while rewriting identity",
+            ));
+        }
+        decoded = decoded.saturating_add(read as u64);
+        if decoded > decoded_limit {
+            return Err(io::Error::other("group copy expands beyond 2 GiB"));
+        }
+        write_history_line(writer, &line, identity)?;
+    }
+}
+
+fn write_history_line(
+    writer: &mut impl Write,
+    line: &[u8],
+    identity: &HistoryIdentityRewrite<'_>,
+) -> io::Result<()> {
+    // RawValue borrows the actual top-level value's bytes from this line.
+    // Nested keys and JSON escapes therefore cannot redirect the replacement.
+    // Other fields are copied even if they contain damaged string bytes;
+    // strict readers will continue to report those records as unreadable.
+    let Ok(parsed) = serde_json::from_slice::<HistoryIdentity<'_>>(line) else {
+        return writer.write_all(line);
+    };
+    let Some(group) = parsed.group_id else {
+        return writer.write_all(line);
+    };
+    if serde_json::from_str::<String>(group.get()).ok().as_deref() != Some(identity.old_group) {
+        return writer.write_all(line);
+    }
+    let mut edits = Vec::with_capacity(2);
+    if identity.old_group != identity.new_group {
+        edits.push((group, serde_json::to_vec(identity.new_group)?));
+    }
+    if !identity.old_scope.is_empty() && identity.old_scope != identity.new_scope {
+        if let Some(scope) = parsed.scope_key {
+            if serde_json::from_str::<String>(scope.get()).ok().as_deref()
+                == Some(identity.old_scope)
+            {
+                edits.push((scope, serde_json::to_vec(identity.new_scope)?));
+            }
+        }
+    }
+    if edits.is_empty() {
+        return writer.write_all(line);
+    }
+    edits.sort_unstable_by_key(|(raw, _)| raw.get().as_ptr() as usize);
+    let mut offset = 0;
+    for (raw, replacement) in edits {
+        let start = raw.get().as_ptr() as usize - line.as_ptr() as usize;
+        writer.write_all(&line[offset..start])?;
+        writer.write_all(&replacement)?;
+        offset = start + raw.get().len();
+    }
+    writer.write_all(&line[offset..])
 }
 
 fn safe_zip_name(name: &str) -> io::Result<String> {
@@ -643,6 +858,24 @@ fn safe_zip_name(name: &str) -> io::Result<String> {
         || name.bytes().any(|byte| byte < 32)
     {
         return Err(io::Error::other("invalid group copy entry path"));
+    }
+    // The archive uses slash-separated names. Do not let filesystem path
+    // normalization bypass duplicate, reserved-name or secret exclusions.
+    let components = name.strip_suffix('/').unwrap_or(name);
+    if components
+        .split('/')
+        .any(|part| part.is_empty() || part == ".")
+    {
+        return Err(io::Error::other("noncanonical group copy entry path"));
+    }
+    #[cfg(windows)]
+    if components.split('/').any(|part| {
+        part.ends_with(['.', ' '])
+            || part
+                .chars()
+                .any(|ch| matches!(ch, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
+    }) {
+        return Err(io::Error::other("invalid Windows group copy entry path"));
     }
     let path = Path::new(name);
     if path.components().any(|part| {
@@ -672,7 +905,12 @@ fn is_windows_reserved(part: &str) -> bool {
         || stem
             .strip_prefix("COM")
             .or_else(|| stem.strip_prefix("LPT"))
-            .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
+            .is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
 }
 
 fn safe_relative(name: &str) -> io::Result<PathBuf> {
@@ -746,6 +984,196 @@ mod tests {
     use super::*;
     use std::fs::File;
 
+    fn history_identity() -> HistoryIdentityRewrite<'static> {
+        HistoryIdentityRewrite {
+            old_group: "g_old",
+            new_group: "g_new",
+            old_scope: "s_old",
+            new_scope: "s_new",
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_files_respect_a_stricter_umask() {
+        use std::os::unix::fs::PermissionsExt;
+        const CHILD_PATH: &str = "CCCC_TEST_STAGED_UMASK_PATH";
+        if let Some(path) = std::env::var_os(CHILD_PATH) {
+            let file = staged_private_file(Path::new(&path)).expect("stage file");
+            assert_eq!(
+                file.metadata().expect("metadata").permissions().mode() & 0o777,
+                0o200
+            );
+            drop(file);
+            fs::remove_file(path).expect("remove file");
+            return;
+        }
+        // umask is process-wide: change it only in an isolated test process.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let status = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "umask 0400; exec \"$1\" --exact group_copy::tests::staged_files_respect_a_stricter_umask",
+                "sh",
+            ])
+            .arg(std::env::current_exe().expect("test executable"))
+            .env(CHILD_PATH, temp.path().join("ledger.jsonl"))
+            .status()
+            .expect("run isolated umask test");
+        assert!(status.success());
+    }
+
+    #[test]
+    fn history_rewrite_uses_top_level_parsed_values_and_preserves_other_bytes() {
+        let input = concat!(
+            "{\"data\":{\"group_id\":\"g_old\",\"scope_key\":\"s_old\"},",
+            "\"scope\\u005fkey\":\"s\\u005fold\",\"group\\u005fid\":\"g\\u005fold\",\"n\":1}\r\n",
+            "{\"group_id\":\"another\",\"scope_key\":\"s_old\"}\n",
+            "{\"scope_key\":\"s_old\",\"data\":{\"group_id\":\"g_old\"}}\n",
+            "{\"group_id\":null,\"scope_key\":\"s_old\"}\n",
+            "{\"group_id\":17,\"scope_key\":\"s_old\"}\n",
+            "not json\n"
+        );
+        let expected = concat!(
+            "{\"data\":{\"group_id\":\"g_old\",\"scope_key\":\"s_old\"},",
+            "\"scope\\u005fkey\":\"s_new\",\"group\\u005fid\":\"g_new\",\"n\":1}\r\n",
+            "{\"group_id\":\"another\",\"scope_key\":\"s_old\"}\n",
+            "{\"scope_key\":\"s_old\",\"data\":{\"group_id\":\"g_old\"}}\n",
+            "{\"group_id\":null,\"scope_key\":\"s_old\"}\n",
+            "{\"group_id\":17,\"scope_key\":\"s_old\"}\n",
+            "not json\n"
+        );
+        let mut reader = BufReader::new(input.as_bytes());
+        let mut result = Vec::new();
+        rewrite_history_lines(&mut reader, &mut result, &history_identity(), 1024, 4096)
+            .expect("rewrite");
+        assert_eq!(result, expected.as_bytes());
+    }
+
+    #[test]
+    fn history_rewrite_bounds_each_line_and_the_decoded_total() {
+        let mut reader = BufReader::new(&b"12345\n"[..]);
+        let error = rewrite_history_lines(&mut reader, &mut Vec::new(), &history_identity(), 5, 99)
+            .expect_err("overlong line rejected");
+        assert!(error.to_string().contains("history line"));
+
+        let mut reader = BufReader::new(&b"one\ntwo\n"[..]);
+        let error = rewrite_history_lines(&mut reader, &mut Vec::new(), &history_identity(), 8, 7)
+            .expect_err("decoded budget rejected");
+        assert!(error.to_string().contains("2 GiB"));
+
+        for (damaged, expected) in [
+            (
+                &b"{\"group_id\":\"g_old\",\"bad\":\"\xff\"}\n"[..],
+                &b"{\"group_id\":\"g_new\",\"bad\":\"\xff\"}\n"[..],
+            ),
+            (
+                &b"{\"group_id\":\"g_old\",\"bad\":\"\\uD800\"}\n"[..],
+                &b"{\"group_id\":\"g_new\",\"bad\":\"\\uD800\"}\n"[..],
+            ),
+            (
+                &b"{\"group_id\":\"g_\xff\",\"scope_key\":\"s_old\"}\n"[..],
+                &b"{\"group_id\":\"g_\xff\",\"scope_key\":\"s_old\"}\n"[..],
+            ),
+            (
+                &b"{\"group_id\":\"g_\\uD800\",\"scope_key\":\"s_old\"}\n"[..],
+                &b"{\"group_id\":\"g_\\uD800\",\"scope_key\":\"s_old\"}\n"[..],
+            ),
+        ] {
+            let mut reader = BufReader::new(damaged);
+            let mut output = Vec::new();
+            rewrite_history_lines(&mut reader, &mut output, &history_identity(), 1024, 1024)
+                .expect("retain unparseable history");
+            assert_eq!(output, expected);
+        }
+
+        let valid = b"{\"group_id\":\"g_old\",\"emoji\":\"\\uD83D\\uDE00\"}\n";
+        let mut reader = BufReader::new(&valid[..]);
+        let mut output = Vec::new();
+        rewrite_history_lines(&mut reader, &mut output, &history_identity(), 1024, 1024)
+            .expect("valid surrogate pair");
+        assert_eq!(
+            output,
+            b"{\"group_id\":\"g_new\",\"emoji\":\"\\uD83D\\uDE00\"}\n"
+        );
+    }
+
+    #[test]
+    fn history_segment_detection_follows_the_staged_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path();
+        fs::create_dir_all(target.join("state/ledger/segments/nested")).expect("segments");
+        fs::create_dir_all(target.join("STATE/LEDGER/SEGMENTS")).expect("other directory");
+        let upper_is_segments = same_file::is_same_file(
+            target.join("state/ledger/segments"),
+            target.join("STATE/LEDGER/SEGMENTS"),
+        )
+        .expect("compare directories");
+        assert!(is_history_segment(target, "state/ledger/segments/ledger.1.jsonl").expect("plain"));
+        assert!(
+            is_history_segment(target, "state/ledger/segments/ledger.1.jsonl.gz").expect("gzip")
+        );
+        assert_eq!(
+            is_history_segment(target, "STATE/LEDGER/SEGMENTS/ledger.1.jsonl")
+                .expect("case variant"),
+            upper_is_segments
+        );
+        assert!(
+            !is_history_segment(target, "state/ledger/segments/nested/ledger.1.jsonl")
+                .expect("nested")
+        );
+        assert!(!is_history_segment(target, "state/ledger/segments/notes.txt").expect("text"));
+    }
+
+    #[test]
+    fn history_rewrite_rejects_gzip_with_an_extra_member() {
+        fn gzip(data: &[u8]) -> Vec<u8> {
+            let mut writer = GzEncoder::new(Vec::new(), Compression::default());
+            writer.write_all(data).expect("compress");
+            writer.finish().expect("finish")
+        }
+        let mut data = gzip(b"{\"group_id\":\"g_old\"}\n");
+        data.extend(gzip(b"{\"group_id\":\"g_old\"}\n"));
+        let temp = tempfile::tempdir().expect("tempdir");
+        let error = rewrite_segment(
+            &temp.path().join("segment.gz"),
+            "state/ledger/segments/test.jsonl.gz",
+            &data,
+            &history_identity(),
+            &mut 0,
+        )
+        .expect_err("extra member must not become visible");
+        assert!(error.to_string().contains("more than one member"));
+    }
+
+    #[test]
+    fn gzip_history_counts_its_decoded_size_even_when_copied_unchanged() {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"hello").expect("gzip");
+        let data = encoder.finish().expect("finish");
+        let mut used = MAX_UNCOMPRESSED_BYTES - 4;
+        let error = count_unchanged_gzip(&data, &mut used).expect_err("decoded budget");
+        assert!(error.to_string().contains("2 GiB"));
+        assert_eq!(used, MAX_UNCOMPRESSED_BYTES - 4);
+
+        let mut used = MAX_UNCOMPRESSED_BYTES - 5;
+        count_unchanged_gzip(&data, &mut used).expect("exactly within budget");
+        assert_eq!(used, MAX_UNCOMPRESSED_BYTES);
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut used = MAX_UNCOMPRESSED_BYTES - 4;
+        let error = rewrite_segment(
+            &temp.path().join("rewritten.gz"),
+            "state/ledger/segments/test.jsonl.gz",
+            &data,
+            &history_identity(),
+            &mut used,
+        )
+        .expect_err("rewritten gzip must use the same decoded budget");
+        assert!(error.to_string().contains("2 GiB"));
+        assert_eq!(used, MAX_UNCOMPRESSED_BYTES - 4);
+    }
+
     #[test]
     fn copy_rejects_case_variants_of_reserved_root_files() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -755,6 +1183,7 @@ mod tests {
         let (bytes, _, _) = export(&store, &group.group_id).expect("export");
         for (canonical, variant) in [
             ("ledger.jsonl", "Ledger.jsonl"),
+            ("ledger.jsonl", "ledger.jſonl"),
             ("group.yaml", "Group.yaml"),
         ] {
             let mut package = read_package(&bytes).expect("package");
@@ -786,6 +1215,225 @@ mod tests {
         }
     }
 
+    // Construct an otherwise valid package so these checks cannot be passed
+    // accidentally just because the archive or its content digest is invalid.
+    fn package_with_extra_file(
+        store: &GroupStore,
+        group_id: &str,
+        name: &str,
+        data: &[u8],
+    ) -> Vec<u8> {
+        let (bytes, _, _) = export(store, group_id).expect("export");
+        let mut package = read_package(&bytes).expect("package");
+        package.files.insert(name.to_owned(), data.to_vec());
+        package.manifest.content_digest = content_digest(&package.files);
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        writer
+            .start_file("manifest.json", options)
+            .expect("manifest");
+        writer
+            .write_all(&serde_json::to_vec(&package.manifest).expect("manifest json"))
+            .expect("manifest data");
+        for (path, contents) in package.files {
+            writer
+                .start_file(format!("group/{path}"), options)
+                .expect("entry");
+            writer.write_all(&contents).expect("entry data");
+        }
+        writer.finish().expect("archive").into_inner()
+    }
+
+    #[test]
+    fn copy_rejects_zip_entries_that_exceed_their_declared_size() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("copy", "").expect("group");
+        let mut bytes =
+            package_with_extra_file(&store, &group.group_id, "payload.txt", &[b'x'; 4096]);
+        let (local, central) = {
+            let mut archive = ZipArchive::new(Cursor::new(&bytes)).expect("zip");
+            let entry = archive.by_name("group/payload.txt").expect("payload");
+            (
+                entry.header_start() as usize,
+                entry.central_header_start() as usize,
+            )
+        };
+        // Deflate still yields all 4096 bytes, but both ZIP headers say one.
+        bytes[local + 22..local + 26].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[central + 24..central + 28].copy_from_slice(&1_u32.to_le_bytes());
+        assert!(preview(&store, &bytes).is_err());
+        assert!(import(&store, &bytes, "", "").is_err());
+        assert_eq!(store.list().expect("registry").len(), 1);
+    }
+
+    #[test]
+    fn copy_rejects_noncanonical_entry_paths_before_publication() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("copy", "").expect("group");
+        for name in [
+            "./ledger.jsonl",
+            "state/./im_weixin_context_tokens.json",
+            "state//im_weixin_context_tokens.json",
+        ] {
+            let bytes = package_with_extra_file(&store, &group.group_id, name, b"synthetic");
+            assert!(preview(&store, &bytes).is_err(), "preview accepted {name}");
+            assert!(
+                import(&store, &bytes, "", "").is_err(),
+                "import accepted {name}"
+            );
+            assert_eq!(store.list().expect("registry").len(), 1);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn copy_rejects_windows_filename_aliases_before_publication() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("copy", "").expect("group");
+        for name in ["ledger.jsonl.", "group.yaml ", "state/notes.txt:stream"] {
+            let bytes = package_with_extra_file(&store, &group.group_id, name, b"synthetic");
+            assert!(preview(&store, &bytes).is_err(), "preview accepted {name}");
+            assert!(
+                import(&store, &bytes, "", "").is_err(),
+                "import accepted {name}"
+            );
+            assert_eq!(store.list().expect("registry").len(), 1);
+        }
+        assert!(safe_zip_name("group/ ledger.jsonl").is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn import_never_replaces_ledger_through_an_existing_short_name() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let probe = temp.path().join("probe");
+        fs::create_dir(&probe).expect("probe directory");
+        fs::write(probe.join("ledger.jsonl"), b"probe").expect("probe ledger");
+        if !same_file::is_same_file(probe.join("ledger.jsonl"), probe.join("LEDGER~1.JSO"))
+            .unwrap_or(false)
+        {
+            // Not every Windows volume creates 8.3 names.
+            return;
+        }
+
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("copy", "").expect("group");
+        let ledger = store
+            .group_dir(&group.group_id)
+            .expect("source")
+            .join("ledger.jsonl");
+        let original = fs::read(&ledger).expect("source ledger");
+        let bytes = package_with_extra_file(&store, &group.group_id, "LEDGER~1.JSO", b"synthetic");
+        preview(&store, &bytes).expect("archive uses a syntactically valid name");
+        let before = fs::read_dir(home.groups_dir()).expect("groups").count();
+        assert!(import(&store, &bytes, "", "").is_err());
+        assert_eq!(
+            fs::read_dir(home.groups_dir()).expect("groups").count(),
+            before
+        );
+        assert_eq!(store.list().expect("registry").len(), 1);
+        assert_eq!(fs::read(ledger).expect("source ledger"), original);
+    }
+
+    #[test]
+    fn copy_rejects_windows_device_names_including_superscript_digits() {
+        for name in ["COM1", "com¹.txt", "Lpt²", "lpt³.log"] {
+            assert!(safe_zip_name(&format!("group/{name}")).is_err(), "{name}");
+        }
+        for name in ["COM0", "COM10", "LPT⁴"] {
+            assert!(safe_zip_name(&format!("group/{name}")).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
+    fn copy_excludes_unicode_case_aliases_of_private_names() {
+        for name in [
+            "state/env_private.jſon",
+            "state/im_weixin_context_tokenſ.json",
+            "state/paẞword/note.txt",
+            "state/KIRO/session.txt",
+        ] {
+            assert!(excluded(name, false), "private alias {name}");
+        }
+        assert!(!excluded("state/memory/日本語.md", false));
+    }
+
+    #[test]
+    fn copy_preserves_distinct_unicode_names_when_the_filesystem_does() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("copy", "").expect("group");
+        let memory = store
+            .group_dir(&group.group_id)
+            .expect("source")
+            .join("state/memory");
+        fs::create_dir_all(&memory).expect("memory");
+        let mut first = staged_private_file(&memory.join("straße.txt")).expect("first");
+        first.write_all(b"first").expect("first contents");
+        drop(first);
+        let mut second = match staged_private_file(&memory.join("strasse.txt")) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return,
+            Err(error) => panic!("create second file: {error}"),
+        };
+        second.write_all(b"second").expect("second contents");
+        drop(second);
+        let (bytes, _, _) = export(&store, &group.group_id).expect("export");
+        let imported = import(&store, &bytes, "", "").expect("import");
+        let memory = store
+            .group_dir(&imported.group_id)
+            .expect("copy")
+            .join("state/memory");
+        assert_eq!(
+            fs::read(memory.join("straße.txt")).expect("first"),
+            b"first"
+        );
+        assert_eq!(
+            fs::read(memory.join("strasse.txt")).expect("second"),
+            b"second"
+        );
+    }
+
+    #[test]
+    fn history_rewrites_only_the_actual_segment_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("copy", "").expect("group");
+        let source = store.group_dir(&group.group_id).expect("source");
+        let upper = source.join("STATE/LEDGER/SEGMENTS");
+        let lower = source.join("state/ledger/segments");
+        fs::create_dir_all(&upper).expect("directory");
+        let is_actual_segment = same_file::is_same_file(&upper, &lower).unwrap_or(false);
+        let original = format!("{{\"group_id\":\"{}\"}}\n", group.group_id);
+        fs::write(upper.join("notes.jsonl"), &original).expect("fixture");
+        let (bytes, _, _) = export(&store, &group.group_id).expect("export");
+        let imported = import(&store, &bytes, "", "").expect("import");
+        let copied = fs::read_to_string(
+            store
+                .group_dir(&imported.group_id)
+                .expect("copy")
+                .join("STATE/LEDGER/SEGMENTS/notes.jsonl"),
+        )
+        .expect("copied file");
+        if is_actual_segment {
+            assert_eq!(
+                copied,
+                format!("{{\"group_id\":\"{}\"}}\n", imported.group_id)
+            );
+        } else {
+            assert_eq!(copied, original);
+        }
+    }
+
     #[test]
     fn weixin_reply_credentials_never_cross_group_copy_boundary() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -810,6 +1458,10 @@ mod tests {
         // Older exporters may have packaged credentials despite the manifest.
         // Import must apply its own exclusion after validating the archive digest.
         package.files.insert(relative.into(), credentials.to_vec());
+        package.files.insert(
+            "state/im_weixin_context_tokenſ.json".into(),
+            credentials.to_vec(),
+        );
         package.manifest.content_digest = content_digest(&package.files);
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         let options = SimpleFileOptions::default();
@@ -833,6 +1485,12 @@ mod tests {
         assert!(
             !directory.join(relative).exists(),
             "import must discard reply credentials"
+        );
+        assert!(
+            !directory
+                .join("state/im_weixin_context_tokenſ.json")
+                .exists(),
+            "import must discard case-folded credential aliases"
         );
         assert_eq!(
             fs::read_to_string(directory.join("state/notes.txt")).expect("content"),

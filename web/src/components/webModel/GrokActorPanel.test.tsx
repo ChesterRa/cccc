@@ -3,7 +3,13 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 const mocks = vi.hoisted(() => ({ load: vi.fn(), change: vi.fn(), stop: vi.fn() }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: { elapsed?: string }) =>
+      options?.elapsed ? `${key}: ${options.elapsed}` : key,
+    i18n: { language: "en" },
+  }),
+}));
 vi.mock("../../services/api", () => ({
   fetchGrokActorState: (...a: unknown[]) => mocks.load(...a),
   changeGrokWebhook: (...a: unknown[]) => mocks.change(...a),
@@ -58,6 +64,51 @@ async function fill(index: number, value: string) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+it("shows the daemon's claim age without announcing a ticking status", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: {
+      ...state,
+      configured: true,
+      phase: "working",
+      active_turn_id: "turn",
+      active_turn_elapsed_seconds: 7200,
+      pending_count: 2,
+    },
+  });
+  await render({ setup: false });
+  const age = host.querySelector("[data-active-turn-age]");
+  expect(age?.textContent).toBe("nativeActor.claimedAgo: 2 hours ago");
+  expect(age?.closest('[role="status"]')).toBeNull();
+  expect(host.textContent).toContain("grokActor.queued");
+});
+it("does not guess the age of an older unfinished turn", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: { ...state, phase: "interrupted", active_turn_id: "turn" },
+  });
+  await render({ setup: false });
+  expect(host.querySelector("[data-active-turn-age]")?.textContent).toBe(
+    "nativeActor.claimTimeUnknown",
+  );
+});
+it("hides the relative claim age when refreshing status fails", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: {
+      ...state,
+      phase: "working",
+      active_turn_id: "turn",
+      active_turn_elapsed_seconds: 7200,
+    },
+  });
+  await render({ setup: false });
+  expect(host.querySelector("[data-active-turn-age]")).not.toBeNull();
+  mocks.load.mockResolvedValue({ ok: false, error: { message: "offline" } });
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(host.querySelector("[data-active-turn-age]")).toBeNull();
+  expect(host.textContent).toContain("grokActor.readFailed");
+});
 it("saves masked credentials through one native setup path", async () => {
   await render();
   expect(host.querySelector("select")).toBeNull();

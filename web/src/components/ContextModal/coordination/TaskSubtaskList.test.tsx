@@ -92,3 +92,35 @@ it("shows actionable task context without treating advisory structure as an erro
     expect(host.textContent).not.toContain("Closeout incomplete");
   });
 });
+
+it("indicates known remaining checklist items on done tasks without inferring custom states", () => {
+  const task: Task = {
+    id: "T2",
+    title: "Review",
+    status: "done",
+    checklist: [
+      { id: "1", text: "Complete", status: "done" },
+      { id: "2", text: "Pending", status: "pending" },
+      { id: "3", text: "In progress", status: "in_progress" },
+      { id: "4", text: "Unchecked" },
+      { id: "5", text: "Custom", status: "deferred" },
+    ],
+  };
+  rendered(<TaskCardBadges task={task} tr={tr} />, (host) => {
+    expect(host.textContent).toContain("Checklist 1/5 · 3 remaining");
+    expect(host.querySelector(".bg-amber-500\\/15")).not.toBeNull();
+  });
+  for (const status of ["active", "archived"]) {
+    rendered(<TaskCardBadges task={{ ...task, status }} tr={tr} />, (host) => {
+      expect(host.textContent).toContain("Checklist 1/5");
+      expect(host.textContent).not.toContain("remaining");
+    });
+  }
+  rendered(
+    <TaskCardBadges
+      task={{ ...task, checklist: [{ id: "1", text: "Custom", status: "deferred" }] }}
+      tr={tr}
+    />,
+    (host) => expect(host.textContent).not.toContain("remaining"),
+  );
+});

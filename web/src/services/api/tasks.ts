@@ -18,6 +18,8 @@ export interface TaskPageResult {
   tasks: Task[];
   count: number;
   totalCount: number;
+  /** Whether the server provided a valid count, rather than the display fallback. */
+  totalCountKnown: boolean;
   offset: number;
   limit: number;
   hasMore: boolean;
@@ -93,6 +95,10 @@ function normalizePage(
     tasks,
     count: Math.max(0, Number(item.count) || tasks.length),
     totalCount: Math.max(0, Number(item.total_count) || 0),
+    totalCountKnown:
+      typeof item.total_count === "number" &&
+      Number.isSafeInteger(item.total_count) &&
+      item.total_count >= 0,
     offset: Math.max(0, Number(item.offset) || 0),
     limit: Math.max(1, Number(item.limit) || fallbackLimit),
     hasMore: Boolean(item.has_more),

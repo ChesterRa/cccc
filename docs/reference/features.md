@@ -110,7 +110,9 @@ an option or writes their own answer in place, under the message.
   terminal interface, a Group's page has a Waiting for you row. A count that
   may be out of date is marked as such, one that cannot be confirmed is shown
   as unknown rather than zero, and neither appears in read-only (exhibit)
-  mode.
+  mode. When the running daemon does not support Waiting for you, as one
+  still running from an earlier version may not, the Web says so and asks
+  for CCCC to be restarted; the counts stay unknown.
 
 ### System Notifications
 
@@ -121,6 +123,13 @@ answer. A notification can appear with no CCCC page open, and opening one
 tries to show its message. Whether and when a notification appears is up to
 the push service, the browser and the device. Setup steps and what each
 platform needs are in the [Web UI guide](../guide/web-ui.md#system-notifications).
+While requests wait for the user in a Group, and the browser could show
+notifications for the account but they are not on yet, the Group's messages
+page offers them until the user turns them on or declines the offer. No offer
+appears when the browser cannot use notifications, when they are blocked, when
+the server cannot send them, or when their state cannot be confirmed. Declining
+is remembered in that browser's site storage; without storage it lasts until
+the page reloads.
 
 - What is announced follows the Inbox rules: a `chat.message` that names
   `user` (or `@user`) explicitly, from someone other than the user, and not
@@ -460,6 +469,8 @@ CCCC Web supports Copy Groups export/import for durable group copy, migration, a
 - Workspace repository/project files are not included. Users provide or remap the workspace root during import.
 - System credentials, browser profiles, provider auth, live runtime state, locks, and rebuildable caches are excluded. Copy packages still contain user content such as ledger history, memory, and attachments, so they should be handled as sensitive data.
 - Imported groups start idle with actors stopped. If the packaged group id already exists, import creates a new copy and does not steal the existing workspace default mapping. An id still registered, as while a Group is being deleted, counts as existing.
+- When the copy gets a new Group id or active scope, the source Group's events in its history take the copied Group's id, and its active scope where they carried the source's active scope; event ids stay the same. The current ledger and history compacted into ledger segments follow the same rule. In each decoded history line, only those two values change; the other bytes are kept. Compressed segments are recompressed when their history needs rewriting. Events of other Groups and records whose Group id cannot be read stay as they were, and damaged records stay unreadable, so Waiting for you can fail on them in the copy just as in the source. History whose identity does not change is copied byte for byte. The decompressed size of each compressed segment's first gzip member, the part the ledger reads, counts toward the import's 2 GiB limit. An import fails before the new Group is published when the first gzip member of a compressed segment cannot be decompressed or exceeds that limit, or when history it must rewrite has a line over 64 MiB or data after the first gzip member of a compressed segment. Ledger snapshot metadata keeps describing the source history, and Groups imported earlier are not changed.
+- Before publishing a new Group, import rejects file entries whose expanded size differs from their declared size, paths with `.` components or repeated separators, and files that would overwrite another staged file. On Windows, names ending in a period or space, or containing characters that Windows does not allow in file names, are also rejected. A package can therefore contain a filename that is valid on its source system but cannot be imported on Windows.
 - An import is assembled out of sight and appears complete, with its history and import marker, before anything can be written to it; nothing sent to the new Group is lost to the import. An interrupted import may leave a hidden `.importing-*` directory in `CCCC_HOME/groups`, which can be removed once no import is running. An import that fails after claiming its Group id but before publishing it keeps that id's directory, and its error names it. The import did not publish it, but a process still writing to an earlier Group with that id may have written into it, so check it before deleting it. That id then counts as taken, and importing again makes a new copy. If a complete import cannot be registered, the error names where its data is kept; that Group is whole and may already hold new messages, so do not delete it blindly.
 - Copy Groups replaces the former group-template Web path; durable group features should be carried by Copy Groups unless explicitly blacklisted as unsafe or runtime-only.
 

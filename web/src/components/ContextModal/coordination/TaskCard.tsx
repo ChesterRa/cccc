@@ -1,10 +1,15 @@
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
+import { useMinuteClock } from "../../../hooks/useMinuteClock";
 import type { Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
+import { formatElapsed, formatFullTime } from "../../../utils/time";
 import {
+  checklistItemOpen,
   taskDisplaySummary,
+  taskIsLive,
   taskStatus,
   taskTitle,
   type BoardStatus,
@@ -47,6 +52,26 @@ function sameTaskRevision(left: Task, right: Task): boolean {
   );
 }
 
+/** By this device's clock, so a time it cannot place, or one ahead of it, shows nothing. */
+function TaskUpdatedAge({ updatedAt, tr }: { updatedAt?: string | null; tr: ContextTranslator }) {
+  const { i18n } = useTranslation();
+  useMinuteClock();
+  const seconds = Math.floor((Date.now() - Date.parse(updatedAt || "")) / 1000);
+  if (!Number.isSafeInteger(seconds) || seconds < 0) return null;
+  return (
+    <>
+      {" · "}
+      <time dateTime={updatedAt ?? undefined} title={formatFullTime(updatedAt ?? undefined)}>
+        {seconds < 60
+          ? tr("context.updatedJustNow", "Updated just now")
+          : tr("context.updatedAgo", "Updated {{elapsed}}", {
+              elapsed: formatElapsed(seconds, i18n?.language),
+            })}
+      </time>
+    </>
+  );
+}
+
 function TaskCardComponent({
   task,
   subtasks,
@@ -59,7 +84,14 @@ function TaskCardComponent({
   onRestoreTask,
 }: TaskCardProps) {
   const status = taskStatus(task);
-  const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+  const summary = taskDisplaySummary(task);
+  // Without a summary, an unfinished task shows the first checklist item still open.
+  const openItem =
+    !summary && taskIsLive(task)
+      ? task.checklist?.find((item) => String(item.text || "").trim() && checklistItemOpen(item))
+          ?.text
+      : undefined;
+  const blocked = taskIsLive(task) && Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, isDragging } =
     useDraggable({
       id: `task:${task.id}`,
@@ -108,7 +140,10 @@ function TaskCardComponent({
             <span className="line-clamp-2 text-sm font-semibold text-[var(--color-text-primary)] [overflow-wrap:anywhere]">
               {taskTitle(task)}
             </span>
-            <span className={classNames("mt-1 block text-xs", ui.mutedTextClass)}>{task.id}</span>
+            <span className={classNames("mt-1 block text-xs", ui.mutedTextClass)}>
+              {task.id}
+              <TaskUpdatedAge updatedAt={task.updated_at} tr={tr} />
+            </span>
           </button>
           <button
             ref={setActivatorNodeRef}
@@ -128,9 +163,13 @@ function TaskCardComponent({
           </button>
         </div>
 
-        {taskDisplaySummary(task) ? (
+        {summary ? (
           <div className={classNames("mt-2 line-clamp-3 text-xs", ui.subtleTextClass)}>
-            {taskDisplaySummary(task)}
+            {summary}
+          </div>
+        ) : openItem ? (
+          <div className={classNames("mt-2 line-clamp-2 text-xs", ui.subtleTextClass)}>
+            {tr("context.openChecklistItem", "To do: {{item}}", { item: openItem.trim() })}
           </div>
         ) : null}
 

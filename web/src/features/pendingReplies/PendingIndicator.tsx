@@ -10,7 +10,9 @@ export function PendingIndicatorText({ indicator }: { indicator: Indicator }) {
       ? t("pendingRepliesCount", { value: indicator.text })
       : indicator.state === "stale"
         ? t("pendingRepliesStale")
-        : t("pendingRepliesUnknown");
+        : indicator.daemonUnsupported
+          ? t("pendingRepliesDaemonUnsupported")
+          : t("pendingRepliesUnknown");
   return (
     <span
       title={label}
@@ -50,7 +52,9 @@ export function GroupPendingIndicator({
       ? t("openPendingRepliesCount", { value: indicator.text })
       : indicator.state === "stale"
         ? t("openPendingRepliesStale")
-        : t("openPendingRepliesUnknown");
+        : indicator.daemonUnsupported
+          ? t("openPendingRepliesDaemonUnsupported")
+          : t("openPendingRepliesUnknown");
   const label = `${groupName || groupId} · ${actionLabel}`;
   return (
     <button

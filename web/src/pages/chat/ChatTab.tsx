@@ -30,6 +30,8 @@ import { LivePendingStatusContext } from "../../features/pendingReplies/liveStat
 import { PendingSummaryContext } from "../../features/pendingReplies/context";
 import { pendingFilterIndicator } from "../../features/pendingReplies/indicator";
 import { useLivePendingStatuses } from "../../features/pendingReplies/useLivePendingStatuses";
+import { NotificationPrompt } from "../../features/pushNotifications/NotificationPrompt";
+import { useNotificationPromptOffer } from "../../features/pushNotifications/useNotificationPromptOffer";
 import { classNames } from "../../utils/classNames";
 import { ChatComposer } from "./ChatComposer";
 import { ChatFilterTabs } from "./ChatFilterTabs";
@@ -275,6 +277,7 @@ export function ChatTab({
     senderHistoryError,
     retrySenderHistory,
     pendingPageError,
+    pendingDaemonUnsupported,
     retryPendingPage,
     pendingActive,
     viewMessageContext,
@@ -743,8 +746,15 @@ export function ChatTab({
     (needsScope || needsActors) &&
     chatMessages.length > 0 &&
     !(inlineReplyEditor !== null && hideDockForKeyboard);
+  const notificationOffer = useNotificationPromptOffer((waitingIndicator?.count ?? 0) > 0);
+  const messageFiltersRef = useRef<HTMLDivElement | null>(null);
+  const focusActiveFilter = useCallback(() => {
+    messageFiltersRef.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus();
+  }, []);
   // Keep the scroll viewport fixed beneath the mobile header and filters, so
-  // showing or hiding those controls cannot move the reader's anchor.
+  // showing or hiding those controls cannot move the reader's anchor. The
+  // overlay reserves a fixed height, so extra rows under the filters keep the
+  // controls in the normal flow instead.
   const overlayMobileChrome =
     isSmallScreen &&
     !mobileAppHeaderReserved &&
@@ -976,6 +986,7 @@ export function ChatTab({
                       data-message-filters
                     >
                       <div
+                        ref={messageFiltersRef}
                         className="chat-reading-width flex min-h-[44px] md:min-h-9 flex-nowrap md:flex-wrap items-center gap-x-2"
                         role="group"
                         aria-label={t("chatFilters")}
@@ -1012,7 +1023,13 @@ export function ChatTab({
                           role="status"
                           className="chat-reading-width flex items-center gap-2 pb-2 text-xs text-[var(--color-text-secondary)]"
                         >
-                          <span>{t("pendingReply.loadFailed")}</span>
+                          <span>
+                            {t(
+                              pendingDaemonUnsupported
+                                ? "pendingReply.daemonUnsupported"
+                                : "pendingReply.loadFailed",
+                            )}
+                          </span>
                           <button
                             type="button"
                             className="min-h-9 underline"
@@ -1135,9 +1152,11 @@ export function ChatTab({
                           emptyMessage={
                             pendingActive
                               ? t(
-                                  pendingPageError
-                                    ? "pendingReply.loadFailed"
-                                    : "pendingReply.empty",
+                                  pendingDaemonUnsupported
+                                    ? "pendingReply.daemonUnsupported"
+                                    : pendingPageError
+                                      ? "pendingReply.loadFailed"
+                                      : "pendingReply.empty",
                                 )
                               : undefined
                           }
@@ -1202,6 +1221,12 @@ export function ChatTab({
                     <ChatGptAppPermissionNotice
                       isDark={isDark}
                       onDismiss={dismissAppPermissionNotice}
+                    />
+                  ) : null}
+                  {notificationOffer.visible && !hideDockForKeyboard ? (
+                    <NotificationPrompt
+                      onDismiss={notificationOffer.dismiss}
+                      restoreFocus={focusActiveFilter}
                     />
                   ) : null}
                   <ChatComposer

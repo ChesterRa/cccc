@@ -6,6 +6,7 @@ import { formatMessageTimestamp } from "../../utils/time";
 import { Button } from "../ui/button";
 import { inputClass } from "../modals/settings/types";
 import {
+  ActiveTurnAge,
   NativeActorDelivery,
   NativeActorSummary,
   nativeActorCard as card,
@@ -51,7 +52,7 @@ function Panel({
   onStateChange,
   onBusyChange,
 }: Props) {
-  const { t } = useTranslation("settings");
+  const { t, i18n } = useTranslation("settings");
   const [state, setState] = useState<GrokActorState | null>(null);
   const [readError, setReadError] = useState("");
   const [error, setError] = useState("");
@@ -283,6 +284,13 @@ function Panel({
                   ? t("grokWebhook.phase." + phase)
                   : t(readError ? "grokActor.unavailable" : "common:loading")}
               </p>
+            )}
+            {unresolved && !readError && (
+              <ActiveTurnAge
+                seconds={state?.active_turn_elapsed_seconds}
+                language={i18n?.language}
+                t={t}
+              />
             )}
           </div>
           {!compact && !setup && (

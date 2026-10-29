@@ -325,7 +325,20 @@ pub fn list(group: &GroupDoc, relative: &str, options: ListOptions) -> io::Resul
     }
 
     for entry in &mut entries {
-        entry.git_status = status.get(&entry.path).copied();
+        // Git lists a new directory once, and a workspace that is one under the empty path;
+        // whatever such a directory holds is new too, unless ignored.
+        entry.git_status = status.get(&entry.path).copied().or_else(|| {
+            (!entry.ignored
+                && std::iter::once("")
+                    .chain(
+                        entry
+                            .path
+                            .match_indices('/')
+                            .map(|(at, _)| &entry.path[..at]),
+                    )
+                    .any(|ancestor| status.get(ancestor) == Some(&GitStatus::Untracked)))
+            .then_some(GitStatus::Untracked)
+        });
         if entry.is_dir {
             let prefix = format!("{}/", entry.path);
             entry.git_dirty_descendant = entry.git_status.is_none()

@@ -2062,6 +2062,8 @@
     "failed": "配信に失敗",
     "interrupted": "タスクが中断されました",
     "unclaimed": "未取得 · 接続を確認",
+    "claimedAgo": "{{elapsed}}に取得",
+    "claimTimeUnknown": "取得時刻は不明",
     "steps": {
       "notify": "待機 / 送信",
       "sending": "通知を送信中",

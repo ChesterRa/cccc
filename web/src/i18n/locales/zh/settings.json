@@ -2046,6 +2046,8 @@
     "failed": "投递失败",
     "interrupted": "任务已中断",
     "unclaimed": "尚未领取 · 请检查连接",
+    "claimedAgo": "{{elapsed}}领取",
+    "claimTimeUnknown": "领取时间未知",
     "steps": {
       "notify": "排队 / 发送",
       "sending": "正在发送通知",

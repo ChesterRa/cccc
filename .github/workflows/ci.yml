@@ -123,7 +123,7 @@ jobs:
   windows-smoke:
     needs: web
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -185,6 +185,11 @@ jobs:
           process_tree::tests::abrupt_daemon_exit_reaps_child_and_grandchild_without_deleting_history
           -- --test-threads=1
 
+      - name: Verify Group copy path checks on Windows
+        timeout-minutes: 10
+        run: >-
+          cargo test --package cccc-pair-core --lib --locked group_copy
+
       - name: Set up Node for Windows npm entrypoint tests
         uses: actions/setup-node@v7
         with:
@@ -215,6 +220,9 @@ jobs:
       - name: Verify TUI rendering and input
         run: >-
           cargo test --package cccc --bin cccc --locked tui::
+      - name: Verify Group copy path checks on macOS
+        run: >-
+          cargo test --package cccc-pair-core --lib --locked group_copy
 
   rust-linux:
     needs: web

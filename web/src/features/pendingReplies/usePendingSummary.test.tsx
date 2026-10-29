@@ -66,6 +66,43 @@ it("shows only allowed Groups and marks a failed refresh stale, then clears on l
   }
 });
 
+it("marks every Group unknown and unsupported, never zero, when the daemon lacks the summary", async () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  let latest: Value | undefined;
+  const update = (value: Value) => (latest = value);
+  fetchSummary.mockResolvedValueOnce({
+    ok: true,
+    result: { groups: [{ group_id: "a", state: "fresh", pending: 2, revision: "r1" }] },
+  });
+  try {
+    await act(async () => root.render(<Harness enabled groups={["a", "b"]} update={update} />));
+    expect(latest!.summaries.a).toMatchObject({ state: "fresh", pending: 2 });
+
+    fetchSummary.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "unknown_op", message: "unknown operation: user_reply_requests_summary" },
+    });
+    await act(async () => latest!.refresh());
+    const unsupported = { state: "unknown", pending: null, daemonUnsupported: true };
+    expect(latest!.summaries.a).toEqual(unsupported);
+    expect(latest!.summaries.b).toEqual(unsupported);
+
+    fetchSummary.mockResolvedValueOnce({
+      ok: true,
+      result: { groups: [{ group_id: "a", state: "fresh", pending: 1, revision: "r2" }] },
+    });
+    await act(async () => latest!.refresh());
+    expect(latest!.summaries.a).toMatchObject({ state: "fresh", pending: 1 });
+    expect(latest!.summaries.a.daemonUnsupported).toBeUndefined();
+    expect(latest!.summaries.b).toEqual({ state: "unknown", pending: null });
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
 it("discards an old asynchronous response after the permitted Group set changes", async () => {
   const host = document.createElement("div");
   document.body.append(host);

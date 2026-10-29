@@ -73,6 +73,7 @@
   "filterNeedReply": "Requests",
   "pendingReply": {
     "loadFailed": "Could not refresh waiting replies. Their status is unknown.",
+    "daemonUnsupported": "The running CCCC daemon does not support Waiting for you; the daemon and this page may be from different versions. Restart CCCC, then retry.",
     "empty": "No matching requests are waiting for your reply.",
     "choose": "Choose an answer",
     "recommended": "Recommended",
@@ -97,6 +98,11 @@
     "unknown": "The request's status is unavailable.",
     "unsupported": "This request came from another Group or device. Check the requester before replying in chat.",
     "openComposer": "Reply in chat"
+  },
+  "notificationPrompt": {
+    "text": "Turn on system notifications to get new messages addressed to you even when this page is closed. Keep the CCCC Web service running.",
+    "enable": "Turn on…",
+    "dismiss": "Not now"
   },
   "chatFilters": "Chat filters",
   "chatMessages": "Chat messages",
@@ -844,7 +850,7 @@
     "conflicts": "Conflicts · open file to inspect",
     "savedOnly": "Read-only Git view. Shows saved files only.",
     "unsaved": "This file has unsaved edits. The diff shows its saved content.",
-    "limited": "Showing the first 2,000 changes. Use the terminal for the complete list.",
+    "limited": "This list is incomplete: some changes are left out or shown only as their new folder. Use the terminal for the complete list.",
     "patchLimited": "This diff exceeds the preview limit (1 MiB or 10,000 lines). Inspect it in the terminal.",
     "noDiff": "No text diff remains on this side. Refresh Changes if needed.",
     "diff": "Git diff",

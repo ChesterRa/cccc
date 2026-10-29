@@ -6,6 +6,7 @@ import { Button } from "../ui/button";
 import { formatMessageTimestamp } from "../../utils/time";
 import { DotsSettingRow, DotsSetupStep, DotsSetupTips } from "./DotsActorSections";
 import {
+  ActiveTurnAge,
   NativeActorDelivery,
   NativeActorSummary,
   nativeActorCard as dotsCard,
@@ -409,6 +410,13 @@ function ActorPanel({
                   ? t(`dotsActor.phases.${state.phase}`)
                   : t(readError ? "dotsActor.unavailable" : "common:loading")}
               </p>
+            )}
+            {unresolved && !readError && (
+              <ActiveTurnAge
+                seconds={state?.active_turn_elapsed_seconds}
+                language={i18n?.language}
+                t={t}
+              />
             )}
           </div>
           {!setup && (

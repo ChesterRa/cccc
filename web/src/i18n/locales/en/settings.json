@@ -2062,6 +2062,8 @@
     "failed": "Delivery failed",
     "interrupted": "Task interrupted",
     "unclaimed": "Not claimed · check connection",
+    "claimedAgo": "Claimed {{elapsed}}",
+    "claimTimeUnknown": "Claim time unavailable",
     "steps": {
       "notify": "Queued / Sending",
       "sending": "Sending notification",

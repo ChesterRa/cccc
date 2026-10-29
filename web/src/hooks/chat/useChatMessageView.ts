@@ -216,6 +216,7 @@ export function useChatMessageView(input: {
     loadSenderHistory: senderHistory.loadMore,
     pendingActive: pending.active,
     pendingPageError: pending.active && pending.error,
+    pendingDaemonUnsupported: pending.active && pending.error && pending.daemonUnsupported,
     loadPendingPage: pending.loadMore,
     retryPendingPage: pending.refresh,
   };

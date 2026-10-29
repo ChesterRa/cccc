@@ -107,6 +107,49 @@ export async function isBoundSubscription(
   );
 }
 
+/** Settings announce each confirmed reading so other views can follow it. */
+export const PUSH_STATUS_EVENT = "cccc:push-status";
+
+export type PushSetupStatus =
+  | "enabled"
+  | "blocked"
+  | "disabled"
+  | "unbound"
+  | "keyMismatch"
+  | "senderUnavailable";
+
+/** What this browser's notifications are for the signed-in account. */
+export function pushSetupStatus(reading: {
+  permission: NotificationPermission;
+  sender: PushConfig["sender"];
+  needsReconnect: boolean;
+  bound: boolean;
+  hasSubscription: boolean;
+}): PushSetupStatus {
+  if (reading.permission === "denied") return "blocked";
+  if (reading.sender === "starting" || reading.sender === "unavailable") return "senderUnavailable";
+  if (reading.needsReconnect) return "keyMismatch";
+  // Permission reset to ask: enabling asks again.
+  if (reading.bound) return reading.permission === "granted" ? "enabled" : "disabled";
+  return reading.hasSubscription ? "unbound" : "disabled";
+}
+
+/** Reads the status without changing anything; throws when it cannot be confirmed. */
+export async function readPushSetupStatus(): Promise<PushSetupStatus> {
+  const local = await findBrowserSubscription();
+  const config = await readPushConfig();
+  const needsReconnect =
+    !!local && !subscriptionKeyMatches(local.subscription, config.vapid_public_key);
+  const bound = !needsReconnect && (await isBoundSubscription(local, config));
+  return pushSetupStatus({
+    permission: Notification.permission,
+    sender: config.sender,
+    needsReconnect,
+    bound,
+    hasSubscription: !!local,
+  });
+}
+
 /** Reuse an already available manager and key without creating anything. */
 export async function existingPushSetup(
   config: PushConfig,

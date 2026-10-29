@@ -12,6 +12,12 @@ export function usePendingGroupLabel(groupId: string, title: string): string {
   const status =
     indicator.state === "fresh"
       ? t("pendingRepliesCount", { value: indicator.text })
-      : t(indicator.state === "stale" ? "pendingRepliesStale" : "pendingRepliesUnknown");
+      : t(
+          indicator.state === "stale"
+            ? "pendingRepliesStale"
+            : indicator.daemonUnsupported
+              ? "pendingRepliesDaemonUnsupported"
+              : "pendingRepliesUnknown",
+        );
   return `${title} · ${status}`;
 }

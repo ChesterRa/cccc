@@ -8,6 +8,7 @@ import {
   existingPushSetup,
   findBrowserSubscription,
   preparePush,
+  pushSetupStatus,
   pushSupported,
   readPushConfig,
   removeSubscription,
@@ -317,5 +318,29 @@ describe("notification subscriptions", () => {
     await expect(removeSubscription({ subscription, registration })).rejects.toThrow(
       "unsubscribe_failed",
     );
+  });
+});
+
+describe("notification status", () => {
+  const reading = {
+    permission: "granted" as NotificationPermission,
+    sender: "here" as const,
+    needsReconnect: false,
+    bound: true,
+    hasSubscription: true,
+  };
+  it("reads each state the settings show, in the order they take precedence", () => {
+    expect(pushSetupStatus(reading)).toBe("enabled");
+    expect(pushSetupStatus({ ...reading, sender: "elsewhere" })).toBe("enabled");
+    expect(pushSetupStatus({ ...reading, permission: "denied", sender: "unavailable" })).toBe(
+      "blocked",
+    );
+    expect(pushSetupStatus({ ...reading, sender: "starting", needsReconnect: true })).toBe(
+      "senderUnavailable",
+    );
+    expect(pushSetupStatus({ ...reading, needsReconnect: true, bound: false })).toBe("keyMismatch");
+    expect(pushSetupStatus({ ...reading, permission: "default" })).toBe("disabled");
+    expect(pushSetupStatus({ ...reading, bound: false })).toBe("unbound");
+    expect(pushSetupStatus({ ...reading, bound: false, hasSubscription: false })).toBe("disabled");
   });
 });

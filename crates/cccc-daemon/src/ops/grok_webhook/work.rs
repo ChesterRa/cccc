@@ -53,7 +53,8 @@ pub(super) fn claim(home: &HomeLayout, r: &DaemonRequest) -> OpResult {
                 if result["status"] == "work_available" {
                     s["execution"] = json!({
                         "event_id":s["wake"]["event_id"], "turn_id":result["turn"]["turn_id"],
-                        "event_ids":result["turn"]["event_ids"], "state":"active"
+                        "event_ids":result["turn"]["event_ids"], "state":"active",
+                        "claimed_at":result["turn"]["created_at"]
                     });
                     s["wake"]["state"] = json!("claimed");
                     result["actor_token"] = json!(private::token(

@@ -73,6 +73,7 @@
   "filterNeedReply": "请求",
   "pendingReply": {
     "loadFailed": "无法刷新待你答复的请求，当前状态未知。",
+    "daemonUnsupported": "运行中的 CCCC daemon 不支持待你答复，daemon 和此页面可能来自不同版本。请重启 CCCC 后重试。",
     "empty": "没有符合筛选条件的待答请求。",
     "choose": "选择答复",
     "recommended": "推荐",
@@ -97,6 +98,11 @@
     "unknown": "暂时无法确认请求状态。",
     "unsupported": "这条请求来自其他组或设备，请核实请求者后在聊天中回复。",
     "openComposer": "在聊天中回复"
+  },
+  "notificationPrompt": {
+    "text": "开启系统通知后，页面关闭时也能收到发给你的新消息。CCCC 的 Web 服务需要保持运行。",
+    "enable": "去开启…",
+    "dismiss": "暂不"
   },
   "chatFilters": "聊天过滤器",
   "chatMessages": "聊天消息",
@@ -844,7 +850,7 @@
     "conflicts": "冲突 · 打开文件检查",
     "savedOnly": "只读 Git 视图，仅显示已保存的内容。",
     "unsaved": "此文件有未保存的修改，差异仅显示已保存的内容。",
-    "limited": "仅显示前 2,000 项变更，完整列表请在终端查看。",
+    "limited": "列表不完整：部分变更未列出，或只显示为所在的新文件夹。完整列表请在终端查看。",
     "patchLimited": "此差异超出预览上限（1 MiB 或 10,000 行），请在终端查看。",
     "noDiff": "此侧已无文本差异，可刷新变更列表。",
     "diff": "Git 差异",

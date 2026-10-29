@@ -2,7 +2,10 @@ import type { Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
 import { evaluateTaskWorkflow, type TaskAttemptVerdict } from "../../../utils/taskWorkflow";
 import {
+  checklistItemOpen,
   priorityLabel,
+  taskIsLive,
+  taskStatus,
   waitingLabel,
   type ContextTranslator,
   type SubtaskProgress,
@@ -34,11 +37,15 @@ export function TaskCardBadges({
   compact?: boolean;
   subtasks?: SubtaskProgress;
 }) {
-  const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+  const live = taskIsLive(task);
+  const blocked = live && Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
   const waiting = String(task.waiting_on || "none").trim();
   const handoff = String(task.handoff_to || "").trim();
   const checklist = (task.checklist || []).filter((item) => String(item.text || "").trim());
   const checklistDone = checklist.filter((item) => item.status === "done").length;
+  // Unknown custom statuses are not proof that an item is still outstanding.
+  const checklistRemaining = checklist.filter(checklistItemOpen).length;
+  const doneWithRemaining = taskStatus(task) === "done" && checklistRemaining > 0;
   const workflow = evaluateTaskWorkflow({
     parent_id: task.parent_id,
     task_type: task.task_type,
@@ -73,8 +80,18 @@ export function TaskCardBadges({
         </span>
       ) : null}
       {!compact && checklist.length > 0 ? (
-        <span className="rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]">
+        <span
+          className={classNames(
+            "rounded-full px-2 py-0.5",
+            doneWithRemaining
+              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+              : "glass-panel text-[var(--color-text-secondary)]",
+          )}
+        >
           {tr("context.checklist", "Checklist")} {checklistDone}/{checklist.length}
+          {doneWithRemaining
+            ? ` · ${tr("context.checklistRemaining", "{{count}} remaining", { count: checklistRemaining })}`
+            : null}
         </span>
       ) : null}
       {subtasks && subtasks.total > 0 ? (
@@ -93,12 +110,12 @@ export function TaskCardBadges({
           {tr("context.blocked", "Blocked")}: {task.blocked_by?.join(", ")}
         </span>
       ) : null}
-      {!compact && waiting && waiting !== "none" ? (
+      {!compact && live && waiting && waiting !== "none" ? (
         <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-600 dark:text-amber-400">
           {waitingLabel(waiting, tr)}
         </span>
       ) : null}
-      {!compact && handoff ? (
+      {!compact && live && handoff ? (
         <span
           className={classNames(
             "rounded-full border px-2 py-0.5",

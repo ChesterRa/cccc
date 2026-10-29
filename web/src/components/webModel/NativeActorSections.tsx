@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { formatElapsed } from "../../utils/time";
 import { AlertIcon, CheckIcon, ClockIcon, RefreshIcon } from "../Icons";
 import { DELIVERY_STEPS, deliveryProgress, type StepState } from "./nativeActorStatus";
 
@@ -6,6 +7,26 @@ type T = (key: string, options?: Record<string, unknown>) => string;
 
 export const nativeActorCard =
   "rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]";
+
+export function ActiveTurnAge({
+  seconds,
+  language,
+  t,
+}: {
+  seconds: number | null | undefined;
+  language: string | undefined;
+  t: T;
+}) {
+  let text = t("nativeActor.claimTimeUnknown");
+  if (typeof seconds === "number" && Number.isSafeInteger(seconds) && seconds >= 0) {
+    text = t("nativeActor.claimedAgo", { elapsed: formatElapsed(seconds, language) });
+  }
+  return (
+    <span data-active-turn-age className="text-xs text-[var(--color-text-muted)]">
+      {text}
+    </span>
+  );
+}
 
 export function NativeActorSummary({
   cells,
