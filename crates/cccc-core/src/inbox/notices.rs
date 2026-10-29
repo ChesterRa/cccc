@@ -22,10 +22,10 @@ mod summary_tests {
     fn unresolved_cache_follows_recipient_generation_and_delivery_facts() {
         // Reducer unit controls: these in-memory facts are synthetic, unlike
         // the IPC integration tests' daemon-produced events.
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
-        let store = GroupStore::new(home).unwrap();
-        let mut group = store.create("Mail reducer", "").unwrap();
+        let temp = tempfile::tempdir().expect("create temporary test directory");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("create test home");
+        let store = GroupStore::new(home).expect("open test group store");
+        let mut group = store.create("Mail reducer", "").expect("create test group");
         group.actors.push(Actor::new("reader"));
         group.actors.push(Actor::new("other"));
         let mut state = NoticeState::default();
@@ -33,7 +33,7 @@ mod summary_tests {
         mail.by = "user".into();
         mail.data = json!({"to":["reader"],"message_mode":"mail"})
             .as_object()
-            .unwrap()
+            .expect("Mail fixture is an object")
             .clone();
         state.note(&group, &mail);
         let cutoff = Utc::now();
@@ -47,7 +47,7 @@ mod summary_tests {
         delivery.data =
             json!({"actor_id":"reader","source_event_id":"notice-id","state":"accepted"})
                 .as_object()
-                .unwrap()
+                .expect("delivery fixture is an object")
                 .clone();
         state.note(&group, &delivery);
         assert_eq!(summarize(&mut state)[0].awaiting_count, 1);

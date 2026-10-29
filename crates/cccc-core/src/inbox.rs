@@ -653,7 +653,7 @@ mod tests {
     fn overdue_timestamp_boundary_and_unknown_ages() {
         // Pure timestamp unit controls, not captured or daemon-produced Mail.
         let cutoff = DateTime::parse_from_rfc3339("2026-01-01T12:00:00Z")
-            .unwrap()
+            .expect("valid timestamp boundary fixture")
             .with_timezone(&Utc);
         let observed = cutoff + chrono::Duration::seconds(60);
         let known = OverdueMailSummary::from_timestamps(
