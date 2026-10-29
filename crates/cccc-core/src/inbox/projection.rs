@@ -196,12 +196,50 @@ impl Projection {
 
 // The query mutex serializes cache publication, never append. Snapshot identity
 // includes source order and inode; growth is decoded from committed offsets.
+#[derive(Clone, Copy)]
+enum CursorPolicy {
+    Effective,
+    Summary,
+}
+
+impl CursorPolicy {
+    fn load(self, home: &HomeLayout, group_id: &str) -> io::Result<InboxState> {
+        match self {
+            Self::Effective => load(home, group_id),
+            Self::Summary => load_raw(home, group_id),
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static TEST_REBUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn with_projection<T>(
     home: &HomeLayout,
     group: &GroupDoc,
     actor_ids: &[String],
     state: &InboxState,
     mut inspect: impl FnMut(&mut Projection, &Snapshot) -> io::Result<T>,
+) -> io::Result<T> {
+    with_projection_policy(
+        home,
+        group,
+        actor_ids,
+        state,
+        CursorPolicy::Effective,
+        |projection, snapshot, _| inspect(projection, snapshot),
+    )
+}
+
+fn with_projection_policy<T>(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_ids: &[String],
+    state: &InboxState,
+    cursor_policy: CursorPolicy,
+    mut inspect: impl FnMut(&mut Projection, &Snapshot, &InboxState) -> io::Result<T>,
 ) -> io::Result<T> {
     let path = GroupStore::new(home.clone())?.ledger_path(&group.group_id)?;
     let entry = entry(&path);
@@ -226,7 +264,12 @@ fn with_projection<T>(
                         unknown |= !projection.deliveries.can_append(&event);
                         ControlFlow::Continue(())
                     })?;
-                    if unknown || !projection.move_cursors(&state, &snapshot)? {
+                    // Summary filtering uses captured durable cursors and read
+                    // facts, without rewinding another reader's mailbox cache.
+                    if unknown
+                        || (matches!(cursor_policy, CursorPolicy::Effective)
+                            && !projection.move_cursors(&state, &snapshot)?)
+                    {
                         true
                     } else {
                         let old_offsets = projection.offsets.clone();
@@ -241,9 +284,15 @@ fn with_projection<T>(
                 _ => true,
             };
             if rebuild {
+                #[cfg(test)]
+                TEST_REBUILDS.with(|count| count.set(count.get().saturating_add(1)));
                 *guard = Some(Projection::build(group, &state, &snapshot, actor_ids)?);
             }
-            inspect(guard.as_mut().expect("projection initialized"), &snapshot)
+            inspect(
+                guard.as_mut().expect("projection initialized"),
+                &snapshot,
+                &state,
+            )
         })();
         if result.is_err() {
             // A failed suffix read/refill may have reduced only a prefix.
@@ -257,7 +306,7 @@ fn with_projection<T>(
         // and must not starve publication. A missed try_lock callback merges
         // by byte offset on the next query.
         let current = Snapshot::open(&path)?;
-        let current_state = load(home, &group.group_id)?;
+        let current_state = cursor_policy.load(home, &group.group_id)?;
         if !current.extends(&snapshot.sources)
             || current_state.cursors != state.cursors
             || entry.cursor_epoch.load(Ordering::Acquire) != cursor_epoch
@@ -266,6 +315,59 @@ fn with_projection<T>(
             continue;
         }
         return result;
+    }
+}
+
+#[cfg(test)]
+mod summary_cursor_tests {
+    use super::*;
+    use cccc_contracts::Actor;
+
+    #[test]
+    fn summary_publication_retry_receives_the_new_raw_cursor_state() {
+        // Synthetic publication-race control, not a daemon-produced read.
+        let temp = tempfile::tempdir().expect("publication test directory");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("publication home");
+        let store = GroupStore::new(home.clone()).expect("publication group store");
+        let mut group = store
+            .create("summary publication", "")
+            .expect("publication group");
+        group.actors.push(Actor::new("reader"));
+        store.save(&group).expect("save publication group");
+        let ledger_path = store
+            .ledger_path(&group.group_id)
+            .expect("publication ledger path");
+        let mut mail = Event::new("chat.message", &group.group_id);
+        mail.data = json!({"to":["reader"],"message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("publication Mail data");
+        ledger::append(&ledger_path, &mail).expect("append publication Mail");
+        let state = load_raw(&home, &group.group_id).expect("initial raw cursor state");
+        let mut observed = Vec::new();
+        let result = with_projection_policy(
+            &home,
+            &group,
+            &[],
+            &state,
+            CursorPolicy::Summary,
+            |_, _, current| {
+                let cursor = current.cursors.get("reader").cloned();
+                observed.push(cursor.clone());
+                if observed.len() == 1 {
+                    write_json(
+                        &path(&home, &group.group_id)?,
+                        &json!({
+                            "schema":MAIL_CURSOR_SCHEMA,"cursors":{"reader":{"event_id":mail.id}}
+                        }),
+                    )?;
+                }
+                Ok(cursor)
+            },
+        )
+        .expect("retry changed raw cursor state");
+        assert_eq!(observed, vec![None, Some(mail.id.clone())]);
+        assert_eq!(result, Some(mail.id));
     }
 }
 
@@ -337,18 +439,25 @@ pub(super) fn overdue_summary(
     group: &GroupDoc,
     cutoff: DateTime<Utc>,
 ) -> io::Result<(DateTime<Utc>, Vec<OverdueMailSummary>)> {
-    let state = load(home, &group.group_id)?;
-    with_projection(home, group, &[], &state, |projection, _| {
-        // Sample after loading/replaying the captured prefix, including on a
-        // publication retry. Cold-load time must not make newly loaded Mail
-        // appear to have a future timestamp relative to this observation.
-        let observed_at = Utc::now();
-        let actors =
-            projection
-                .notices
-                .overdue_summary(group, &projection.cursors, cutoff, observed_at);
-        Ok((observed_at, actors))
-    })
+    let state = load_raw(home, &group.group_id)?;
+    with_projection_policy(
+        home,
+        group,
+        &[],
+        &state,
+        CursorPolicy::Summary,
+        |projection, _, state| {
+            // Sample after loading/replaying the captured prefix, including on a
+            // publication retry. Cold-load time must not make newly loaded Mail
+            // appear to have a future timestamp relative to this observation.
+            let observed_at = Utc::now();
+            let actors =
+                projection
+                    .notices
+                    .overdue_summary(group, &state.cursors, cutoff, observed_at);
+            Ok((observed_at, actors))
+        },
+    )
 }
 
 pub(crate) fn due(
