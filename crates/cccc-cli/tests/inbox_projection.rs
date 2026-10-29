@@ -54,7 +54,7 @@ async fn overdue_summary_distinguishes_worker_mail_delivery_from_notice_delivery
     );
     let deadline = Instant::now() + Duration::from_secs(20);
     while !home.daemon_dir().join("ccccd.addr.json").exists() {
-        assert!(daemon.0.try_wait().unwrap().is_none());
+        assert!(daemon.0.try_wait().expect("check daemon status").is_none());
         assert!(Instant::now() < deadline);
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -64,25 +64,25 @@ async fn overdue_summary_distinguishes_worker_mail_delivery_from_notice_delivery
     // when a test assertion panics. No provider or external account is used.
     let outcome = tokio::spawn(async move {
         let created = call(&client, "group_create", json!({"title":"Delivery summary","by":"user"})).await;
-        let group = created["group"]["group_id"].as_str().unwrap();
+        let group = created["group"]["group_id"].as_str().expect("created group ID");
         let project = runtime_home.root().join("project");
-        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&project).expect("create fixture project directory");
         call(&client, "attach", json!({"group_id":group,"path":project,"by":"user"})).await;
         call(&client, "group_preamble_set", json!({"group_id":group,"content":"Use the delivery protocol.","by":"user"})).await;
         call(&client, "actor_add", json!({"group_id":group,"actor_id":"reader","runtime":"custom","submit":"newline",
             "command":["sh","-c","stty -echo -icanon min 1 time 0; while IFS= read -r line; do printf '%s\\n' \"$line\"; done"],"by":"user"})).await;
         call(&client, "actor_start", json!({"group_id":group,"actor_id":"reader","by":"user"})).await;
         let mail = call(&client, "message_send", json!({"group_id":group,"to":["reader"],"by":"user","message_mode":"mail","text":"Please review the delivery result."})).await;
-        let mail_id = mail["event"]["id"].as_str().unwrap();
-        let cutoff = mail["event"]["ts"].as_str().unwrap();
+        let mail_id = mail["event"]["id"].as_str().expect("Mail event ID");
+        let cutoff = mail["event"]["ts"].as_str().expect("original Mail timestamp");
         let before = call(&client, "inbox_summary", json!({"group_id":group,"cutoff":cutoff})).await;
         assert_eq!(summary_row(&before, "reader")["awaiting_count"], 1);
         let notice = call(&client, "system_notify", json!({"group_id":group,"by":"system","to":["reader"],"text":"A separate delivery notice."})).await;
-        let notice_id = notice["event"]["id"].as_str().unwrap();
-        let path = GroupStore::new(runtime_home.clone()).unwrap().ledger_path(group).unwrap();
+        let notice_id = notice["event"]["id"].as_str().expect("notice event ID");
+        let path = GroupStore::new(runtime_home.clone()).expect("open fixture group store").ledger_path(group).expect("fixture group ledger path");
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
-            let events = ledger::read_all(&path).unwrap();
+            let events = ledger::read_all(&path).expect("read notice-delivery evidence");
             if events.iter().any(|event| event.kind == "runtime.delivery"
                 && event.data["source_event_id"] == notice_id && event.data["state"] == "accepted") {
                 break;
@@ -104,7 +104,7 @@ async fn overdue_summary_distinguishes_worker_mail_delivery_from_notice_delivery
         call(&client, "message_deliver", json!({"group_id":group,"source_event_id":mail_id,"actor_ids":["reader"],"by":"user"})).await;
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
-            let events = ledger::read_all(&path).unwrap();
+            let events = ledger::read_all(&path).expect("read Mail-delivery evidence");
             if events.iter().any(|event| event.kind == "runtime.delivery"
                 && event.data["source_event_id"] == mail_id && event.data["state"] == "accepted") {
                 break;
@@ -179,7 +179,13 @@ async fn overdue_mail_summary_is_passive_authorized_and_generation_scoped() {
         json!({"group_id":group,"cutoff":timestamp}),
     )
     .await;
-    assert_eq!(summary["actors"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        summary["actors"]
+            .as_array()
+            .expect("actor summary rows")
+            .len(),
+        3
+    );
     assert_eq!(
         summary_row(&summary, "reader")["overdue_count"],
         1,
@@ -205,11 +211,11 @@ async fn overdue_mail_summary_is_passive_authorized_and_generation_scoped() {
                 op: "inbox_summary".into(),
                 args: json!({"group_id":group,"cutoff":timestamp,"by":by})
                     .as_object()
-                    .unwrap()
+                    .expect("permission-test request arguments")
                     .clone(),
             })
             .await
-            .unwrap();
+            .expect("permission-test daemon response");
         assert!(!response.ok, "{by} obtained a Group-wide Inbox view");
     }
     for cutoff in ["not-a-time", "9999-01-01T00:00:00Z"] {
@@ -219,11 +225,11 @@ async fn overdue_mail_summary_is_passive_authorized_and_generation_scoped() {
                 op: "inbox_summary".into(),
                 args: json!({"group_id":group,"cutoff":cutoff})
                     .as_object()
-                    .unwrap()
+                    .expect("cutoff-test request arguments")
                     .clone(),
             })
             .await
-            .unwrap();
+            .expect("cutoff-test daemon response");
         assert!(!response.ok);
     }
     let peek = call(
@@ -323,7 +329,9 @@ async fn overdue_mail_summary_is_passive_authorized_and_generation_scoped() {
     .await;
     assert_eq!(summary_row(&generation, "reader")["awaiting_count"], 0);
     let current = call(&client, "message_send", json!({"group_id":group,"by":"user","to":["reader"],"message_mode":"mail","text":"Review in this session."})).await;
-    let current_cutoff = current["event"]["ts"].as_str().unwrap();
+    let current_cutoff = current["event"]["ts"]
+        .as_str()
+        .expect("current-generation Mail timestamp");
     let warm = call(
         &client,
         "inbox_summary",
