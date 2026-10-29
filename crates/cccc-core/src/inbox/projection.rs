@@ -336,13 +336,18 @@ pub(super) fn overdue_summary(
     home: &HomeLayout,
     group: &GroupDoc,
     cutoff: DateTime<Utc>,
-    observed_at: DateTime<Utc>,
-) -> io::Result<Vec<OverdueMailSummary>> {
+) -> io::Result<(DateTime<Utc>, Vec<OverdueMailSummary>)> {
     let state = load(home, &group.group_id)?;
     with_projection(home, group, &[], &state, |projection, _| {
-        Ok(projection
-            .notices
-            .overdue_summary(group, &projection.cursors, cutoff, observed_at))
+        // Sample after loading/replaying the captured prefix, including on a
+        // publication retry. Cold-load time must not make newly loaded Mail
+        // appear to have a future timestamp relative to this observation.
+        let observed_at = Utc::now();
+        let actors =
+            projection
+                .notices
+                .overdue_summary(group, &projection.cursors, cutoff, observed_at);
+        Ok((observed_at, actors))
     })
 }
 

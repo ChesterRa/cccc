@@ -16,11 +16,11 @@ pub fn summary(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let cutoff = chrono::DateTime::parse_from_rfc3339(&cutoff)
         .map_err(|_| OpError::invalid("cutoff must be an RFC3339 timestamp"))?
         .with_timezone(&chrono::Utc);
-    let observed_at = chrono::Utc::now();
-    if cutoff > observed_at {
+    if cutoff > chrono::Utc::now() {
         return Err(OpError::invalid("cutoff must not be in the future"));
     }
-    let summary = inbox::overdue_summary(home, &group, cutoff, observed_at).map_err(OpError::io)?;
+    let (observed_at, summary) =
+        inbox::overdue_summary(home, &group, cutoff).map_err(OpError::io)?;
     object(json!({
         "group_id": group.group_id,
         "observed_at": observed_at.to_rfc3339(),

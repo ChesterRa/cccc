@@ -239,9 +239,8 @@ pub fn overdue_summary(
     home: &HomeLayout,
     group: &GroupDoc,
     cutoff: DateTime<Utc>,
-    observed_at: DateTime<Utc>,
-) -> io::Result<Vec<OverdueMailSummary>> {
-    projection::overdue_summary(home, group, cutoff, observed_at)
+) -> io::Result<(DateTime<Utc>, Vec<OverdueMailSummary>)> {
+    projection::overdue_summary(home, group, cutoff)
 }
 
 pub fn mail_pending_summary(

@@ -5190,7 +5190,9 @@ The boundary is inclusive: an awaiting Mail is overdue when its original
 `chat.message.ts <= cutoff`. The cutoff filters **current** awaiting state; it
 does not reconstruct Inbox state as of that timestamp. Age is measured from the
 original Mail timestamp to `observed_at`, independently of notice delivery or
-Actor restart. A malformed or future Mail timestamp has unknown age and cannot
+Actor restart. The observation time is sampled after the captured projection
+prefix is loaded, and is resampled if publication validation retries.
+A malformed or future Mail timestamp has unknown age and cannot
 establish overdue status. Invalid/future request cutoffs are errors.
 
 Result:

@@ -93,6 +93,14 @@ async fn overdue_summary_distinguishes_worker_mail_delivery_from_notice_delivery
         let noticed = call(&client, "inbox_summary", json!({"group_id":group,"cutoff":cutoff})).await;
         assert_eq!(summary_row(&noticed, "reader")["awaiting_count"], 1, "notice delivery settled the Mail itself");
         assert_eq!(summary_row(&noticed, "reader")["oldest_awaiting_at"], summary_row(&before, "reader")["oldest_awaiting_at"]);
+        call(&client, "actor_stop", json!({"group_id":group,"actor_id":"reader","by":"user"})).await;
+        let parked = call(&client, "inbox_summary", json!({"group_id":group,"cutoff":cutoff})).await;
+        assert_eq!(summary_row(&parked, "reader")["awaiting_count"], 1, "stopping an Actor must not hide its awaiting Mail");
+        assert_eq!(summary_row(&parked, "reader")["oldest_awaiting_at"], summary_row(&before, "reader")["oldest_awaiting_at"]);
+        call(&client, "actor_start", json!({"group_id":group,"actor_id":"reader","by":"user"})).await;
+        let restarted = call(&client, "inbox_summary", json!({"group_id":group,"cutoff":cutoff})).await;
+        assert_eq!(summary_row(&restarted, "reader")["awaiting_count"], 1);
+        assert_eq!(summary_row(&restarted, "reader")["oldest_awaiting_at"], summary_row(&before, "reader")["oldest_awaiting_at"], "restart must not reset Mail age");
         call(&client, "message_deliver", json!({"group_id":group,"source_event_id":mail_id,"actor_ids":["reader"],"by":"user"})).await;
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
