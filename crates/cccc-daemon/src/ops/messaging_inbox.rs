@@ -21,6 +21,9 @@ pub fn summary(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let (observed_at, summary) =
         inbox::overdue_summary(home, &group, cutoff).map_err(OpError::io)?;
+    if cutoff > observed_at {
+        return Err(OpError::invalid("cutoff must not be after observed_at"));
+    }
     object(json!({
         "group_id": group.group_id,
         "observed_at": observed_at.to_rfc3339(),
