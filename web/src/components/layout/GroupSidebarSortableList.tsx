@@ -100,7 +100,7 @@ export function GroupSidebarSortableList({
       }
     >
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-        <div className={isCollapsed ? "flex flex-col items-center gap-2" : "space-y-1"}>
+        <div className={isCollapsed ? "flex flex-col items-center gap-2" : "space-y-0.5"}>
           {groups.map((group, index) => {
             const gid = String(group.group_id || "");
             return (

@@ -122,3 +122,74 @@ fn binary_changes_and_output_limits_do_not_attempt_decoding_or_return_partial_pa
     assert!(large.limited);
     assert!(large.patch.is_empty());
 }
+
+#[test]
+fn new_directories_list_each_untracked_file_as_editors_do() {
+    let f = workspace_fixture::fixture();
+    init(&f.repo);
+    git(&f.repo, &["add", "."]);
+    git(&f.repo, &["commit", "-qm", "initial"]);
+    fs::write(f.repo.join(".gitignore"), "*.log\n").expect("gitignore");
+    fs::create_dir_all(f.repo.join("fresh/inner")).expect("fresh");
+    fs::write(f.repo.join("fresh/a.txt"), "a\n").expect("a");
+    fs::write(f.repo.join("fresh/inner/b.txt"), "b\n").expect("b");
+    fs::write(f.repo.join("fresh/noise.log"), "noise\n").expect("ignored");
+    // A repository inside the workspace is still one entry, as Git reports it.
+    fs::create_dir_all(f.repo.join("nested")).expect("nested");
+    init(&f.repo.join("nested"));
+    fs::write(f.repo.join("nested/inside.txt"), "inside\n").expect("inside");
+
+    let listing = changes(&f.group).expect("changes");
+    let untracked: Vec<(&str, bool)> = listing
+        .entries
+        .iter()
+        .filter(|e| e.untracked)
+        .map(|e| (e.path.as_str(), e.directory))
+        .collect();
+    assert_eq!(
+        untracked,
+        [
+            (".gitignore", false),
+            ("fresh/a.txt", false),
+            ("fresh/inner/b.txt", false),
+            ("nested", true),
+        ]
+    );
+    assert!(!listing.limited);
+    let error = diff(&f.group, "fresh/a.txt", DiffSide::Worktree).expect_err("no diff");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn a_workspace_that_is_a_new_directory_lists_its_files() {
+    let mut f = workspace_fixture::fixture();
+    init(&f.repo);
+    fs::write(f.repo.join(".gitignore"), "*.log\n").expect("gitignore");
+    git(&f.repo, &["add", "."]);
+    git(&f.repo, &["commit", "-qm", "initial"]);
+    // A project folder created inside an existing repository and not added yet.
+    let project = f.repo.join("project");
+    fs::create_dir_all(project.join("inner")).expect("project");
+    fs::write(project.join("a.txt"), "a\n").expect("a");
+    fs::write(project.join("inner/b.txt"), "b\n").expect("b");
+    fs::write(project.join("noise.log"), "noise\n").expect("ignored");
+    f.group.scopes[0].url = project
+        .canonicalize()
+        .expect("scope")
+        .to_string_lossy()
+        .into_owned();
+
+    let listing = changes(&f.group).expect("changes");
+    let entries: Vec<(&str, bool, bool)> = listing
+        .entries
+        .iter()
+        .map(|e| (e.path.as_str(), e.untracked, e.directory))
+        .collect();
+    assert_eq!(
+        entries,
+        [("a.txt", true, false), ("inner/b.txt", true, false)]
+    );
+    assert!(!listing.limited);
+    let error = diff(&f.group, "a.txt", DiffSide::Worktree).expect_err("no diff");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+}

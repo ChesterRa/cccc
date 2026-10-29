@@ -5,6 +5,13 @@ import type { GrokActorState } from "../../services/api";
 import { formatMessageTimestamp } from "../../utils/time";
 import { Button } from "../ui/button";
 import { inputClass } from "../modals/settings/types";
+import {
+  ActiveTurnAge,
+  NativeActorDelivery,
+  NativeActorSummary,
+  nativeActorCard as card,
+} from "./NativeActorSections";
+import { phaseTone } from "./nativeActorStatus";
 
 type Props = {
   groupId: string;
@@ -24,16 +31,6 @@ type Props = {
   onStateChange?: (state: GrokActorState | null) => void;
   onBusyChange?: (busy: boolean) => void;
 };
-const card = "rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]";
-function tone(phase: string) {
-  if (phase === "ready" || phase === "working")
-    return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-  if (phase === "failed" || phase === "interrupted")
-    return "bg-rose-500/10 text-rose-700 dark:text-rose-300";
-  if (["pending", "delivering", "delivered", "unclaimed"].includes(phase))
-    return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
-  return "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]";
-}
 export function GrokActorPanel(props: Props) {
   return <Panel key={props.groupId + "/" + props.actorId} {...props} />;
 }
@@ -55,7 +52,7 @@ function Panel({
   onStateChange,
   onBusyChange,
 }: Props) {
-  const { t } = useTranslation("settings");
+  const { t, i18n } = useTranslation("settings");
   const [state, setState] = useState<GrokActorState | null>(null);
   const [readError, setReadError] = useState("");
   const [error, setError] = useState("");
@@ -70,6 +67,7 @@ function Panel({
   const pending = useRef(false);
   const mounted = useRef(true);
   const revision = useRef(0);
+  const savedBot = useRef("");
   const current = useRef({ visible: false, onStateChange, onBusyChange, t });
   current.current = { visible: isVisible && canAccessConnection, onStateChange, onBusyChange, t };
   useEffect(() => {
@@ -85,6 +83,18 @@ function Panel({
         if (cancelled || pending.current || started !== revision.current) return;
         if (!r.ok) throw new Error(r.error.message);
         if (r.result.group_id !== groupId || r.result.actor_id !== actorId) return;
+        const botUrl = r.result.bot_url || "";
+        if (savedBot.current !== botUrl) {
+          // Routine drafts and setup instructions belong to one saved Bot.
+          savedBot.current = botUrl;
+          setUrl("");
+          setKey("");
+          setInstructions("");
+          setCopied(false);
+          setError("");
+          setConfirm(null);
+          setDisconnecting(false);
+        }
         setState(r.result);
         setReadError("");
         current.current.onStateChange?.(r.result);
@@ -112,9 +122,7 @@ function Panel({
   }, []);
   const locked = readOnly || saving || Boolean(action) || !state || !isVisible;
   const unresolved = Boolean(state?.active_turn_id);
-  async function act(
-    kind: "instructions" | "configure" | "retry" | "resolve" | "disconnect" | "pause",
-  ) {
+  async function act(kind: "instructions" | "configure" | "retry" | "resolve" | "disconnect") {
     if (locked || !canAccessConnection || pending.current || !state) return;
     if (kind === "configure" && unresolved) return;
     pending.current = true;
@@ -123,24 +131,19 @@ function Panel({
     setError("");
     current.current.onBusyChange?.(true);
     try {
-      if (kind === "pause") {
-        const r = await api.stopActor(groupId, actorId);
-        if (!r.ok) throw new Error(r.error.message);
-      } else {
-        const r = await api.changeGrokWebhook(groupId, actorId, {
-          action: kind,
-          ...(kind === "configure" ? { url: url.trim(), key: key.trim() } : {}),
-          ...(kind === "resolve" && confirm ? confirm : {}),
-        });
-        if (!current.current.visible) return;
-        if (!r.ok)
-          throw new Error(
-            r.error.code === "delivery_unresolved" ? t("grokWebhook.waitForTask") : r.error.message,
-          );
-        if (kind === "instructions") {
-          setInstructions(r.result.instructions || "");
-          setCopied(false);
-        }
+      const r = await api.changeGrokWebhook(groupId, actorId, {
+        action: kind,
+        ...(kind === "configure" ? { url: url.trim(), key: key.trim() } : {}),
+        ...(kind === "resolve" && confirm ? confirm : {}),
+      });
+      if (!current.current.visible) return;
+      if (!r.ok)
+        throw new Error(
+          r.error.code === "delivery_unresolved" ? t("grokWebhook.waitForTask") : r.error.message,
+        );
+      if (kind === "instructions") {
+        setInstructions(r.result.instructions || "");
+        setCopied(false);
       }
       if (!current.current.visible) return;
       if (kind === "configure") {
@@ -206,83 +209,95 @@ function Panel({
       )}
     </>
   );
-  const recovery = !readOnly && state && (
-    <>
-      {unresolved && state.enabled && (
-        <Button variant="outline" disabled={locked} onClick={() => void act("pause")}>
-          {t("grokWebhook.pause")}
-        </Button>
-      )}
-      {!unresolved && ["failed", "unclaimed"].includes(phase) && (
-        <Button variant="outline" disabled={locked} onClick={() => void act("retry")}>
-          {t("grokWebhook.retry")}
-        </Button>
-      )}
-      {unresolved && !state.enabled && (
-        <div className="space-y-2">
-          <p className="text-xs text-[var(--color-text-muted)]">{t("grokWebhook.resolveHint")}</p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              disabled={locked}
-              onClick={() =>
-                confirm
-                  ? void act("resolve")
-                  : setConfirm({
-                      turn_id: state.active_turn_id!,
-                      event_ids: [...(state.active_event_ids || [])],
-                    })
-              }
-            >
-              {t(confirm ? "grokWebhook.confirmResolve" : "grokWebhook.resolve")}
-            </Button>
-            {confirm && (
-              <Button variant="ghost" onClick={() => setConfirm(null)}>
-                {t("common:cancel")}
+  const recovery = !readOnly &&
+    state &&
+    (unresolved || ["failed", "unclaimed"].includes(phase)) && (
+      <>
+        {!unresolved && ["failed", "unclaimed"].includes(phase) && (
+          <Button variant="outline" disabled={locked} onClick={() => void act("retry")}>
+            {t("grokWebhook.retry")}
+          </Button>
+        )}
+        {unresolved && (
+          <div className="space-y-2">
+            <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+              {t(confirm ? "nativeActor.endTurnConfirm" : "nativeActor.endTurnHint", {
+                provider: t("grokActor.title"),
+              })}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                disabled={locked}
+                onClick={() =>
+                  confirm
+                    ? void act("resolve")
+                    : setConfirm({
+                        turn_id: state.active_turn_id!,
+                        event_ids: [...(state.active_event_ids || [])],
+                      })
+                }
+              >
+                {t(confirm ? "nativeActor.confirmEndTurn" : "nativeActor.endTurn")}
               </Button>
-            )}
+              {confirm && (
+                <Button variant="ghost" onClick={() => setConfirm(null)}>
+                  {t("common:cancel")}
+                </Button>
+              )}
+            </div>
           </div>
-        </div>
-      )}
-    </>
-  );
-  const summaries = [
+        )}
+      </>
+    );
+  const summaries: Array<[string, string]> = [
     [
       t("grokActor.routine"),
-      t(state?.configured ? "grokActor.configured" : "grokActor.setupRequired"),
+      state
+        ? t(state.configured ? "grokActor.configured" : "grokActor.setupRequired")
+        : t("grokActor.unavailable"),
     ],
     [t("grokActor.queued"), state ? t("grokWebhook.pending", { count: state.pending_count }) : "—"],
-    [t("grokActor.lastTask"), lastTask],
+    [t("grokActor.lastTask"), state ? lastTask : t("grokActor.unavailable")],
   ];
-  const step =
-    phase === "working" || phase === "interrupted"
-      ? 2
-      : ["delivered", "unclaimed"].includes(phase)
-        ? 1
-        : ["pending", "delivering", "failed"].includes(phase)
-          ? 0
-          : last?.status === "done"
-            ? 4
-            : -1;
   return (
     <section
       className={
-        "@container/grok flex min-h-0 flex-1 flex-col overflow-y-auto text-sm " +
+        "@container/nativeActor flex min-h-0 flex-1 flex-col overflow-y-auto text-sm " +
         (compact ? "gap-2 p-2" : "gap-4")
       }
       aria-label={t("grokActor.title")}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {!compact && <h2 className="text-base font-semibold">{t("grokActor.title")}</h2>}
-          <p
-            role="status"
-            className={"rounded-full px-2.5 py-1 text-xs font-semibold " + tone(phase)}
-          >
-            {state
-              ? t("grokWebhook.phase." + phase)
-              : t(readError ? "grokActor.unavailable" : "common:loading")}
-          </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            {!compact && <h2 className="text-base font-semibold">{t("grokActor.title")}</h2>}
+            {!setup && (
+              <p
+                role="status"
+                className={
+                  "inline-flex min-h-6 items-center rounded-full px-2.5 py-1 text-xs font-semibold " +
+                  phaseTone(phase)
+                }
+              >
+                {state
+                  ? t("grokWebhook.phase." + phase)
+                  : t(readError ? "grokActor.unavailable" : "common:loading")}
+              </p>
+            )}
+            {unresolved && !readError && (
+              <ActiveTurnAge
+                seconds={state?.active_turn_elapsed_seconds}
+                language={i18n?.language}
+                t={t}
+              />
+            )}
+          </div>
+          {!compact && !setup && (
+            <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
+              {t("grokActor.hint")}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {compact && onExpand && (
@@ -290,77 +305,28 @@ function Panel({
               {t("dotsActor.openDetails")}
             </Button>
           )}
-          {!setup && !readOnly && onSettings && (
-            <Button variant="outline" onClick={onSettings}>
-              {t("grokActor.connectionSettings")}
-            </Button>
-          )}
+          {!setup &&
+            !readOnly &&
+            onSettings &&
+            (compact || (state && !state.configured && !unresolved)) && (
+              <Button variant="outline" onClick={onSettings}>
+                {t("grokActor.connectionSettings")}
+              </Button>
+            )}
           {openBot}
         </div>
       </div>
-      {!compact && (
-        <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-          {t("grokActor.hint")}
-        </p>
-      )}
       {notices}
-      <dl
-        className={
-          compact
-            ? "flex flex-wrap gap-x-4 gap-y-2 border-b border-[var(--glass-border-subtle)] pb-2 text-xs"
-            : card + " grid shrink-0 grid-cols-1 overflow-hidden @xl/grok:grid-cols-3"
-        }
-      >
-        {summaries.map(([label, value], index) => (
-          <div
-            key={label}
-            className={
-              compact
-                ? "min-w-0"
-                : "px-4 py-3 " +
-                  (index
-                    ? "border-t border-[var(--glass-border-subtle)] @xl/grok:border-t-0 @xl/grok:border-l"
-                    : "")
-            }
-          >
-            <dt className="text-xs text-[var(--color-text-muted)]">{label}</dt>
-            <dd className="mt-1 font-semibold">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      {recovery}
-      {step >= 0 && !compact && (
-        <div className={card + " overflow-hidden"}>
-          <h3 className="border-b border-[var(--glass-border-subtle)] px-4 py-3 font-semibold">
-            {t("grokActor.taskProgress")}
-          </h3>
-          <ol className="grid gap-3 px-4 py-3 @xl/grok:grid-cols-4">
-            {["notify", "waiting", "working", "completed"].map((name, index) => (
-              <li
-                key={name}
-                aria-current={index === step ? "step" : undefined}
-                className="flex items-center gap-2 text-xs"
-              >
-                <span
-                  className={
-                    "flex size-6 shrink-0 items-center justify-center rounded-full " +
-                    (index < step
-                      ? tone("ready")
-                      : index === step
-                        ? tone(phase)
-                        : tone("unconfigured"))
-                  }
-                >
-                  {index < step ? "✓" : index + 1}
-                </span>
-                {t("grokActor.steps." + name)}
-              </li>
-            ))}
-          </ol>
-        </div>
+      {!setup && <NativeActorSummary cells={summaries} compact={compact} />}
+      {setup ? (
+        recovery
+      ) : (
+        <NativeActorDelivery phase={phase} provider="grok" t={t} compact={compact}>
+          {recovery}
+        </NativeActorDelivery>
       )}
       {setup && !readOnly && (
-        <div className={card + " divide-y divide-[var(--glass-border-subtle)]"}>
+        <div className={card + " shrink-0 divide-y divide-[var(--glass-border-subtle)]"}>
           <div className="space-y-2 px-4 py-3">
             <h3 className="font-semibold">{t("grokActor.connectorStep")}</h3>
             <p className="text-xs text-[var(--color-text-muted)]">{t("grokActor.connectorHint")}</p>
@@ -470,7 +436,7 @@ function Panel({
       {!setup && !state?.configured && !unresolved && (
         <p className="text-xs text-[var(--color-text-secondary)]">{t("grokActor.setupHint")}</p>
       )}
-      {!compact && (
+      {!compact && !setup && (
         <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
           {t("grokWebhook.runtimeHint")}
         </p>

@@ -24,6 +24,11 @@ pub(crate) async fn call_with_context(
     context: Option<RequestContext<'_>>,
     via_capability_use: bool,
 ) -> Result<Value, ToolCallError> {
+    if name == "cccc_session" {
+        return Err(
+            "This tool requires native local-session integration; use cccc sessions enable".into(),
+        );
+    }
     arguments.remove("_cccc_secretary_token");
     if crate::secretary_task_mode() {
         let token = crate::secretary_task_token(home).ok_or(
@@ -49,7 +54,19 @@ pub(crate) async fn call_with_context(
     crate::tools::apply_default_action(name, &mut arguments);
     add_runtime_context(home, &mut arguments);
     arguments.remove("_cccc_web_binding");
+    arguments.remove("_cccc_native_binding");
+    if name == "cccc_message_send"
+        && context.is_some_and(|context| context.native_binding.is_some())
+    {
+        arguments.entry("mode").or_insert(json!("send"));
+    }
     if let Some(context) = context {
+        if let Some(binding) = context.native_binding {
+            arguments.insert(
+                "_cccc_native_binding".into(),
+                serde_json::to_value(binding).map_err(|e| e.to_string())?,
+            );
+        }
         if let Some(binding) = context.binding {
             cccc_core::web_model_connectors::validate_binding(home, binding)
                 .map_err(|e| e.to_string())?;
@@ -121,6 +138,9 @@ pub(crate) async fn call_with_context(
                     if let Some(value) = arguments.get("by").cloned() {
                         dynamic.insert("by".into(), value);
                     }
+                    if let Some(value) = arguments.get("_cccc_native_binding").cloned() {
+                        dynamic.insert("_cccc_native_binding".into(), value);
+                    }
                     dynamic.insert("tool_name".into(), Value::String(name.into()));
                     dynamic.insert("arguments".into(), Value::Object(arguments));
                     return Ok(tool_result(Value::Object(
@@ -131,6 +151,7 @@ pub(crate) async fn call_with_context(
             };
             let mut result = daemon(client, &op, args).await?;
             crate::context_projection::apply(name, &mut result, &arguments);
+            crate::history_projection::apply(name, &mut result, &arguments);
             if name == "cccc_task" {
                 postprocess_task_result(&mut result, &arguments)?;
                 if is_task_mail_boundary(&arguments) {
@@ -294,7 +315,7 @@ async fn capability_use(
     let state_probe = if tool_name.is_empty() {
         Map::new()
     } else {
-        capability_state(client, &group_id, &actor_id, &by)
+        capability_state(client, &group_id, &actor_id, &by, &arguments)
             .await
             .unwrap_or_default()
     };
@@ -377,24 +398,25 @@ async fn capability_use(
         .cloned()
         .expect("reused enable result")
     } else {
-        daemon(
-            client,
-            "capability_enable",
-            json!({
-                "group_id":group_id,
-                "actor_id":actor_id,
-                "by":by,
-                "capability_id":capability_id,
-                "scope":requested_scope,
-                "enabled":true,
-                "ttl_seconds":ttl_seconds,
-                "reason":reason,
-            })
-            .as_object()
-            .cloned()
-            .expect("capability enable args"),
-        )
-        .await?
+        let mut enable_args = json!({
+            "group_id":group_id,
+            "actor_id":actor_id,
+            "by":by,
+            "capability_id":capability_id,
+            "scope":requested_scope,
+            "enabled":true,
+            "ttl_seconds":ttl_seconds,
+            "reason":reason,
+        })
+        .as_object()
+        .cloned()
+        .expect("capability enable args");
+        for key in ["_cccc_web_binding", "_cccc_native_binding"] {
+            if let Some(binding) = arguments.get(key) {
+                enable_args.insert(key.into(), binding.clone());
+            }
+        }
+        daemon(client, "capability_enable", enable_args).await?
     };
     let state = enable_result
         .get("state")
@@ -477,16 +499,18 @@ async fn capability_state(
     group_id: &str,
     actor_id: &str,
     by: &str,
+    authority: &Map<String, Value>,
 ) -> Result<Map<String, Value>, ToolCallError> {
-    daemon(
-        client,
-        "capability_state",
-        json!({"group_id":group_id,"actor_id":actor_id,"by":by})
-            .as_object()
-            .cloned()
-            .expect("capability state args"),
-    )
-    .await
+    let mut args = json!({"group_id":group_id,"actor_id":actor_id,"by":by})
+        .as_object()
+        .cloned()
+        .expect("capability state args");
+    for key in ["_cccc_web_binding", "_cccc_native_binding"] {
+        if let Some(binding) = authority.get(key) {
+            args.insert(key.into(), binding.clone());
+        }
+    }
+    daemon(client, "capability_state", args).await
 }
 
 fn prepare_task_arguments(
@@ -943,6 +967,7 @@ mod tests {
         }
 
         let context = Some(RequestContext {
+            native_binding: None,
             binding: None,
             group_id: &group.group_id,
             actor_id: "user",
@@ -1113,6 +1138,7 @@ mod tests {
             "cccc_message_send",
             &mut args,
             RequestContext {
+                native_binding: None,
                 binding: None,
                 group_id: "bound-group",
                 actor_id: "bound-actor",
@@ -1143,6 +1169,7 @@ mod tests {
                 RequestContext {
                     group_id: "bound-group",
                     actor_id: "alpha",
+                    native_binding: None,
                     binding: None,
                 },
             );

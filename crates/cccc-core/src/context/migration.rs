@@ -17,6 +17,7 @@ pub(super) fn migrate_legacy_json(paths: &ContextPaths) -> io::Result<()> {
     };
     let before = yaml_storage::load(paths)?;
     let (mut merged, mappings) = merge(before.clone(), legacy)?;
+    super::task_revision::advance(&before.tasks, &mut merged.tasks)?;
     yaml_storage::touch_updated_at(&mut merged);
     yaml_storage::persist_diff(paths, &before, &merged)?;
     write_json(

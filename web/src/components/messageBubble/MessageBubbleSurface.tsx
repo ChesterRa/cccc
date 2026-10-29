@@ -19,8 +19,8 @@ function sharedClasses({
   isHighlighted,
 }: Omit<MessageBubbleSurfaceProps, "children" | "isUserMessage">): string {
   return classNames(
-    "inline-flex max-w-full min-w-0 flex-col px-4 py-3 text-sm leading-relaxed",
-    "transition-[opacity,transform,box-shadow,background-color,border-color] duration-200 ease-out",
+    "inline-flex max-w-full min-w-0 flex-col px-4 py-3 chat-message-type",
+    "transition-[opacity,transform,box-shadow,background-color,border-color] duration-150 ease-out",
     isStreaming ? "translate-y-0 opacity-95" : "translate-y-0 opacity-100",
     motionClass,
     replyRequested ? "ring-1 ring-violet-400/35 dark:ring-violet-500/35" : "",
@@ -43,7 +43,7 @@ export function MessageBubbleSurface({
       <div
         className={classNames(
           className,
-          "glass-bubble w-auto min-w-[min(18rem,70vw)] rounded-[22px] rounded-tr-md",
+          "glass-bubble w-auto min-w-[min(18rem,70vw)] rounded-2xl rounded-tr-md",
         )}
       >
         {children}

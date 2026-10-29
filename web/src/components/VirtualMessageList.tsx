@@ -34,6 +34,7 @@ import { useVirtualScrollState } from "./virtualMessageList/useVirtualScrollStat
 import { useScrollAnchorRestoration as useAnchorRestoration } from "./virtualMessageList/useScrollAnchorRestoration";
 import { useInitialMessageScroll } from "./virtualMessageList/useInitialMessageScroll";
 import { useMessageTailAutoFollow } from "./virtualMessageList/useMessageTailAutoFollow";
+import { usePendingReplyFollow } from "./virtualMessageList/usePendingReplyFollow";
 import { cacheMessageRowHeight } from "./virtualMessageList/rowHeightCache";
 import {
   discardDeferredScrollAdjustment,
@@ -96,6 +97,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   isLoadingHistory = false,
   hasMoreHistory = true,
   isFilteredEmpty = false,
+  emptyMessage,
   onLoadMore,
   resetKey,
 }: VirtualMessageListInnerProps) {
@@ -430,6 +432,32 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     [anchorRestoration, followModeRef],
   );
 
+  const detachForPendingReply = useCallback(() => {
+    setFollowMode("detached");
+    setAtBottom(false);
+    onScrollChange?.(false);
+  }, [onScrollChange, setAtBottom, setFollowMode]);
+  const {
+    cancel: cancelPendingReplyFollow,
+    consider: considerPendingReply,
+    revealIfNeeded: revealPendingReply,
+  } = usePendingReplyFollow({
+    parentRef,
+    readOnly,
+    topInset,
+    cancelBottomScroll: cancelPendingBottomScroll,
+    detach: detachForPendingReply,
+  });
+  const followLatestMessage = useCallback(() => {
+    if (!revealPendingReply()) scrollToBottom();
+  }, [revealPendingReply, scrollToBottom]);
+
+  const scheduleInitialFollow = useCallback(() => {
+    const latest = displayMessages[displayMessages.length - 1];
+    if (latest) considerPendingReply(latest);
+    scheduleForceStickToBottom(revealPendingReply);
+  }, [displayMessages, considerPendingReply, revealPendingReply, scheduleForceStickToBottom]);
+
   const detachFollowModeForHistoryLoad = useCallback(() => {
     setFollowMode("detached");
   }, [setFollowMode]);
@@ -448,9 +476,15 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   });
 
   const cancelForcedFollowForUserScroll = useCallback(() => {
+    cancelPendingReplyFollow();
     anchorRestoration.cancel();
     if (shouldForceStickToBottom()) cancelPendingBottomScroll();
-  }, [anchorRestoration, cancelPendingBottomScroll, shouldForceStickToBottom]);
+  }, [
+    anchorRestoration,
+    cancelPendingBottomScroll,
+    cancelPendingReplyFollow,
+    shouldForceStickToBottom,
+  ]);
   const cancelForcedFollowOnKey = useBottomFollowKeyCancel(cancelForcedFollowForUserScroll);
 
   const wasFollowingBeforeContentChange = useCallback(
@@ -695,6 +729,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
     prevResetKeyRef.current = resetKey;
     latestSnapshotRef.current = null;
+    cancelPendingReplyFollow();
 
     scrollTokenRef.current += 1;
     const hasInitialJumpTarget = !!(initialScrollAnchorId || initialScrollTargetId);
@@ -746,6 +781,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     prevResetKeyRef,
     prevTailMutationSnapshotRef,
     prevTailSnapshotRef,
+    cancelPendingReplyFollow,
     setAtBottom,
     setFollowMode,
     snapshotFlushTimerRef,
@@ -768,7 +804,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     beginAnchorRestoration: anchorRestoration.begin,
     setAtBottom,
     setFollowMode,
-    scheduleForceStickToBottom,
+    scheduleForceStickToBottom: scheduleInitialFollow,
     onScrollSnapshot,
     onRestoreAwayFromBottom: notifyRestoredAwayFromBottom,
   });
@@ -797,7 +833,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     isLoadingHistory,
     shouldAutoScroll: shouldAutoScrollNow,
     scheduleScroll,
-    scrollToBottom,
+    scrollToBottom: followLatestMessage,
+    onTailChange: cancelPendingReplyFollow,
+    onFollowAppend: considerPendingReply,
   });
 
   useEffect(() => {
@@ -844,7 +882,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       if (shouldAutoScrollNow({ previousContentSize })) {
         scheduleScroll(() => {
           if (!shouldAutoScrollNow({ previousContentSize })) return;
-          scrollToBottom();
+          followLatestMessage();
         });
       }
 
@@ -862,7 +900,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     latestSnapshotRef,
     previousContentSizeRef,
     scheduleScroll,
-    scrollToBottom,
+    followLatestMessage,
     shouldAutoScrollNow,
   ]);
 
@@ -908,19 +946,27 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const nonVirtualTopMargin = getNonVirtualMessageListTopMargin({ topInset });
 
   return (
-    <div className="relative flex-1 min-h-0 flex flex-col">
+    <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
       <div
         ref={(el) => {
           parentRef.current = el;
           if (scrollRef) scrollRef.current = el;
         }}
         className={classNames("flex-1 min-h-0 overflow-auto px-4 py-4 relative", className)}
-        style={{ overflowAnchor: "none", scrollbarGutter: "stable both-edges" }}
+        style={{
+          overflowAnchor: "none",
+          scrollbarGutter: "stable both-edges",
+          scrollPaddingTop: topInset || undefined,
+        }}
         onKeyDownCapture={cancelForcedFollowOnKey}
+        onFocusCapture={cancelPendingReplyFollow}
         onWheel={cancelForcedFollowForUserScroll}
         onPointerDown={(event) => {
           if (event.target === event.currentTarget) cancelForcedFollowForUserScroll();
-          else anchorRestoration.cancel();
+          else {
+            cancelPendingReplyFollow();
+            anchorRestoration.cancel();
+          }
         }}
         onTouchStart={cancelForcedFollowForUserScroll}
         onScroll={displayMessages.length > 0 ? handleScroll : undefined}
@@ -932,6 +978,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
             isLoadingHistory={isLoadingHistory}
             hasMoreHistory={hasMoreHistory}
             isFilteredEmpty={isFilteredEmpty}
+            emptyMessage={emptyMessage}
             onLoadMore={onLoadMore}
           />
         ) : (
@@ -1007,6 +1054,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         <button
           className="glass-panel absolute bottom-6 right-5 z-30 rounded-full p-3 shadow-xl transition-all duration-200 hover:shadow-2xl hover:scale-105 active:scale-95 animate-scale-in text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
           onClick={() => {
+            cancelPendingReplyFollow();
             anchorRestoration.cancel();
             scrollToBottom({ force: true });
             onScrollButtonClick();

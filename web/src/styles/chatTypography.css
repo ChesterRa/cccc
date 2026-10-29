@@ -1,0 +1,22 @@
+/* Compact desktop reading rhythm; rem sizes retain the user's text-scale preference. */
+.chat-message-type {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.chat-message-type .markdown-body.prose {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.chat-message-type .markdown-body pre,
+.chat-message-type .markdown-body :not(pre) > code {
+  font-size: 1em;
+}
+
+@media (min-width: 768px) {
+  .chat-message-type {
+    font-size: 0.8125rem;
+    line-height: calc(20 / 13);
+  }
+}

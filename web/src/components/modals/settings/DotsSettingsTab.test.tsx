@@ -68,18 +68,18 @@ const render = async (props: Partial<React.ComponentProps<typeof DotsSettingsTab
   );
 };
 
-it("shows the bound Actor's subscription and the newest subscription outcome first", async () => {
+it("shows the bound Actor's subscription and keeps diagnostics at the shared connector", async () => {
   await render();
   expect(mocks.dots).toHaveBeenCalledWith("g_a", "nn");
   const actor = host.querySelector('[data-dots-actor="nn"]')!;
   expect(actor.textContent).toContain("dotsActor.phases.ready");
   expect(actor.textContent).toContain("dotsActor.status.permanent");
-  const calls = [...host.querySelectorAll("[data-dots-call]")];
-  expect(calls.map((call) => call.getAttribute("data-dots-call"))).toEqual(["ok", "failed"]);
-  expect(calls[1].textContent).toContain("dotsSettings.callFailed(challenge_failed)");
+  expect(host.textContent).toContain("dotsSettings.prereqHint");
+  expect(host.textContent).not.toContain("challenge_failed");
+  expect(host.querySelector("[data-web-model-call]")).toBeNull();
 });
 
-it("shows pairing failures in shared diagnostics without changing the Actor's ready state", async () => {
+it("links to shared diagnostics without attributing another Actor's pairing failure to this Dot", async () => {
   mocks.connectors.mockResolvedValue({
     ok: true,
     result: {
@@ -100,11 +100,11 @@ it("shows pairing failures in shared diagnostics without changing the Actor's re
       connector_base_url: "https://cccc.example.test",
     },
   });
-  await render();
-  const call = host.querySelector('[data-dots-call="failed"]')!;
-  expect(call.textContent).toContain("cccc_pair");
-  expect(call.textContent).toContain("dotsSettings.callFailed(pairing_expired)");
-  expect(call.textContent).toContain("dotsSettings.reasons.pairingExpired");
+  const onOpenChatGPT = vi.fn();
+  await render({ onOpenChatGPT });
+  expect(host.textContent).not.toContain("pairing_expired");
+  await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+  expect(onOpenChatGPT).toHaveBeenCalledOnce();
   expect(host.querySelector('[data-dots-actor="nn"]')!.textContent).toContain(
     "dotsActor.phases.ready",
   );

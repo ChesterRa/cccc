@@ -325,7 +325,11 @@ mod tests {
         fs::create_dir(&blocked).expect("block target");
         assert!(persist_diff(&paths, &before, &after).is_err());
         fs::remove_dir(&blocked).expect("restore target");
-        assert_eq!(load(&paths).expect("partial state").tasks, [existing]);
+        // Unchanged: the update was not published, so the task is still at
+        // the revision it was loaded with.
+        let mut unchanged = existing;
+        unchanged.insert("rev".into(), json!(0));
+        assert_eq!(load(&paths).expect("partial state").tasks, [unchanged]);
     }
 
     #[test]

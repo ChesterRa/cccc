@@ -31,6 +31,11 @@ pub fn add_reply_snapshot(target: &Event, data: &mut Map<String, Value>) {
     let Some(text) = target.data.get("text").and_then(Value::as_str) else {
         return;
     };
+    add_quote_snapshot(text, data);
+}
+
+/// Quote `text` as what the reply answers.
+pub fn add_quote_snapshot(text: &str, data: &mut Map<String, Value>) {
     let text = text.trim();
     if text.is_empty() {
         return;

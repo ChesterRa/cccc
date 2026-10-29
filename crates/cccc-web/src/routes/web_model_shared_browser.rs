@@ -62,7 +62,7 @@ async fn payload(state: &AppState, provider: &str, inspect: bool) -> ApiResult {
         surface = state.browser_surfaces.info(key(provider)).await;
     }
     Ok(success(
-        json!({"browser_surface":surface,"browser_session":{"active":surface["active"],"ready":readiness["ready"],"login_required":readiness["login_required"],"verification_required":readiness["verification_required"],"tab_url":surface["url"]}}),
+        json!({"browser_surface":surface,"browser_session":{"active":surface["active"],"ready":readiness["ready"],"login_required":readiness["login_required"],"verification_required":readiness["verification_required"],"state":readiness["state"],"checked_at":readiness["checked_at"],"tab_url":surface["url"]}}),
     ))
 }
 async fn info(State(state): State<AppState>, Query(query): Query<QueryArgs>) -> ApiResult {

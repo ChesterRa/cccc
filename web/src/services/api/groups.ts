@@ -1380,6 +1380,7 @@ export type GroupCopyPreviewActor = {
   runtime?: string;
   runner?: string;
   enabled?: boolean;
+  native_session: boolean;
 };
 
 export type GroupCopyPreview = {
@@ -1396,6 +1397,7 @@ export type GroupCopyPreview = {
     chatgpt_web_model?: boolean;
     grok_web_model?: boolean;
     notebooklm_group_space?: boolean;
+    native_sessions?: boolean;
   };
   workspace_included?: boolean;
   contains_secrets?: boolean;
@@ -1526,10 +1528,17 @@ export async function resetGroup(groupId: string) {
   );
 }
 
-export async function attachScope(groupId: string, path: string) {
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/attach`, {
+export type AttachScopeResult = {
+  group_id: string;
+  scope_key: string;
+  title?: string;
+  scope: { scope_key: string; url: string; label: string; git_remote: string };
+};
+
+export async function attachScope(groupId: string, path: string, options?: { activate?: boolean }) {
+  return apiJson<AttachScopeResult>(`/api/v1/groups/${encodeURIComponent(groupId)}/attach`, {
     method: "POST",
-    body: JSON.stringify({ path, by: "user" }),
+    body: JSON.stringify({ path, by: "user", activate: options?.activate }),
   });
 }
 

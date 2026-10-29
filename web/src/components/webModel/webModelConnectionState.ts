@@ -15,6 +15,8 @@ export function webModelConnectionState(
     else if (session?.login_required) displayState = "login_required";
     else if (pairing?.actor_enabled === false) displayState = "bound_stopped";
     else if (session?.active === false) displayState = "browser_closed";
+    else if (session?.state === "inspection_failed") displayState = "inspection_failed";
+    else if (session?.active && session.ready === false) displayState = "page_not_ready";
   }
   return { state, displayState, bound, connecting, failed };
 }

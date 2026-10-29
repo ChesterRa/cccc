@@ -18,12 +18,48 @@
     "copyGroups": "Copy Groups",
     "actorProfiles": "Actor Profiles",
     "myProfiles": "My Profiles",
+    "notifications": "Notifications",
     "branding": "Branding",
     "account": "Account",
     "developer": "Developer",
     "webAccess": "Web Access",
     "webModels": "Web Models",
     "voice": "Voice"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "description": "Get notifications for messages addressed to you, even when the page is closed. Keep the CCCC Web service running. Requests already waiting when you enable notifications stay in Waiting for you; they aren't sent again. Message previews may appear on your lock screen. Enable this separately in each browser or installed app. On iPhone or iPad, add CCCC to your Home Screen first.",
+    "enable": "Enable notifications",
+    "finish": "Finish enabling",
+    "disable": "Disable notifications",
+    "removeSaved": "Remove saved browser subscription",
+    "removeSavedHelp": "Removing this browser's subscription can also stop notifications for other accounts using the same browser profile.",
+    "retry": "Try again",
+    "ready": "Permission is ready. Select Finish enabling to complete setup.",
+    "status": {
+      "checking": "Checking notification status…",
+      "enabled": "Notifications are enabled for this browser and account.",
+      "blocked": "Notifications are blocked. Allow them in your browser or device settings.",
+      "disabled": "Notifications are off for this browser and account.",
+      "unbound": "This browser has a saved subscription that is not connected to the current account. Enabling it here may stop notifications for another account in this browser.",
+      "keyMismatch": "This subscription uses a different or unverifiable server key. Remove it, then enable notifications again.",
+      "senderUnavailable": "The notification sender is starting or unavailable. Try again shortly or check the Web service.",
+      "unknown": "Could not check notification status.",
+      "unsupported": "Notifications are unavailable here. Use HTTPS and a supported browser; on iPhone or iPad, open CCCC from the Home Screen."
+    },
+    "error": {
+      "permission": "Notification permission was not granted. Check this browser or device's notification settings.",
+      "prepare": "Could not prepare notifications. Check your connection and try again.",
+      "subscribe": "Could not complete setup. Check your connection or browser settings and try again.",
+      "serverUnavailable": "The notification service is unavailable. Check your connection and try again.",
+      "serviceUnsupported": "This browser's notification service is not supported.",
+      "subscriptionInvalid": "The browser subscription is invalid. Remove it and enable notifications again.",
+      "keyMismatch": "The server key changed. Remove the saved subscription and enable notifications again.",
+      "verify": "Setup was requested, but its status could not be confirmed. Try again.",
+      "disable": "Could not fully disable notifications. Check your connection and try again.",
+      "originInvalid": "This server does not accept the address this page was opened at. If CCCC runs behind a proxy, forward the original Host header or add this address to CCCC_WEB_CORS_ORIGINS.",
+      "signedOut": "Your sign-in is no longer valid. Sign in again, then enable notifications."
+    }
   },
   "navigation": {
     "targetScope": "Target Scope",
@@ -1132,6 +1168,7 @@
     "workspaceExcluded": "Workspace files are not included.",
     "secretsExcluded": "System credentials, cookies, and auth sessions are not included. Chat history, memory, and attachments may still contain sensitive user content.",
     "reconnectChatGPT": "ChatGPT connections must be reconfigured after import.",
+    "reconnectNativeSessions": "Native CCCC access imports paused, even in the same instance. Explicitly resume access or connect native sessions before use; the source Group is unchanged.",
     "reconnectNotebookLM": "NotebookLM / Group Space may need reconnect after import.",
     "importButton": "Import Group",
     "importConfirm": "Import group copy package \"{{filename}}\"?",
@@ -1189,6 +1226,7 @@
     "logTailHint": "Tails local log files (developer mode only). Component \"im\" is group-scoped.",
     "imLogsRequireGroup": "IM logs require a group_id; open Settings from a group.",
     "component": "Component",
+    "daemonDiagnostics": "Daemon diagnostics",
     "lines": "Lines",
     "clearTruncate": "Clear (truncate)",
     "refresh": "Refresh",
@@ -1513,10 +1551,10 @@
     "description": "ChatGPT Web Model Actors chat in CCCC's browser. Sign in once; each Actor keeps its own window and conversation.",
     "upgrade": "This version requires a new shared connector and conversation pairing. Old chats and history are preserved.",
     "login": "Shared ChatGPT login",
-    "loginHint": "All Actor windows share this login. Signing out affects every ChatGPT Actor. Closing the login window leaves Actor windows and the saved login intact.",
+    "loginHint": "ChatGPT Web Model Actor windows share this login. Signing out affects those browser Actors. Closing the login window preserves their windows and saved login.",
     "verification": "Website verification required",
     "ready": "Signed in",
-    "openState": "Login window open · check login",
+    "openState": "Browser open · page not checked",
     "closed": "Login window closed",
     "open": "Open login window",
     "check": "Check login",
@@ -1552,7 +1590,9 @@
       "auth": "Authentication",
       "urlHidden": "Private URL, hidden; copy it",
       "copyName": "Copy name"
-    }
+    },
+    "loginRequired": "ChatGPT sign-in required",
+    "pageNotReady": "Conversation input not ready"
   },
   "webModelActor": {
     "title": "ChatGPT conversation",
@@ -1562,7 +1602,7 @@
     "new": "Preview new chat",
     "url": "Existing ChatGPT conversation URL",
     "openUrl": "Preview this URL",
-    "pairHint": "Enable the CCCC connector in this Actor’s ChatGPT conversation, then start the Actor normally. CCCC sends one setup message automatically to verify the connection before delivering tasks. You do not need to connect here first. Unsent drafts are preserved.",
+    "pairHint": "Enable the CCCC connector in this Actor’s ChatGPT conversation, then enable CCCC access here. When the Group is running, CCCC sends one setup message automatically to verify the connection before delivering tasks. Unsent drafts are preserved.",
     "restoreHint": "To restore access, preview the previous URL and confirm pausing this Actor if asked, then select Use this conversation. Pending delivery records are preserved; unresolved deliveries must stay in the same conversation.",
     "cancel": "Cancel pairing",
     "remove": "Unpair",
@@ -1587,7 +1627,9 @@
       "browser_closed": "Connected · browser closed",
       "replacement_failed": "Conversation change failed",
       "replacement_interrupted": "Conversation change interrupted",
-      "replacement_cancelled": "Conversation change cancelled"
+      "replacement_cancelled": "Conversation change cancelled",
+      "page_not_ready": "ChatGPT input not ready",
+      "inspection_failed": "Could not check the ChatGPT page"
     },
     "previousUrl": "Previous conversation (reuse this URL to preserve pending delivery)",
     "errors": {
@@ -1612,7 +1654,13 @@
     "bindingRetained": "The previous verified binding remains in place until a replacement succeeds.",
     "pauseChangeConfirm": "Pause this Actor to change its conversation now? Other Actors keep working. After connecting the new conversation, use Start Actor here to resume. Unsaved page drafts and unresolved deliveries are protected.",
     "pauseRemoveConfirm": "Stop this Actor and disconnect its conversation now? This takes effect immediately. Other Actors are unaffected.",
-    "start": "Start Actor"
+    "start": "Enable CCCC access",
+    "sharedLogin": "Shared ChatGPT login",
+    "checkPage": "Check page",
+    "configureConnection": "Configure connection",
+    "checkedAt": "Page checked {{time}}",
+    "immediateHint": "Connection actions take effect immediately. Save other Actor changes using the button below.",
+    "adminManaged": "An administrator manages this Actor’s ChatGPT connection. You can still use the Group normally."
   },
   "grokShared": {
     "title": "Grok Bot shared setup",
@@ -1637,14 +1685,13 @@
     "confirmRemove": "Confirm disconnect",
     "runtimeSaveHint": "Enter an existing Bot URL here and save it with the Actor settings below. A running Actor is stopped and restarted only when you confirm applying the change.",
     "invalidUrl": "Enter a complete Grok Bot URL: https://grok.com/bot/…",
-    "draftHint": "Edit freely while the Actor runs. Use Save below to apply this Bot URL with the other settings. An unfinished task must complete or be explicitly resolved first. Changing Bots clears the old Routine credentials.",
+    "draftHint": "Edit freely while the Actor runs. Use Save below to apply this Bot URL with the other settings. An unfinished task must complete or be explicitly resolved first. Changing Bots clears the old Routine credentials. After saving, continue Routine setup here.",
     "routine": "Webhook Routine",
     "configured": "Configured",
     "setupRequired": "Setup required",
     "queued": "Pending messages",
     "lastTask": "Last task",
     "noTask": "No completed task yet",
-    "taskProgress": "Task delivery",
     "connectorStep": "1. Connect CCCC",
     "connectorHint": "Add the shared CCCC MCP connector to this Bot. Manage its address and credentials in global settings.",
     "botStep": "2. Select the Bot",
@@ -1654,18 +1701,20 @@
     "unavailable": "Unavailable",
     "adminManaged": "An instance administrator manages this Bot connection. You can still use the Group normally.",
     "setupHint": "Open connection settings to connect this Bot and save its native Webhook Routine.",
-    "disconnectHint": "Stop CCCC access before disconnecting. Disable the Routine in Grok if it is no longer needed.",
+    "disconnectHint": "Pause CCCC access before disconnecting. Disable the Routine in Grok if it is no longer needed.",
     "outcomes": {
       "done": "Last task completed",
       "failed": "Last task failed",
       "cancelled": "Last task ended"
     },
     "steps": {
-      "notify": "Queued / Sending",
       "waiting": "Waiting for Bot",
-      "working": "Working",
-      "completed": "Completed"
-    }
+      "notifyHint": "Messages are saved and waiting for CCCC to notify the Bot.",
+      "sendingHint": "CCCC is sending the Webhook notification to Grok.",
+      "waitingHint": "Grok accepted the Webhook notification. Waiting for the Bot to claim this task.",
+      "workingHint": "The Bot has claimed this task. Waiting for its completion receipt."
+    },
+    "deliveryHint": "A successful Webhook notification waits for the Bot to claim the task."
   },
   "voiceSettings": {
     "claudeTrustHint": "Before using Claude, trust $CCCC_HOME/voice-secretary/jobs once with the configured CLAUDE_CONFIG_DIR. New tasks then share that parent trust; no model prompt is needed for setup.",
@@ -1861,28 +1910,26 @@
     "openDetails": "View details",
     "title": "ChatGPT Dots",
     "hint": "Tasks arrive through native ChatGPT events. Pausing CCCC access does not stop a task that is already running in ChatGPT. Replies return to this Group.",
-    "createHint": "After saving, continue in this Actor’s pane to connect a native Dots event task. Reuse the CCCC plugin in the same ChatGPT account; no CCCC browser login window is needed. One Dot connects to one Actor.",
+    "createHint": "After saving, continue in this Actor’s pane to connect a native Dots event task. Reuse the CCCC plugin in the same ChatGPT account; no CCCC browser login window is needed. The shared connector currently supports one Dots Actor at a time.",
     "connect": "Connect Dots",
     "getInstructions": "Get setup instructions",
     "connectHint": "If the CCCC plugin is not connected in your ChatGPT account, use Shared ChatGPT setup first. After upgrading CCCC, refresh the plugin’s tools. Copy the setup instructions into your Dot to pair it with this Actor and save a native event task.",
     "nativeStepCopy": "Copy the setup instructions below.",
     "nativeStepPasteConfirm": "Paste into your Dot to complete pairing and save the native event task. Update the existing task rather than creating another; a chat reply alone does not save it.",
     "nativeStepObserve": "Return here. CCCC checks both pairing and subscription automatically. If CCCC access is paused, resume it after setup is complete.",
+    "pairedPaused": "This Dot is paired. CCCC access is paused; finish saving its event task, then resume access from Actor details to receive work. Pairing again is unnecessary.",
     "adminSetup": "An administrator needs to connect this Actor to a native Dots task.",
     "adminStatus": "Administrator-managed connection",
     "adminManaged": "An administrator manages this Actor’s Dots connection and task status.",
     "disconnect": "Disconnect Dots",
-    "sharedSettings": "Shared ChatGPT setup",
+    "sharedSettings": "Shared ChatGPT connector",
     "connectionSettings": "Connection settings",
     "openDots": "Open Dots ↗",
     "instructions": "Dots setup instructions",
     "copyInstructions": "Copy setup instructions",
     "copied": "Copied",
-    "pauseBeforeChanging": "Pause CCCC access before changing this connection.",
+    "pauseBeforeChanging": "Disconnecting first pauses this Actor’s CCCC access. Queued messages are kept.",
     "disconnectConfirm": "Disconnect this Actor from Dots? This removes CCCC access. The native task and ChatGPT history remain.",
-    "resolve": "Resolve unfinished delivery",
-    "resolveConfirm": "Have you reviewed the task in Dots? Mark this unfinished delivery as resolved without sending it again. A remote task may still be running.",
-    "reviewUnfinished": "Review this delivery in Dots before resolving it. CCCC will not resend it automatically.",
     "readFailed": "Status could not be updated. The last known state is retained.",
     "actionFailed": "The connection action failed. Try again.",
     "copyFailed": "Copy failed. Select and copy the instructions instead.",
@@ -1896,7 +1943,7 @@
       "ready": "Ready for tasks",
       "delivering": "Sending event",
       "delivered": "Waiting for the Dot to claim the task",
-      "working": "Dot is processing the task",
+      "working": "Claimed · awaiting completion",
       "interrupted": "Unfinished delivery · review required",
       "failed": "Delivery failed · review required",
       "stopped": "CCCC access paused",
@@ -1915,7 +1962,7 @@
       "executionInterrupted": "CCCC access changed before the result arrived. Review the unfinished task in Dots.",
       "subscriptionGone": "The native event subscription is no longer valid. Get setup instructions again and update the native task in Dots.",
       "connectorRequired": "Configure the shared ChatGPT connector first.",
-      "bindingConflict": "This account’s Dot is connected to another Actor. Pause and disconnect that Actor before moving the connection."
+      "bindingConflict": "This shared connector already has a Dots Actor. Pause and disconnect that Actor before moving the connection."
     },
     "unavailable": "Status unavailable",
     "subscriptionExpires": "Event subscription expires: {{time}}",
@@ -1928,25 +1975,17 @@
       "notSubscribed": "Not subscribed",
       "pending": "Pending messages",
       "lastTask": "Last task",
-      "noTask": "No task yet"
-    },
-    "delivery": {
-      "title": "Task delivery",
-      "lastCompleted": "Last completed task",
-      "hint": "An accepted event may wait before the Dot claims the task.",
-      "empty": "No active delivery."
+      "noTask": "No task yet",
+      "pairing": "Pairing",
+      "paired": "Paired",
+      "notPaired": "Not paired"
     },
     "steps": {
-      "notify": "Queued / Sending",
-      "notifyHint": "The message is saved and waiting for CCCC to notify the Dot.",
-      "notifySending": "Sending notification",
-      "notifySendingHint": "CCCC is sending the event to ChatGPT.",
       "waiting": "Waiting for Dot",
+      "notifyHint": "The message is saved and waiting for CCCC to notify the Dot.",
+      "sendingHint": "CCCC is sending the event to ChatGPT.",
       "waitingHint": "ChatGPT accepted the event. Waiting for the Dot to claim this task.",
-      "working": "Working",
-      "workingHint": "The Dot has claimed this task. Waiting for its result.",
-      "completed": "Completed",
-      "completedHint": "CCCC has confirmed this task’s completion receipt."
+      "workingHint": "The Dot has claimed this task. CCCC is waiting for its completion receipt."
     },
     "settings": {
       "instructions": "Setup instructions",
@@ -1968,40 +2007,27 @@
       "tipRefresh": "In ChatGPT's plugin settings, choose Refresh tools for CCCC, then ask the Dot to retry.",
       "tipPermissions": "Make sure the CCCC plugin may claim, reply to and complete tasks.",
       "tipRetry": "A chat confirmation is not enough. CCCC must detect both pairing and subscription before this Actor can receive work."
-    }
+    },
+    "deliveryHint": "An accepted event may wait before the Dot claims the task.",
+    "pauseDisconnectConfirm": "Pause this Actor’s CCCC access and disconnect it from Dots? Queued messages, the native task and ChatGPT history remain. Other Actors keep working."
   },
   "dotsSettings": {
     "title": "ChatGPT Dots",
     "description": "Dots receive work through ChatGPT native events and reply to their Group. They do not need CCCC's browser login window.",
     "prereq": "Prerequisites",
-    "prereqHint": "Dots share the ChatGPT CCCC connector. Its status shows here; manage it in the ChatGPT view so only one exists.",
+    "prereqHint": "Dots share the ChatGPT CCCC connector. Manage its setup and recent plugin diagnostics in the ChatGPT view.",
     "addressReady": "Public HTTPS Web address is configured.",
     "configureWebAccess": "Web access settings",
-    "connectorReady": "Shared CCCC connector is ready.",
+    "connectorReady": "Shared CCCC connector is configured.",
     "connectorMissing": "Create the shared CCCC connector in the ChatGPT view first.",
     "manageConnector": "Manage in ChatGPT",
     "boundActor": "Bound Dots Actor",
-    "boundHint": "One Dot serves one Actor. Set it up and follow deliveries in that Actor's main pane.",
+    "boundHint": "This shared connector supports one Dots Actor at a time. Pause and disconnect the current Actor before moving the connection.",
     "actorReadFailed": "Couldn't read this Actor's status just now. Showing the last known status; it retries automatically.",
     "noActor": "No Dots Actor is bound yet. Create an Actor with runtime ChatGPT Dots and connect it from its main pane.",
-    "actorGroup": "Group {{group}}",
-    "diagnostics": "Shared plugin diagnostics",
-    "diagnosticsHint": "The latest 10 subscription and task-tool outcomes, newest first. This plugin also serves ordinary ChatGPT Actors; these are not all this Dot’s calls. Only reason codes are kept, without credentials or call arguments.",
-    "noCalls": "No recorded calls yet.",
-    "callOk": "Call succeeded",
-    "callFailed": "Failed · {{reason}}",
-    "reasons": {
-      "pairingExpired": "Get fresh setup instructions for the intended Actor and use its code within 10 minutes.",
-      "bindingChanged": "Check the intended Actor and its current connection before requesting new setup instructions.",
-      "conversationUnpaired": "Use the paired conversation. If this Actor is paired but that same Dot is rejected, pause its CCCC access and explicitly disconnect and reconnect it.",
-      "executionToken": "Refresh the plugin tools and update the existing native task with the latest setup instructions. Turn tools use only the execution token returned by the claim.",
-      "actorStopped": "Resume CCCC access for the intended Actor if you want it to receive work.",
-      "refreshTools": "Refresh the CCCC plugin tools in ChatGPT and check the latest setup instructions.",
-      "callFailed": "Check the failed call reported in ChatGPT before retrying; this record alone does not establish whether a turn completed."
-    }
+    "actorGroup": "Group {{group}}"
   },
   "grokWebhook": {
-    "pause": "Stop CCCC access",
     "setupHint": "Save one Webhook Routine in this Bot using these instructions, then add its desktop credentials below. Routine runs use your Grok subscription.",
     "instructions": "Get Routine setup instructions",
     "copyFailed": "Copy failed. Select and copy the instructions manually.",
@@ -2012,20 +2038,17 @@
     "save": "Save Routine credentials",
     "pending": "{{count}} queued messages",
     "openBot": "Open Grok Bot",
-    "runtimeHint": "CCCC claims and completes one turn at a time. Stopping access revokes CCCC authority; it does not stop cloud work already running in Grok.",
+    "runtimeHint": "CCCC claims and completes one turn at a time. Pausing access revokes CCCC authority; it does not stop cloud work already running in Grok.",
     "deliveryError": "Webhook delivery needs attention (HTTP {{status}}). Check the desktop Routine, key, limits and CCCC connector.",
     "retry": "Retry wake",
-    "resolveHint": "Review the Bot first. Resolving retires the unfinished turn without replaying its messages; later queued work can continue. This does not cancel Grok cloud work.",
-    "resolve": "Resolve unfinished turn",
-    "confirmResolve": "Confirm resolution",
     "phase": {
       "ready": "Ready for tasks",
-      "stopped": "CCCC access stopped",
+      "stopped": "CCCC access paused",
       "pending": "Waiting to send wake",
       "delivering": "Sending wake",
       "delivered": "Wake accepted · waiting for claim",
       "unclaimed": "Wake accepted but not claimed · check Routine and connector",
-      "working": "Processing a claimed turn",
+      "working": "Claimed · awaiting completion",
       "interrupted": "Unfinished turn · review before continuing",
       "failed": "Wake failed · queued messages retained",
       "unconfigured": "Setup required"
@@ -2033,5 +2056,49 @@
     "saveAndApply": "Save & apply credentials",
     "applyHint": "Edits stay local until saved. Applying while idle keeps the current CCCC access state.",
     "waitForTask": "An unfinished task is using this connection. You can edit now; apply after it completes or is explicitly resolved."
+  },
+  "nativeActor": {
+    "deliveryTitle": "Task delivery",
+    "failed": "Delivery failed",
+    "interrupted": "Task interrupted",
+    "unclaimed": "Not claimed · check connection",
+    "claimedAgo": "Claimed {{elapsed}}",
+    "claimTimeUnknown": "Claim time unavailable",
+    "steps": {
+      "notify": "Queued / Sending",
+      "sending": "Sending notification",
+      "working": "Awaiting completion",
+      "completed": "Completed"
+    },
+    "connectionBusy": "An unfinished turn is using this connection. Wait for it to finish, or explicitly end that turn before applying connection changes.",
+    "endTurn": "End this turn",
+    "confirmEndTurn": "Confirm end",
+    "endTurnHint": "If this turn cannot finish, review its work in {{provider}} before ending it. Ending the turn does not stop cloud work or resend its messages.",
+    "endTurnConfirm": "Have you reviewed this task in {{provider}}? Ending this turn revokes its CCCC access and records cancellation if no completion was recorded. Cloud work may still be running. Its messages will not be resent; other queued work may continue while CCCC access is enabled."
+  },
+  "webModelDiagnostics": {
+    "identity": {
+      "title": "Host identity fingerprints",
+      "hint": "Compare pairing and claim calls within this connector. These are salted hashes, not raw identities or credentials.",
+      "session": "Conversation",
+      "subject": "User",
+      "organization": "Organization",
+      "absent": "Not supplied by host"
+    },
+    "refresh": "Refresh",
+    "noCalls": "No recorded calls yet.",
+    "callOk": "Call succeeded",
+    "callFailed": "Failed · {{reason}}",
+    "reasons": {
+      "pairingExpired": "Retry connection setup from the intended Actor's connection settings. Pairing codes expire after 10 minutes.",
+      "bindingChanged": "Check the intended Actor and its current connection before requesting new setup instructions.",
+      "conversationUnpaired": "Use this Actor’s paired conversation. To change it, explicitly reconnect in that Actor’s connection settings.",
+      "executionToken": "Update the native task using the latest setup instructions. Use only the execution credential returned by the current task claim.",
+      "actorStopped": "Resume CCCC access for the intended Actor if you want it to receive work.",
+      "refreshTools": "Refresh the CCCC connector tools in the provider app and check the current connection settings.",
+      "callFailed": "Check the failed call in the provider app before retrying; this record alone does not establish whether a turn completed."
+    },
+    "title": "Connector diagnostics",
+    "hint": "The latest 10 subscription and task-tool outcomes for this shared connector, newest first. These may involve multiple Actors. Records include fixed reasons and optional salted identity fingerprints, without credentials or call arguments."
   }
 }

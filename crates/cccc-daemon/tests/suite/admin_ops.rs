@@ -2,7 +2,7 @@
 use cccc_contracts::{DaemonRequest, DaemonResponse};
 use cccc_core::access_tokens::AccessTokenStore;
 use cccc_core::{
-    GroupStore, HomeLayout, Registry, group_scope, ledger, membership, scope, settings,
+    GroupDoc, GroupStore, HomeLayout, Registry, group_scope, ledger, membership, scope, settings,
 };
 use serde_json::{Map, Value, json};
 use std::io::{Read, Write};
@@ -480,6 +480,13 @@ fn diagnostics_are_developer_gated_and_logs_are_bounded() {
         .observability
         .insert("developer_mode".into(), Value::Bool(true));
     settings::save(&home, &global).expect("save");
+    let empty = ok(
+        &home,
+        "debug_tail_logs",
+        json!({"component":"daemon_diagnostics","lines":2}),
+    );
+    assert_eq!(empty.result["lines"], json!([]));
+    assert!(!home.daemon_dir().join("ccccd-diagnostics.lock").exists());
     std::fs::write(home.daemon_dir().join("ccccd.log"), "one\ntwo\nthree\n").expect("log");
     let tail = ok(
         &home,
@@ -495,6 +502,32 @@ fn diagnostics_are_developer_gated_and_logs_are_bounded() {
     assert!(
         std::fs::read_to_string(home.daemon_dir().join("ccccd.log"))
             .expect("log")
+            .is_empty()
+    );
+
+    let diagnostics = home.daemon_dir().join("ccccd-diagnostics.log");
+    let previous = home.daemon_dir().join("ccccd-diagnostics.log.1");
+    std::fs::write(&previous, "old-1\nold-2\n").expect("previous diagnostics");
+    std::fs::write(&diagnostics, "new-1\nnew-2\n").expect("current diagnostics");
+    let tail = ok(
+        &home,
+        "debug_tail_logs",
+        json!({"component":"daemon_diagnostics","lines":3}),
+    );
+    assert_eq!(tail.result["lines"], json!(["old-2", "new-1", "new-2"]));
+    ok(
+        &home,
+        "debug_clear_logs",
+        json!({"component":"daemon_diagnostics","by":"user"}),
+    );
+    assert!(
+        std::fs::read_to_string(diagnostics)
+            .expect("current")
+            .is_empty()
+    );
+    assert!(
+        std::fs::read_to_string(previous)
+            .expect("previous")
             .is_empty()
     );
 }
@@ -594,6 +627,132 @@ fn group_reset_appends_a_creation_event_for_the_replacement_group() {
     );
     assert_eq!(events[0].kind, "group.create");
     assert_eq!(events[0].data["reset_from"], old_group_id);
+}
+
+fn reset_group_with_mixed_scope_defaults() -> (tempfile::TempDir, GroupStore, GroupDoc) {
+    use cccc_contracts::{Actor, ActorRuntime};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let store = GroupStore::new(home).expect("store");
+    let old = store.create("native direct reset", "").expect("old group");
+    let other = store.create("other scope owner", "").expect("other group");
+    let scopes = ["owned", "other", "unowned"].map(|name| {
+        let path = temp.path().join(name);
+        std::fs::create_dir(&path).expect("project");
+        scope::detect(&path).expect("scope")
+    });
+    group_scope::attach(&store, &old.group_id, scopes[0].clone()).expect("owned default");
+    group_scope::attach(&store, &other.group_id, scopes[1].clone()).expect("other default");
+    let old = store
+        .mutate(&old.group_id, |group| {
+            group.scopes.extend(scopes.into_iter().skip(1));
+            for (id, runtime, source_id) in [
+                ("codex", ActorRuntime::Codex, "codex:reset-peer"),
+                ("claude", ActorRuntime::Claude, "claude:reset-peer"),
+            ] {
+                let mut actor = Actor::new(id);
+                actor.runtime = runtime;
+                actor.external_session_id = source_id.into();
+                cccc_core::actors::add(group, actor)?;
+            }
+            group.extra.insert(
+                "local_session_conversation".into(),
+                json!({
+                    "direct":true,
+                    "source_ids":["claude:reset-peer","codex:reset-peer"],
+                    "runtime_receiver":{"drop":true}
+                }),
+            );
+            group
+                .extra
+                .insert("runtime_states".into(), json!({"drop":true}));
+            Ok(group.clone())
+        })
+        .expect("native scopes and configuration");
+    (temp, store, old)
+}
+
+#[test]
+fn group_reset_preserves_actual_scope_default_ownership_and_native_direct_reuse() {
+    let (_temp, store, old) = reset_group_with_mixed_scope_defaults();
+    let home = store.home();
+    let mut expected_defaults = Registry::load(home).expect("original registry").defaults;
+    assert_eq!(expected_defaults.len(), 2);
+
+    let reset = ok(
+        home,
+        "group_reset",
+        json!({"group_id":old.group_id,"confirm":old.group_id,"by":"user"}),
+    );
+    let new_group_id = reset.result["new_group_id"].as_str().expect("new group id");
+    for owner in expected_defaults.values_mut() {
+        if owner == &old.group_id {
+            *owner = new_group_id.into();
+        }
+    }
+    assert_eq!(
+        Registry::load(home).expect("replacement registry").defaults,
+        expected_defaults,
+        "only the old Group's actual defaults may transfer; unowned scopes stay unowned"
+    );
+    assert_eq!(reset.result["deleted_old"], true);
+    let replacement = store.load(new_group_id).expect("replacement");
+    assert_eq!(replacement.actors, old.actors);
+    assert_eq!(
+        serde_json::to_value(&replacement.extra).expect("replacement extra"),
+        json!({"local_session_conversation":{
+            "direct":true,
+            "source_ids":["claude:reset-peer","codex:reset-peer"]
+        }}),
+        "reset keeps only declared native configuration, never receiver/runtime state"
+    );
+    let reused = ok(
+        home,
+        "local_session_conversation",
+        json!({"source_ids":["codex:reset-peer","claude:reset-peer"],"direct":true}),
+    );
+    assert_eq!(reused.result["reused"], true);
+    assert_eq!(reused.result["group_id"], new_group_id);
+    assert_eq!(store.list().expect("groups after direct reuse").len(), 2);
+}
+
+#[test]
+fn group_reset_rollback_restores_actual_scope_default_ownership() {
+    let (_temp, store, old) = reset_group_with_mixed_scope_defaults();
+    let home = store.home();
+    let before = Registry::load(home).expect("original registry");
+    let source_directory = store.group_dir(&old.group_id).expect("old directory");
+    let source_yaml = std::fs::read(source_directory.join("group.yaml")).expect("source yaml");
+    let secrets = home.root().join("state/secrets/actors").join(&old.group_id);
+    std::fs::create_dir_all(&secrets).expect("source secret directory");
+    std::fs::write(secrets.join("broken.json"), b"{invalid json").expect("copy failure fixture");
+
+    let reset = raw(
+        home,
+        "group_reset",
+        json!({"group_id":old.group_id,"confirm":old.group_id,"by":"user"}),
+    );
+
+    assert!(
+        !reset.ok,
+        "invalid secret JSON must fail after replacement preparation"
+    );
+    assert_eq!(reset.error.expect("copy error").code, "io_error");
+    let after = Registry::load(home).expect("rolled back registry");
+    assert_eq!(after.defaults, before.defaults);
+    assert_eq!(after.groups, before.groups);
+    assert_eq!(
+        std::fs::read(source_directory.join("group.yaml")).expect("unchanged source yaml"),
+        source_yaml
+    );
+    assert_eq!(
+        std::fs::read_dir(home.root().join("state/secrets/actors"))
+            .expect("remaining secret directories")
+            .count(),
+        1,
+        "the failed replacement's partial secrets must be removed"
+    );
 }
 
 fn ok(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {

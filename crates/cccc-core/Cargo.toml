@@ -11,8 +11,8 @@ publish = false
 [dependencies]
 aws-lc-rs.workspace = true
 base64.workspace = true
-cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.44", path = "../cccc-contracts" }
-cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.44", path = "../cccc-runtime" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.45", path = "../cccc-contracts" }
+cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.45", path = "../cccc-runtime" }
 chrono.workspace = true
 chrono-tz.workspace = true
 cron.workspace = true
@@ -24,7 +24,7 @@ flate2.workspace = true
 hmac.workspace = true
 if-addrs.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 serde_yaml.workspace = true
 shell-words.workspace = true
 mime_guess.workspace = true
@@ -37,7 +37,15 @@ toml.workspace = true
 tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
+unicase.workspace = true
 zip.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libproc = "0.14.11"
+nix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+cccc-windows-process = { path = "../cccc-windows-process" }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,7 +1,18 @@
-use cccc_contracts::utc_now;
+use cccc_contracts::{Actor, utc_now};
+use serde::{Deserialize, Serialize};
 use std::io;
+use std::path::PathBuf;
 
 use crate::{GroupDoc, GroupStore, Registry, Scope};
+
+/// Read-only workspace projection. Runtime owners may replace the configured
+/// selection with their immutable launch workspace; this is never Actor state.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EffectiveScope {
+    pub scope_key: String,
+    pub path: PathBuf,
+    pub source: String,
+}
 
 #[must_use]
 pub fn resolve_attached_scope<'a>(group: &'a GroupDoc, reference: &str) -> Option<&'a Scope> {
@@ -16,9 +27,33 @@ pub fn resolve_attached_scope<'a>(group: &'a GroupDoc, reference: &str) -> Optio
     })
 }
 
+/// Next-launch configuration, not the workspace of an already running owner.
+/// An empty default or no Actor follows Group active. An invalid selection is
+/// unavailable, not permission to silently use another workspace.
+#[must_use]
+pub fn effective_scope<'a>(group: &'a GroupDoc, actor: Option<&Actor>) -> Option<&'a Scope> {
+    let reference = actor
+        .map(|actor| actor.default_scope_key.trim())
+        .filter(|reference| !reference.is_empty())
+        .unwrap_or(&group.active_scope_key);
+    resolve_attached_scope(group, reference)
+}
+
+#[must_use]
+pub fn configured_scope(group: &GroupDoc, actor: Option<&Actor>) -> Option<EffectiveScope> {
+    effective_scope(group, actor).map(|scope| EffectiveScope {
+        scope_key: scope.scope_key.clone(),
+        path: PathBuf::from(&scope.url),
+        source: if actor.is_some_and(|actor| !actor.default_scope_key.trim().is_empty()) {
+            "actor_default"
+        } else {
+            "group_active"
+        }
+        .into(),
+    })
+}
+
 pub fn normalize_actor_scope_keys(group: &mut GroupDoc) -> usize {
-    let active_scope_key =
-        resolve_attached_scope(group, &group.active_scope_key).map(|scope| scope.scope_key.clone());
     let replacements = group
         .actors
         .iter()
@@ -28,9 +63,8 @@ pub fn normalize_actor_scope_keys(group: &mut GroupDoc) -> usize {
             if reference.is_empty() {
                 return None;
             }
-            let scope_key = resolve_attached_scope(group, reference)
-                .map(|scope| scope.scope_key.clone())
-                .or_else(|| active_scope_key.clone())?;
+            let scope_key =
+                resolve_attached_scope(group, reference).map(|scope| scope.scope_key.clone())?;
             (scope_key != reference).then_some((index, scope_key))
         })
         .collect::<Vec<_>>();
@@ -51,13 +85,28 @@ fn paths_resolve_to_same_location(left: &str, right: &str) -> bool {
 }
 
 pub fn attach(store: &GroupStore, group_id: &str, scope: Scope) -> io::Result<GroupDoc> {
-    attach_with(store, group_id, scope, |result| {
+    attach_with_activation(store, group_id, scope, true)
+}
+
+/// Nonactivating attachment only extends the Group's available directories. It
+/// does not select a workspace or claim any registry default, even if unclaimed.
+pub fn attach_with_activation(
+    store: &GroupStore,
+    group_id: &str,
+    scope: Scope,
+    activate: bool,
+) -> io::Result<GroupDoc> {
+    attach_with(store, group_id, scope, activate, |result| {
         Registry::mutate(store.home(), |registry| {
-            registry
-                .defaults
-                .insert(result.active_scope_key.clone(), group_id.into());
+            if activate {
+                registry
+                    .defaults
+                    .insert(result.active_scope_key.clone(), group_id.into());
+            }
             if let Some(meta) = registry.groups.get_mut(group_id) {
-                meta.default_scope_key.clone_from(&result.active_scope_key);
+                if activate {
+                    meta.default_scope_key.clone_from(&result.active_scope_key);
+                }
                 meta.updated_at = utc_now();
             }
             Ok(())
@@ -69,6 +118,7 @@ fn attach_with(
     store: &GroupStore,
     group_id: &str,
     scope: Scope,
+    activate: bool,
     update_registry: impl FnOnce(&GroupDoc) -> io::Result<()>,
 ) -> io::Result<GroupDoc> {
     store.mutate_with_rollback(
@@ -79,11 +129,25 @@ fn attach_with(
                 .iter_mut()
                 .find(|item| item.scope_key == scope.scope_key)
             {
+                if !activate
+                    && existing.url != scope.url
+                    && !paths_resolve_to_same_location(&existing.url, &scope.url)
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        format!(
+                            "This project is already attached at {}. Use a separate Group for a different clone or worktree ({}).",
+                            existing.url, scope.url
+                        ),
+                    ));
+                }
                 existing.clone_from(&scope);
             } else {
                 group.scopes.push(scope.clone());
             }
-            group.active_scope_key.clone_from(&scope.scope_key);
+            if activate {
+                group.active_scope_key.clone_from(&scope.scope_key);
+            }
             Ok(group.clone())
         },
         update_registry,
@@ -128,11 +192,8 @@ fn detach_with(
                     .map(|scope| scope.scope_key.clone())
                     .unwrap_or_default();
             }
-            for actor in &mut group.actors {
-                if actor.default_scope_key == scope_key {
-                    actor.default_scope_key.clone_from(&group.active_scope_key);
-                }
-            }
+            // Keep explicit Actor selections unresolved until the operator
+            // chooses a replacement. Detaching is not permission to switch repos.
             Ok(group.clone())
         },
         update_registry,
@@ -185,6 +246,61 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn effective_scope_respects_fixed_following_and_missing_selections() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut group =
+            GroupStore::new(HomeLayout::from_path(temp.path().join("home")).expect("home"))
+                .expect("store")
+                .create("effective scope", "")
+                .expect("group");
+        for name in ["A", "B"] {
+            let root = temp.path().join(name);
+            std::fs::create_dir(&root).expect("workspace");
+            group.scopes.push(Scope {
+                scope_key: format!("scope_{name}"),
+                url: root.to_string_lossy().into_owned(),
+                label: name.into(),
+                git_remote: String::new(),
+            });
+        }
+        let mut fixed = Actor::new("fixed");
+        fixed.default_scope_key = "scope_B".into();
+        let following = Actor::new("following");
+        for active in ["scope_A", "scope_B", "scope_A"] {
+            group.active_scope_key = active.into();
+            assert_eq!(
+                effective_scope(&group, Some(&fixed)),
+                Some(&group.scopes[1])
+            );
+            assert_eq!(
+                effective_scope(&group, Some(&following)),
+                effective_scope(&group, None)
+            );
+            assert_eq!(
+                effective_scope(&group, None).expect("active").scope_key,
+                active
+            );
+            assert_eq!(group.active_scope_key, active);
+            assert_eq!(fixed.default_scope_key, "scope_B");
+        }
+        fixed.default_scope_key = format!("{}/.", group.scopes[1].url);
+        assert_eq!(
+            effective_scope(&group, Some(&fixed)),
+            Some(&group.scopes[1])
+        );
+        fixed.default_scope_key = "detached".into();
+        assert!(effective_scope(&group, Some(&fixed)).is_none());
+        group.active_scope_key.clear();
+        assert!(effective_scope(&group, None).is_none());
+        assert!(effective_scope(&group, Some(&following)).is_none());
+        fixed.default_scope_key = "scope_B".into();
+        assert_eq!(
+            effective_scope(&group, Some(&fixed)),
+            Some(&group.scopes[1])
+        );
+    }
+
+    #[test]
     fn legacy_actor_scope_paths_normalize_to_attached_scope_keys() {
         let temp = tempfile::tempdir().expect("tempdir");
         let scope_path = temp.path().join("project");
@@ -210,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_actor_scope_keys_fall_back_to_the_active_scope() {
+    fn stale_actor_scope_keys_remain_unavailable_instead_of_switching_workspaces() {
         let temp = tempfile::tempdir().expect("tempdir");
         let scope_path = temp.path().join("project");
         std::fs::create_dir(&scope_path).expect("project");
@@ -230,12 +346,13 @@ mod tests {
         actor.default_scope_key = "s_detached".into();
         group.actors.push(actor);
 
-        assert_eq!(normalize_actor_scope_keys(&mut group), 1);
-        assert_eq!(group.actors[0].default_scope_key, "s_active");
+        assert_eq!(normalize_actor_scope_keys(&mut group), 0);
+        assert_eq!(group.actors[0].default_scope_key, "s_detached");
+        assert!(effective_scope(&group, Some(&group.actors[0])).is_none());
     }
 
     #[test]
-    fn detach_reassigns_actor_scope_to_the_remaining_active_scope() {
+    fn detach_preserves_actor_pin_without_reassigning_it_to_the_remaining_scope() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home).expect("store");
@@ -267,7 +384,8 @@ mod tests {
         let detached = detach_with(&store, &group.group_id, "s_old", |_| Ok(())).expect("detach");
 
         assert_eq!(detached.active_scope_key, "s_next");
-        assert_eq!(detached.actors[0].default_scope_key, "s_next");
+        assert_eq!(detached.actors[0].default_scope_key, "s_old");
+        assert!(effective_scope(&detached, Some(&detached.actors[0])).is_none());
     }
 
     #[test]
@@ -318,16 +436,15 @@ mod tests {
             git_remote: String::new(),
         };
 
-        let error = attach_with(&store, &group.group_id, scope, |_| {
-            Err(io::Error::other("injected registry failure"))
-        })
-        .expect_err("attach failure");
+        for activate in [false, true] {
+            let error = attach_with(&store, &group.group_id, scope.clone(), activate, |_| {
+                Err(io::Error::other("injected registry failure"))
+            })
+            .expect_err("attach failure");
 
-        assert!(error.to_string().contains("injected registry failure"));
-        let stored = store.load(&group.group_id).expect("stored");
-        assert_eq!(stored.updated_at, before.updated_at);
-        assert!(stored.scopes.is_empty());
-        assert!(stored.active_scope_key.is_empty());
+            assert!(error.to_string().contains("injected registry failure"));
+            assert_eq!(store.load(&group.group_id).expect("stored"), before);
+        }
     }
 
     #[test]
@@ -352,7 +469,7 @@ mod tests {
             let attach_store = store.clone();
             let attach_group_id = group_id.clone();
             let attach = threads.spawn(move || {
-                attach_with(&attach_store, &attach_group_id, scope, |_| {
+                attach_with(&attach_store, &attach_group_id, scope, true, |_| {
                     side_effect_started_tx.send(()).expect("signal");
                     fail_side_effect_rx.recv().expect("continue");
                     Err(io::Error::other("injected registry failure"))
@@ -419,7 +536,7 @@ mod tests {
             git_remote: String::new(),
         };
 
-        let error = attach_with(&store, &group.group_id, scope, |_| {
+        let error = attach_with(&store, &group.group_id, scope, true, |_| {
             let mut external = store.load(&group.group_id).expect("external load");
             external.title = "python concurrent".into();
             crate::fs::write_yaml(&group_path, &external).expect("external unlocked write");

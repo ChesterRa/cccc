@@ -229,7 +229,9 @@ fn heartbeat() {
         if let Some(guard) = guard().as_ref()
             && let Err(error) = persist(guard)
         {
-            eprintln!("could not refresh owned process groups: {error}");
+            crate::diagnostic(format_args!(
+                "could not refresh owned process groups: {error}"
+            ));
         }
     }
 }

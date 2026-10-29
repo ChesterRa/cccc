@@ -23,6 +23,51 @@ The Web UI has these main areas:
 - **Main Area**: Group message history or a paginated terminal view
 - **Input**: Message composer with @mention support
 
+The local Group list scrolls independently from the collapsible **CCCC Connect**
+section and the Voice dock below it. CCCC Connect starts collapsed; click its heading
+to expand or collapse the instance list. The section's information button opens the full
+local instance name and public address. Group rows are more compact, while their
+ordering stays unchanged; connection counts and action menus keep fixed positions,
+with menus visible on touchscreens.
+
+The composer uses one send control with an adjacent mode arrow. The primary action
+shows the selected mode; its tooltip includes the send shortcut. Recipient chips
+need no separate “To” caption. Local messages addressed only to the user omit the
+redundant recipient label; cross-group routes and agent recipients remain explicit.
+User names remain accessible to screen readers without repeating a visible label
+above right-aligned local user messages. Message spacing is tighter, and the
+composer uses a subdued border that strengthens on focus.
+
+Image attachments in the composer show thumbnails before sending. Hovering or
+focusing a thumbnail opens a larger preview; the filename remains its accessible
+label and tooltip. Unsupported or unreadable images fall back to a filename chip,
+as do ordinary files. The attachment area scrolls when needed and local preview
+URLs are released when a file is replaced or removed.
+
+On wider screens, an empty, unfocused composer cycles through four localized typing hints for tasks,
+Skills (`/` and `/install`), Actors (`@`), and Groups (`#`). Focusing the composer
+pauses the hint; any draft text hides it, and a suggested reply takes precedence.
+Reduced-motion preferences show a static hint, and hidden tabs pause the animation.
+Hints are decorative and never become draft content or screen-reader live announcements.
+
+Message bubbles retain their framed surfaces. Sender, recipient routing, Mail mode
+and time share a compact header; delivery failures and reply/read status stay visible.
+A reply shows up to two lines of the message it answers; clicking or tapping that
+quote, or pressing Enter on it, opens the original message. On hover-capable desktop
+screens, message actions appear on hover or keyboard focus; touch and narrow screens
+use a **More** menu. Read-only views retain status information without exposing
+these actions. The composer groups recipients, text and tools into one surface.
+Short, transform/opacity-only message entry feedback respects reduced-motion
+preferences.
+
+On phones, the chat keeps as much of the screen as possible for messages. An empty
+composer that is not in use is a single row with the attachment button, the message
+box, voice and Send, plus a short label for a chosen recipient; tapping it or one of
+its controls expands it. Scrolling the messages by touch toward newer ones slides the
+header, the filter row and the runtime dock out of view. They return when you scroll
+back, tap the messages, reach the newest message or touch the composer. The **More**
+button sits beside each message. Phones in landscape also use the single-row composer.
+
 The header uses its existing Group status dot for page-connection health: red
 means disconnected, pulsing amber means reconnecting, and a connected page uses
 the normal Group lifecycle color. The badge text still describes the Group's
@@ -37,6 +82,8 @@ clears the previous message link, so refreshing stays in the Group you selected.
 Reordering or archiving Groups does not move an existing selection.
 
 ### Group message and terminal views
+
+Use **Connect existing sessions** in the sidebar to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
 **Group connections** is available under the current Group’s settings and in each Group’s sidebar **⋮** menu, including remote Groups
@@ -250,7 +297,12 @@ replaced with another file's path.
 
 Select **Changes** next to **Files** to inspect the active workspace's Git changes.
 The list separates working-tree modifications, staged changes, conflicts and untracked
-items. Select a tracked change to see its diff in the main area; use **Unified** or
+items. A new folder is listed file by file, as code editors list it; it stays a single
+item when it holds a separate repository. It also stays one item when listing its files
+would exceed the time or size limit, and a note then says the list is incomplete. In
+Files, the contents of a new folder are marked untracked too. This also applies when the
+workspace itself is a new folder of its repository.
+Select a tracked change to see its diff in the main area; use **Unified** or
 **Side by side** when the viewer is wide enough. Untracked files open in Files,
 untracked folders reveal their contents, and conflicts open the current file for
 inspection. The view uses saved content; unsaved drafts remain intact when switching
@@ -564,13 +616,15 @@ For Codex, CCCC removes conflicting host flags and pins app-server,
 Grok, CCCC accepts a direct root command with supported global provider/model options, then owns the
 private leader socket, ACP controller, native TUI attachment, YOLO policy, workspace, and per-session
 MCP binding. Grok subcommands, wrappers, prompt tails, and user-owned topology/session flags are
-rejected rather than routed through a second PTY path. For OpenCode and Kilo, CCCC owns the ACP process,
-generation-scoped authenticated loopback backend, session/load boundary, one-time permission policy,
-per-session MCP injection, and native `opencode attach` or `kilo attach` command. It preserves supported model, agent,
-pure-mode, and logging choices. Kilo's official Windows npm entrypoint uses Node and the installed
-launcher for both ACP and TUI. Custom wrappers, subcommands, prompt tails, and user-owned topology
-or session flags likewise fail explicitly. CCCC validates the live ACP and authenticated backend
-behavior during startup instead of maintaining a separate legacy-version compatibility branch.
+rejected rather than routed through a second PTY path. OpenCode V2 uses a private `serve --stdio` HTTP/SSE backend with its native
+`--server --session` TUI. Kilo uses its own ACP process and `kilo attach`.
+CCCC owns the session, authenticated loopback backend, one-time permissions
+and scoped MCP injection. Supported model, agent and logging choices remain
+configurable; pure mode is Kilo-only. Kilo's official Windows npm entrypoint
+uses Node and the installed launcher. Custom wrappers, subcommands, prompt tails,
+and user-owned topology or session flags fail explicitly. OpenCode requires
+V2 2.1.4 or newer; old V1 receipts and history are retained for explicit migration
+or a deliberate New session.
 These CCCC-owned values cannot be overridden.
 
 For Claude Code, CCCC requires both the launcher and background worker to report version 2.1.259
@@ -590,8 +644,8 @@ app-server and remote TUI receive the same executable, model, Profile, supported
 policy, and private environment. Claude's Agent View controller, transcript follower, and native TUI
 share one background session and one effective launch identity. Grok's leader, ACP client, and TUI share one resolved provider
 configuration, private environment, and exact session; CCCC adds topology arguments only to the
-processes that accept them. OpenCode and Kilo each use a stdio ACP controller and authenticated native TUI attach sharing
-one provider backend and exact session. CCCC injects the scoped MCP binding when it creates the
+processes that accept them. OpenCode V2 uses its HTTP/SSE controller; Kilo uses ACP. Both attach a native TUI to
+one authenticated provider backend and exact session. CCCC injects the scoped MCP binding when it creates the
 managed session,
 so the model reached from either client has the same CCCC tools. Opening the embedded terminal
 therefore observes and controls the existing Analyst session instead of starting another model
@@ -678,10 +732,11 @@ external terminal commands are deliberately not part of the product surface.
 The embedded native TUI remains writable while managed work is active. The receiving Runtime owns
 whether new terminal input steers the current turn or queues for the next one; CCCC registers exact
 Voice input before writing it and uses the Runtime's authoritative echo to associate the result with
-the correct delegation. OpenCode Analyst results remain available to Realtime Voice when the provider omits a
-live ACP prompt echo: CCCC acknowledges the request from the matching user message on OpenCode's
-authenticated backend stream, then uses the ACP response as the exact completion fence. A completed
-Voice turn with no result is reported as failed instead of silently returning an empty answer.
+the correct delegation. OpenCode V2 Analyst results follow consumed inbox IDs, model output and terminal
+execution events on the same ordered backend stream. Prompt admission alone is
+not completion. Exact-turn interruption is unavailable in V2's public API; use
+the native terminal to interrupt, or stop the owning session. A completed Voice
+turn with no result is reported as failed instead of silently returning an empty answer.
 
 The session manager keeps at most one voice call and one warm Voice Analyst per interactive
 Web host. The normal launcher permits one such Web process per `CCCC_HOME`, while the call also uses
@@ -881,10 +936,46 @@ Enter/Space. Switching sections retains summary/file drafts and task filters.
 - **Tasks** is the default section. The goal, current focus and warnings stay
   visible above the board. Expand **Working summary** for background and
   constraints, or use Edit directly. The disclosure stays open while editing.
-  The board retains Planned, Active and Done columns, including empty drop targets.
-  Search and attention filters narrow the board. Open a task for requirements,
-  steps, handoffs and completion details. Missing requirements or closeout records
-  describe record completeness; they do not change an existing task's status.
+  While there are tasks to show, Planned, Active and Done stay as columns, empty
+  ones included, so each remains a drop target; when there are none, or none
+  match the search and attention filters, the board says so instead. Dragging a
+  card to a column moves the task there; **Restore** on an archived card returns
+  it to the status it had before it was archived. A parent card shows how many of
+  its direct, non-archived subtasks are done, even when filters or paging hide
+  some of them. Subtask progress never completes the parent. Each card shows how
+  long ago the task last changed, by this device's clock, and a Planned or Active
+  card without a summary shows its first open checklist item. Done and archived
+  cards no longer show blocking, waiting or handoff marks; reopening the task
+  shows them again. A Done card whose checklist still has open items says how
+  many remain. While a search or filter is active, the board says how many tasks
+  match.
+
+  Opening a task shows its editor: title, status, assignee, priority and waiting
+  on first, then the outcome, checklist, notes and subtasks, with **Add subtask**.
+  Parent, handoff, blocking tasks and task type are under **Advanced details**.
+  The outcome, notes and checklist items grow with their text, so a long record
+  scrolls with the editor and long items are not cut off. Text taller than
+  10,000 pixels scrolls inside its own box instead.
+  A checklist item in progress shows as partly ticked, and any other status an
+  agent set is shown beside the item and kept until the item is ticked. Moving a
+  task to Done needs no particular notes; a done task without an outcome only
+  gets a suggestion to add one. Task type requirements describe how complete the
+  record is; they never block a change. Escape closes the editor and keeps
+  Project Context open.
+
+  Saving sends only the fields you changed, and only onto the version you
+  opened. If the task has changed since you opened it, the save is refused and
+  your edits stay in the editor to copy before you reload the latest version; an
+  editor without edits follows such changes by itself. When a save cannot be
+  confirmed, the editor reads the task to tell whether it went through, and
+  saving again never applies it twice. A task that no longer exists keeps your
+  edits in its editor until you close it. If creating a task cannot be
+  confirmed, creating it again unchanged from the same form finishes without
+  making a second one; a closed form or a reloaded page has no such guarantee.
+  **Delete** is offered only for a task that never left Planned,
+  together with its unexecuted subtasks; for other tasks the editor says why,
+  and archiving is the alternative. A deletion is refused, deleting nothing, if
+  any of it changed after you confirmed.
 - **AGENTS.md** views and edits the file in the current workspace root, showing
   its actual path. A missing file can be created explicitly; existing documents
   are not renamed, merged, or overwritten as part of setup. Each runtime controls
@@ -904,6 +995,62 @@ Enter/Space. Switching sections retains summary/file drafts and task filters.
 ## Settings Panel
 
 Open settings from **Settings and more** in the header:
+
+### System notifications
+
+Use **Settings → This instance → Notifications** to enable notifications in
+each browser or installed app where you want them. This is available in the
+private Web UI, not exhibit mode. Keep the CCCC Web service running; closing
+the CCCC page does not stop the service on your server. While requests wait
+for you in a Group, and this browser could show notifications for your account
+but they are not on yet, its messages page also offers them above the message
+box: **Turn on…** opens this settings page, and **Not now** hides the offer in
+that browser. No offer appears when the browser cannot use notifications, when
+they are blocked, when the server cannot send them, or when their state cannot
+be confirmed.
+
+1. Open CCCC over HTTPS, or use localhost on the same computer. On iPhone or
+   iPad, first add CCCC to the Home Screen and open it from there; Web Push
+   requires iOS or iPadOS 16.4 or later. See [WebKit's setup guidance](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/).
+2. Select **Enable notifications** and allow notifications when the browser
+   asks. If **Finish enabling** appears, select it to complete the subscription.
+3. Check that the page reports notifications enabled. To turn them off for
+   this browser, return to the same page and select **Disable notifications**.
+   This works even when the server cannot be reached: the browser stops
+   receiving them, and the server forgets the subscription once its next
+   notification is refused. Signing out of this browser in **Web Access** also
+   asks the server to stop notifying it for that account.
+
+On desktop, Chrome and Edge need a browser process to remain running. On
+Windows, Edge can keep running after the last window closes if background mode
+is enabled in `edge://settings/system`; see [Microsoft's Edge documentation](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-browser-policies/backgroundmodeenabled).
+Whether Chrome can remain running in the background depends on its version and
+management settings.
+For macOS, Safari supports receiving Web Push while Safari is quit on supported
+systems; see [WebKit's platform requirements](https://webkit.org/blog/12945/meet-web-push/).
+Browser settings and operating-system notification permissions also affect delivery.
+
+Notifications are for new messages explicitly addressed to the user. Requests
+already waiting when notifications are enabled remain in **Waiting for you**;
+they are not sent again. Events written while the Web service is stopped are
+not replayed; a sender restart or handover can also leave a gap. During a
+temporary push-service failure, up to 10 unanswered
+requests per browser are retried while the service runs; older requests may
+be dropped. The push service and device may also delay or discard notifications.
+Check **Waiting for you** if a notification does not open its request. On
+Safari 18.5 or later for Mac, and in iPhone or iPad Home Screen apps on iOS 18.4
+or later, opening a notification tries to load CCCC at its message; in a Home
+Screen app this can reload the open page, and unsent text in it is then lost.
+Message previews may be visible on the lock screen. The server stores a private
+signing key and subscription secrets in `CCCC_HOME`, so keep it accessible only
+to trusted accounts; on Windows file access depends on the directory's
+permissions.
+
+If the sender is starting or unavailable, select **Try again** after the Web
+service starts and check its logs if the status persists. If the browser blocks
+notifications, allow them in browser or device settings. A saved subscription
+that is not connected to the current account can be removed or enabled again
+from this page.
 
 ### Copy Groups
 

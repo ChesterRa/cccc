@@ -4,6 +4,8 @@ CCCC can run multiple agent runtimes in the same working group. Each actor choos
 
 Use `cccc runtime list --all` to see the full supported list on your machine, and `cccc doctor` to check which CLI runtimes are installed.
 
+Independently started Codex, Claude Code, Pi and OpenCode V2 CLI sessions can also [connect as native sessions](./local-sessions), with native ownership preserved and no session-history import.
+
 ## First-Class Runtimes
 
 | Runtime | Runtime id | Entrypoint / surface | MCP setup |
@@ -24,7 +26,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Grok Build | `grok` | CCCC-managed Grok leader + ACP + native TUI | Automatic native MCP registration; identity inherited per session |
 | Hermes Agent | `hermes` | Native TUI or official ACP | Native user profile for TUI; injected per ACP session |
 | Kimi Code | `kimi` | Native TUI or official ACP | Native registration for TUI; injected per ACP session |
-| OpenCode | `opencode` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
+| OpenCode | `opencode` | CCCC-managed V2 HTTP/SSE + authenticated native TUI | Injected into each managed session |
 | Pi | `pi` | Official RPC (headless; no native terminal attachment) | Injected per managed session |
 | ChatGPT Web Model | `web_model` | Bound ChatGPT Web conversation | Browser delivery + remote MCP connector |
 | ChatGPT Dots | `chatgpt_dots` | One explicitly bound Dot | MCP Events + task-scoped remote MCP; no browser message delivery |
@@ -54,10 +56,10 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | `hermes` | `hermes --tui --yolo` | Starts Hermes in TUI YOLO mode. |
 | `kimi` | `kimi --yolo` | Ask When Needed: routine actions are automatic; risky actions and questions can still ask. Use an explicit `kimi --auto` command for Never Ask mode. |
 | `pi` | `pi` | Uses official RPC; project trust and native-tool permissions remain Pi's responsibility. Extension decisions remain explicit user interactions. |
-| `opencode` | `opencode --auto` | CCCC owns the ACP permission boundary and selects only request-scoped one-time approval; it never writes a persistent provider approval. |
+| `opencode` | `opencode --auto` | CCCC owns the V2 permission boundary and selects only request-scoped one-time approval; it never writes a persistent provider approval. |
 | `amp` | `amp` | No extra CCCC launch flag; Amp's current CLI default is already direct tool execution. |
 | `auggie` | `auggie` | Use Auggie permissions or settings for per-tool approval policy; CCCC does not inject a broad wildcard permission rule. |
-| `kilo` | `kilo` | Same request-scoped ACP approval policy as OpenCode; no persistent provider approval is written. |
+| `kilo` | `kilo` | Request-scoped one-time ACP approval; no persistent provider approval is written. |
 | `web_model` | N/A | Browser-delivered runtime; local CLI launch flags do not apply. |
 | `chatgpt_dots` | N/A | Event-triggered cloud runtime; CCCC Actor permissions apply to each accepted task. |
 | `custom` | User command | CCCC preserves the user-provided command exactly. |
@@ -315,35 +317,36 @@ different saved/default selection despite the launch arguments. Rejected
 selections fail startup; CCCC does not silently choose another model. Unspecified
 selections remain owned by Grok and its saved session.
 
-Direct OpenCode Actors use one
-`opencode acp` process as both the structured controller endpoint and an
-authenticated loopback backend. CCCC injects the
-actor-scoped MCP server when it creates or loads the ACP session and attaches
-OpenCode's native writable TUI to that exact backend and session. CCCC observes
-input, output, and `session.status` through the authenticated workdir event stream,
-whose listener is ready before connection succeeds. New Actor
-messages are handed to the native TUI without waiting for an active turn to settle.
-Losing that non-replayable lifecycle stream invalidates the session rather than
-guessing that it is idle. Stop/start validates and loads a version-2 OpenCode
-receipt; `actor new-session` deliberately replaces it. CCCC owns ACP/server,
-session, attach, cwd, MCP, and permission arguments. It accepts documented
-model, agent, pure-mode, and logging options, but subcommands, wrappers, prompt
-tails, and user-owned topology/session flags fail explicitly with no raw-PTY
-fallback. OpenCode does not emit the accepted user prompt through ACP, so CCCC
-correlates protocol-originated requests on OpenCode's authenticated backend
-event stream before acknowledging admission. Native input is associated with the
-answer that consumes it, using the assistant message's parent user ID; queued
-input survives the preceding turn's completion. Text and terminal status follow
-the same ordered stream, so an earlier prompt's RPC response cannot complete a
-queued answer. Kilo shares these boundaries. OpenCode keeps a
-TUI model change local until that TUI submits its next message. CCCC observes the
-submitted message's provider, model, and variant and mirrors them into the same
-ACP session for later managed requests. Add `--model provider/model` to the
-Runtime command when the model must be selected at launch instead.
+Direct OpenCode Actors require official **OpenCode V2 2.1.4+**. CCCC starts a
+private `opencode serve --stdio` backend and attaches `opencode --server` to
+that exact session. The official V2 installation is available from
+[OpenCode's V2 guide](https://opencode.ai/v2/docs/); the older `opencode-ai` npm
+package and V1 GitHub releases are different distribution channels.
+
+CCCC injects the Actor-scoped MCP server into this backend's inline configuration,
+preserving unrelated provider settings. Messages use V2's durable HTTP prompt
+queue, including during TUI startup. An admission receipt is not completion:
+the ordered `/api/event` stream associates consumed inbox IDs, model steps,
+MCP results and terminal execution status. The stream is registered before input;
+a lost or malformed stream invalidates the owner without replaying uncertain
+work. Each encoded event line is bounded to 16 MiB. Native model/agent choices
+belong to the same provider session and remain authoritative for later input;
+an explicit runtime-command `--model provider/model` overrides the launch choice.
+
+Stop/start validates and reloads the same V2 managed receipt and workspace.
+A retained V1 ACP receipt is not automatically resumed as V2. Choose
+**New session** explicitly to start V2; original provider history remains available
+for migration using OpenCode's tools. CCCC does not convert the V1 receipt. CCCC owns server/session, authentication, cwd,
+MCP and permissions; it accepts model, agent and logging options. V1's `--pure`
+flag is no longer accepted. V2 exposes session-wide interruption without an
+expected-turn guard, so CCCC rejects exact-turn interrupt requests rather than
+risk stopping newer work. Use the native TUI to interrupt, or **Quit** to stop
+the Actor's owned backend. Each permission request is approved only once; no
+persistent provider approval is written. Kilo retains its separate ACP adapter.
 
 The Rust daemon also owns the lifetime of every process-backed actor. On Windows, the daemon host and each terminal actor use non-breakaway Job Objects with `KILL_ON_JOB_CLOSE`; Codex and actor-launched MCP descendants inherit containment when they are created, so an abrupt daemon or combined Web-process exit cannot leave them orphaned. On POSIX, each terminal actor is a separate session and normal stop/reap terminates its entire process group. Process cleanup never removes `group.yaml`, `ledger.jsonl`, or retained terminal history.
 
-Kilo shares the OpenCode ACP/HTTP adapter for both Actors and Voice Analyst.
+Kilo uses ACP control with its ordered HTTP event stream for both Actors and Voice Analyst.
 CCCC owns a private `kilo acp` backend and attaches `kilo attach` to that exact
 session; it does not reuse an unrelated global Kilo daemon. Kilo receives
 session-scoped MCP injection, and no setup or bootstrap prompt is sent merely
@@ -617,6 +620,20 @@ execution credential. Only that credential permits business tools and completion
 of the exact task. A successful webhook response acknowledges receipt, not task
 completion. Waiting never triggers browser delivery.
 
+Keep each successful claim's execution credential, turn ID and event IDs together
+in temporary host state for that run. Direct tool calls and host-side JavaScript
+may pass the credential in the CCCC tool's `actor_token` argument, including a
+literal argument value when necessary. It must not enter `cccc_code_exec`
+`source`/`code`, business code, files, commands, logs, saved instructions or
+user-facing messages. No particular host storage API is required.
+
+Losing a JavaScript variable does not expire the credential. The same execution
+may use its original claim tool result to fill tool arguments without claiming
+again. This does not permit using prior runs, chat history, subscription
+configuration or saved memory to recover credentials. If that original result
+is unavailable, report the block and explicitly resolve the unfinished turn
+before starting new work. Discard temporary context after confirmed completion.
+
 If an older task asks to read subscription configuration or refuses to save a
 credential in its handler, get the current setup instructions and update that
 same task with the credential-free handler. Updating CCCC cannot rewrite a task
@@ -631,9 +648,23 @@ fresh pairing. This resets only the Dot connection; the shared plugin and other
 ChatGPT Actors remain connected. CCCC never treats an arbitrary unpaired chat
 as the account's Dot.
 
+Pairing can finish while CCCC access is paused. The setup instructions check
+`cccc_connector_status` before the optional first claim. A paired, paused Dot
+reports that setup is complete and waits for you to resume access in Actor
+details. `paired_actor_stopped` means access is paused, not that pairing was
+lost. `paired_actor_identity_changed` means the Actor was replaced;
+`paired_actor_runtime_changed` means its runtime changed. Review the intended
+Actor before reconnecting in either of those cases.
+
 For failed setup or tool calls, open the instance's **ChatGPT Dots** settings
 and check **Shared plugin diagnostics**. It keeps ten recent subscription and
-task-tool outcomes with safe reason codes and setup hints. Successful status
+task-tool outcomes with safe reason codes and setup hints. Pairing and claim
+records may include expandable **Host identity fingerprints**: connector-scoped
+salted hashes for conversation, user and organization, with absent optional
+fields marked as not supplied. Compare a successful pairing and a rejected
+claim to see which component differs; fingerprints do not grant access and
+cannot prove why the provider changed a value. Raw identifiers, credentials and
+call arguments are not recorded. Successful status
 reads do not erase these records. The plugin also serves ordinary ChatGPT
 Actors, so check the failed tool and time against the conversation you tested.
 An old diagnostic is not the Actor's current phase, and a successful claim or
@@ -662,10 +693,16 @@ automatically. Disconnecting or rebinding revokes the old pairing and subscripti
 - **Notification failed before acceptance:** check the shared connector and
   native task, then pause and resume the Actor to notify unclaimed work again.
   This does not replay an accepted task.
-- **Unfinished delivery:** review the messages and the Dot's work, then choose
-  **Resolve unfinished delivery** for that exact turn. This reconciles its
-  existing receipt or closes the turn without rerunning it; it does not stop
-  ChatGPT's cloud work.
+- **Unfinished turn:** a claimed turn means CCCC is waiting for a completion
+  receipt; it does not prove the Dot is still processing it. If it cannot finish,
+  review the messages and the Dot's work, then choose **End this turn** in
+  **Task delivery** and confirm. Pausing CCCC access first is not required.
+  This revokes the old execution's authority and preserves an existing completion
+  or records cancellation without rerunning the task. It does not stop ChatGPT's
+  cloud work. Other queued messages may proceed while access is enabled. To run
+  the original task again, check for earlier side effects and send a new,
+  explicit message. Repeated claims, restarting or re-pairing do not resume an
+  abandoned execution.
 - **Disconnect or move the binding:** pause the connected Actor and finish or
   resolve its accepted turn before disconnecting it. Then connect the intended
   Actor. Disconnecting revokes the CCCC setup credential, but the native task

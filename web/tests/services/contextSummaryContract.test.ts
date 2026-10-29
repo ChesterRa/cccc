@@ -23,7 +23,7 @@ describe("context summary task contract", () => {
     expect(taskToDraft(task!)).toMatchObject({
       outcome: "Existing outcome",
       notes: "Existing notes",
-      checklist: "[~] Keep this item",
+      checklist: [{ id: "check-1", text: "Keep this item", status: "in_progress" }],
     });
   });
 });

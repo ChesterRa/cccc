@@ -80,7 +80,7 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by"))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
-    super::message_validation::normalize(home, &group, &mut data)?;
+    super::message_validation::normalize(home, &group, &by, &mut data)?;
     super::super::messaging_recipients::normalize_chat_data(&group, &by, &mut data, false)?;
     let task_assignee = assignee(request);
     authorize_task_create(&group, &by, &task_assignee)?;

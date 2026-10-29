@@ -74,6 +74,36 @@ async function edit() {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+
+it("enables a first preview through normal startup without a second manual pairing flow", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: {
+      pairing: { state: "unpaired", actor_enabled: false, url: null, previous_url: null },
+      browser_session: { active: true },
+    },
+  });
+  await act(async () =>
+    root.render(<WebModelActorSetup groupId="g_a" actorId="A" isDark={false} />),
+  );
+  expect(button("start")).toBeDefined();
+  await act(async () => button("start").click());
+  expect(mocks.start).toHaveBeenCalledExactlyOnceWith("g_a", "A");
+  expect(mocks.pair).not.toHaveBeenCalled();
+  expect(mocks.navigate).not.toHaveBeenCalled();
+});
+
+it("does not read protected connection state or offer actions to a Group-only user", async () => {
+  await act(async () =>
+    root.render(
+      <WebModelActorSetup groupId="g_a" actorId="A" isDark={false} canAccessConnection={false} />,
+    ),
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(6000));
+  expect(mocks.load).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("webModelActor.adminManaged");
+  expect(host.querySelectorAll("button,input")).toHaveLength(0);
+});
 it("permits local URL edits while running; declining pause changes nothing", async () => {
   await edit();
   expect(mocks.stop).not.toHaveBeenCalled();
@@ -130,4 +160,37 @@ it("keeps connection verification separate and exposes Start only after this att
   expect(mocks.start).not.toHaveBeenCalled();
   await act(async () => button("start").click());
   expect(mocks.start).toHaveBeenCalledExactlyOnceWith("g_a", "A");
+});
+
+it("releases a removed editor's busy state without a late result unlocking its replacement", async () => {
+  mocks.load.mockResolvedValue(response(false));
+  const busy = vi.fn();
+  const renderAccess = async (allowed: boolean) =>
+    act(async () =>
+      root.render(
+        <WebModelActorSetup
+          groupId="g_a"
+          actorId="A"
+          isDark={false}
+          canAccessConnection={allowed}
+          onBusyChange={busy}
+        />,
+      ),
+    );
+  let oldFinish!: (value: unknown) => void;
+  mocks.start.mockReturnValueOnce(new Promise((resolve) => (oldFinish = resolve)));
+  await renderAccess(true);
+  await act(async () => button("start").click());
+  await renderAccess(false);
+  expect(busy).toHaveBeenLastCalledWith(false);
+  let newFinish!: (value: unknown) => void;
+  mocks.start.mockReturnValueOnce(new Promise((resolve) => (newFinish = resolve)));
+  await renderAccess(true);
+  await act(async () => button("start").click());
+  expect(busy).toHaveBeenLastCalledWith(true);
+  await act(async () => oldFinish({ ok: true }));
+  expect(busy).toHaveBeenLastCalledWith(true);
+  expect(button("start").disabled).toBe(true);
+  await act(async () => newFinish({ ok: true }));
+  expect(busy).toHaveBeenLastCalledWith(false);
 });

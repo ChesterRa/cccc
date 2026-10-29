@@ -970,6 +970,9 @@ export function mergeLedgerEventStatuses(
           ? mergeReadStatus(patch.read_status, event._read_status)
           : undefined,
       _obligation_status: mergeObligationStatus(patch.obligation_status, event._obligation_status),
+      _user_request:
+        patch.user_request ??
+        (patch.obligation_status === undefined ? event._user_request : undefined),
       _retired_bridge: patch.retired_bridge || event._retired_bridge,
       _connect_delivery: mergeConnectDelivery(patch.connect_delivery, event._connect_delivery),
       _connect_cancellation: mergeConnectDelivery(

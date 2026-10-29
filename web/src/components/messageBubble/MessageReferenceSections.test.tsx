@@ -16,6 +16,7 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+import { MessageReplyQuote } from "./MessageReplyQuote";
 import { MessageReferenceSections } from "./MessageReferenceSections";
 
 describe("MessageReferenceSections", () => {
@@ -83,5 +84,40 @@ describe("MessageReferenceSections", () => {
     await act(async () => buttons[1]?.click());
     expect(onOpenPresentationRef).toHaveBeenCalledWith(presentationRef, event);
     expect(onOpenTaskRef).toHaveBeenCalledWith(taskRef, event);
+  });
+  it("opens the replied message from the quote itself", async () => {
+    const onOpenReplyTarget = vi.fn();
+    const onBubbleClick = vi.fn();
+    const text = "Quoted context\n".repeat(20);
+    await act(async () =>
+      root.render(
+        <div onClick={onBubbleClick}>
+          <MessageReplyQuote
+            text={text}
+            replyToEventId="source-event"
+            onOpenReplyTarget={onOpenReplyTarget}
+          />
+        </div>,
+      ),
+    );
+    const buttons = host.querySelectorAll<HTMLButtonElement>("button");
+    expect(buttons).toHaveLength(1);
+    const quote = buttons[0];
+    expect(quote.textContent).toBe(`jumpToRepliedMessage: ${text}`);
+    expect(quote.getAttribute("title")).toBe("jumpToRepliedMessage");
+    // The replied message holds the rest.
+    expect(quote.querySelector(".line-clamp-2")).not.toBeNull();
+    await act(async () => quote.click());
+    expect(onOpenReplyTarget).toHaveBeenCalledExactlyOnceWith("source-event");
+    expect(onBubbleClick).not.toHaveBeenCalled();
+  });
+
+  it("shows all of a quote without a known source as plain text", async () => {
+    await act(async () => root.render(<MessageReplyQuote text="Quoted context" />));
+    expect(host.querySelector("button")).toBeNull();
+    const quote = host.querySelector("[data-message-quote]");
+    expect(quote?.textContent).toBe("Quoted context");
+    // Nothing else leads to the rest of it, so none of it is cut off.
+    expect(quote?.querySelector(".line-clamp-2")).toBeNull();
   });
 });

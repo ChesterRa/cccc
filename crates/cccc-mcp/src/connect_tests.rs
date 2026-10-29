@@ -61,13 +61,23 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
     .expect("directory");
     let root = temp.path().join("project");
     std::fs::create_dir(&root).expect("project");
+    let worker_root = temp.path().join("worker-project");
+    std::fs::create_dir(&worker_root).expect("worker project");
     let store = GroupStore::new(home.clone()).expect("store");
     let mut group = store.create("Local", "").expect("group");
     actors::add(&mut group, Actor::new("lead")).expect("lead");
-    actors::add(&mut group, Actor::new("worker")).expect("peer");
+    let mut worker = Actor::new("worker");
+    worker.default_scope_key = "worker-project".into();
+    actors::add(&mut group, worker).expect("peer");
     group.scopes.push(cccc_core::group::Scope {
         scope_key: "project".into(),
         url: root.to_string_lossy().into(),
+        label: String::new(),
+        git_remote: String::new(),
+    });
+    group.scopes.push(cccc_core::group::Scope {
+        scope_key: "worker-project".into(),
+        url: worker_root.to_string_lossy().into(),
         label: String::new(),
         git_remote: String::new(),
     });
@@ -133,6 +143,7 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
             name,
             args.as_object().expect("args").clone(),
             Some(crate::RequestContext {
+                native_binding: None,
                 binding: None,
                 group_id: &group.group_id,
                 actor_id: "worker",
@@ -194,7 +205,8 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
         retry["structuredContent"]["delivery_id"],
         sent["structuredContent"]["delivery_id"]
     );
-    let file = root.join("note.txt");
+    std::fs::write(root.join("note.txt"), "wrong group scope").expect("decoy file");
+    let file = worker_root.join("note.txt");
     std::fs::write(&file, "file payload").expect("file");
     let args = json!({"path":"note.txt","dst_instance_id":remote.peer_id,"dst_group_id":group.group_id,"idempotency_key":"stable-file","insight":"The remote task needs this attachment."});
     let file_sent = call("cccc_file_send", args.clone())
@@ -210,6 +222,15 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
         file_sent["structuredContent"]["result"]["source_event"]["data"]["attachments"][0]["bytes"],
         12
     );
+    let attachment =
+        &file_sent["structuredContent"]["result"]["source_event"]["data"]["attachments"][0];
+    let stored = cccc_core::blobs::resolve(
+        &home,
+        &group.group_id,
+        attachment["path"].as_str().expect("blob path"),
+    )
+    .expect("stored attachment");
+    assert_eq!(std::fs::read(stored).expect("blob bytes"), b"file payload");
     std::fs::remove_file(file).expect("remove original");
     let file_retry = call("cccc_file_send", args)
         .await

@@ -21,7 +21,7 @@ export function CodexVoiceMobileDock(props: SharedProps) {
   const { voice } = props;
   if (!voice.controller.isEngaged) return null;
   return (
-    <div className="mt-14 flex-none md:hidden">
+    <div className="mt-[48px] flex-none md:hidden">
       <CodexVoiceDock
         variant="mobile"
         controller={voice.controller}

@@ -1,20 +1,10 @@
 use super::*;
 
-// Exercises the real OpenCode ACP/SSE bridge with isolated local models and
+// Exercises the real Kilo ACP/SSE bridge with isolated local models and
 // noReply submissions (the same committed user-message shape as native TUI).
 // Repeat fresh subscriptions: an immediately submitted first message used to
 // disappear through the lazily subscribed global endpoint.
 // No provider credentials or paid inference are required.
-#[tokio::test]
-async fn live_opencode_submitted_model_reaches_acp_when_enabled() {
-    if std::env::var("CCCC_OPENCODE_MODEL_SYNC_LIVE").as_deref() != Ok("1") {
-        return;
-    }
-    for _ in 0..3 {
-        submitted_model_reaches_acp("opencode", "OPENCODE").await;
-    }
-}
-
 #[tokio::test]
 async fn live_kilo_submitted_model_reaches_acp_when_enabled() {
     if std::env::var("CCCC_KILO_MODEL_SYNC_LIVE").as_deref() != Ok("1") {

@@ -1,6 +1,6 @@
 //! Finite command execution. The invocation owns the child tree and all pipes;
 //! use runtime sessions for interactive or persistent commands instead.
-use crate::OwnedProcessTree;
+use crate::{CommandError, OwnedProcessTree};
 use std::io;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::Duration;
@@ -15,9 +15,9 @@ pub struct CapturedOutput {
     pub stderr_truncated: bool,
 }
 
-struct OwnedChild {
-    child: Child,
-    tree: OwnedProcessTree,
+pub(crate) struct OwnedChild {
+    pub(crate) child: Child,
+    pub(crate) tree: OwnedProcessTree,
 }
 
 impl Drop for OwnedChild {
@@ -41,6 +41,23 @@ pub async fn capture_command(
     timeout: Duration,
     limit: usize,
 ) -> io::Result<CapturedOutput> {
+    capture_command_with_start_evidence(command, input, timeout, limit)
+        .await
+        .map_err(CommandError::into_io_error)
+}
+
+/// The same finite capture with explicit process-start evidence. `NotStarted`
+/// means admission was refused or `Command::spawn` failed; the requested
+/// executable was not started. Resource registration, pipe setup, I/O and
+/// timeout after a successful spawn all remain `Started`, even if their error
+/// kind also occurs during spawn. Dropping a polled future has no returned
+/// evidence and must not be treated as proof of non-submission.
+pub async fn capture_command_with_start_evidence(
+    command: &mut Command,
+    input: Option<&[u8]>,
+    timeout: Duration,
+    limit: usize,
+) -> Result<CapturedOutput, CommandError> {
     let deadline = tokio::time::Instant::now() + timeout;
     command
         .stdin(if input.is_some() {
@@ -50,28 +67,33 @@ pub async fn capture_command(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let (child, tree) = OwnedProcessTree::spawn(command)?;
+    let (child, tree) = OwnedProcessTree::spawn_registered(command, 0)?;
     let mut owned = OwnedChild { child, tree };
     let stdout = tokio::process::ChildStdout::from_std(
         owned
             .child
             .stdout
             .take()
-            .ok_or_else(|| io::Error::other("command stdout unavailable"))?,
-    )?;
+            .ok_or_else(|| io::Error::other("command stdout unavailable"))
+            .map_err(CommandError::Started)?,
+    )
+    .map_err(CommandError::Started)?;
     let stderr = tokio::process::ChildStderr::from_std(
         owned
             .child
             .stderr
             .take()
-            .ok_or_else(|| io::Error::other("command stderr unavailable"))?,
-    )?;
+            .ok_or_else(|| io::Error::other("command stderr unavailable"))
+            .map_err(CommandError::Started)?,
+    )
+    .map_err(CommandError::Started)?;
     let stdin = owned
         .child
         .stdin
         .take()
         .map(tokio::process::ChildStdin::from_std)
-        .transpose()?;
+        .transpose()
+        .map_err(CommandError::Started)?;
     let operation = async {
         let write = async move {
             if let (Some(mut stdin), Some(input)) = (stdin, input) {
@@ -104,11 +126,12 @@ pub async fn capture_command(
     tokio::time::timeout_at(deadline, operation)
         .await
         .map_err(|_| {
-            io::Error::new(
+            CommandError::Started(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("command timed out after {}s", timeout.as_secs_f64()),
-            )
+            ))
         })?
+        .map_err(CommandError::Started)
 }
 
 /// Synchronous ports use the same capture semantics without a permanent worker

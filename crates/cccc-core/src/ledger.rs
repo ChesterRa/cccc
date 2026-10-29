@@ -226,8 +226,17 @@ pub(crate) fn acquire_reader_lock(path: &Path) -> io::Result<File> {
 
 fn ledger_lock_file(path: &Path) -> io::Result<File> {
     let lock_path = ledger_lock_path(path);
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent)?;
+    // The ledger's directory belongs to its Group, and deleting the Group
+    // renames that directory away. Create only the levels below it, so a
+    // reader or writer that outlives the Group fails with NotFound instead of
+    // recreating an empty Group directory (which would also block a rollback).
+    let mut dir = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+    for name in ["state", "ledger"] {
+        dir.push(name);
+        match std::fs::create_dir(&dir) {
+            Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
+            _ => {}
+        }
     }
     let mut lock = OpenOptions::new()
         .create(true)
@@ -305,6 +314,21 @@ fn visit_validated_source(
     source: &Path,
     visit: &mut impl FnMut(Event) -> io::Result<()>,
 ) -> io::Result<()> {
+    let mut line = Vec::new();
+    let mut line_no = 0_usize;
+    while reader.read_until(b'\n', &mut line)? != 0 {
+        line_no += 1;
+        let raw = trim_ascii(&line);
+        if !raw.is_empty() {
+            visit(decode_validated(raw, source, line_no).map_err(io::Error::other)?)?;
+        }
+        line.clear();
+    }
+    Ok(())
+}
+
+/// Decode stored bytes as one complete event, or explain why they are not.
+fn decode_validated(raw: &[u8], source: &Path, line_no: usize) -> Result<Event, String> {
     // Event's construction defaults generate an ID and timestamp. Those are
     // useful for new events, but cannot certify missing fields in stored bytes.
     #[derive(serde::Deserialize)]
@@ -314,37 +338,21 @@ fn visit_validated_source(
         #[serde(borrow)]
         ts: std::borrow::Cow<'a, str>,
     }
-    let mut line = Vec::new();
-    let mut line_no = 0_usize;
-    while reader.read_until(b'\n', &mut line)? != 0 {
-        line_no += 1;
-        let raw = trim_ascii(&line);
-        if !raw.is_empty() {
-            if raw.first() != Some(&b'{') {
-                return Err(io::Error::other(format!(
-                    "malformed ledger JSON at {}:{line_no}: event must be an object",
-                    source.display()
-                )));
-            }
-            let invalid = |error| {
-                io::Error::other(format!(
-                    "malformed ledger JSON at {}:{line_no}: {error}",
-                    source.display()
-                ))
-            };
-            let identity: StoredIdentity<'_> = serde_json::from_slice(raw).map_err(invalid)?;
-            if identity.id.is_empty() || identity.ts.is_empty() {
-                return Err(io::Error::other(format!(
-                    "malformed ledger JSON at {}:{line_no}: stored id and ts must be nonempty",
-                    source.display()
-                )));
-            }
-            let event: Event = serde_json::from_slice(raw).map_err(invalid)?;
-            visit(event)?;
-        }
-        line.clear();
+    let invalid = |error: &dyn std::fmt::Display| {
+        format!(
+            "malformed ledger JSON at {}:{line_no}: {error}",
+            source.display()
+        )
+    };
+    if raw.first() != Some(&b'{') {
+        return Err(invalid(&"event must be an object"));
     }
-    Ok(())
+    let identity: StoredIdentity<'_> =
+        serde_json::from_slice(raw).map_err(|error| invalid(&error))?;
+    if identity.id.is_empty() || identity.ts.is_empty() {
+        return Err(invalid(&"stored id and ts must be nonempty"));
+    }
+    serde_json::from_slice(raw).map_err(|error| invalid(&error))
 }
 
 fn source_paths(path: &Path) -> io::Result<Vec<PathBuf>> {
@@ -466,11 +474,14 @@ fn read_events(mut reader: impl BufRead, source: &Path, group_id: &str) -> io::R
     Ok(events)
 }
 
-fn decode_event_line(raw: &[u8], source: &Path, line_no: usize, _group_id: &str) -> Option<Event> {
+fn decode_event_line(raw: &[u8], source: &Path, line_no: usize, group_id: &str) -> Option<Event> {
     match serde_json::from_slice(raw) {
         Ok(event) => Some(event),
         Err(error) => {
             tracing::warn!(
+                group_id,
+                diagnostic_code = "invalid_data",
+                diagnostic_action = "ledger_decode",
                 source = %source.display(),
                 line = line_no,
                 %error,
@@ -616,10 +627,10 @@ pub fn find_relay(path: &Path, source_event_id: &str) -> io::Result<Option<Event
 fn note_index_query(api: &str) {
     if std::env::var_os("CCCC_LEDGER_INDEX_PROBE").is_some_and(|value| value == "1") {
         let caller = std::panic::Location::caller();
-        eprintln!(
+        cccc_runtime::diagnostic(format_args!(
             "CCCC_EVENT_INDEX_QUERY {}",
             serde_json::json!({"api":api,"file":caller.file(),"line":caller.line()})
-        );
+        ));
     }
 }
 
@@ -1062,6 +1073,33 @@ mod tests {
         let event = Event::new("chat.message", "g_test");
         append(&path, &event).expect("append after contention");
         assert_eq!(follower.poll(&path).expect("retry"), vec![event]);
+    }
+
+    #[test]
+    fn ledger_access_never_recreates_a_removed_group_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let group = temp.path().join("g_test");
+        let path = group.join("ledger.jsonl");
+        std::fs::create_dir(&group).expect("group");
+        append(&path, &Event::new("group.create", "g_test")).expect("append");
+        let mut follower = LedgerFollower::default();
+        follower.poll(&path).expect("follow");
+        // Deletion renames the Group away while this follower still holds its path.
+        std::fs::rename(&group, temp.path().join(".g_test.deleting")).expect("delete");
+
+        let not_found = |result: io::Result<()>, access: &str| {
+            let error = result.expect_err(access);
+            assert_eq!(error.kind(), io::ErrorKind::NotFound, "{access}: {error}");
+            assert!(!group.exists(), "{access} recreated the Group directory");
+        };
+        not_found(follower.poll(&path).map(drop), "poll");
+        not_found(LedgerFollower::at_end(&path).map(drop), "at_end");
+        not_found(acquire_reader_lock(&path).map(drop), "reader lock");
+        not_found(tail(&path, 1).map(drop), "tail");
+        not_found(
+            append(&path, &Event::new("chat.message", "g_test")),
+            "append",
+        );
     }
 
     #[test]

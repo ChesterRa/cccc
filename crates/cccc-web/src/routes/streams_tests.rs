@@ -111,6 +111,7 @@ fn test_state(home: HomeLayout) -> AppState {
         runtime_proof_key: "proof_test".into(),
         web_mode: crate::WebMode::Normal,
         exhibit_allow_terminal: false,
+        push: Default::default(),
         home,
     }
 }

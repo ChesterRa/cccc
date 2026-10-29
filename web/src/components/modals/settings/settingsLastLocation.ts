@@ -19,6 +19,7 @@ const globalTabIds = new Set<GlobalTabId>([
   "capabilities",
   "actorProfiles",
   "myProfiles",
+  "notifications",
   "branding",
   "webAccess",
   "webModels",

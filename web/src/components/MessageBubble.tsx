@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { useTranslation } from "react-i18next";
 import { useCopyFeedback } from "../hooks/useCopyFeedback";
@@ -25,7 +25,6 @@ import { getTaskMessageRefs } from "../utils/taskRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
 import { getMessageInsight } from "../utils/messagePerspective";
 import {
-  destinationChipKey,
   getDelegationDisplayText,
   getDelegationSourceOutboundStatus,
   isDelegationSourceOutbound,
@@ -50,7 +49,13 @@ import { AgentStateTooltip } from "./messageBubble/AgentStateTooltip";
 import { MessageContent } from "./messageBubble/MessageContent";
 import { MessageBubbleSurface } from "./messageBubble/MessageBubbleSurface";
 import { buildMessageCopyText } from "./messageBubble/messageCopyText";
+import { MessageRoutingMetadata } from "./messageBubble/MessageRoutingMetadata";
+import { MessageReplyQuote } from "./messageBubble/MessageReplyQuote";
 import { MessageReferenceSections } from "./messageBubble/MessageReferenceSections";
+import { PendingReplySlot } from "./messageBubble/PendingReplySlot";
+import { PendingReplyStoreContext } from "../features/pendingReplies/store";
+import { pendingReplyView, recordedQuestionText } from "../features/pendingReplies/model";
+import { LivePendingStatusContext } from "../features/pendingReplies/liveStatusContext";
 
 const ANIMATED_MESSAGE_BUBBLE_KEYS = new Set<string>();
 const NEW_MESSAGE_ANIMATION_WINDOW_MS = 12000;
@@ -89,31 +94,18 @@ function MessageBubbleBody({
   event,
   isUserMessage,
   isDark,
-  destinationLabel,
-  toLabel,
-  hasSource,
-  sourceLabel,
-  sourceTitle,
-  isRemoteSource,
-  srcGroupId,
-  srcEventId,
-  hasDestination,
-  dstTo,
-  relayChipClass,
   quoteText,
   replyToEventId,
   presentationRefs,
   voiceDocumentRefs,
   taskRefs,
   taskById,
-  messageText,
   bodyText,
   insight,
   shouldRenderMarkdown,
   blobAttachments,
   blobGroupId,
   stableMessageAttachmentKey,
-  onOpenSource,
   onOpenPresentationRef,
   onOpenTaskRef,
   onOpenReplyTarget,
@@ -121,24 +113,12 @@ function MessageBubbleBody({
   event: LedgerEvent;
   isUserMessage: boolean;
   isDark: boolean;
-  destinationLabel: string;
-  toLabel: string;
-  hasSource: boolean;
-  sourceLabel: string;
-  sourceTitle: string;
-  isRemoteSource: boolean;
-  srcGroupId: string;
-  srcEventId: string;
-  hasDestination: boolean;
-  dstTo: string[];
-  relayChipClass: string;
   quoteText?: string;
   replyToEventId?: string;
   presentationRefs: PresentationMessageRef[];
   voiceDocumentRefs: VoiceDocumentMessageRef[];
   taskRefs: TaskMessageRef[];
   taskById: Map<string, Task>;
-  messageText: string;
   bodyText: string;
   insight: string;
   shouldRenderMarkdown: boolean;
@@ -152,112 +132,25 @@ function MessageBubbleBody({
   }>;
   blobGroupId: string;
   stableMessageAttachmentKey: string;
-  onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
   onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
   onOpenReplyTarget?: (replyToEventId: string) => void;
 }) {
   const { t } = useTranslation("chat");
-  const canJumpToReplyTarget = !!(replyToEventId && onOpenReplyTarget);
-  const quoteClassName = classNames(
-    "rounded-2xl border px-3 py-2 text-xs leading-5",
-    "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]",
-  );
-  const metaChipClass = classNames(
-    "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
-    "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]",
-  );
-  const normalizedToLabel = String(toLabel || "").trim();
   const supportingSectionClass = classNames(
     "mt-3 border-t pt-3",
     "border-[var(--glass-border-subtle)]",
   );
   return (
     <>
-      {normalizedToLabel || hasSource || hasDestination ? (
-        <div className="mb-3 flex flex-wrap items-center gap-1.5">
-          {normalizedToLabel ? (
-            <span className={metaChipClass} title={normalizedToLabel}>
-              <span className="opacity-55">{t("to")}</span>
-              <span className="truncate">{normalizedToLabel}</span>
-            </span>
-          ) : null}
-          {hasSource && isRemoteSource && sourceLabel ? (
-            <span className={metaChipClass} title={sourceTitle}>
-              {t("relayedFrom", { label: sourceLabel })}
-            </span>
-          ) : null}
-          {hasSource && !isRemoteSource ? (
-            <button
-              type="button"
-              className={classNames(
-                metaChipClass,
-                relayChipClass,
-                onOpenSource
-                  ? "cursor-pointer transition-colors hover:opacity-100"
-                  : "cursor-default",
-              )}
-              onClick={() => onOpenSource?.(srcGroupId, srcEventId)}
-              disabled={!onOpenSource}
-              title={sourceTitle}
-            >
-              <span className="opacity-65">↗</span>
-              <span className="truncate">{t("relayedFrom", { label: sourceLabel })}</span>
-            </button>
-          ) : null}
-          {hasDestination
-            ? (() => {
-                const dstLabel = destinationLabel;
-                const dstToLabel = dstTo.join(", ");
-                // A delegation relay request is an agent contacting the
-                // target group on the user's behalf — show "Relayed to"
-                // so it never reads like a user direct cross-send.
-                const chipKey = destinationChipKey(messageText);
-                return (
-                  <div
-                    className={classNames(metaChipClass, relayChipClass)}
-                    title={t(chipKey, { label: destinationLabel, to: dstToLabel })}
-                  >
-                    <span className="opacity-65">↗</span>
-                    <span className="truncate">
-                      {t(chipKey, { label: dstLabel, to: dstToLabel })}
-                    </span>
-                  </div>
-                );
-              })()
-            : null}
-        </div>
-      ) : null}
-
-      {quoteText ? (
-        canJumpToReplyTarget ? (
-          <button
-            type="button"
-            className={classNames(
-              quoteClassName,
-              "mb-3 block w-full cursor-pointer appearance-none bg-transparent text-left text-inherit transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(35,36,37)]/20 dark:focus-visible:ring-white/25",
-            )}
-            onClick={(mouseEvent) => {
-              mouseEvent.stopPropagation();
-              onOpenReplyTarget?.(String(replyToEventId || ""));
-            }}
-            title={t("jumpToRepliedMessage")}
-            aria-label={t("jumpToRepliedMessage")}
-          >
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
-              {t("reply")}
-            </span>
-            <span className="block">"{quoteText}"</span>
-          </button>
-        ) : (
-          <div className={classNames(quoteClassName, "mb-3")}>
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
-              {t("reply")}
-            </span>
-            <span className="block">"{quoteText}"</span>
-          </div>
-        )
-      ) : null}
+      {quoteText && (
+        <MessageReplyQuote
+          key={replyToEventId || quoteText}
+          text={quoteText}
+          replyToEventId={replyToEventId}
+          onOpenReplyTarget={onOpenReplyTarget}
+        />
+      )}
 
       <MessageReferenceSections
         event={event}
@@ -360,6 +253,22 @@ export const MessageBubble = memo(
     const isStreaming = !!ev._streaming;
     const canReply = !!getReplyEventId(ev);
     const messageText = useMemo(() => formatEventLine(ev), [ev]);
+    const pendingStore = useContext(PendingReplyStoreContext);
+    const liveStatuses = useContext(LivePendingStatusContext);
+    const liveEntry = ev.id && liveStatuses ? liveStatuses[ev.id] : undefined;
+    const liveStatus = liveEntry?.status;
+    const replyEvent = useMemo(
+      () =>
+        liveEntry === undefined
+          ? ev
+          : {
+              ...ev,
+              _user_request: liveStatus?.user_request,
+              _obligation_status: liveStatus?.obligation_status,
+            },
+      [ev, liveEntry, liveStatus],
+    );
+    const replyView = !readOnly && pendingStore ? pendingReplyView(replyEvent) : null;
 
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
     const [copiedMessageText, setCopiedMessageText] = useState(false);
@@ -474,9 +383,17 @@ export const MessageBubble = memo(
     // status, not conversation content. Target-side inbound delegation still
     // shows the natural contact body while hiding the protocol comment.
     const bubbleBodyText = useMemo(() => {
+      if (replyView?.question) {
+        if (replyView.state === "pending")
+          return [replyView.question.context, replyView.question.prompt]
+            .filter(Boolean)
+            .join("\n\n");
+        if (replyView.state === "answered" || replyView.state === "withdrawn")
+          return recordedQuestionText(replyView.question, t("pendingReply.recommended"));
+      }
       if (delegationSourceOutbound) return getDelegationSourceOutboundStatus(displayMessageText);
       return getDelegationDisplayText(displayMessageText);
-    }, [delegationSourceOutbound, displayMessageText]);
+    }, [delegationSourceOutbound, displayMessageText, replyView?.state, replyView?.question, t]);
     const presentationRefs = useMemo(
       () => getPresentationMessageRefs(msgData?.refs),
       [msgData?.refs],
@@ -676,8 +593,6 @@ export const MessageBubble = memo(
       0,
       visibleReadStatusEntries.length - readPreviewEntries.length,
     );
-    const relayChipClass =
-      "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] shadow-none hover:bg-[var(--glass-tab-bg-hover)]";
 
     useEffect(() => {
       if (!copiedMessageText) return undefined;
@@ -696,10 +611,28 @@ export const MessageBubble = memo(
       }
     }, [copyWithFeedback, copyableMessageText, t]);
 
+    const routingMetadata = (
+      <MessageRoutingMetadata
+        toLabel={isDirectUserMessage && !hasSource && !hasDestination ? "" : toLabel}
+        isMail={isMail}
+        hasSource={hasSource}
+        sourceLabel={sourceLabel}
+        sourceTitle={sourceTitle}
+        isRemoteSource={isRemoteSource}
+        srcGroupId={srcGroupId}
+        srcEventId={srcEventId}
+        hasDestination={hasDestination}
+        destinationLabel={destinationLabel}
+        dstTo={dstTo.map((id) => destinationNames.get(id) || id)}
+        messageText={displayMessageText}
+        onOpenSource={onOpenSource}
+      />
+    );
+
     return (
       <div
         className={classNames(
-          "relative flex w-full min-w-0 gap-2 sm:gap-3 group",
+          "message-row relative flex w-full min-w-0 gap-2 sm:gap-3 group",
           // Scale the opposite gutter with the message column, leaving room beyond the desktop avatar.
           isUserMessage
             ? "flex-col items-end pl-[clamp(1.5rem,8%,2rem)] sm:items-start sm:flex-row-reverse sm:pl-[clamp(6rem,12%,12rem)]"
@@ -785,7 +718,9 @@ export const MessageBubble = memo(
                 senderRuntime={senderRuntime || undefined}
                 avatarRingClassName={senderAccent?.ring}
                 remoteBadgeLabel={remoteBadgeLabel || undefined}
-              />
+              >
+                {routingMetadata}
+              </MessageMetadataHeader>
 
               <MessageMetadataHeader
                 isUserMessage={isUserMessage}
@@ -795,9 +730,15 @@ export const MessageBubble = memo(
                 messageTimestamp={messageTimestamp}
                 fullMessageTimestamp={fullMessageTimestamp}
                 remoteBadgeLabel={remoteBadgeLabel || undefined}
-              />
+              >
+                {routingMetadata}
+              </MessageMetadataHeader>
             </>
-          ) : null}
+          ) : (
+            <div className="mb-1 flex min-w-0 flex-wrap items-center gap-x-2 text-xs">
+              {routingMetadata}
+            </div>
+          )}
 
           {/* Bubble wrapper (allows badge to overflow) */}
           <div
@@ -829,34 +770,28 @@ export const MessageBubble = memo(
                 event={ev}
                 isUserMessage={isUserMessage}
                 isDark={isDark}
-                destinationLabel={destinationLabel}
-                toLabel={toLabel}
-                hasSource={hasSource}
-                sourceLabel={sourceLabel}
-                sourceTitle={sourceTitle}
-                isRemoteSource={isRemoteSource}
-                srcGroupId={srcGroupId}
-                srcEventId={srcEventId}
-                hasDestination={hasDestination}
-                dstTo={dstTo.map((id) => destinationNames.get(id) || id)}
-                relayChipClass={relayChipClass}
                 quoteText={quoteText}
                 replyToEventId={replyToEventId}
                 presentationRefs={presentationRefs}
                 voiceDocumentRefs={voiceDocumentRefs}
                 taskRefs={taskRefs}
                 taskById={taskById}
-                messageText={displayMessageText}
                 bodyText={bubbleBodyText}
                 insight={insight}
                 shouldRenderMarkdown={shouldRenderMarkdown}
                 blobAttachments={blobAttachments}
                 blobGroupId={blobGroupId}
                 stableMessageAttachmentKey={stableMessageAttachmentKey}
-                onOpenSource={onOpenSource}
                 onOpenPresentationRef={onOpenPresentationRef}
                 onOpenTaskRef={onOpenTaskRef}
                 onOpenReplyTarget={onOpenReplyTarget}
+              />
+              <PendingReplySlot
+                event={replyEvent}
+                groupId={groupId}
+                readOnly={readOnly}
+                checking={liveEntry?.checking}
+                onUseComposer={onReply}
               />
             </MessageBubbleSurface>
           </div>
@@ -871,7 +806,6 @@ export const MessageBubble = memo(
             displayNameMap={displayNameMap}
             isDark={isDark}
             isMail={isMail}
-            replyRequested={replyRequested}
             copiedMessageText={copiedMessageText}
             copyableMessageText={copyableMessageText}
             onCopyMessageText={() => void handleCopyMessageText()}
@@ -896,6 +830,7 @@ export const MessageBubble = memo(
       prevProps.agentState === nextProps.agentState &&
       prevProps.taskById === nextProps.taskById &&
       prevProps.isDark === nextProps.isDark &&
+      prevProps.readOnly === nextProps.readOnly &&
       prevProps.groupId === nextProps.groupId &&
       prevProps.groupLabelById === nextProps.groupLabelById &&
       prevProps.webModelDeliveryStatus === nextProps.webModelDeliveryStatus &&

@@ -270,6 +270,9 @@ fn session(
 }
 
 fn binding_identity(args: &Map<String, Value>) -> Value {
+    if let Some(binding) = args.get("_cccc_native_binding") {
+        return binding.clone();
+    }
     args.get("_cccc_web_binding")
         .map(|binding| {
             if binding["transport"] == "mcp_events" {

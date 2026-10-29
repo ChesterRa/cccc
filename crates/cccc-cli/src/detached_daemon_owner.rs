@@ -73,6 +73,10 @@ pub(crate) async fn force_stop_shared(owner: &SharedOwnedDetachedDaemon) -> Resu
 
 #[cfg(windows)]
 impl OwnedDetachedDaemon {
+    pub(crate) fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     pub(crate) async fn start(home: &HomeLayout, client: &DaemonClient) -> Result<Option<Self>> {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {

@@ -17,6 +17,7 @@ import { useWebAccessSessionSummaries } from "./useWebAccessSessionSummaries";
 import { WebAccessReachabilityActions } from "./WebAccessReachabilityActions";
 import * as api from "../../../services/api";
 import { endConnectFrame } from "../../../features/connect/protocol";
+import { unbindBeforeSignOut } from "../../../features/pushNotifications/subscription";
 import {
   inputClass,
   labelClass,
@@ -645,6 +646,8 @@ export function WebAccessTab({
     setError("");
     setSignOutBusy(true);
     try {
+      // While still signed in: the server stops notifying this browser for it.
+      await unbindBeforeSignOut();
       const resp = await api.logoutWebAccess();
       if (!resp.ok) {
         setError(resp.error?.message || t("webAccess.loadFailed"));

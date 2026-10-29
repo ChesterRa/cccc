@@ -87,7 +87,7 @@ fn create_using(
     match finish_create(home, request, &group_store, created, detected, steps) {
         Ok(group) => object(json!({
             "group_id": group.group_id,
-            "group": super::group_runtime::group(group),
+            "group": super::group_runtime::group(home, group),
         })),
         Err(failure) => Err(rollback_create(
             home,

@@ -402,6 +402,7 @@ while True:
                 group: group.clone(),
                 actor: actor.clone(),
                 event,
+                claimed: true,
             };
             assert!(
                 matches!(

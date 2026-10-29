@@ -10,6 +10,7 @@ interface ModalFrameProps {
   titleId: string;
   title: ReactNode;
   closeAriaLabel: string;
+  closeDisabled?: boolean;
   panelClassName: string;
   headerActions?: ReactNode;
   headerClassName?: string;
@@ -32,6 +33,7 @@ export function ModalFrame({
   titleId,
   title,
   closeAriaLabel,
+  closeDisabled = false,
   panelClassName,
   headerActions,
   headerClassName = "",
@@ -49,7 +51,8 @@ export function ModalFrame({
     <button
       type="button"
       onClick={onClose}
-      className={`flex min-h-10 min-w-10 max-sm:min-h-11 max-sm:min-w-11 items-center justify-center rounded-lg border border-[var(--color-border-primary)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] ${floatingCloseButtonClassName}`}
+      disabled={closeDisabled}
+      className={`flex min-h-10 min-w-10 max-sm:min-h-11 max-sm:min-w-11 items-center justify-center rounded-lg border border-[var(--color-border-primary)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] disabled:cursor-not-allowed disabled:opacity-50 ${floatingCloseButtonClassName}`}
       aria-label={closeAriaLabel}
     >
       {closeIcon || (
@@ -84,7 +87,7 @@ export function ModalFrame({
     >
       <div
         className={`${inline ? "hidden" : ""} absolute inset-0 glass-overlay transition-opacity duration-200 ${isOpen ? "opacity-100" : "opacity-0"}`}
-        onPointerDown={isOpen ? onClose : undefined}
+        onPointerDown={isOpen && !closeDisabled ? onClose : undefined}
         aria-hidden="true"
       />
 

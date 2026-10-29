@@ -8,6 +8,7 @@ import type {
   TaskChecklistItem,
   TaskWaitingOn,
 } from "../../types";
+import type { TaskUpdatePatch } from "../../services/api";
 import { formatTime } from "../../utils/time";
 import { getTaskDisplaySummary, resolveTaskType, type TaskTypeId } from "../../utils/taskWorkflow";
 
@@ -19,7 +20,7 @@ export interface BriefDraft {
   projectBriefStale: boolean;
 }
 
-export interface TaskDraft {
+export interface TaskDraftFields {
   title: string;
   outcome: string;
   status: string;
@@ -31,8 +32,23 @@ export interface TaskDraft {
   waitingOn: TaskWaitingOn;
   handoffTo: string;
   notes: string;
-  checklist: string;
+  checklist: TaskChecklistItem[];
 }
+
+/**
+ * A task being edited, with what it was made from: edits are told from
+ * changes made elsewhere by comparing with `base`, and saving is refused
+ * once the task has moved past `base.rev`. A new task has no revision.
+ */
+export interface TaskDraft extends TaskDraftFields {
+  base: { rev: number | undefined; fields: TaskDraftFields };
+}
+
+/**
+ * Why a draft may be behind its task: the task changed since the draft was
+ * made from it, or a save went through but what it saved could not be read.
+ */
+export type TaskStale = "" | "changed" | "unconfirmed";
 
 export interface NoteDraft {
   summary: string;
@@ -75,6 +91,32 @@ export function getWaitingOnOptions(
   ];
 }
 
+/** The label `labels` has for `key` itself; a key is free text, so not one it inherits. */
+function ownLabel(labels: Record<string, string>, key: string): string {
+  return Object.prototype.hasOwnProperty.call(labels, key) ? labels[key] : "";
+}
+
+export function taskStatusLabel(status: string, tr: ContextTranslator): string {
+  const labels: Record<string, string> = {
+    planned: tr("context.planned", "Planned"),
+    active: tr("context.active", "Active"),
+    done: tr("context.done", "Done"),
+    archived: tr("context.archived", "Archived"),
+  };
+  return ownLabel(labels, status) || status;
+}
+
+export function priorityLabel(value: string, tr: ContextTranslator): string {
+  const labels: Record<string, string> = {
+    low: tr("context.priorityLow", "Low"),
+    medium: tr("context.priorityMedium", "Medium"),
+    normal: tr("context.priorityNormal", "Normal"),
+    high: tr("context.priorityHigh", "High"),
+    urgent: tr("context.priorityUrgent", "Urgent"),
+  };
+  return ownLabel(labels, value.trim().toLowerCase()) || value;
+}
+
 export function isVisibleContextAgent(agent: AgentState | null | undefined): boolean {
   const id = String(agent?.id || "").trim();
   return Boolean(id);
@@ -101,6 +143,12 @@ export function taskDisplaySummary(task: Task | null | undefined): string {
 
 export function taskStatus(task: Task | null | undefined): string {
   return String(task?.status || "planned").toLowerCase();
+}
+
+/** Completed and archived tasks retain their fields for a later reopen. */
+export function taskIsLive(task: Task | null | undefined): boolean {
+  const status = taskStatus(task);
+  return status !== "done" && status !== "archived";
 }
 
 export function taskArchivedFrom(task: Task | null | undefined): string {
@@ -160,6 +208,39 @@ export function getTaskDeleteInfo(task: Task | null | undefined, allTasks: Task[
   return { allowed: true, total: subtree.length, reason: "" };
 }
 
+export type SubtaskProgress = { done: number; total: number };
+
+function liveParentId(task: Task): string {
+  const parentId = String(task.parent_id || "").trim();
+  if (!parentId || parentId === String(task.id || "").trim()) return "";
+  return taskStatus(task) === "archived" ? "" : parentId;
+}
+
+// Direct, non-archived subtasks only; a grandchild counts for its own parent.
+export function subtaskProgressByParent(tasks: readonly Task[]): Map<string, SubtaskProgress> {
+  const progress = new Map<string, SubtaskProgress>();
+  for (const task of tasks) {
+    const parentId = liveParentId(task);
+    if (!parentId) continue;
+    const current = progress.get(parentId) || { done: 0, total: 0 };
+    progress.set(parentId, {
+      done: current.done + (taskStatus(task) === "done" ? 1 : 0),
+      total: current.total + 1,
+    });
+  }
+  return progress;
+}
+
+export function directSubtasks(taskId: string, tasks: readonly Task[]): Task[] {
+  const id = String(taskId || "").trim();
+  if (!id) return [];
+  return tasks
+    .filter((task) => liveParentId(task) === id)
+    .sort((left, right) =>
+      String(left.id || "").localeCompare(String(right.id || ""), undefined, { numeric: true }),
+    );
+}
+
 export function listToText(items: string[] | null | undefined): string {
   return Array.isArray(items) ? items.join("\n") : "";
 }
@@ -171,38 +252,47 @@ export function parseLineList(text: string): string[] {
     .filter(Boolean);
 }
 
-export function checklistToText(items: TaskChecklistItem[] | null | undefined): string {
-  if (!Array.isArray(items) || items.length === 0) return "";
-  return items
-    .map((item) => {
-      const status = String(item.status || "pending").toLowerCase();
-      const mark = status === "done" ? "[x]" : status === "in_progress" ? "[~]" : "[ ]";
-      return `${mark} ${String(item.text || "").trim()}`.trim();
-    })
-    .join("\n");
+/**
+ * An id no item in `items` has, in the `item-N` form agents also use: one
+ * past the highest N, or the lowest free N once that is past what a number
+ * holds exactly. Ids are any text, so their N can be that large.
+ */
+export function nextChecklistItemId(items: readonly TaskChecklistItem[]): string {
+  const highest = items.reduce((max, item) => {
+    const n = Number(/^item-(\d+)$/.exec(item.id)?.[1] || 0);
+    return Number.isSafeInteger(n) ? Math.max(max, n) : max;
+  }, 0);
+  if (Number.isSafeInteger(highest + 1)) return `item-${highest + 1}`;
+  const taken = new Set(items.map((item) => item.id));
+  let next = 1;
+  while (taken.has(`item-${next}`)) next += 1;
+  return `item-${next}`;
 }
 
-export function parseChecklist(
-  text: string,
-  previous: TaskChecklistItem[] | null | undefined,
-): TaskChecklistItem[] {
-  const prior = Array.isArray(previous) ? previous : [];
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line, index) => {
-      const match = line.match(/^(?:[-*]\s*)?\[(x|X|~| )\]\s*(.+)$/);
-      const status = match
-        ? match[1].toLowerCase() === "x"
-          ? "done"
-          : match[1] === "~"
-            ? "in_progress"
-            : "pending"
-        : "pending";
-      const textValue = (match ? match[2] : line.replace(/^[-*]\s*/, "")).trim();
-      return { id: String(prior[index]?.id || `item-${index + 1}`), text: textValue, status };
-    });
+/** The items worth keeping: those with any text, kept as written. */
+export function checklistToSave(items: readonly TaskChecklistItem[]): TaskChecklistItem[] {
+  return items.filter((item) => item.text.trim());
+}
+
+/** Custom statuses are retained as written and are not classified as open. */
+export function checklistItemOpen(item: TaskChecklistItem): boolean {
+  return !item.status || item.status === "pending" || item.status === "in_progress";
+}
+
+function draftChecklist(items: TaskChecklistItem[] | null | undefined): TaskChecklistItem[] {
+  const draft: TaskChecklistItem[] = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    // Items stored without an id, or with one an earlier item has, get one,
+    // the same each time. The status is kept as stored, whatever it is,
+    // until the item is ticked or unticked.
+    const stored = String(item.id || "");
+    const id =
+      stored && !draft.some((kept) => kept.id === stored)
+        ? stored
+        : nextChecklistItemId([...(items || []), ...draft]);
+    draft.push({ id, text: String(item.text || ""), status: item.status });
+  }
+  return draft;
 }
 
 export function briefToDraft(brief: CoordinationBrief | null | undefined): BriefDraft {
@@ -215,7 +305,7 @@ export function briefToDraft(brief: CoordinationBrief | null | undefined): Brief
   };
 }
 
-export function taskToDraft(task: Task): TaskDraft {
+function taskDraftFields(task: Task): TaskDraftFields {
   return {
     title: taskTitle(task),
     outcome: taskOutcome(task),
@@ -236,25 +326,31 @@ export function taskToDraft(task: Task): TaskDraft {
     waitingOn: (String(task.waiting_on || "none") || "none") as TaskWaitingOn,
     handoffTo: String(task.handoff_to || ""),
     notes: String(task.notes || ""),
-    checklist: checklistToText(task.checklist),
+    checklist: draftChecklist(task.checklist),
   };
 }
 
-export function emptyTaskDraft(status: BoardStatus = "planned"): TaskDraft {
-  return {
+export function taskToDraft(task: Task): TaskDraft {
+  const fields = taskDraftFields(task);
+  return { ...fields, base: { rev: task.rev, fields } };
+}
+
+export function emptyTaskDraft(status: BoardStatus = "planned", parentId = ""): TaskDraft {
+  const fields: TaskDraftFields = {
     title: "",
     outcome: "",
     status,
-    taskType: "standard",
+    taskType: parentId ? "free" : "standard",
     assignee: "",
     priority: "",
-    parentId: "",
+    parentId,
     blockedBy: "",
     waitingOn: "none",
     handoffTo: "",
     notes: "",
-    checklist: "",
+    checklist: [],
   };
+  return { ...fields, base: { rev: undefined, fields } };
 }
 
 export function alignTaskDraftTaskType(
@@ -270,22 +366,70 @@ export function alignTaskDraftTaskType(
   return taskType;
 }
 
-export function taskDraftDirty(draft: TaskDraft | null | undefined): boolean {
-  if (!draft) return false;
-  return !!(
-    draft.title.trim() ||
-    draft.outcome.trim() ||
-    draft.taskType !== "standard" ||
-    draft.assignee.trim() ||
-    draft.priority.trim() ||
-    draft.parentId.trim() ||
-    draft.blockedBy.trim() ||
-    (draft.waitingOn && draft.waitingOn !== "none") ||
-    draft.handoffTo.trim() ||
-    draft.notes.trim() ||
-    draft.checklist.trim() ||
-    String(draft.status || "planned") !== "planned"
+/** Whether the draft holds edits: it differs from what it was made from. */
+export function taskDraftChanged(draft: TaskDraft | null | undefined): boolean {
+  return !!draft && !sameTaskDraftFields(draft, draft.base.fields);
+}
+
+function sameTaskDraftFields(left: TaskDraftFields, right: TaskDraftFields): boolean {
+  return (
+    left.title === right.title &&
+    left.outcome === right.outcome &&
+    left.status === right.status &&
+    left.taskType === right.taskType &&
+    left.assignee === right.assignee &&
+    left.priority === right.priority &&
+    left.parentId === right.parentId &&
+    left.blockedBy === right.blockedBy &&
+    left.waitingOn === right.waitingOn &&
+    left.handoffTo === right.handoffTo &&
+    left.notes === right.notes &&
+    sameChecklist(left.checklist, right.checklist)
   );
+}
+
+function sameChecklist(left: TaskChecklistItem[], right: TaskChecklistItem[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((item, index) => {
+      const other = right[index];
+      return item.id === other.id && item.text === other.text && item.status === other.status;
+    })
+  );
+}
+
+/**
+ * What a draft changed from what it was made from, and nothing else: a field
+ * left alone is not sent, so it is not rewritten in the form this editor
+ * would give it.
+ */
+export function taskDraftPatch(draft: TaskDraft): TaskUpdatePatch {
+  const base = draft.base.fields;
+  const patch: TaskUpdatePatch = {};
+  if (draft.title !== base.title) patch.title = draft.title.trim();
+  if (draft.outcome !== base.outcome) patch.outcome = draft.outcome;
+  if (draft.assignee !== base.assignee) patch.assignee = draft.assignee.trim() || null;
+  if (draft.priority !== base.priority) patch.priority = draft.priority.trim() || null;
+  if (draft.parentId !== base.parentId) patch.parent_id = draft.parentId.trim() || null;
+  if (draft.blockedBy !== base.blockedBy) patch.blocked_by = parseLineList(draft.blockedBy);
+  if (draft.waitingOn !== base.waitingOn) patch.waiting_on = draft.waitingOn;
+  if (draft.handoffTo !== base.handoffTo) patch.handoff_to = draft.handoffTo.trim() || null;
+  if (draft.taskType !== base.taskType) patch.task_type = draft.taskType;
+  if (draft.notes !== base.notes) patch.notes = draft.notes;
+  if (!sameChecklist(draft.checklist, base.checklist)) {
+    patch.checklist = checklistToSave(draft.checklist);
+  }
+  if (draft.status !== base.status) patch.status = draft.status;
+  return patch;
+}
+
+/**
+ * Whether `task` is the draft's base with what saving the draft sends, and
+ * nothing else, changed: how a save whose answer was lost shows it went through.
+ */
+export function taskHoldsDraftSave(task: Task, draft: TaskDraft): boolean {
+  const since = taskDraftPatch({ ...taskDraftFields(task), base: draft.base });
+  return JSON.stringify(since) === JSON.stringify(taskDraftPatch(draft));
 }
 
 export function countLike(value: number | TaskBoardEntry[] | undefined, fallback: number): number {
@@ -493,31 +637,9 @@ export function taskOptionLabel(task: Task): string {
   return title ? `${task.id} · ${title}` : task.id;
 }
 
-export function taskDraftMatches(
-  task: Task | null | undefined,
-  draft: TaskDraft | null | undefined,
-): boolean {
-  if (!task || !draft) return false;
+/** Whether a task, at the revision a draft was made from, still reads as that draft's base. */
+export function taskMatchesDraftBase(task: Task, draft: TaskDraft): boolean {
   return (
-    taskTitle(task) === draft.title &&
-    taskOutcome(task) === draft.outcome &&
-    taskStatus(task) === draft.status &&
-    resolveTaskType({
-      parent_id: task.parent_id,
-      task_type: task.task_type,
-      status: task.status,
-      assignee: task.assignee,
-      outcome: task.outcome,
-      notes: task.notes,
-      checklist: task.checklist,
-    }) === draft.taskType &&
-    String(task.assignee || "") === draft.assignee &&
-    String(task.priority || "") === draft.priority &&
-    String(task.parent_id || "") === draft.parentId &&
-    listToText(task.blocked_by) === draft.blockedBy &&
-    String(task.waiting_on || "none") === draft.waitingOn &&
-    String(task.handoff_to || "") === draft.handoffTo &&
-    String(task.notes || "") === draft.notes &&
-    checklistToText(task.checklist) === draft.checklist
+    task.rev === draft.base.rev && sameTaskDraftFields(taskDraftFields(task), draft.base.fields)
   );
 }

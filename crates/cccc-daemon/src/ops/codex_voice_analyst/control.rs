@@ -123,10 +123,12 @@ impl AnalystSession {
                 io::ErrorKind::Unsupported,
                 "this managed Runtime does not support safe in-turn steering",
             )),
-            ManagedProtocol::Claude(_) | ManagedProtocol::Pi(_) => Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "this managed Runtime does not support safe in-turn steering",
-            )),
+            ManagedProtocol::Claude(_) | ManagedProtocol::Pi(_) | ManagedProtocol::OpenCode(_) => {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "this managed Runtime does not support safe in-turn steering",
+                ))
+            }
         }
     }
 
@@ -147,6 +149,7 @@ impl AnalystSession {
                 .await
                 .map(|_| ()),
             ManagedProtocol::Acp(protocol) => protocol.cancel(&self.thread_id).await,
+            ManagedProtocol::OpenCode(protocol) => protocol.cancel(turn_id).await,
             ManagedProtocol::Claude(protocol) => protocol.cancel(turn_id).await,
             ManagedProtocol::Pi(protocol) => protocol.cancel(&self.thread_id, turn_id).await,
         }

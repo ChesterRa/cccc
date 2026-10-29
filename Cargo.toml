@@ -20,7 +20,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.4.44"
+version = "0.4.45"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/ChesterRa/cccc"
@@ -94,6 +94,7 @@ nix = { version = "0.28", features = ["signal"] }
 if-addrs = "0.15"
 uuid = { version = "1.17", features = ["v4", "serde"] }
 unicode-width = "0.2"
+unicase = "2.9"
 windows-sys = "0.61"
 renamore = "0.3.2"
 same-file = "1.0.6"

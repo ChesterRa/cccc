@@ -21,6 +21,17 @@ pub struct SuspendedChild {
 /// `creation_flags` is the caller's complete Windows creation-flag set; it is
 /// combined with CREATE_SUSPENDED, not silently replaced by that flag alone.
 pub fn spawn_suspended(command: &mut Command, creation_flags: u32) -> io::Result<SuspendedChild> {
+    spawn_suspended_with_creation_observer(command, creation_flags, || {})
+}
+
+/// Observe successful `Command::spawn` before any fallible thread lookup. This
+/// distinguishes creation failure from later setup failure without guessing
+/// from OS error codes. The child is already guarded but has not been resumed.
+pub fn spawn_suspended_with_creation_observer(
+    command: &mut Command,
+    creation_flags: u32,
+    created: impl FnOnce(),
+) -> io::Result<SuspendedChild> {
     command.creation_flags(creation_flags | CREATE_SUSPENDED);
     let result = command.spawn();
     // Command remains reusable with the caller's original flags.
@@ -29,6 +40,7 @@ pub fn spawn_suspended(command: &mut Command, creation_flags: u32) -> io::Result
         child: Some(result?),
         thread: None,
     };
+    created();
     suspended.thread = Some(primary_thread(suspended.child().id())?);
     Ok(suspended)
 }

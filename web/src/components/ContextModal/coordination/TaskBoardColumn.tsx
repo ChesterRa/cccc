@@ -2,7 +2,7 @@ import { useDroppable } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import { TASK_PAGE_SIZE } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
-import type { BoardStatus, ContextTranslator } from "../model";
+import type { BoardStatus, ContextTranslator, SubtaskProgress } from "../model";
 import type { ContextModalUi } from "../ui";
 import { TaskCard } from "./TaskCard";
 
@@ -15,12 +15,14 @@ export function TaskBoardColumn({
   totalCount,
   hasMore,
   loading,
+  subtaskProgress,
   tr,
   ui,
   syncBusy,
   selectedTaskId,
   onSelectTask,
   onMoveTaskToStatus,
+  onRestoreTask,
   onLoadMore,
 }: {
   columnKey: BoardStatus;
@@ -29,12 +31,14 @@ export function TaskBoardColumn({
   totalCount: number;
   hasMore: boolean;
   loading: boolean;
+  subtaskProgress: ReadonlyMap<string, SubtaskProgress>;
   tr: ContextTranslator;
   ui: ContextModalUi;
   syncBusy: boolean;
   selectedTaskId: string;
   onSelectTask: (task: Task) => void;
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
+  onRestoreTask: (task: Task) => void;
   onLoadMore: (status: BoardStatus) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
@@ -47,6 +51,7 @@ export function TaskBoardColumn({
   return (
     <section
       ref={setNodeRef}
+      aria-label={label}
       data-task-column={columnKey}
       data-rendered-task-count={items.length}
       data-total-task-count={totalCount}
@@ -71,12 +76,14 @@ export function TaskBoardColumn({
             <TaskCard
               key={task.id}
               task={task}
+              subtasks={subtaskProgress.get(task.id)}
               tr={tr}
               ui={ui}
               syncBusy={syncBusy}
               selected={selectedTaskId === task.id}
               onSelectTask={onSelectTask}
               onMoveTaskToStatus={onMoveTaskToStatus}
+              onRestoreTask={onRestoreTask}
             />
           ))
         ) : (

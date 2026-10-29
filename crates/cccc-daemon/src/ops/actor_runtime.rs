@@ -13,10 +13,13 @@ mod reconcile;
 pub(crate) mod terminal_history;
 #[cfg(test)]
 mod untrusted_workspace_tests;
+mod workspace;
 pub(crate) use attributed_reap::reap_group;
 pub use persistence::persist_lifecycle;
 pub(crate) use reconcile::record_process_exit;
 pub use reconcile::{reap_exited, reconcile_exited};
+pub(crate) use workspace::LaunchWorkspace;
+pub(super) use workspace::{caller_scope, effective_scope, session_prompt};
 
 /// Claude Code refused the Actor's workspace; only the operator can accept its trust prompt.
 pub(crate) const CLAUDE_WORKSPACE_UNTRUSTED: &str = "claude_workspace_untrusted";
@@ -34,6 +37,9 @@ pub fn apply(
         .iter()
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("not_found", format!("actor not found: {actor_id}")))?;
+    if !stored_actor.external_session_id.is_empty() {
+        return external_lifecycle(kind);
+    }
     // Configuration may already name a different backend. Lifecycle ownership
     // comes from the registries, not from the next launch configuration.
     if matches!(kind, "actor.stop" | "actor.restart" | "actor.new_session") {
@@ -65,6 +71,9 @@ pub(super) fn apply_resolved(
     actor: &Actor,
     kind: &str,
 ) -> Result<Option<SessionStatus>, OpError> {
+    if !actor.external_session_id.is_empty() {
+        return external_lifecycle(kind);
+    }
     let actor_id = &actor.id;
     if actor_id == "voice-secretary" || actor.internal_kind.as_deref() == Some("voice_secretary") {
         return Err(OpError::new(
@@ -108,6 +117,16 @@ pub(super) fn apply_resolved(
         return Ok(None);
     }
     start(home, group, actor).map(Some)
+}
+
+fn external_lifecycle(kind: &str) -> Result<Option<SessionStatus>, OpError> {
+    if matches!(kind, "actor.restart" | "actor.new_session") {
+        return Err(OpError::new(
+            "external_session_owned",
+            "Continue or reset this session in its original runtime; CCCC only controls its collaboration access",
+        ));
+    }
+    Ok(None)
 }
 
 fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
@@ -158,6 +177,19 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     let cwd = working_directory(group, &actor)?;
     let mut env = environment::launch_env(home, group, &actor);
     super::runtime_mcp::prepare(home, actor.runtime, &command, &cwd, &mut env)?;
+    // Only the PTY registry reads these host-owned attribution fields. Managed
+    // providers capture their workspace directly; changing their environment
+    // would invalidate otherwise compatible persisted conversation receipts.
+    env.insert(
+        "CCCC_SCOPE_KEY".into(),
+        cccc_core::group_scope::effective_scope(group, Some(&actor))
+            .map(|scope| scope.scope_key.clone())
+            .unwrap_or_default(),
+    );
+    env.insert(
+        "CCCC_ACTOR_GENERATION".into(),
+        cccc_core::actors::generation_identity(&actor),
+    );
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
     let command = cccc_runtime::resolve_command_executable(&command, &env);
@@ -277,7 +309,7 @@ pub fn stop_group(home: &HomeLayout, group: &GroupDoc) -> Result<Vec<SessionStat
 }
 
 pub(super) fn working_directory(group: &GroupDoc, actor: &Actor) -> Result<PathBuf, OpError> {
-    let wanted = if actor.default_scope_key.is_empty() {
+    let wanted = if actor.default_scope_key.trim().is_empty() {
         &group.active_scope_key
     } else {
         &actor.default_scope_key
@@ -288,7 +320,7 @@ pub(super) fn working_directory(group: &GroupDoc, actor: &Actor) -> Result<PathB
             "missing project root for group (no active scope)",
         ));
     }
-    let scope = cccc_core::group_scope::resolve_attached_scope(group, wanted).ok_or_else(|| {
+    let scope = cccc_core::group_scope::effective_scope(group, Some(actor)).ok_or_else(|| {
         OpError::new(
             "scope_not_attached",
             format!("scope not attached: {wanted}"),
@@ -301,7 +333,8 @@ pub(super) fn working_directory(group: &GroupDoc, actor: &Actor) -> Result<PathB
             format!("project root path does not exist: {}", path.display()),
         ));
     }
-    Ok(path)
+    path.canonicalize()
+        .map_err(|error| OpError::new("invalid_project_root", error.to_string()))
 }
 
 fn runtime_error(error: cccc_runtime::RuntimeError) -> OpError {

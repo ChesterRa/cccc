@@ -72,6 +72,15 @@ describe("useComposerTextareaAutoResize", () => {
     expect(host.querySelector("textarea")?.style.height).toBe("128px");
   });
 
+  it("does not read layout in fixed-height mode, including repeated typing", async () => {
+    const read = vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get");
+    await act(async () => root.render(<Probe value="a" minHeight={64} maxHeight={64} />));
+    await act(async () => root.render(<Probe value="longer text" minHeight={64} maxHeight={64} />));
+    expect(read).not.toHaveBeenCalled();
+    expect(host.querySelector("textarea")?.style.height).toBe("64px");
+    read.mockRestore();
+  });
+
   it("keeps a fixed desktop editing viewport while the draft grows", async () => {
     await act(async () => root.render(<Probe value="one line" minHeight={64} maxHeight={64} />));
     expect(host.querySelector("textarea")?.style.height).toBe("64px");

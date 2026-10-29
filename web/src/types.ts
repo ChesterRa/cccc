@@ -215,12 +215,20 @@ export type ConnectMessageRouting = {
   reply_to?: { event_id: string; delivery_id: string } | null;
 };
 
+export type UserReplyRequestStatus = {
+  question: "valid" | "none" | "unavailable";
+  requester: "available" | "unavailable" | "unknown" | "unsupported";
+  reply_event_id?: string;
+  reply_route?: "composer";
+};
+
 export type ChatMessageData = {
   connect_message?: ConnectMessageRouting;
   text?: string;
   insight?: string;
   to?: string[];
   message_mode?: MessageMode;
+  question?: unknown;
   sender_title?: string;
   sender_runtime?: string;
   sender_avatar_path?: string;
@@ -284,6 +292,7 @@ export type LedgerEvent = {
   _streaming?: boolean;
   _read_status?: Record<string, boolean>;
   _obligation_status?: Record<string, ObligationStatus>;
+  _user_request?: UserReplyRequestStatus;
   _retired_bridge?: boolean;
   _connect_delivery?: ConnectDeliveryStatus;
   _connect_cancellation?: ConnectDeliveryStatus;
@@ -304,6 +313,7 @@ export type HeadlessStreamEvent = {
 export type LedgerEventStatusPayload = {
   read_status?: Record<string, boolean>;
   obligation_status?: Record<string, ObligationStatus>;
+  user_request?: UserReplyRequestStatus;
   retired_bridge?: boolean;
   connect_delivery?: ConnectDeliveryStatus;
   connect_cancellation?: ConnectDeliveryStatus;
@@ -321,6 +331,8 @@ export type WebModelDeliveryStatusPayload = {
 export type RuntimeMode = "default" | "acp";
 
 export type Actor = {
+  /** User-owned native runtime; CCCC manages collaboration access only. */
+  external_session_id?: string;
   id: string;
   generation?: string;
   role?: string;
@@ -330,7 +342,7 @@ export type Actor = {
   has_custom_avatar?: boolean;
   enabled?: boolean;
   running?: boolean; // Actual process running status
-  idle_seconds?: number | null; // Seconds since last PTY output (null if not running/headless)
+  idle_seconds?: number | null; // Legacy idle duration, independent of terminal output activity.
   effective_working_state?: "stopped" | "idle" | "working" | "waiting" | "stuck" | string;
   effective_working_reason?: string;
   effective_working_updated_at?: string | null;
@@ -339,6 +351,7 @@ export type Actor = {
   env?: Record<string, string>;
   capability_autoload?: string[];
   capability_hidden?: string[];
+  default_scope_key?: string;
   runner?: string;
   runner_effective?: string;
   runtime?: string;
@@ -640,6 +653,8 @@ export type TaskChecklistItem = { id: string; text: string; status?: ChecklistSt
 
 export type Task = {
   id: string;
+  /** Daemon-owned revision used to protect edits against concurrent changes. */
+  rev?: number;
   title?: string | null;
   outcome?: string | null;
   parent_id?: string | null;
@@ -1983,4 +1998,35 @@ export function supportsAcpMode(runtime?: string | null): boolean {
     "hermes",
     "droid",
   ].includes(runtime || "");
+}
+
+export interface LocalSessionSource {
+  source_id: string;
+  runtime: "codex" | "claude" | "pi" | "opencode";
+  native_session_id: string;
+  cwd: string;
+  title: string;
+  origin?: string | null;
+  connected: boolean;
+}
+
+export interface LocalSessionRecovery {
+  group_id: string;
+  actor_id: string;
+  source_id: string;
+  /** Explicit qualification result; recovery data is revalidated independently. */
+  refresh_status?: "checked" | "unavailable" | "not_checked";
+  recovery: {
+    state:
+      | "connected"
+      | "disconnected"
+      | "host_exited"
+      | "session_ended"
+      | "integration_disabled"
+      | "unknown";
+    cwd: string | null;
+    shell: "posix" | "powershell";
+    /** Server-quoted command for the declared shell; manual use only. */
+    command: string;
+  };
 }

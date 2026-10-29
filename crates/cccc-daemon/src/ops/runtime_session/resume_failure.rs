@@ -64,7 +64,7 @@ fn supported(document: &Map<String, Value>) -> bool {
         ),
         ("codex", "codex_app_server")
             | ("grok", "grok_acp_leader")
-            | ("opencode", "opencode_acp_attach")
+            | ("opencode", "opencode_http_v2")
             | ("kilo", "kilo_acp_attach")
     )
 }
@@ -317,7 +317,7 @@ mod tests {
             let transport = match stored_runtime {
                 ActorRuntime::Codex => "codex_app_server",
                 ActorRuntime::Grok => "grok_acp_leader",
-                ActorRuntime::Opencode => "opencode_acp_attach",
+                ActorRuntime::Opencode => "opencode_http_v2",
                 ActorRuntime::Kilo => "kilo_acp_attach",
                 _ => unreachable!("native test runtimes"),
             };

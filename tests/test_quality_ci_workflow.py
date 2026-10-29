@@ -57,6 +57,7 @@ def test_pr_jobs_keep_quality_web_package_and_native_boundaries() -> None:
         "web",
         "package",
         "windows-smoke",
+        "tui-macos-smoke",
         "rust-linux",
         "ci-required",
     }
@@ -277,7 +278,7 @@ def test_ci_keeps_python_only_for_release_and_repository_tooling() -> None:
     assert "python-compat" not in jobs
     assert not any(
         step.get("uses", "").startswith("actions/setup-python")
-        for name in ("web", "windows-smoke", "rust-linux")
+        for name in ("web", "windows-smoke", "tui-macos-smoke", "rust-linux")
         for step in jobs[name]["steps"]
     )
 

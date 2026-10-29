@@ -198,6 +198,7 @@ async fn delayed_scope_call(
         name,
         args.as_object().expect("args").clone(),
         Some(crate::RequestContext {
+            native_binding: None,
             binding: Some(&fixture.binding),
             group_id: &fixture.group_id,
             actor_id: &fixture.actor_id,

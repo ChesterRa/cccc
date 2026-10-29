@@ -22,10 +22,10 @@ pub(crate) use events::{
     append as append_event, append_with_dedupe as append_event_with_dedupe,
     contains_dedupe as contains_event_dedupe,
 };
-pub(crate) use supervisor::registered_running;
 pub(crate) use supervisor::{
     cancel_turn, respond_interaction, respond_permission, structured_state,
 };
+pub(crate) use supervisor::{registered_running, registered_workspace};
 
 use cccc_core::HomeLayout;
 use serde::Serialize;
@@ -101,6 +101,9 @@ struct Session {
     home: HomeLayout,
     group_id: String,
     actor_id: String,
+    // Pure headless sessions may never have a viewer. The provider's launch
+    // workspace belongs to this owner, independently of terminal attachment.
+    workspace: super::actor_runtime::LaunchWorkspace,
     managed: std::sync::Arc<super::codex_voice_analyst::AnalystSession>,
     has_terminal: AtomicBool,
     viewer: Mutex<Option<ViewerLaunch>>,

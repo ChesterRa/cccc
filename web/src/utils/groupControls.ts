@@ -7,7 +7,11 @@ export type GroupMenuControl = {
   labelKey: "launchAllAgents" | "resumeDelivery" | "pauseDelivery" | "stopAllAgents";
 };
 
-/** Lifecycle actions shared by the Group header and sidebar menus. */
+/**
+ * Lifecycle actions shared by the Group header and sidebar menus. Only a
+ * stopped Group hides Stop: an Offline Group is still active or idle, so it
+ * offers Start for its Actors and Stop for its recorded lifecycle.
+ */
 export function getGroupMenuControls(
   status: GroupStatusKey | null | undefined,
 ): GroupMenuControl[] {

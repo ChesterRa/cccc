@@ -120,8 +120,13 @@ export function useGroupMenu(label: string, actions: GroupMenuActionItem[]) {
     onContextMenu(event: React.MouseEvent<HTMLElement>) {
       if (!actions.length) return;
       event.preventDefault();
-      event.currentTarget.focus();
-      refs.setReference(event.currentTarget);
+      // Expanded rows wrap the group button and its separate action buttons.
+      // Return focus to the primary button rather than the unfocusable row.
+      const trigger =
+        event.currentTarget.querySelector<HTMLButtonElement>(":scope > button") ??
+        event.currentTarget;
+      trigger.focus();
+      refs.setReference(trigger);
       refs.setPositionReference({
         getBoundingClientRect: () => new DOMRect(event.clientX, event.clientY, 0, 0),
       });

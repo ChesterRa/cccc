@@ -3,17 +3,383 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   cancelReplyRequest,
   contextSync,
+  deleteCoordinationTaskConfirmed,
   deliverMessage,
   enableGroupCapability,
   fetchContext,
   fetchSlashCommandCapabilityState,
   fetchGroupCapabilityState,
+  moveCoordinationTask,
+  restoreCoordinationTask,
   uninstallCapability,
   updateGroupCapabilityVisibility,
+  updateCoordinationTask,
   replyMessage,
   sendCrossGroupMessage,
   sendMessage,
 } from "./context";
+
+describe("task revision guards", () => {
+  const taskReceipt = (...ops: string[]) =>
+    new Response(
+      JSON.stringify({
+        ok: true,
+        result: { success: true, dry_run: false, changes: ops.map((op, index) => ({ index, op })) },
+      }),
+    );
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("fences the edit before the move in the same batch and passes conflicts through", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const conflict = {
+      ok: false,
+      error: { code: "task_conflict", message: "changed", details: { expected: 0, actual: 1 } },
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify(conflict), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    const response = await updateCoordinationTask(
+      "g1",
+      "T001",
+      { title: "new title", status: "active", notes: "old draft" },
+      0,
+    );
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      by: "user",
+      ops: [
+        {
+          op: "task.update",
+          task_id: "T001",
+          if_task_rev: 0,
+          title: "new title",
+          notes: "old draft",
+        },
+        { op: "task.move", task_id: "T001", status: "active" },
+      ],
+    });
+    expect(JSON.parse(String(request.body)).ops[1]).not.toHaveProperty("if_task_rev");
+    expect(response).toEqual(conflict);
+  });
+
+  it("sends only the fields explicitly changed, and only a guarded move for status alone", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(taskReceipt("task.update"))
+      .mockResolvedValueOnce(taskReceipt("task.move"));
+
+    expect(
+      await updateCoordinationTask("g1", "T001", { title: "new title", priority: null }, 3),
+    ).toMatchObject({ ok: true });
+    expect(await updateCoordinationTask("g1", "T001", { status: "done" }, 4)).toMatchObject({
+      ok: true,
+    });
+
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)));
+    expect(bodies[0].ops).toEqual([
+      { op: "task.update", task_id: "T001", if_task_rev: 3, title: "new title", priority: "" },
+    ]);
+    expect(bodies[1].ops).toEqual([
+      { op: "task.move", task_id: "T001", status: "done", if_task_rev: 4 },
+    ]);
+  });
+
+  it("treats an empty patch as a local no-op", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    expect(await updateCoordinationTask("g1", "T001", {}, undefined)).toMatchObject({ ok: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not treat an empty HTTP success as confirmation of a task write", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 200 }));
+
+    expect(await updateCoordinationTask("g1", "T001", { title: "draft" }, 1)).toMatchObject({
+      ok: false,
+      error: { code: "task_receipt_unconfirmed" },
+    });
+  });
+
+  it("requires each task operation and the created task ID in a success receipt", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const response = (changes: unknown, dryRun = false) =>
+      new Response(
+        JSON.stringify({ ok: true, result: { success: true, dry_run: dryRun, changes } }),
+      );
+    fetchMock
+      .mockResolvedValueOnce(response([{ index: 0, op: "task.create" }]))
+      .mockResolvedValueOnce(response([{ index: 0, op: "task.create", task_id: "T002" }]))
+      .mockResolvedValueOnce(response([{ index: 0, op: "task.move" }]))
+      .mockResolvedValueOnce(response([{ index: 0, op: "task.update" }], true));
+
+    const create = [{ op: "task.create", title: "Task" }];
+    const update = [{ op: "task.update", task_id: "T001", title: "Task" }];
+    expect(await contextSync("g1", create)).toMatchObject({
+      ok: false,
+      error: { code: "task_receipt_unconfirmed" },
+    });
+    expect(await contextSync("g1", create)).toMatchObject({ ok: true });
+    expect(await contextSync("g1", update)).toMatchObject({
+      ok: false,
+      error: { code: "task_receipt_unconfirmed" },
+    });
+    expect(await contextSync("g1", update)).toMatchObject({
+      ok: false,
+      error: { code: "task_receipt_unconfirmed" },
+    });
+  });
+
+  it("checks every operation in a task batch and accepts a matching dry run", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const ops = [
+      { op: "task.update", task_id: "T001", title: "Task" },
+      { op: "task.move", task_id: "T001", status: "active" },
+    ];
+    const result = (changes: unknown, dryRun: boolean) =>
+      new Response(
+        JSON.stringify({ ok: true, result: { success: true, dry_run: dryRun, changes } }),
+      );
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(result([{ index: 0, op: "task.update" }], false))
+      .mockResolvedValueOnce(
+        result(
+          [
+            { index: 0, op: "task.update" },
+            { index: 1, op: "task.move" },
+          ],
+          true,
+        ),
+      );
+
+    expect(await contextSync("g1", ops)).toMatchObject({
+      ok: false,
+      error: { code: "task_receipt_unconfirmed" },
+    });
+    expect(await contextSync("g1", ops, true)).toMatchObject({ ok: true });
+  });
+
+  it("includes the observed revision in an independent move", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(taskReceipt("task.move"));
+
+    expect(await moveCoordinationTask("g1", "T001", "done", 7)).toMatchObject({ ok: true });
+
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)));
+    expect(bodies[0].ops).toEqual([
+      { op: "task.move", task_id: "T001", status: "done", if_task_rev: 7 },
+    ]);
+  });
+
+  it("restores an archived task with its observed revision", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(taskReceipt("task.restore"));
+
+    expect(await restoreCoordinationTask("g1", "T001", 7)).toMatchObject({ ok: true });
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body)).ops).toEqual([
+      { op: "task.restore", task_id: "T001", if_task_rev: 7 },
+    ]);
+    expect(await restoreCoordinationTask("g1", "T001", undefined)).toMatchObject({
+      ok: false,
+      error: { code: "task_revision_unavailable" },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  const detailResponse = (tasksVersion = "tasksv:9", rev = 0, total = 2) =>
+    new Response(
+      JSON.stringify({
+        ok: true,
+        result: {
+          task: { id: "T002", rev },
+          tasks_version: tasksVersion,
+          delete_info: { allowed: true, total },
+        },
+      }),
+    );
+  const contextResponse = (tasksVersion = "tasksv:9") =>
+    new Response(
+      JSON.stringify({
+        ok: true,
+        result: { version: "ctxv:4", tasks_version: tasksVersion, coordination: { tasks: [] } },
+      }),
+    );
+  const confirmed = { rev: 0, total: 2, tasksVersion: "tasksv:9" };
+
+  it("checks the confirmed task snapshot and sends both revision guards for deletion", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(detailResponse())
+      .mockResolvedValueOnce(contextResponse())
+      .mockResolvedValueOnce(taskReceipt("task.delete"));
+
+    const result = await deleteCoordinationTaskConfirmed("g1", "T002", confirmed);
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock.mock.calls[0]?.[1]?.cache).toBe("no-store");
+    expect(fetchMock.mock.calls[1]?.[1]?.cache).toBe("no-store");
+    const request = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      if_version: "ctxv:4",
+      ops: [{ op: "task.delete", task_id: "T002", if_task_rev: 0 }],
+    });
+  });
+
+  it("rejects a replaced child even if the root revision and total are unchanged", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(detailResponse("tasksv:10"));
+
+    const result = await deleteCoordinationTaskConfirmed("g1", "T002", confirmed);
+
+    expect(result).toMatchObject({ ok: false, error: { code: "task_changed" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a task change between the detail and context reads", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(detailResponse())
+      .mockResolvedValueOnce(contextResponse("tasksv:10"));
+
+    const result = await deleteCoordinationTaskConfirmed("g1", "T002", confirmed);
+
+    expect(result).toMatchObject({ ok: false, error: { code: "task_changed" } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("turns a later context conflict into a request to confirm again", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(detailResponse())
+      .mockResolvedValueOnce(contextResponse())
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: false, error: { code: "version_conflict" } }), {
+          status: 409,
+        }),
+      );
+
+    expect(await deleteCoordinationTaskConfirmed("g1", "T002", confirmed)).toMatchObject({
+      ok: false,
+      error: { code: "task_changed" },
+    });
+  });
+
+  it("leaves deletion unattempted and reports a failed context read", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(detailResponse())
+      .mockRejectedValueOnce(new Error("offline"));
+
+    const result = await deleteCoordinationTaskConfirmed("g1", "T002", confirmed);
+
+    expect(result).toMatchObject({ ok: false, error: { code: "task_delete_check_unavailable" } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send a deletion when reading the task fails", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("offline"));
+
+    expect(await deleteCoordinationTaskConfirmed("g1", "T002", confirmed)).toMatchObject({
+      ok: false,
+      error: { code: "task_delete_check_unavailable" },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not issue a delete when the task has already disappeared", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ ok: false, error: { code: "task_not_found", message: "gone" } }),
+          { status: 404 },
+        ),
+      );
+
+    const result = await deleteCoordinationTaskConfirmed("g1", "T002", confirmed);
+
+    expect(result).toMatchObject({ ok: false, error: { code: "task_not_found" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["permission_denied", "group_not_found"])(
+    "keeps the known %s reason when the deletion check is refused",
+    async (code) => {
+      vi.stubGlobal("window", { location: { search: "" } });
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ ok: false, error: { code, message: "refused" } }), {
+            status: 403,
+          }),
+        );
+
+      expect(await deleteCoordinationTaskConfirmed("g1", "T002", confirmed)).toMatchObject({
+        ok: false,
+        error: { code },
+      });
+      expect(fetchMock).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([undefined, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])(
+    "refuses all task writes when the revision %s is not trustworthy",
+    async (revision) => {
+      vi.stubGlobal("window", { location: { search: "" } });
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+
+      const responses = await Promise.all([
+        updateCoordinationTask("g1", "T001", { title: "changed" }, revision),
+        moveCoordinationTask("g1", "T001", "active", revision),
+        deleteCoordinationTaskConfirmed("g1", "T001", {
+          rev: revision,
+          total: 1,
+          tasksVersion: "tasksv:1",
+        }),
+      ]);
+
+      for (const response of responses) {
+        expect(response).toMatchObject({ ok: false, error: { code: "task_revision_unavailable" } });
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { rev: 1, total: 0, tasksVersion: "tasksv:1" },
+    { rev: 1, total: 1, tasksVersion: "" },
+  ])("refuses deletion without a complete confirmed snapshot", async (snapshot) => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    expect(await deleteCoordinationTaskConfirmed("g1", "T001", snapshot)).toMatchObject({
+      ok: false,
+      error: { code: "task_revision_unavailable" },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("capability state API helpers", () => {
   afterEach(() => {

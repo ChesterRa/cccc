@@ -20,7 +20,7 @@ fn transport(runtime: ActorRuntime) -> &'static str {
     if runtime == ActorRuntime::Kilo {
         "kilo_acp_attach"
     } else {
-        "opencode_acp_attach"
+        "opencode_http_v2"
     }
 }
 
@@ -40,6 +40,16 @@ pub fn prepare_managed(
     let Ok(mut document) = read(home, group_id, actor_id) else {
         return Ok(None);
     };
+    if runtime == ActorRuntime::Opencode
+        && string(&document, "runtime") == "opencode"
+        && string(&document, "transport") == "opencode_acp_attach"
+        && string(&document, "workspace_path") == workspace_path(cwd)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "The saved OpenCode session belongs to V1. Choose New session in CCCC to start V2; the V1 receipt and provider history are retained for explicit migration with OpenCode's tools",
+        ));
+    }
     if document.get("v").and_then(Value::as_u64) != Some(MANAGED_RECORD_VERSION)
         || string(&document, "kind") != "runtime_session"
         || string(&document, "transport") != transport(runtime)
@@ -80,7 +90,7 @@ pub fn record_managed(
     if !valid_opencode_session_id(session_id) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "invalid OpenCode/Kilo ACP session id",
+            "invalid OpenCode/Kilo managed session id",
         ));
     }
     let now = utc_now();
@@ -107,7 +117,7 @@ pub fn record_managed(
         (
             "captured_from".into(),
             json!(format!(
-                "{}_acp_session_{}",
+                "{}_managed_session_{}",
                 runtime_name(runtime),
                 if resumed { "load" } else { "new" }
             )),
@@ -137,7 +147,7 @@ fn identity_fingerprint(
     .identity_fingerprint()
 }
 
-fn valid_opencode_session_id(value: &str) -> bool {
+pub(crate) fn valid_opencode_session_id(value: &str) -> bool {
     value.len() <= 128
         && value.starts_with("ses")
         && value

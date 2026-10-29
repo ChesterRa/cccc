@@ -1,9 +1,9 @@
 use cccc_contracts::{Actor, ActorRuntime};
-use cccc_core::{GroupDoc, HomeLayout, system_prompt};
+use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::json;
 
 pub fn render(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> String {
-    let prompt = system_prompt::render_session(home, group, actor);
+    let prompt = super::actor_runtime::session_prompt(home, group, actor);
     if actor.runtime != ActorRuntime::Cursor {
         return prompt;
     }
@@ -33,7 +33,7 @@ fn setup_prompt(runtime: ActorRuntime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cccc_core::GroupStore;
+    use cccc_core::{GroupStore, system_prompt};
 
     #[test]
     fn prompt_assisted_runtime_gets_idempotent_mcp_setup_before_preamble() {

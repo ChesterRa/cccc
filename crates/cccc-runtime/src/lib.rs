@@ -2,11 +2,18 @@ mod cancellation;
 mod command;
 mod command_output;
 mod command_session;
+mod diagnostic;
+pub use diagnostic::{DiagnosticLog, diagnostic, log_diagnostics_to};
 pub mod deepseek_acp;
 pub mod deepseek_supervisor;
 mod executable;
 mod history_access;
 mod manager;
+mod native_codex;
+pub use native_codex::{
+    NativeCodexSessionInfo, NativeCodexSteerOutcome, native_codex_can_receive,
+    native_codex_session_info, native_codex_try_steer,
+};
 #[cfg(all(test, windows))]
 mod manager_windows_tests;
 mod output;
@@ -48,12 +55,14 @@ pub use command::{
     is_canonical_deepseek_config, is_canonical_deepseek_profile_manifest,
     is_canonical_deepseek_runtime_manifest,
 };
-pub use command_output::{CapturedOutput, capture_command, capture_command_blocking};
+pub use command_output::{
+    CapturedOutput, capture_command, capture_command_blocking, capture_command_with_start_evidence,
+};
 pub use command_session::CommandSession;
 pub use executable::{prepare_pty_command, resolve_command_executable, resolve_executable_in_path};
 pub use history_access::{
     active_history_replay, active_history_since, bracketed_paste_enabled, clear, history,
-    history_since, retained_history, retained_history_tail,
+    history_since, last_output, retained_history, retained_history_tail,
 };
 pub use manager::{
     reap, resize, start, start_with_history, status, stop, stop_all, stop_if_started_at, submit,
@@ -62,8 +71,11 @@ pub use manager::{
 pub use output::HistoryPage;
 #[cfg(unix)]
 pub use process_tree::protect_owned_process_groups;
-pub use process_tree::{OwnedProcessTree, force_terminate_owned, owned_process_recovery_pending};
+pub use process_tree::{
+    CommandError, OwnedProcessTree, force_terminate_owned, owned_process_recovery_pending,
+};
 pub use session::{LaunchSpec, SessionStatus};
+pub use session_history::OutputObservation;
 pub use terminal_attach::{TerminalAttachMode, TerminalAttachment, TerminalInput, TerminalOutput};
 pub use terminal_initial_output::{TerminalInitialOutput, TerminalInitialOutputKind};
 pub use terminal_manager::{

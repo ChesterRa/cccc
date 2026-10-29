@@ -145,7 +145,7 @@ fn setup_required(message: String) -> serde_json::Value {
     })
 }
 
-fn public_executable() -> Result<PathBuf> {
+pub(super) fn public_executable() -> Result<PathBuf> {
     let current = std::env::current_exe()?;
     Ok(select_public_executable(
         current,
@@ -249,6 +249,38 @@ fn setup_one(
     }
     let command = add_command(runtime, executable)?;
     let cwd = absolute(&args.path)?;
+    if runtime == "codex"
+        && let Some(registered) = codex_mcp_entry(home, &cwd)?
+    {
+        // The provider's public registry is authoritative. Ordinary setup must
+        // not downgrade a native entry or move it to this invocation's Home.
+        let transport = &registered["transport"];
+        let registered_args = transport["args"].as_array().and_then(|args| {
+            args.iter()
+                .map(serde_json::Value::as_str)
+                .collect::<Option<Vec<_>>>()
+        });
+        let native = transport["type"] == "stdio"
+            && transport["command"]
+                .as_str()
+                .is_some_and(|command| !command.trim().is_empty())
+            && registered_args.is_some_and(|args| {
+                args.contains(&"--local-session-runtime=codex")
+                    || args
+                        .windows(2)
+                        .any(|pair| pair == ["--local-session-runtime", "codex"])
+            });
+        if native {
+            // Leave the complete entry untouched, including enabled state,
+            // filters, timeouts, launcher and any additional environment.
+            return Ok(json!({
+                "runtime":"codex","mode":"native_session","status":"ready",
+                "mcp":"native_registry","preserved":true,
+                "enabled":registered["enabled"],"home":transport["env"]["CCCC_HOME"],
+                "note":"Existing native-session MCP configuration and CCCC_HOME were preserved. Use `cccc sessions disable --runtime codex` to switch to ordinary MCP."
+            }));
+        }
+    }
     let mut output = run_command(&command, &cwd, home)?;
     if !output.status.success()
         && already_exists(&output)
@@ -274,6 +306,66 @@ fn setup_one(
     Ok(json!({
         "runtime":runtime,"mode":"auto","status":"added","command":command,"config":config
     }))
+}
+
+pub(super) fn codex_mcp_entry(home: &HomeLayout, cwd: &Path) -> Result<Option<serde_json::Value>> {
+    let output = cccc_runtime::capture_command_blocking(
+        &mut codex_registry_command(home, cwd),
+        None,
+        std::time::Duration::from_secs(30),
+        32_768,
+    )
+    .context(CODEX_INSPECTION_ERROR)?;
+    parse_codex_registry(&output)
+}
+
+pub(super) async fn codex_mcp_entry_async(
+    home: &HomeLayout,
+    cwd: &Path,
+) -> Result<Option<serde_json::Value>> {
+    let output = cccc_runtime::capture_command(
+        &mut codex_registry_command(home, cwd),
+        None,
+        std::time::Duration::from_secs(30),
+        32_768,
+    )
+    .await
+    .context(CODEX_INSPECTION_ERROR)?;
+    parse_codex_registry(&output)
+}
+
+const CODEX_INSPECTION_ERROR: &str = "Could not safely identify Codex's cccc MCP configuration; it was left unchanged. Inspect it with `codex mcp list --json` before retrying.";
+
+fn codex_registry_command(home: &HomeLayout, cwd: &Path) -> Command {
+    let program =
+        cccc_core::runtime_mcp::resolve_program("codex", std::env::var_os("PATH").as_deref());
+    let mut command = Command::new(program);
+    command
+        .args(["mcp", "list", "--json"])
+        .current_dir(cwd)
+        .env("CCCC_HOME", home.root());
+    command
+}
+
+fn parse_codex_registry(
+    output: &cccc_runtime::CapturedOutput,
+) -> Result<Option<serde_json::Value>> {
+    let inspection_error = CODEX_INSPECTION_ERROR;
+    anyhow::ensure!(
+        output.status.success() && !output.stdout_truncated && !output.stderr_truncated,
+        "{inspection_error}"
+    );
+    let registry: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|_| anyhow::anyhow!(inspection_error))?;
+    let entries = registry.as_array().context(inspection_error)?;
+    anyhow::ensure!(
+        entries.iter().all(|entry| entry["name"].is_string()),
+        "{inspection_error}"
+    );
+    let mut matches = entries.iter().filter(|entry| entry["name"] == "cccc");
+    let entry = matches.next().cloned();
+    anyhow::ensure!(matches.next().is_none(), "{inspection_error}");
+    Ok(entry)
 }
 
 fn run_command(command: &[String], cwd: &Path, home: &HomeLayout) -> Result<std::process::Output> {

@@ -1,0 +1,27 @@
+[
+  {
+    "created_at": "2026-10-19T18:21:08.376959Z",
+    "id": "T792",
+    "priority": "P2",
+    "status": "planned",
+    "task_type": "standard",
+    "updated_at": "2026-10-21T17:28:10.663123Z",
+    "waiting_on": "user"
+  },
+  {
+    "created_at": "2026-10-20T20:20:55.489040Z",
+    "id": "T898",
+    "status": "planned",
+    "task_type": "standard",
+    "updated_at": "2026-10-21T18:06:02.486751Z",
+    "waiting_on": "none"
+  },
+  {
+    "created_at": "2026-10-20T16:46:47.823354Z",
+    "id": "T863",
+    "status": "planned",
+    "task_type": "standard",
+    "updated_at": "2026-10-21T20:03:33.890615Z",
+    "waiting_on": "external"
+  }
+]

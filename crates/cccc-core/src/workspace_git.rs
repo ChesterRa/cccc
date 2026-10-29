@@ -127,7 +127,8 @@ fn parse_status(stdout: &str, prefix: &str) -> BTreeMap<String, GitStatus> {
             continue;
         };
         let relative = relative.trim_end_matches('/');
-        if !relative.is_empty() {
+        // The empty path is the workspace itself, which Git reports when it is a new directory.
+        if !relative.is_empty() || status == GitStatus::Untracked {
             entries.insert(relative.to_owned(), status);
         }
     }

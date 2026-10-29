@@ -12,6 +12,7 @@ import { applyTextScale, getStoredTextScale } from "./utils/textScale";
 import { ConnectEmbeddedApp } from "./features/connect/ConnectEmbeddedApp";
 import { isConnectFramePath } from "./features/connect/protocol";
 import { claimVitePreloadReload, recoverDynamicImportError } from "./utils/vitePreloadRecovery";
+import { cleanupLegacyWorkers } from "./features/pushNotifications/legacyWorkers";
 
 function reloadAfterStaleModuleError(error: unknown): boolean {
   return recoverDynamicImportError(error, window.sessionStorage, () => window.location.reload());
@@ -37,28 +38,16 @@ window.addEventListener("unhandledrejection", (event) => {
   }
 });
 
-// v0.4: We intentionally do NOT use Service Workers.
-// Reason: SW caching frequently causes "stale UI" bugs in an ops/admin console.
-//
-// Best-effort cleanup: unregister any legacy SWs scoped to `/ui/` so clients
-// recover automatically after upgrades.
+// Keep removing old page-controlling workers: their caches can serve stale UI.
+// The narrowly scoped push worker handles no fetches and is retained.
 if (
   "serviceWorker" in navigator &&
   typeof navigator.serviceWorker.getRegistrations === "function"
 ) {
-  void navigator.serviceWorker.getRegistrations().then((registrations) => {
-    for (const r of registrations) {
-      try {
-        const scope = String(r.scope || "");
-        // Only touch our own scope to avoid impacting unrelated SWs on the same origin.
-        if (scope.includes("/ui/")) {
-          void r.unregister();
-        }
-      } catch {
-        // ignore
-      }
-    }
-  });
+  void navigator.serviceWorker
+    .getRegistrations()
+    .then(cleanupLegacyWorkers)
+    .catch(() => {});
 }
 
 applyBrandingToDocument(DEFAULT_WEB_BRANDING);

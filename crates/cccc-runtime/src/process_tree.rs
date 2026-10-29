@@ -9,6 +9,27 @@ use std::io;
 use std::process::{Child, Command};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+/// Evidence from the actual process-creation boundary, not from an error kind.
+/// `Started` does not assert submission: child code may have run, so callers
+/// must not infer that retrying a side-effecting command is safe.
+#[derive(Debug, thiserror::Error)]
+pub enum CommandError {
+    #[error(transparent)]
+    NotStarted(io::Error),
+    #[error(transparent)]
+    Started(io::Error),
+}
+
+impl CommandError {
+    /// Preserve the original I/O error, including its raw OS code, for callers
+    /// using the ordinary spawn/capture interfaces.
+    pub fn into_io_error(self) -> io::Error {
+        match self {
+            Self::NotStarted(error) | Self::Started(error) => error,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Registry {
     closed: bool,
@@ -34,7 +55,7 @@ pub struct OwnedProcessTree {
 
 impl OwnedProcessTree {
     pub fn spawn(command: &mut Command) -> io::Result<(Child, Self)> {
-        Self::spawn_registered(command, 0)
+        Self::spawn_registered(command, 0).map_err(CommandError::into_io_error)
     }
 
     /// Supply Windows flags explicitly because std::Command has no flag getter.
@@ -43,12 +64,15 @@ impl OwnedProcessTree {
         command: &mut Command,
         flags: u32,
     ) -> io::Result<(Child, Self)> {
-        Self::spawn_registered(command, flags)
+        Self::spawn_registered(command, flags).map_err(CommandError::into_io_error)
     }
 
-    fn spawn_registered(command: &mut Command, flags: u32) -> io::Result<(Child, Self)> {
+    pub(crate) fn spawn_registered(
+        command: &mut Command,
+        flags: u32,
+    ) -> Result<(Child, Self), CommandError> {
         let mut registry = registry();
-        registry.require_open()?;
+        registry.require_open().map_err(CommandError::NotStarted)?;
         // Serialize admission with force termination. Windows additionally
         // assigns the Job before resuming the child; the mutex alone cannot
         // prevent child code from executing during registration.
@@ -164,7 +188,9 @@ impl Registry {
                 .map(Resource::owned_group)
                 .collect::<Vec<_>>();
             if let Err(error) = guard::publish(&groups) {
-                eprintln!("could not record owned process groups: {error}");
+                crate::diagnostic(format_args!(
+                    "could not record owned process groups: {error}"
+                ));
             }
         }
     }

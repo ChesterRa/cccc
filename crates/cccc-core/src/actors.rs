@@ -39,16 +39,16 @@ pub fn validate_actor_id(value: &str) -> io::Result<String> {
     Ok(id.to_owned())
 }
 
-/// An Actor's `model` label, trimmed: at most 128 characters and no control
+/// An Actor's `model_label`, trimmed: at most 128 characters and no control
 /// characters. Empty clears it.
-pub fn validate_model(value: &str) -> io::Result<String> {
-    let model = value.trim();
-    if model.chars().count() > 128 || model.chars().any(char::is_control) {
+pub fn validate_model_label(value: &str) -> io::Result<String> {
+    let label = value.trim();
+    if label.chars().count() > 128 || label.chars().any(char::is_control) {
         return Err(io::Error::other(
-            "model must be at most 128 characters, without control characters",
+            "model_label must be at most 128 characters, without control characters",
         ));
     }
-    Ok(model.to_owned())
+    Ok(label.to_owned())
 }
 
 pub fn visible(group: &GroupDoc) -> impl Iterator<Item = &Actor> {
@@ -107,7 +107,20 @@ pub fn add(group: &mut GroupDoc, mut actor: Actor) -> io::Result<Actor> {
     }
 
     actor.id = validate_actor_id(&actor.id)?;
-    actor.model = validate_model(&actor.model)?;
+    actor.model_label = validate_model_label(&actor.model_label)?;
+    if !actor.external_session_id.is_empty()
+        && !matches!(
+            actor.runtime,
+            cccc_contracts::ActorRuntime::Codex
+                | cccc_contracts::ActorRuntime::Claude
+                | cccc_contracts::ActorRuntime::Pi
+                | cccc_contracts::ActorRuntime::Opencode
+        )
+    {
+        return Err(io::Error::other(
+            "This runtime does not support native-session Actors",
+        ));
+    }
     actor
         .runtime_mode
         .validate(actor.runtime)
@@ -148,6 +161,13 @@ pub fn update(
         .position(|actor| actor.id == actor_id)
         .ok_or_else(|| io::Error::other(format!("actor not found: {actor_id}")))?;
     let mut value = serde_json::to_value(&group.actors[index]).map_err(io::Error::other)?;
+    if let Some(source) = patch.get("external_session_id")
+        && source.as_str() != Some(group.actors[index].external_session_id.as_str())
+    {
+        return Err(io::Error::other(
+            "Native session binding is managed by local-session access",
+        ));
+    }
     let object = value
         .as_object_mut()
         .ok_or_else(|| io::Error::other("invalid actor"))?;
@@ -165,8 +185,22 @@ pub fn update(
     }
     object.insert("updated_at".into(), Value::String(utc_now()));
     let mut actor: Actor = serde_json::from_value(value).map_err(io::Error::other)?;
+    let current = &group.actors[index];
+    if !current.external_session_id.is_empty()
+        && (actor.runtime != current.runtime
+            || actor.runtime_mode != current.runtime_mode
+            || actor.command != current.command
+            || actor.env != current.env
+            || actor.profile_id != current.profile_id
+            || actor.profile_scope != current.profile_scope
+            || actor.profile_owner != current.profile_owner)
+    {
+        return Err(io::Error::other(
+            "Native runtime configuration belongs to the original session",
+        ));
+    }
     actor.role = None;
-    actor.model = validate_model(&actor.model)?;
+    actor.model_label = validate_model_label(&actor.model_label)?;
     actor
         .runtime_mode
         .validate(actor.runtime)

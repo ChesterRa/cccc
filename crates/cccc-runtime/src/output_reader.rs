@@ -88,16 +88,16 @@ fn copy_output(
                 if let Some(error) = outcome.archive_error
                     && !history_error_reported
                 {
-                    eprintln!(
+                    crate::diagnostic(format_args!(
                         "CCCC terminal history write failed; continuing to drain PTY output: {error}"
-                    );
+                    ));
                     history_error_reported = true;
                 }
             }
             Err(error) if !history_error_reported => {
-                eprintln!(
+                crate::diagnostic(format_args!(
                     "CCCC terminal history write failed; continuing to drain PTY output: {error}"
-                );
+                ));
                 history_error_reported = true;
             }
             Err(_) => {}

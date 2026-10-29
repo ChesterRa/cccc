@@ -44,6 +44,7 @@ pub mod ledger;
 pub mod ledger_archive;
 mod ledger_index;
 pub mod local_network;
+pub mod local_sessions;
 pub mod mail_pending;
 pub mod membership;
 pub mod memory;
@@ -59,6 +60,7 @@ pub mod scope;
 pub mod settings;
 pub mod space_credentials;
 pub mod system_prompt;
+pub mod user_requests;
 pub mod voice_notifications;
 pub mod voice_recording_lease;
 pub mod voice_secretary;
@@ -72,8 +74,9 @@ pub mod workspace_changes;
 pub mod workspace_git;
 
 pub use capability_builtin::{
-    CORE_TOOL_NAMES, USER_CONTROL_TOOL_NAMES, VOICE_SECRETARY_TASK_TOOL_NAMES,
-    actor_base_tool_names, is_builtin_capability_pack_tool, web_model_tool_names,
+    CORE_TOOL_NAMES, LOCAL_SESSION_TOOL_NAMES, USER_CONTROL_TOOL_NAMES,
+    VOICE_SECRETARY_TASK_TOOL_NAMES, actor_base_tool_names, is_builtin_capability_pack_tool,
+    web_model_tool_names,
 };
 pub use group::{GroupDoc, GroupStore, Scope};
 pub use home::{HomeError, HomeLayout};

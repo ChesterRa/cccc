@@ -6,12 +6,96 @@ Complete command reference for the CCCC CLI.
 
 ### `cccc`
 
-Start the Web UI, reusing an existing daemon or starting one if needed.
+Start the daemon and the Web UI, reusing an existing daemon or starting one if
+needed.
 
 ```bash
-cccc                    # Start daemon + Web UI
+cccc                    # In a terminal: daemon + Web UI, with the terminal interface
+cccc --headless         # Daemon + Web UI with plain log output (same as `cccc web`)
 cccc --help             # Show help
 ```
+
+In an interactive terminal, `cccc` opens a terminal interface for this launch.
+Its main screen is a status panel: the version, the actual Web address, the
+`CCCC_HOME` in use, whether this launch started the daemon, the Groups, and the
+native sessions this CCCC knows. Terminals that recognize URLs open the Web
+address directly, for example with Ctrl+click in Windows Terminal. Lists refresh
+every few seconds while they are on screen; a failed refresh keeps the last list
+and says how old it is.
+
+The Groups table has NAME, STATUS and RUNNING columns. STATUS uses the Web UI's
+words: Running, Idle, Paused, Offline and Stopped. Stopped means the Group was
+stopped. Offline means it was not stopped or paused, but no actor is running:
+for example a new Group, or one whose actors exited or whose native sessions are
+closed. RUNNING counts the managed actors that are running and the native
+members ready to receive from that Group; it is neither the number of members
+nor the number of busy models. The native sessions table has APP, DIRECTORY,
+STATUS and ID columns; ID is the end of the session's source id, which
+`/sessions` shows in full.
+
+On the regular screens, browsing and every action use the arrow keys, Enter, Tab
+and Esc, without letter shortcuts. Up/Down moves the highlight, Enter opens or runs the highlighted
+row, and Esc goes back one level or cancels a confirmation. On the main screen, Up/Down selects a Group, PgUp/PgDn pages through a list
+longer than the screen, and Enter opens its page. Tab on an empty command line, or typing `/`, opens the command menu:
+Up/Down moves through it, Tab completes the selected command without running
+it, Enter runs it, and Esc closes it. Left/Right, Home/End, Delete and
+Ctrl+A/E/U edit a typed command. Pasting only inserts text: in terminals with
+bracketed paste, pasted newlines do not run a command.
+
+A Group's page shows its recorded state, how many tasks it has in each state,
+its actors and a link that opens it in the Web UI. Its rows are Tasks and the
+actions the Group's state allows: Start for a stopped Group (and Stop while it
+still reports running actors), Resume and Stop for a paused one, and Start and
+Stop otherwise. Each action asks for a confirmation
+that names the Group and what will happen. The confirmation starts on Cancel:
+choose the action with Up/Down and press Enter to run it, so pressing Enter
+twice changes nothing. Starting runs the enabled actors that
+are not running and lets enabled native members receive again, so Start also
+helps a running Group whose other actors have exited; stopping stops the managed
+actors and stops delivery to native members, whose apps stay open. Tasks lists the Group's tasks: Left/Right switches between the unfinished
+ones (Active, then Planned) and the Done ones, and PgUp/PgDn pages through a
+long list. Enter shows one task read-only, with its status, assignee,
+checklist, notes and outcome; tasks are edited in the Web UI.
+
+When agents wait for your answer in a Group, the main screen shows the number
+after its name (`[~3]` is from an earlier read, `[?]` cannot be confirmed), and
+its page adds a Waiting for you row. That row lists the open requests and
+PgUp/PgDn pages through them; Enter opens one. In a request, Up/Down moves
+between its options, Other and Send answer, and Enter selects the highlighted
+row: nothing is chosen until you press Enter on it. Other opens an editor where
+Ctrl+J starts a new line and Enter or Esc returns. Send answer records the
+answer; when the result is uncertain, only the same answer can be retried.
+Requests that cannot be answered here, such as ones from another Group, say so
+and are answered in the Web conversation.
+
+Commands:
+
+- `/groups` opens the page of the Group selected on the main screen.
+- `/sessions` lists every native session this CCCC knows. Enter shows the
+  selected session's details.
+- `/setup` connects Codex, Claude Code, Pi or OpenCode sessions; see
+  [Native sessions](../guide/local-sessions).
+- `/help` lists the commands and keys. It scrolls with Up/Down when the terminal
+  is short.
+- `/quit` (or `/exit`, or Ctrl+C on any page) stops what this launch started:
+  the Web server, and the daemon when this launch started it. A daemon that was
+  already running keeps running. If stopping takes too long, a second Ctrl+C
+  forces an exit (after `/quit`, press Ctrl+C twice). After the interface
+  closes, the terminal shows what actually stopped.
+
+The interface is English only and needs at least 60x16 characters; on a wider
+terminal it stays within 100 columns. In a smaller terminal it shows only a
+notice and accepts only Ctrl+C, so nothing can be confirmed unseen. It does not use the mouse; Ctrl+Z does not
+suspend it (use `/quit`), and Ctrl+L redraws the screen. `NO_COLOR` turns its
+colors off.
+
+`cccc` runs headless, with plain log output and no terminal interface, when
+given `--headless`, when its input or output is not a terminal, or when
+`CCCC_WEB_MODE` / `CCCC_WEB_READONLY` select read-only Exhibit mode. Use
+`--headless` on servers, in containers, under a service manager and in scripts.
+It applies only to this launch, so `cccc --headless` with a subcommand is an
+error. Other options keep the interface: `cccc --port 9000` in a terminal opens
+it on port 9000.
 
 ### `cccc doctor`
 
@@ -37,9 +121,15 @@ current launcher's directory to the front of PATH and open a new terminal.
 List available agent runtimes.
 
 ```bash
-cccc runtime list       # List detected runtimes
-cccc runtime list --all # List all supported runtimes
+cccc runtime list       # List supported runtimes and whether each is available
+cccc runtime list --all # Also include the custom runtime
 ```
+
+## Local native sessions
+
+`cccc sessions enable|disable --runtime codex|claude|pi|opencode` installs or removes the same-user native integration; `/setup` in the terminal interface runs the same enable step for the apps you pick. Use `cccc sessions list [--include-offline]`, `send --to <source_id> --text <text>`, and `create --sources <ids...>` to collaborate without pairwise invitations.
+
+Use `cccc sessions join --group <group_id> --sources <ids...>` to add sources to an existing Group, or `leave --group <group_id> --from <source_id>` to pause one source's access without stopping its native process. `recovery --group <group_id> --actor <actor_id>` reads local recovery instructions; adding `--refresh` explicitly rechecks Codex's existing receive channel. Neither form starts or resumes the native application or replays messages. See [Native sessions](../guide/local-sessions) for requirements, reload steps and lifecycle semantics.
 
 ## Daemon Commands
 
@@ -127,6 +217,9 @@ cccc group set-state idle --group <id>       # Set state: active/idle/paused/sto
 cccc group detach-scope <scope_key> --group <id>
 cccc group delete --group <id> --confirm <id>
 ```
+
+`set-state stopped` is the same as `group stop`: it stops the Group's actors and
+delivery to its native members, never only its recorded state.
 
 ## Actor Commands
 
@@ -445,7 +538,9 @@ Notes:
 ### `cccc web`
 
 Start the Web UI, reusing an existing daemon or starting one if needed, just
-like `cccc` with no subcommand.
+like `cccc --headless`: never with the terminal interface, always with plain log
+output. Unlike `cccc --headless`, it accepts `--exhibit` (or `--mode exhibit`)
+for a read-only Web UI.
 
 ```bash
 cccc web                           # Start Web UI

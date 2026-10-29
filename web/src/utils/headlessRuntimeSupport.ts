@@ -27,6 +27,7 @@ export function hasManagedRuntimeOutput(actor: RunnerSource): boolean {
   const source = String(actor.runtime_state_source || "")
     .trim()
     .toLowerCase();
+  if (source === "external_session") return false;
   return isHeadlessActorRunner(actor) || source === "managed_session" || source === "app_server";
 }
 

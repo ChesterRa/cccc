@@ -46,7 +46,8 @@ export function PresentationTrigger({
       type="button"
       onClick={onOpen}
       className={classNames(
-        "relative flex h-8 w-8 pointer-coarse:h-10 pointer-coarse:w-10 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2 focus-visible:outline-offset-2",
+        "relative flex shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2 focus-visible:outline-offset-2",
+        mobile ? "h-[44px] w-[44px]" : "h-8 w-8 pointer-coarse:h-10 pointer-coarse:w-10",
         isOpen
           ? "bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] ring-1 ring-inset ring-[var(--glass-tab-border-active)]"
           : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]",

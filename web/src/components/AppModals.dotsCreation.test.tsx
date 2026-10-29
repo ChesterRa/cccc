@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   add: vi.fn(),
   refresh: vi.fn(),
   recipientsProps: vi.fn(),
+  bind: vi.fn(),
+  editSaveTarget: "",
   t: (key: string) => key,
 }));
 vi.mock("react-i18next", async (original) => ({
@@ -16,6 +18,8 @@ vi.mock("react-i18next", async (original) => ({
 }));
 vi.mock("../services/api", () => ({
   addActor: (...args: unknown[]) => mocks.add(...args),
+  bindGrokBot: (...args: unknown[]) => mocks.bind(...args),
+  fetchGroupPrompts: async () => ({ ok: true, result: { help: { content: "" } } }),
   listActorProfiles: async () => ({ ok: true, result: { profiles: [] } }),
 }));
 vi.mock("./modals/ActorConfigModal", () => ({
@@ -23,13 +27,47 @@ vi.mock("./modals/ActorConfigModal", () => ({
     mode,
     isOpen,
     onCreate,
+    onSave,
+    scopes,
+    activeScopeKey,
   }: {
     mode: string;
     isOpen: boolean;
-    onCreate?: () => Promise<boolean>;
+    onCreate?: (avatar?: File | null, mode?: "default", scope?: string) => Promise<boolean>;
+    scopes?: Array<{ scope_key?: string }>;
+    activeScopeKey?: string;
+    onSave?: (payload: {
+      mode: "custom";
+      setVars: {};
+      unsetKeys: [];
+      clear: false;
+      capabilityAutoload: [];
+      grokBotUrl: string;
+    }) => Promise<void>;
   }) =>
     mode === "create" && isOpen ? (
-      <button onClick={() => void onCreate?.()}>Create Dot</button>
+      <>
+        <button onClick={() => void onCreate?.()}>Create Dot</button>
+        <button onClick={() => void onCreate?.(null, "default", scopes?.[1]?.scope_key)}>
+          Create in second scope
+        </button>
+        <span data-active-scope={activeScopeKey} />
+      </>
+    ) : mode === "edit" && isOpen && mocks.editSaveTarget ? (
+      <button
+        onClick={() =>
+          void onSave?.({
+            mode: "custom",
+            setVars: {},
+            unsetKeys: [],
+            clear: false,
+            capabilityAutoload: [],
+            grokBotUrl: mocks.editSaveTarget,
+          })
+        }
+      >
+        Save Bot URL
+      </button>
     ) : null,
 }));
 vi.mock("./SearchModal", () => ({ SearchModal: () => null }));
@@ -66,6 +104,8 @@ let root: ReturnType<typeof createRoot>;
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.clearAllMocks();
+  mocks.editSaveTarget = "";
+  mocks.bind.mockResolvedValue({ ok: true, result: {} });
   useModalStore.setState({
     modals: { ...useModalStore.getState().modals, addActor: true },
     editingActor: null,
@@ -101,7 +141,7 @@ function AppLifecycleHost() {
   const groupId = useGroupStore((state) => state.selectedGroupId);
   const actors = useGroupStore((state) => state.actors);
   const activeTab = useUIStore((state) => state.activeTab);
-  const { onDotsActorCreated } = useAppTabState({
+  const { onNativeActorCreated } = useAppTabState({
     activeTab,
     runtimeActors: actors,
     selectedGroupId: groupId,
@@ -119,7 +159,7 @@ function AppLifecycleHost() {
       ccccHome="/fixture-only"
       composerRef={createRef()}
       onStartReply={vi.fn()}
-      onDotsActorCreated={onDotsActorCreated}
+      onNativeActorCreated={onNativeActorCreated}
       onThemeChange={vi.fn()}
       onTextScaleChange={vi.fn()}
       onDeleteGroup={vi.fn()}
@@ -144,12 +184,36 @@ it("opens the actual newly created enabled Dot's pane after Actors hydrate, with
     "chatgpt_dots",
     "",
     undefined,
-    { capabilityAutoload: [] },
+    { capabilityAutoload: [], defaultScopeKey: "" },
   );
   expect(useUIStore.getState().activeTab).toBe("dot-created");
   expect(getChatSession("g_a", useUIStore.getState().chatSessions).mobileSurface).toBe("messages");
   expect(useModalStore.getState().editingActor).toBeNull();
   expect(mocks.refresh).toHaveBeenCalledWith("g_a");
+});
+it("passes the selected attached scope through the creation action", async () => {
+  useGroupStore.setState({
+    groupDoc: {
+      group_id: "g_a",
+      active_scope_key: "s_a",
+      scopes: [
+        { scope_key: "s_a", url: "/fixture/a" },
+        { scope_key: "s_b", url: "/fixture/b" },
+      ],
+    },
+  });
+  await render();
+  expect(host.querySelector('[data-active-scope="s_a"]')).not.toBeNull();
+  await act(async () => host.querySelectorAll<HTMLButtonElement>("button")[1].click());
+  expect(mocks.add).toHaveBeenLastCalledWith(
+    "g_a",
+    "dot-created",
+    "peer",
+    "chatgpt_dots",
+    "",
+    undefined,
+    { capabilityAutoload: [], defaultScopeKey: "s_b" },
+  );
 });
 it("waits for the existing Actor refresh to publish the created identity rather than navigating to an unknown Actor", async () => {
   mocks.refresh.mockResolvedValue(undefined);
@@ -158,6 +222,20 @@ it("waits for the existing Actor refresh to publish the created identity rather 
   expect(useUIStore.getState().activeTab).toBe("chat");
   await act(async () => useGroupStore.setState({ actors: [created] }));
   expect(useUIStore.getState().activeTab).toBe("dot-created");
+});
+
+it("takes a newly created Grok Bot to its required connection settings after hydration", async () => {
+  const grok = { ...created, id: "grok-created", runtime: "grok_web_model" } as Actor;
+  useFormStore.setState({ newActorRuntime: "grok_web_model", newActorId: grok.id });
+  mocks.add.mockResolvedValue({ ok: true, result: { actor: grok } });
+  mocks.refresh.mockResolvedValue(undefined);
+  await render();
+  await submit();
+  expect(useModalStore.getState().editingActor).toBeNull();
+  await act(async () => useGroupStore.setState({ actors: [grok] }));
+  expect(useUIStore.getState().activeTab).toBe(grok.id);
+  expect(useModalStore.getState().editingActor?.id).toBe(grok.id);
+  expect(useModalStore.getState().editingActorSection).toBe("chatgpt");
 });
 it("does not navigate a different Group when an accepted creation response arrives late", async () => {
   let finish!: (value: unknown) => void;
@@ -224,4 +302,35 @@ it("resolves RecipientsModal metadata from the selected Group's chatByGroup buck
   expect(mocks.recipientsProps).toHaveBeenLastCalledWith(
     expect.objectContaining({ isOpen: true, messageMode: "request_reply", canCancelReply: true }),
   );
+});
+
+it("does not open stale Grok settings if the Actor changes while navigation awaits confirmation", async () => {
+  const grok = { ...created, id: "grok-created", runtime: "grok_web_model" } as Actor;
+  useFormStore.setState({ newActorRuntime: "grok_web_model", newActorId: grok.id });
+  mocks.add.mockResolvedValue({ ok: true, result: { actor: grok } });
+  mocks.refresh.mockImplementation(async () => useGroupStore.setState({ actors: [grok] }));
+  useWorkspaceNavigation.setState({ owners: new Set([Symbol("unsaved-work")]), pending: null });
+  await render();
+  await submit();
+  expect(useWorkspaceNavigation.getState().pending).not.toBeNull();
+  await act(async () => useGroupStore.setState({ actors: [{ ...grok, runtime: "codex" }] }));
+  await act(async () => finishWorkspaceNavigation(true));
+  expect(useUIStore.getState().activeTab).toBe("chat");
+  expect(useModalStore.getState().editingActor).toBeNull();
+});
+it("keeps Grok setup open after its Bot URL is saved so Routine setup can continue", async () => {
+  const grok = { ...created, id: "grok-created", runtime: "grok_web_model" } as Actor;
+  useFormStore.setState({ newActorRuntime: "grok_web_model", newActorId: grok.id });
+  mocks.add.mockResolvedValue({ ok: true, result: { actor: grok } });
+  mocks.refresh.mockImplementation(async () => useGroupStore.setState({ actors: [grok] }));
+  await render();
+  await submit();
+  mocks.editSaveTarget = "https://grok.com/bot/00000000-0000-4000-8000-000000000001";
+  await render();
+  const save = [...host.querySelectorAll("button")].find(
+    (button) => button.textContent === "Save Bot URL",
+  )!;
+  await act(async () => save.click());
+  expect(mocks.bind).toHaveBeenCalledExactlyOnceWith("g_a", grok.id, mocks.editSaveTarget);
+  expect(useModalStore.getState().editingActor?.id).toBe(grok.id);
 });

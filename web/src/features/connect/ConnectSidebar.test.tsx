@@ -7,6 +7,38 @@ import type { ConnectWorkbench } from "./useConnectWorkbench";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
+it("keeps unavailable remote access in the instance tooltip without a subtitle", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const select = vi.fn();
+  const workbench = {
+    instances: [
+      { instance_id: "offline", device_id: "device", display_name: "Remote", public_origin: "" },
+    ],
+    collapsedInstances: [],
+    listings: {},
+    selected: null,
+    select,
+  } as unknown as ConnectWorkbench;
+  try {
+    await act(async () =>
+      root.render(<ConnectSidebar workbench={workbench} collapsed={false} onSelected={() => {}} />),
+    );
+    await act(async () => host.querySelector<HTMLButtonElement>("button[aria-controls]")!.click());
+    expect(host.textContent).not.toContain("connect.noRemoteAccess");
+    const instance = host.querySelector<HTMLButtonElement>("button[title]")!;
+    expect(instance.title).toContain("connect.noRemoteAccess");
+    expect(instance.textContent).toContain("Remote");
+    await act(async () => instance.click());
+    expect(select).toHaveBeenCalledExactlyOnceWith("offline", "");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
 it("opens a remote Group's connections through its own instance navigation", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const host = document.createElement("div");
@@ -40,6 +72,19 @@ it("opens a remote Group's connections through its own instance navigation", asy
         <ConnectSidebar workbench={workbench} collapsed={false} onSelected={onSelected} />,
       ),
     );
+    const sectionToggle = host.querySelector<HTMLButtonElement>("button[aria-controls]")!;
+    const content = document.getElementById(sectionToggle.getAttribute("aria-controls")!)!;
+    expect(sectionToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(content.hidden).toBe(true);
+    expect(select).not.toHaveBeenCalled();
+    await act(async () => sectionToggle.click());
+    expect(sectionToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(content.hidden).toBe(false);
+    await act(async () => sectionToggle.click());
+    expect(sectionToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(content.hidden).toBe(true);
+    expect(select).not.toHaveBeenCalled();
+    await act(async () => sectionToggle.click());
     const trigger = host.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!;
     await act(async () => trigger.click());
     expect(select).not.toHaveBeenCalled();

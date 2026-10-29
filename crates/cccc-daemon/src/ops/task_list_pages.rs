@@ -67,7 +67,7 @@ pub(super) fn pages(
 }
 
 pub(super) fn index(tasks: &[Map<String, Value>]) -> Value {
-    const FIELDS: [&str; 5] = ["id", "title", "status", "assignee", "parent_id"];
+    const FIELDS: [&str; 6] = ["id", "rev", "title", "status", "assignee", "parent_id"];
     let mut items = tasks
         .iter()
         .filter(|task| task_status(task) != "archived")

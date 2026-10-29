@@ -1,33 +1,41 @@
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
+import { useMinuteClock } from "../../../hooks/useMinuteClock";
 import type { Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
+import { formatElapsed, formatFullTime } from "../../../utils/time";
 import {
-  statusTone,
+  checklistItemOpen,
   taskDisplaySummary,
+  taskIsLive,
   taskStatus,
   taskTitle,
   type BoardStatus,
   type ContextTranslator,
+  type SubtaskProgress,
 } from "../model";
 import type { ContextModalUi } from "../ui";
 import { TaskCardBadges } from "./TaskCardBadges";
 
 interface TaskCardProps {
   task: Task;
+  subtasks?: SubtaskProgress;
   tr: ContextTranslator;
   ui: ContextModalUi;
   syncBusy: boolean;
   selected: boolean;
   onSelectTask: (task: Task) => void;
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
+  onRestoreTask: (task: Task) => void;
 }
 
 function sameTaskRevision(left: Task, right: Task): boolean {
   return (
     left === right ||
     (left.id === right.id &&
+      left.rev === right.rev &&
       left.title === right.title &&
       left.outcome === right.outcome &&
       left.parent_id === right.parent_id &&
@@ -44,22 +52,53 @@ function sameTaskRevision(left: Task, right: Task): boolean {
   );
 }
 
+/** By this device's clock, so a time it cannot place, or one ahead of it, shows nothing. */
+function TaskUpdatedAge({ updatedAt, tr }: { updatedAt?: string | null; tr: ContextTranslator }) {
+  const { i18n } = useTranslation();
+  useMinuteClock();
+  const seconds = Math.floor((Date.now() - Date.parse(updatedAt || "")) / 1000);
+  if (!Number.isSafeInteger(seconds) || seconds < 0) return null;
+  return (
+    <>
+      {" · "}
+      <time dateTime={updatedAt ?? undefined} title={formatFullTime(updatedAt ?? undefined)}>
+        {seconds < 60
+          ? tr("context.updatedJustNow", "Updated just now")
+          : tr("context.updatedAgo", "Updated {{elapsed}}", {
+              elapsed: formatElapsed(seconds, i18n?.language),
+            })}
+      </time>
+    </>
+  );
+}
+
 function TaskCardComponent({
   task,
+  subtasks,
   tr,
   ui,
   syncBusy,
   selected,
   onSelectTask,
   onMoveTaskToStatus,
+  onRestoreTask,
 }: TaskCardProps) {
   const status = taskStatus(task);
-  const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: `task:${task.id}`,
-    disabled: syncBusy,
-    data: { type: "task", taskId: task.id, status },
-  });
+  const summary = taskDisplaySummary(task);
+  // Without a summary, an unfinished task shows the first checklist item still open.
+  const openItem =
+    !summary && taskIsLive(task)
+      ? task.checklist?.find((item) => String(item.text || "").trim() && checklistItemOpen(item))
+          ?.text
+      : undefined;
+  const blocked = taskIsLive(task) && Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, isDragging } =
+    useDraggable({
+      id: `task:${task.id}`,
+      disabled: syncBusy,
+      data: { type: "task", taskId: task.id, status },
+      attributes: { roleDescription: tr("context.dragRoleDescription", "movable task") },
+    });
   const quickAction =
     status === "planned"
       ? { label: tr("context.start", "Start"), next: "active" as BoardStatus }
@@ -78,7 +117,6 @@ function TaskCardComponent({
       <div
         id={`context-task-${task.id}`}
         data-task-id={task.id}
-        {...attributes}
         onClick={() => onSelectTask(task)}
         className={classNames(
           "min-w-0 w-full cursor-pointer overflow-hidden rounded-2xl border p-3 text-left transition-all",
@@ -90,60 +128,64 @@ function TaskCardComponent({
         )}
       >
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1 text-left">
-            <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+          <button
+            type="button"
+            title={taskTitle(task)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelectTask(task);
+            }}
+            className="min-w-0 flex-1 rounded-sm text-left focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
+          >
+            <span className="line-clamp-2 text-sm font-semibold text-[var(--color-text-primary)] [overflow-wrap:anywhere]">
               {taskTitle(task)}
-            </div>
-            <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>{task.id}</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={classNames(
-                "rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                statusTone(status),
-              )}
-            >
-              {status}
             </span>
-            <button
-              type="button"
-              {...listeners}
-              className="rounded-lg px-2 py-1 text-[11px] glass-btn text-[var(--color-text-secondary)] md:opacity-0 md:group-hover/task:opacity-100"
-              onClick={(event) => event.stopPropagation()}
-              aria-label={tr("context.dragTask", "Drag task")}
-              title={tr("context.dragTask", "Drag task")}
-            >
-              ⋮⋮
-            </button>
-          </div>
+            <span className={classNames("mt-1 block text-xs", ui.mutedTextClass)}>
+              {task.id}
+              <TaskUpdatedAge updatedAt={task.updated_at} tr={tr} />
+            </span>
+          </button>
+          <button
+            ref={setActivatorNodeRef}
+            type="button"
+            {...attributes}
+            {...listeners}
+            disabled={syncBusy}
+            className="touch-none rounded-lg px-2 py-1 text-[11px] glass-btn text-[var(--color-text-secondary)] focus:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] md:opacity-0 md:group-hover/task:opacity-100"
+            onClick={(event) => event.stopPropagation()}
+            aria-label={tr("context.dragTaskNamed", "Move {{id}}: {{title}}", {
+              id: task.id,
+              title: taskTitle(task),
+            })}
+            title={tr("context.dragTask", "Drag task")}
+          >
+            <span aria-hidden="true">⋮⋮</span>
+          </button>
         </div>
 
-        {taskDisplaySummary(task) ? (
+        {summary ? (
           <div className={classNames("mt-2 line-clamp-3 text-xs", ui.subtleTextClass)}>
-            {taskDisplaySummary(task)}
+            {summary}
+          </div>
+        ) : openItem ? (
+          <div className={classNames("mt-2 line-clamp-2 text-xs", ui.subtleTextClass)}>
+            {tr("context.openChecklistItem", "To do: {{item}}", { item: openItem.trim() })}
           </div>
         ) : null}
 
-        <TaskCardBadges task={task} tr={tr} />
+        <TaskCardBadges task={task} tr={tr} subtasks={subtasks} />
 
-        <div
-          className="mt-3 flex items-center gap-2 border-t pt-3"
-          onClick={(event) => event.stopPropagation()}
-        >
+        <div className="mt-2 flex items-center" onClick={(event) => event.stopPropagation()}>
           <button
             type="button"
-            onClick={() => onMoveTaskToStatus(task, quickAction.next)}
+            onClick={() => {
+              if (status === "archived") onRestoreTask(task);
+              else onMoveTaskToStatus(task, quickAction.next);
+            }}
             disabled={syncBusy}
-            className={ui.buttonSecondaryClass}
+            className="rounded-md border border-[var(--glass-border-subtle)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] disabled:opacity-50"
           >
             {quickAction.label}
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelectTask(task)}
-            className={ui.buttonSecondaryClass}
-          >
-            {tr("context.edit", "Edit")}
           </button>
         </div>
       </div>
@@ -154,11 +196,14 @@ function TaskCardComponent({
 export const TaskCard = memo(TaskCardComponent, (previous, next) => {
   return (
     sameTaskRevision(previous.task, next.task) &&
+    previous.subtasks?.done === next.subtasks?.done &&
+    previous.subtasks?.total === next.subtasks?.total &&
     previous.tr === next.tr &&
     previous.ui === next.ui &&
     previous.syncBusy === next.syncBusy &&
     previous.selected === next.selected &&
     previous.onSelectTask === next.onSelectTask &&
-    previous.onMoveTaskToStatus === next.onMoveTaskToStatus
+    previous.onMoveTaskToStatus === next.onMoveTaskToStatus &&
+    previous.onRestoreTask === next.onRestoreTask
   );
 });

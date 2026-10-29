@@ -26,6 +26,18 @@ pub fn routes() -> Router<AppState> {
             post(reply_request_cancel),
         )
         .route(
+            "/api/v1/groups/{group_id}/messages/{source_event_id}/reply-request/answer",
+            post(reply_request_answer),
+        )
+        .route(
+            "/api/v1/groups/{group_id}/reply-requests/pending",
+            get(user_reply_requests),
+        )
+        .route(
+            "/api/v1/reply-requests/summary",
+            get(user_reply_requests_summary),
+        )
+        .route(
             "/api/v1/groups/{group_id}/inbox/{actor_id}",
             get(inbox_peek),
         )
@@ -137,6 +149,56 @@ async fn reply_request_cancel(
     args.insert("source_event_id".into(), Value::String(source_event_id));
     args.insert("by".into(), Value::String("user".into()));
     call(&state, "reply_request_cancel", args).await
+}
+async fn reply_request_answer(
+    State(state): State<AppState>,
+    Path((group_id, source_event_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let mut args = body_object(body)?;
+    if let Some(key) = args
+        .keys()
+        .find(|key| !matches!(key.as_str(), "client_id" | "answer"))
+    {
+        return Err(ApiError::bad(format!(
+            "reply-request answer accepts client_id and answer only, not {key}"
+        )));
+    }
+    args.insert("group_id".into(), Value::String(group_id));
+    args.insert("source_event_id".into(), Value::String(source_event_id));
+    args.insert("by".into(), Value::String("user".into()));
+    call(&state, "reply_request_answer", args).await
+}
+#[derive(serde::Deserialize)]
+struct PendingQuery {
+    before: Option<String>,
+    limit: Option<u64>,
+}
+async fn user_reply_requests(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<PendingQuery>,
+) -> ApiResult {
+    let mut args = object(json!({"group_id": group_id, "by": "user"}));
+    if let Some(before) = query.before {
+        args.insert("before".into(), Value::String(before));
+    }
+    if let Some(limit) = query.limit {
+        args.insert("limit".into(), json!(limit));
+    }
+    call(&state, "user_reply_requests", args).await
+}
+/// Only Groups this principal may open are counted; a non-admin never learns
+/// another Group's id or count.
+async fn user_reply_requests_summary(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+) -> ApiResult {
+    let mut args = object(json!({"by": "user"}));
+    if !principal.is_admin {
+        args.insert("group_ids".into(), json!(principal.allowed_groups));
+    }
+    call(&state, "user_reply_requests_summary", args).await
 }
 async fn inbox_peek(
     State(state): State<AppState>,

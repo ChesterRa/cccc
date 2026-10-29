@@ -16,7 +16,7 @@
   },
   {
     "name": "cccc_bootstrap",
-    "description": "Cold-start bootstrap: session + recovery + inbox_preview + context_hygiene + memory_recall_gate + next_calls. Use it first on cold start or resume. Call cccc_help only when a CCCC route or state boundary is unclear; follow next_calls for colder detail because hidden tools are routed through cccc_capability_use.",
+    "description": "Cold-start bootstrap for the authenticated caller: session + recovery + inbox_preview + context_hygiene + memory_recall_gate + next_calls. session.members lists this Group's recipients (Actor ID, runtime, role, enabled access and optional native source_id); use those Actor IDs with ordinary message tools. session.active_scope is the Group selection; session.effective_scope is your tool workspace, retaining the running managed launch directory until exit or restart. Use it first on cold start or resume. Call cccc_help only when a CCCC route or state boundary is unclear; follow next_calls for colder detail because hidden tools are routed through cccc_capability_use.",
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -32,7 +32,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Bootstrap always reports the authenticated caller; this field cannot select another Actor."
         },
         "inbox_limit": {
           "type": "integer",
@@ -76,7 +76,7 @@
   },
   {
     "name": "cccc_message_history",
-    "description": "Inspect actor-visible chat history without changing Mail read state. Use this when you explicitly need past Send, Send + Reply, or Mail messages; routine Mail handling should use cccc_inbox_read instead.",
+    "description": "Inspect actor-visible chat history without changing Mail read state. Pass event_id from a native notification to read that exact message or system notice: delivery_text has its full text and instructions, and message has the event without a text or insight already shown there. Do not combine event_id with filters or pagination. Otherwise list past Send, Send + Reply, or Mail messages; routine Mail handling should use cccc_inbox_read instead.",
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -112,6 +112,10 @@
         "before_event_id": {
           "type": "string",
           "description": "Return messages older than this visible history event."
+        },
+        "event_id": {
+          "type": "string",
+          "description": "Read this exact visible message or system notice, returned as full delivery_text plus message. Exclusive with mode, query, before_event_id and limit."
         },
         "limit": {
           "type": "integer",
@@ -167,7 +171,7 @@
   },
   {
     "name": "cccc_message_send",
-    "description": "Start a new visible chat message. Default to mode=mail for agents. Use mode=send only when delayed awareness costs more than interrupting the recipient, and mode=request_reply only when a concrete reply is also required. Mail is agent-only; messages to user must use send or request_reply. One message may address user alone or one/more agents, never both; send separate messages for separate audience domains. Do not send routine noise. Do not use this to answer an existing delivered message/event; use cccc_message_reply with that event_id instead. Choose `to` deliberately; request_reply requires concrete recipients and @all should be rare.",
+    "description": "Start a new visible chat message. Default to mode=mail for agents. Use mode=send only when delayed awareness costs more than interrupting the recipient, and mode=request_reply only when a concrete reply is also required. Mail is agent-only; messages to user must use send or request_reply. One message may address user alone or one/more agents, never both; send separate messages for separate audience domains. Do not send routine noise. Do not use this to answer an existing delivered message/event; use cccc_message_reply with that event_id instead. Choose `to` deliberately; request_reply requires concrete recipients and @all should be rare. When the user's decision or information is needed, add a question so they answer it in place.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -213,7 +217,7 @@
             "request_reply"
           ],
           "default": "mail",
-          "description": "mail stores for agent Inbox without an immediate prompt and cannot target user; send requests best-effort prompt delivery now; request_reply uses the same delivery path and creates a reply obligation for concrete recipients."
+          "description": "mail stores for agent Inbox without an immediate prompt and cannot target user; send requests best-effort prompt delivery now; request_reply uses the same delivery path and creates a reply obligation for concrete recipients. Use mode in MCP calls; message_mode is an IPC field and is rejected here, including when both fields are present."
         },
         "idempotency_key": {
           "type": "string",
@@ -224,6 +228,75 @@
           "items": {
             "type": "object"
           }
+        },
+        "question": {
+          "type": "object",
+          "description": "Ask the user for a decision or information, answered in place. Only with mode=request_reply and to=\"user\" alone, in a new message (not a reply). Ask only for what you cannot responsibly supply yourself: the user's authority or judgment (a change of scope, an irreversible or outward action, spending money or credits, a product preference with a real tradeoff, or conflicting instructions) or information only the user has; otherwise decide and report. For a choice, offer 2-4 mutually exclusive, actionable options, each with its consequence, and recommend one with a reason when you know enough; the user can always answer in their own words instead. Omit options for a value only the user knows (a path, a number, a clarification). Never ask for secrets. text becomes the question's context (at most 4000 characters). Limits count characters. Keep working on what does not depend on the answer, and withdraw a question that is no longer needed with cccc_reply_request_cancel.",
+          "properties": {
+            "v": {
+              "type": "integer",
+              "enum": [
+                1
+              ]
+            },
+            "prompt": {
+              "type": "string",
+              "maxLength": 500,
+              "description": "The decision itself, in one or two sentences."
+            },
+            "options": {
+              "type": "array",
+              "maxItems": 4,
+              "description": "None for a free answer, otherwise 2-4. They are labelled A, B, C, D in this order.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "consequence": {
+                    "type": "string",
+                    "maxLength": 240,
+                    "description": "What choosing it means, in one line."
+                  }
+                },
+                "required": [
+                  "label"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "recommended": {
+              "type": "object",
+              "description": "Only when you know enough to recommend. It is shown as advice, never preselected.",
+              "properties": {
+                "option_id": {
+                  "type": "string",
+                  "enum": [
+                    "A",
+                    "B",
+                    "C",
+                    "D"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              },
+              "required": [
+                "option_id",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "prompt"
+          ],
+          "additionalProperties": false
         },
         "suggested_user_message": {
           "type": "string",
@@ -362,7 +435,7 @@
   },
   {
     "name": "cccc_message_reply",
-    "description": "Reply to a visible chat message by its current event_id. Defaults to Send; choose Mail only when the recipient is an agent and the reply may wait in Inbox without an immediate prompt. Replies to user must use Send. One reply may address user alone or one/more agents, never both. Either mode fulfills the original reply request. Use only for the thread you are answering; set `to` explicitly if the audience differs. For Connect, use the received local event_id; omit to to address the original participants. Routing comes from that event, without looking up or passing a remote Group ID.",
+    "description": "Reply to a visible chat message by its current event_id. Defaults to Send; choose Mail only when the recipient is an agent and the reply may wait in Inbox without an immediate prompt. Replies to user must use Send. One reply may address user alone or one/more agents, never both. Either mode fulfills the original reply request. Use only for the thread you are answering; set `to` explicitly if the audience differs. For Connect, use the received local event_id; omit to to address the original participants. Routing comes from that event, without looking up or passing a remote Group ID. A reply cannot carry a question: when the user's decision or information is needed, send a new request_reply message to user with a question.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -412,7 +485,7 @@
             "mail"
           ],
           "default": "send",
-          "description": "send: prompt the recipient now; mail: agent-only Inbox storage without an immediate prompt. Either fulfills the original reply request."
+          "description": "send: prompt the recipient now; mail: agent-only Inbox storage without an immediate prompt. Either fulfills the original reply request. Use mode in MCP calls; message_mode is an IPC field and is rejected here, including when both fields are present."
         },
         "refs": {
           "type": "array",
@@ -517,7 +590,7 @@
   },
   {
     "name": "cccc_file",
-    "description": "Read a file in the active workspace or a delivered attachment. read returns UTF-8 text, native PNG/JPEG/WebP images, or original PDF/PPTX resources for the client file reader. Binary limit: 20 MiB; no local conversion or OCR. info/blob_path return metadata/path only. In cccc_code_exec, native media is emitted automatically and JavaScript receives metadata. This tool never sends files or changes messages; use cccc_file_send for attachments.",
+    "description": "Read a file in your effective workspace (running managed launch, otherwise Actor default or Group active) or a delivered attachment. read returns UTF-8 text, native PNG/JPEG/WebP images, or original PDF/PPTX resources for the client file reader. Binary limit: 20 MiB; no local conversion or OCR. info/blob_path return metadata/path only. In cccc_code_exec, native media is emitted automatically and JavaScript receives metadata. This tool never sends files or changes messages; use cccc_file_send for attachments.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -540,7 +613,7 @@
         },
         "rel_path": {
           "type": "string",
-          "description": "Path for read/blob_path/info: an active-scope relative file path or delivered attachment path such as state/blobs/<hash>. Images, PDF and PPTX files are detected from file content, including extensionless blobs."
+          "description": "Path for read/blob_path/info: a file relative to your effective workspace or a delivered attachment path such as state/blobs/<hash>. Images, PDF and PPTX files are detected from file content, including extensionless blobs."
         },
         "max_bytes": {
           "type": "integer",
@@ -563,7 +636,7 @@
   },
   {
     "name": "cccc_file_send",
-    "description": "Attach an active-workspace file to a CCCC message. Choose the human user alone or agent recipients, never both. Send prompts recipients; Mail stores agent Inbox mail without prompting. For a connected instance, provide both dst_instance_id and dst_group_id from cccc_connect. Returns the message/queue receipt; it does not confirm that a recipient has read the file. Use cccc_file to read files without sending them.",
+    "description": "Attach a file from your effective workspace (running managed launch, otherwise Actor default or Group active) to a CCCC message. Choose the human user alone or agent recipients, never both. Send prompts recipients; Mail stores agent Inbox mail without prompting. For a connected instance, provide both dst_instance_id and dst_group_id from cccc_connect. Returns the message/queue receipt; it does not confirm that a recipient has read the file. Use cccc_file to read files without sending them.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -577,7 +650,7 @@
         },
         "path": {
           "type": "string",
-          "description": "Relative to the active scope, or an absolute path under that scope."
+          "description": "Relative to your effective tool workspace, or an absolute path under that workspace."
         },
         "dst_group_id": {
           "type": "string",
@@ -718,7 +791,7 @@
   },
   {
     "name": "cccc_repo",
-    "description": "Read-only active workspace inspection: info|list|list_dir|read|search. Editing actions are rejected. list is shallow; list_dir honors depth and offset. Paths and file_path aliases are scope-relative; discovered symlinks are not followed. Search honors path, globs, case, context and limits. Check truncated/incomplete and skipped_files before concluding no match. Read returns whole-file sha256; use next_start_line to continue a truncated range. If partial_last_line is true, reread that line with a larger max_bytes (do not skip it). Use cccc_repo_edit or cccc_apply_patch for writes.",
+    "description": "Read-only inspection of your effective workspace (running managed launch, otherwise Actor default or Group active): info|list|list_dir|read|search. Editing actions are rejected. list is shallow; list_dir honors depth and offset. Paths and file_path aliases are scope-relative; discovered symlinks are not followed. Search honors path, globs, case, context and limits. Check truncated/incomplete and skipped_files before concluding no match. Read returns whole-file sha256; use next_start_line to continue a truncated range. If partial_last_line is true, reread that line with a larger max_bytes (do not skip it). Use cccc_repo_edit or cccc_apply_patch for writes.",
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -745,7 +818,7 @@
         },
         "path": {
           "type": "string",
-          "description": "Path under the active workspace root (or file_path alias). Required for read; list/search default to root. Search accepts a directory or one file. Conflicting aliases are rejected."
+          "description": "Path under your effective workspace root (or file_path alias). Required for read; list/search default to root. Search accepts a directory or one file. Conflicting aliases are rejected."
         },
         "file_path": {
           "type": "string",
@@ -840,7 +913,7 @@
   },
   {
     "name": "cccc_repo_edit",
-    "description": "Write to the active workspace repository for remote runtimes: action=replace|multi_replace|write|mkdir|delete|move. For exact small edits, prefer cccc_repo(action=read) -> replace/multi_replace with expected_sha256, then cccc_git diff. Use cccc_apply_patch for structural or multi-file Codex *** Begin Patch patches.",
+    "description": "Write to your effective workspace repository (Actor default scope, otherwise Group active): action=replace|multi_replace|write|mkdir|delete|move. For exact small edits, prefer cccc_repo(action=read) -> replace/multi_replace with expected_sha256, then cccc_git diff. Use cccc_apply_patch for structural or multi-file Codex *** Begin Patch patches.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true,
@@ -960,7 +1033,7 @@
   },
   {
     "name": "cccc_shell",
-    "description": "Short one-shot process execution in the group's active workspace. Uses the host process's OS permissions; cwd is not a filesystem/network sandbox. The command is split into program/arguments using shell-style quoting and executed directly: shell operators, redirection, variables, and wildcards are not expanded. For shell syntax, explicitly invoke an installed shell, e.g. sh -c 'pwd && git status --short' on Unix or powershell.exe -NoProfile -Command 'Get-Location; Get-ChildItem' on Windows. Returns exit_code, stdout, stderr, and output-truncation flags. For long-running or interactive commands use cccc_exec_command plus cccc_write_stdin.",
+    "description": "Short one-shot process execution in your effective workspace (running managed launch, otherwise Actor default or Group active). Uses the host process's OS permissions; cwd is not a filesystem/network sandbox. The command is split into program/arguments using shell-style quoting and executed directly: shell operators, redirection, variables, and wildcards are not expanded. For shell syntax, explicitly invoke an installed shell, e.g. sh -c 'pwd && git status --short' on Unix or powershell.exe -NoProfile -Command 'Get-Location; Get-ChildItem' on Windows. Returns exit_code, stdout, stderr, and output-truncation flags. For long-running or interactive commands use cccc_exec_command plus cccc_write_stdin.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true,
@@ -980,7 +1053,7 @@
         },
         "cwd": {
           "type": "string",
-          "description": "Relative cwd under the active workspace root.",
+          "description": "Relative cwd under your effective workspace root.",
           "default": "."
         },
         "timeout_s": {
@@ -1010,7 +1083,7 @@
   },
   {
     "name": "cccc_exec_command",
-    "description": "Start a long-running or interactive foreground process in the group's active workspace. Like cccc_shell, command strings use shell-style quoting but execute the program directly; operators and expansions require an explicit installed shell (e.g. sh -c on Unix or powershell.exe -NoProfile -Command on Windows). Returns session_id, status, initial output, cursor, has_more, cursor_expired, timed_out and closed. Waits up to yield_time_ms for output or exit. timeout_s is a hard lifetime limit (default/max 600 seconds), enforced without polling. Use cccc_write_stdin for incremental output/input/termination until closed=true, even when status.running=false but has_more=true. Output is bounded; max_output_bytes may extend by up to 3 bytes to finish a UTF-8 character. At most 64 sessions per host/Home; abandoned results expire 10 minutes after the command deadline. Use cccc_shell for short one-shot commands. Commands retain the host process's OS file/network permissions; workspace scope is not a sandbox.",
+    "description": "Start a long-running or interactive foreground process in your effective workspace (running managed launch, otherwise Actor default or Group active). Like cccc_shell, command strings use shell-style quoting but execute the program directly; operators and expansions require an explicit installed shell (e.g. sh -c on Unix or powershell.exe -NoProfile -Command on Windows). Returns session_id, status, initial output, cursor, has_more, cursor_expired, timed_out and closed. Waits up to yield_time_ms for output or exit. timeout_s is a hard lifetime limit (default/max 600 seconds), enforced without polling. Use cccc_write_stdin for incremental output/input/termination until closed=true, even when status.running=false but has_more=true. Output is bounded; max_output_bytes may extend by up to 3 bytes to finish a UTF-8 character. At most 64 sessions per host/Home; abandoned results expire 10 minutes after the command deadline. Use cccc_shell for short one-shot commands. Commands retain the host process's OS file/network permissions; workspace scope is not a sandbox.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true,
@@ -1034,7 +1107,7 @@
         },
         "cwd": {
           "type": "string",
-          "description": "Relative cwd under the active workspace root.",
+          "description": "Relative cwd under your effective workspace root.",
           "default": "."
         },
         "workdir": {
@@ -1113,7 +1186,7 @@
   },
   {
     "name": "cccc_git",
-    "description": "Web Model local-power git operations in the group's active workspace: action=status|diff|log|add|commit. Returns exit_code, stdout, stderr and output-truncation flags. Use cccc_shell for unusual git commands. Commands retain the host process's OS file/network permissions; workspace scope is not a sandbox.",
+    "description": "Local git operations in your effective workspace (running managed launch, otherwise Actor default or Group active): action=status|diff|log|add|commit. Returns exit_code, stdout, stderr and output-truncation flags. Use cccc_shell for unusual git commands. Commands retain the host process's OS file/network permissions; workspace scope is not a sandbox.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true,
@@ -1157,7 +1230,7 @@
         "all_changes": {
           "type": "boolean",
           "default": false,
-          "description": "For action=add, stage all changes under the active workspace."
+          "description": "For action=add, stage all changes under your effective workspace."
         },
         "message": {
           "type": "string",
@@ -1295,7 +1368,7 @@
             "paused",
             "stopped"
           ],
-          "description": "Required when action=set_state"
+          "description": "Required when action=set_state. stopped calls group_stop to stop managed runtimes and Group delivery."
         }
       },
       "required": []
@@ -1344,9 +1417,9 @@
         "title": {
           "type": "string"
         },
-        "model": {
+        "model_label": {
           "type": "string",
-          "description": "On add: the model this Actor runs, as a label; launching does not read it."
+          "description": "On add: optional operator-maintained model declaration; absence means undeclared. Does not configure launch or verify the serving model."
         },
         "command": {
           "type": "array",
@@ -2184,7 +2257,7 @@
   },
   {
     "name": "cccc_automation",
-    "description": "Automation hub tool: action=state|manage.",
+    "description": "Scheduled reminders for this Group: action=state|manage. state lists the rules you can see, their timing status and the version. manage applies actions in order and saves all of them or none. A peer manages only its own reminders (scope personal, owner_actor_id and to set to itself; these are the defaults when it leaves them out). The foreman manages every notify rule. Scheduled group_state and actor_control rules belong to the user; a request that would change, remove or reorder them is refused.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2204,19 +2277,16 @@
           ],
           "default": "state"
         },
-        "op": {
-          "type": "string",
-          "description": "Simple mode op for manage"
-        },
         "actions": {
           "type": "array",
           "items": {
             "type": "object"
           },
-          "description": "Advanced manage actions"
+          "description": "manage only. Items: {type:create_rule|update_rule, rule}, {type:set_rule_enabled, rule_id, enabled}, {type:delete_rule, rule_id}, {type:replace_all_rules, ruleset:{rules, snippets}}. A rule is {id, enabled?, scope?: group|personal, owner_actor_id?, to?: [recipient], trigger: {kind:interval, every_seconds} | {kind:cron, cron, timezone?} | {kind:at, at:RFC3339}, action: {kind:notify, message or snippet_ref, title?, priority?: low|normal|high|urgent}}. A one-time reminder to yourself: {type:create_rule, rule:{id:check-ci, trigger:{kind:at, at:<RFC3339 time after server_now from state>}, action:{kind:notify, message:Check CI}}}. A fired one-time rule is disabled; an interval or cron rule keeps firing until it is disabled or deleted."
         },
         "expected_version": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The version from state; a stale value returns version_conflict instead of overwriting a newer change."
         }
       },
       "required": []
@@ -2406,6 +2476,11 @@
             "delete"
           ],
           "default": "list"
+        },
+        "if_task_rev": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional task revision guard for update, move, restore or delete. Read rev from the task first; a stale value returns task_conflict."
         },
         "task_id": {
           "type": "string"
@@ -3199,6 +3274,75 @@
       "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": false
+    }
+  },
+  {
+    "name": "cccc_session",
+    "description": "Communicate with independently started, opted-in native Codex, Claude, Pi and OpenCode V2 sessions without pairwise invitations. List receive-ready sources and self_memberships (existing Group IDs/titles, your Actor ID/role, enabled access and Group state); use that read-only list after a context reset, then bootstrap the chosen explicit Group. Use action=send with source_ids and text to contact selected sessions, creating or reusing a Group. action=conversation only creates a Group and accepts source_ids and optional title; it does not send a message and rejects nonempty message fields or non-default delivery modes. action=list only lists; action=leave accepts group_id. Unused optional fields with null/empty values and the default mode=send are ignored on these non-send actions. Only available in the native-session MCP integration.",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "send",
+            "conversation",
+            "leave"
+          ],
+          "default": "list"
+        },
+        "source_ids": {
+          "description": "For send, selected recipient sources; cannot be combined with group_id or to. For conversation, selected participants.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "description": "Message body for action=send only. conversation creates a Group without sending."
+        },
+        "title": {
+          "type": "string",
+          "description": "Optional Group title for action=conversation only."
+        },
+        "to": {
+          "description": "Group recipients for send with an explicit group_id; cannot be used with source_ids.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "send",
+            "request_reply",
+            "mail"
+          ],
+          "default": "send",
+          "description": "Defaults to send for timely native collaboration. Choose mail explicitly for asynchronous Inbox work. Use mode in MCP calls; message_mode is an IPC field and is rejected here, including when both fields are present."
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "insight": {
+          "type": "string",
+          "maxLength": 1200,
+          "description": "A concise, visible, provisional judgment that helps the recipient assess this work beyond the message itself. Required for agent-facing messages in the MCP profile; optional for replies to the human user. Maximum 1200 characters. Include the conclusion, not private reasoning."
+        }
+      },
+      "required": []
     }
   }
 ]

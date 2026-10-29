@@ -414,7 +414,7 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
         "latest_ts":latest.ts,
         "messages":messages,
         "coalesced_text":coalesced_text,
-        "system_prompt":cccc_core::system_prompt::render_session(home, &group, actor),
+        "system_prompt":super::actor_runtime::session_prompt(home, &group, actor),
         "delivery":{"mode":"runtime_delivery","transport":transport,"max_events":limit,"web_model_mode":web_model_mode},
         "instructions":"Process this coalesced CCCC turn and call cccc_runtime_complete_turn when finished."
     });
@@ -552,7 +552,7 @@ fn recover_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "latest_ts":latest.ts,
         "messages":messages,
         "coalesced_text":coalesced,
-        "system_prompt":cccc_core::system_prompt::render_session(home, &group, actor),
+        "system_prompt":super::actor_runtime::session_prompt(home, &group, actor),
         "delivery":{"mode":"recovery_no_delivery_mutation","web_model_mode":web_model_mode}
     });
     object(json!({"status":"recovered","turn":turn}))
@@ -955,6 +955,29 @@ pub(super) fn actor_state(
         .unwrap_or(Value::Null))
 }
 
+/// Elapsed time since the matching private execution was claimed. Canonical
+/// ownership remains authoritative; a missing or mismatched projection does
+/// not establish when the current turn began.
+pub(super) fn active_turn_elapsed_seconds(
+    runtime: &Value,
+    execution: &Value,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<u64> {
+    let turn_id = runtime["active_turn_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())?;
+    if execution["turn_id"].as_str() != Some(turn_id)
+        || !matches!(execution["state"].as_str(), Some("active" | "interrupted"))
+    {
+        return None;
+    }
+    let claimed = chrono::DateTime::parse_from_rfc3339(execution["claimed_at"].as_str()?).ok()?;
+    now.signed_duration_since(claimed)
+        .to_std()
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
 fn update_actor_state<T>(
     home: &HomeLayout,
     group_id: &str,
@@ -1041,4 +1064,42 @@ fn coalesced_text(
 ) -> String {
     super::actor_delivery_render::render_batch_with_mail_context(home, group, actor_id, messages)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod active_turn_elapsed_tests {
+    use super::*;
+
+    #[test]
+    fn elapsed_requires_matching_active_execution_and_a_valid_past_claim_time() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-29T06:00:00Z")
+            .expect("fixture time")
+            .to_utc();
+        let runtime = json!({"active_turn_id":"turn-a", "updated_at":"2026-10-29T05:59:59Z"});
+        let execution =
+            json!({"turn_id":"turn-a", "state":"active", "claimed_at":"2026-10-29T03:00:00Z"});
+        assert_eq!(
+            active_turn_elapsed_seconds(&runtime, &execution, now),
+            Some(10_800)
+        );
+        let mut interrupted = execution.clone();
+        interrupted["state"] = json!("interrupted");
+        assert_eq!(
+            active_turn_elapsed_seconds(&runtime, &interrupted, now),
+            Some(10_800)
+        );
+        for invalid in [
+            json!({"turn_id":"turn-b", "state":"active", "claimed_at":"2026-10-29T03:00:00Z"}),
+            json!({"turn_id":"turn-a", "state":"completed", "claimed_at":"2026-10-29T03:00:00Z"}),
+            json!({"turn_id":"turn-a", "state":"active"}),
+            json!({"turn_id":"turn-a", "state":"active", "claimed_at":"invalid"}),
+            json!({"turn_id":"turn-a", "state":"active", "claimed_at":"2026-10-29T06:00:00.001Z"}),
+        ] {
+            assert_eq!(active_turn_elapsed_seconds(&runtime, &invalid, now), None);
+        }
+        assert_eq!(
+            active_turn_elapsed_seconds(&json!({"active_turn_id":""}), &execution, now),
+            None
+        );
+    }
 }

@@ -40,3 +40,5 @@ Use this section based on what you are trying to do next.
 - **Ledger**: append-only collaboration event stream
 - **Daemon**: single writer and source of operational truth
 - **CCCC Connect**: same-account collaboration with independent instance state
+
+- [Native sessions](./local-sessions): connect existing Codex and Claude sessions without importing history.

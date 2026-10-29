@@ -7,7 +7,9 @@ mod daemon_lifecycle;
 mod daemon_takeover;
 #[cfg(any(windows, test))]
 mod detached_daemon_owner;
+mod host_state;
 mod shutdown;
+mod tui;
 mod web_endpoint;
 mod web_host;
 mod web_instance;
@@ -21,6 +23,7 @@ use cccc_daemon::{DetachedDaemon, StartOutcome};
 use clap::Parser;
 use commands::common::{call, print};
 use serde_json::json;
+use std::io::IsTerminal;
 
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -36,10 +39,20 @@ async fn main() -> Result<()> {
     // `mcp` run from this same binary -- so no process reaches TLS without one.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let cli = Cli::parse();
+    if cli.headless && cli.command.is_some() {
+        bail!("--headless is a launch option; use cccc --headless without a subcommand");
+    }
     let home = HomeLayout::resolve()?;
     let client = DaemonClient::new(home.clone());
     match cli.command {
-        None => web_host::launch(home, cli.host, cli.port, None).await,
+        None => {
+            let terminal = web_host::use_terminal_interface(
+                !cli.headless,
+                std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+                cccc_web::WebMode::from_env(),
+            );
+            web_host::launch(home, cli.host, cli.port, None, terminal).await
+        }
         Some(CommandKind::Web(args)) => {
             if args.reload {
                 eprintln!(
@@ -59,9 +72,19 @@ async fn main() -> Result<()> {
                     WebModeArg::Exhibit => cccc_web::WebMode::Exhibit,
                 })
             };
-            web_host::launch(home, cli.host, cli.port, mode).await
+            web_host::launch(home, cli.host, cli.port, mode, false).await
         }
-        Some(CommandKind::Mcp) => cccc_mcp::run_stdio(home).await,
+        Some(CommandKind::Mcp {
+            local_session_runtime,
+            local_session_host_pid,
+        }) => {
+            cccc_mcp::run_stdio_with_local_session(
+                home,
+                local_session_runtime.as_deref(),
+                local_session_host_pid,
+            )
+            .await
+        }
         Some(CommandKind::Version) => {
             println!("cccc {PRODUCT_VERSION}");
             Ok(())
@@ -90,6 +113,7 @@ async fn main() -> Result<()> {
         }
         Some(CommandKind::Active) => show_active(&client, &home).await,
         Some(CommandKind::Actor(args)) => commands::actor::run(&client, &home, args).await,
+        Some(CommandKind::Sessions(args)) => commands::sessions::run(&home, args.action).await,
         Some(CommandKind::Prompt(args)) => {
             commands::integrations::prompt(&client, &home, args).await
         }
@@ -140,7 +164,7 @@ async fn main() -> Result<()> {
 
 async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -> Result<()> {
     match action {
-        DaemonAction::Run => cccc_daemon::run(home).await,
+        DaemonAction::Run => cccc_daemon::run_with_diagnostics(home).await,
         DaemonAction::Stop => {
             let response = daemon_lifecycle::stop(client, &home).await?;
             if response.ok {

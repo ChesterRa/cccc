@@ -2,6 +2,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useGroupStore, useUIStore, useModalStore, useInboxStore } from "../stores";
 import * as api from "../services/api";
+import { resumeLocalSessionAccess } from "../services/api/localSessions";
 import type { Actor } from "../types";
 import { beginActorAction, endActorAction } from "./actorActionInFlight";
 import { resolveActorLifecycleRunning } from "./actorLifecycleAction";
@@ -60,7 +61,9 @@ export function useActorActions(groupId: string) {
       try {
         const resp = isRunning
           ? await api.stopActor(groupId, actor.id)
-          : await api.startActor(groupId, actor.id);
+          : actor.external_session_id
+            ? await resumeLocalSessionAccess(groupId, actor.id, actor.external_session_id)
+            : await api.startActor(groupId, actor.id);
         if (!resp.ok) {
           await Promise.all([refreshActors(groupId), refreshGroups()]);
           if (isRunning || !latestActorHasResumeFailure(groupId, actor.id)) {
@@ -147,7 +150,16 @@ export function useActorActions(groupId: string) {
   const removeActor = useCallback(
     async (actor: Actor, currentActiveTab: string) => {
       if (!actor || !groupId) return;
-      if (!window.confirm(i18n.t("actors:removeAgentConfirm", { name: actor.title || actor.id })))
+      if (
+        !window.confirm(
+          i18n.t(
+            actor.external_session_id
+              ? "actors:nativeSession.removeConfirm"
+              : "actors:removeAgentConfirm",
+            { name: actor.title || actor.id },
+          ),
+        )
+      )
         return;
       changeActorBusy(groupId, actor.id, 1);
       try {

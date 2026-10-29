@@ -41,7 +41,13 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-const empty = { ok: true, result: { connectors: [] as WebModelConnector[] } };
+const empty = {
+  ok: true,
+  result: {
+    connectors: [] as WebModelConnector[],
+    connector_base_url: "https://cccc.example.test",
+  },
+};
 const existing = { connector_id: "shared", bound_actor_count: 2 };
 const created = {
   ok: true,
@@ -54,10 +60,11 @@ describe("shared Web Model login and connector", () => {
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     vi.resetAllMocks();
+    HTMLElement.prototype.scrollIntoView = vi.fn();
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    mocks.connectors.mockResolvedValue({ ok: true, result: { connectors: [] } });
+    mocks.connectors.mockResolvedValue(empty);
     mocks.browser.mockResolvedValue({ ok: true, result: { browser_session: { active: false } } });
     mocks.create.mockResolvedValue(created);
     mocks.copy.mockResolvedValue(true);
@@ -95,10 +102,29 @@ describe("shared Web Model login and connector", () => {
     expect(host.querySelector("[data-testid=viewer]")).toBe(viewer);
     expect(mocks.panel.mock.calls.every(([props]) => props.refreshNonce === 0)).toBe(true);
   });
+  it.each(["login", "connector"] as const)(
+    "focuses %s without starting a login or changing credentials",
+    async (section) => {
+      await act(async () =>
+        root.render(<WebModelConnectorsTab isDark={false} focusTarget={{ section, nonce: 1 }} />),
+      );
+      await vi.waitFor(() =>
+        expect(document.activeElement).toBe(
+          host.querySelector(`[data-web-model-section="${section}"]`),
+        ),
+      );
+      expect(mocks.browser.mock.calls.every((call) => call[0] === "status")).toBe(true);
+      expect(mocks.create).not.toHaveBeenCalled();
+      expect(mocks.revoke).not.toHaveBeenCalled();
+    },
+  );
   it("requires explicit confirmation for credential rotation and preserves error visibility", async () => {
     mocks.connectors.mockResolvedValue({
       ok: true,
-      result: { connectors: [{ connector_id: "shared", bound_actor_count: 2 }] },
+      result: {
+        connectors: [{ connector_id: "shared", bound_actor_count: 2 }],
+        connector_base_url: "https://cccc.example.test",
+      },
     });
     mocks.create.mockResolvedValue({ ok: false, error: { message: "Save failed" } });
     await act(async () => root.render(<WebModelConnectorsTab isDark={true} />));
@@ -138,7 +164,12 @@ describe("shared Web Model login and connector", () => {
     expect(button("create").disabled).toBe(true);
     await act(async () => button("create").click());
     expect(mocks.create).not.toHaveBeenCalled();
-    await act(async () => read.resolve({ ok: true, result: { connectors: [existing] } }));
+    await act(async () =>
+      read.resolve({
+        ok: true,
+        result: { connectors: [existing], connector_base_url: "https://cccc.example.test" },
+      }),
+    );
     expect(button("create")).toBeUndefined();
     await act(async () => host.querySelector("summary")!.click());
     await act(async () => button("rotate").click());
@@ -258,7 +289,11 @@ describe("shared Web Model login and connector", () => {
       await act(async () => manage.click());
       expect(radios[0].getAttribute("aria-checked")).toBe("true");
       expect(manage.closest("[hidden]")).not.toBeNull();
-      expect(document.activeElement).toBe(radios[0]);
+      await vi.waitFor(() =>
+        expect(document.activeElement).toBe(
+          host.querySelector('[data-web-model-section="connector"]'),
+        ),
+      );
       expect(mocks.browser.mock.calls.every((call) => call[0] === "status")).toBe(true);
       expect(mocks.create).not.toHaveBeenCalled();
     },
@@ -301,6 +336,7 @@ describe("shared Web Model login and connector", () => {
       });
       await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
       expect(button("create")).toBeDefined();
+      expect(button("create").disabled).toBe(warned);
       const page = host.querySelector("div:not([hidden]) > [data-settings-page]")!;
       expect(page.textContent?.includes("webModelShared.publicUrl")).toBe(warned);
     },
@@ -425,7 +461,10 @@ describe("shared Web Model login and connector", () => {
     await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
     await act(async () => button("create").click());
     expect(mocks.create).toHaveBeenLastCalledWith("chatgpt_web");
-    mocks.connectors.mockResolvedValue({ ok: true, result: { connectors: [existing] } });
+    mocks.connectors.mockResolvedValue({
+      ok: true,
+      result: { connectors: [existing], connector_base_url: "https://cccc.example.test" },
+    });
     const select = (name: string) =>
       Array.from(host.querySelectorAll("button")).find((b) => b.textContent === name)!;
     await act(async () => select("Grok Bot").click());
@@ -460,5 +499,97 @@ describe("shared Web Model login and connector", () => {
     expect(mocks.copy).toHaveBeenLastCalledWith("CCCC");
     await act(async () => button("copy").click());
     expect(mocks.copy).toHaveBeenLastCalledWith("https://fixture.test/token/test-only");
+  });
+  it.each(["chatgpt_web", "grok_web"] as const)(
+    "reads %s connector diagnostics in its own settings without mutating credentials",
+    async (provider) => {
+      mocks.connectors.mockResolvedValue({
+        ok: true,
+        result: {
+          connector_base_url: "https://cccc.example.test",
+          connectors: [
+            {
+              ...existing,
+              provider,
+              events_log: [
+                { at: "2026-10-22T00:00:00Z", method: "events/subscribe", ok: true, reason: null },
+                {
+                  at: "2026-10-23T00:00:00Z",
+                  method: "tools/call",
+                  tool_name: "cccc_pair",
+                  ok: false,
+                  reason: "pairing_expired",
+                },
+              ],
+            },
+          ],
+        },
+      });
+      await act(async () =>
+        root.render(<WebModelConnectorsTab isDark={false} provider={provider} />),
+      );
+      const page = host.querySelector("div:not([hidden]) > [data-settings-page]")!;
+      expect(
+        [...page.querySelectorAll("[data-web-model-call]")].map((e) =>
+          e.getAttribute("data-web-model-call"),
+        ),
+      ).toEqual(["failed", "ok"]);
+      expect(page.querySelector('[data-web-model-call="failed"]')?.textContent).toContain(
+        "cccc_pair",
+      );
+      expect(page.textContent).toContain("webModelDiagnostics.reasons.pairingExpired");
+      expect(mocks.create).not.toHaveBeenCalled();
+      expect(mocks.revoke).not.toHaveBeenCalled();
+    },
+  );
+  it("refreshes diagnostic reads without losing a one-time URL or rotating its credential", async () => {
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    await act(async () => button("create").click());
+    mocks.connectors.mockResolvedValue({
+      ok: true,
+      result: {
+        connector_base_url: "https://cccc.example.test",
+        connectors: [
+          {
+            ...existing,
+            events_log: [
+              {
+                at: "2026-10-23T00:00:00Z",
+                method: "tools/call",
+                tool_name: "cccc_pair",
+                ok: false,
+                reason: "pairing_expired",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const refresh = [...host.querySelectorAll("button")].find(
+      (b) => !b.closest("[hidden]") && b.textContent === "webModelDiagnostics.refresh",
+    )!;
+    await act(async () => refresh.click());
+    expect(host.querySelector('[data-web-model-call="failed"]')?.textContent).toContain(
+      "cccc_pair",
+    );
+    await act(async () => button("copy").click());
+    expect(mocks.copy).toHaveBeenLastCalledWith(created.result.connector.connector_url_path_token);
+    expect(mocks.create).toHaveBeenCalledOnce();
+    expect(mocks.revoke).not.toHaveBeenCalled();
+    expect(mocks.browser.mock.calls.every((c) => c[0] === "status" && c[1] === false)).toBe(true);
+  });
+  it("keeps revocation available when a configured connector has lost its public HTTPS address", async () => {
+    mocks.connectors.mockResolvedValue({
+      ok: true,
+      result: { connector_base_url: "", connectors: [existing] },
+    });
+    mocks.revoke.mockResolvedValue({ ok: true, result: {} });
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    expect(button("rotate").disabled).toBe(true);
+    expect(button("revoke").disabled).toBe(false);
+    await act(async () => button("revoke").click());
+    await act(async () => button("confirm").click());
+    expect(mocks.revoke).toHaveBeenCalledExactlyOnceWith("shared");
+    expect(mocks.create).not.toHaveBeenCalled();
   });
 });

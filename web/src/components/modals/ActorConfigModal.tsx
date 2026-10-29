@@ -1,7 +1,8 @@
+import { NativeActorEditor } from "../../features/localSessions/NativeActorEditor";
 import { supportsAcpMode } from "../../types";
 import { GrokActorSetup } from "../webModel/GrokActorSetup";
 import { isWebModelRuntime } from "../../types";
-import { type Actor, ActorProfile, RuntimeInfo, SupportedRuntime } from "../../types";
+import { type Actor, ActorProfile, GroupDoc, RuntimeInfo, SupportedRuntime } from "../../types";
 import { useTranslation } from "react-i18next";
 import { BASIC_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -17,6 +18,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Surface } from "../ui/surface";
 import { Textarea } from "../ui/textarea";
+import { ActorWorkingDirectory } from "./ActorWorkingDirectory";
 import { ActorConfigTabs } from "./ActorConfigTabs";
 import { ActorSecretManager } from "./ActorSecretManager";
 import {
@@ -57,6 +59,7 @@ export interface EditActorSavePayload {
   unsetKeys: string[];
   clear: boolean;
   capabilityAutoload: string[];
+  defaultScopeKey?: string;
   profileId?: string;
   convertToCustom?: boolean;
   grokBotUrl?: string;
@@ -77,6 +80,10 @@ interface ActorConfigBaseProps {
   runtimes: RuntimeInfo[];
   actorProfiles: ActorProfile[];
   actorProfilesBusy: boolean;
+  groupId?: string;
+  scopes?: GroupDoc["scopes"];
+  activeScopeKey?: string;
+  onScopeAttached?: (groupId: string, scope: api.AttachScopeResult["scope"]) => void;
   onRequestActorProfiles?: () => Promise<void> | void;
   onSaveAsProfile: (
     secrets?: ActorSecretSaveChanges,
@@ -145,7 +152,11 @@ export interface CreateActorConfigProps extends ActorConfigBaseProps {
   onChangeError: (message: string) => void;
   canSubmit: boolean;
   submitDisabledReason: string;
-  onCreate: (avatarFile?: File | null, runtimeMode?: RuntimeMode) => Promise<boolean> | boolean;
+  onCreate: (
+    avatarFile?: File | null,
+    runtimeMode?: RuntimeMode,
+    defaultScopeKey?: string,
+  ) => Promise<boolean> | boolean;
 }
 
 export type ActorConfigModalProps = EditActorConfigProps | CreateActorConfigProps;
@@ -234,6 +245,10 @@ function CreateActorConfigModal({
   isOpen,
   isDark,
   busy,
+  groupId,
+  scopes = [],
+  activeScopeKey,
+  onScopeAttached,
   hasForeman,
   runtimes,
   suggestedActorId,
@@ -271,6 +286,8 @@ function CreateActorConfigModal({
   const { t } = useTranslation("actors");
   const { modalRef } = useModalA11y(isOpen, onCancel);
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("default");
+  const [defaultScopeKey, setDefaultScopeKey] = useState("");
+  const [directoryBusy, setDirectoryBusy] = useState(false);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [capabilitiesPrimed, setCapabilitiesPrimed] = useState(false);
   const [advancedTab, setAdvancedTab] = useState<AdvancedTabId>("environment");
@@ -280,8 +297,14 @@ function CreateActorConfigModal({
   );
 
   useEffect(() => {
-    if (!isOpen) setRuntimeMode("default");
+    if (!isOpen) {
+      setRuntimeMode("default");
+    }
   }, [isOpen]);
+
+  useEffect(() => {
+    setDefaultScopeKey("");
+  }, [groupId, isOpen]);
 
   useEffect(() => {
     return () => {
@@ -304,6 +327,11 @@ function CreateActorConfigModal({
   const selectedProfile = selectableActorProfiles.find(
     (item) => actorProfileIdentityKey(item) === String(profileId || "").trim(),
   );
+  const attachedScopes = scopes.filter((scope) => scope.scope_key && scope.url);
+  const selectedScope = attachedScopes.find(
+    (scope) => scope.scope_key === (defaultScopeKey || activeScopeKey),
+  );
+  const scopeUnavailable = Boolean(defaultScopeKey && !selectedScope);
   const selectedProfileRuntime = String(selectedProfile?.runtime || "").trim() as SupportedRuntime;
   const runtimeInfo = runtimes.find((r) => r.name === runtime);
   const defaultCommand = runtimeInfo?.recommended_command || "";
@@ -331,9 +359,10 @@ function CreateActorConfigModal({
   };
 
   const handleSubmit = async () => {
+    if (scopeUnavailable || directoryBusy) return;
     try {
       const ok = await Promise.resolve(
-        onCreate(avatarFile, supportsAcpMode(runtime) ? runtimeMode : "default"),
+        onCreate(avatarFile, supportsAcpMode(runtime) ? runtimeMode : "default", defaultScopeKey),
       );
       if (ok) setAvatarFile(null);
     } catch (e) {
@@ -398,7 +427,7 @@ function CreateActorConfigModal({
                 type="button"
                 className="w-full font-semibold"
                 onClick={() => void handleSubmit()}
-                disabled={!canSubmit}
+                disabled={!canSubmit || scopeUnavailable || directoryBusy}
               >
                 {busy === "actor-add"
                   ? t("adding")
@@ -406,9 +435,9 @@ function CreateActorConfigModal({
                     ? t("createFromProfile")
                     : t("addAgent")}
               </Button>
-              {submitDisabledReason ? (
+              {scopeUnavailable || submitDisabledReason ? (
                 <div className="text-[10px] text-amber-700 dark:text-amber-400 mt-1.5">
-                  {submitDisabledReason}
+                  {scopeUnavailable ? t("workingDirectoryUnavailable") : submitDisabledReason}
                 </div>
               ) : null}
             </div>
@@ -495,6 +524,21 @@ function CreateActorConfigModal({
                     </div>
                   </div>
                 </div>
+
+                {attachedScopes.length > 0 || defaultScopeKey || groupId ? (
+                  <ActorWorkingDirectory
+                    key={`${groupId}/${isOpen}`}
+                    groupId={groupId}
+                    scopes={attachedScopes}
+                    activeScopeKey={activeScopeKey}
+                    value={defaultScopeKey}
+                    onChange={setDefaultScopeKey}
+                    onScopeAttached={onScopeAttached}
+                    onBusyChange={setDirectoryBusy}
+                    disabled={busy === "actor-add"}
+                    hint={t("workingDirectoryHint")}
+                  />
+                ) : null}
 
                 <div>
                   <RolePresetPicker
@@ -749,6 +793,7 @@ export function ActorConfigModal(props: ActorConfigModalProps) {
   if (props.mode === "create") {
     return <CreateActorConfigModal {...props} />;
   }
+  if (props.savedActor?.external_session_id) return <NativeActorEditor {...props} />;
   return <EditActorConfigModal {...props} />;
 }
 
@@ -763,6 +808,9 @@ function EditActorConfigModal({
   groupRole,
   avatarUrl,
   hasCustomAvatar = false,
+  scopes = [],
+  activeScopeKey,
+  onScopeAttached,
   isRunning,
   savedRuntime,
   savedActor,
@@ -842,12 +890,8 @@ function EditActorConfigModal({
     openSettingsTarget({
       scope: "global",
       tab: "webModels",
-      webModelProvider:
-        conversationRuntime === "grok_web_model"
-          ? "grok_web"
-          : conversationRuntime === "chatgpt_dots"
-            ? "dots"
-            : "chatgpt_web",
+      webModelProvider: conversationRuntime === "grok_web_model" ? "grok_web" : "chatgpt_web",
+      webModelSection: conversationRuntime === "web_model" ? "login" : "connector",
     });
   };
   const [secretKeys, setSecretKeys] = useState<string[]>([]);
@@ -859,6 +903,13 @@ function EditActorConfigModal({
   const [secretKeysLoadFailed, setSecretKeysLoadFailed] = useState(false);
   const [attachProfileId, setAttachProfileId] = useState("");
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("default");
+  const savedDefaultScopeKey = savedActor?.default_scope_key || "";
+  const [defaultScopeKey, setDefaultScopeKey] = useState(savedDefaultScopeKey);
+  const [directoryBusy, setDirectoryBusy] = useState(false);
+  const attachedScopes = scopes.filter((scope) => scope.scope_key && scope.url);
+  const scopeUnavailable = Boolean(
+    defaultScopeKey && !attachedScopes.some((scope) => scope.scope_key === defaultScopeKey),
+  );
   const [editMode, setEditMode] = useState<ConfigMode>("custom");
   const [pendingConvertToCustom, setPendingConvertToCustom] = useState(false);
   const [grokBotUrl, setGrokBotUrl] = useState<string | undefined>();
@@ -948,7 +999,9 @@ function EditActorConfigModal({
   const applyRunningTarget = grokTargetChanged && (connectionEnabled ?? isRunning);
   const launchChanges = buildActorSecretSaveChanges(secretChanges);
   const hasChanges =
+    scopeUnavailable ||
     title.trim() !== baseline.current.title.trim() ||
+    defaultScopeKey !== savedDefaultScopeKey ||
     (baseline.current.notesLoaded && actorNotes.trim() !== baseline.current.actorNotes.trim()) ||
     JSON.stringify(parseCapabilityIdInput(capabilityAutoloadText)) !==
       JSON.stringify(parseCapabilityIdInput(baseline.current.capabilityAutoloadText)) ||
@@ -1124,6 +1177,7 @@ function EditActorConfigModal({
     }
     initializedDraftIdentityRef.current = identity;
     setRuntimeMode(savedActor?.runtime_mode || "default");
+    setDefaultScopeKey(savedDefaultScopeKey);
     secretFetchSeqRef.current += 1;
     setEditMode(hasLinked ? "profile" : "custom");
     setPendingConvertToCustom(false);
@@ -1150,6 +1204,7 @@ function EditActorConfigModal({
     linkedProfileOwner,
     linkedProfileScope,
     savedActor?.runtime_mode,
+    savedDefaultScopeKey,
   ]);
 
   useEffect(() => {
@@ -1264,7 +1319,7 @@ function EditActorConfigModal({
 
   const submit = async (restart: boolean) => {
     if (!groupId || !actorId) return;
-    if (busy === "actor-update") return;
+    if (busy === "actor-update" || scopeUnavailable || directoryBusy) return;
     const callback = restart ? onSaveAndRestart : onSave;
 
     if (grokTargetChanged && !isGrokBotUrl(grokBotUrl || "")) {
@@ -1295,6 +1350,7 @@ function EditActorConfigModal({
           unsetKeys: [],
           clear: false,
           capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
+          defaultScopeKey,
           profileId,
           ...(grokTargetChanged ? { grokBotUrl: grokBotUrl!.trim() } : {}),
         });
@@ -1327,6 +1383,7 @@ function EditActorConfigModal({
         unsetKeys: secretSaveChanges.unsetKeys,
         clear: secretSaveChanges.clear,
         capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
+        defaultScopeKey,
         convertToCustom: linked && pendingConvertToCustom,
         onSecretsSaved: (keys) => {
           if (initializedDraftIdentityRef.current !== identity) return;
@@ -1358,6 +1415,8 @@ function EditActorConfigModal({
     secretsBusy ||
     secretsRefreshing ||
     actorNotesBusy ||
+    scopeUnavailable ||
+    directoryBusy ||
     (grokTargetChanged && !grokBotUrl?.trim()) ||
     (grokTargetChanged && connectionUnresolved) ||
     (editMode === "custom" && effectiveLinked) ||
@@ -1505,6 +1564,21 @@ function EditActorConfigModal({
                     </div>
                   </div>
                 </div>
+
+                {attachedScopes.length > 0 || defaultScopeKey || groupId ? (
+                  <ActorWorkingDirectory
+                    key={`${groupId}/${actorId}/${isOpen}`}
+                    groupId={groupId}
+                    scopes={attachedScopes}
+                    activeScopeKey={activeScopeKey}
+                    value={defaultScopeKey}
+                    onChange={setDefaultScopeKey}
+                    onScopeAttached={onScopeAttached}
+                    onBusyChange={setDirectoryBusy}
+                    disabled={busy === "actor-update"}
+                    hint={t("workingDirectoryEditHint")}
+                  />
+                ) : null}
 
                 <div>
                   <RolePresetPicker
@@ -1722,6 +1796,9 @@ function EditActorConfigModal({
                     : "settings:webModelActor.title",
               )}
             >
+              <p className="mb-3 text-xs text-[var(--color-text-muted)]">
+                {t("settings:webModelActor.immediateHint")}
+              </p>
               {conversationRuntime === "chatgpt_dots" ? (
                 <DotsActorPanel
                   key={`${groupId}/${actorId}/dots`}
@@ -1758,6 +1835,7 @@ function EditActorConfigModal({
                   actorId={actorId}
                   isDark={isDark}
                   isVisible={!suspended}
+                  canAccessConnection={canAccessGlobalSettings}
                   onOpenSharedSettings={openSharedSettings}
                   onBusyChange={setConnectionBusy}
                   saving={secretsBusy || busy === "actor-update"}

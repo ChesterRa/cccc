@@ -65,7 +65,9 @@ async fn probe_existing(client: &DaemonClient) -> Option<cccc_contracts::DaemonR
     match tokio::time::timeout(DAEMON_SLOW_PROBE_NOTICE, &mut probe).await {
         Ok(result) => result.ok(),
         Err(_) => {
-            eprintln!("[cccc] Waiting for the CCCC daemon that already holds the lock...");
+            cccc_runtime::diagnostic(format_args!(
+                "[cccc] Waiting for the CCCC daemon that already holds the lock..."
+            ));
             probe.await.ok()
         }
     }
@@ -164,7 +166,9 @@ pub(crate) async fn wait_for_loss(home: &HomeLayout) {
             Ok(LockState::Held) => reported = false,
             Err(error) if !reported => {
                 reported = true;
-                eprintln!("warning: cannot read the CCCC daemon lock: {error:#}");
+                cccc_runtime::diagnostic(format_args!(
+                    "warning: cannot read the CCCC daemon lock: {error:#}"
+                ));
             }
             Err(_) => {}
         }
@@ -184,7 +188,9 @@ pub(crate) async fn stop(
 
 /// Stop a daemon that answered but cannot serve this build.
 async fn replace(client: &DaemonClient, home: &HomeLayout) -> Result<()> {
-    eprintln!("Replacing a legacy or incompatible CCCC daemon...");
+    cccc_runtime::diagnostic(format_args!(
+        "Replacing a legacy or incompatible CCCC daemon..."
+    ));
     if !stop(client, home).await?.ok {
         bail!("failed to stop incompatible CCCC daemon");
     }
@@ -210,7 +216,7 @@ pub(crate) async fn announce_ownership(client: &DaemonClient, owned: bool, slot:
             DaemonSlot::Vacant => daemon_pid(client).await,
         }
     };
-    eprintln!("{}", ownership_line(owned, pid));
+    cccc_runtime::diagnostic(format_args!("{}", ownership_line(owned, pid)));
 }
 
 async fn daemon_pid(client: &DaemonClient) -> Option<u32> {

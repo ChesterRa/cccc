@@ -3,7 +3,13 @@ import type { SensorDescriptor, SensorOptions } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import type { TaskColumnPages } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
-import type { BoardColumns, BoardStatus, ContextTranslator, TaskFilterValue } from "../model";
+import type {
+  BoardColumns,
+  BoardStatus,
+  ContextTranslator,
+  SubtaskProgress,
+  TaskFilterValue,
+} from "../model";
 import type { ContextModalUi } from "../ui";
 import { TaskBoardGrid } from "./TaskBoardGrid";
 import { TaskBoardLoadNotice } from "./TaskBoardLoadNotice";
@@ -28,7 +34,9 @@ interface TaskBoardProps {
   columnPages: TaskColumnPages;
   taskLoading: boolean;
   taskLoadError: string;
+  matchingCount?: number | null;
   taskMap: Map<string, Task>;
+  subtaskProgress: ReadonlyMap<string, SubtaskProgress>;
   selectedTaskId: string;
   dragTaskId: string;
   sensors: SensorDescriptor<SensorOptions>[];
@@ -43,6 +51,7 @@ interface TaskBoardProps {
   onDragCancel: () => void;
   onSelectTask: (task: Task) => void;
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
+  onRestoreTask: (task: Task) => void;
   onLoadMore: (status: BoardStatus) => void;
   onRetryLoad: () => void;
 }
@@ -66,7 +75,9 @@ export function TaskBoard({
   columnPages,
   taskLoading,
   taskLoadError,
+  matchingCount,
   taskMap,
+  subtaskProgress,
   selectedTaskId,
   dragTaskId,
   sensors,
@@ -81,31 +92,34 @@ export function TaskBoard({
   onDragCancel,
   onSelectTask,
   onMoveTaskToStatus,
+  onRestoreTask,
   onLoadMore,
   onRetryLoad,
 }: TaskBoardProps) {
+  const hasActiveFilters = Boolean(
+    taskQuery.trim() || assigneeFilter !== "__all__" || taskFilter !== "all",
+  );
+  const showEmpty = !hasVisibleTasks && !taskLoading && !taskLoadError;
+  const hasRenderedTasks =
+    filteredBoard.planned.length > 0 ||
+    filteredBoard.active.length > 0 ||
+    filteredBoard.done.length > 0 ||
+    (archivedExpanded && filteredBoard.archived.length > 0);
+  const showBoard = !showEmpty && (hasRenderedTasks || (!taskLoading && !taskLoadError));
+  const emptyBoard =
+    showEmpty && !hasActiveFilters && !hasArchivedTasks && Number(tasksSummary.total || 0) === 0;
+
   return (
-    <section className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-4">
-      <div className="flex flex-col gap-4">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1">
+    <section className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-3">
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
           <div className="text-lg font-semibold text-[var(--color-text-primary)]">
             {tr("context.tasks", "Tasks")}
-          </div>
-          <div
-            className={classNames(
-              "col-span-2 row-start-2 text-sm lg:col-span-1",
-              ui.subtleTextClass,
-            )}
-          >
-            {tr(
-              "context.taskBoardHint",
-              "Plan shared work here. Open a card only when you need blockers, handoffs, notes, or checklist detail.",
-            )}
           </div>
           <button
             type="button"
             onClick={() => onOpenCreate("planned")}
-            className={classNames(ui.buttonPrimaryClass, "col-start-2 row-start-1 lg:row-span-2")}
+            className={ui.buttonPrimaryClass}
           >
             {tr("context.newTask", "New task")}
           </button>
@@ -124,6 +138,9 @@ export function TaskBoard({
           unassignedCount={unassignedCount}
           hasArchivedTasks={hasArchivedTasks}
           archivedExpanded={archivedExpanded}
+          matchingCount={
+            hasActiveFilters && !syncBusy && !taskLoading && !taskLoadError ? matchingCount : null
+          }
           onTaskQueryChange={onTaskQueryChange}
           onAssigneeFilterChange={onAssigneeFilterChange}
           onTaskFilterChange={onTaskFilterChange}
@@ -139,7 +156,7 @@ export function TaskBoard({
           onRetry={onRetryLoad}
         />
 
-        {!hasVisibleTasks ? (
+        {showEmpty ? (
           <div className="rounded-xl border border-dashed px-4 py-5 text-sm glass-card text-[var(--color-text-muted)]">
             {hiddenArchivedMatches > 0 ? (
               <>
@@ -158,30 +175,47 @@ export function TaskBoard({
                   {tr("context.showArchived", "Show archived")}
                 </button>
               </>
+            ) : emptyBoard ? (
+              tr("context.noTasksYet", "No tasks yet")
             ) : (
-              tr("context.noMatchingTasks", "No tasks match the current filters")
+              <>
+                {tr("context.noMatchingTasks", "No tasks match the current filters")}
+                {hasActiveFilters ? (
+                  <button
+                    type="button"
+                    onClick={onClearFilters}
+                    className={classNames(ui.buttonSecondaryClass, "mt-3 block")}
+                  >
+                    {tr("context.clearFilters", "Clear filters")}
+                  </button>
+                ) : null}
+              </>
             )}
           </div>
         ) : null}
 
-        <TaskBoardGrid
-          tr={tr}
-          ui={ui}
-          syncBusy={syncBusy}
-          archivedExpanded={archivedExpanded}
-          board={filteredBoard}
-          pages={columnPages}
-          taskMap={taskMap}
-          selectedTaskId={selectedTaskId}
-          dragTaskId={dragTaskId}
-          sensors={sensors}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          onDragCancel={onDragCancel}
-          onSelectTask={onSelectTask}
-          onMoveTaskToStatus={onMoveTaskToStatus}
-          onLoadMore={onLoadMore}
-        />
+        {showBoard ? (
+          <TaskBoardGrid
+            tr={tr}
+            ui={ui}
+            syncBusy={syncBusy}
+            archivedExpanded={archivedExpanded}
+            board={filteredBoard}
+            pages={columnPages}
+            taskMap={taskMap}
+            subtaskProgress={subtaskProgress}
+            selectedTaskId={selectedTaskId}
+            dragTaskId={dragTaskId}
+            sensors={sensors}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            onDragCancel={onDragCancel}
+            onSelectTask={onSelectTask}
+            onMoveTaskToStatus={onMoveTaskToStatus}
+            onRestoreTask={onRestoreTask}
+            onLoadMore={onLoadMore}
+          />
+        ) : null}
       </div>
     </section>
   );

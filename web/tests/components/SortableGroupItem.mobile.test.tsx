@@ -45,8 +45,8 @@ describe("SortableGroupItem mobile activation", () => {
       );
     });
 
-    // The action menu is the only button left on a row; no drag handle.
-    expect(host.querySelectorAll("button")).toHaveLength(1);
+    // Group and action buttons are siblings; neither is a separate drag handle.
+    expect(host.querySelectorAll("button")).toHaveLength(2);
     expect(host.querySelector('button[aria-label="Group actions"]')).not.toBeNull();
 
     const item = host.querySelector<HTMLElement>('[role="button"]')!;

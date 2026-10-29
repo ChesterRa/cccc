@@ -14,6 +14,10 @@ pub fn apply_all(
     for (index, operation) in operations.iter().enumerate() {
         let name = operation.get("op").and_then(Value::as_str).unwrap_or("");
         authorize(document, operation)?;
+        if name.starts_with("task.") {
+            super::task_revision::check(&document.tasks, operation)?;
+        }
+        let tasks = name.starts_with("task.").then(|| document.tasks.clone());
         let mut change = json!({"index": index, "op": name, "detail": "applied"});
         if name == "task.create" {
             // The created task's id, or the existing task a replayed
@@ -25,6 +29,9 @@ pub fn apply_all(
             }
         } else {
             apply_one(document, name, operation, by)?;
+        }
+        if let Some(tasks) = tasks {
+            super::task_revision::advance(&tasks, &mut document.tasks)?;
         }
         changes.push(change);
     }

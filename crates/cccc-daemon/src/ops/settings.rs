@@ -25,6 +25,11 @@ const SECTION_SETTING_KEYS: &[(&str, &str, &str)] = &[
         "mail_notice_idle_after_seconds",
     ),
     (
+        "mail_notice_repeat_seconds",
+        "delivery",
+        "mail_notice_repeat_seconds",
+    ),
+    (
         "reply_notice_after_seconds",
         "delivery",
         "reply_notice_after_seconds",

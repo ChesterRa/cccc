@@ -266,3 +266,71 @@ fn non_utf8_names_and_link_targets_never_alias_another_utf8_filename() {
         "different file"
     );
 }
+
+#[test]
+fn files_inside_a_new_directory_are_untracked_unless_ignored() {
+    // Git reports a new directory as one entry; what it holds must not look clean.
+    let fixture = fixture();
+    git(&fixture.repo, &["init", "-q"]);
+    git(&fixture.repo, &["add", "."]);
+    git(&fixture.repo, &["commit", "-qm", "base"]);
+    std::fs::write(fixture.repo.join(".gitignore"), "*.log\n").expect("gitignore");
+    std::fs::create_dir_all(fixture.repo.join("fresh/inner")).expect("fresh");
+    std::fs::write(fixture.repo.join("fresh/a.txt"), "a\n").expect("a");
+    std::fs::write(fixture.repo.join("fresh/inner/b.txt"), "b\n").expect("b");
+    std::fs::write(fixture.repo.join("fresh/noise.log"), "noise\n").expect("log");
+
+    let root = workspace::list(&fixture.group, "", ListOptions::default()).expect("list");
+    let fresh = root
+        .items
+        .iter()
+        .find(|item| item.name == "fresh")
+        .expect("fresh");
+    assert_eq!(fresh.git_status, Some(GitStatus::Untracked));
+
+    let inside = workspace::list(&fixture.group, "fresh", ListOptions { show_ignored: true })
+        .expect("list fresh");
+    let status = |name: &str| {
+        inside
+            .items
+            .iter()
+            .find(|item| item.name == name)
+            .expect(name)
+            .git_status
+    };
+    assert_eq!(status("a.txt"), Some(GitStatus::Untracked));
+    assert_eq!(status("inner"), Some(GitStatus::Untracked));
+    assert_eq!(status("noise.log"), None);
+}
+
+#[test]
+fn a_workspace_that_is_a_new_directory_marks_its_contents_untracked() {
+    let mut fixture = fixture();
+    git(&fixture.repo, &["init", "-q"]);
+    std::fs::write(fixture.repo.join(".gitignore"), "*.log\n").expect("gitignore");
+    git(&fixture.repo, &["add", "."]);
+    git(&fixture.repo, &["commit", "-qm", "base"]);
+    let project = fixture.repo.join("project");
+    std::fs::create_dir_all(project.join("inner")).expect("project");
+    std::fs::write(project.join("a.txt"), "a\n").expect("a");
+    std::fs::write(project.join("inner/b.txt"), "b\n").expect("b");
+    std::fs::write(project.join("noise.log"), "noise\n").expect("log");
+    fixture.group.scopes[0].url = project
+        .canonicalize()
+        .expect("scope")
+        .to_string_lossy()
+        .into_owned();
+
+    let root =
+        workspace::list(&fixture.group, "", ListOptions { show_ignored: true }).expect("list");
+    let status = |name: &str| {
+        root.items
+            .iter()
+            .find(|item| item.name == name)
+            .expect(name)
+            .git_status
+    };
+    assert_eq!(status("a.txt"), Some(GitStatus::Untracked));
+    assert_eq!(status("inner"), Some(GitStatus::Untracked));
+    assert_eq!(status("noise.log"), None);
+}

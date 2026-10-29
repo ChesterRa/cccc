@@ -17,6 +17,7 @@ vi.mock("react-i18next", async (original) => ({
 vi.mock("../../services/api", () => ({
   fetchDotsActorState: (...args: unknown[]) => mocks.load(...args),
   updateDotsActorConnection: (...args: unknown[]) => mocks.update(...args),
+  fetchWebModelBrowserSurfaceSession: (...args: unknown[]) => mocks.load(...args),
   fetchActorPrivateEnvKeys: mocks.env,
   fetchActorProfilePrivateEnvKeys: mocks.env,
 }));
@@ -81,15 +82,21 @@ afterEach(async () => {
   vi.useRealTimers();
   useUIStore.setState({ canAccessGlobalSettings: null });
 });
-it("keeps a Group writer's Dots Actor edit form usable without instance-connection reads or actions", async () => {
-  await act(async () => root.render(<ActorConfigModal {...props()} />));
-  await act(async () => vi.advanceTimersByTimeAsync(4_000));
-  expect(mocks.load).not.toHaveBeenCalled();
-  expect(mocks.env).not.toHaveBeenCalled();
-  expect(host.textContent).toContain("dotsActor.adminManaged");
-  const title = host.querySelector<HTMLInputElement>('input[placeholder="dot"]');
-  expect(title?.value).toBe("Dot");
-  expect(title?.disabled).toBe(false);
-  const panel = host.querySelector('section[aria-label="dotsActor.title"]')!;
-  expect(panel.querySelectorAll("button")).toHaveLength(0);
-});
+it.each(["chatgpt_dots", "web_model"] as const)(
+  "keeps a Group writer's %s form usable without instance-connection reads or actions",
+  async (runtime) => {
+    await act(async () =>
+      root.render(<ActorConfigModal {...props()} runtime={runtime} savedRuntime={runtime} />),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(4_000));
+    expect(mocks.load).not.toHaveBeenCalled();
+    expect(mocks.env).not.toHaveBeenCalled();
+    const prefix = runtime === "chatgpt_dots" ? "dotsActor" : "webModelActor";
+    expect(host.textContent).toContain(`${prefix}.adminManaged`);
+    const title = host.querySelector<HTMLInputElement>('input[placeholder="dot"]');
+    expect(title?.value).toBe("Dot");
+    expect(title?.disabled).toBe(false);
+    const panel = host.querySelector(`section[aria-label="${prefix}.title"]`)!;
+    expect(panel.querySelectorAll("button")).toHaveLength(0);
+  },
+);

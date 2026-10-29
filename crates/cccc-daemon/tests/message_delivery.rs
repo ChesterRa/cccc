@@ -106,7 +106,20 @@ async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
         .as_str()
         .expect("reply event id");
 
-    wait_for(&client, &group_id, &format!("[event_id={reply_event_id}]")).await;
+    // The envelope carries the event's original timestamp to the second.
+    let sent = |result: &Map<String, Value>| {
+        let ts = result["event"]["ts"].as_str().expect("event ts");
+        format!("{}Z", &ts[..19])
+    };
+    let (first_sent, second_sent) = (sent(&first.result), sent(&second.result));
+    let (notify_sent, reply_sent) = (sent(&notify.result), sent(&reply.result));
+
+    wait_for(
+        &client,
+        &group_id,
+        &format!("[event_id={reply_event_id} sent={reply_sent}]"),
+    )
+    .await;
     let tail = daemon_call(
         &client,
         "terminal_tail",
@@ -116,14 +129,16 @@ async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
     let text = tail.result["text"].as_str().unwrap_or_default();
     assert!(text.contains("PREAMBLE:[CCCC] You are peer1"));
     assert!(text.contains(&format!(
-        "FIRST:[cccc] user → peer1 [event_id={first_event_id}]: one"
+        "FIRST:[cccc] user → peer1 [event_id={first_event_id} sent={first_sent}]: one"
     )));
     assert!(text.contains(&format!(
-        "SECOND:[cccc] user → peer1 [event_id={second_event_id}]: two"
+        "SECOND:[cccc] user → peer1 [event_id={second_event_id} sent={second_sent}]: two"
     )));
-    assert!(text.contains("THIRD:[cccc] SYSTEM (info): notice"));
     assert!(text.contains(&format!(
-        "FOURTH:[cccc] user → peer1 (reply:{}) [event_id={reply_event_id}]",
+        "THIRD:[cccc] SYSTEM (info) [sent={notify_sent}]: notice"
+    )));
+    assert!(text.contains(&format!(
+        "FOURTH:[cccc] user → peer1 (reply:{}) [event_id={reply_event_id} sent={reply_sent}]",
         &first_event_id[..8]
     )));
     assert!(text.contains("> \"one\": fix it"));
@@ -386,6 +401,109 @@ fn inbox_read_consumes_only_mail_in_append_order() {
     );
     assert_eq!(empty.result["messages"], json!([]));
     assert!(empty.result["event"].is_null());
+}
+
+#[test]
+fn exact_message_history_is_visible_generation_scoped_and_non_consuming() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group_id = stopped_peer_group(&home, "exact history");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"peer2","by":"user"}),
+    );
+    let body = "quoted \"message\" 界😀\n".repeat(1_000);
+    let old = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":body,"message_mode":"request_reply"}),
+    );
+    let private = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer2"],"text":"other Actor only","message_mode":"send"}),
+    );
+    let store = GroupStore::new(home.clone()).expect("store");
+    let path = store.ledger_path(&group_id).expect("ledger");
+    for _ in 0..110 {
+        let mut newer = Event::new("chat.message", &group_id);
+        newer.by = "user".into();
+        newer.data = json!({"to":["peer1"],"text":"newer","message_mode":"send"})
+            .as_object()
+            .expect("data")
+            .clone();
+        ledger::append(&path, &newer).expect("newer event");
+    }
+    let before = std::fs::read(&path).expect("ledger before read");
+    let exact = call(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":old.result["event"]["id"]}),
+    );
+    assert_eq!(exact.result["messages"].as_array().map(Vec::len), Some(1));
+    assert_eq!(exact.result["messages"][0]["data"]["text"], body);
+    assert!(
+        exact.result["delivery_text"]
+            .as_str()
+            .expect("rendered message")
+            .contains(&body)
+    );
+    assert_eq!(exact.result["has_more"], false);
+    assert_eq!(std::fs::read(&path).expect("ledger after read"), before);
+    let notice = call(
+        &home,
+        "system_notify",
+        json!({
+            "group_id":group_id,"by":"system","title":"notice","message":"Complete system guidance",
+            "target_actor_id":"peer1"
+        }),
+    );
+    let exact_notice = call(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":notice.result["event"]["id"]}),
+    );
+    assert_eq!(exact_notice.result["messages"][0]["kind"], "system.notify");
+    assert!(
+        exact_notice.result["delivery_text"]
+            .as_str()
+            .expect("notice text")
+            .contains("Complete system guidance")
+    );
+    for event_id in [private.result["event"]["id"].clone(), json!("missing")] {
+        let denied = call_raw(
+            &home,
+            "message_history",
+            json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":event_id}),
+        );
+        assert_eq!(denied.error.expect("not visible").code, "event_not_found");
+    }
+    let conflict = call_raw(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":old.result["event"]["id"],"limit":1}),
+    );
+    assert_eq!(
+        conflict.error.expect("exclusive exact lookup").code,
+        "invalid_args"
+    );
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    let stale = call_raw(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":old.result["event"]["id"]}),
+    );
+    assert_eq!(stale.error.expect("old generation").code, "event_not_found");
 }
 
 #[test]

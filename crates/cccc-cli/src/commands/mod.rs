@@ -6,6 +6,7 @@ pub mod group;
 pub mod integrations;
 pub mod membership;
 pub mod messaging;
+pub mod sessions;
 pub mod setup;
 pub mod status;
 pub mod update;

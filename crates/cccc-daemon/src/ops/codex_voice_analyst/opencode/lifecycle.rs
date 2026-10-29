@@ -10,13 +10,13 @@ use std::time::Duration;
 // an HTTP chunk containing multiple events, while preserving lifecycle data.
 const SSE_BUFFER_LIMIT: usize = 16 * 1024 * 1024;
 
-struct SseLineBuffer {
+pub(in super::super) struct SseLineBuffer {
     bytes: Vec<u8>,
     limit: usize,
 }
 
 impl SseLineBuffer {
-    fn new(limit: usize) -> Self {
+    pub(in super::super) fn new(limit: usize) -> Self {
         Self {
             bytes: Vec::new(),
             limit,
@@ -25,7 +25,7 @@ impl SseLineBuffer {
 
     // The caller splits at LF, including it in each completed fragment. Count
     // all framing bytes (including CR/LF) before retaining any fragment.
-    fn push(&mut self, fragment: &[u8]) -> io::Result<Option<Value>> {
+    pub(in super::super) fn push(&mut self, fragment: &[u8]) -> io::Result<Option<Value>> {
         let size = self.bytes.len().saturating_add(fragment.len());
         if size > self.limit {
             return Err(io::Error::new(
@@ -270,7 +270,7 @@ fn observed_model(info: &Value) -> Option<String> {
     })
 }
 
-fn basic_authorization(username: &str, password: &str) -> String {
+pub(in super::super) fn basic_authorization(username: &str, password: &str) -> String {
     let credentials =
         base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
     format!("Basic {credentials}")

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
-import { formatMessageTimestamp } from "../../../utils/time";
 import { connectorAddress } from "./connectorAddress";
 import { SettingsCard, SettingsNotice, SettingsPage } from "./SettingsKit";
 import { secondaryButtonClass } from "./types";
@@ -20,43 +19,10 @@ type Snapshot = {
   actorUnreadable: boolean;
 };
 
-function reasonHint(reason: string | null): string {
-  switch (reason) {
-    case "pairing_expired":
-    case "pairing_invalid":
-    case "pairing_failed":
-    case "pairing_not_received":
-      return "pairingExpired";
-    case "pairing_changed":
-    case "pairing_already_used":
-    case "binding_conflict":
-    case "dots_binding_conflict":
-    case "dots_binding_changed":
-    case "dots_binding_unavailable":
-    case "dots_pairing_changed":
-      return "bindingChanged";
-    case "conversation_not_paired":
-    case "conversation_pairing_changed":
-    case "session_missing":
-    case "session_metadata_invalid":
-      return "conversationUnpaired";
-    case "dots_token_invalid":
-    case "dots_execution_token_required":
-      return "executionToken";
-    case "dots_actor_stopped":
-      return "actorStopped";
-    case "rpc_-32601":
-    case "rpc_-32602":
-      return "refreshTools";
-    default:
-      return "callFailed";
-  }
-}
-
 /**
- * Dots on the shared ChatGPT connector: what it needs, which Actor it serves,
- * and recent shared event/tool outcomes. It never creates or rotates the
- * connector; that stays on the ChatGPT view so only one exists.
+ * Dots on the shared ChatGPT connector: prerequisites and its bound Actor.
+ * Shared setup and diagnostics stay in ChatGPT; this page never creates or
+ * rotates a connector.
  */
 export default function DotsSettingsTab({ isActive, onOpenChatGPT, onOpenWebAccess }: Props) {
   const { t, i18n } = useTranslation("settings");
@@ -132,7 +98,6 @@ export default function DotsSettingsTab({ isActive, onOpenChatGPT, onOpenWebAcce
   const address = connectorAddress(snapshot?.base ?? connector?.connector_url ?? "");
   const actor = snapshot?.actor ?? null;
   const bound = connector?.dots_actor ?? null;
-  const calls = [...(connector?.events_log ?? [])].reverse();
   const subscription = !actor
     ? t("dotsActor.unavailable")
     : actor.subscription_expires_at
@@ -224,47 +189,6 @@ export default function DotsSettingsTab({ isActive, onOpenChatGPT, onOpenWebAcce
             <p className="text-[var(--color-text-muted)]">{t("dotsSettings.noActor")}</p>
           )}
         </div>
-      </SettingsCard>
-      <SettingsCard
-        title={t("dotsSettings.diagnostics")}
-        description={t("dotsSettings.diagnosticsHint")}
-      >
-        {calls.length ? (
-          <ul className="divide-y divide-[var(--glass-border-subtle)]">
-            {calls.map((call, index) => (
-              <li
-                key={`${call.at}-${index}`}
-                data-dots-call={call.ok ? "ok" : "failed"}
-                className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5 text-sm"
-              >
-                <span className="break-all font-mono text-xs">{call.tool_name || call.method}</span>
-                <span
-                  className={
-                    call.ok
-                      ? "text-xs text-emerald-700 dark:text-emerald-300"
-                      : "break-words text-xs text-rose-700 dark:text-rose-300"
-                  }
-                >
-                  {call.ok
-                    ? t("dotsSettings.callOk")
-                    : t("dotsSettings.callFailed", { reason: call.reason || "-" })}
-                </span>
-                <span className="w-full text-xs text-[var(--color-text-muted)] sm:w-auto">
-                  {formatMessageTimestamp(call.at)}
-                </span>
-                {!call.ok && call.tool_name ? (
-                  <p className="w-full text-xs text-[var(--color-text-secondary)]">
-                    {t(`dotsSettings.reasons.${reasonHint(call.reason)}`)}
-                  </p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="px-5 py-3.5 text-sm text-[var(--color-text-muted)]">
-            {t("dotsSettings.noCalls")}
-          </p>
-        )}
       </SettingsCard>
     </SettingsPage>
   );

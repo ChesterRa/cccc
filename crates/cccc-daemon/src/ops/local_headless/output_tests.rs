@@ -28,6 +28,7 @@ impl Fixture {
             home,
             group_id: group.group_id,
             actor_id: "fixture-actor".into(),
+            workspace: Default::default(),
             managed: Arc::new(AnalystSession::for_output_test(
                 &config, structured, private,
             )),

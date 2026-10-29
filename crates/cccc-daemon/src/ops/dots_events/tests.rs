@@ -730,6 +730,10 @@ fn dots_stop_start_fences_late_work_and_requires_explicit_resolution_without_rep
     let delivery = f.delivery();
     let original_claim = f.claim_capture();
     let turn = f.claim(&original_claim)["turn"].clone();
+    assert!(f.call("dots_events_status", json!({}))["active_turn_elapsed_seconds"].is_u64());
+    let reopened = HomeLayout::from_path(f.home.root()).expect("reopen isolated home");
+    super::super::runtime_restore::restore_running(&reopened).expect("daemon startup restore");
+    assert!(f.call("dots_events_status", json!({}))["active_turn_elapsed_seconds"].is_u64());
     let live = f.captured(&delivery, "cccc_runtime_complete_turn");
     let subscription = f.private()["dots"]["subscription"].clone();
     f.call("actor_stop", json!({}));
@@ -751,10 +755,9 @@ fn dots_stop_start_fences_late_work_and_requires_explicit_resolution_without_rep
     let epoch = f.private()["dots"]["epoch"].clone();
     f.call("actor_start", json!({}));
     assert_eq!(f.private()["dots"]["epoch"], epoch);
-    assert_eq!(
-        f.call("dots_events_status", json!({}))["phase"],
-        "interrupted"
-    );
+    let interrupted = f.call("dots_events_status", json!({}));
+    assert_eq!(interrupted["phase"], "interrupted");
+    assert!(interrupted["active_turn_elapsed_seconds"].is_u64());
     assert!(f.delivery().is_null());
     assert!(
         !f.response(
@@ -771,6 +774,7 @@ fn dots_stop_start_fences_late_work_and_requires_explicit_resolution_without_rep
     let current = f.call("dots_events_status", json!({}));
     assert_eq!(current["last_execution"]["status"], "cancelled");
     assert_eq!(current["active_turn_id"], "");
+    assert!(current["active_turn_elapsed_seconds"].is_null());
     f.source("new independent input");
     assert!(f.delivery().is_object());
 }
@@ -1037,6 +1041,45 @@ fn dots_revoked_binding_does_not_strand_explicit_user_resolution() {
         revoked_bytes
     );
     assert!(f.delivery().is_null());
+}
+
+#[test]
+fn user_can_resolve_enabled_turn_without_replaying_inputs_or_reviving_credentials() {
+    let f = Fixture::new();
+    f.start();
+    f.source("abandoned input");
+    let delivery = f.delivery();
+    let claimed = f.claim(&f.claim_capture());
+    let execution = f.captured(&delivery, "cccc_message_send");
+    let exact = json!({"action":"resolve","turn_id":claimed["turn"]["turn_id"],"event_ids":claimed["turn"]["event_ids"]});
+    let mut denied = exact.clone();
+    denied["by"] = json!("dot");
+    assert!(!f.response("dots_work_control", denied).ok);
+    let mut stale = exact.clone();
+    stale["event_ids"] = json!(["different-input"]);
+    assert!(!f.response("dots_work_control", stale).ok);
+    assert!(store::validate_binding(&f.home, &execution).is_ok());
+    let later = f.source("independent queued input");
+    f.call("dots_work_control", exact.clone());
+    let status = f.call("dots_events_status", json!({}));
+    assert_eq!(status["enabled"], true);
+    assert_eq!(status["paired"], true);
+    assert_eq!(status["subscribed"], true);
+    assert_eq!(status["active_turn_id"], "");
+    assert_eq!(status["last_execution"]["status"], "cancelled");
+    assert!(store::validate_binding(&f.home, &execution).is_err());
+    let next = f.delivery();
+    let next_claim = f.claim(&f.claim_capture());
+    assert_eq!(next_claim["turn"]["event_ids"], json!([later]));
+    assert!(!f.response("dots_work_control", exact).ok);
+    assert_eq!(
+        f.call("dots_events_status", json!({}))["active_turn_id"],
+        next_claim["turn"]["turn_id"]
+    );
+    f.complete(
+        &next_claim["turn"],
+        &f.captured(&next, "cccc_runtime_complete_turn"),
+    );
 }
 
 #[test]

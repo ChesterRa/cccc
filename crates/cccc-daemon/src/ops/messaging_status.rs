@@ -1,11 +1,83 @@
+use cccc_contracts::reply_question::{self, Stored};
 use cccc_contracts::{DaemonRequest, Event};
-use cccc_core::{GroupDoc, HomeLayout, actors, inbox, ledger};
+use cccc_core::{GroupDoc, HomeLayout, actors, inbox, ledger, user_requests};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store};
 
 const MAX_STATUS_EVENT_IDS: usize = 1000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Requester {
+    Available,
+    /// Removed, or registered again after asking.
+    Unavailable,
+    /// The ledger cannot prove the registration either way.
+    Unknown,
+    /// Relayed from another Group or instance, or not an Actor here; answer
+    /// through an ordinary reply.
+    Unsupported,
+}
+
+impl Requester {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Unavailable => "unavailable",
+            Self::Unknown => "unknown",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+/// The user's side of one request, read under the caller's Group permit.
+pub(super) struct UserRequest {
+    pub target: Event,
+    /// `None` while open; otherwise `answered` or `cancelled`.
+    pub closed: Option<&'static str>,
+    pub requester: Requester,
+}
+
+/// `Ok(None)` when the event is not a request to the user.
+pub(super) fn user_request(
+    home: &HomeLayout,
+    group_id: &str,
+    event_id: &str,
+) -> Result<Option<UserRequest>, OpError> {
+    let event_ids = [event_id.to_owned()];
+    StatusSnapshot::with(home, group_id, &event_ids, |snapshot| {
+        let target = snapshot
+            .positions
+            .get(event_id)
+            .and_then(|&position| snapshot.events.get(position))
+            .cloned()
+            .ok_or_else(|| {
+                OpError::new("event_not_found", format!("event not found: {event_id}"))
+            })?;
+        let requested =
+            target.data.get("message_mode").and_then(Value::as_str) == Some("request_reply");
+        if !requested || !user_requests::targets_user(&target) {
+            return Ok(None);
+        }
+        let user_reply = snapshot
+            .reply_positions
+            .get(event_id)
+            .and_then(|actors| actors.get("user"))
+            .copied();
+        let cancellation = snapshot.cancellation_positions.get(event_id).copied();
+        let closed = match terminal_outcome(user_reply, cancellation) {
+            (true, _) => Some("answered"),
+            (_, true) => Some("cancelled"),
+            _ => None,
+        };
+        Ok(Some(UserRequest {
+            requester: snapshot.requester(&target),
+            target,
+            closed,
+        }))
+    })?
+}
 
 type DeliveryStatuses = HashMap<String, HashMap<String, String>>;
 type ReplyPositions = HashMap<String, HashMap<String, usize>>;
@@ -181,6 +253,13 @@ impl StatusSnapshot<'_> {
         let replies = self.reply_positions.get(&event.id);
         let cancellation = self.cancellation_positions.get(&event.id).copied();
         let delivery = self.delivery_statuses.get(&event.id);
+        if reply_requested && obligation_recipients.iter().any(|id| id == "user") {
+            let user_reply = replies.and_then(|actors| actors.get("user")).copied();
+            status.insert(
+                "user_request".into(),
+                self.user_request(event, user_reply, cancellation),
+            );
+        }
 
         let obligation_status = obligation_recipients
             .into_iter()
@@ -225,21 +304,87 @@ impl StatusSnapshot<'_> {
     }
 
     fn obligation_recipients(&self, event: &Event, mut recipients: Vec<String>) -> Vec<String> {
-        let explicitly_targets_user =
-            event
-                .data
-                .get("to")
-                .and_then(Value::as_array)
-                .is_some_and(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .any(|recipient| matches!(recipient, "user" | "@user"))
-                });
-        if event.by != "user" && explicitly_targets_user {
+        if user_requests::targets_user(event) {
             recipients.push("user".into());
         }
         recipients
+    }
+
+    /// What answering this request to the user in place depends on: whether
+    /// its question can be trusted and whether its sender is still the Actor
+    /// that asked.
+    fn user_request(
+        &self,
+        event: &Event,
+        user_reply: Option<usize>,
+        cancellation: Option<usize>,
+    ) -> Value {
+        let question = match reply_question::stored(&event.data) {
+            Stored::None => "none",
+            Stored::Valid(_) => "valid",
+            Stored::Unavailable => "unavailable",
+        };
+        let requester = self.requester(event);
+        let mut status = Map::new();
+        status.insert("question".into(), json!(question));
+        status.insert("requester".into(), json!(requester.as_str()));
+        if requester == Requester::Unsupported {
+            status.insert("reply_route".into(), json!("composer"));
+        }
+        if terminal_outcome(user_reply, cancellation).0
+            && let Some(reply) = user_reply.and_then(|position| self.events.get(position))
+        {
+            status.insert("reply_event_id".into(), json!(reply.id));
+        }
+        Value::Object(status)
+    }
+
+    /// The sender is still the Actor that asked only when the ledger proves
+    /// it: its latest registration precedes the request and records the
+    /// identity the Group holds now. Any missing proof is unknown, never
+    /// assumed (a creation time can be supplied by a caller, and an add can
+    /// stop between saving the Group and appending its event).
+    fn requester(&self, event: &Event) -> Requester {
+        let relayed = event.data.contains_key("connect_message")
+            || event
+                .data
+                .get("src_group_id")
+                .and_then(Value::as_str)
+                .is_some_and(|group| !group.trim().is_empty());
+        if relayed {
+            return Requester::Unsupported;
+        }
+        let registered = self.actor_generations.get(&event.by).copied();
+        let Some(actor) = self.group.actors.iter().find(|actor| actor.id == event.by) else {
+            // Without a relay field, a sender the ledger never registered is
+            // unproven rather than from elsewhere.
+            return if registered.is_some() {
+                Requester::Unavailable
+            } else {
+                Requester::Unknown
+            };
+        };
+        let (Some(registered), Some(&asked)) = (registered, self.positions.get(&event.id)) else {
+            return Requester::Unknown;
+        };
+        if registered > asked {
+            return Requester::Unavailable;
+        }
+        let recorded = self
+            .events
+            .get(registered)
+            .and_then(|add| add.data.get("actor"))
+            .and_then(|actor| serde_json::from_value::<cccc_contracts::Actor>(actor.clone()).ok());
+        match recorded {
+            Some(recorded)
+                if recorded.id == actor.id
+                    && actors::generation_identity(&recorded)
+                        == actors::generation_identity(actor) =>
+            {
+                Requester::Available
+            }
+            _ => Requester::Unknown,
+        }
     }
 
     fn is_read(&self, event: &Event, actor_id: &str) -> bool {

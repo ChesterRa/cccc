@@ -1,0 +1,1 @@
+Task field projection recorded 2026-10-22. IDs, lifecycle/waiting values, priorities, types and timestamps are retained. Titles, notes, assignees and unrelated fields are omitted. Revision was absent in the recorded format. Test mutations are explicit operations on this recorded state.

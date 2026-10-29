@@ -5,11 +5,11 @@ use serde_json::{Value, json};
 
 use crate::ops::actor_runtime_status;
 
-pub fn status(group: &GroupDoc) -> Value {
+pub fn status(home: &cccc_core::HomeLayout, group: &GroupDoc) -> Value {
     let running: Vec<_> = group
         .actors
         .iter()
-        .filter(|actor| actor.enabled && actor_runtime_status::resolve(group, actor).running)
+        .filter(|actor| actor.enabled && actor_runtime_status::resolve(home, group, actor).running)
         .collect();
     let lifecycle = if running.is_empty() && group.state == GroupState::Stopped {
         GroupState::Stopped
@@ -26,8 +26,8 @@ pub fn status(group: &GroupDoc) -> Value {
     })
 }
 
-pub fn group(group: GroupDoc) -> Value {
-    let runtime_status = status(&group);
+pub fn group(home: &cccc_core::HomeLayout, group: GroupDoc) -> Value {
+    let runtime_status = status(home, &group);
     let desired_running = group.running;
     let mut value = serde_json::to_value(&group).unwrap_or_else(|_| json!({}));
     if let Some(object) = value.as_object_mut() {
@@ -41,7 +41,7 @@ pub fn group(group: GroupDoc) -> Value {
             for (item, actor) in items.iter_mut().zip(&group.actors) {
                 item["role"] = serde_json::to_value(actors::effective_role(&group, &actor.id))
                     .unwrap_or(Value::Null);
-                let status = actor_runtime_status::resolve(&group, actor);
+                let status = actor_runtime_status::resolve(home, &group, actor);
                 item["running"] = Value::Bool(status.running);
                 item["pid"] = status
                     .pid
@@ -52,8 +52,8 @@ pub fn group(group: GroupDoc) -> Value {
     value
 }
 
-pub fn summary(meta: GroupMeta, group: &GroupDoc) -> Value {
-    let runtime_status = status(group);
+pub fn summary(home: &cccc_core::HomeLayout, meta: GroupMeta, group: &GroupDoc) -> Value {
+    let runtime_status = status(home, group);
     let mut value = serde_json::to_value(meta).unwrap_or_else(|_| json!({}));
     if let Some(object) = value.as_object_mut() {
         object.insert("desired_running".into(), Value::Bool(group.running));

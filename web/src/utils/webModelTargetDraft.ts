@@ -4,20 +4,26 @@ export type TargetDraftMode = "existing" | "new";
 
 export type TargetDraft = { mode: TargetDraftMode; url: string };
 
-export function isGrokBotUrl(value: string): boolean {
+export function canonicalGrokBotUrl(value: string): string | null {
   try {
     const url = new URL(value.trim());
-    return (
+    if (
       url.protocol === "https:" &&
       url.hostname === "grok.com" &&
       !url.port &&
       !url.username &&
       !url.password &&
       /^\/bot\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(url.pathname)
-    );
+    )
+      return `https://grok.com${url.pathname.toLowerCase()}`;
+    return null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function isGrokBotUrl(value: string): boolean {
+  return canonicalGrokBotUrl(value) !== null;
 }
 
 export function isChatGptConversationUrl(url?: string): boolean {

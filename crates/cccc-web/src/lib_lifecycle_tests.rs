@@ -58,6 +58,42 @@ async fn explicit_shutdown_stops_web_server() {
     assert!(result.port() > 0);
 }
 
+#[tokio::test]
+async fn supervised_listener_reports_its_actual_ephemeral_address() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let (address_tx, mut address_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(serve_until_mode_supervised(
+        home,
+        "127.0.0.1",
+        0,
+        WebMode::Normal,
+        async {
+            let _ = stopped.await;
+        },
+        Some(Arc::new(move |address| {
+            let _ = address_tx.send(address);
+        })),
+    ));
+    let address = tokio::time::timeout(std::time::Duration::from_secs(2), address_rx.recv())
+        .await
+        .expect("listener callback timeout")
+        .expect("listener address");
+    assert!(address.port() > 0);
+    let ready = reqwest::get(format!("http://{address}/api/v1/ready"))
+        .await
+        .expect("ready request");
+    assert!(ready.status().is_success());
+    stop.send(()).expect("shutdown");
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .expect("shutdown timeout")
+        .expect("server task")
+        .expect("server result");
+    assert!(matches!(outcome, ServeOutcome::Stopped(actual) if actual == address));
+}
+
 #[test]
 fn remote_listener_requires_an_administrator_access_token() {
     let temp = tempfile::tempdir().expect("tempdir");

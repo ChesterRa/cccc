@@ -97,10 +97,12 @@ it("offers two- and three-way choices as one-tap segments", async () => {
     ["INFO", "DEBUG"],
     ["developer.visible", "developer.hidden"],
     ["developer.hidden", "developer.visible"],
-    ["daemon", "web", "im"],
+    ["daemon", "developer.daemonDiagnostics", "web", "im"],
   ]);
   await act(async () => button("DEBUG").click());
   expect(props.setLogLevel).toHaveBeenCalledWith("DEBUG");
+  await act(async () => button("developer.daemonDiagnostics").click());
+  expect(props.setLogComponent).toHaveBeenCalledWith("daemon_diagnostics");
   await act(async () => button("im").click());
   expect(props.setLogComponent).toHaveBeenCalledWith("im");
 });

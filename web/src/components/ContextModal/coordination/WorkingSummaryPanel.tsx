@@ -31,9 +31,6 @@ export function WorkingSummaryPanel({
   tr,
   ui,
   brief,
-  tasksSummary,
-  attentionCounts,
-  unassignedCount,
   editingBrief,
   briefDraft,
   syncBusy,
@@ -50,13 +47,7 @@ export function WorkingSummaryPanel({
     onStartBriefEdit();
   };
   const hasOverview = Boolean(
-    brief?.objective ||
-    brief?.current_focus ||
-    brief?.project_brief_stale ||
-    tasksSummary.active ||
-    attentionCounts.blocked ||
-    attentionCounts.waitingUser ||
-    unassignedCount,
+    brief?.objective || brief?.current_focus || brief?.project_brief_stale,
   );
   const hasSummary = Boolean(brief?.project_brief || brief?.constraints?.length);
 
@@ -89,28 +80,6 @@ export function WorkingSummaryPanel({
                     {tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}
                   </button>
                 </div>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-              {Number(tasksSummary.active || 0) > 0 ? (
-                <span>
-                  {tr("context.active", "Active")} · {tasksSummary.active}
-                </span>
-              ) : null}
-              {attentionCounts.blocked > 0 ? (
-                <span className="rounded-full bg-rose-500/15 px-2 py-1 text-rose-600 dark:text-rose-300">
-                  {tr("context.blocked", "Blocked")} · {attentionCounts.blocked}
-                </span>
-              ) : null}
-              {attentionCounts.waitingUser > 0 ? (
-                <span className="rounded-full bg-amber-500/15 px-2 py-1 text-amber-700 dark:text-amber-300">
-                  {tr("context.waitingUser", "Waiting user")} · {attentionCounts.waitingUser}
-                </span>
-              ) : null}
-              {unassignedCount > 0 ? (
-                <span>
-                  {tr("context.unassigned", "Unassigned")} · {unassignedCount}
-                </span>
               ) : null}
             </div>
           </div>

@@ -1,11 +1,17 @@
 //! Payload-free ordered notice facts, separate from the fixed inbox page.
-//! Historical Mail/reply/read/delivery/claim relations are not yet pruned:
-//! this metadata grows with history, even though no Event payload is retained.
-//! Capping arbitrary old claim references would change the notice protocol.
+//! Opt-in repeats prune expired handed-off claims and withdrawn notices.
+//! Pending handoffs retain their original delivery ownership.
+//! Other historical relations still grow with history; no payload is retained.
 use super::*;
 use std::collections::HashSet;
 
-type MailClaims = HashMap<(String, String), Vec<(String, Vec<String>)>>;
+type MailClaims = HashMap<(String, String), Vec<MailClaim>>;
+
+struct MailClaim {
+    id: String,
+    ts: String,
+    sources: Vec<String>,
+}
 
 #[derive(Default)]
 pub(crate) struct NoticeState {
@@ -187,7 +193,11 @@ impl NoticeState {
                     self.mail_claims
                         .entry((actor.to_owned(), created.to_owned()))
                         .or_default()
-                        .push((event.id.clone(), ids));
+                        .push(MailClaim {
+                            id: event.id.clone(),
+                            ts: event.ts.clone(),
+                            sources: ids,
+                        });
                 } else {
                     self.reply_claims.extend(
                         ids.into_iter()
@@ -197,6 +207,47 @@ impl NoticeState {
             }
             _ => {}
         }
+        // Only notice/delivery facts need append-time pruning. Expiry is also
+        // reconciled in due(), without rescanning claims for every unrelated
+        // event in a cold history replay.
+        if matches!(event.kind.as_str(), "system.notify" | "runtime.delivery") {
+            self.prune_mail_claims(group);
+        }
+    }
+
+    fn prune_mail_claims(&mut self, group: &GroupDoc) {
+        let repeat =
+            crate::automation::delivery_timing_value(group, "mail_notice_repeat_seconds", 0);
+        if repeat <= 0 {
+            return;
+        }
+        let now = Utc::now().timestamp();
+        self.mail_claims.retain(|(actor, created), claims| {
+            let current = group
+                .actors
+                .iter()
+                .any(|a| a.id == *actor && a.created_at == *created);
+            claims.retain(|claim| {
+                current
+                    && match self
+                        .deliveries
+                        .get(&(claim.id.clone(), actor.clone()))
+                        .map(|value| value.0.as_str())
+                    {
+                        Some("withdrawn") => false,
+                        Some("accepted" | "ambiguous") => {
+                            now - crate::automation::timestamp(&claim.ts, now) < repeat
+                        }
+                        _ => true,
+                    }
+            });
+            !claims.is_empty()
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_mail_claims(&self) -> usize {
+        self.mail_claims.values().map(Vec::len).sum()
     }
 
     pub fn still_awaited(
@@ -230,7 +281,7 @@ impl NoticeState {
     }
 
     pub fn due(
-        &self,
+        &mut self,
         group: &GroupDoc,
         eligible: &[&cccc_contracts::Actor],
         cursors: &BTreeMap<String, String>,
@@ -238,6 +289,7 @@ impl NoticeState {
         reply_after: i64,
     ) -> Vec<Event> {
         use crate::automation::{notice_event, timestamp};
+        self.prune_mail_claims(group);
         let now = Utc::now().timestamp();
         let resume_at = self.resume_at.as_deref().map(|ts| timestamp(ts, now));
         let mut notices = Vec::new();
@@ -309,13 +361,16 @@ impl NoticeState {
                     .into_iter()
                     .flatten()
                     .rev()
-                    .filter(|(id, _)| {
+                    .filter(|claim| {
+                        // Expiry is handled by pruning, which keeps pending handoffs.
+                        // Zero/default retains historical single-notice claims.
                         self.deliveries
-                            .get(&(id.clone(), actor.id.clone()))
+                            .get(&(claim.id.clone(), actor.id.clone()))
                             .is_none_or(|v| v.0 != "withdrawn")
                     })
-                    .any(|(_, claimed)| {
-                        let claimed = claimed
+                    .any(|claim| {
+                        let claimed = claim
+                            .sources
                             .iter()
                             .filter(|id| self.positions.contains_key(*id))
                             .collect::<Vec<_>>();

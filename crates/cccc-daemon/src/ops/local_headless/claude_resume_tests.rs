@@ -218,6 +218,7 @@ impl Fixture {
             group: self.group.clone(),
             actor: self.actor.clone(),
             event,
+            claimed: true,
         }
     }
 }

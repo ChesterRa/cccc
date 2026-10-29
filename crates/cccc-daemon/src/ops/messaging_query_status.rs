@@ -31,6 +31,7 @@ pub(super) fn decorate(
             "obligation_status",
             "_obligation_status",
         ),
+        ("with_obligation_status", "user_request", "_user_request"),
     ];
     if !include.iter().any(|(flag, _, _)| bool_arg(request, flag)) {
         return events

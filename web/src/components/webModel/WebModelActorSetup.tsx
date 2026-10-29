@@ -3,10 +3,26 @@ import { useTranslation } from "react-i18next";
 import * as api from "../../services/api";
 import { ProjectedBrowserSurfacePanel } from "../browser/ProjectedBrowserSurfacePanel";
 import { primaryButtonClass, secondaryButtonClass, inputClass } from "../modals/settings/types";
-import { WebModelConnectionStatus } from "./WebModelConnectionStatus";
+import { WebModelConnectionStatus, WebModelManagedConnection } from "./WebModelConnectionStatus";
 import { webModelConnectionState } from "./webModelConnectionState";
 
-export function WebModelActorSetup({
+type Props = {
+  groupId: string;
+  actorId: string;
+  isDark: boolean;
+  isVisible?: boolean;
+  canAccessConnection?: boolean;
+  onOpenSharedSettings?: () => void;
+  onBusyChange?: (busy: boolean) => void;
+  saving?: boolean;
+};
+
+export function WebModelActorSetup(props: Props) {
+  if (props.canAccessConnection === false) return <WebModelManagedConnection />;
+  return <ActorSetup key={`${props.groupId}/${props.actorId}`} {...props} />;
+}
+
+function ActorSetup({
   groupId,
   actorId,
   isDark,
@@ -14,15 +30,7 @@ export function WebModelActorSetup({
   onOpenSharedSettings,
   onBusyChange,
   saving = false,
-}: {
-  groupId: string;
-  actorId: string;
-  isDark: boolean;
-  isVisible?: boolean;
-  onOpenSharedSettings?: () => void;
-  onBusyChange?: (busy: boolean) => void;
-  saving?: boolean;
-}) {
+}: Props) {
   const { t } = useTranslation("settings");
   const label = (key: string) => t(`webModelActor.${key}`);
   const [result, setResult] = useState<api.WebModelBrowserSurfaceResult | null>(null);
@@ -37,7 +45,16 @@ export function WebModelActorSetup({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const mutation = useRef(0);
   const selection = useRef("");
+  const busyCallback = useRef(onBusyChange);
+  busyCallback.current = onBusyChange;
   selection.current = `${groupId}/${actorId}`;
+  useEffect(() => {
+    selection.current = `${groupId}/${actorId}`;
+    return () => {
+      selection.current = "";
+      busyCallback.current?.(false);
+    };
+  }, [groupId, actorId]);
   const fetchStatus = useCallback(
     () => api.fetchWebModelBrowserSurfaceSession(groupId, actorId),
     [groupId, actorId],
@@ -268,7 +285,7 @@ export function WebModelActorSetup({
         />
       )}
       <div className="flex flex-wrap gap-2">
-        {state === "bound" && !enabled && !changing && (
+        {!enabled && !changing && (state === "bound" || (state === "unpaired" && !restoring)) && (
           <button
             type="button"
             className={primaryButtonClass()}

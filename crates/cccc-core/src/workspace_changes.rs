@@ -2,6 +2,7 @@
 use crate::{GroupDoc, workspace};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{HashMap, HashSet},
     io,
     path::Path,
     process::Command,
@@ -135,7 +136,13 @@ fn parse(stdout: &str, prefix: &str) -> io::Result<Vec<Change>> {
     }
     Ok(entries)
 }
-fn inspect(root: &Path, deadline: Instant) -> io::Result<Changes> {
+/// Also reports whether the workspace is itself a new directory of its repository.
+fn inspect(
+    root: &Path,
+    deadline: Instant,
+    limit: usize,
+    expand_untracked: bool,
+) -> io::Result<(Changes, bool)> {
     let repository = run(
         root,
         &["rev-parse", "--is-inside-work-tree"],
@@ -145,12 +152,15 @@ fn inspect(root: &Path, deadline: Instant) -> io::Result<Changes> {
     if !repository.status.success() {
         // A non-repository is a normal Files state; ownership/permission failures are not.
         if String::from_utf8_lossy(&repository.stderr).contains("not a git repository") {
-            return Ok(Changes {
-                repository: false,
-                branch: String::new(),
-                entries: vec![],
-                limited: false,
-            });
+            return Ok((
+                Changes {
+                    repository: false,
+                    branch: String::new(),
+                    entries: vec![],
+                    limited: false,
+                },
+                false,
+            ));
         }
         return Err(io::Error::other(
             String::from_utf8_lossy(&repository.stderr)
@@ -174,11 +184,14 @@ fn inspect(root: &Path, deadline: Instant) -> io::Result<Changes> {
             ".",
         ],
         deadline,
-        STATUS_LIMIT,
+        limit,
     )?)?;
+    // Such a workspace is one record for the workspace path, which `parse` drops as empty.
+    let root_untracked = !prefix.is_empty()
+        && stdout
+            .split('\0')
+            .any(|record| record.strip_prefix("?? ") == Some(prefix));
     let mut entries = parse(&stdout, prefix)?;
-    let limited = entries.len() > ENTRY_LIMIT;
-    entries.truncate(ENTRY_LIMIT);
     let branch = run(
         root,
         &["symbolic-ref", "--short", "-q", "HEAD"],
@@ -195,27 +208,127 @@ fn inspect(root: &Path, deadline: Instant) -> io::Result<Changes> {
             8192,
         )?)?
     };
-    Ok(Changes {
-        repository: true,
-        branch: branch.trim_end_matches(['\n', '\r']).to_owned(),
-        entries,
-        limited,
-    })
+    let mut collapsed = false;
+    if expand_untracked {
+        (entries, collapsed) =
+            expand_untracked_directories(root, prefix, entries, root_untracked, deadline, limit);
+    }
+    let limited = collapsed || entries.len() > ENTRY_LIMIT;
+    entries.truncate(ENTRY_LIMIT);
+    Ok((
+        Changes {
+            repository: true,
+            branch: branch.trim_end_matches(['\n', '\r']).to_owned(),
+            entries,
+            limited,
+        },
+        root_untracked,
+    ))
+}
+
+/// Git reports a new directory as one entry, while editors list each new file in it. List
+/// those files too with what is left of the budget. A directory whose files do not fit in the
+/// time or output bounds keeps its single entry, as before, and the returned flag is set so
+/// the list is not mistaken for a complete one.
+fn expand_untracked_directories(
+    root: &Path,
+    prefix: &str,
+    entries: Vec<Change>,
+    root_untracked: bool,
+    deadline: Instant,
+    limit: usize,
+) -> (Vec<Change>, bool) {
+    let mut directories: HashSet<String> = entries
+        .iter()
+        .filter(|entry| entry.untracked && entry.directory)
+        .map(|entry| entry.path.clone())
+        .collect();
+    // A workspace that is itself a new directory owns its files under the empty path.
+    if root_untracked {
+        directories.insert(String::new());
+    }
+    if directories.is_empty() {
+        return (entries, false);
+    }
+    // One walk of the workspace avoids a command line that grows with the directory count.
+    let args = [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--",
+        ".",
+    ];
+    let Some(files) = run(root, &args, deadline, limit)
+        .and_then(text)
+        .and_then(|stdout| parse(&stdout, prefix))
+        .ok()
+    else {
+        return (entries, true);
+    };
+    let mut by_directory: HashMap<String, Vec<Change>> = HashMap::new();
+    for file in files.into_iter().filter(|file| file.untracked) {
+        // Directories reported in normal mode never nest, so one ancestor owns each file.
+        // A nested repository is listed as itself in both modes.
+        let owner = std::iter::once(file.path.as_str())
+            .chain(file.path.match_indices('/').map(|(at, _)| &file.path[..at]))
+            .chain([""])
+            .find(|candidate| directories.contains(*candidate))
+            .map(str::to_owned);
+        if let Some(owner) = owner {
+            by_directory.entry(owner).or_default().push(file);
+        }
+    }
+    let mut expanded = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if entry.untracked && entry.directory {
+            // The listing is the newer view, so a directory it no longer shows has nothing
+            // untracked left: it was removed, emptied or ignored in between.
+            expanded.extend(by_directory.remove(&entry.path).unwrap_or_default());
+        } else {
+            expanded.push(entry);
+        }
+    }
+    expanded.extend(by_directory.remove("").unwrap_or_default());
+    (expanded, false)
 }
 
 pub fn changes(group: &GroupDoc) -> io::Result<Changes> {
-    inspect(&workspace::root(group)?, Instant::now() + BUDGET)
+    inspect(
+        &workspace::root(group)?,
+        Instant::now() + BUDGET,
+        STATUS_LIMIT,
+        true,
+    )
+    .map(|(changes, _)| changes)
+}
+fn open_in_files() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "Open this entry in Files to inspect its contents",
+    )
 }
 pub fn diff(group: &GroupDoc, path: &str, side: DiffSide) -> io::Result<Patch> {
     workspace::safe_relative(path)?;
     let root = workspace::root(group)?;
     let deadline = Instant::now() + BUDGET;
     // Only a current status entry can select a diff. No caller-supplied revision or Git option.
-    let changes = inspect(&root, deadline)?;
+    // Untracked files have no diff, so the directories that hold them need not be expanded.
+    let (changes, root_untracked) = inspect(&root, deadline, STATUS_LIMIT, false)?;
+    // Everything in a workspace that is itself a new directory is untracked.
+    if root_untracked {
+        return Err(open_in_files());
+    }
     let entry = changes
         .entries
         .iter()
-        .find(|entry| entry.path == path)
+        .find(|entry| {
+            entry.path == path
+                || (entry.untracked
+                    && entry.directory
+                    && path.starts_with(&entry.path)
+                    && path[entry.path.len()..].starts_with('/'))
+        })
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -223,10 +336,7 @@ pub fn diff(group: &GroupDoc, path: &str, side: DiffSide) -> io::Result<Patch> {
             )
         })?;
     if entry.untracked || entry.conflicted || entry.directory {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Open this entry in Files to inspect its contents",
-        ));
+        return Err(open_in_files());
     }
     let code = if side == DiffSide::Staged {
         entry.index
@@ -270,4 +380,109 @@ pub fn diff(group: &GroupDoc, path: &str, side: DiffSide) -> io::Result<Patch> {
         patch: if limited { String::new() } else { patch },
         limited,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_directories_that_do_not_fit_keep_one_entry_and_mark_the_list_limited() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let git = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(root)
+            .output()
+            .expect("git");
+        assert!(git.status.success());
+        let file = format!("fresh/{}.txt", "a".repeat(80));
+        std::fs::create_dir_all(root.join("fresh")).expect("fresh");
+        std::fs::write(root.join(&file), "a\n").expect("file");
+        let listed = |changes: &Changes| -> Vec<(String, bool)> {
+            changes
+                .entries
+                .iter()
+                .map(|entry| (entry.path.clone(), entry.directory))
+                .collect()
+        };
+        // Git's single entry for the directory fits in 64 bytes; the listing of its file does not.
+        let (changes, _) = inspect(root, Instant::now() + BUDGET, 64, true).expect("inspect");
+        assert_eq!(listed(&changes), [("fresh".to_owned(), true)]);
+        assert!(changes.limited);
+        // No budget left for the listing has the same result.
+        let collapsed = || {
+            vec![Change {
+                path: "fresh".into(),
+                index: '?',
+                worktree: '?',
+                previous_path: None,
+                untracked: true,
+                conflicted: false,
+                directory: true,
+            }]
+        };
+        let (entries, incomplete) = expand_untracked_directories(
+            root,
+            "",
+            collapsed(),
+            false,
+            Instant::now(),
+            STATUS_LIMIT,
+        );
+        assert!(incomplete);
+        assert!(entries.len() == 1 && entries[0].directory && entries[0].path == "fresh");
+        let (changes, _) =
+            inspect(root, Instant::now() + BUDGET, STATUS_LIMIT, true).expect("inspect");
+        assert_eq!(listed(&changes), [(file.clone(), false)]);
+        assert!(!changes.limited && changes.entries[0].untracked);
+        // A directory removed between the two Git calls is dropped rather than kept stale.
+        let mut entries = collapsed();
+        entries.insert(
+            0,
+            Change {
+                path: "gone".into(),
+                ..collapsed().remove(0)
+            },
+        );
+        let (entries, incomplete) = expand_untracked_directories(
+            root,
+            "",
+            entries,
+            false,
+            Instant::now() + BUDGET,
+            STATUS_LIMIT,
+        );
+        assert!(!incomplete);
+        let paths: Vec<&str> = entries.iter().map(|entry| entry.path.as_str()).collect();
+        assert_eq!(paths, [file.as_str()]);
+    }
+
+    #[test]
+    fn a_new_workspace_directory_that_does_not_fit_marks_its_empty_list_limited() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let git = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(temp.path())
+            .output()
+            .expect("git");
+        assert!(git.status.success());
+        let root = temp.path().join("project");
+        let file = format!("{}.txt", "a".repeat(80));
+        std::fs::create_dir_all(&root).expect("project");
+        std::fs::write(root.join(&file), "a\n").expect("file");
+        // Git's record for the workspace fits in 64 bytes; the listing of its file does not.
+        let (changes, root_untracked) =
+            inspect(&root, Instant::now() + BUDGET, 64, true).expect("inspect");
+        assert!(root_untracked && changes.limited && changes.entries.is_empty());
+        let (changes, _) =
+            inspect(&root, Instant::now() + BUDGET, STATUS_LIMIT, true).expect("inspect");
+        let paths: Vec<&str> = changes
+            .entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect();
+        assert_eq!(paths, [file.as_str()]);
+        assert!(!changes.limited && changes.entries[0].untracked);
+    }
 }

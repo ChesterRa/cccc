@@ -1,0 +1,31 @@
+/* Animate the HTML layer, not an SVG child: the latter invalidates layout
+   on each frame in Chromium. Only working, visible rings retain a layer. */
+@keyframes runtime-dock-layer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.runtime-dock-ring-layer {
+  display: block;
+  contain: layout style;
+}
+
+.runtime-dock-ring-layer--active {
+  animation: runtime-dock-layer-spin 3.6s linear infinite;
+}
+
+.runtime-dock-ring-layer[data-animating="true"] {
+  will-change: transform;
+}
+
+.runtime-dock-ring-layer[data-animating="false"] {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-dock-ring-layer--active {
+    animation: none;
+    will-change: auto;
+  }
+}

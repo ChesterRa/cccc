@@ -2,7 +2,8 @@ use crate::RuntimeError;
 use crate::output::{HistoryPage, OutputBuffer};
 use crate::terminal_snapshot::TerminalStateMirror;
 use crate::transcript_archive::{HistoryConfig, TranscriptArchive};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::watch;
 
 mod subscription;
@@ -14,6 +15,18 @@ struct SessionHistoryState {
     archive_writable: bool,
     accepting_output: bool,
     terminal: TerminalStateMirror,
+    last_output: Option<(Instant, SystemTime)>,
+}
+
+/// When a live terminal session's process last wrote output. This is an
+/// observation only: output neither proves nor disproves that the process is
+/// working.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputObservation {
+    /// Wall-clock time of the last output, for display.
+    pub last_output_at: SystemTime,
+    /// Time since the last output, measured on the monotonic clock.
+    pub quiet_for: Duration,
 }
 
 #[derive(Clone)]
@@ -54,9 +67,9 @@ impl SessionHistory {
             Some(config) => match TranscriptArchive::create_at(config, cursor_floor) {
                 Ok(archive) => Some(archive),
                 Err(error) => {
-                    eprintln!(
+                    crate::diagnostic(format_args!(
                         "CCCC terminal transcript archive unavailable; using memory only: {error}"
-                    );
+                    ));
                     None
                 }
             },
@@ -77,6 +90,7 @@ impl SessionHistory {
                 archive_writable,
                 accepting_output: true,
                 terminal: TerminalStateMirror::new(cols, rows),
+                last_output: None,
             })),
             changes,
         })
@@ -108,6 +122,9 @@ impl SessionHistory {
                 terminal_responses: Vec::new(),
                 archive_error: None,
             });
+        }
+        if !data.is_empty() {
+            state.last_output = Some((Instant::now(), SystemTime::now()));
         }
         let responses = state.terminal.process(data);
         state.output.push(data);
@@ -257,10 +274,59 @@ impl SessionHistory {
         Ok(())
     }
 
+    /// When the process last wrote to its terminal, or `None` before its first
+    /// output in this session or while transcript access is busy.
+    pub(crate) fn last_output(&self) -> Result<Option<OutputObservation>, RuntimeError> {
+        // Transcript writes and compaction hold this lock during disk I/O.
+        // Optional status observations must not wait behind that work.
+        let state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::WouldBlock) => return Ok(None),
+            Err(TryLockError::Poisoned(_)) => return Err(RuntimeError::Poisoned),
+        };
+        Ok(state.last_output.map(|(at, wall)| OutputObservation {
+            last_output_at: wall,
+            quiet_for: at.elapsed(),
+        }))
+    }
+
     pub(crate) fn bracketed_paste_enabled(&self) -> Result<bool, RuntimeError> {
         self.state
             .lock()
             .map_err(|_| RuntimeError::Poisoned)
             .map(|state| state.output.bracketed_paste_enabled())
+    }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn busy_transcript_does_not_block_output_observations() {
+        let history = SessionHistory::new(None).expect("history");
+        history.push(b"observed").expect("output");
+        let before = history.last_output().expect("read").expect("observation");
+        let writer_history = history.clone();
+        let (locked, ready) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let _io = writer_history.state.lock().expect("transcript writer");
+            locked.send(()).expect("ready");
+            // Bound a regression's wait without leaving a blocked test thread.
+            let _ = released.recv_timeout(Duration::from_secs(2));
+        });
+        ready.recv().expect("writer holds the transcript lock");
+        let unavailable = history.last_output();
+        let _ = release.send(());
+        writer.join().expect("writer exits");
+        assert!(
+            unavailable.expect("observation query").is_none(),
+            "optional observations must not wait for transcript I/O"
+        );
+        let after = history.last_output().expect("read").expect("observation");
+        assert_eq!(after.last_output_at, before.last_output_at);
+        assert!(after.quiet_for >= before.quiet_for);
     }
 }

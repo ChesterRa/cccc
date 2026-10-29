@@ -7,11 +7,13 @@ use crate::dispatch::OpError;
 pub(super) fn normalize(
     home: &HomeLayout,
     group: &GroupDoc,
+    by: &str,
     data: &mut Map<String, Value>,
 ) -> Result<(), OpError> {
     // Captured port authority is checked before dispatch, never message content.
     data.remove("_cccc_web_binding");
-    normalize_scope(group, data)?;
+    data.remove("_cccc_native_binding");
+    normalize_scoped_path(group, Some(by), data)?;
     normalize_attachments(home, group, data)?;
     super::install_command::prepare(data);
     Ok(())
@@ -19,6 +21,14 @@ pub(super) fn normalize(
 
 pub(super) fn normalize_scope(
     group: &GroupDoc,
+    data: &mut Map<String, Value>,
+) -> Result<(), OpError> {
+    normalize_scoped_path(group, None, data)
+}
+
+fn normalize_scoped_path(
+    group: &GroupDoc,
+    by: Option<&str>,
     data: &mut Map<String, Value>,
 ) -> Result<(), OpError> {
     let Some(raw) = data
@@ -35,6 +45,17 @@ pub(super) fn normalize_scope(
             "path does not belong to an attached group scope",
         )
     })?;
+    // A live caller can still send from its own launch root after detach or an
+    // explicit same-key rebind. Attribute that origin before consulting current
+    // configuration. Destination-only validation has no caller and stays strict.
+    if let Some(by) = by
+        && let Some(scope) = crate::ops::actor_runtime::caller_scope(group, by)?
+        && scope.source == "runtime_launch"
+        && requested.starts_with(&scope.path)
+    {
+        data.insert("scope_key".into(), Value::String(scope.scope_key));
+        return Ok(());
+    }
     let scope = group.scopes.iter().find(|scope| {
         absolute(Path::new(&scope.url))
             .is_ok_and(|root| requested == root || requested.starts_with(root))

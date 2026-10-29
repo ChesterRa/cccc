@@ -1,0 +1,63 @@
+/* Keep hover controls out of the reading path, with keyboard and touch access. */
+.message-actions-inline {
+  display: none;
+}
+
+/* Put each touch menu beside its message instead of reserving a row below it. */
+@supports selector(.message-row:has(.message-actions-menu)) {
+  @media (pointer: coarse) and (max-width: 767px),
+    (pointer: coarse) and (max-width: 1023px) and (max-height: 480px) {
+    .message-row:has(.message-actions-menu) {
+      min-height: 44px;
+    }
+    .message-row.items-start:has(.message-actions-menu) {
+      padding-right: max(clamp(1.5rem, 8%, 2rem), calc(44px - min(16px, 1rem)));
+    }
+    .message-row.items-end:has(.message-actions-menu) {
+      padding-left: max(clamp(1.5rem, 8%, 2rem), calc(44px - min(16px, 1rem)));
+    }
+    .message-actions-menu {
+      position: absolute;
+      z-index: 1;
+      bottom: 0;
+    }
+    .message-row.items-start .message-actions-menu {
+      right: calc(-1 * min(16px, 1rem));
+    }
+    .message-row.items-end .message-actions-menu {
+      left: calc(-1 * min(16px, 1rem));
+    }
+    .message-actions-menu > button {
+      width: 44px;
+      height: 44px;
+      padding: 0;
+    }
+    .message-actions-label {
+      display: none;
+    }
+    .message-footer-no-status:has(.message-actions-menu) {
+      margin-top: 0;
+    }
+  }
+}
+@media (min-width: 640px) and (hover: hover) {
+  .message-actions-menu {
+    display: none;
+  }
+  .message-actions-inline {
+    display: flex;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 140ms ease-out;
+  }
+  .message-row:hover .message-actions-inline,
+  .message-row:focus-within .message-actions-inline {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .message-actions-inline {
+    transition: none;
+  }
+}

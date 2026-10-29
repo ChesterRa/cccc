@@ -24,14 +24,27 @@ use crate::server_lifecycle::{DaemonLifecycle, cleanup_stale};
 type RuntimeRestoreSpawner = fn(HomeLayout, DispatchLocks);
 
 pub async fn run(home: HomeLayout) -> Result<()> {
-    run_with_restore(home, crate::ops::runtime_restore::spawn).await
+    run_with_restore(home, crate::ops::runtime_restore::spawn, false).await
 }
 
-async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> Result<()> {
+/// Run the CLI-owned daemon with bounded, content-free diagnostics. The library
+/// entry point leaves subscriber ownership with its embedding application.
+pub async fn run_with_diagnostics(home: HomeLayout) -> Result<()> {
+    run_with_restore(home, crate::ops::runtime_restore::spawn, true).await
+}
+
+async fn run_with_restore(
+    home: HomeLayout,
+    restore: RuntimeRestoreSpawner,
+    diagnostics: bool,
+) -> Result<()> {
     home.initialize().context("initialize Rust home")?;
     let paths = DaemonPaths::new(home);
     std::fs::create_dir_all(&paths.daemon_dir)?;
     let lock = claim_home(&paths)?;
+    if diagnostics {
+        crate::diagnostic_log::install(&paths.daemon_dir);
+    }
     if let Err(error) = cccc_core::group_bridge_retirement::retire(&paths.home) {
         tracing::warn!(%error, "manual Group Bridge state retained for retirement on next startup");
     }

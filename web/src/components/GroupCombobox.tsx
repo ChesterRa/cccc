@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { defaultFilter } from "cmdk";
 import { Check, ChevronsUpDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -55,6 +56,7 @@ export function GroupCombobox({
 }: GroupComboboxProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [triggerWidth, setTriggerWidth] = useState<number | null>(null);
 
   const selectedItem = useMemo(
@@ -104,6 +106,14 @@ export function GroupCombobox({
       </PopoverTrigger>
       <PopoverContent
         align="start"
+        onOpenAutoFocus={(event) => {
+          // With no search input, put focus inside cmdk so its arrow-key and
+          // Enter handling can run. The list also exposes its active option.
+          if (!searchable && listRef.current) {
+            event.preventDefault();
+            listRef.current.focus();
+          }
+        }}
         style={matchTriggerWidth && triggerWidth ? { width: `${triggerWidth}px` } : undefined}
         className={cn(
           matchTriggerWidth
@@ -112,9 +122,11 @@ export function GroupCombobox({
           contentClassName,
         )}
       >
-        <Command>
+        <Command
+          filter={(value, search, keywords) => defaultFilter(value.slice(1, -1), search, keywords)}
+        >
           {searchable ? <CommandInput placeholder={searchPlaceholder} /> : null}
-          <CommandList>
+          <CommandList ref={listRef} label={ariaLabel}>
             <CommandEmpty>{emptyText}</CommandEmpty>
             <CommandGroup>
               {items.map((item) => {
@@ -122,7 +134,9 @@ export function GroupCombobox({
                 return (
                   <CommandItem
                     key={item.value}
-                    value={item.value}
+                    // cmdk reserves the empty value and trims values. Wrap
+                    // ours so empty strings and whitespace stay distinct.
+                    value={`=${item.value}=`}
                     disabled={item.disabled}
                     keywords={[item.label, item.description || "", ...(item.keywords || [])]}
                     onSelect={() => {

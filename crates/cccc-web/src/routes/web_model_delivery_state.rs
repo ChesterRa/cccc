@@ -88,6 +88,7 @@ pub(super) fn record_connector(
             turn_id,
             error,
         },
+        None,
     )
 }
 

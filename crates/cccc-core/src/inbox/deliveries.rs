@@ -29,7 +29,7 @@ struct State {
     state: String,
     transport: String,
     // pending_sources skips malformed state records; latest_state does not.
-    pending: Option<(String, usize)>,
+    pending: Option<(String, usize, bool)>,
 }
 
 impl DeliveryState {
@@ -145,7 +145,13 @@ impl DeliveryState {
                 .data
                 .get("state")
                 .and_then(Value::as_str)
-                .map(|state| (state.to_owned(), position))
+                .map(|state| {
+                    (
+                        state.to_owned(),
+                        position,
+                        event.data.get("retryable") == Some(&Value::Bool(true)),
+                    )
+                })
                 .or_else(|| states.get(source).and_then(|state| state.pending.clone()));
             states.insert(
                 source.to_owned(),
@@ -173,10 +179,12 @@ impl DeliveryState {
             .and_then(|states| states.get(source))
             .map(|state| (state.state.clone(), state.transport.clone()))
     }
-    pub fn pending(&self, actor: &str, limit: usize) -> Vec<Location> {
+    pub fn pending(&self, group: &GroupDoc, actor: &str, limit: usize) -> Vec<Location> {
         let Some(actor_index) = self.actors.get(actor) else {
             return Vec::new();
         };
+        let external_session =
+            find(group, actor).is_some_and(|actor| !actor.external_session_id.is_empty());
         let states = self.latest.get(actor);
         let generation = self.generations.get(actor).copied();
         let current = |position: usize| generation.is_none_or(|generation| position > generation);
@@ -197,14 +205,15 @@ impl DeliveryState {
             .iter()
             .filter(|source| current(source.position) && source.recipients.contains(actor_index))
             .filter(|source| {
-                let state = states
+                let (state, retryable) = states
                     .and_then(|states| states.get(&source.id))
                     .and_then(|state| state.pending.as_ref())
-                    .filter(|(_, position)| current(*position))
-                    .map(|(state, _)| state.as_str())
-                    .unwrap_or_default();
+                    .filter(|(_, position, _)| current(*position))
+                    .map(|(state, _, retryable)| (state.as_str(), state == "failed" && *retryable))
+                    .unwrap_or(("", false));
                 if matches!(state, "accepted" | "ambiguous" | "withdrawn")
-                    || (source.mail && state != "claimed")
+                    || (external_session && state == "failed" && !retryable)
+                    || (source.mail && state != "claimed" && !retryable)
                 {
                     return false;
                 }

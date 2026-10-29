@@ -81,11 +81,17 @@ fn restores_enabled_actors_for_persisted_running_groups() {
             });
             group.active_scope_key = "s_project".into();
             let mut actor = Actor::new("peer1");
-            actor.default_scope_key = "s_detached".into();
+            actor.default_scope_key = "s_project".into();
             actor.runtime = ActorRuntime::Custom;
             actor.runner = RunnerKind::Pty;
             actor.command = vec!["sh".into(), "-c".into(), "sleep 5".into()];
             actors::add(group, actor)?;
+            let mut unavailable = Actor::new("peer-unavailable");
+            unavailable.default_scope_key = "s_detached".into();
+            unavailable.runtime = ActorRuntime::Custom;
+            unavailable.runner = RunnerKind::Pty;
+            unavailable.command = vec!["sh".into(), "-c".into(), "sleep 5".into()];
+            actors::add(group, unavailable)?;
             group.running = true;
             group.state = GroupState::Active;
             Ok(())
@@ -94,10 +100,10 @@ fn restores_enabled_actors_for_persisted_running_groups() {
 
     assert!(runtime_restore::restore_running(&home).is_ok());
     assert!(actor_runtime::status(&group_id, "peer1").is_some_and(|status| status.running));
-    assert_eq!(
-        store.load(&group_id).expect("restored group").actors[0].default_scope_key,
-        "s_project"
-    );
+    assert!(actor_runtime::status(&group_id, "peer-unavailable").is_none());
+    let restored = store.load(&group_id).expect("restored group");
+    assert_eq!(restored.actors[0].default_scope_key, "s_project");
+    assert_eq!(restored.actors[1].default_scope_key, "s_detached");
     cccc_runtime::stop(&group_id, "peer1").expect("stop");
 }
 

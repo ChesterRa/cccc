@@ -61,15 +61,15 @@ CCCC 只需一条安装命令，无需单独运维数据库、消息队列或 Do
 | **角色化协调** | Foreman + Peer 角色模型，权限边界清晰，收件人路由精确（`@all`、`@peers`、`@foreman`） |
 | **本地优先的运行时状态** | 运行时数据保存在 `CCCC_HOME` 而不是代码仓库里，同时仍可通过 Web Access 与 IM 做远程运维 |
 
-## 0.4.44 要点
+## 0.4.45 要点
 
-- **关注所需发送者**：在同一菜单勾选领班、同伴或用户，与消息类型组合筛选，翻阅更早的匹配消息并同步回执。发送保留筛选，被隐藏的新消息提供直达链接。
-- **实验性 Grok Voice**：复用本机 Grok Build 订阅登录，无需额外 API Key。Codex Voice 扩充声线并提示主要语言；两者均独立选择 Analyst Runtime。Grok 按顺序播报完整调查结果。
-- **给工作内容更多空间**：终端按可用宽高显示最多四个 2×2 窗格，采用紧凑标题栏、Actor 头像和分隔线。Voice 与任务工作区减少留白，同时保留完整操作。
-- **使用仓库原生指引**：Context 编辑当前工作区的 `AGENTS.md`，由 Runtime 负责加载。移除 `PROJECT.md` 专属行为和 `cccc_project_info`，不改动已有文件。
-- **日常流程更可靠**：视频附件播放、刷新后保持 Group 选择、保留设置草稿并完成已接受操作、自动清理已关闭直连，以及运行时获取最新稳定版的网站安装器。
+- **Grok Bot 原生投递**：使用 Webhook Routine 与远程 MCP 替代画面投递，提供有序任务准入、限定凭据和显式恢复。已有 Grok Actor 需要配置 Routine。
+- **Web Model 设置更清晰**：统一访问和编辑操作，同时保留 ChatGPT 浏览器登录、Dots 事件配对与 Grok Routine 的差异。ChatGPT 适配当前页面结构，并提供共享登录入口。
+- **减少大型 Group 的重复工作**：紧凑 Inbox 投影、有界归档句柄、gzip 批量读取和有界 Web 缓存保留历史及活动输出。可选 Mail 重复提醒默认关闭，不重放任务。
+- **任务操作更稳妥**：创建请求身份及引用支持任务树重试，可选 revision 检查拒绝过期编辑。Context 分页和字节限制约束请求结果，移除 Actor 时清理失效任务引用和工作状态。
+- **恢复行为更明确**：改善 Claude 中断／恢复与停止诊断，遵循 Codex 命令中的模型选择，避免重放 DeepSeek 失败轮次，并展示安全的 Pi 工具活动。直连预览明确 Group 身份和连接重试错误。
 
-升级步骤与功能边界见 [0.4.44 英文发布说明](docs/release/v0.4.44_release_notes.md)。请检查旧 `PROJECT.md`，再将需要的指引合并到 `AGENTS.md`。实时语音仍属实验功能，Grok 声调／音色漂移尚未确认修复。全局秘书仍共享各 Group 的模型历史。
+升级步骤与功能边界见 [0.4.45 英文发布说明](docs/release/v0.4.45_release_notes.md)。实时语音仍属实验功能，Grok 声调／音色漂移尚未确认修复。全局秘书仍共享各 Group 的模型历史。本版不包含外部会话热接入。
 
 ## 快速上手
 
@@ -123,7 +123,15 @@ Windows 尤其如此。如果要在同一命令目录从 pip 切换到官网安�
 cccc
 ```
 
-打开 **http://127.0.0.1:8848** — 默认会一起拉起 daemon 和本地 Web UI。
+在交互式终端里运行 `cccc`，会打开一个简洁的终端界面，并同时拉起 daemon 和本地 Web UI。
+这个界面是一个状态面板：显示 Web 地址、daemon 是否由本次启动、各工作组的状态和运行中的成员，以及原生会话。
+用上下键选中工作组，按 Enter 打开，可以查看它的任务（只读），也可以启动或停止它。输入 `/` 可查看全部命令：`/sessions` 列出所有原生会话，
+`/setup` 可接入 Codex、Claude Code、Pi 或 OpenCode 会话，`/quit`（或 Ctrl+C）会停止本次启动的服务。
+其余功能都在 Web UI 里。
+
+完整的 Web UI 在 **http://127.0.0.1:8848**。不需要终端界面时，例如在服务器、容器、服务管理器或
+脚本中启动，请使用 `cccc --headless`（或 `cccc web`），它保持纯日志输出。输入或输出不是终端时，
+以及只读（Exhibit）模式下，`cccc` 也会以 headless 方式运行。
 直接通过 `localhost` / `127.0.0.1` 使用时保持免密，也不会自动创建 Access Token。
 只有开启 LAN、Remote Access、公网 URL 或反向代理访问时才需要显式管理员 Token。
 
@@ -386,7 +394,8 @@ cccc im start
 
 ```bash
 # 生命周期
-cccc                           # 启动 daemon + Web UI
+cccc                           # 启动 daemon + Web UI，并打开终端界面
+cccc --headless                # 启动 daemon + Web UI，不打开终端界面（同 cccc web）
 cccc daemon start|status|stop  # daemon 管理
 
 # 协作组
@@ -479,6 +488,7 @@ CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层�
 | [场景示例](https://chesterra.github.io/cccc/guide/use-cases) | 实际多智能体场景 |
 | [Web UI 指南](https://chesterra.github.io/cccc/guide/web-ui) | 看板导航 |
 | [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | 账户与 Direct 连接、投递和权限边界 |
+| [原生会话](https://chesterra.github.io/cccc/guide/local-sessions) | 连接独立运行的 Codex 和 Claude 会话，无需导入历史 |
 | [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | 听写、文档与输入框工作流 |
 | [IM 桥接配置](https://chesterra.github.io/cccc/guide/im-bridge/) | 连接 Telegram、Slack、Discord、Mattermost、飞书、钉钉、企业微信、微信 |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM 知识集成 |

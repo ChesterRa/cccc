@@ -115,7 +115,7 @@ fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             error,
         ));
     }
-    object(json!({"group_id": group.group_id, "group": group_runtime::group(group)}))
+    object(json!({"group_id": group.group_id, "group": group_runtime::group(home, group)}))
 }
 
 fn list(home: &HomeLayout) -> OpResult {
@@ -128,14 +128,21 @@ fn list(home: &HomeLayout) -> OpResult {
             store
                 .load(&meta.group_id)
                 .ok()
-                .map(|group| group_runtime::summary(meta, &group))
+                .map(|group| group_runtime::summary(home, meta, &group))
         })
         .collect::<Vec<_>>();
     object(json!({"groups": groups}))
 }
 
 fn show(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    object(json!({"group": group_runtime::group(load(home, request)?)}))
+    let group = load(home, request)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    let scope = actor_runtime::caller_scope(&group, &by)?;
+    object(json!({
+        "group": group_runtime::group(home, group),
+        // A caller-scoped read projection, outside GroupDoc/Actor persistence.
+        "effective_scope": scope.map_or_else(|| json!({}), |scope| json!(scope)),
+    }))
 }
 
 fn preamble_get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -516,7 +523,9 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         json!({"patch": patch}),
     )?;
     let group_id = group.group_id.clone();
-    object(json!({"group_id": group_id, "group": group_runtime::group(group), "event": event}))
+    object(
+        json!({"group_id": group_id, "group": group_runtime::group(home, group), "event": event}),
+    )
 }
 
 fn group_update_patch(request: &DaemonRequest) -> Result<serde_json::Map<String, Value>, OpError> {
@@ -593,6 +602,11 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     authorize(&group, request)?;
     let raw = required_arg(request, "state")?;
     let state: GroupState = serde_json::from_value(Value::String(raw)).map_err(OpError::invalid)?;
+    if state == GroupState::Stopped {
+        return Err(OpError::invalid(
+            "use group_stop to stop a Group and its runtimes",
+        ));
+    }
     let resumes_automation = matches!(group.state, GroupState::Paused)
         && matches!(state, GroupState::Active | GroupState::Idle)
         || matches!(group.state, GroupState::Idle) && matches!(state, GroupState::Active);
@@ -600,7 +614,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         cccc_core::automation::reset_rule_timers_on_resume(home, &group.group_id)
             .map_err(OpError::io)?;
     }
-    if matches!(state, GroupState::Paused | GroupState::Stopped) {
+    if state == GroupState::Paused {
         super::dots_events::invalidate_group(home, &group)?;
         super::grok_webhook::invalidate_group(home, &group)?;
         if group.actors.iter().any(|a| a.runtime.is_web_model()) {
@@ -631,7 +645,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if matches!(updated.state, GroupState::Active | GroupState::Idle) {
         actor_delivery::dispatch_group_unread(home, &updated);
     }
-    object(json!({"group": group_runtime::group(updated)}))
+    object(json!({"group": group_runtime::group(home, updated)}))
 }
 
 fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult {
@@ -671,7 +685,9 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
     if value {
         actor_delivery::dispatch_group_unread(home, &updated);
     }
-    object(json!({"group": group_runtime::group(updated), "running": value, "runtimes": runtimes}))
+    object(
+        json!({"group": group_runtime::group(home, updated), "running": value, "runtimes": runtimes}),
+    )
 }
 
 fn load(home: &HomeLayout, request: &DaemonRequest) -> Result<GroupDoc, OpError> {

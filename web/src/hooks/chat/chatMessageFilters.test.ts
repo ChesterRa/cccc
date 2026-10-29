@@ -30,3 +30,30 @@ it("combines the sender set with the existing message categories using AND", () 
   expect(matchesChatFilters({ ...reply, by: "user" }, "all", ["user", "peer"])).toBe(true);
   expect(matchesChatFilters(reply, "all", [])).toBe(true);
 });
+
+it("only treats an authoritatively open user obligation as waiting", () => {
+  const event: LedgerEvent = {
+    kind: "chat.message",
+    by: "worker",
+    data: { to: ["user"], message_mode: "request_reply" },
+    _user_request: { question: "none", requester: "available" },
+    _obligation_status: {
+      user: { reply_requested: true, replied: false, cancelled: false, delivery_state: "" },
+    },
+  };
+  expect(matchesChatFilters(event, "pending_user", [])).toBe(true);
+  expect(matchesChatFilters({ ...event, _user_request: undefined }, "pending_user", [])).toBe(
+    false,
+  );
+  expect(
+    matchesChatFilters(
+      {
+        ...event,
+        _obligation_status: { user: { ...event._obligation_status!.user, replied: true } },
+      },
+      "pending_user",
+      [],
+    ),
+  ).toBe(false);
+  expect(matchesChatFilters(event, "request_reply", [])).toBe(true);
+});

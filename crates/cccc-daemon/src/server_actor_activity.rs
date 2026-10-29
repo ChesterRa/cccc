@@ -25,7 +25,7 @@ impl ActorActivityService {
                 let tick_home = home.clone();
                 publisher = tokio::task::spawn_blocking(move || {
                     if let Err(error) = publisher.tick(&tick_home) {
-                        tracing::warn!(%error, "actor.activity tick failed");
+                        tracing::warn!(diagnostic_action = "actor_activity", diagnostic_code = crate::diagnostic_log::io_code(&error), %error, "actor.activity tick failed");
                     }
                     publisher
                 })

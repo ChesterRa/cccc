@@ -2,8 +2,10 @@ use cccc_contracts::Event;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::Value;
 
+mod native_notice;
 mod references;
 mod reply_guidance;
+pub(super) use native_notice::claude_notice;
 #[cfg(test)]
 #[path = "actor_delivery_render/reply_guidance_tests.rs"]
 mod reply_guidance_tests;
@@ -204,7 +206,10 @@ fn format_envelope(event: &Event, body: &str) -> String {
         } else {
             ""
         };
-        format!(" [event_id={}{reply_required}]", event.id)
+        let sent = sent_at(event)
+            .map(|sent| format!(" sent={sent}"))
+            .unwrap_or_default();
+        format!(" [event_id={}{sent}{reply_required}]", event.id)
     };
     if body.contains(['\r', '\n']) {
         format!("[cccc] {sender} → {targets}{reply}{metadata}{quote}:\n{body}")
@@ -217,11 +222,27 @@ fn render_system(event: &Event) -> Option<String> {
     let kind = text(event, "kind");
     let body = system_notify::body(event);
     (!body.is_empty()).then(|| {
+        let sent = sent_at(event)
+            .map(|sent| format!(" [sent={sent}]"))
+            .unwrap_or_default();
         format!(
-            "[cccc] SYSTEM ({}): {body}",
+            "[cccc] SYSTEM ({}){sent}: {body}",
             if kind.is_empty() { "info" } else { &kind }
         )
     })
+}
+
+/// The event's original timestamp as recorded in the ledger, to the second. A
+/// runtime may present a delivery long after handoff (native queues hold input
+/// until the current turn ends), so the envelope carries when the event was
+/// created, not when it is handed over or shown.
+fn sent_at(event: &Event) -> Option<String> {
+    chrono::DateTime::parse_from_rfc3339(&event.ts)
+        .ok()
+        .map(|time| {
+            time.with_timezone(&chrono::Utc)
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        })
 }
 
 fn text(event: &Event, key: &str) -> String {
@@ -304,8 +325,11 @@ mod tests {
         .as_object()
         .cloned()
         .expect("object");
+        event.ts = "2026-10-28T01:45:03.676332Z".into();
         let rendered = render_batch(&[event]).expect("render");
-        assert!(rendered.starts_with("[cccc] user → peer1 [event_id=event-123 reply_required]:\n"));
+        assert!(rendered.starts_with(
+            "[cccc] user → peer1 [event_id=event-123 sent=2026-10-28T01:45:03Z reply_required]:\n"
+        ));
         assert!(!rendered.contains("REPLY REQUIRED (event_id="));
         assert!(rendered.contains("task_ref: Fix send"));
         assert!(rendered.contains("cccc_file(action=\"read\", group_id=\"g_test\""));

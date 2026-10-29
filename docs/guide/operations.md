@@ -19,8 +19,15 @@ Key paths:
 ### Start
 
 ```bash
-cccc
+cccc              # interactive terminal: daemon + Web UI with the terminal interface
+cccc --headless   # servers, containers, service managers, scripts: plain log output
 ```
+
+Both run in the foreground and own what they started: quitting the interface,
+Ctrl+C or a termination signal stops the Web server, and the daemon when that
+launch started it. To keep CCCC running unattended, run `cccc --headless` under
+a service manager such as systemd or a container runtime instead of detaching
+it. Without a terminal, `cccc` runs headless on its own.
 
 ### Health Baseline
 

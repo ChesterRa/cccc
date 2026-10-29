@@ -1,5 +1,8 @@
 /* CSS imports must stay at the top for PostCSS. */
 @import "./styles/markdown.css";
+@import "./styles/chatTypography.css";
+@import "./styles/chatMessage.css";
+@import "./styles/chatComposer.css";
 @import "tailwindcss";
 
 @config "../tailwind.config.ts";
@@ -8,23 +11,6 @@
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
-}
-
-@keyframes runtime-dock-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.runtime-dock-ring__activity {
-  transform-origin: 22px 22px;
-  animation: runtime-dock-spin 3.6s linear infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .runtime-dock-ring__activity {
-    animation: none;
-  }
 }
 
 /* ============================================
@@ -37,8 +23,8 @@
   --color-body-bg: #ffffff; /* Clean white canvas background like Codex */
   --color-sidebar-bg: #f5f5f4; /* Codex-like warm neutral sidebar */
   --color-sidebar-border: #d5d9e0;
-  --color-sidebar-item-hover: rgba(28, 29, 33, 0.04);
-  --color-sidebar-item-active: rgba(28, 29, 33, 0.065);
+  --color-sidebar-item-hover: rgba(28, 29, 33, 0.025);
+  --color-sidebar-item-active: rgba(28, 29, 33, 0.09);
   --color-chat-bg: rgba(255, 255, 255, 0.96); /* Soft glass paper tone for the main chat panel */
 
   --color-bg-primary: #ffffff;
@@ -165,10 +151,10 @@
 :root.dark {
   --color-body-bg: #1c1f26;
   --color-sidebar-bg: #191c22;
-  --color-sidebar-border: #424b59;
-  --color-sidebar-item-hover: #2b313b;
-  --color-sidebar-item-active: #363f4d;
-  --color-chat-bg: #22262e;
+  --color-sidebar-border: #303744;
+  --color-sidebar-item-hover: #222832;
+  --color-sidebar-item-active: #343e4c;
+  --color-chat-bg: #20242b;
 
   --color-bg-primary: #1c1f26;
   --color-bg-secondary: #252a33;
@@ -181,7 +167,7 @@
   --glass-bg-hover: #353e4b;
   --glass-bg-active: #3c4757;
   --glass-border: #4c5767;
-  --glass-border-subtle: #3b4452;
+  --glass-border-subtle: #343d49;
   --glass-border-gradient: linear-gradient(
     135deg,
     rgba(255, 255, 255, 0.1),
@@ -203,13 +189,13 @@
   --glass-tab-shadow-active: none;
 
   /* Bubble glass tokens — fully opaque for reliable GPU rasterization */
-  --glass-bubble-bg: #282d36;
-  --glass-bubble-border: #444d5b;
+  --glass-bubble-bg: #282e38;
+  --glass-bubble-border: #39424e;
   --glass-bubble-shadow: none;
 
   /* Panel glass tokens (non-interactive) */
-  --glass-panel-bg: #292f39;
-  --glass-panel-border: #444e5e;
+  --glass-panel-bg: #282e38;
+  --glass-panel-border: #3b4553;
 
   /* Neutral action colors */
   --glass-accent-bg: #343e4d;
@@ -313,16 +299,7 @@ body {
   /* Top safe area for notch/status bar, bottom handled by components */
   padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) 0 env(safe-area-inset-left, 0);
   box-sizing: border-box;
-  font-family:
-    "Inter",
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
-    Helvetica,
-    Arial,
-    sans-serif;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  font-family: var(--font-sans);
   text-rendering: optimizeLegibility;
   background: var(--color-body-bg, var(--color-bg-primary));
   color: var(--color-text-primary);
@@ -716,49 +693,31 @@ select {
 @keyframes cccc-message-bubble-enter {
   from {
     opacity: 0;
-    transform: translateY(14px) scale(0.982);
-    box-shadow: 0 0 0 rgba(15, 23, 42, 0);
+    transform: translateY(4px);
   }
-  60% {
+  to {
     opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes cccc-message-bubble-enter-incoming {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes cccc-message-bubble-enter-outgoing {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.995);
   }
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
-    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
-  }
-}
-
-@keyframes cccc-message-bubble-enter-incoming {
-  from {
-    opacity: 0;
-    transform: translateX(-10px) translateY(10px) scale(0.985);
-  }
-  55% {
-    opacity: 1;
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0) translateY(0) scale(1);
-  }
-}
-
-@keyframes cccc-message-bubble-enter-outgoing {
-  from {
-    opacity: 0;
-    transform: translateX(18px) translateY(12px) scale(0.96);
-    filter: saturate(0.96);
-  }
-  45% {
-    opacity: 1;
-  }
-  70% {
-    transform: translateX(-2px) translateY(0) scale(1.01);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0) translateY(0) scale(1);
-    filter: saturate(1);
   }
 }
 
@@ -772,19 +731,19 @@ select {
 }
 
 .cccc-message-bubble-enter {
-  animation: cccc-message-bubble-enter 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: cccc-message-bubble-enter 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   will-change: opacity, transform;
 }
 
 .cccc-message-bubble-enter-incoming {
   animation-name: cccc-message-bubble-enter-incoming;
-  animation-duration: 0.24s;
+  animation-duration: 0.18s;
   animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .cccc-message-bubble-enter-outgoing {
   animation-name: cccc-message-bubble-enter-outgoing;
-  animation-duration: 0.28s;
+  animation-duration: 0.18s;
   animation-timing-function: cubic-bezier(0.18, 0.9, 0.22, 1);
 }
 
@@ -1128,63 +1087,12 @@ select {
 
 .glass-group-item-active {
   background: var(--color-sidebar-item-active);
-  border-color: var(--glass-tab-border-active);
+  border: 1px solid transparent;
   box-shadow: none;
 }
 
 .glass-group-item-active::before {
   content: none;
-}
-
-/* Glass status pill — premium badge */
-.glass-status-pill {
-  background-clip: padding-box;
-  border: 1px solid transparent;
-  letter-spacing: 0.05em;
-}
-
-.glass-status-pill-run {
-  background: rgba(16, 185, 129, 0.12);
-  border-color: rgba(16, 185, 129, 0.2);
-  color: #059669;
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.15);
-}
-
-.dark .glass-status-pill-run {
-  background: rgba(52, 211, 153, 0.1);
-  border-color: rgba(52, 211, 153, 0.2);
-  color: #34d399;
-  box-shadow: 0 0 10px rgba(52, 211, 153, 0.12);
-}
-
-.glass-status-pill-paused {
-  background: rgba(245, 158, 11, 0.1);
-  border-color: rgba(245, 158, 11, 0.2);
-  color: #d97706;
-}
-
-.dark .glass-status-pill-paused {
-  background: rgba(251, 191, 36, 0.1);
-  border-color: rgba(251, 191, 36, 0.2);
-  color: #fbbf24;
-}
-
-.glass-status-pill-stop {
-  background: var(--glass-tab-bg);
-  border-color: var(--glass-border-subtle);
-  color: var(--color-text-tertiary);
-}
-
-.glass-status-pill-idle {
-  background: rgba(35, 36, 37, 0.08);
-  border-color: rgba(35, 36, 37, 0.16);
-  color: rgb(35, 36, 37);
-}
-
-.dark .glass-status-pill-idle {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.16);
-  color: #ffffff;
 }
 
 /* Glow pulse — subtle premium animation */

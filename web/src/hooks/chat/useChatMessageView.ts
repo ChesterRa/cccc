@@ -23,6 +23,7 @@ import {
 import { resolveChatListHistoryState } from "./chatListHistoryState";
 import { matchesChatFilters } from "./chatMessageFilters";
 import { useChatSenderHistory } from "./useChatSenderHistory";
+import { usePendingPages } from "../../features/pendingReplies/usePendingPages";
 
 const EMPTY_SENDERS: readonly string[] = [];
 
@@ -48,11 +49,18 @@ export function useChatMessageView(input: {
   needsActors: boolean;
 }) {
   const senders = input.senders ?? EMPTY_SENDERS;
-  const senderHistory = useChatSenderHistory(input.selectedGroupId, senders);
-  const conversationEvents = senders.length === 0 ? input.events : senderHistory.events;
   const inChatWindow =
     !!input.chatWindow &&
     String(input.chatWindow.groupId || "") === String(input.selectedGroupId || "");
+  const pending = usePendingPages(
+    input.selectedGroupId,
+    input.chatFilter === "pending_user" && !inChatWindow,
+  );
+  const senderHistory = useChatSenderHistory(
+    input.selectedGroupId,
+    pending.active ? EMPTY_SENDERS : senders,
+  );
+  const conversationEvents = senders.length === 0 ? input.events : senderHistory.events;
   const viewKey =
     inChatWindow && input.chatWindow
       ? `${input.selectedGroupId}:window:${input.chatWindow.centerEventId}`
@@ -112,6 +120,15 @@ export function useChatMessageView(input: {
       .filter(shouldShowInConversation)
       .map(toVisibleConversationEvent);
   }, [inChatWindow, input.chatWindow, liveChatMessages]);
+  // Pending requests are a server projection over the complete ledger, not the
+  // locally loaded tail. Keep closed rows until the user leaves this view.
+  const displayedMessages = useMemo(
+    () =>
+      pending.active
+        ? pending.events.filter((event) => !senders.length || senders.includes(event.by ?? ""))
+        : chatMessages,
+    [pending.active, pending.events, senders, chatMessages],
+  );
 
   const hasAnyChatMessages = useMemo(
     () =>
@@ -128,7 +145,7 @@ export function useChatMessageView(input: {
     selectedGroupId: input.selectedGroupId,
     chatFilter: input.chatFilter,
     senderFiltered: senders.length > 0,
-    filteredMessageCount: chatMessages.length,
+    filteredMessageCount: displayedMessages.length,
     hasAnyChatMessages,
     inChatWindow,
     hasLoadedTail: senders.length === 0 ? input.hasLoadedTail : senderHistory.loaded,
@@ -136,8 +153,10 @@ export function useChatMessageView(input: {
     isLoadingHistory: senders.length === 0 ? input.isLoadingHistory : senderHistory.loading,
     isChatWindowLoading: input.isChatWindowLoading,
   });
-  const effectiveIsLoadingHistory = historyState.isLoadingHistory;
-  const effectiveHasMoreHistory = historyState.hasMoreHistory;
+  const effectiveIsLoadingHistory = pending.active
+    ? pending.loading
+    : historyState.isLoadingHistory;
+  const effectiveHasMoreHistory = pending.active ? pending.hasMore : historyState.hasMoreHistory;
   const hydratedDoc =
     !!input.groupDoc &&
     input.groupDoc.group_id === input.selectedGroupId &&
@@ -147,18 +166,22 @@ export function useChatMessageView(input: {
     !!input.selectedGroupId &&
     (input.actors.length > 0 || input.groupContext !== null || input.groupSettings !== null);
   const emptyState: ChatEmptyState =
-    chatMessages.length > 0
+    displayedMessages.length > 0
       ? "ready"
-      : !input.selectedGroupId
-        ? "business_empty"
-        : historyState.isFilteredEmpty
-          ? "filtered_empty"
-          : effectiveIsLoadingHistory ||
-              effectiveHasMoreHistory ||
-              !hydratedDoc ||
-              (input.needsActors && !settledActors)
-            ? "hydrating"
-            : "business_empty";
+      : pending.active
+        ? !pending.loaded && !pending.error
+          ? "hydrating"
+          : "filtered_empty"
+        : !input.selectedGroupId
+          ? "business_empty"
+          : historyState.isFilteredEmpty
+            ? "filtered_empty"
+            : effectiveIsLoadingHistory ||
+                effectiveHasMoreHistory ||
+                !hydratedDoc ||
+                (input.needsActors && !settledActors)
+              ? "hydrating"
+              : "business_empty";
 
   const centerEventId = inChatWindow ? input.chatWindow?.centerEventId : undefined;
   return {
@@ -166,7 +189,7 @@ export function useChatMessageView(input: {
     chatViewKey: viewKey,
     liveWorkEvents,
     unfilteredLiveChatMessages,
-    chatMessages,
+    chatMessages: displayedMessages,
     hasAnyChatMessages,
     chatInitialScrollAnchorId: restoreSnapshot ? input.scrollSnapshot!.anchorId : undefined,
     chatInitialScrollAnchorOffsetPx: restoreSnapshot
@@ -191,5 +214,10 @@ export function useChatMessageView(input: {
     chatEmptyState: emptyState,
     senderHistoryError: senders.length === 0 ? "" : senderHistory.error,
     loadSenderHistory: senderHistory.loadMore,
+    pendingActive: pending.active,
+    pendingPageError: pending.active && pending.error,
+    pendingDaemonUnsupported: pending.active && pending.error && pending.daemonUnsupported,
+    loadPendingPage: pending.loadMore,
+    retryPendingPage: pending.refresh,
   };
 }

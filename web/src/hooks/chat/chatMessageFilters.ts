@@ -9,6 +9,15 @@ export function matchesChatFilters(
 ) {
   if (senders.length > 0 && !senders.includes(event.by ?? "")) return false;
   const data = event.data as ChatMessageData;
+  if (kind === "pending_user") {
+    const obligation = event._obligation_status?.user;
+    return (
+      !!event._user_request &&
+      obligation?.reply_requested === true &&
+      obligation.replied === false &&
+      obligation.cancelled === false
+    );
+  }
   if (kind === "mail" || kind === "request_reply") return projectMessageMode(data) === kind;
   if (kind === "user") {
     if (String(data?.dst_group_id || "").trim()) return false;

@@ -151,7 +151,7 @@ export function MessageRows({
                 ? "true"
                 : undefined
             }
-            className={grouping.compactSpacing ? "pb-3" : "pb-6"}
+            className={grouping.compactSpacing ? "pb-2" : "pb-4"}
           >
             <MessageBubble
               {...common}

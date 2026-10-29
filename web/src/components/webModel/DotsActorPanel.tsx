@@ -4,16 +4,15 @@ import * as api from "../../services/api";
 import type { DotsActorState } from "../../services/api";
 import { Button } from "../ui/button";
 import { formatMessageTimestamp } from "../../utils/time";
+import { DotsSettingRow, DotsSetupStep, DotsSetupTips } from "./DotsActorSections";
 import {
-  DotsDeliverySteps,
-  DotsSettingRow,
-  DotsSetupStep,
-  DotsSetupTips,
-  DotsStatusSummary,
-  dotsCard,
-} from "./DotsActorSections";
+  ActiveTurnAge,
+  NativeActorDelivery,
+  NativeActorSummary,
+  nativeActorCard as dotsCard,
+} from "./NativeActorSections";
 import { DotsPluginStep } from "./DotsPluginStep";
-import { phaseTone } from "./dotsActorStatus";
+import { phaseTone } from "./nativeActorStatus";
 
 type DotsActorPanelProps = {
   groupId: string;
@@ -26,6 +25,7 @@ type DotsActorPanelProps = {
   saving?: boolean;
   compact?: boolean;
   onExpand?: () => void;
+  onSettings?: () => void;
   onOpenSharedSettings?: () => void;
   onStateChange?: (state: DotsActorState | null) => void;
   onBusyChange?: (busy: boolean) => void;
@@ -42,7 +42,7 @@ const requestErrorKeys: Record<string, string> = {
   connector_unavailable: "dotsActor.errors.connectorRequired",
   dots_binding_conflict: "dotsActor.errors.bindingConflict",
   actor_must_be_stopped: "dotsActor.pauseBeforeChanging",
-  delivery_unresolved: "dotsActor.reviewUnfinished",
+  delivery_unresolved: "nativeActor.connectionBusy",
   dots_state_unavailable: "dotsActor.readFailed",
 };
 
@@ -59,7 +59,9 @@ function ActorPanel({
   canAccessConnection = true,
   saving = false,
   compact = false,
+  setup = false,
   onExpand,
+  onSettings,
   onOpenSharedSettings,
   onStateChange,
   onBusyChange,
@@ -140,18 +142,32 @@ function ActorPanel({
 
   const update = async (nextAction: "connect" | "disconnect" | "resolve") => {
     if (readOnly || !canAccessConnection || saving || action || pluginCreating || !state) return;
-    if (nextAction === "disconnect" && (state.enabled || isRunning)) return;
     const turnId = nextAction === "resolve" ? state.active_turn_id || undefined : undefined;
     if (nextAction !== "resolve" && state.active_turn_id) return;
-    if (nextAction === "resolve" && (!turnId || !window.confirm(t("dotsActor.resolveConfirm"))))
+    if (
+      nextAction === "resolve" &&
+      (!turnId ||
+        !window.confirm(t("nativeActor.endTurnConfirm", { provider: t("dotsActor.title") })))
+    )
       return;
-    if (nextAction === "disconnect" && !window.confirm(t("dotsActor.disconnectConfirm"))) return;
+    const pauseFirst = nextAction === "disconnect" && state.enabled;
+    if (
+      nextAction === "disconnect" &&
+      !window.confirm(
+        t(pauseFirst ? "dotsActor.pauseDisconnectConfirm" : "dotsActor.disconnectConfirm"),
+      )
+    )
+      return;
     const startedRevision = ++revision.current;
     setAction(nextAction);
     setActionError("");
     setCopied(false);
     current.current.onBusyChange?.(true);
     try {
+      if (pauseFirst) {
+        const stopped = await api.stopActor(groupId, actorId);
+        if (!stopped.ok) throw new Error(stopped.error.message);
+      }
       const response = await api.updateDotsActorConnection(groupId, actorId, nextAction, turnId);
       if (!current.current.isVisible || startedRevision !== revision.current) return;
       if (!response.ok) {
@@ -161,9 +177,9 @@ function ActorPanel({
       }
       setInstructions(nextAction === "connect" ? response.result.instructions || "" : "");
       setRefresh((value) => value + 1);
-    } catch {
+    } catch (error) {
       if (current.current.isVisible && startedRevision === revision.current)
-        setActionError(t("dotsActor.actionFailed"));
+        setActionError(error instanceof Error ? error.message : t("dotsActor.actionFailed"));
     } finally {
       if (current.current.isVisible && startedRevision === revision.current) {
         setAction("");
@@ -182,11 +198,10 @@ function ActorPanel({
         setActionError(t("dotsActor.copyFailed"));
     }
   };
-  const enabled = isRunning || state?.enabled;
+  const enabled = state?.enabled ?? isRunning;
   const locked = readOnly || saving || Boolean(action) || pluginCreating || !state;
   const unresolved = Boolean(state?.active_turn_id);
   const hasDelivery = Boolean((state?.paired && state.subscribed) || unresolved);
-  const canResolve = unresolved && (state?.phase === "failed" || state?.phase === "interrupted");
   const dotsLink = (
     <a
       href="https://chatgpt.com/dots/home"
@@ -234,6 +249,14 @@ function ActorPanel({
             : ""
         }`
       : t("dotsActor.status.noTask");
+  const summaries: Array<[string, string]> = [
+    [t("dotsActor.status.subscription"), subscription],
+    [
+      t("dotsActor.status.pending"),
+      state ? t("dotsActor.pending", { count: state.pending_count }) : t("dotsActor.unavailable"),
+    ],
+    [t("dotsActor.status.lastTask"), lastTask],
+  ];
   const connectButton = (
     <Button
       type="button"
@@ -264,7 +287,7 @@ function ActorPanel({
         <Button
           type="button"
           variant="outline"
-          disabled={locked || Boolean(enabled) || unresolved}
+          disabled={locked || unresolved}
           onClick={() => void update("disconnect")}
         >
           {t("dotsActor.disconnect")}
@@ -316,27 +339,23 @@ function ActorPanel({
       ) : null}
     </>
   );
-  const recovery = (
-    <>
-      {canResolve && !readOnly ? (
-        <div
-          className={`${compact ? "border-y border-[var(--glass-border-subtle)] py-2" : `${dotsCard} px-4 py-3`} flex flex-wrap items-center justify-between gap-3`}
+  const recovery =
+    unresolved && !readOnly ? (
+      <div className="flex flex-col items-start gap-2 @lg/nativeActor:flex-row @lg/nativeActor:items-center @lg/nativeActor:justify-between @lg/nativeActor:gap-3">
+        <p className="min-w-0 flex-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
+          {t("nativeActor.endTurnHint", { provider: t("dotsActor.title") })}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          className="shrink-0"
+          disabled={locked}
+          onClick={() => void update("resolve")}
         >
-          <p className="text-xs text-[var(--color-text-muted)]">
-            {t("dotsActor.reviewUnfinished")}
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={locked}
-            onClick={() => void update("resolve")}
-          >
-            {t("dotsActor.resolve")}
-          </Button>
-        </div>
-      ) : null}
-    </>
-  );
+          {t("nativeActor.endTurn")}
+        </Button>
+      </div>
+    ) : null;
   if (compact && onExpand)
     return (
       <section
@@ -358,16 +377,11 @@ function ActorPanel({
           {dotsLink}
         </div>
         {notices}
-        <DotsStatusSummary
-          state={state}
-          t={t}
-          subscription={subscription}
-          lastTask={lastTask}
-          compact
-        />
-        {recovery}
+        <NativeActorSummary cells={summaries} compact />
         {hasDelivery && state ? (
-          <DotsDeliverySteps state={state} t={t} compact />
+          <NativeActorDelivery phase={state.phase} provider="dots" t={t} compact>
+            {recovery}
+          </NativeActorDelivery>
         ) : (
           <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
             {t(readOnly ? "dotsActor.adminSetup" : "dotsActor.nativeStepObserve")}
@@ -378,73 +392,117 @@ function ActorPanel({
 
   return (
     <section
-      className="@container/dots flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto text-sm"
+      className="@container/nativeActor flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto text-sm"
       aria-label={t("dotsActor.title")}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-base font-semibold">{t("dotsActor.title")}</h2>
-            <p
-              className={`inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold ${
-                state ? phaseTone(state.phase) : phaseTone("unconfigured")
-              }`}
-              role="status"
-            >
-              {state
-                ? t(`dotsActor.phases.${state.phase}`)
-                : t(readError ? "dotsActor.unavailable" : "common:loading")}
-              {state && state.pending_count > 0
-                ? ` · ${t("dotsActor.pending", { count: state.pending_count })}`
-                : ""}
-            </p>
-          </div>
-          <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
-            {t("dotsActor.hint")}
-          </p>
-        </div>
-        {dotsLink}
-      </div>
-      {notices}
-      <DotsStatusSummary state={state} t={t} subscription={subscription} lastTask={lastTask} />
-      {recovery}
-      {readOnly && state && !hasDelivery ? (
-        <p className="text-xs text-[var(--color-text-secondary)]">{t("dotsActor.adminSetup")}</p>
-      ) : hasDelivery || readOnly ? (
-        <div className="grid flex-1 gap-4 @3xl/dots:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          {state ? <DotsDeliverySteps state={state} t={t} /> : null}
-          {readOnly ? null : (
-            <section
-              className={`${dotsCard} flex flex-col`}
-              aria-label={t("dotsActor.connectionSettings")}
-            >
-              <h3 className="px-4 py-3 font-semibold">{t("dotsActor.connectionSettings")}</h3>
-              {instructions ? (
-                <div className="flex flex-col gap-2 border-t border-[var(--glass-border-subtle)] px-4 py-3">
-                  {instructionsBox}
-                </div>
-              ) : null}
-              <DotsSettingRow
-                label={t("dotsActor.settings.instructions")}
-                hint={t("dotsActor.settings.instructionsHint")}
+            {!setup && (
+              <p
+                className={`inline-flex min-h-6 items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  state ? phaseTone(state.phase) : phaseTone("unconfigured")
+                }`}
+                role="status"
               >
-                {connectButton}
-              </DotsSettingRow>
-              {sharedButton ? (
-                <DotsSettingRow
-                  label={t("dotsActor.settings.shared")}
-                  hint={t("dotsActor.settings.sharedHint")}
-                >
-                  {sharedButton}
-                </DotsSettingRow>
-              ) : null}
-              <div className="flex-1" />
-              {disconnectRow}
-            </section>
+                {state
+                  ? t(`dotsActor.phases.${state.phase}`)
+                  : t(readError ? "dotsActor.unavailable" : "common:loading")}
+              </p>
+            )}
+            {unresolved && !readError && (
+              <ActiveTurnAge
+                seconds={state?.active_turn_elapsed_seconds}
+                language={i18n?.language}
+                t={t}
+              />
+            )}
+          </div>
+          {!setup && (
+            <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
+              {t("dotsActor.hint")}
+            </p>
+          )}
+          {setup && (
+            <p
+              role="status"
+              className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]"
+            >
+              {t("dotsActor.status.pairing")}:{" "}
+              {state
+                ? t(state.paired ? "dotsActor.status.paired" : "dotsActor.status.notPaired")
+                : t("dotsActor.unavailable")}
+              {" · "}
+              {t("dotsActor.status.subscription")}: {subscription}
+            </p>
           )}
         </div>
+        <div className="flex flex-wrap gap-2">
+          {!setup &&
+            !readOnly &&
+            onSettings &&
+            (compact ||
+              (state &&
+                ["unconfigured", "waiting_pairing", "waiting_subscription"].includes(
+                  state.phase,
+                ))) && (
+              <Button variant="outline" onClick={onSettings}>
+                {t("dotsActor.connectionSettings")}
+              </Button>
+            )}
+          {dotsLink}
+        </div>
+      </div>
+      {notices}
+      {setup && state?.paired && !enabled && !unresolved && (
+        <p role="status" className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          {t("dotsActor.pairedPaused")}
+        </p>
+      )}
+      {!setup && <NativeActorSummary cells={summaries} />}
+      {setup && recovery}
+      {setup && unresolved && (
+        <p role="status" className="text-xs text-[var(--color-text-muted)]">
+          {t("nativeActor.connectionBusy")}
+        </p>
+      )}
+      {!setup && state && hasDelivery && (
+        <NativeActorDelivery phase={state.phase} provider="dots" t={t}>
+          {recovery}
+        </NativeActorDelivery>
+      )}
+      {readOnly && state && !hasDelivery ? (
+        <p className="text-xs text-[var(--color-text-secondary)]">{t("dotsActor.adminSetup")}</p>
+      ) : readOnly || (!setup && hasDelivery) ? null : hasDelivery ? (
+        <section
+          className={`${dotsCard} flex flex-col`}
+          aria-label={t("dotsActor.connectionSettings")}
+        >
+          <h3 className="px-4 py-3 font-semibold">{t("dotsActor.connectionSettings")}</h3>
+          {instructions ? (
+            <div className="flex flex-col gap-2 border-t border-[var(--glass-border-subtle)] px-4 py-3">
+              {instructionsBox}
+            </div>
+          ) : null}
+          <DotsSettingRow
+            label={t("dotsActor.settings.instructions")}
+            hint={t("dotsActor.settings.instructionsHint")}
+          >
+            {connectButton}
+          </DotsSettingRow>
+          {sharedButton ? (
+            <DotsSettingRow
+              label={t("dotsActor.settings.shared")}
+              hint={t("dotsActor.settings.sharedHint")}
+            >
+              {sharedButton}
+            </DotsSettingRow>
+          ) : null}
+          {disconnectRow}
+        </section>
       ) : (
-        <div className="grid flex-1 gap-4 @3xl/dots:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="grid shrink-0 items-start gap-4 @3xl/nativeActor:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <ol className={`${dotsCard} flex flex-col overflow-hidden`}>
             <DotsSetupStep
               number={1}

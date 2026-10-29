@@ -545,6 +545,9 @@ impl MailDelays<'_> {
 }
 
 #[cfg(test)]
+type ReferenceMailClaims = HashMap<(String, String), Vec<(String, i64, Vec<String>)>>;
+
+#[cfg(test)]
 fn unread_notices(
     group: &GroupDoc,
     eligible: &[&cccc_contracts::Actor],
@@ -557,6 +560,7 @@ fn unread_notices(
     let mut notices = Vec::new();
     let generations = inbox::actor_generation_positions(events);
     let now = Utc::now().timestamp();
+    let mail_repeat = delivery_timing_value(group, "mail_notice_repeat_seconds", 0);
     let resume_at = events.iter().rev().find_map(|event| {
         let resumed = event.kind == "group.start"
             || (event.kind == "group.set_state"
@@ -574,7 +578,7 @@ fn unread_notices(
     let mut actor_resumes = HashMap::<String, i64>::new();
     // Each Mail notice, keyed by its own event id: a withdrawn notice was never
     // sent and must not stop the next one.
-    let mut mail_claims = HashMap::<(String, String), Vec<(String, Vec<String>)>>::new();
+    let mut mail_claims = ReferenceMailClaims::new();
     let mut reply_claims = HashSet::<(String, String, String)>::new();
     for (position, event) in events.iter().enumerate() {
         match event.kind.as_str() {
@@ -650,7 +654,7 @@ fn unread_notices(
                     mail_claims
                         .entry((actor_id.into(), created_at.into()))
                         .or_default()
-                        .push((event.id.clone(), source_ids));
+                        .push((event.id.clone(), timestamp(&event.ts, now), source_ids));
                 } else {
                     reply_claims.extend(
                         source_ids
@@ -765,12 +769,19 @@ fn unread_notices(
                 .into_iter()
                 .flatten()
                 .rev()
-                .filter(|(notice_id, _)| {
-                    deliveries
+                .filter(|(notice_id, claimed_at, _)| {
+                    match deliveries
                         .get(&(notice_id.clone(), actor.id.clone()))
-                        .is_none_or(|(state, _, _)| state != "withdrawn")
+                        .map(|(state, _, _)| state.as_str())
+                    {
+                        Some("withdrawn") => false,
+                        Some("accepted" | "ambiguous") => {
+                            mail_repeat <= 0 || now - claimed_at < mail_repeat
+                        }
+                        _ => true,
+                    }
                 })
-                .any(|(_, claimed)| {
+                .any(|(_, _, claimed)| {
                     let claimed = claimed
                         .iter()
                         .filter(|source| positions.contains_key(*source))
@@ -840,7 +851,7 @@ fn unread_notices(
     notices
 }
 
-fn delivery_timing_value(group: &GroupDoc, key: &str, default: i64) -> i64 {
+pub(crate) fn delivery_timing_value(group: &GroupDoc, key: &str, default: i64) -> i64 {
     group
         .extra
         .get("delivery")
@@ -1198,3 +1209,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "automation/mail_notice_repeat_tests.rs"]
+mod mail_notice_repeat_tests;

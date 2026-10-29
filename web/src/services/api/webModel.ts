@@ -22,8 +22,8 @@ export type WebModelConnector = {
   last_wait_status?: string;
   last_turn_id?: string;
   last_error?: string;
-  /** Shared connector diagnostics: event/tool outcomes and fixed reason codes only. */
-  events_log?: DotsEventCall[];
+  /** Bounded outcomes, fixed reasons and optional salted host identity fingerprints. */
+  events_log?: WebModelConnectorCall[];
   /** The Actor this connector's Dot is bound to, if any. */
   dots_actor?: { group_id: string; actor_id: string } | null;
   connector_url?: string;
@@ -51,12 +51,13 @@ export type DotsPhase =
   | "failed"
   | "stopped";
 
-export type DotsEventCall = {
+export type WebModelConnectorCall = {
   at: string;
   method: string;
   tool_name?: string;
   ok: boolean;
   reason: string | null;
+  host_identity?: { session: string; subject: string | null; organization: string | null };
 };
 
 export type DotsActorState = {
@@ -69,6 +70,7 @@ export type DotsActorState = {
   phase: DotsPhase;
   pending_count: number;
   active_turn_id?: string | null;
+  active_turn_elapsed_seconds?: number | null;
   active_event_ids?: string[];
   last_execution?: {
     turn_id: string;
@@ -147,6 +149,7 @@ export type WebModelBrowserSession = {
   ready?: boolean;
   login_required?: boolean;
   verification_required?: boolean;
+  checked_at?: string | null;
   state?: string;
   pid?: number;
   cdp_port?: number;
@@ -281,6 +284,7 @@ export type GrokActorState = {
   pending_count: number;
   bot_url?: string | null;
   active_turn_id?: string;
+  active_turn_elapsed_seconds?: number | null;
   active_event_ids?: string[];
   error_code?: string | null;
   http_status?: number | null;

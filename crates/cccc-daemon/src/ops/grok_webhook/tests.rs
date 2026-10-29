@@ -402,21 +402,63 @@ fn grok_claims_require_a_current_webhook_event() {
 }
 
 #[test]
+fn user_can_resolve_enabled_turn_without_replaying_inputs_or_reviving_credentials() {
+    let f = Fixture::new();
+    f.start();
+    f.source("abandoned input");
+    let delivery = f.next();
+    let claimed = f.claim(&f.capture(&delivery, "cccc_runtime_wait_next_turn"));
+    let execution = f.execution(&claimed, "cccc_message_send");
+    let exact =
+        json!({"turn_id":claimed["turn"]["turn_id"],"event_ids":claimed["turn"]["event_ids"]});
+    let mut denied = exact.clone();
+    denied["by"] = json!("bot");
+    assert!(!f.response("grok_work_resolve", denied).ok);
+    let mut stale = exact.clone();
+    stale["event_ids"] = json!(["different-input"]);
+    assert!(!f.response("grok_work_resolve", stale).ok);
+    assert!(store::validate_binding(&f.home, &execution).is_ok());
+    let later = f.source("independent queued input");
+    f.call("grok_work_resolve", exact.clone());
+    let status = f.call("grok_webhook_status", json!({}));
+    assert_eq!(status["enabled"], true);
+    assert_eq!(status["active_turn_id"], "");
+    assert_eq!(status["last_execution"]["status"], "cancelled");
+    assert!(store::validate_binding(&f.home, &execution).is_err());
+    let next = f.next();
+    let next_claim = f.claim(&f.capture(&next, "cccc_runtime_wait_next_turn"));
+    assert_eq!(next_claim["turn"]["event_ids"], json!([later]));
+    assert!(!f.response("grok_work_resolve", exact).ok);
+    assert_eq!(
+        f.call("grok_webhook_status", json!({}))["active_turn_id"],
+        next_claim["turn"]["turn_id"]
+    );
+    f.complete(&next_claim);
+}
+
+#[test]
 fn stop_revokes_authority_and_requires_explicit_resolution_without_replay() {
     let f = Fixture::new();
     f.start();
     let old = f.source("accepted");
     let d = f.next();
     let claim = f.claim(&f.capture(&d, "cccc_runtime_wait_next_turn"));
+    assert_eq!(
+        private::state(&f.private(), &f.group.group_id, "bot")["execution"]["claimed_at"],
+        claim["turn"]["created_at"]
+    );
+    assert!(f.call("grok_webhook_status", json!({}))["active_turn_elapsed_seconds"].is_u64());
+    let reopened = HomeLayout::from_path(f.home.root()).expect("reopen isolated home");
+    super::super::runtime_restore::restore_running(&reopened).expect("daemon startup restore");
+    assert!(f.call("grok_webhook_status", json!({}))["active_turn_elapsed_seconds"].is_u64());
     let b = f.execution(&claim, "cccc_message_send");
     f.call("actor_stop", json!({}));
     assert!(store::validate_binding(&f.home, &b).is_err());
     f.start();
     assert!(f.next().is_null());
-    assert_eq!(
-        f.call("grok_webhook_status", json!({}))["phase"],
-        "interrupted"
-    );
+    let interrupted = f.call("grok_webhook_status", json!({}));
+    assert_eq!(interrupted["phase"], "interrupted");
+    assert!(interrupted["active_turn_elapsed_seconds"].is_u64());
     assert!(store::validate_binding(&f.home, &b).is_err());
     assert!(!f.response("grok_webhook_retry", json!({})).ok);
     f.call("actor_stop", json!({}));
@@ -435,6 +477,7 @@ fn stop_revokes_authority_and_requires_explicit_resolution_without_replay() {
         "grok_work_resolve",
         json!({"turn_id":claim["turn"]["turn_id"],"event_ids":claim["turn"]["event_ids"]}),
     );
+    assert!(f.call("grok_webhook_status", json!({}))["active_turn_elapsed_seconds"].is_null());
     let later = f.source("later");
     f.start();
     let next = f.next();

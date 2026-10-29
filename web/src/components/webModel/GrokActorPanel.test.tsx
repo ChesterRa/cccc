@@ -3,7 +3,13 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 const mocks = vi.hoisted(() => ({ load: vi.fn(), change: vi.fn(), stop: vi.fn() }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: { elapsed?: string }) =>
+      options?.elapsed ? `${key}: ${options.elapsed}` : key,
+    i18n: { language: "en" },
+  }),
+}));
 vi.mock("../../services/api", () => ({
   fetchGrokActorState: (...a: unknown[]) => mocks.load(...a),
   changeGrokWebhook: (...a: unknown[]) => mocks.change(...a),
@@ -58,6 +64,51 @@ async function fill(index: number, value: string) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+it("shows the daemon's claim age without announcing a ticking status", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: {
+      ...state,
+      configured: true,
+      phase: "working",
+      active_turn_id: "turn",
+      active_turn_elapsed_seconds: 7200,
+      pending_count: 2,
+    },
+  });
+  await render({ setup: false });
+  const age = host.querySelector("[data-active-turn-age]");
+  expect(age?.textContent).toBe("nativeActor.claimedAgo: 2 hours ago");
+  expect(age?.closest('[role="status"]')).toBeNull();
+  expect(host.textContent).toContain("grokActor.queued");
+});
+it("does not guess the age of an older unfinished turn", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: { ...state, phase: "interrupted", active_turn_id: "turn" },
+  });
+  await render({ setup: false });
+  expect(host.querySelector("[data-active-turn-age]")?.textContent).toBe(
+    "nativeActor.claimTimeUnknown",
+  );
+});
+it("hides the relative claim age when refreshing status fails", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: {
+      ...state,
+      phase: "working",
+      active_turn_id: "turn",
+      active_turn_elapsed_seconds: 7200,
+    },
+  });
+  await render({ setup: false });
+  expect(host.querySelector("[data-active-turn-age]")).not.toBeNull();
+  mocks.load.mockResolvedValue({ ok: false, error: { message: "offline" } });
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(host.querySelector("[data-active-turn-age]")).toBeNull();
+  expect(host.textContent).toContain("grokActor.readFailed");
+});
 it("saves masked credentials through one native setup path", async () => {
   await render();
   expect(host.querySelector("select")).toBeNull();
@@ -86,6 +137,41 @@ it("retains credentials after a failed save", async () => {
   expect(host.querySelectorAll("input")[1].value).toBe("synthetic-key");
   expect(button("grokWebhook.save").disabled).toBe(false);
 });
+it("keeps Routine drafts for the same Bot and clears them when the saved Bot changes", async () => {
+  const botA = "https://grok.com/bot/1373170d-9cf2-408c-b597-e243e5884f4a";
+  const botB = "https://grok.com/bot/958f2446-013f-4225-8dd3-f146295992d7";
+  mocks.load.mockResolvedValue({ ok: true, result: { ...state, enabled: true, bot_url: botA } });
+  mocks.change.mockResolvedValue({ ok: true, result: { instructions: "Setup for fixture Bot A" } });
+  await render();
+  await fill(0, "https://api2.cursor.sh/automations/webhook/fixture-a");
+  await fill(1, "fixture-a-key");
+  await act(async () => button("grokWebhook.instructions").click());
+  await tick();
+  expect(host.querySelectorAll("input")[1].value).toBe("fixture-a-key");
+  expect(host.querySelector("textarea")!.value).toBe("Setup for fixture Bot A");
+  mocks.load.mockRejectedValueOnce(new Error("offline"));
+  await tick();
+  expect(host.querySelectorAll("input")[1].value).toBe("fixture-a-key");
+  await render({ targetDirty: true });
+  await tick();
+  expect(host.querySelectorAll("input")[1].value).toBe("fixture-a-key");
+  mocks.load.mockResolvedValue({ ok: true, result: { ...state, enabled: true, bot_url: botB } });
+  await tick();
+  await render();
+  expect([...host.querySelectorAll("input")].map((input) => input.value)).toEqual(["", ""]);
+  expect(host.querySelector("textarea")).toBeNull();
+  expect(button("grokWebhook.instructions").disabled).toBe(false);
+  expect(button("grokWebhook.saveAndApply").disabled).toBe(true);
+  expect(mocks.change.mock.calls.map((call) => call[2].action)).toEqual(["instructions"]);
+  await fill(0, "https://api2.cursor.sh/automations/webhook/fixture-b");
+  await fill(1, "fixture-b-key");
+  await act(async () => button("grokWebhook.saveAndApply").click());
+  expect(mocks.change).toHaveBeenLastCalledWith("g", "bot", {
+    action: "configure",
+    url: "https://api2.cursor.sh/automations/webhook/fixture-b",
+    key: "fixture-b-key",
+  });
+});
 it("requires a saved Bot but allows editing and applying while enabled and idle", async () => {
   mocks.load.mockResolvedValue({ ok: true, result: { ...state, bound: false } });
   await render();
@@ -94,7 +180,7 @@ it("requires a saved Bot but allows editing and applying while enabled and idle"
   mocks.load.mockResolvedValue({ ok: true, result: { ...state, enabled: true } });
   await tick();
   expect(host.querySelector("input")!.disabled).toBe(false);
-  expect(button("grokWebhook.pause")).toBeUndefined();
+  expect(button("actors:dotsPause")).toBeUndefined();
   await fill(0, "https://api2.cursor.sh/automations/webhook/replacement");
   await fill(1, "synthetic-key");
   await act(async () => button("grokWebhook.saveAndApply").click());
@@ -172,7 +258,7 @@ it("rejects stale polls initiated before a successful action", async () => {
   });
   await act(async () => button("grokWebhook.instructions").click());
   await act(async () => finish({ ok: true, result: state }));
-  expect(host.textContent).toContain("grokActor.configured");
+  expect(host.textContent).toContain("grokWebhook.saved");
   expect(host.textContent).not.toContain("grokWebhook.phase.unconfigured");
 });
 it("clears pending UI state when an action finishes while hidden", async () => {
@@ -204,26 +290,56 @@ it("does not apply an old Actor's action result to a new Actor", async () => {
   await act(async () => finish({ ok: true, result: { instructions: "old handler" } }));
   expect(host.querySelector("textarea")).toBeNull();
 });
-it("retains exact unfinished task IDs across confirmation and polling", async () => {
-  mocks.load.mockResolvedValue({
-    ok: true,
-    result: { ...state, phase: "interrupted", active_turn_id: "older", active_event_ids: ["old"] },
-  });
-  await render();
-  await act(async () => button("grokWebhook.resolve").click());
-  mocks.load.mockResolvedValue({
-    ok: true,
-    result: { ...state, phase: "interrupted", active_turn_id: "newer", active_event_ids: ["new"] },
-  });
-  await tick();
-  await act(async () => button("grokWebhook.confirmResolve").click());
-  expect(mocks.change).toHaveBeenCalledExactlyOnceWith("g", "bot", {
-    action: "resolve",
-    turn_id: "older",
-    event_ids: ["old"],
-  });
-});
-it("can stop unfinished work after the connector was revoked", async () => {
+it.each([
+  { setup: true, enabled: false },
+  { setup: false, enabled: false },
+  { setup: true, enabled: true },
+  { setup: false, enabled: true },
+])(
+  "retains exact unfinished task IDs across confirmation and polling (%j)",
+  async ({ setup, enabled }) => {
+    mocks.load.mockResolvedValue({
+      ok: true,
+      result: {
+        ...state,
+        enabled,
+        phase: enabled ? "working" : "interrupted",
+        active_turn_id: "older",
+        active_event_ids: ["old"],
+      },
+    });
+    await render({ setup });
+    expect(mocks.change).not.toHaveBeenCalled();
+    if (!setup)
+      expect(
+        host
+          .querySelector('section[aria-label="nativeActor.deliveryTitle"]')
+          ?.contains(button("nativeActor.endTurn")),
+      ).toBe(true);
+    await act(async () => button("nativeActor.endTurn").click());
+    expect(mocks.change).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("nativeActor.endTurnConfirm");
+    mocks.load.mockResolvedValue({
+      ok: true,
+      result: {
+        ...state,
+        enabled,
+        phase: enabled ? "working" : "interrupted",
+        active_turn_id: "newer",
+        active_event_ids: ["new"],
+      },
+    });
+    await tick();
+    await act(async () => button("nativeActor.confirmEndTurn").click());
+    expect(mocks.change).toHaveBeenCalledExactlyOnceWith("g", "bot", {
+      action: "resolve",
+      turn_id: "older",
+      event_ids: ["old"],
+    });
+    expect(mocks.stop).not.toHaveBeenCalled();
+  },
+);
+it("keeps explicit turn resolution reachable after connector revocation without requiring pause", async () => {
   mocks.load.mockResolvedValue({
     ok: true,
     result: {
@@ -232,18 +348,25 @@ it("can stop unfinished work after the connector was revoked", async () => {
       enabled: true,
       phase: "interrupted",
       active_turn_id: "task",
+      active_event_ids: ["input"],
     },
   });
   await render();
-  await act(async () => button("grokWebhook.pause").click());
-  expect(mocks.stop).toHaveBeenCalledExactlyOnceWith("g", "bot");
+  await act(async () => button("nativeActor.endTurn").click());
+  await act(async () => button("nativeActor.confirmEndTurn").click());
+  expect(mocks.change).toHaveBeenCalledExactlyOnceWith("g", "bot", {
+    action: "resolve",
+    turn_id: "task",
+    event_ids: ["input"],
+  });
+  expect(mocks.stop).not.toHaveBeenCalled();
 });
 it("shows wake acceptance separately from confirmed completion", async () => {
   mocks.load.mockResolvedValue({
     ok: true,
     result: { ...state, configured: true, phase: "delivered" },
   });
-  await render();
+  await render({ setup: false });
   expect(host.querySelector('[aria-current="step"]')?.textContent).toContain(
     "grokActor.steps.waiting",
   );
@@ -292,3 +415,97 @@ it("does not present an earlier wake failure as a failed task after claim", asyn
   await tick();
   expect(host.querySelector('[role="alert"]')?.textContent).toBe("grokWebhook.deliveryError");
 });
+
+it("keeps a completed receipt in the summary instead of showing a current completed workflow", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: {
+      ...state,
+      configured: true,
+      enabled: true,
+      phase: "ready",
+      last_execution: { status: "done", completed_at: "2026-10-22T00:00:00Z" },
+    },
+  });
+  const onSettings = vi.fn();
+  await render({ setup: false, onSettings });
+  expect(host.querySelector("dl")?.textContent).toContain("grokActor.outcomes.done");
+  expect(host.querySelector("li[data-step]")).toBeNull();
+  expect(host.querySelector("input")).toBeNull();
+  expect(button("grokActor.connectionSettings")).toBeUndefined();
+  await render({ setup: false, compact: true, onSettings });
+  await act(async () => button("grokActor.connectionSettings").click());
+  expect(onSettings).toHaveBeenCalledOnce();
+  expect(mocks.change).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["delivered", "waiting", "current"],
+  ["unclaimed", "waiting", "error"],
+  ["working", "working", "current"],
+  ["interrupted", "working", "error"],
+  ["failed", "notify", "error"],
+] as const)(
+  "shows the current %s stage independently of a previous completion",
+  async (phase, step, status) => {
+    mocks.load.mockResolvedValue({
+      ok: true,
+      result: {
+        ...state,
+        configured: true,
+        phase,
+        last_execution: { status: "done", completed_at: "2026-10-22T00:00:00Z" },
+      },
+    });
+    await render({ setup: false });
+    const current = host.querySelector('li[aria-current="step"]')!;
+    expect(current.getAttribute("data-step")).toBe(step);
+    expect(current.getAttribute("data-state")).toBe(status);
+    expect(host.querySelector('li[data-step="completed"]')?.getAttribute("data-state")).toBe(
+      "todo",
+    );
+    expect(Boolean(current.querySelector(".animate-spin"))).toBe(false);
+    expect(mocks.change).not.toHaveBeenCalled();
+  },
+);
+
+it("shows only the current delivery stage in a compact pane", async () => {
+  mocks.load.mockResolvedValue({
+    ok: true,
+    result: { ...state, configured: true, phase: "delivered" },
+  });
+  await render({ setup: false, compact: true });
+  expect(host.querySelectorAll("li[data-step]")).toHaveLength(1);
+  expect(host.querySelector('li[aria-current="step"]')?.textContent).toContain(
+    "grokActor.steps.waiting",
+  );
+  expect(mocks.change).not.toHaveBeenCalled();
+});
+
+it.each(["ready", "delivered", "working", "interrupted"])(
+  "keeps %s overview out of Bot connection editing without losing credentials or recovery",
+  async (phase) => {
+    const unfinished = phase === "working" || phase === "interrupted";
+    mocks.load.mockResolvedValue({
+      ok: true,
+      result: {
+        ...state,
+        configured: true,
+        phase,
+        active_turn_id: unfinished ? "accepted-turn" : undefined,
+        last_execution: { status: "done", completed_at: "2026-10-22T00:00:00Z" },
+      },
+    });
+    await render();
+    expect(host.querySelector("dl")).toBeNull();
+    expect(host.querySelector("li[data-step]")).toBeNull();
+    expect(host.textContent).not.toContain(`grokWebhook.phase.${phase}`);
+    expect(host.textContent).not.toContain("grokActor.outcomes.done");
+    expect(host.querySelectorAll("input[type=password]")).toHaveLength(2);
+    if (unfinished) {
+      expect(host.textContent).toContain("grokWebhook.waitForTask");
+      expect(button("nativeActor.endTurn")).toBeDefined();
+    }
+    expect(mocks.change).not.toHaveBeenCalled();
+  },
+);

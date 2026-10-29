@@ -152,7 +152,10 @@ pub(super) async fn start(State(state): State<AppState>, Json(body): Json<Value>
         let diagnostic = StartDiagnostic::from_error(&error, started.elapsed().as_millis() as u64);
         // The packaged cccc entrypoint has no tracing subscriber. Emit one
         // safe line on failure without globally enabling unrelated logs.
-        eprintln!("[cccc] Codex Voice start failed: {}", diagnostic.details());
+        cccc_runtime::diagnostic(format_args!(
+            "[cccc] Codex Voice start failed: {}",
+            diagnostic.details()
+        ));
         diagnostic.into_api_error()
     })?;
     match outcome {

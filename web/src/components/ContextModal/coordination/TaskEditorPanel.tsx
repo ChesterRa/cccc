@@ -1,5 +1,17 @@
-import type { Dispatch, SetStateAction } from "react";
-import type { Task, TaskWaitingOn } from "../../../types";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type Dispatch,
+  type ReactNode,
+  type RefObject,
+  type SetStateAction,
+  type TextareaHTMLAttributes,
+} from "react";
+import { Plus, X } from "lucide-react";
+import type { Task, TaskChecklistItem, TaskWaitingOn } from "../../../types";
 import { formatFullTime, formatTime } from "../../../utils/time";
 import { classNames } from "../../../utils/classNames";
 import {
@@ -12,12 +24,25 @@ import { SelectCombobox } from "../../SelectCombobox";
 import {
   alignTaskDraftTaskType,
   getWaitingOnOptions,
-  statusTone,
+  nextChecklistItemId,
+  priorityLabel,
+  taskOptionLabel,
   type ContextTranslator,
   type TaskDeleteInfo,
   type TaskDraft,
+  type TaskStale,
 } from "../model";
 import type { ContextModalUi } from "../ui";
+import { TaskSubtaskList } from "./TaskSubtaskList";
+
+/**
+ * Select values for a field that can be empty. An item needs a value, and the
+ * field's own text, which can be any text, is kept apart from "none" by a prefix.
+ */
+const NONE = "none";
+const asOption = (value: string) => (value ? `=${value}` : NONE);
+const fromOption = (option: string) => (option.startsWith("=") ? option.slice(1) : "");
+const PRIORITIES = ["low", "normal", "high", "urgent"];
 
 interface TaskEditorPanelProps {
   tr: ContextTranslator;
@@ -25,19 +50,37 @@ interface TaskEditorPanelProps {
   taskEditorMode: "none" | "create" | "edit";
   taskDraft: TaskDraft | null;
   hasTaskUnsaved: boolean;
+  /** A save is under way: the draft is what is being saved, so it holds still. */
   syncBusy: boolean;
+  error: string;
+  /** The task was deleted while it was open. */
+  taskGone: boolean;
+  taskStale: TaskStale;
   selectedTask: Task | null;
+  subtasks: readonly Task[];
+  assigneeChoices: readonly string[];
+  parentChoices: readonly Task[];
   selectedTaskDeleteInfo: TaskDeleteInfo;
   selectedTaskDeleteHint: string;
   taskWorkflowCoverage: TaskWorkflowCoverage;
   taskTypeId: TaskTypeId;
   selectedTaskType: TaskTypeDefinition;
+  titleRef?: RefObject<HTMLInputElement | null>;
   setTaskDraft: Dispatch<SetStateAction<TaskDraft | null>>;
   onTaskTypeChange: (value: TaskTypeId) => void;
+  /** Drop the edits: a new task starts over, an existing one loads its latest version. */
   onResetTask: () => void;
   onClose: () => void;
   onDeleteSelectedTask: () => void;
   onSaveTask: () => void;
+  onOpenTask: (taskId: string) => void;
+  onAddSubtask: () => void;
+}
+
+/** The choices for an actor field: none, the given ones, and a value no longer among them. */
+function actorItems(none: string, choices: readonly string[], value: string) {
+  const ids = [...new Set([...choices, value].filter(Boolean))];
+  return [{ value: NONE, label: none }, ...ids.map((id) => ({ value: asOption(id), label: id }))];
 }
 
 export function TaskEditorPanel({
@@ -47,24 +90,633 @@ export function TaskEditorPanel({
   taskDraft,
   hasTaskUnsaved,
   syncBusy,
+  error,
+  taskGone,
+  taskStale,
   selectedTask,
+  subtasks,
+  assigneeChoices,
+  parentChoices,
   selectedTaskDeleteInfo,
   selectedTaskDeleteHint,
   taskWorkflowCoverage,
   taskTypeId,
   selectedTaskType,
+  titleRef,
   setTaskDraft,
   onTaskTypeChange,
   onResetTask,
   onClose,
   onDeleteSelectedTask,
   onSaveTask,
+  onOpenTask,
+  onAddSubtask,
 }: TaskEditorPanelProps) {
   if (taskEditorMode === "none" || !taskDraft) {
     return null;
   }
 
   const isCreate = taskEditorMode === "create";
+  const locked = syncBusy;
+  const update = (patch: Partial<TaskDraft>) =>
+    setTaskDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+  const labelClass = classNames(
+    "mb-1 block text-xs font-medium uppercase tracking-wide",
+    ui.mutedTextClass,
+  );
+  const field = (label: string, control: ReactNode, note?: ReactNode) => (
+    <label className="block min-w-0 text-sm">
+      <span className={labelClass}>{label}</span>
+      {control}
+      {note}
+    </label>
+  );
+
+  const priorityValues = [
+    ...PRIORITIES,
+    ...(taskDraft.priority && !PRIORITIES.includes(taskDraft.priority) ? [taskDraft.priority] : []),
+  ];
+  const parentItems = [
+    { value: NONE, label: tr("context.rootTask", "Root task") },
+    ...parentChoices
+      .filter((task) => task.id !== selectedTask?.id)
+      .map((task) => ({ value: asOption(task.id), label: taskOptionLabel(task) })),
+    ...(taskDraft.parentId && !parentChoices.some((task) => task.id === taskDraft.parentId)
+      ? [{ value: asOption(taskDraft.parentId), label: taskDraft.parentId }]
+      : []),
+  ];
+  const heading = isCreate
+    ? taskDraft.parentId
+      ? tr("context.newSubtask", "New subtask of {{id}}", { id: taskDraft.parentId })
+      : tr("context.newTask", "New task")
+    : selectedTask?.id || tr("context.taskDetails", "Task editor");
+  const isDone = String(taskDraft.status || "").toLowerCase() === "done";
+
+  return (
+    <section className="flex h-full min-h-0 flex-col" aria-busy={syncBusy}>
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 items-center gap-2">
+          <h2 className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+            {heading}
+          </h2>
+          {hasTaskUnsaved ? (
+            <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+              {tr("context.unsaved", "Unsaved")}
+            </span>
+          ) : null}
+        </div>
+        <button type="button" onClick={onClose} className={ui.buttonSecondaryClass}>
+          {tr("context.close", "Close")}
+        </button>
+      </div>
+
+      <div
+        data-task-editor-scroll
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+      >
+        {error ? (
+          <div
+            role="alert"
+            className="rounded-xl border border-rose-500/30 bg-rose-500/15 px-3 py-2 text-sm text-rose-600 dark:text-rose-400"
+          >
+            {error}
+          </div>
+        ) : null}
+        {taskGone ? (
+          <div
+            role="alert"
+            className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300"
+          >
+            {tr(
+              "context.taskGone",
+              "This task no longer exists, so your edits can't be saved here. Copy anything you want to keep.",
+            )}
+          </div>
+        ) : taskStale ? (
+          <div
+            role="alert"
+            className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300"
+          >
+            <p>
+              {taskStale === "unconfirmed"
+                ? tr(
+                    "context.taskReadbackFailed",
+                    "Saved, but the latest version could not be loaded. Reload it before editing again.",
+                  )
+                : tr(
+                    "context.taskChangedElsewhere",
+                    "This task has changed since you opened it. Saving now could overwrite those changes, so it is refused. Copy anything you want to keep, then reload the latest version.",
+                  )}
+            </p>
+            <button
+              type="button"
+              onClick={onResetTask}
+              disabled={syncBusy}
+              className={ui.buttonSecondaryClass}
+            >
+              {tr("context.reloadLatest", "Reload latest version")}
+            </button>
+          </div>
+        ) : null}
+
+        {field(
+          tr("context.titleField", "Title"),
+          <input
+            ref={titleRef}
+            value={taskDraft.title}
+            readOnly={locked}
+            onChange={(event) => update({ title: event.target.value })}
+            className={classNames(ui.inputClass, "text-base font-semibold")}
+          />,
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          {field(
+            tr("context.status", "Status"),
+            <SelectCombobox
+              items={[
+                { value: "planned", label: tr("context.planned", "Planned") },
+                { value: "active", label: tr("context.active", "Active") },
+                { value: "done", label: tr("context.done", "Done") },
+                { value: "archived", label: tr("context.archived", "Archived") },
+              ]}
+              value={taskDraft.status}
+              onChange={(value) => update({ status: value })}
+              ariaLabel={tr("context.status", "Status")}
+              className={ui.inputClass}
+              disabled={locked}
+            />,
+          )}
+          {field(
+            tr("context.assignee", "Assignee"),
+            <SelectCombobox
+              items={actorItems(
+                tr("context.unassigned", "Unassigned"),
+                assigneeChoices,
+                taskDraft.assignee,
+              )}
+              value={asOption(taskDraft.assignee)}
+              onChange={(value) => update({ assignee: fromOption(value) })}
+              ariaLabel={tr("context.assignee", "Assignee")}
+              className={ui.inputClass}
+              disabled={locked}
+              searchable
+            />,
+          )}
+          {field(
+            tr("context.priority", "Priority"),
+            <SelectCombobox
+              items={[
+                { value: NONE, label: tr("context.noPriority", "No priority") },
+                ...priorityValues.map((value) => ({
+                  value: asOption(value),
+                  label: priorityLabel(value, tr),
+                })),
+              ]}
+              value={asOption(taskDraft.priority)}
+              onChange={(value) => update({ priority: fromOption(value) })}
+              ariaLabel={tr("context.priority", "Priority")}
+              className={ui.inputClass}
+              disabled={locked}
+            />,
+          )}
+          {field(
+            tr("context.waitingOn", "Waiting on"),
+            <SelectCombobox
+              items={getWaitingOnOptions(tr)}
+              value={taskDraft.waitingOn}
+              onChange={(value) => update({ waitingOn: value as TaskWaitingOn })}
+              ariaLabel={tr("context.waitingOn", "Waiting on")}
+              className={ui.inputClass}
+              disabled={locked}
+            />,
+          )}
+        </div>
+
+        {field(
+          tr("context.outcome", "Outcome"),
+          <GrowingTextarea
+            value={taskDraft.outcome}
+            readOnly={locked}
+            onChange={(event) => update({ outcome: event.target.value })}
+            placeholder={tr("context.outcomePlaceholder", "The result, in a sentence or two")}
+            className={classNames(ui.textareaClass, "min-h-[72px]")}
+          />,
+          isDone && !taskDraft.outcome.trim() ? (
+            <span className={classNames("mt-1 block text-xs", ui.mutedTextClass)}>
+              {tr("context.outcomeDoneHint", "Add a short result so others can see what was done.")}
+            </span>
+          ) : null,
+        )}
+
+        <ChecklistEditor
+          tr={tr}
+          ui={ui}
+          items={taskDraft.checklist}
+          locked={locked}
+          onChange={(checklist) => update({ checklist })}
+        />
+
+        {field(
+          tr("context.notes", "Notes"),
+          <GrowingTextarea
+            value={taskDraft.notes}
+            readOnly={locked}
+            onChange={(event) => update({ notes: event.target.value })}
+            className={classNames(ui.textareaClass, "min-h-[180px]")}
+          />,
+        )}
+
+        {isCreate ? null : (
+          <TaskSubtaskList
+            tr={tr}
+            ui={ui}
+            subtasks={subtasks}
+            onOpenTask={onOpenTask}
+            onAddSubtask={taskGone ? undefined : onAddSubtask}
+          />
+        )}
+
+        <details className="rounded-xl border border-[var(--glass-border-subtle)] px-3 py-3">
+          <summary className="cursor-pointer text-sm font-medium text-[var(--color-text-primary)]">
+            {tr("context.advancedTaskFields", "Advanced details")}
+          </summary>
+          <div className="mt-3 space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {field(
+                tr("context.parentTask", "Parent task"),
+                <SelectCombobox
+                  items={parentItems}
+                  value={asOption(taskDraft.parentId)}
+                  onChange={(value) => {
+                    const parentId = fromOption(value);
+                    setTaskDraft((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            parentId,
+                            taskType: alignTaskDraftTaskType(
+                              prev.taskType,
+                              parentId,
+                              prev.parentId,
+                            ),
+                          }
+                        : prev,
+                    );
+                  }}
+                  ariaLabel={tr("context.parentTask", "Parent task")}
+                  className={ui.inputClass}
+                  disabled={locked}
+                  searchable
+                />,
+              )}
+              {field(
+                tr("context.handoffField", "Hand off to"),
+                <SelectCombobox
+                  items={actorItems(
+                    tr("context.none", "None"),
+                    assigneeChoices,
+                    taskDraft.handoffTo,
+                  )}
+                  value={asOption(taskDraft.handoffTo)}
+                  onChange={(value) => update({ handoffTo: fromOption(value) })}
+                  ariaLabel={tr("context.handoffField", "Hand off to")}
+                  className={ui.inputClass}
+                  disabled={locked}
+                  searchable
+                />,
+              )}
+            </div>
+            {field(
+              tr("context.blockedBy", "Blocked by"),
+              <textarea
+                value={taskDraft.blockedBy}
+                readOnly={locked}
+                onChange={(event) => update({ blockedBy: event.target.value })}
+                className={classNames(ui.textareaClass, "min-h-[72px]")}
+                placeholder={tr("context.blockedByPlaceholder", "Task IDs, one per line")}
+              />,
+            )}
+            <TaskTypeSection
+              tr={tr}
+              ui={ui}
+              taskDraft={taskDraft}
+              taskTypeId={taskTypeId}
+              selectedTaskType={selectedTaskType}
+              taskWorkflowCoverage={taskWorkflowCoverage}
+              locked={locked}
+              onTaskTypeChange={onTaskTypeChange}
+            />
+          </div>
+        </details>
+
+        {!isCreate && selectedTask ? (
+          <p className={classNames("text-xs", ui.mutedTextClass)}>
+            {[
+              selectedTask.created_at
+                ? `${tr("context.createdAt", "Created")} ${formatFullTime(selectedTask.created_at)}`
+                : "",
+              selectedTask.updated_at
+                ? tr("context.updated", "Updated {{time}}", {
+                    time: formatTime(selectedTask.updated_at),
+                  })
+                : "",
+              selectedTask.archived_from
+                ? `${tr("context.archivedFrom", "Archived from")} ${selectedTask.archived_from}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        ) : null}
+        {/* Why Delete is not offered: read when looked for, not kept on screen. */}
+        {!isCreate && selectedTask && selectedTaskDeleteHint ? (
+          <p className={classNames("text-xs", ui.mutedTextClass)}>{selectedTaskDeleteHint}</p>
+        ) : null}
+      </div>
+
+      <div className="shrink-0 border-t border-[var(--glass-border-subtle)] px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5">
+        <div className="flex flex-wrap items-center gap-2">
+          {!isCreate && selectedTask && selectedTaskDeleteInfo.allowed ? (
+            <button
+              type="button"
+              onClick={onDeleteSelectedTask}
+              disabled={syncBusy}
+              className={ui.buttonDangerClass}
+            >
+              {tr("context.deleteTask", "Delete")}
+            </button>
+          ) : null}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {hasTaskUnsaved && !taskGone ? (
+              <button
+                type="button"
+                onClick={onResetTask}
+                disabled={syncBusy}
+                className={ui.buttonSecondaryClass}
+              >
+                {isCreate
+                  ? tr("context.clear", "Clear")
+                  : tr("context.discardChanges", "Discard changes")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onSaveTask}
+              disabled={
+                syncBusy ||
+                taskGone ||
+                taskStale === "unconfirmed" ||
+                (!isCreate && !hasTaskUnsaved)
+              }
+              className={ui.buttonPrimaryClass}
+            >
+              {syncBusy
+                ? tr("context.saving", "Saving…")
+                : isCreate
+                  ? tr("context.createTask", "Create task")
+                  : tr("context.saveTask", "Save task")}
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Many screens tall. Past it the box scrolls inside, so huge text cannot push
+// the controls below it beyond the browser's height limit.
+const MAX_GROWN_HEIGHT_PX = 10_000;
+
+/** As tall as its text, so a long record scrolls with the editor instead of inside a box. */
+function GrowingTextarea({
+  className,
+  ref: outer,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  ref?: (element: HTMLTextAreaElement | null) => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  const fit = useCallback(() => {
+    const node = ref.current;
+    if (!node) return;
+    // Measuring collapses the box for a moment, which can pull the editor's scroll back.
+    const scroller = node.closest<HTMLElement>("[data-task-editor-scroll]");
+    const top = scroller?.scrollTop ?? 0;
+    // Measure without a scrollbar, which would narrow the text and overstate its height.
+    node.style.overflowY = "hidden";
+    node.style.height = "auto";
+    const height = node.scrollHeight + node.offsetHeight - node.clientHeight;
+    node.style.height = `${Math.min(height, MAX_GROWN_HEIGHT_PX)}px`;
+    if (height > MAX_GROWN_HEIGHT_PX) node.style.overflowY = "auto";
+    if (scroller) scroller.scrollTop = top;
+  }, []);
+  useLayoutEffect(fit, [fit, props.value]);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    // Text wraps again when the editor's width changes.
+    let width = node.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (node.clientWidth === width) return;
+      width = node.clientWidth;
+      fit();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [fit]);
+  return (
+    <textarea
+      ref={(element) => {
+        ref.current = element;
+        outer?.(element);
+      }}
+      {...props}
+      className={className}
+      // Inline, so no resize class in `className` can let the box be dragged over its text.
+      style={{ ...props.style, resize: "none" }}
+    />
+  );
+}
+
+function ChecklistEditor({
+  tr,
+  ui,
+  items,
+  locked,
+  onChange,
+}: {
+  tr: ContextTranslator;
+  ui: ContextModalUi;
+  items: TaskChecklistItem[];
+  locked: boolean;
+  onChange: (items: TaskChecklistItem[]) => void;
+}) {
+  const inputs = useRef(new Map<string, HTMLTextAreaElement>());
+  const focusId = useRef("");
+  const statusId = useId();
+  useEffect(() => {
+    if (!focusId.current) return;
+    inputs.current.get(focusId.current)?.focus();
+    focusId.current = "";
+  });
+  const add = (after = items.length - 1) => {
+    const id = nextChecklistItemId(items);
+    focusId.current = id;
+    onChange([
+      ...items.slice(0, after + 1),
+      { id, text: "", status: "pending" },
+      ...items.slice(after + 1),
+    ]);
+  };
+  const change = (index: number, patch: Partial<TaskChecklistItem>) =>
+    onChange(items.map((item, at) => (at === index ? { ...item, ...patch } : item)));
+  const remove = (index: number) => {
+    focusId.current = items[index - 1]?.id || "";
+    onChange(items.filter((_, at) => at !== index));
+  };
+  const listed = items.filter((item) => item.text.trim());
+  const done = listed.filter((item) => item.status === "done").length;
+
+  return (
+    <fieldset className="min-w-0">
+      <legend className="mb-1 flex w-full items-center justify-between gap-2">
+        <span
+          className={classNames("text-xs font-medium uppercase tracking-wide", ui.mutedTextClass)}
+        >
+          {tr("context.checklist", "Checklist")}
+        </span>
+        {listed.length > 0 ? (
+          <span className={classNames("text-xs", ui.mutedTextClass)}>
+            {tr("context.checklistDone", "{{done}} of {{total}} done", {
+              done,
+              total: listed.length,
+            })}
+          </span>
+        ) : null}
+      </legend>
+      {items.length > 0 ? (
+        <ul className="space-y-1.5">
+          {items.map((item, index) => {
+            const label = tr("context.checklistItem", "Checklist item {{n}}", { n: index + 1 });
+            // A status the checkbox cannot show is shown as written beside it.
+            const other =
+              item.status && !["pending", "in_progress", "done"].includes(item.status)
+                ? String(item.status)
+                : "";
+            return (
+              <li key={`${item.id}:${index}`} className="flex items-start gap-1">
+                <label
+                  className="flex size-10 shrink-0 cursor-pointer items-center justify-center"
+                  title={
+                    item.status === "in_progress"
+                      ? tr("context.checklistInProgress", "In progress")
+                      : undefined
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    className="size-4 cursor-pointer accent-[var(--color-text-primary)]"
+                    checked={item.status === "done"}
+                    ref={(element) => {
+                      if (element) element.indeterminate = item.status === "in_progress";
+                    }}
+                    disabled={locked}
+                    onChange={() =>
+                      change(index, { status: item.status === "done" ? "pending" : "done" })
+                    }
+                    aria-label={tr("context.checklistItemDone", "Done: {{item}}", {
+                      item: item.text.trim() || label,
+                    })}
+                    aria-describedby={other ? `${statusId}-${index}` : undefined}
+                  />
+                </label>
+                <GrowingTextarea
+                  ref={(element) => {
+                    if (element) inputs.current.set(item.id, element);
+                    else inputs.current.delete(item.id);
+                  }}
+                  rows={1}
+                  value={item.text}
+                  readOnly={locked}
+                  aria-label={label}
+                  onChange={(event) => change(index, { text: event.target.value })}
+                  onKeyDown={(event) => {
+                    // Enter that ends an IME composition only commits the text.
+                    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      if (item.text.trim()) add(index);
+                    } else if (event.key === "Backspace" && !item.text) {
+                      event.preventDefault();
+                      remove(index);
+                    }
+                  }}
+                  className={classNames(
+                    ui.inputClass,
+                    "min-h-10 min-w-0 flex-1 px-3 py-2",
+                    item.status === "done" && "text-[var(--color-text-muted)] line-through",
+                  )}
+                />
+                {other ? (
+                  <span
+                    id={`${statusId}-${index}`}
+                    title={other}
+                    className="max-w-[6rem] shrink-0 truncate rounded-full border border-[var(--glass-border-subtle)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]"
+                  >
+                    {other}
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={locked}
+                  onClick={() => remove(index)}
+                  aria-label={tr("context.checklistRemove", "Remove item {{n}}", { n: index + 1 })}
+                  className="flex size-10 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--glass-tab-bg)] hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] disabled:opacity-50"
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      <button
+        type="button"
+        disabled={locked}
+        onClick={() => add()}
+        className={classNames(ui.buttonSecondaryClass, "mt-2 gap-1.5")}
+      >
+        <Plus className="size-4" aria-hidden="true" />
+        {tr("context.checklistAdd", "Add item")}
+      </button>
+    </fieldset>
+  );
+}
+
+/**
+ * The task type and what it asks of a task's notes. These describe how
+ * complete a record is; they never decide whether it can move or finish.
+ */
+function TaskTypeSection({
+  tr,
+  ui,
+  taskDraft,
+  taskTypeId,
+  selectedTaskType,
+  taskWorkflowCoverage,
+  locked,
+  onTaskTypeChange,
+}: {
+  tr: ContextTranslator;
+  ui: ContextModalUi;
+  taskDraft: TaskDraft;
+  taskTypeId: TaskTypeId;
+  selectedTaskType: TaskTypeDefinition;
+  taskWorkflowCoverage: TaskWorkflowCoverage;
+  locked: boolean;
+  onTaskTypeChange: (value: TaskTypeId) => void;
+}) {
   const attemptToneClass = (verdict: TaskAttemptVerdict) =>
     classNames(
       "rounded-full px-2 py-0.5 text-[11px] font-medium",
@@ -76,45 +728,13 @@ export function TaskEditorPanel({
             ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
             : "glass-panel text-[var(--color-text-secondary)]",
     );
-  const workflowToneClass = (ok: boolean) =>
+  const presentClass = (ok: boolean) =>
     classNames(
       "rounded-full px-2 py-0.5 text-[11px] font-medium",
       ok
         ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-        : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+        : "glass-panel text-[var(--color-text-secondary)]",
     );
-  const workflowSummary = taskWorkflowCoverage.needsCloseout
-    ? tr("context.taskWorkflowNeedsCloseout", "Closeout is still missing {{items}}.", {
-        items: taskWorkflowCoverage.missingCloseout.join(", "),
-      })
-    : taskWorkflowCoverage.needsContract
-      ? tr("context.taskWorkflowNeedsContract", "This task type is still missing {{items}}.", {
-          items: taskWorkflowCoverage.missingSetup.join(", "),
-        })
-      : taskWorkflowCoverage.isOptimization
-        ? taskWorkflowCoverage.hasCurrentBest && taskWorkflowCoverage.hasFrontierNext
-          ? tr(
-              "context.taskWorkflowOptimizationReady",
-              "This optimization task has a usable metric setup, a current best, and a next frontier.",
-            )
-          : taskWorkflowCoverage.hasCurrentBest
-            ? tr(
-                "context.taskWorkflowOptimizationBestReady",
-                "This optimization task has a usable metric setup and a current best.",
-              )
-            : tr(
-                "context.taskWorkflowOptimizationContractReady",
-                "This optimization task has a usable baseline / metric setup.",
-              )
-        : taskWorkflowCoverage.taskTypeFamily === "standard"
-          ? tr(
-              "context.taskWorkflowStandardReady",
-              "This standard task has the required goal / evidence structure.",
-            )
-          : tr(
-              "context.taskWorkflowFreeReady",
-              "Keep this task lightweight unless more structure would improve control.",
-            );
   const latestAttemptLabel =
     taskWorkflowCoverage.latestAttemptVerdict === "keep"
       ? tr("context.latestAttemptKeep", "Latest keep")
@@ -125,7 +745,6 @@ export function TaskEditorPanel({
           : taskWorkflowCoverage.latestAttemptVerdict === "continue"
             ? tr("context.latestAttemptContinue", "Latest continue")
             : "";
-  const waitingOnOptions = getWaitingOnOptions(tr);
   const taskTypeDescription =
     selectedTaskType.id === "free"
       ? tr(
@@ -141,624 +760,127 @@ export function TaskEditorPanel({
             "context.taskTypeDescOptimization",
             "For metric-sensitive work. Capture baseline, metric, verifier boundary, current best, and next frontier.",
           );
-  const requirementItems =
-    selectedTaskType.id === "free"
-      ? [
-          tr(
-            "context.taskTypeReqFree",
-            "Keep the task lightweight unless more structure improves control.",
-          ),
-        ]
-      : selectedTaskType.id === "optimization"
-        ? [
-            tr("context.goal", "Goal"),
-            tr("context.successCriteria", "Success criteria"),
-            tr("context.requiredEvidence", "Required evidence"),
-            tr("context.owner", "Owner"),
-            tr("context.baseline", "Baseline"),
-            tr("context.primaryMetric", "Primary metric"),
-            tr("context.verifierBoundary", "Verifier boundary"),
-            tr("context.currentBest", "Current best"),
-            tr("context.frontierNext", "Frontier next"),
-            tr("context.attemptDecision", "Attempt decision"),
-          ]
-        : [
-            tr("context.goal", "Goal"),
-            tr("context.successCriteria", "Success criteria"),
-            tr("context.requiredEvidence", "Required evidence"),
-            tr("context.owner", "Owner"),
-            tr("context.closeoutVerdict", "Closeout verdict"),
-            tr("context.verificationSummary", "Verification summary"),
-          ];
+  const structured =
+    taskWorkflowCoverage.taskTypeFamily === "standard" || taskWorkflowCoverage.isOptimization;
+  const isDone = String(taskDraft.status || "").toLowerCase() === "done";
 
   return (
-    <section className={classNames(ui.surfaceClass, "min-h-full p-4 pb-24 sm:pb-28")}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>
-            {isCreate
-              ? tr("context.newTask", "New task")
-              : tr("context.taskDetails", "Task editor")}
-          </div>
-          <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
-            {isCreate
-              ? tr(
-                  "context.newTaskHint",
-                  "Create a new shared task. Default root work to Standard and subtasks to Free unless more structure is useful.",
-                )
-              : selectedTask?.id || ""}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {hasTaskUnsaved ? (
-            <span
-              className={classNames(
-                "rounded-full px-2 py-0.5 text-[11px] font-medium",
-                "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-              )}
-            >
-              {tr("context.unsaved", "Unsaved")}
+    <div className="space-y-2 border-t border-[var(--glass-border-subtle)] pt-3">
+      <label className="block text-sm">
+        <span
+          className={classNames(
+            "mb-1 block text-xs font-medium uppercase tracking-wide",
+            ui.mutedTextClass,
+          )}
+        >
+          {tr("context.taskWorkflow", "Task type")}
+        </span>
+        <SelectCombobox
+          items={[
+            { value: "free", label: tr("context.taskTypeFree", "Free") },
+            { value: "standard", label: tr("context.taskTypeStandard", "Standard") },
+            { value: "optimization", label: tr("context.taskTypeOptimization", "Optimization") },
+          ]}
+          value={taskTypeId}
+          onChange={(value) => onTaskTypeChange(value as TaskTypeId)}
+          ariaLabel={tr("context.taskType", "Task type")}
+          className={ui.inputClass}
+          disabled={locked}
+        />
+      </label>
+      <p className={classNames("text-xs", ui.mutedTextClass)}>{taskTypeDescription}</p>
+      {structured ? (
+        <div className="flex flex-wrap gap-1.5">
+          <span className={presentClass(taskWorkflowCoverage.hasGoal)}>
+            {tr("context.goal", "Goal")}
+          </span>
+          <span className={presentClass(taskWorkflowCoverage.hasSuccessCriteria)}>
+            {tr("context.successCriteria", "Success criteria")}
+          </span>
+          <span className={presentClass(taskWorkflowCoverage.hasRequiredEvidence)}>
+            {tr("context.requiredEvidence", "Required evidence")}
+          </span>
+          {taskWorkflowCoverage.taskTypeFamily === "standard" ? (
+            <span className={presentClass(taskWorkflowCoverage.hasOwner)}>
+              {tr("context.owner", "Owner")}
             </span>
           ) : null}
-          <button
-            type="button"
-            onClick={onResetTask}
-            disabled={syncBusy}
-            className={ui.buttonSecondaryClass}
-          >
-            {isCreate ? tr("context.clear", "Clear") : tr("context.reset", "Reset")}
-          </button>
-          <button type="button" onClick={onClose} className={ui.buttonSecondaryClass}>
-            {tr("context.close", "Close")}
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-4 space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className={classNames("text-xs", ui.mutedTextClass)}>
-            {isCreate
-              ? tr(
-                  "context.editorInlineHint",
-                  "Editing opens in a side panel so the board stays readable.",
-                )
-              : selectedTask?.updated_at
-                ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(selectedTask.updated_at) })}`
-                : tr("context.notUpdatedYet", "Not updated yet")}
-          </div>
-          <span
-            className={classNames(
-              "rounded-full border px-2 py-0.5 text-[11px] font-medium",
-              statusTone(taskDraft.status),
-            )}
-          >
-            {taskDraft.status}
-          </span>
-        </div>
-
-        <div className={classNames("rounded-xl border px-3 py-3", "glass-panel")}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0 flex-1">
-              <div
-                className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}
-              >
-                {tr("context.taskWorkflow", "Task type")}
-              </div>
-              <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
-                {taskTypeDescription}
-              </div>
-              <div className="mt-3">
-                <div
-                  className={classNames(
-                    "text-[11px] font-medium uppercase tracking-wide",
-                    ui.mutedTextClass,
-                  )}
-                >
-                  {tr("context.taskRequirements", "Requirements")}
-                </div>
-                <ul
-                  className={classNames(
-                    "mt-1 space-y-1 text-xs",
-                    "text-[var(--color-text-secondary)]",
-                  )}
-                >
-                  {requirementItems.map((item) => (
-                    <li key={item} className="leading-5">
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            <div className="grid gap-2 sm:w-[15rem]">
-              <SelectCombobox
-                items={[
-                  { value: "free", label: tr("context.taskTypeFree", "Free") },
-                  { value: "standard", label: tr("context.taskTypeStandard", "Standard") },
-                  {
-                    value: "optimization",
-                    label: tr("context.taskTypeOptimization", "Optimization"),
-                  },
-                ]}
-                value={taskTypeId}
-                onChange={(value) => onTaskTypeChange(value as TaskTypeId)}
-                ariaLabel={tr("context.taskType", "Task type")}
-                className={ui.inputClass}
-              />
-            </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            <span
-              className={classNames(
-                "rounded-full px-2 py-0.5 text-[11px] font-medium",
-                "glass-panel text-[var(--color-text-secondary)]",
-              )}
-            >
-              {selectedTaskType.label}
-            </span>
-            <span
-              className={classNames(
-                "rounded-full px-2 py-0.5 text-[11px] font-medium",
-                "glass-panel text-[var(--color-text-secondary)]",
-              )}
-            >
-              {taskWorkflowCoverage.isRoot
-                ? tr("context.rootTask", "Root task")
-                : tr("context.subtask", "Subtask")}
-            </span>
-            {taskWorkflowCoverage.taskTypeFamily === "standard" ||
-            taskWorkflowCoverage.isOptimization ? (
-              <>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasGoal)}>
-                  {tr("context.goal", "Goal")}
-                </span>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasSuccessCriteria)}>
-                  {tr("context.successCriteria", "Success criteria")}
-                </span>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasRequiredEvidence)}>
-                  {tr("context.requiredEvidence", "Required evidence")}
-                </span>
-              </>
-            ) : null}
-            {taskWorkflowCoverage.taskTypeFamily === "standard" ? (
-              <span className={workflowToneClass(taskWorkflowCoverage.hasOwner)}>
-                {tr("context.owner", "Owner")}
+          {taskWorkflowCoverage.isOptimization ? (
+            <>
+              <span className={presentClass(taskWorkflowCoverage.hasBaseline)}>
+                {tr("context.baseline", "Baseline")}
               </span>
-            ) : null}
-            {taskWorkflowCoverage.isOptimization ? (
-              <>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasBaseline)}>
-                  {tr("context.baseline", "Baseline")}
+              <span className={presentClass(taskWorkflowCoverage.hasPrimaryMetric)}>
+                {tr("context.primaryMetric", "Primary metric")}
+              </span>
+              <span className={presentClass(taskWorkflowCoverage.hasVerifierBoundary)}>
+                {tr("context.verifierBoundary", "Verifier boundary")}
+              </span>
+              <span className={presentClass(taskWorkflowCoverage.hasCurrentBest)}>
+                {tr("context.currentBest", "Current best")}
+              </span>
+              <span className={presentClass(taskWorkflowCoverage.hasFrontierNext)}>
+                {tr("context.frontierNext", "Frontier next")}
+              </span>
+            </>
+          ) : null}
+          {isDone ? (
+            <>
+              <span className={presentClass(taskWorkflowCoverage.hasCloseoutVerdict)}>
+                {tr("context.closeoutVerdict", "Closeout verdict")}
+              </span>
+              <span className={presentClass(taskWorkflowCoverage.hasVerificationSummary)}>
+                {tr("context.verificationSummary", "Verification summary")}
+              </span>
+              {taskWorkflowCoverage.isOptimization ? (
+                <span className={presentClass(taskWorkflowCoverage.hasAttemptDecision)}>
+                  {tr("context.attemptDecision", "Attempt decision")}
                 </span>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasPrimaryMetric)}>
-                  {tr("context.primaryMetric", "Primary metric")}
-                </span>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasVerifierBoundary)}>
-                  {tr("context.verifierBoundary", "Verifier boundary")}
-                </span>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasCurrentBest)}>
-                  {tr("context.currentBest", "Current best")}
-                </span>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasFrontierNext)}>
-                  {tr("context.frontierNext", "Frontier next")}
-                </span>
-              </>
-            ) : null}
-            {String(taskDraft.status || "").toLowerCase() === "done" ? (
-              <>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasOutcomeSummary)}>
-                  {tr("context.outcomeSummary", "Outcome summary")}
-                </span>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasCloseoutVerdict)}>
-                  {tr("context.closeoutVerdict", "Closeout verdict")}
-                </span>
-                <span className={workflowToneClass(taskWorkflowCoverage.hasVerificationSummary)}>
-                  {tr("context.verificationSummary", "Verification summary")}
-                </span>
-                {taskWorkflowCoverage.isOptimization ? (
-                  <span className={workflowToneClass(taskWorkflowCoverage.hasAttemptDecision)}>
-                    {tr("context.attemptDecision", "Attempt decision")}
-                  </span>
-                ) : null}
-              </>
-            ) : null}
-          </div>
-
-          <div
-            className={classNames(
-              "mt-3 rounded-lg border px-3 py-2 text-xs",
-              taskWorkflowCoverage.needsContract || taskWorkflowCoverage.needsCloseout
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                : "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-            )}
-          >
-            {workflowSummary}
-          </div>
-          {taskWorkflowCoverage.isOptimization &&
-          (taskWorkflowCoverage.hasCurrentBest ||
-            taskWorkflowCoverage.hasFrontierNext ||
-            taskWorkflowCoverage.hasAttemptLog) ? (
-            <div
-              className={classNames(
-                "mt-3 grid gap-2 rounded-lg border px-3 py-3 text-xs",
-                "glass-card",
-              )}
-            >
-              {taskWorkflowCoverage.hasCurrentBest ? (
-                <div>
-                  <div className={classNames("font-medium", ui.mutedTextClass)}>
-                    {tr("context.currentBest", "Current best")}
-                  </div>
-                  <div className={classNames("mt-1", "text-[var(--color-text-primary)]")}>
-                    {taskWorkflowCoverage.currentBestSummary}
-                  </div>
-                </div>
               ) : null}
-              {taskWorkflowCoverage.hasFrontierNext ? (
-                <div>
-                  <div className={classNames("font-medium", ui.mutedTextClass)}>
-                    {tr("context.frontierNext", "Frontier next")}
-                  </div>
-                  <div className={classNames("mt-1", "text-[var(--color-text-primary)]")}>
-                    {taskWorkflowCoverage.frontierNextSummary}
-                  </div>
-                </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+      {taskWorkflowCoverage.isOptimization &&
+      (taskWorkflowCoverage.hasCurrentBest ||
+        taskWorkflowCoverage.hasFrontierNext ||
+        taskWorkflowCoverage.hasAttemptLog) ? (
+        <div className="grid gap-2 text-xs">
+          {taskWorkflowCoverage.hasCurrentBest ? (
+            <div>
+              <div className={classNames("font-medium", ui.mutedTextClass)}>
+                {tr("context.currentBest", "Current best")}
+              </div>
+              <div className="mt-1 text-[var(--color-text-primary)]">
+                {taskWorkflowCoverage.currentBestSummary}
+              </div>
+            </div>
+          ) : null}
+          {taskWorkflowCoverage.hasFrontierNext ? (
+            <div>
+              <div className={classNames("font-medium", ui.mutedTextClass)}>
+                {tr("context.frontierNext", "Frontier next")}
+              </div>
+              <div className="mt-1 text-[var(--color-text-primary)]">
+                {taskWorkflowCoverage.frontierNextSummary}
+              </div>
+            </div>
+          ) : null}
+          {taskWorkflowCoverage.hasAttemptLog ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {latestAttemptLabel ? (
+                <span className={attemptToneClass(taskWorkflowCoverage.latestAttemptVerdict)}>
+                  {latestAttemptLabel}
+                </span>
               ) : null}
-              {taskWorkflowCoverage.hasAttemptLog ? (
-                <div
-                  className={classNames(
-                    "flex flex-wrap items-center gap-2",
-                    (taskWorkflowCoverage.hasCurrentBest || taskWorkflowCoverage.hasFrontierNext) &&
-                      "border-t pt-2",
-                  )}
-                >
-                  {latestAttemptLabel ? (
-                    <span className={attemptToneClass(taskWorkflowCoverage.latestAttemptVerdict)}>
-                      {latestAttemptLabel}
-                    </span>
-                  ) : null}
-                  <span className={classNames("min-w-0 flex-1", ui.subtleTextClass)}>
-                    {taskWorkflowCoverage.latestAttemptSummary ||
-                      tr("context.attemptLogPresent", "Attempt log recorded")}
-                  </span>
-                </div>
-              ) : null}
+              <span className={classNames("min-w-0 flex-1", ui.subtleTextClass)}>
+                {taskWorkflowCoverage.latestAttemptSummary ||
+                  tr("context.attemptLogPresent", "Attempt log recorded")}
+              </span>
             </div>
           ) : null}
         </div>
-
-        <label className="block text-sm">
-          <span
-            className={classNames(
-              "mb-1 block text-xs font-medium uppercase tracking-wide",
-              ui.mutedTextClass,
-            )}
-          >
-            {tr("context.titleField", "Title")}
-          </span>
-          <input
-            value={taskDraft.title}
-            onChange={(event) =>
-              setTaskDraft((prev) => (prev ? { ...prev, title: event.target.value } : prev))
-            }
-            className={ui.inputClass}
-          />
-        </label>
-
-        <label className="block text-sm">
-          <div className="flex items-center justify-between gap-2">
-            <span
-              className={classNames(
-                "mb-1 block text-xs font-medium uppercase tracking-wide",
-                ui.mutedTextClass,
-              )}
-            >
-              {tr("context.outcome", "Outcome")}
-            </span>
-            <span className={classNames("mb-1 block text-[11px]", ui.mutedTextClass)}>
-              {tr(
-                "context.outcomeHint",
-                "Use this as the concise result summary, especially at closeout.",
-              )}
-            </span>
-          </div>
-          <textarea
-            value={taskDraft.outcome}
-            onChange={(event) =>
-              setTaskDraft((prev) => (prev ? { ...prev, outcome: event.target.value } : prev))
-            }
-            className={ui.textareaClass}
-          />
-        </label>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block text-sm">
-            <span
-              className={classNames(
-                "mb-1 block text-xs font-medium uppercase tracking-wide",
-                ui.mutedTextClass,
-              )}
-            >
-              {tr("context.status", "Status")}
-            </span>
-            <SelectCombobox
-              items={[
-                { value: "planned", label: tr("context.planned", "Planned") },
-                { value: "active", label: tr("context.active", "Active") },
-                { value: "done", label: tr("context.done", "Done") },
-                { value: "archived", label: tr("context.archived", "Archived") },
-              ]}
-              value={taskDraft.status}
-              onChange={(value) =>
-                setTaskDraft((prev) => (prev ? { ...prev, status: value } : prev))
-              }
-              ariaLabel={tr("context.status", "Status")}
-              className={ui.inputClass}
-            />
-          </label>
-          <label className="block text-sm">
-            <span
-              className={classNames(
-                "mb-1 block text-xs font-medium uppercase tracking-wide",
-                ui.mutedTextClass,
-              )}
-            >
-              {tr("context.assignee", "Assignee")}
-            </span>
-            <input
-              value={taskDraft.assignee}
-              onChange={(event) =>
-                setTaskDraft((prev) => (prev ? { ...prev, assignee: event.target.value } : prev))
-              }
-              className={ui.inputClass}
-            />
-          </label>
-        </div>
-
-        <label className="block text-sm">
-          <span
-            className={classNames(
-              "mb-1 block text-xs font-medium uppercase tracking-wide",
-              ui.mutedTextClass,
-            )}
-          >
-            {tr("context.priority", "Priority")}
-          </span>
-          <input
-            value={taskDraft.priority}
-            onChange={(event) =>
-              setTaskDraft((prev) => (prev ? { ...prev, priority: event.target.value } : prev))
-            }
-            className={ui.inputClass}
-          />
-        </label>
-
-        <div className="grid gap-3">
-          <label className="block text-sm">
-            <div className="flex items-center justify-between gap-2">
-              <span
-                className={classNames(
-                  "mb-1 block text-xs font-medium uppercase tracking-wide",
-                  ui.mutedTextClass,
-                )}
-              >
-                {tr("context.notes", "Notes")}
-              </span>
-              <span className={classNames("mb-1 block text-[11px]", ui.mutedTextClass)}>
-                {tr(
-                  "context.notesHint",
-                  "Use notes for the working record. The built-in requirements stay read-only above.",
-                )}
-              </span>
-            </div>
-            <textarea
-              value={taskDraft.notes}
-              onChange={(event) =>
-                setTaskDraft((prev) => (prev ? { ...prev, notes: event.target.value } : prev))
-              }
-              className={classNames(ui.textareaClass, "min-h-[220px]")}
-            />
-          </label>
-
-          <label className="block text-sm">
-            <span
-              className={classNames(
-                "mb-1 block text-xs font-medium uppercase tracking-wide",
-                ui.mutedTextClass,
-              )}
-            >
-              {tr("context.checklist", "Checklist")}
-            </span>
-            <textarea
-              value={taskDraft.checklist}
-              onChange={(event) =>
-                setTaskDraft((prev) => (prev ? { ...prev, checklist: event.target.value } : prev))
-              }
-              className={classNames(ui.textareaClass, "min-h-[140px]")}
-              placeholder={tr(
-                "context.checklistPlaceholder",
-                "Use [ ], [~], [x] prefixes if useful.",
-              )}
-            />
-          </label>
-        </div>
-
-        <details className={classNames("rounded-xl border px-3 py-3", "glass-card")}>
-          <summary
-            className={classNames(
-              "cursor-pointer text-sm font-medium",
-              "text-[var(--color-text-primary)]",
-            )}
-          >
-            {tr("context.advancedTaskFields", "Advanced details")}
-          </summary>
-          <div className="mt-3 space-y-3">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block text-sm">
-                <span
-                  className={classNames(
-                    "mb-1 block text-xs font-medium uppercase tracking-wide",
-                    ui.mutedTextClass,
-                  )}
-                >
-                  {tr("context.parentTask", "Parent task")}
-                </span>
-                <input
-                  value={taskDraft.parentId}
-                  onChange={(event) =>
-                    setTaskDraft((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            parentId: event.target.value,
-                            taskType: alignTaskDraftTaskType(
-                              prev.taskType,
-                              event.target.value,
-                              prev.parentId,
-                            ),
-                          }
-                        : prev,
-                    )
-                  }
-                  className={ui.inputClass}
-                  placeholder={tr("context.rootTask", "Root task")}
-                />
-              </label>
-              <label className="block text-sm">
-                <span
-                  className={classNames(
-                    "mb-1 block text-xs font-medium uppercase tracking-wide",
-                    ui.mutedTextClass,
-                  )}
-                >
-                  {tr("context.handoffTo", "Handoff to")}
-                </span>
-                <input
-                  value={taskDraft.handoffTo}
-                  onChange={(event) =>
-                    setTaskDraft((prev) =>
-                      prev ? { ...prev, handoffTo: event.target.value } : prev,
-                    )
-                  }
-                  className={ui.inputClass}
-                />
-              </label>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block text-sm">
-                <span
-                  className={classNames(
-                    "mb-1 block text-xs font-medium uppercase tracking-wide",
-                    ui.mutedTextClass,
-                  )}
-                >
-                  {tr("context.blockedBy", "Blocked by")}
-                </span>
-                <textarea
-                  value={taskDraft.blockedBy}
-                  onChange={(event) =>
-                    setTaskDraft((prev) =>
-                      prev ? { ...prev, blockedBy: event.target.value } : prev,
-                    )
-                  }
-                  className={classNames(ui.textareaClass, "min-h-[90px]")}
-                  placeholder={tr("context.onePerLine", "One per line")}
-                />
-              </label>
-              <label className="block text-sm">
-                <span
-                  className={classNames(
-                    "mb-1 block text-xs font-medium uppercase tracking-wide",
-                    ui.mutedTextClass,
-                  )}
-                >
-                  {tr("context.waitingOn", "Waiting on")}
-                </span>
-                <SelectCombobox
-                  items={waitingOnOptions}
-                  value={taskDraft.waitingOn}
-                  onChange={(value) =>
-                    setTaskDraft((prev) =>
-                      prev ? { ...prev, waitingOn: value as TaskWaitingOn } : prev,
-                    )
-                  }
-                  ariaLabel={tr("context.waitingOn", "Waiting on")}
-                  className={ui.inputClass}
-                />
-              </label>
-            </div>
-          </div>
-        </details>
-
-        {isCreate ? (
-          <div
-            className={classNames(
-              "rounded-xl border px-3 py-3 text-xs",
-              "glass-card text-[var(--color-text-muted)]",
-            )}
-          >
-            {tr(
-              "context.newTaskHint",
-              "Create a new shared task. Default root work to Standard and subtasks to Free unless more structure is useful.",
-            )}
-          </div>
-        ) : selectedTask ? (
-          <div
-            className={classNames(
-              "grid gap-2 rounded-xl border px-3 py-3 text-xs sm:grid-cols-2",
-              "glass-card text-[var(--color-text-muted)]",
-            )}
-          >
-            <div>
-              {tr("context.createdAt", "Created")}:{" "}
-              {selectedTask.created_at ? formatFullTime(selectedTask.created_at) : "-"}
-            </div>
-            <div>
-              {tr("context.updatedAt", "Updated")}:{" "}
-              {selectedTask.updated_at ? formatFullTime(selectedTask.updated_at) : "-"}
-            </div>
-            <div>
-              {tr("context.archivedFrom", "Archived from")}: {selectedTask.archived_from || "-"}
-            </div>
-            <div>
-              {tr("context.checklistItems", "Checklist items")}:{" "}
-              {Array.isArray(selectedTask.checklist) ? selectedTask.checklist.length : 0}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="flex items-center gap-2">
-          {!isCreate && selectedTask ? (
-            <button
-              type="button"
-              onClick={onDeleteSelectedTask}
-              disabled={syncBusy || !selectedTaskDeleteInfo.allowed}
-              className={ui.buttonDangerClass}
-              title={selectedTaskDeleteHint || undefined}
-            >
-              {tr("context.deleteTask", "Delete")}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={onSaveTask}
-            disabled={syncBusy}
-            className={ui.buttonPrimaryClass}
-          >
-            {syncBusy
-              ? tr("context.saving", "Saving…")
-              : isCreate
-                ? tr("context.createTask", "Create task")
-                : tr("context.saveTask", "Save task")}
-          </button>
-        </div>
-        {!isCreate && selectedTaskDeleteHint ? (
-          <div className={classNames("text-xs", ui.mutedTextClass)}>{selectedTaskDeleteHint}</div>
-        ) : null}
-      </div>
-    </section>
+      ) : null}
+    </div>
   );
 }

@@ -243,6 +243,7 @@ export type VoiceSecretaryComposerControlProps = {
   composerContext?: Record<string, unknown>;
   onPromptDraft?: (text: string, opts?: { mode?: "replace" | "append" }) => void;
   onFocusComposer?: () => void;
+  onCompactBlockChange?: (blocked: boolean) => void;
   initiallyOpen?: boolean;
   statusPortalTarget?: HTMLElement | null;
 };
@@ -315,6 +316,7 @@ export function VoiceSecretaryComposerControl({
   composerContext = {},
   onPromptDraft,
   onFocusComposer,
+  onCompactBlockChange,
   initiallyOpen = false,
 }: VoiceSecretaryComposerControlProps) {
   const readCurrentComposerText = useCallback(
@@ -5104,6 +5106,19 @@ export function VoiceSecretaryComposerControl({
     askSummary: pendingAskFeedback && !askNotice.hidden ? pendingAskFeedbackSummaryText : "",
     transcriptSummary: liveTranscriptSummaryText,
   });
+  const compactBlocked = Boolean(
+    open ||
+    executionOpen ||
+    recording ||
+    recordingStarting ||
+    composerActivity ||
+    composerErrorText ||
+    speechErrorHint,
+  );
+  useEffect(() => {
+    onCompactBlockChange?.(compactBlocked);
+  }, [compactBlocked, onCompactBlockChange]);
+  useEffect(() => () => onCompactBlockChange?.(false), [onCompactBlockChange]);
   const composerAnnouncement =
     composerActivity === "recording"
       ? t("voiceSecretaryRecording")
@@ -5873,8 +5888,9 @@ export function VoiceSecretaryComposerControl({
             </div>
           ) : null}
           <div
+            data-voice-assistant-row-control
             className={classNames(
-              "inline-flex h-11 min-w-0 max-w-full shrink items-center gap-0.5 rounded-lg border transition-colors sm:h-9 sm:shrink-0 sm:p-0.5",
+              "inline-flex h-[44px] min-w-0 max-w-full shrink items-center gap-0.5 rounded-lg border transition-colors @min-[600px]/composer:h-9 @min-[600px]/composer:shrink-0 @min-[600px]/composer:p-0.5",
               recording
                 ? isDark
                   ? "border-rose-400/30 bg-rose-500/10"
@@ -5887,7 +5903,7 @@ export function VoiceSecretaryComposerControl({
             <button
               type="button"
               className={classNames(
-                "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
+                "relative inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 @min-[600px]/composer:h-8 @min-[600px]/composer:w-8",
                 recording
                   ? isDark
                     ? "bg-rose-500/20 text-rose-200 hover:bg-rose-500/28"

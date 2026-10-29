@@ -6,10 +6,12 @@ export function GroupConnectionBadge({
   connection,
   onClick,
   disabled = false,
+  compact = false,
 }: {
   connection?: GroupConnectionCount;
   onClick?: () => void;
   disabled?: boolean;
+  compact?: boolean;
 }) {
   const { t } = useTranslation("layout");
   if (!connection || connection.count === 0 || !onClick) return null;
@@ -23,7 +25,7 @@ export function GroupConnectionBadge({
       title={label}
       aria-label={label}
       disabled={disabled}
-      className="flex min-h-8 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--glass-panel-bg)] focus-visible:outline-2 disabled:opacity-50"
+      className={`flex min-h-8 shrink-0 items-center gap-1 rounded-md text-xs text-[var(--color-text-secondary)] hover:bg-[var(--glass-panel-bg)] focus-visible:outline-2 disabled:opacity-50 ${compact ? "px-0" : "px-1.5"}`}
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
       onTouchStart={(event) => event.stopPropagation()}

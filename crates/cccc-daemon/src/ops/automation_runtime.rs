@@ -12,7 +12,7 @@ pub fn prepare_exited() -> BTreeMap<String, Vec<cccc_runtime::SessionStatus>> {
     let exited = match actor_runtime::reap_exited() {
         Ok(exited) => exited,
         Err(error) => {
-            tracing::warn!(message = %error.message, "runtime reap failed");
+            tracing::warn!(diagnostic_action = "runtime_reap", diagnostic_code = %error.code, message = %error.message, "runtime reap failed");
             Vec::new()
         }
     };
@@ -33,7 +33,7 @@ pub fn pending_delivery_group_ids() -> Vec<String> {
 pub fn maintain_group(home: &HomeLayout, group_id: &str, exited: Vec<cccc_runtime::SessionStatus>) {
     actor_delivery::drain_group(home, group_id);
     if let Err(error) = actor_runtime::reconcile_exited(home, exited) {
-        tracing::warn!(message = %error.message, %group_id, "runtime reconciliation failed");
+        tracing::warn!(diagnostic_action = "runtime_reconcile", diagnostic_code = %error.code, message = %error.message, %group_id, "runtime reconciliation failed");
     }
 }
 
@@ -41,7 +41,7 @@ pub fn group_ids(home: &HomeLayout) -> Vec<String> {
     match cccc_core::automation::group_ids(home) {
         Ok(group_ids) => group_ids,
         Err(error) => {
-            tracing::warn!(%error, "automation group discovery failed");
+            tracing::warn!(diagnostic_action = "automation_group_discovery", diagnostic_code = crate::diagnostic_log::io_code(&error), %error, "automation group discovery failed");
             Vec::new()
         }
     }
@@ -57,7 +57,7 @@ pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cance
             .map(|group| {
                 actors::visible(&group)
                     .filter(|actor| actor.enabled)
-                    .filter(|actor| actor_runtime_status::resolve(&group, actor).running)
+                    .filter(|actor| actor_runtime_status::resolve(home, &group, actor).running)
                     .map(|actor| actor.id.clone())
                     .collect::<HashSet<_>>()
             })
@@ -82,7 +82,7 @@ pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cance
             if include_unread
                 && std::env::var_os("CCCC_AUTOMATION_TICK_PROBE").is_some_and(|value| value == "1")
             {
-                eprintln!(
+                cccc_runtime::diagnostic(format_args!(
                     "CCCC_UNREAD_TICK {}",
                     json!({
                         "group_id":group_id,
@@ -90,11 +90,13 @@ pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cance
                         "eligible_actors":delivery_actor_ids.len(),
                         "success":unread_success && !cancelled.load(Ordering::Acquire),
                     })
-                );
+                ));
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => tracing::warn!(%error, %group_id, "automation group tick failed"),
+        Err(error) => {
+            tracing::warn!(diagnostic_action = "automation_group_tick", diagnostic_code = crate::diagnostic_log::io_code(&error), %error, %group_id, "automation group tick failed")
+        }
     }
 }
 
@@ -233,7 +235,7 @@ fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
                 let mut succeeded = true;
                 if state == "active"
                     && store.load(&group_id).is_ok_and(|group| {
-                        !group_runtime::status(&group)["runtime_running"]
+                        !group_runtime::status(home, &group)["runtime_running"]
                             .as_bool()
                             .unwrap_or(false)
                     })
@@ -400,6 +402,7 @@ mod tests {
             group: group.clone(),
             actor: peer.clone(),
             event: first.clone(),
+            claimed: true,
         };
         super::super::actor_delivery::withdraw_jobs(std::slice::from_ref(&job), "held");
 
@@ -687,3 +690,10 @@ mod tests {
             .expect("automation rule");
     }
 }
+
+#[cfg(all(test, unix))]
+mod mail_notice_repeat_tests;
+
+#[cfg(all(test, unix))]
+#[path = "automation_mail_tests.rs"]
+mod automation_mail_tests;

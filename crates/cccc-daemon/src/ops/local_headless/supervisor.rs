@@ -71,15 +71,16 @@ pub fn supports(actor: &Actor) -> bool {
 }
 
 pub(super) fn uses_managed_session(actor: &Actor) -> bool {
-    matches!(
-        actor.runtime,
-        ActorRuntime::Claude
-            | ActorRuntime::Codex
-            | ActorRuntime::Grok
-            | ActorRuntime::Opencode
-            | ActorRuntime::Kilo
-            | ActorRuntime::Pi
-    ) || actor.runtime.is_headless_acp(actor.runtime_mode)
+    actor.external_session_id.is_empty()
+        && (matches!(
+            actor.runtime,
+            ActorRuntime::Claude
+                | ActorRuntime::Codex
+                | ActorRuntime::Grok
+                | ActorRuntime::Opencode
+                | ActorRuntime::Kilo
+                | ActorRuntime::Pi
+        ) || actor.runtime.is_headless_acp(actor.runtime_mode))
 }
 
 fn start_managed_agent(
@@ -140,11 +141,15 @@ pub(super) fn attach_managed(
     app: AnalystSession,
 ) -> io::Result<()> {
     let app = Arc::new(app);
-    let prompt = cccc_core::system_prompt::render_session(home, group, actor);
+    let workspace = super::super::actor_runtime::LaunchWorkspace::capture(group, actor, &cwd);
+    let scope = workspace.clone().for_actor(actor);
+    let prompt =
+        cccc_core::system_prompt::render_session_with_scope(home, group, actor, scope.as_ref());
     let item = Arc::new(Session {
         home: home.clone(),
         group_id: group.group_id.clone(),
         actor_id: actor.id.clone(),
+        workspace,
         managed: Arc::clone(&app),
         has_terminal: AtomicBool::new(false),
         viewer: Mutex::new(app.tui_ready().then(|| super::ViewerLaunch {
@@ -391,6 +396,14 @@ pub(crate) fn registered_running(group_id: &str, actor_id: &str) -> Option<bool>
     lookup(&(group_id.to_owned(), actor_id.to_owned())).map(|item| item.running())
 }
 
+pub(crate) fn registered_workspace(
+    group_id: &str,
+    actor_id: &str,
+) -> Option<(bool, super::super::actor_runtime::LaunchWorkspace)> {
+    let item = lookup(&(group_id.to_owned(), actor_id.to_owned()))?;
+    Some((item.running(), item.workspace.clone()))
+}
+
 #[must_use]
 pub fn status(group_id: &str, actor_id: &str) -> Option<HeadlessStatus> {
     let item = lookup(&(group_id.to_owned(), actor_id.to_owned()))?;
@@ -449,7 +462,12 @@ fn submit_admitted(
     ) else {
         return BatchSubmission::Deferred;
     };
-    if item.managed.structured_only() {
+    // OpenCode V2's terminal is a view of the owned HTTP session. Admit CCCC
+    // input through that session's durable queue, including during TUI startup.
+    // Writing the terminal can be acknowledged before its composer is ready.
+    if item.managed.structured_only()
+        || item.managed.runtime() == cccc_contracts::ActorRuntime::Opencode
+    {
         let id = format!(
             "actor-delivery:{}",
             source_events
@@ -473,7 +491,7 @@ fn submit_admitted(
                         }
                     } => Err(std::io::Error::new(
                         std::io::ErrorKind::Interrupted,
-                        "Actor stopped before ACP admission was confirmed",
+                        "Actor stopped before managed input admission was confirmed",
                     )),
                 }
             }) {
@@ -488,7 +506,7 @@ fn submit_admitted(
                         message = %diagnostic,
                         group_id = %group.group_id,
                         actor_id = %actor.id,
-                        "ACP delivery outcome is unconfirmed; quarantining the batch"
+                        "Managed delivery outcome is unconfirmed; quarantining the batch"
                     );
                     if error.kind() != io::ErrorKind::Interrupted {
                         super::output::emit(
@@ -632,28 +650,8 @@ pub(crate) fn cancel_turn(group: &str, actor: &str, generation: &str) -> io::Res
 }
 
 fn working_directory(group: &GroupDoc, actor: &Actor) -> io::Result<std::path::PathBuf> {
-    let wanted = if actor.default_scope_key.is_empty() {
-        &group.active_scope_key
-    } else {
-        &actor.default_scope_key
-    };
-    if wanted.is_empty() {
-        return std::env::current_dir();
-    }
-    let scope = cccc_core::group_scope::resolve_attached_scope(group, wanted).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("scope not attached: {wanted}"),
-        )
-    })?;
-    let path = std::path::PathBuf::from(&scope.url);
-    if !path.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("project root path does not exist: {}", path.display()),
-        ));
-    }
-    Ok(path)
+    super::super::actor_runtime::working_directory(group, actor)
+        .map_err(|error| io::Error::new(io::ErrorKind::NotFound, error.message))
 }
 
 #[cfg(test)]

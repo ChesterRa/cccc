@@ -1,7 +1,15 @@
 import type { Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
 import { evaluateTaskWorkflow, type TaskAttemptVerdict } from "../../../utils/taskWorkflow";
-import { waitingLabel, type ContextTranslator } from "../model";
+import {
+  checklistItemOpen,
+  priorityLabel,
+  taskIsLive,
+  taskStatus,
+  waitingLabel,
+  type ContextTranslator,
+  type SubtaskProgress,
+} from "../model";
 
 function latestAttemptTone(verdict: TaskAttemptVerdict): string {
   if (verdict === "keep") return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
@@ -22,14 +30,22 @@ export function TaskCardBadges({
   task,
   tr,
   compact = false,
+  subtasks,
 }: {
   task: Task;
   tr: ContextTranslator;
   compact?: boolean;
+  subtasks?: SubtaskProgress;
 }) {
-  const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+  const live = taskIsLive(task);
+  const blocked = live && Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
   const waiting = String(task.waiting_on || "none").trim();
   const handoff = String(task.handoff_to || "").trim();
+  const checklist = (task.checklist || []).filter((item) => String(item.text || "").trim());
+  const checklistDone = checklist.filter((item) => item.status === "done").length;
+  // Unknown custom statuses are not proof that an item is still outstanding.
+  const checklistRemaining = checklist.filter(checklistItemOpen).length;
+  const doneWithRemaining = taskStatus(task) === "done" && checklistRemaining > 0;
   const workflow = evaluateTaskWorkflow({
     parent_id: task.parent_id,
     task_type: task.task_type,
@@ -55,20 +71,51 @@ export function TaskCardBadges({
       ) : null}
       {!compact && task.priority ? (
         <span className="rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]">
-          {task.priority}
+          {priorityLabel(task.priority, tr)}
+        </span>
+      ) : null}
+      {!compact && task.parent_id ? (
+        <span className="rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]">
+          {tr("context.parentTask", "Parent task")} {task.parent_id}
+        </span>
+      ) : null}
+      {!compact && checklist.length > 0 ? (
+        <span
+          className={classNames(
+            "rounded-full px-2 py-0.5",
+            doneWithRemaining
+              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+              : "glass-panel text-[var(--color-text-secondary)]",
+          )}
+        >
+          {tr("context.checklist", "Checklist")} {checklistDone}/{checklist.length}
+          {doneWithRemaining
+            ? ` · ${tr("context.checklistRemaining", "{{count}} remaining", { count: checklistRemaining })}`
+            : null}
+        </span>
+      ) : null}
+      {subtasks && subtasks.total > 0 ? (
+        <span
+          className="rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]"
+          title={tr(
+            "context.subtasksHint",
+            "Counts direct subtasks; archived ones are excluded. Subtask status does not complete this task.",
+          )}
+        >
+          {tr("context.subtaskProgress", "Subtasks {{done}}/{{total}}", subtasks)}
         </span>
       ) : null}
       {blocked ? (
         <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-rose-600 dark:text-rose-400">
-          {tr("context.blocked", "Blocked")}
+          {tr("context.blocked", "Blocked")}: {task.blocked_by?.join(", ")}
         </span>
       ) : null}
-      {!compact && waiting && waiting !== "none" ? (
+      {!compact && live && waiting && waiting !== "none" ? (
         <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-600 dark:text-amber-400">
           {waitingLabel(waiting, tr)}
         </span>
       ) : null}
-      {!compact && handoff ? (
+      {!compact && live && handoff ? (
         <span
           className={classNames(
             "rounded-full border px-2 py-0.5",
@@ -91,16 +138,6 @@ export function TaskCardBadges({
       {missingCurrentBest ? (
         <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-amber-700 dark:text-amber-300">
           {tr("context.noCurrentBestYet", "No best yet")}
-        </span>
-      ) : null}
-      {workflow.needsContract ? (
-        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-600 dark:text-amber-400">
-          {tr("context.needsContract", "Requirements incomplete")}
-        </span>
-      ) : null}
-      {workflow.needsCloseout ? (
-        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-600 dark:text-amber-400">
-          {tr("context.needsCloseout", "Closeout incomplete")}
         </span>
       ) : null}
     </div>

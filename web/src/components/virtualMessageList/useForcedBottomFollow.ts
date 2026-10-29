@@ -47,17 +47,21 @@ export function useForcedBottomFollow(args: {
     [forceStickToBottomRef],
   );
 
-  const scheduleForceStickToBottom = useCallback(() => {
-    requestTokenRef.current += 1;
-    const requestToken = requestTokenRef.current;
-    forceStickToBottomRef.current = true;
-    cancelScheduledScroll();
-    scrollRafRef.current = window.requestAnimationFrame(() => {
-      scrollRafRef.current = null;
-      if (requestTokenRef.current !== requestToken) return;
-      scrollToBottom({ force: true, requestToken });
-    });
-  }, [cancelScheduledScroll, forceStickToBottomRef, requestTokenRef, scrollRafRef, scrollToBottom]);
+  const scheduleForceStickToBottom = useCallback(
+    (beforeScroll?: () => boolean) => {
+      requestTokenRef.current += 1;
+      const requestToken = requestTokenRef.current;
+      forceStickToBottomRef.current = true;
+      cancelScheduledScroll();
+      scrollRafRef.current = window.requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        if (requestTokenRef.current !== requestToken) return;
+        if (beforeScroll?.()) return;
+        scrollToBottom({ force: true, requestToken });
+      });
+    },
+    [cancelScheduledScroll, forceStickToBottomRef, requestTokenRef, scrollRafRef, scrollToBottom],
+  );
 
   return {
     cancelPendingBottomScroll,

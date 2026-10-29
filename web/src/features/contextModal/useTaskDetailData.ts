@@ -75,7 +75,14 @@ export function useTaskDetailData({
           loadedTasks.current.tasks.set(id, response.result.task);
           onTaskLoaded(response.result.task);
           setDetailTasks((current) => ({ ...current, [id]: response.result.task }));
-          setDeleteInfoById((current) => ({ ...current, [id]: response.result.deleteInfo }));
+          setDeleteInfoById((current) => ({
+            ...current,
+            [id]: {
+              ...response.result.deleteInfo,
+              tasksVersion: response.result.tasksVersion,
+              rev: response.result.task.rev,
+            },
+          }));
           return response.result.task;
         })
         .finally(() => {

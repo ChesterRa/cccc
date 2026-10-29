@@ -101,6 +101,7 @@ impl AnalystSession {
             ManagedProtocol::Acp(protocol) => protocol
                 .start_prompt(&self.thread_id, delegation_id, text)
                 .await,
+            ManagedProtocol::OpenCode(protocol) => protocol.start_prompt(delegation_id, text).await,
             ManagedProtocol::Claude(protocol) => {
                 protocol.start_prompt(delegation_id, text).await
             }

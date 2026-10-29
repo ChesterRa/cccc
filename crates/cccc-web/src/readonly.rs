@@ -72,7 +72,7 @@ pub async fn guard(State(state): State<AppState>, request: Request, next: Next) 
 
 fn is_read_only_safe(method: &Method, path: &str) -> bool {
     match *method {
-        Method::GET | Method::HEAD => !is_mutating_get(path),
+        Method::GET | Method::HEAD => !is_mutating_get(path) && !is_user_obligation_get(path),
         Method::OPTIONS => true,
         _ => false,
     }
@@ -85,6 +85,20 @@ fn is_mutating_get(path: &str) -> bool {
             .strip_prefix("/nomcp/s/")
             .and_then(|rest| rest.strip_suffix("/send"))
             .is_some_and(|session_id| !session_id.is_empty() && !session_id.contains('/'))
+}
+
+/// The user's open reply requests and notification subscriptions. An
+/// exhibit's viewers are spectators, not the Group's user, so these reads are
+/// refused there, not only the changes.
+fn is_user_obligation_get(path: &str) -> bool {
+    path == "/api/v1/reply-requests/summary"
+        || path == "/api/v1/push/config"
+        || path
+            .strip_prefix("/api/v1/groups/")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(group_id, tail)| {
+                !group_id.is_empty() && tail == "reply-requests/pending"
+            })
 }
 
 fn read_only_response() -> Response {
@@ -143,6 +157,20 @@ mod tests {
         assert!(is_read_only_safe(
             &Method::GET,
             "/nomcp/s/session-1/context"
+        ));
+    }
+
+    #[test]
+    fn read_only_refuses_the_users_reply_requests() {
+        for path in [
+            "/api/v1/reply-requests/summary",
+            "/api/v1/groups/g_1/reply-requests/pending",
+        ] {
+            assert!(!is_read_only_safe(&Method::GET, path), "{path}");
+        }
+        assert!(is_read_only_safe(
+            &Method::GET,
+            "/api/v1/groups/g_1/ledger/tail"
         ));
     }
 }

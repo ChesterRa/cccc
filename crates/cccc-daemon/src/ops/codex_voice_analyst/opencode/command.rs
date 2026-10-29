@@ -14,7 +14,9 @@ pub(super) fn launch_prefix(
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
-    if filename.eq_ignore_ascii_case(name) || filename.eq_ignore_ascii_case(&format!("{name}.exe"))
+    if filename.eq_ignore_ascii_case(name)
+        || filename.eq_ignore_ascii_case(&format!("{name}.exe"))
+        || (name == "opencode" && filename.eq_ignore_ascii_case("opencode2"))
     {
         return Ok(vec![executable.to_string_lossy().into_owned()]);
     }

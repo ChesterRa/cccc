@@ -8,8 +8,8 @@ import {
   hasRecoveryCues,
   isVisibleContextAgent,
   recoverySummary,
-  taskDraftDirty,
-  taskDraftMatches,
+  taskDraftChanged,
+  taskMatchesDraftBase,
   taskToDraft,
   waitingLabel,
 } from "../../../src/components/ContextModal/model";
@@ -57,13 +57,13 @@ describe("ContextModal task draft task type", () => {
     const draft = taskToDraft(task);
 
     expect(draft.taskType).toBe("standard");
-    expect(taskDraftMatches(task, draft)).toBe(true);
+    expect(taskMatchesDraftBase(task, draft)).toBe(true);
   });
 
   it("marks task-type-only changes as dirty for new drafts", () => {
     const draft = { ...emptyTaskDraft("planned"), taskType: "free" as const };
 
-    expect(taskDraftDirty(draft)).toBe(true);
+    expect(taskDraftChanged(draft)).toBe(true);
   });
 
   it("only re-aligns the untouched structure-default type when parent shape changes", () => {

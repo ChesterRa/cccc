@@ -101,18 +101,28 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: GroupArgs) -> R
             group_id,
             by,
         } => {
-            if !matches!(state.as_str(), "active" | "idle" | "paused" | "stopped") {
-                bail!("state must be active, idle, paused, or stopped");
-            }
-            call(
-                client,
-                "group_set_state",
-                json!({"group_id":group(home,group_id)?,"state":state,"by":by}),
-            )
-            .await?
+            let (op, args) = group_state_request(&group(home, group_id)?, &state, &by)?;
+            call(client, op, args).await?
         }
     };
     print(response)
+}
+
+fn group_state_request(
+    group_id: &str,
+    state: &str,
+    by: &str,
+) -> Result<(&'static str, serde_json::Value)> {
+    if state == "stopped" {
+        return Ok(("group_stop", json!({"group_id":group_id,"by":by})));
+    }
+    if !matches!(state, "active" | "idle" | "paused") {
+        bail!("state must be active, idle, paused, or stopped");
+    }
+    Ok((
+        "group_set_state",
+        json!({"group_id":group_id,"state":state,"by":by}),
+    ))
 }
 
 fn group_update_request(
@@ -144,8 +154,25 @@ fn confirm_id(group_id: &str, confirm: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{group_update_request, group_use_request};
+    use super::{group_state_request, group_update_request, group_use_request};
     use serde_json::json;
+
+    #[test]
+    fn stopped_uses_real_group_stop_and_keeps_the_author() {
+        let (op, args) =
+            group_state_request("g_test", "stopped", "foreman").expect("stopped alias");
+        assert_eq!(op, "group_stop");
+        assert_eq!(args, json!({"group_id":"g_test","by":"foreman"}));
+        for state in ["active", "idle", "paused"] {
+            assert_eq!(
+                group_state_request("g_test", state, "user")
+                    .expect("delivery state")
+                    .0,
+                "group_set_state"
+            );
+        }
+        assert!(group_state_request("g_test", "unknown", "user").is_err());
+    }
 
     #[test]
     fn group_update_emits_only_the_canonical_patch_shape() {

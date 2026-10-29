@@ -5,10 +5,12 @@ mod code_mode;
 mod context_projection;
 mod cross_group;
 mod file_read;
+mod history_projection;
 mod local_patch;
 mod local_sessions;
 mod local_tools;
 mod mapping;
+mod native_session;
 mod repo;
 mod repo_inspect;
 mod router;
@@ -111,13 +113,29 @@ fn valid_error_code(code: &str) -> bool {
 }
 
 pub async fn run_stdio(home: HomeLayout) -> Result<()> {
-    let result = run_stdio_loop(&home).await;
+    run_stdio_with_local_session(home, None, None).await
+}
+
+pub async fn run_stdio_with_local_session(
+    home: HomeLayout,
+    runtime: Option<&str>,
+    host_pid: Option<u32>,
+) -> Result<()> {
+    let result = run_stdio_loop(&home, runtime, host_pid).await;
     shutdown(&home).await;
     result
 }
 
-async fn run_stdio_loop(home: &HomeLayout) -> Result<()> {
+async fn run_stdio_loop(
+    home: &HomeLayout,
+    runtime: Option<&str>,
+    host_pid: Option<u32>,
+) -> Result<()> {
     let client = DaemonClient::new(home.clone());
+    let mut native = runtime
+        .filter(|_| !cccc_core::local_sessions::cccc_owned_environment())
+        .map(|runtime| native_session::Context::new(runtime, host_pid))
+        .transpose()?;
     let mut input = BufReader::new(tokio::io::stdin()).lines();
     let mut output = tokio::io::stdout();
     while let Some(line) = input.next_line().await? {
@@ -139,7 +157,11 @@ async fn run_stdio_loop(home: &HomeLayout) -> Result<()> {
         if request.get("id").is_none() {
             continue;
         }
-        let response = handle(home, &client, &request, None).await;
+        let response = if let Some(native) = native.as_mut() {
+            native.handle(home, &client, &request).await
+        } else {
+            handle(home, &client, &request, None).await
+        };
         write_response(&mut output, &response).await?;
     }
     Ok(())
@@ -151,8 +173,12 @@ pub async fn shutdown(home: &HomeLayout) {
     code_mode::shutdown(home).await;
     match commands.await {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => eprintln!("[cccc] local command shutdown failed: {error}"),
-        Err(error) => eprintln!("[cccc] local command cleanup worker failed: {error}"),
+        Ok(Err(error)) => cccc_runtime::diagnostic(format_args!(
+            "[cccc] local command shutdown failed: {error}"
+        )),
+        Err(error) => cccc_runtime::diagnostic(format_args!(
+            "[cccc] local command cleanup worker failed: {error}"
+        )),
     }
 }
 
@@ -175,6 +201,7 @@ pub async fn handle_request_for_actor(
         Some(RequestContext {
             group_id,
             actor_id,
+            native_binding: None,
             binding: None,
         }),
     )
@@ -231,6 +258,7 @@ pub async fn handle_request_for_binding(
         Some(RequestContext {
             group_id: binding["group_id"].as_str().unwrap_or_default(),
             actor_id: binding["actor_id"].as_str().unwrap_or_default(),
+            native_binding: None,
             binding: Some(binding),
         }),
     )
@@ -242,6 +270,7 @@ pub(crate) struct RequestContext<'a> {
     group_id: &'a str,
     actor_id: &'a str,
     binding: Option<&'a Value>,
+    native_binding: Option<&'a cccc_contracts::local_session::LocalSessionBinding>,
 }
 
 async fn handle(
@@ -347,6 +376,7 @@ pub(crate) async fn visible_tools_for_actor(
         Some(RequestContext {
             group_id,
             actor_id,
+            native_binding: None,
             binding: None,
         }),
     )
@@ -404,7 +434,9 @@ async fn visible_tools_with_context(
             .filter(|tool| tool["name"] == "cccc_voice_secretary_task")
             .collect();
     }
-    catalog.retain(|tool| tool["name"] != "cccc_voice_secretary_task");
+    catalog.retain(|tool| {
+        tool["name"] != "cccc_voice_secretary_task" && tool["name"] != "cccc_session"
+    });
     if context.is_none()
         && std::env::var("CCCC_MCP_TOOL_PROFILE")
             .ok()

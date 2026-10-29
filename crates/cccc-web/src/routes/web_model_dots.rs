@@ -105,12 +105,16 @@ BEGIN CCCC DOTS HANDLER
 When {EVENT_NAME} wakes this task, call cccc_runtime_wait_next_turn once:
 {{}}
 ChatGPT metadata identifies the explicitly paired Dot. Do not supply Actor or Group selectors or retrieve credentials from subscription configuration, event data, chat history or memory.
-If work_available, follow that turn's system_prompt and instructions. Use the actor_token returned in that tool result for all CCCC calls in this turn, including cccc_code_exec. Reply through CCCC, then call cccc_runtime_complete_turn with the exact turn_id, event_ids and execution actor_token.
-If idle, stopped or turn_in_progress, exit. If a call is rejected, report it and stop; do not poll, recover another turn, reconnect or infer another identity.
-Use execution credentials only in this turn's tool arguments. Never put them in messages, files, commands, JavaScript source, saved instructions or replies.
+If work_available:
+{handoff}
+Follow that turn's system_prompt and instructions. Use the actor_token returned in that tool result for all CCCC calls in this turn, including cccc_code_exec. Reply through CCCC, then call cccc_runtime_complete_turn with the exact turn_id, event_ids and execution actor_token.
+If idle, stopped or turn_in_progress, exit. If paired_actor_stopped or dots_actor_stopped is returned, report that CCCC access is paused and exit; this does not mean pairing was lost. Do not enable access yourself. If another call is rejected, report it and stop; do not poll, recover another turn, reconnect or infer another identity.
+{credential_usage}
 END CCCC DOTS HANDLER
 
-3. Verify the task actually saved this handler with {{}} and no literal credential; a chat confirmation is not proof. If saving or subscription fails, report incomplete setup. Do not echo credentials. After successful setup, execute its saved handler once for queued, unclaimed work. Keep the task until I explicitly disable it."#
+3. Verify the task actually saved this handler with {{}} and no literal credential; a chat confirmation is not proof. If saving or subscription fails, report incomplete setup. Do not echo credentials. After successful setup, call cccc_connector_status once with {{}}. If paired=true, enabled=true, subscribed=true and state is not stopped, execute its saved handler once for queued, unclaimed work. If paired=true and access is paused (enabled=false or state=stopped), report "Pairing is complete; CCCC access is paused" and wait for me to resume access in CCCC. Do not pair again or enable access yourself. For any other status, report that status without claiming work. Keep the task until I explicitly disable it."#,
+        handoff = session::NATIVE_EXECUTION_HANDOFF,
+        credential_usage = session::CREDENTIAL_ARGUMENT_USAGE,
     )
 }
 
@@ -125,11 +129,15 @@ pub(super) fn extend_catalog(response: &mut Value) {
         if tool["name"] == "cccc_runtime_wait_next_turn" {
             let original = tool["description"].as_str().unwrap_or_default();
             tool["description"] = json!(format!(
-                "{original} For ChatGPT Dots: call once with {{}} from the explicitly paired Dot conversation. Host metadata identifies the fixed Actor; no saved credential or event payload is needed. If unpaired, use Get setup instructions in CCCC to pair this Dot. A successful claim returns the current turn's execution actor_token; pairing alone cannot authorize business tools."
+                "{original} For ChatGPT Dots: call once with {{}} from the explicitly paired Dot conversation. Host metadata identifies the fixed Actor; no saved credential or event payload is needed. If unpaired, use Get setup instructions in CCCC to pair this Dot. A successful claim returns the current turn's execution actor_token; pairing alone cannot authorize business tools. {}",
+                session::NATIVE_EXECUTION_HANDOFF
             ));
             continue;
         }
-        let description = "For ChatGPT Dots only: use the execution actor_token returned by cccc_runtime_wait_next_turn for the current turn. Pairing and the native subscription credential cannot authorize this tool. Ordinary paired ChatGPT conversations omit this field. Never include credentials in messages, files, commands, JavaScript source, saved instructions or replies.";
+        let description = format!(
+            "For ChatGPT Dots only: use the execution actor_token returned by cccc_runtime_wait_next_turn for the current turn. Pairing and the native subscription credential cannot authorize this tool. Ordinary paired ChatGPT conversations omit this field. {}",
+            session::CREDENTIAL_ARGUMENT_USAGE
+        );
         tool["inputSchema"]["properties"]["actor_token"] = json!({"type":"string","minLength":43,"maxLength":43,
             "description":description});
     }
@@ -522,6 +530,13 @@ mod tests {
         assert!(!handler.contains("synthetic-setup-code"));
         assert!(setup.contains("update that task instead of creating another"));
         assert!(setup.contains("execute its saved handler once"));
+        assert!(setup.contains("call cccc_connector_status once"));
+        assert!(setup.contains("Pairing is complete; CCCC access is paused"));
+        assert!(handler.contains("paired_actor_stopped"));
+        assert!(handler.contains("Host JavaScript orchestration"));
+        assert!(handler.contains("this same run's original claim tool result"));
+        assert!(handler.contains("cccc_code_exec source/code"));
+        assert!(!handler.contains("commands, JavaScript source"));
         let paired_setup = setup_instruction("synthetic-subscription-credential", None);
         assert!(!paired_setup.contains("synthetic-setup-code"));
         let event = definition();
@@ -544,5 +559,10 @@ mod tests {
                     .is_null()
             );
         }
+        let usage = response["result"]["tools"][0]["inputSchema"]["properties"]["actor_token"]["description"]
+            .as_str().expect("execution argument guidance");
+        assert!(usage.contains("Host JavaScript orchestration"));
+        assert!(usage.contains("cccc_code_exec source/code"));
+        assert!(!usage.contains("commands, JavaScript source"));
     }
 }

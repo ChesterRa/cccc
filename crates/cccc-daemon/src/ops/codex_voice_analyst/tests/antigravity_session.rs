@@ -522,6 +522,7 @@ fn antigravity_supervisor_keeps_actual_acp_surface_after_a_pending_mode_edit() {
         group: group.clone(),
         actor: pending.clone(),
         event,
+        claimed: true,
     };
     assert!(
         matches!(

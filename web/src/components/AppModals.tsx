@@ -63,6 +63,7 @@ interface AppModalsProps {
   theme: Theme;
   textScale: TextScale;
   readOnly?: boolean;
+  notificationsAllowed?: boolean;
   ccccHome: string;
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
   onStartReply: (ev: LedgerEvent) => void;
@@ -72,7 +73,9 @@ interface AppModalsProps {
   fetchContext: ContextModalFetch;
   canManageGroups: boolean;
   accountLabel?: string | null;
-  onDotsActorCreated?: (visit: import("../hooks/useAppTabState").CreatedDotsNavigation) => void;
+  onNativeActorCreated?: (
+    visit: import("../hooks/useAppTabState").CreatedNativeActorNavigation,
+  ) => void;
 }
 
 function sortPresentationSlotIds(slotIds: string[]): string[] {
@@ -102,13 +105,14 @@ export function AppModals({
   theme,
   textScale,
   readOnly,
+  notificationsAllowed,
   ccccHome,
   composerRef,
   onStartReply,
   onThemeChange,
   onTextScaleChange,
   onDeleteGroup,
-  onDotsActorCreated,
+  onNativeActorCreated,
   fetchContext,
   canManageGroups,
   accountLabel,
@@ -361,6 +365,24 @@ export function AppModals({
   );
 
   const directoryBrowser = useCreateGroupDirectoryBrowser();
+  const handleActorScopeAttached = useCallback(
+    (groupId: string, scope: api.AttachScopeResult["scope"]) => {
+      useGroupStore.setState((state) => {
+        const doc = state.groupDoc;
+        if (state.selectedGroupId !== groupId || doc?.group_id !== groupId) return state;
+        const scopes = doc.scopes || [];
+        return {
+          groupDoc: {
+            ...doc,
+            scopes: scopes.some((item) => item.scope_key === scope.scope_key)
+              ? scopes.map((item) => (item.scope_key === scope.scope_key ? scope : item))
+              : [...scopes, scope],
+          },
+        };
+      });
+    },
+    [],
+  );
   const [presentationViewerCacheByGroup, setPresentationViewerCacheByGroup] = useState<
     Record<string, string[]>
   >({});
@@ -394,7 +416,7 @@ export function AppModals({
     setEditingActor,
     closeModal,
     refreshActors,
-    onDotsActorCreated,
+    onNativeActorCreated,
     editActorRuntime,
     editActorCommand,
     editActorTitle,
@@ -1367,6 +1389,7 @@ export function AppModals({
             isDark={isDark}
             groupId={selectedGroupId}
             groupDoc={groupDoc}
+            notificationsAllowed={notificationsAllowed === true}
           />
         </Suspense>
       ) : null}
@@ -1437,6 +1460,13 @@ export function AppModals({
         isDark={isDark}
         busy={busy}
         groupId={selectedGroupId || groupDoc?.group_id || ""}
+        scopes={groupDoc?.group_id === selectedGroupId ? groupDoc.scopes : undefined}
+        activeScopeKey={
+          groupDoc?.group_id === selectedGroupId ? groupDoc.active_scope_key : undefined
+        }
+        onScopeAttached={
+          groupDoc?.group_id === selectedGroupId ? handleActorScopeAttached : undefined
+        }
         actorId={editingActor?.id || ""}
         groupRole={editingActor?.role || "peer"}
         avatarUrl={editingActor?.avatar_url || undefined}
@@ -1499,7 +1529,16 @@ export function AppModals({
       />
 
       <ActorConfigModal
+        key={`create-actor-${selectedGroupId}`}
         mode="create"
+        groupId={selectedGroupId || groupDoc?.group_id || ""}
+        scopes={groupDoc?.group_id === selectedGroupId ? groupDoc.scopes : undefined}
+        activeScopeKey={
+          groupDoc?.group_id === selectedGroupId ? groupDoc.active_scope_key : undefined
+        }
+        onScopeAttached={
+          groupDoc?.group_id === selectedGroupId ? handleActorScopeAttached : undefined
+        }
         isOpen={modals.addActor}
         isDark={isDark}
         busy={busy}

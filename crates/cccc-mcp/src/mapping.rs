@@ -1,7 +1,9 @@
 use serde_json::{Map, Value};
 
 use crate::actions;
-use crate::argument_normalization::{alias, normalize_message_author, normalize_recipients};
+use crate::argument_normalization::{
+    alias, message_mode, normalize_message_author, normalize_recipients,
+};
 
 pub fn daemon_call(
     name: &str,
@@ -18,10 +20,7 @@ pub fn daemon_call(
         "cccc_message_send" => {
             alias(&mut args, "event_id", "reply_to");
             normalize_message_author(&mut args);
-            let mode = args
-                .remove("mode")
-                .and_then(|value| value.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "mail".into());
+            let mode = message_mode(&mut args, "mail")?;
             args.insert("message_mode".into(), Value::String(mode));
             if connect_destination(&mut args)? {
                 return Ok(("connect_send".into(), args));
@@ -51,10 +50,7 @@ pub fn daemon_call(
             alias(&mut args, "event_id", "reply_to");
             alias(&mut args, "idempotency_key", "client_id");
             normalize_message_author(&mut args);
-            let mode = args
-                .remove("mode")
-                .and_then(|value| value.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "send".into());
+            let mode = message_mode(&mut args, "send")?;
             args.insert("message_mode".into(), Value::String(mode));
             "reply"
         }
@@ -87,7 +83,16 @@ pub fn daemon_call(
             alias(&mut args, "id", "capability_id");
             "capability_uninstall"
         }
-        "cccc_group" => return action(args, actions::group),
+        "cccc_group" => {
+            let (op, mut args) = action(args, actions::group)?;
+            if op == "group_set_state"
+                && args.get("state").and_then(Value::as_str) == Some("stopped")
+            {
+                args.remove("state");
+                return Ok(("group_stop".into(), args));
+            }
+            return Ok((op, args));
+        }
         "cccc_actor" => return action(args, actions::actor),
         "cccc_actor_notes" => return action(args, actions::actor_notes),
         "cccc_coordination" => return context_action(args, "coordination"),
@@ -228,6 +233,7 @@ fn task_action(
                     "task_type",
                     "notes",
                     "checklist",
+                    "if_task_rev",
                     "client_request_id",
                     "parent_ref",
                     "blocked_by_refs",
@@ -241,6 +247,7 @@ fn task_action(
                 args.insert("task_type".into(), value);
             }
             let status = args.remove("status");
+            let guard = args.get("if_task_rev").cloned();
             let task_id = args.get("task_id").cloned();
             retain_fields(
                 &mut args,
@@ -257,9 +264,12 @@ fn task_action(
                     "task_type",
                     "notes",
                     "checklist",
+                    "if_task_rev",
                 ],
             );
-            let has_patch = args.keys().any(|key| key != "task_id");
+            let has_patch = args
+                .keys()
+                .any(|key| !matches!(key.as_str(), "task_id" | "if_task_rev"));
             if has_patch || status.is_none() {
                 args.insert("op".into(), Value::String("task.update".into()));
                 operations.push(Value::Object(args));
@@ -271,6 +281,11 @@ fn task_action(
                     movement.insert("task_id".into(), task_id);
                 }
                 movement.insert("status".into(), status);
+                if operations.is_empty()
+                    && let Some(guard) = guard
+                {
+                    movement.insert("if_task_rev".into(), guard);
+                }
                 operations.push(Value::Object(movement));
             }
         }
@@ -278,9 +293,9 @@ fn task_action(
             retain_fields(
                 &mut args,
                 if action_name == "move" {
-                    &["task_id", "status"]
+                    &["task_id", "status", "if_task_rev"]
                 } else {
-                    &["task_id"]
+                    &["task_id", "if_task_rev"]
                 },
             );
             args.insert(
@@ -365,6 +380,21 @@ mod tests {
     use super::daemon_call;
     use crate::argument_normalization::normalize_message_author;
     use serde_json::{Map, json};
+
+    #[test]
+    fn group_set_state_stopped_uses_the_stop_operation_with_authority_intact() {
+        let input = json!({"action":"set_state", "state":"stopped", "group_id":"g", "by":"foreman", "_cccc_native_source_binding":{"revision":7}});
+        let (op, args) = daemon_call(
+            "cccc_group",
+            input.as_object().expect("Group arguments").clone(),
+        )
+        .expect("Group mapping");
+        assert_eq!(op, "group_stop");
+        assert!(!args.contains_key("state"));
+        assert_eq!(args["by"], "foreman");
+        assert_eq!(args["group_id"], "g");
+        assert_eq!(args["_cccc_native_source_binding"]["revision"], 7);
+    }
 
     #[test]
     fn context_reads_never_ask_for_more_than_one_bounded_page() {
@@ -520,6 +550,50 @@ mod tests {
     }
 
     #[test]
+    fn message_modes_preserve_explicit_choices_and_existing_defaults() {
+        for (tool, default, modes) in [
+            (
+                "cccc_message_send",
+                "mail",
+                vec!["mail", "send", "request_reply"],
+            ),
+            ("cccc_message_reply", "send", vec!["mail", "send"]),
+        ] {
+            for mode in std::iter::once(None).chain(modes.into_iter().map(Some)) {
+                let mut input =
+                    json!({"group_id":"g_test","to":["peer"],"text":"Synthetic message"});
+                if let Some(mode) = mode {
+                    input["mode"] = json!(mode);
+                }
+                let (_, args) = daemon_call(tool, input.as_object().expect("args").clone())
+                    .expect("valid mode");
+                assert_eq!(args["message_mode"], mode.unwrap_or(default), "{tool}");
+                assert!(!args.contains_key("mode"));
+            }
+        }
+    }
+
+    #[test]
+    fn message_modes_reject_wire_fields_and_invalid_values_instead_of_defaulting() {
+        for tool in ["cccc_message_send", "cccc_message_reply"] {
+            for input in [
+                json!({"message_mode":"mail"}),
+                json!({"mode":"send","message_mode":"mail"}),
+                json!({"mode":"mail","message_mode":"mail"}),
+                json!({"mode":null}),
+                json!({"mode":false}),
+                json!({"mode":42}),
+                json!({"mode":"invalid"}),
+            ] {
+                let error = daemon_call(tool, input.as_object().expect("args").clone())
+                    .expect_err("invalid mode");
+                assert!(error.starts_with("invalid_args:"), "{tool}: {error}");
+                assert!(error.contains("mode"));
+            }
+        }
+    }
+
+    #[test]
     fn message_control_tools_map_to_existing_event_operations() {
         for (tool, expected) in [
             ("cccc_message_deliver", "message_deliver"),
@@ -664,5 +738,27 @@ mod tests {
         let (op, args) = daemon_call("cccc_message_send", args).expect("mapping");
         assert_eq!(op, "reply");
         assert_eq!(args["by"], "backend");
+    }
+
+    #[test]
+    fn task_revision_guard_is_preserved_once_in_compound_updates() {
+        for arguments in [
+            json!({"action":"update","task_id":"T792","waiting_on":"none","status":"active","if_task_rev":0}),
+            json!({"action":"update","task_id":"T792","status":"active","if_task_rev":0}),
+            json!({"action":"move","task_id":"T792","status":"active","if_task_rev":0}),
+            json!({"action":"restore","task_id":"T792","if_task_rev":0}),
+            json!({"action":"delete","task_id":"T792","if_task_rev":0}),
+        ] {
+            let (_, args) = daemon_call("cccc_task", arguments.as_object().expect("args").clone())
+                .expect("mapping");
+            let operations = args["ops"].as_array().expect("ops");
+            assert_eq!(operations[0]["if_task_rev"], 0);
+            assert!(
+                operations
+                    .iter()
+                    .skip(1)
+                    .all(|op| op.get("if_task_rev").is_none())
+            );
+        }
     }
 }

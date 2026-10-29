@@ -166,6 +166,81 @@ fn blocking_adapter_preserves_cwd_environment_and_spawn_errors() {
     assert_eq!(error.kind(), io::ErrorKind::NotFound);
 }
 
+#[tokio::test]
+async fn creation_evidence_preserves_missing_program_and_legacy_os_errors() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let missing = temp.path().join("absent");
+    let error = capture_command_with_start_evidence(
+        &mut Command::new(&missing),
+        None,
+        Duration::from_secs(1),
+        1024,
+    )
+    .await
+    .expect_err("missing program");
+    let CommandError::NotStarted(error) = error else {
+        panic!("no child was created for the missing program");
+    };
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    assert_eq!(error.raw_os_error(), Some(nix::libc::ENOENT));
+    let legacy = capture_command(
+        &mut Command::new(&missing),
+        None,
+        Duration::from_secs(1),
+        1024,
+    )
+    .await
+    .expect_err("legacy capture error");
+    assert_eq!(legacy.raw_os_error(), error.raw_os_error());
+    assert_eq!(legacy.to_string(), error.to_string());
+    let legacy =
+        OwnedProcessTree::spawn(&mut Command::new(missing)).expect_err("legacy spawn error");
+    assert_eq!(legacy.raw_os_error(), error.raw_os_error());
+}
+
+#[tokio::test]
+async fn creation_evidence_retains_started_for_timeout_and_pipe_failure() {
+    let error = capture_command_with_start_evidence(
+        &mut shell("printf started; exec sleep 60"),
+        None,
+        Duration::from_millis(50),
+        1024,
+    )
+    .await
+    .expect_err("started timeout");
+    let CommandError::Started(error) = error else {
+        panic!("a timeout after spawn cannot authorize replay");
+    };
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    let error = capture_command_with_start_evidence(
+        &mut shell("exit 0"),
+        Some(&vec![b'x'; 262_144]),
+        Duration::from_secs(1),
+        1024,
+    )
+    .await
+    .expect_err("child exited before reading input");
+    let CommandError::Started(error) = error else {
+        panic!("pipe failure after spawn cannot authorize replay");
+    };
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn creation_evidence_labels_kernel_argument_rejection_as_not_started() {
+    let mut command = shell("printf must-not-run");
+    command.arg("x".repeat(8 * 1024 * 1024));
+    let error =
+        capture_command_with_start_evidence(&mut command, None, Duration::from_secs(1), 1024)
+            .await
+            .expect_err("kernel argument limit");
+    let CommandError::NotStarted(error) = error else {
+        panic!("exec rejected argv without running the command");
+    };
+    assert_eq!(error.raw_os_error(), Some(nix::libc::E2BIG));
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn repeated_completion_timeout_and_cancellation_release_processes_and_pipes() {

@@ -109,6 +109,12 @@ fn public_target(
         .iter()
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("actor_not_found", format!("actor not found: {actor_id}")))?;
+    if !actor.external_session_id.is_empty() {
+        return Err(OpError::new(
+            "external_session_owned",
+            "Configure native session credentials in the original runtime",
+        ));
+    }
     if !actor.profile_id.trim().is_empty() {
         return Err(OpError::new(
             "actor_profile_linked_readonly",

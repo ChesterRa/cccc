@@ -14,20 +14,24 @@ import type {
   LedgerEvent,
   MessageMode,
   MessageRef,
-  Task,
+  TaskChecklistItem,
+  TaskWaitingOn,
 } from "../../types";
 import {
   apiForm,
   apiJson,
   ApiResponse,
+  asRecord,
   capabilityStateRequestKey,
   clearCapabilityStateRequests,
   clearContextRequest,
   contextRequestKey,
   FetchContextOptions,
+  isTaskRevision,
   normalizeContext,
   reuseSharedReadRequest,
 } from "./base";
+import { fetchTaskById } from "./tasks";
 
 export async function fetchContext(groupId: string, opts?: FetchContextOptions) {
   const gid = String(groupId || "").trim();
@@ -43,7 +47,7 @@ export async function fetchContext(groupId: string, opts?: FetchContextOptions) 
     if (opts?.noCache || opts?.signal) {
       return apiJson<unknown>(
         `/api/v1/groups/${encodeURIComponent(gid)}/context?${params.toString()}`,
-        { signal: opts?.signal },
+        { signal: opts?.signal, cache: "no-store" },
       ).then((resp) => {
         if (!resp.ok) return resp as ApiResponse<GroupContext>;
         return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
@@ -52,6 +56,7 @@ export async function fetchContext(groupId: string, opts?: FetchContextOptions) 
     return reuseSharedReadRequest(contextRequestKey(gid, detail), async () => {
       const resp = await apiJson<unknown>(
         `/api/v1/groups/${encodeURIComponent(gid)}/context?${params.toString()}`,
+        { cache: "no-store" },
       );
       if (!resp.ok) return resp as ApiResponse<GroupContext>;
       return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
@@ -81,16 +86,67 @@ export async function contextSync(
   groupId: string,
   ops: Array<Record<string, unknown>>,
   dryRun: boolean = false,
+  ifVersion?: string,
 ) {
   clearContextRequest(groupId);
   try {
-    return await apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/context`, {
-      method: "POST",
-      body: JSON.stringify({ ops, by: "user", dry_run: dryRun }),
-    });
+    const response = await apiJson<unknown>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/context`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ops,
+          by: "user",
+          dry_run: dryRun,
+          ...(ifVersion !== undefined ? { if_version: ifVersion } : {}),
+        }),
+      },
+    );
+    // A successful HTTP status alone cannot prove a task write. In particular,
+    // an empty response must not cause an editor to discard its draft.
+    if (
+      response.ok &&
+      ops.some((op) => typeof op.op === "string" && op.op.startsWith("task.")) &&
+      !taskReceiptConfirmed(response.result, ops, dryRun)
+    ) {
+      return {
+        ok: false,
+        error: {
+          code: "task_receipt_unconfirmed",
+          message:
+            "The task change could not be confirmed. It may have been applied; check the latest state before trying again.",
+        },
+      } as ApiResponse<never>;
+    }
+    return response;
   } finally {
     clearContextRequest(groupId);
   }
+}
+
+function taskReceiptConfirmed(
+  value: unknown,
+  ops: Array<Record<string, unknown>>,
+  dryRun: boolean,
+): boolean {
+  const result = asRecord(value);
+  if (
+    result?.success !== true ||
+    result.dry_run !== dryRun ||
+    !Array.isArray(result.changes) ||
+    result.changes.length !== ops.length
+  )
+    return false;
+  const changes = result.changes;
+  return ops.every((op, index) => {
+    const change = asRecord(changes[index]);
+    return (
+      change?.index === index &&
+      change.op === op.op &&
+      (op.op !== "task.create" ||
+        (typeof change.task_id === "string" && change.task_id.trim().length > 0))
+    );
+  });
 }
 
 export async function updateCoordinationBrief(groupId: string, brief: CoordinationBrief) {
@@ -119,40 +175,163 @@ export async function addCoordinationNote(
   return contextSync(groupId, [op]);
 }
 
-export async function updateCoordinationTask(groupId: string, task: Task) {
-  const resolvedTaskType =
-    String(task.task_type || "").trim() ||
-    (String(task.parent_id || "").trim() ? "free" : "standard");
-  const updateOp: Record<string, unknown> = {
-    op: "task.update",
-    task_id: task.id,
-    title: String(task.title || ""),
-    outcome: String(task.outcome || ""),
-    assignee: task.assignee || null,
-    priority: String(task.priority || ""),
-    parent_id: task.parent_id || null,
-    blocked_by: Array.isArray(task.blocked_by) ? task.blocked_by : [],
-    waiting_on: String(task.waiting_on || "none"),
-    handoff_to: task.handoff_to || null,
-    task_type: resolvedTaskType,
-    notes: String(task.notes || ""),
-    checklist: Array.isArray(task.checklist)
-      ? task.checklist.map((item, index) => ({
-          id: String(item.id || `item-${index + 1}`),
-          text: String(item.text || ""),
-          status: String(item.status || "pending"),
-        }))
-      : [],
+function revisionUnavailable(): ApiResponse<never> {
+  return {
+    ok: false,
+    error: {
+      code: "task_revision_unavailable",
+      message: "The task revision is unavailable. Reload the task before trying again.",
+    },
   };
-  const ops: Array<Record<string, unknown>> = [updateOp];
-  if (task.status) {
-    ops.push({ op: "task.move", task_id: task.id, status: String(task.status || "planned") });
+}
+
+function deleteReadFailure(error: {
+  code: string;
+  message: string;
+  details?: unknown;
+}): ApiResponse<never> {
+  if (["task_not_found", "permission_denied", "group_not_found"].includes(error.code)) {
+    return { ok: false, error };
+  }
+  return {
+    ok: false,
+    error: {
+      code: "task_delete_check_unavailable",
+      message: "Could not check the task before deletion. Nothing was deleted; try again.",
+    },
+  };
+}
+
+export type TaskUpdatePatch = Partial<{
+  title: string;
+  outcome: string;
+  assignee: string | null;
+  priority: string | null;
+  parent_id: string | null;
+  blocked_by: string[];
+  waiting_on: TaskWaitingOn;
+  handoff_to: string | null;
+  task_type: string;
+  notes: string;
+  checklist: TaskChecklistItem[];
+  status: string;
+}>;
+
+export async function updateCoordinationTask(
+  groupId: string,
+  taskId: string,
+  patch: TaskUpdatePatch,
+  expectedRev: number | undefined,
+): Promise<ApiResponse<unknown>> {
+  const fields = [
+    "title",
+    "outcome",
+    "assignee",
+    "priority",
+    "parent_id",
+    "blocked_by",
+    "waiting_on",
+    "handoff_to",
+    "task_type",
+    "notes",
+    "checklist",
+  ] as const;
+  const update: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (patch[field] !== undefined) {
+      // The task.update contract uses a string, including "" for no priority.
+      update[field] = field === "priority" ? patch.priority || "" : patch[field];
+    }
+  }
+  if (Object.keys(update).length === 0 && patch.status === undefined) {
+    return { ok: true, result: {} };
+  }
+  if (!isTaskRevision(expectedRev)) return revisionUnavailable();
+
+  const ops: Array<Record<string, unknown>> = [];
+  if (Object.keys(update).length > 0) {
+    ops.push({ op: "task.update", task_id: taskId, if_task_rev: expectedRev, ...update });
+  }
+  if (patch.status !== undefined) {
+    ops.push({
+      op: "task.move",
+      task_id: taskId,
+      status: patch.status,
+      ...(ops.length === 0 ? { if_task_rev: expectedRev } : {}),
+    });
   }
   return contextSync(groupId, ops);
 }
 
-export async function deleteCoordinationTask(groupId: string, taskId: string) {
-  return contextSync(groupId, [{ op: "task.delete", task_id: String(taskId || "") }]);
+export async function moveCoordinationTask(
+  groupId: string,
+  taskId: string,
+  status: string,
+  expectedRev: number | undefined,
+) {
+  if (!isTaskRevision(expectedRev)) return revisionUnavailable();
+  return contextSync(groupId, [
+    { op: "task.move", task_id: String(taskId || ""), status, if_task_rev: expectedRev },
+  ]);
+}
+
+export async function restoreCoordinationTask(
+  groupId: string,
+  taskId: string,
+  expectedRev: number | undefined,
+) {
+  if (!isTaskRevision(expectedRev)) return revisionUnavailable();
+  return contextSync(groupId, [
+    { op: "task.restore", task_id: String(taskId || ""), if_task_rev: expectedRev },
+  ]);
+}
+
+export async function deleteCoordinationTaskConfirmed(
+  groupId: string,
+  taskId: string,
+  confirmed: { rev: number | undefined; total: number; tasksVersion: string },
+) {
+  if (
+    !isTaskRevision(confirmed.rev) ||
+    !Number.isSafeInteger(confirmed.total) ||
+    confirmed.total < 1 ||
+    !confirmed.tasksVersion
+  )
+    return revisionUnavailable();
+
+  const changed = (): ApiResponse<never> => ({
+    ok: false,
+    error: {
+      code: "task_changed",
+      message: "The state changed. Reload the task and confirm again.",
+    },
+  });
+
+  // The confirmation came from one task-list snapshot. A root revision by
+  // itself cannot detect a new or replaced child in its deletion subtree.
+  const task = await fetchTaskById(groupId, taskId);
+  if (!task.ok) return deleteReadFailure(task.error);
+  if (
+    task.result.tasksVersion !== confirmed.tasksVersion ||
+    task.result.task.rev !== confirmed.rev ||
+    task.result.deleteInfo.total !== confirmed.total ||
+    !task.result.deleteInfo.allowed
+  )
+    return changed();
+
+  // Pair that task snapshot with a whole-context revision from the same task
+  // generation. The daemon checks if_version and if_task_rev under one lock.
+  const context = await fetchContext(groupId, { fresh: true, detail: "summary", noCache: true });
+  if (!context.ok) return deleteReadFailure(context.error);
+  if (!context.result.version || !context.result.tasks_version) return revisionUnavailable();
+  if (context.result.tasks_version !== task.result.tasksVersion) return changed();
+  const response = await contextSync(
+    groupId,
+    [{ op: "task.delete", task_id: String(taskId || ""), if_task_rev: confirmed.rev }],
+    false,
+    context.result.version,
+  );
+  return !response.ok && response.error.code === "version_conflict" ? changed() : response;
 }
 
 export async function fetchSettings(groupId: string, init?: RequestInit & { noCache?: boolean }) {

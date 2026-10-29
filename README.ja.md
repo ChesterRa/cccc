@@ -61,15 +61,15 @@ CCCC はコマンド一つで導入でき、データベースやメッセージ
 | **ロールベース協調** | Foreman + Peer ロールモデル、権限境界と宛先ルーティング（`@all`、`@peers`、`@foreman`） |
 | **ローカルファーストなランタイム状態** | ランタイムデータはリポジトリではなく `CCCC_HOME` に保持しつつ、Web Access と IM ブリッジで遠隔運用も可能 |
 
-## 0.4.44 の主な変更
+## 0.4.45 の主な変更
 
-- **必要な送信者に絞る**：Foreman、Peer、ユーザーを複数選択し、メッセージ種別と組み合わせて表示。過去の一致メッセージにも最新の受領状態を反映し、送信後も絞り込みを維持します。隠れた送信メッセージには直接開くリンクを表示します。
-- **実験的な Grok Voice**：ホストの Grok Build サブスクリプションのログインを利用し、追加の API キーは不要です。Codex Voice の音声と主要言語のヒントを拡充。Analyst の Runtime は独立して選択でき、Grok は完了した調査結果を順番に読み上げます。
-- **作業内容の表示領域を拡大**：利用可能な幅と高さに応じ、最大四つのターミナルを 2×2 で表示。コンパクトなヘッダー、Actor のアイコン、区切り線を採用し、Voice とタスク画面も必要な操作を残して余白を削減しました。
-- **リポジトリ標準の指示ファイルへ**：Context で現在のワークスペースの `AGENTS.md` を編集し、読み込みは Runtime に委ねます。`PROJECT.md` の専用処理と `cccc_project_info` を削除しますが、既存ファイルは変更しません。
-- **日常の操作をより確実に**：動画添付の再生、再読み込み後の Group 選択維持、設定の下書き保持と受理済み操作の完了、終了済み Direct 接続の自動整理、最新安定版を取得する Web サイトのインストーラーを改善しました。
+- **Grok Bot のネイティブ配信**：画面経由の配信を Webhook Routine とリモート MCP に置き換え、順序を守ったタスク受付、権限を限定した認証情報、明示的な復旧を提供します。既存の Grok Actor には Routine の設定が必要です。
+- **分かりやすい Web Model 設定**：アクセスと編集の操作を統一しつつ、ChatGPT のブラウザーログイン、Dots のイベントペアリング、Grok Routine の違いを維持します。ChatGPT の現在の画面構造に対応し、共有ログインへの入口を設けました。
+- **大規模 Group の重複処理を削減**：コンパクトな Inbox 投影、上限のあるアーカイブハンドル、gzip の一括読み取り、上限付き Web キャッシュにより、履歴と進行中の出力を保持します。任意の Mail 再通知は既定で無効で、タスクを再実行しません。
+- **より確実なタスク操作**：作成要求の識別子と参照によりタスクツリーの再試行を支援し、任意の revision チェックで古い編集を拒否します。Context のページ分割とバイト上限で応答を制限し、Actor 削除時には無効なタスク参照と作業状態をクリアします。
+- **予測しやすい復旧**：Claude の中断・再開と停止診断を改善し、Codex コマンドのモデル指定を反映、DeepSeek の失敗ターンの再送を抑止、Pi の安全なツール活動を表示します。Direct 接続のプレビューでは Group の識別と再接続エラーを明確にします。
 
-更新手順と機能の範囲は [0.4.44 英語リリースノート](docs/release/v0.4.44_release_notes.md)をご覧ください。旧 `PROJECT.md` を確認してから、必要な指示を `AGENTS.md` に統合してください。ライブ音声は実験的な機能で、Grok の音高・声質の変動は修正を確認できていません。グローバル Secretary は引き続き Group 間でモデルの会話履歴を共有します。
+更新手順と機能の範囲は [0.4.45 英語リリースノート](docs/release/v0.4.45_release_notes.md)をご覧ください。ライブ音声は実験的な機能で、Grok の音高・声質の変動は修正を確認できていません。グローバル Secretary は引き続き Group 間でモデルの会話履歴を共有します。外部セッションのホット接続は本版に含まれません。
 
 ## クイックスタート
 
@@ -127,7 +127,17 @@ pip 管理下のコマンドは standalone 自己更新を引き続き拒否し�
 cccc
 ```
 
-**http://127.0.0.1:8848** を開く — デフォルトで daemon とローカル Web UI が一緒に起動します。
+対話的なターミナルで `cccc` を実行すると、シンプルなターミナル画面が開き、daemon とローカル Web UI も
+一緒に起動します。この画面はステータスパネルで、Web のアドレス、daemon がこの起動で開始されたかどうか、
+各グループの状態と実行中のメンバー、ネイティブセッションが表示されます。上下キーでグループを選び、Enter で開くと
+タスクの確認（読み取り専用）や起動・停止ができます。`/` を入力するとコマンドの一覧が表示されます。`/sessions` ですべてのネイティブセッションを確認でき、
+`/setup` で Codex、Claude Code、Pi、OpenCode のセッションを接続でき、`/quit`（または Ctrl+C）でこの起動で
+開始したものを停止します。それ以外の機能は Web UI にあります。
+
+Web UI 全体は **http://127.0.0.1:8848** で開けます。ターミナル画面が不要な場合（サーバー、コンテナ、
+サービスマネージャー、スクリプトなど）は `cccc --headless`（または `cccc web`）を使ってください。従来どおりの
+ログ出力のままです。入力または出力がターミナルでない場合や、読み取り専用（Exhibit）モードでも、
+`cccc` は headless で動作します。
 `localhost`／`127.0.0.1` から直接利用する場合はパスワード不要で、Access Token も作成しません。LAN、Remote Access、公開 URL、リバースプロキシ経由の利用には明示的な管理者 Token が必要です。
 
 ```bash
@@ -389,7 +399,8 @@ cccc im start
 
 ```bash
 # ライフサイクル
-cccc                           # daemon + Web UI を起動
+cccc                           # daemon + Web UI を起動し、ターミナル画面を開く
+cccc --headless                # ターミナル画面なしで daemon + Web UI を起動（cccc web と同じ）
 cccc daemon start|status|stop  # daemon 管理
 
 # グループ
@@ -482,6 +493,7 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 | [ユースケース](https://chesterra.github.io/cccc/guide/use-cases) | 実践的なマルチエージェントシナリオ |
 | [Web UI ガイド](https://chesterra.github.io/cccc/guide/web-ui) | ダッシュボードのナビゲーション |
 | [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | アカウント・Direct 接続、配信と権限境界 |
+| [ネイティブセッション](https://chesterra.github.io/cccc/guide/local-sessions) | 履歴を取り込まずに既存の Codex / Claude セッションを接続 |
 | [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | 音声入力、文書、入力欄のワークフロー |
 | [IM ブリッジ設定](https://chesterra.github.io/cccc/guide/im-bridge/) | Telegram、Slack、Discord、Mattermost、Feishu、DingTalk、WeCom、Weixin の接続 |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM ナレッジ統合 |

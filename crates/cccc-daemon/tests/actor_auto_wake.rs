@@ -249,6 +249,92 @@ async fn directed_message_wakes_an_explicitly_stopped_group() {
 }
 
 #[tokio::test]
+async fn an_answer_waits_until_the_user_resumes_the_group_or_starts_the_requester() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    for case in ["paused", "disabled"] {
+        let (temp, daemon, client, group_id) = setup(&format!("answer-{case}"), false).await;
+        let ledger_path = group_ledger_path(&temp, &group_id);
+        let asked = call(
+            &client,
+            "send",
+            json!({"group_id":group_id,"by":"peer1","to":["user"],"message_mode":"request_reply","text":"",
+                   "question":{"v":1,"prompt":"Which port?","options":[{"label":"8080"},{"label":"9090"}]}}),
+        )
+        .await;
+        let asked_id = asked.result["event"]["id"].as_str().expect("asked id");
+        if case == "paused" {
+            call(
+                &client,
+                "group_set_state",
+                json!({"group_id":group_id,"state":"paused","by":"user"}),
+            )
+            .await;
+        } else {
+            call(
+                &client,
+                "actor_update",
+                json!({"group_id":group_id,"actor_id":"peer1","patch":{"enabled":false},"by":"user"}),
+            )
+            .await;
+        }
+        let answered = call(
+            &client,
+            "reply_request_answer",
+            json!({"group_id":group_id,"by":"user","source_event_id":asked_id,"client_id":case,
+                   "answer":{"v":1,"option_id":"B"}}),
+        )
+        .await;
+        let answer_id = answered.result["event"]["id"]
+            .as_str()
+            .expect("answer id")
+            .to_owned();
+
+        // Answering changes neither the Group nor the Actor, so nothing is delivered.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let group = call(
+            &client,
+            "group_show",
+            json!({"group_id":group_id,"by":"user"}),
+        )
+        .await;
+        let expected_state = if case == "paused" { "paused" } else { "active" };
+        assert_eq!(group.result["group"]["state"], expected_state, "{case}");
+        assert_eq!(
+            group.result["group"]["actors"][0]["enabled"],
+            case == "paused",
+            "{case}"
+        );
+        let delivered = ledger::read_all(&ledger_path).is_ok_and(|events| {
+            events.iter().any(|event| {
+                event.kind == "runtime.delivery" && event.data["source_event_id"] == answer_id
+            })
+        });
+        assert!(!delivered, "{case}: delivered before the user resumed");
+
+        // The user's own resume or start delivers the recorded answer.
+        if case == "paused" {
+            call(
+                &client,
+                "group_set_state",
+                json!({"group_id":group_id,"state":"active","by":"user"}),
+            )
+            .await;
+        } else {
+            call(
+                &client,
+                "actor_start",
+                json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+            )
+            .await;
+        }
+        wait_for_accepted_delivery(&ledger_path, &answer_id).await;
+
+        shutdown(&client, daemon).await;
+        drop(temp);
+    }
+}
+
+#[tokio::test]
 async fn mail_does_not_wake_an_explicitly_stopped_group() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("stopped-group-mail-test", false).await;

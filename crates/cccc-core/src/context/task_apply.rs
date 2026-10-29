@@ -56,7 +56,7 @@ pub(super) fn create(
     });
     let waiting_on = enum_value(op, "waiting_on", WAITING_ON)?;
     let mut task = op.clone();
-    for key in ["op", "parent_ref", "blocked_by_refs"] {
+    for key in ["op", "if_task_rev", "rev", "parent_ref", "blocked_by_refs"] {
         task.remove(key);
     }
     let number = doc
@@ -210,7 +210,7 @@ pub(super) fn update(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resul
 pub(super) fn move_task(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Result<()> {
     let unexpected = op
         .keys()
-        .filter(|key| !matches!(key.as_str(), "op" | "task_id" | "status"))
+        .filter(|key| !matches!(key.as_str(), "op" | "task_id" | "status" | "if_task_rev"))
         .cloned()
         .collect::<Vec<_>>();
     if !unexpected.is_empty() {

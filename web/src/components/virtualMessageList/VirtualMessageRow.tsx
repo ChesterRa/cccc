@@ -76,7 +76,7 @@ export const VirtualMessageRow = memo(function VirtualMessageRow({
         width: "100%",
         transform: `translateY(${virtualRow.start}px)`,
       }}
-      className={compactSpacing ? "pb-3" : "pb-6"}
+      className={compactSpacing ? "pb-2" : "pb-4"}
     >
       <MessageBubble
         {...messageBubbleProps}

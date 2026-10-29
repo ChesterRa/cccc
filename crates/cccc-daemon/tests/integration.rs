@@ -1,3 +1,5 @@
+#[path = "suite/actor_context_cleanup.rs"]
+mod actor_context_cleanup;
 #[path = "suite/admin_ops.rs"]
 mod admin_ops;
 #[path = "suite/assistant_voice_ops.rs"]
@@ -32,6 +34,8 @@ mod profile_access;
 mod registry_reconcile;
 #[path = "suite/reme_parity.rs"]
 mod reme_parity;
+#[path = "suite/reply_requests.rs"]
+mod reply_requests;
 #[path = "suite/runtime_completion.rs"]
 mod runtime_completion;
 #[path = "suite/runtime_completion_replay.rs"]

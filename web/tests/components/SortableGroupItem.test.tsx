@@ -19,6 +19,7 @@ vi.mock("@dnd-kit/sortable", () => ({
 }));
 
 import { SortableGroupItem } from "../../src/components/layout/SortableGroupItem";
+import { GroupSidebarItem } from "../../src/components/layout/GroupSidebarItem";
 import { GroupMeta } from "../../src/types";
 
 describe("SortableGroupItem", () => {
@@ -40,11 +41,11 @@ describe("SortableGroupItem", () => {
       );
     });
 
-    // The six-dot grip is gone on every viewport: the only button a row may
-    // still carry is the action menu, which this render does not request.
-    expect(host.querySelector("button")).toBeNull();
-
-    const item = host.querySelector<HTMLElement>('[role="button"]')!;
+    // The group button is also the drag activator; there is no separate grip.
+    const buttons = host.querySelectorAll("button");
+    expect(buttons).toHaveLength(1);
+    const item = buttons[0];
+    expect(item.textContent).toContain("AQuant");
     item.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
 
     expect(sortableMocks.onPointerDown).toHaveBeenCalledOnce();
@@ -123,6 +124,59 @@ describe("SortableGroupItem", () => {
     await act(async () => root.unmount());
     host.remove();
   });
+
+  it.each(["sortable", "archived"] as const)(
+    "returns focus to the %s group after closing its context menu",
+    async (kind) => {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const root = createRoot(host);
+      const props = {
+        group: { group_id: "g_aquant", title: "AQuant" } as GroupMeta,
+        isActive: false,
+        isCollapsed: false,
+        menuActionLabel: "Archive group",
+        onMenuAction: vi.fn(),
+        onSelect: vi.fn(),
+      };
+      try {
+        await act(async () => {
+          root.render(
+            kind === "sortable" ? (
+              <SortableGroupItem {...props} isDark={false} />
+            ) : (
+              <GroupSidebarItem {...props} isArchived />
+            ),
+          );
+        });
+        const groupButton = host.querySelector<HTMLButtonElement>('button[role="button"]')!;
+        await act(async () => {
+          groupButton.dispatchEvent(
+            new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+          );
+        });
+        const menu = document.body.querySelector<HTMLElement>('[role="menu"]')!;
+        expect(menu).not.toBeNull();
+        await act(async () => {
+          menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        });
+        expect(document.activeElement).toBe(groupButton);
+
+        await act(async () => {
+          groupButton.dispatchEvent(
+            new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+          );
+        });
+        const action = document.body.querySelector<HTMLButtonElement>('[role="menuitem"]')!;
+        await act(async () => action.click());
+        expect(props.onMenuAction).toHaveBeenCalledOnce();
+        expect(document.activeElement).toBe(groupButton);
+      } finally {
+        await act(async () => root.unmount());
+        host.remove();
+      }
+    },
+  );
 
   it("keeps the group action available from the desktop keyboard menu shortcut", async () => {
     const host = document.createElement("div");

@@ -14,6 +14,13 @@ describe("getGroupMenuControls", () => {
     expect(getGroupMenuControls(null).map((c) => c.control)).toEqual(["launch", "stop"]);
   });
 
+  it("keeps Stop for an Offline Group, whose recorded lifecycle is not stopped", () => {
+    expect(getGroupMenuControls("offline")).toEqual([
+      { control: "launch", labelKey: "launchAllAgents" },
+      { control: "stop", labelKey: "stopAllAgents" },
+    ]);
+  });
+
   it("pairs each control with the header's former label", () => {
     expect(getGroupMenuControls("run")).toEqual([
       { control: "pause", labelKey: "pauseDelivery" },

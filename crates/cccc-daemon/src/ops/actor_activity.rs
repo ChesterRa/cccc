@@ -37,7 +37,7 @@ impl Publisher {
         let mut payloads = Vec::new();
         let mut snapshot = BTreeMap::new();
         for actor in &group.actors {
-            if let Some(payload) = running_payload(store.home(), group, actor) {
+            if let Some(payload) = activity_payload(store.home(), group, actor) {
                 let runner = text(&payload, "runner_effective", "pty");
                 let state = text(&payload, "effective_working_state", "waiting");
                 snapshot.insert(actor.id.clone(), Fingerprint { state, runner });
@@ -90,19 +90,22 @@ impl Publisher {
     }
 }
 
-pub(super) fn running_payload(
+pub(super) fn activity_payload(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
 ) -> Option<Map<String, Value>> {
-    let running = super::actor_runtime_status::resolve(group, actor).running;
-    if !running {
+    let running = super::actor_runtime_status::resolve(home, group, actor).running;
+    // Native callbacks and receiver leases can change outside Actor controls,
+    // before a connected tick has ever been published. Include unavailable
+    // native members too, so clients can replace a hydrated connected snapshot.
+    if !running && actor.external_session_id.is_empty() {
         return None;
     }
     let mut payload =
-        super::working_state::runtime_actor_fields(home, actor, &group.group_id, true);
+        super::working_state::runtime_actor_fields(home, actor, &group.group_id, running);
     payload.insert("id".into(), json!(actor.id));
-    payload.insert("running".into(), Value::Bool(true));
+    payload.insert("running".into(), Value::Bool(running));
     Some(payload)
 }
 

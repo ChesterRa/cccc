@@ -89,7 +89,7 @@ export function CodexVoiceDock({
 
   if (collapsed) {
     return (
-      <div className="flex flex-col gap-1 border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] p-2 md:bg-transparent">
+      <div className="flex shrink-0 flex-col gap-1 border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] p-2 md:bg-transparent">
         <IconButton
           type="button"
           variant={controller.isEngaged ? "secondary" : "ghost"}
@@ -116,7 +116,7 @@ export function CodexVoiceDock({
   }
 
   return (
-    <div className="border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] px-3 py-3 md:bg-transparent">
+    <div className="shrink-0 border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] px-2 py-2 md:py-1 md:bg-transparent">
       <div className="flex items-center gap-2">
         <ConsoleButton
           onOpen={onOpen}

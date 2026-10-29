@@ -47,6 +47,7 @@ mod groups;
 mod hermes_runtime;
 mod im;
 pub(crate) mod local_headless;
+pub(crate) mod local_sessions;
 mod maintenance;
 mod membership;
 pub(crate) use membership::ReachRestore;
@@ -67,6 +68,7 @@ mod presentation;
 mod profile_access;
 mod profiles;
 mod remote_access;
+mod reply_requests;
 mod runtime_completion;
 pub(crate) mod runtime_delivery;
 mod runtime_mcp;
@@ -99,6 +101,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         group_scopes::resolve_operation,
         group_space::resolve_operation,
         actors::resolve_operation,
+        local_sessions::resolve_operation,
         automation_config::resolve_operation,
         assistants::resolve_operation,
         capabilities::resolve_operation,

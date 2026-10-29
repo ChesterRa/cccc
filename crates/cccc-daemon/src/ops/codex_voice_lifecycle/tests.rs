@@ -10,6 +10,33 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
+pub(crate) async fn collect_normalized_events_for_test(
+    events: Vec<AnalystEvent>,
+    pending: Option<&str>,
+) -> Vec<AnalystLifecycleEvent> {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut receiver = lifecycle.subscribe();
+    lifecycle.state.lock().await.pending = pending.map(|delegation| PendingStart {
+        delegation_id: delegation.into(),
+        origin: AnalystTurnOrigin::Voice,
+        cancelling: false,
+    });
+    for mut event in events {
+        event.generation = session.generation().to_owned();
+        event.message["params"]["threadId"] = json!(session.thread_id());
+        lifecycle.handle(event).await;
+    }
+    let result = std::iter::from_fn(|| receiver.try_recv().ok()).collect();
+    session
+        .stop(session.generation())
+        .await
+        .expect("stop fixture");
+    server.await.expect("fixture server exit");
+    result
+}
+
 #[tokio::test]
 async fn actor_results_and_voice_share_busy_native_admission_and_all_completion_sources() {
     let (session, server) = test_session().await;

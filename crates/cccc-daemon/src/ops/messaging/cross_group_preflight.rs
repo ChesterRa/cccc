@@ -85,7 +85,7 @@ pub(super) fn send_files(
     check.args.remove("path");
     check.args.insert("has_attachments".into(), json!(true));
     upload(home, &check)?;
-    let files = super::files::read(group, paths, super::cross_group_attachments::MAX_BYTES)?;
+    let files = super::files::read(group, &by, paths, super::cross_group_attachments::MAX_BYTES)?;
     files.apply(home, group, &mut forwarded.args)?;
     // The source scope root means nothing in the destination Group.
     forwarded.args.remove("path");

@@ -4,6 +4,7 @@ import {
   statusTone,
   taskDisplaySummary,
   taskStatus,
+  taskStatusLabel,
   taskTitle,
   type ContextTranslator,
 } from "../model";
@@ -26,7 +27,7 @@ export function TaskGhostCard({
     <div className={classNames("w-[320px] rounded-2xl border p-3 shadow-2xl", "glass-panel")}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+          <div className="line-clamp-2 text-sm font-semibold text-[var(--color-text-primary)] [overflow-wrap:anywhere]">
             {taskTitle(task)}
           </div>
           <div className={classNames("mt-1 text-xs", mutedTextClass)}>{task.id}</div>
@@ -37,7 +38,7 @@ export function TaskGhostCard({
             statusTone(status),
           )}
         >
-          {status}
+          {taskStatusLabel(status, tr)}
         </span>
       </div>
       {taskDisplaySummary(task) ? (

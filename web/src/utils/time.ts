@@ -1,3 +1,5 @@
+import { normalizeLanguageCode } from "../i18n/languages";
+
 // Format ISO timestamp to friendly relative/absolute time
 export function formatTime(isoStr: string | undefined): string {
   if (!isoStr) return "—";
@@ -68,4 +70,20 @@ export function formatFullTime(isoStr: string | undefined): string {
   } catch {
     return isoStr;
   }
+}
+
+/** Elapsed seconds in the page's language, in the largest whole unit: "2 hours ago". */
+export function formatElapsed(seconds: number, language: string | undefined): string {
+  const [value, unit]: [number, Intl.RelativeTimeFormatUnit] =
+    seconds >= 86400
+      ? [Math.floor(seconds / 86400), "day"]
+      : seconds >= 3600
+        ? [Math.floor(seconds / 3600), "hour"]
+        : seconds >= 60
+          ? [Math.floor(seconds / 60), "minute"]
+          : [seconds, "second"];
+  return new Intl.RelativeTimeFormat(normalizeLanguageCode(language), { numeric: "always" }).format(
+    -value,
+    unit,
+  );
 }

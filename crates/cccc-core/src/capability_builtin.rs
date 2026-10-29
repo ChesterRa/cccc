@@ -69,6 +69,9 @@ pub fn actor_base_tool_names(
     CORE_TOOL_NAMES.iter().chain(extra).copied()
 }
 
+/// Discovery and conversation entry point for explicitly enabled native sessions.
+pub const LOCAL_SESSION_TOOL_NAMES: &[&str] = &["cccc_session"];
+
 /// Local user-authority MCP sessions need the Group control plane without
 /// first mutating capability state. Actor sessions keep the smaller core and
 /// opt into these operations through `pack:group-runtime`.

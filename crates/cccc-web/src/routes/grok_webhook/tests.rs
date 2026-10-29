@@ -210,6 +210,9 @@ async fn native_http_claim_reply_complete_and_next_wake_use_scoped_authority() {
         .as_str()
         .expect("isolated Grok fixture");
     assert!(handler.contains("BEGIN CCCC GROK HANDLER"));
+    assert!(handler.contains("Host JavaScript orchestration"));
+    assert!(handler.contains("this same run's original claim tool result"));
+    assert!(handler.contains("cccc_code_exec source/code"));
     assert!(!handler.contains("synthetic-provider"));
     let (http,configured)=f.api(json!({"action":"configure","url":"https://api2.cursor.sh/automations/webhook/fixture","key":"synthetic-provider"})).await;
     assert_eq!(http, StatusCode::OK);
@@ -251,7 +254,12 @@ async fn native_http_claim_reply_complete_and_next_wake_use_scoped_authority() {
     );
     let token = &c["actor_token"];
     assert_ne!(*token, claim);
-    let reply=f.tool("cccc_message_reply",json!({"actor_token":token,"event_id":source,"text":"Synthetic result","message_mode":"send","insight":"Synthetic native transport verification"})).await;
+    let reply = f
+        .tool(
+            "cccc_message_reply",
+            json!({"actor_token":token,"event_id":source,"text":"Synthetic result","mode":"send","insight":"Synthetic native transport verification"}),
+        )
+        .await;
     assert_ne!(reply["result"]["isError"], true, "{reply}");
     assert!(
         reply["result"]["structuredContent"]["event"]["data"]

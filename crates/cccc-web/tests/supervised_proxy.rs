@@ -27,6 +27,7 @@ async fn supervised_loopback_web_trusts_forwarded_https_for_auth_and_security() 
             async move {
                 let _ = shutdown_rx.await;
             },
+            None,
         )
         .await
     });

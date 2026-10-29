@@ -487,7 +487,9 @@ fn log_disconnect(
         "close_code":close_code, "elapsed_ms":started.elapsed().as_millis() as u64,
         "time_unix_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
     });
-    eprintln!("[cccc] Codex Voice control ended: {diagnostic}");
+    cccc_runtime::diagnostic(format_args!(
+        "[cccc] Codex Voice control ended: {diagnostic}"
+    ));
 }
 
 async fn finish(state: &AppState, attachment: crate::codex_voice::SessionAttachment) {

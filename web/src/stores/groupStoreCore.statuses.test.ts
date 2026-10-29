@@ -81,3 +81,29 @@ describe.each(Object.entries(mergers))("late %s response", (_, merge) => {
     expect(merge([failed], retrying)[0]._obligation_status?.worker.delivery_state).toBe("claimed");
   });
 });
+
+it("uses the authoritative requester state and does not retain it when that status is removed", () => {
+  const userRequest: LedgerEvent = {
+    id: "user-request",
+    kind: "chat.message",
+    by: "worker",
+    data: { message_mode: "request_reply", to: ["user"] },
+    _obligation_status: { user: pending },
+    _user_request: { question: "none", requester: "available" },
+  };
+  const changed = mergeLedgerEventStatuses([userRequest], {
+    "user-request": {
+      obligation_status: { user: pending },
+      user_request: { question: "none", requester: "unavailable" },
+    },
+  });
+  expect(changed[0]._user_request?.requester).toBe("unavailable");
+  const removed = mergeLedgerEventStatuses(changed, {
+    "user-request": { obligation_status: { user: pending } },
+  });
+  expect(removed[0]._user_request).toBeUndefined();
+  expect(
+    mergeLedgerEvents(changed, [{ ...userRequest, _user_request: undefined }], 100)[0]
+      ._user_request,
+  ).toBeUndefined();
+});

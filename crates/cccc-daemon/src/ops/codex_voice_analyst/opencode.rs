@@ -20,11 +20,12 @@ mod lifecycle_tests;
 mod model_sync_tests;
 mod session;
 pub(super) mod stream;
+pub(super) mod v2;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const START_ATTEMPTS: usize = 3;
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-const MIN_MANAGED_VERSION: (u64, u64, u64) = (1, 18, 14);
+const MIN_MANAGED_VERSION: (u64, u64, u64) = (2, 1, 4);
 
 pub(super) struct PreparedOpenCode {
     runtime: super::ActorRuntime,
@@ -36,7 +37,7 @@ pub(super) struct PreparedOpenCode {
 }
 
 pub(super) struct LaunchedOpenCode {
-    pub(super) protocol: AcpClient,
+    pub(super) protocol: super::ManagedProtocol,
     pub(super) process: Arc<process::ChildOwner>,
     pub(super) session_id: String,
     pub(super) tui_command: Vec<String>,
@@ -82,9 +83,18 @@ pub(super) async fn launch(
     resume_session_id: Option<&str>,
     mcp_server: Value,
 ) -> io::Result<LaunchedOpenCode> {
-    // Kilo shares this ACP/HTTP topology, not OpenCode's release numbering.
     if prepared.runtime == super::ActorRuntime::Opencode {
         require_supported_version(&prepared.launch_prefix[0], cwd, &base_environment).await?;
+        return v2::launch(
+            prepared,
+            cwd,
+            base_environment,
+            generation,
+            purpose,
+            resume_session_id,
+            mcp_server,
+        )
+        .await;
     }
     if purpose == SessionPurpose::VoiceAnalyst {
         command::write_voice_agent(
@@ -233,7 +243,7 @@ pub(super) async fn launch(
             cwd.to_string_lossy().into_owned(),
         ]);
         return Ok(LaunchedOpenCode {
-            protocol,
+            protocol: super::ManagedProtocol::Acp(protocol),
             process: owner,
             session_id,
             tui_command,
@@ -269,7 +279,7 @@ async fn require_supported_version(
     if !output.status.success() {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "OpenCode version could not be verified for a managed ACP session",
+            "OpenCode version could not be verified for a managed V2 session",
         ));
     }
     let version = parse_version(&String::from_utf8_lossy(&output.stdout))
@@ -277,14 +287,14 @@ async fn require_supported_version(
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::Unsupported,
-                "OpenCode returned an unrecognized version for a managed ACP session",
+                "OpenCode returned an unrecognized version for a managed V2 session",
             )
         })?;
     if version < MIN_MANAGED_VERSION {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!(
-                "OpenCode {}.{}.{} cannot host a reliable managed ACP session; upgrade to 1.18.14 or newer",
+                "OpenCode {}.{}.{} is unsupported; install official OpenCode V2 2.1.4 or newer",
                 version.0, version.1, version.2
             ),
         ));
@@ -313,7 +323,7 @@ mod tests {
     fn parses_official_opencode_versions() {
         assert_eq!(parse_version("1.18.27"), Some((1, 18, 27)));
         assert_eq!(
-            parse_version("opencode 1.18.14 (stable)"),
+            parse_version("opencode 2.1.4 (stable)"),
             Some(MIN_MANAGED_VERSION)
         );
         assert_eq!(parse_version("unknown"), None);
@@ -321,7 +331,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn rejects_versions_before_the_reliable_acp_completion_fence() {
+    async fn rejects_v1_before_the_v2_managed_backend() {
         use std::os::unix::fs::PermissionsExt;
 
         let root = tempfile::tempdir().expect("tempdir");
@@ -339,9 +349,9 @@ mod tests {
         .await
         .expect_err("old OpenCode must fail closed");
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
-        assert!(error.to_string().contains("upgrade to 1.18.14 or newer"));
+        assert!(error.to_string().contains("OpenCode V2 2.1.4 or newer"));
 
-        std::fs::write(&executable, "#!/bin/sh\necho 1.18.14\n").expect("supported OpenCode");
+        std::fs::write(&executable, "#!/bin/sh\necho 2.1.4\n").expect("supported OpenCode");
         require_supported_version(
             executable.to_str().expect("UTF-8 path"),
             root.path(),

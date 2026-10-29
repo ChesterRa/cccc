@@ -19,6 +19,9 @@ const REPLY_ANSWER_WINDOWS: [Duration; 3] = [
 ];
 const MAX_FRAME_BYTES: usize = 512 * 1024;
 
+#[cfg(all(test, unix))]
+mod stop_tests;
+
 #[cfg(unix)]
 pub(super) type PlatformStream = tokio::net::UnixStream;
 #[cfg(windows)]
