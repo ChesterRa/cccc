@@ -123,6 +123,7 @@ syncComposerToSelectedGroup(initialSelectedGroupId);
 export const useGroupStore = create<GroupState>((set, get) => ({
   // Initial state
   groups: [],
+  groupsLoaded: false,
   groupOrder: loadGroupOrder(),
   archivedGroupIds: loadArchivedGroupIds(),
   selectedGroupId: initialSelectedGroupId,
@@ -146,7 +147,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     const mergedArchived = mergeArchivedGroupIds(storedArchived, groups);
     saveGroupOrder(mergedOrder);
     saveArchivedGroupIds(mergedArchived);
-    set({ groups, groupOrder: mergedOrder, archivedGroupIds: mergedArchived });
+    set({ groups, groupsLoaded: true, groupOrder: mergedOrder, archivedGroupIds: mergedArchived });
   },
   setGroupOrder: (order) => {
     saveGroupOrder(order);

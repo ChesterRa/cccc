@@ -17,6 +17,7 @@ mod security_headers;
 mod shutdown;
 mod web_banner;
 mod web_listener;
+mod web_push;
 mod web_runtime_state;
 
 use anyhow::Result;
@@ -108,6 +109,8 @@ pub(crate) struct AppState {
     runtime_proof_key: String,
     web_mode: WebMode,
     exhibit_allow_terminal: bool,
+    /// Wakes the Web Push notifier when a browser subscribes.
+    push: Arc<web_push::Runtime>,
 }
 
 pub(crate) struct RestartHandle {
@@ -194,6 +197,16 @@ fn app_with_shutdown(
         Arc::clone(&browser_surfaces),
         shutdown.subscribe(),
     );
+    let push = Arc::new(web_push::Runtime::default());
+    // An exhibit's viewers are spectators: it neither subscribes nor sends.
+    if !web_mode.is_read_only() {
+        web_push::spawn(
+            home.clone(),
+            ledger_events.clone(),
+            Arc::clone(&push),
+            shutdown.subscribe(),
+        );
+    }
     let state = AppState {
         connect_frames: Arc::new(connect_frames::ConnectFrames::default()),
         connect_http: connect_frames::http_client()
@@ -213,6 +226,7 @@ fn app_with_shutdown(
         runtime_proof_key: new_web_runtime_proof_key(),
         web_mode,
         exhibit_allow_terminal: readonly::exhibit_allow_terminal_from_env(),
+        push,
     };
     let app = router_for_state(state.clone());
     (app, im_workers, browser_surfaces, state)
@@ -220,6 +234,7 @@ fn app_with_shutdown(
 
 fn router_for_state(state: AppState) -> Router {
     let mut app = routes::router()
+        .merge(web_push::routes())
         .fallback(static_asset)
         .layer(CompressionLayer::new())
         .layer(
@@ -344,11 +359,14 @@ async fn static_asset(method: axum::http::Method, uri: Uri) -> Response {
     } else {
         path
     };
+    // The push worker's scope holds no pages, so nothing there falls back
+    // to the app: a missing worker must not be answered with index.html.
     let asset = WebAssets::get(path).map(|asset| (asset, path)).or_else(|| {
-        (!path
-            .rsplit('/')
-            .next()
-            .is_some_and(|name| name.contains('.')))
+        (!path.starts_with("push/")
+            && !path
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name.contains('.')))
         .then(|| WebAssets::get("index.html").map(|asset| (asset, "index.html")))
         .flatten()
     });

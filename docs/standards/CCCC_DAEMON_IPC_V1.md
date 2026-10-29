@@ -4458,8 +4458,8 @@ Args (core):
   question?: {                  // a choice for the user; see CCCS §6.4
     v: 1
     prompt: string
-    options?: { label: string; consequence?: string }[] // none, or 2-3; ids are assigned A, B, C
-    recommended?: { option_id: "A" | "B" | "C"; reason: string }
+    options?: { label: string; consequence?: string }[] // none, or 2-4; ids are assigned A, B, C, D
+    recommended?: { option_id: "A" | "B" | "C" | "D"; reason: string }
   }
 }
 ```

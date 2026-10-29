@@ -17,13 +17,8 @@ import type { ReplyAnswer } from "../../features/pendingReplies/types";
 import { answerPendingReply, type PendingReplyAnswer } from "../../services/api/pendingReplies";
 import { useGroupStore } from "../../stores";
 import type { ChatMessageData, LedgerEvent } from "../../types";
+import { newClientId } from "../../utils/clientId";
 import { PendingReplyCard } from "./PendingReplyCard";
-
-function newClientId(): string {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
 
 function ReplyEntry({
   store,

@@ -32,8 +32,7 @@ with menus visible on touchscreens.
 
 The composer uses one send control with an adjacent mode arrow. The primary action
 shows the selected mode; its tooltip includes the send shortcut. Recipient chips
-need no separate “To” caption. Quote text is the expand/collapse control, with a
-separate source-jump icon. Local messages addressed only to the user omit the
+need no separate “To” caption. Local messages addressed only to the user omit the
 redundant recipient label; cross-group routes and agent recipients remain explicit.
 User names remain accessible to screen readers without repeating a visible label
 above right-aligned local user messages. Message spacing is tighter, and the
@@ -53,12 +52,13 @@ Hints are decorative and never become draft content or screen-reader live announ
 
 Message bubbles retain their framed surfaces. Sender, recipient routing, Mail mode
 and time share a compact header; delivery failures and reply/read status stay visible.
-Quoted replies show a two-line summary that can be expanded, with a separate jump
-to the original message. On hover-capable desktop screens, message actions appear
-on hover or keyboard focus; touch and narrow screens use a **More** menu. Read-only
-views retain status information without exposing these actions. The composer groups
-recipients, text and tools into one surface. Short, transform/opacity-only message
-entry feedback respects reduced-motion preferences.
+A reply shows up to two lines of the message it answers; clicking or tapping that
+quote, or pressing Enter on it, opens the original message. On hover-capable desktop
+screens, message actions appear on hover or keyboard focus; touch and narrow screens
+use a **More** menu. Read-only views retain status information without exposing
+these actions. The composer groups recipients, text and tools into one surface.
+Short, transform/opacity-only message entry feedback respects reduced-motion
+preferences.
 
 On phones, the chat keeps as much of the screen as possible for messages. An empty
 composer that is not in use is a single row with the attachment button, the message
@@ -931,13 +931,37 @@ Enter/Space. Switching sections retains summary/file drafts and task filters.
 - **Tasks** is the default section. The goal, current focus and warnings stay
   visible above the board. Expand **Working summary** for background and
   constraints, or use Edit directly. The disclosure stays open while editing.
-  The board retains Planned, Active and Done columns, including empty drop targets.
-  Search and attention filters narrow the board. Open a task for requirements,
-  steps, handoffs and completion details. Missing requirements or closeout records
-  describe record completeness; they do not change an existing task's status.
-  A parent card shows how many of its direct, non-archived subtasks are done, even
-  when filters or paging hide some of them; the open task lists them, and each one
-  opens in the editor. Subtask progress never completes the parent.
+  While there are tasks to show, Planned, Active and Done stay as columns, empty
+  ones included, so each remains a drop target; when there are none, or none
+  match the search and attention filters, the board says so instead. Dragging a
+  card to a column moves the task there; **Restore** on an archived card returns
+  it to the status it had before it was archived. A parent card shows how many of
+  its direct, non-archived subtasks are done, even when filters or paging hide
+  some of them. Subtask progress never completes the parent.
+
+  Opening a task shows its editor: title, status, assignee, priority and waiting
+  on first, then the outcome, checklist, notes and subtasks, with **Add subtask**.
+  Parent, handoff, blocking tasks and task type are under **Advanced details**.
+  A checklist item in progress shows as partly ticked, and any other status an
+  agent set is shown beside the item and kept until the item is ticked. Moving a
+  task to Done needs no particular notes; a done task without an outcome only
+  gets a suggestion to add one. Task type requirements describe how complete the
+  record is; they never block a change. Escape closes the editor and keeps
+  Project Context open.
+
+  Saving sends only the fields you changed, and only onto the version you
+  opened. If the task has changed since you opened it, the save is refused and
+  your edits stay in the editor to copy before you reload the latest version; an
+  editor without edits follows such changes by itself. When a save cannot be
+  confirmed, the editor reads the task to tell whether it went through, and
+  saving again never applies it twice. A task that no longer exists keeps your
+  edits in its editor until you close it. If creating a task cannot be
+  confirmed, creating it again unchanged from the same form finishes without
+  making a second one; a closed form or a reloaded page has no such guarantee.
+  **Delete** is offered only for a task that never left Planned,
+  together with its unexecuted subtasks; for other tasks the editor says why,
+  and archiving is the alternative. A deletion is refused, deleting nothing, if
+  any of it changed after you confirmed.
 - **AGENTS.md** views and edits the file in the current workspace root, showing
   its actual path. A missing file can be created explicitly; existing documents
   are not renamed, merged, or overwritten as part of setup. Each runtime controls
@@ -957,6 +981,56 @@ Enter/Space. Switching sections retains summary/file drafts and task filters.
 ## Settings Panel
 
 Open settings from **Settings and more** in the header:
+
+### System notifications
+
+Use **Settings → This instance → Notifications** to enable notifications in
+each browser or installed app where you want them. This is available in the
+private Web UI, not exhibit mode. Keep the CCCC Web service running; closing
+the CCCC page does not stop the service on your server.
+
+1. Open CCCC over HTTPS, or use localhost on the same computer. On iPhone or
+   iPad, first add CCCC to the Home Screen and open it from there; Web Push
+   requires iOS or iPadOS 16.4 or later. See [WebKit's setup guidance](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/).
+2. Select **Enable notifications** and allow notifications when the browser
+   asks. If **Finish enabling** appears, select it to complete the subscription.
+3. Check that the page reports notifications enabled. To turn them off for
+   this browser, return to the same page and select **Disable notifications**.
+   This works even when the server cannot be reached: the browser stops
+   receiving them, and the server forgets the subscription once its next
+   notification is refused. Signing out of this browser in **Web Access** also
+   asks the server to stop notifying it for that account.
+
+On desktop, Chrome and Edge need a browser process to remain running. On
+Windows, Edge can keep running after the last window closes if background mode
+is enabled in `edge://settings/system`; see [Microsoft's Edge documentation](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-browser-policies/backgroundmodeenabled).
+Whether Chrome can remain running in the background depends on its version and
+management settings.
+For macOS, Safari supports receiving Web Push while Safari is quit on supported
+systems; see [WebKit's platform requirements](https://webkit.org/blog/12945/meet-web-push/).
+Browser settings and operating-system notification permissions also affect delivery.
+
+Notifications are for new messages explicitly addressed to the user. Requests
+already waiting when notifications are enabled remain in **Waiting for you**;
+they are not sent again. Events written while the Web service is stopped are
+not replayed; a sender restart or handover can also leave a gap. During a
+temporary push-service failure, up to 10 unanswered
+requests per browser are retried while the service runs; older requests may
+be dropped. The push service and device may also delay or discard notifications.
+Check **Waiting for you** if a notification does not open its request. On
+Safari 18.5 or later for Mac, and in iPhone or iPad Home Screen apps on iOS 18.4
+or later, opening a notification tries to load CCCC at its message; in a Home
+Screen app this can reload the open page, and unsent text in it is then lost.
+Message previews may be visible on the lock screen. The server stores a private
+signing key and subscription secrets in `CCCC_HOME`, so keep it accessible only
+to trusted accounts; on Windows file access depends on the directory's
+permissions.
+
+If the sender is starting or unavailable, select **Try again** after the Web
+service starts and check its logs if the status persists. If the browser blocks
+notifications, allow them in browser or device settings. A saved subscription
+that is not connected to the current account can be removed or enabled again
+from this page.
 
 ### Copy Groups
 

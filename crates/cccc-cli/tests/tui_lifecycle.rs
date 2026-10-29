@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const WAIT: Duration = Duration::from_secs(45);
 
@@ -116,6 +116,7 @@ impl Fixture {
         }
         command.cwd(self.root.path());
         let original_modes = format!("{:?}", terminal_modes(pair.master.as_ref()));
+        let launched = SystemTime::now();
         let child = pair.slave.spawn_command(command).expect("start CCCC");
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().expect("terminal reader");
@@ -140,6 +141,8 @@ impl Fixture {
             writer,
             output,
             original_modes,
+            home: self.home.clone(),
+            launched,
         }
     }
 
@@ -164,11 +167,75 @@ struct Terminal {
     writer: Box<dyn Write + Send>,
     output: Arc<Mutex<Vec<u8>>>,
     original_modes: String,
+    home: PathBuf,
+    launched: SystemTime,
 }
 
 impl Terminal {
     fn text(&self) -> String {
         String::from_utf8_lossy(&self.output.lock().expect("output")).into_owned()
+    }
+
+    /// The daemon files in the isolated Home, each with its size and when it
+    /// last changed relative to launch, and the end of the content-free
+    /// diagnostics log, so that a stall seen only on a CI runner names the
+    /// stage it stopped in. Paths and the daemon's own output stay out of
+    /// the test output.
+    fn startup_state(&self) -> String {
+        let since = |time: SystemTime| match time.duration_since(self.launched) {
+            Ok(after) => format!("+{after:.1?}"),
+            Err(_) => "before launch".into(),
+        };
+        let daemon = self.home.join("daemon");
+        let mut report = format!("\n--- daemon files at {}:", since(SystemTime::now()));
+        let mut entries: Vec<_> = std::fs::read_dir(&daemon)
+            .map(|entries| entries.flatten().collect())
+            .unwrap_or_default();
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            if let Ok(metadata) = entry.metadata() {
+                let changed = metadata.modified().map(since).unwrap_or_default();
+                report.push_str(&format!(
+                    "\n  {} {} bytes, changed {changed}",
+                    entry.file_name().to_string_lossy(),
+                    metadata.len()
+                ));
+            }
+        }
+        if let Ok(mut log) = std::fs::File::open(daemon.join("ccccd-diagnostics.log")) {
+            use std::io::{Seek, SeekFrom};
+            let length = log.seek(SeekFrom::End(0)).unwrap_or(0);
+            let mut tail = Vec::new();
+            if log
+                .seek(SeekFrom::Start(length.saturating_sub(2000)))
+                .is_ok()
+                && log.take(2000).read_to_end(&mut tail).is_ok()
+            {
+                report.push_str(&format!(
+                    "\n--- end of ccccd-diagnostics.log:\n{}",
+                    String::from_utf8_lossy(&tail)
+                ));
+            }
+        }
+        report
+    }
+
+    /// Send `open`, which opens a confirmation, then `keys`, and wait until
+    /// the confirmation has been displayed. Unix terminals pass every frame
+    /// through, so there `keys` stay queued behind `open`. ConPTY repaints
+    /// the console on its own schedule and can merge away a confirmation
+    /// that queued input closes within a millisecond, so on Windows `keys`
+    /// wait until the confirmation is on screen.
+    fn confirm_then(&mut self, open: &[u8], confirmation: &str, keys: &[u8]) {
+        let before = self.output.lock().expect("output").len();
+        if cfg!(windows) {
+            self.send(open);
+            self.until_screen_after(confirmation, before);
+            self.send(keys);
+        } else {
+            self.send(&[open, keys].concat());
+            self.until_screen_after(confirmation, before);
+        }
     }
 
     fn until(&mut self, text: &str) {
@@ -192,8 +259,9 @@ impl Terminal {
             );
             assert!(
                 Instant::now() < deadline,
-                "CCCC did not show {text:?}: {}",
-                self.text()
+                "CCCC did not show {text:?}: {}{}",
+                self.text(),
+                self.startup_state()
             );
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -220,7 +288,8 @@ impl Terminal {
             );
             assert!(
                 Instant::now() < deadline,
-                "CCCC did not display {text:?}: {visible}"
+                "CCCC did not display {text:?}: {visible}{}",
+                self.startup_state()
             );
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -270,7 +339,11 @@ impl Terminal {
                 self.child.try_wait().expect("child status").is_none(),
                 "CCCC exited before displaying {text:?}"
             );
-            assert!(Instant::now() < deadline, "CCCC did not display {text:?}");
+            assert!(
+                Instant::now() < deadline,
+                "CCCC did not display {text:?}{}",
+                self.startup_state()
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -288,8 +361,9 @@ impl Terminal {
             }
             assert!(
                 Instant::now() < deadline,
-                "CCCC did not exit: {}",
-                self.text()
+                "CCCC did not exit: {}{}",
+                self.text(),
+                self.startup_state()
             );
             std::thread::sleep(Duration::from_millis(20));
         };
@@ -599,6 +673,58 @@ fn a_paused_group_can_be_stopped_directly_and_confirmation_is_cancellable() {
     assert_eq!(events[0].by, "user");
 }
 
+/// ConPTY can merge away a confirmation that queued input closes at once
+/// (see `confirm_then`), so on Windows queued keys are also checked by their
+/// outcome alone, once CCCC has exited and no stop can still be under way.
+#[cfg(windows)]
+fn queued_stop_keys_in_conpty(
+    title: &str,
+    keys: &[u8],
+    done: Option<&str>,
+) -> Vec<cccc_contracts::Event> {
+    use cccc_contracts::GroupState;
+    let fixture = Fixture::new();
+    let (store, group) = fixture.group(title, GroupState::Active);
+    let mut terminal = fixture.start(&[], &[]);
+    terminal.until_screen(title);
+    terminal.send(b"\r");
+    terminal.until_screen(&group.group_id);
+    terminal.send(b"\x1b[B\x1b[B");
+    terminal.until_screen("> Stop group");
+    terminal.send(keys);
+    if let Some(done) = done {
+        terminal.until_screen(done);
+    }
+    // Back on the main screen, every queued key has been read.
+    terminal.send(b"b");
+    terminal.until_screen("Tab menu");
+    terminal.send(b"/quit\r");
+    terminal.finish();
+    fixture.assert_stopped();
+    cccc_core::ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger"))
+        .expect("Group events")
+}
+
+#[cfg(windows)]
+#[test]
+fn queued_enters_land_on_cancel_in_conpty() {
+    let events = queued_stop_keys_in_conpty("Burst cancel fixture", b"\r\r", None);
+    assert!(events.is_empty(), "a queued Enter confirmed: {events:?}");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_deliberate_burst_still_stops_in_conpty() {
+    let events = queued_stop_keys_in_conpty(
+        "Burst stop fixture",
+        b"\r\x1b[B\r",
+        Some("Burst stop fixture: stop done."),
+    );
+    assert_eq!(events.len(), 1, "one burst stops the Group once");
+    assert_eq!(events[0].kind, "group.stop");
+    assert_eq!(events[0].by, "user");
+}
+
 #[test]
 fn failed_web_start_reports_failure_after_stopping_its_daemon() {
     let fixture = Fixture::new();
@@ -770,9 +896,7 @@ fn queued_group_confirmation_is_drawn_and_defaults_to_cancel() {
     terminal.send(b"\x1b[B\x1b[B");
     terminal.until_screen("> Stop group");
 
-    let before = terminal.output.lock().expect("output").len();
-    terminal.send(b"\r\r");
-    terminal.until_screen_after(&format!("Stop {title}?"), before);
+    terminal.confirm_then(b"\r", &format!("Stop {title}?"), b"\r");
     terminal.until_screen("Enter open");
     assert_eq!(
         store.load(&group.group_id).expect("unchanged Group").state,
@@ -785,9 +909,7 @@ fn queued_group_confirmation_is_drawn_and_defaults_to_cancel() {
     );
 
     // Even deliberate queued input must paint the confirmation first.
-    let before = terminal.output.lock().expect("output").len();
-    terminal.send(b"\r\x1b[B\r");
-    terminal.until_screen_after(&format!("Stop {title}?"), before);
+    terminal.confirm_then(b"\r", &format!("Stop {title}?"), b"\x1b[B\r");
     terminal.until_screen(&format!("{title}: stop done."));
     assert_eq!(
         store.load(&group.group_id).expect("stopped Group").state,

@@ -31,7 +31,14 @@ fn atomic_write_with(path: &Path, data: &[u8], preserve_mode: bool) -> io::Resul
     if preserve_mode && let Ok(existing) = fs::metadata(path) {
         temp.as_file().set_permissions(existing.permissions())?;
     }
-    temp.persist(path).map_err(|error| error.error)?;
+    // Replace with the standard library's rename: on Windows it can replace a
+    // file that another handle is reading, where tempfile's persist is refused.
+    // Keeping the temporary path first clears its temporary-file attribute.
+    let kept = temp.into_temp_path().keep().map_err(|error| error.error)?;
+    if let Err(error) = fs::rename(&kept, path) {
+        let _ = fs::remove_file(&kept);
+        return Err(error);
+    }
     sync_dir(parent)
 }
 
@@ -179,6 +186,78 @@ fn sync_dir(_path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::quote_rfc3339_yaml_scalars;
+
+    #[test]
+    fn an_atomic_write_replaces_a_file_another_handle_is_reading() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("group.yaml");
+        super::atomic_write(&path, b"old").expect("first write");
+        // As the daemon or the Web reading the same file at that moment.
+        let mut reader = std::fs::File::open(&path).expect("reader");
+        super::atomic_write(&path, b"new").expect("replace while it is being read");
+        // The reader keeps what it opened; the path has the new content.
+        let mut held = Vec::new();
+        std::io::Read::read_to_end(&mut reader, &mut held).expect("read held file");
+        assert_eq!(held, b"old");
+        assert_eq!(std::fs::read(&path).expect("read"), b"new");
+        drop(reader);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x100;
+            let attributes = std::fs::metadata(&path)
+                .expect("metadata")
+                .file_attributes();
+            assert_eq!(
+                attributes & FILE_ATTRIBUTE_TEMPORARY,
+                0,
+                "kept as a temporary file"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_atomic_write_leaves_no_temporary_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("taken");
+        std::fs::create_dir(&path).expect("a directory where the file would go");
+        assert!(super::atomic_write(&path, b"new").is_err());
+        let names: Vec<_> = std::fs::read_dir(temp.path())
+            .expect("list")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(names, ["taken"]);
+    }
+
+    /// Windows refuses to replace a read-only file, and an atomic write keeps
+    /// that refusal rather than overriding a user's read-only setting.
+    #[cfg(windows)]
+    #[test]
+    #[allow(clippy::permissions_set_readonly_false)]
+    fn an_atomic_write_leaves_a_read_only_file_as_it_is() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("locked.txt");
+        std::fs::write(&path, b"old").expect("write");
+        let set_readonly = |readonly: bool| {
+            let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
+            permissions.set_readonly(readonly);
+            std::fs::set_permissions(&path, permissions).expect("permissions");
+        };
+        set_readonly(true);
+        let result = super::atomic_write(&path, b"new");
+        let content = std::fs::read(&path).expect("read");
+        let still_readonly = std::fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .readonly();
+        set_readonly(false);
+        assert_eq!(
+            result.expect_err("read-only target").kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(content, b"old");
+        assert!(still_readonly);
+    }
 
     #[test]
     fn python_yaml_loaders_keep_rfc3339_values_as_strings() {

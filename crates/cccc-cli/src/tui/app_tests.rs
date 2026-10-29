@@ -1172,7 +1172,8 @@ fn pending_question_keeps_long_details_scrollable_without_moving_choices() {
         &json!({"v":1, "prompt":"Which direction should we take?", "options":[
             {"label":"A".repeat(80), "consequence":"First consequence"},
             {"label":"B".repeat(80), "consequence":"Second consequence"},
-            {"label":"C".repeat(80), "consequence":"Third consequence"}
+            {"label":"C".repeat(80), "consequence":"Third consequence"},
+            {"label":"D".repeat(80), "consequence":"Fourth consequence"}
         ], "recommended":{"option_id":"B", "reason":"Recommendation reason"}}),
         "Background for the decision",
     )
@@ -1198,6 +1199,7 @@ fn pending_question_keeps_long_details_scrollable_without_moving_choices() {
         assert!(screen.contains("A. AAAAA"));
         assert!(screen.contains("B. (recommended) BBBBB"));
         assert!(screen.contains("C. CCCCC"));
+        assert!(screen.contains("D. DDDDD"));
         assert!(screen.contains("Other (type answer)"));
         assert!(screen.contains("Send answer"));
         assert!(!screen.contains("Reply with"));
@@ -1210,6 +1212,7 @@ fn pending_question_keeps_long_details_scrollable_without_moving_choices() {
         "First consequence",
         "Second consequence",
         "Third consequence",
+        "Fourth consequence",
         "Recommendation reason",
     ] {
         assert!(pages.contains(text), "missing {text:?}");
@@ -1236,7 +1239,7 @@ fn pending_question_keeps_long_details_scrollable_without_moving_choices() {
         !screen.contains("Reply with"),
         "closed questions have no answer prompt"
     );
-    assert!(screen.contains("Third consequence"));
+    assert!(screen.contains("Fourth consequence"));
 }
 
 #[test]

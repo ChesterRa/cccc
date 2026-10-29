@@ -70,6 +70,11 @@ const WebModelConnectorsTab = lazy(() =>
 const DeveloperTab = lazy(() =>
   import("./modals/settings/DeveloperTab").then((module) => ({ default: module.DeveloperTab })),
 );
+const NotificationsTab = lazy(() =>
+  import("./modals/settings/NotificationsTab").then((module) => ({
+    default: module.NotificationsTab,
+  })),
+);
 
 interface SettingsModalProps {
   codexVoice: import("../features/codexVoice/useCodexVoiceShell").CodexVoiceShellState;
@@ -82,6 +87,7 @@ interface SettingsModalProps {
   isDark: boolean;
   groupId?: string;
   groupDoc?: GroupDoc | null;
+  notificationsAllowed?: boolean;
 }
 
 function SettingsTabFallback() {
@@ -103,6 +109,7 @@ export function SettingsModal({
   isDark,
   groupId,
   groupDoc,
+  notificationsAllowed = false,
 }: SettingsModalProps) {
   const { t } = useTranslation("settings");
   const [voiceSection, setVoiceSection] = useState<"secretary" | "realtime">("secretary");
@@ -522,6 +529,9 @@ export function SettingsModal({
       ...(currentBrowserSignedIn && !globalSettingsEnabled
         ? [{ id: "myProfiles" as const, label: t("tabs.myProfiles") }]
         : []),
+      ...(notificationsAllowed && (globalSettingsEnabled || currentBrowserSignedIn)
+        ? [{ id: "notifications" as const, label: t("tabs.notifications") }]
+        : []),
       ...(globalSettingsEnabled
         ? [
             { id: "branding" as const, label: t("tabs.branding") },
@@ -534,7 +544,7 @@ export function SettingsModal({
           ]
         : []),
     ],
-    [globalSettingsEnabled, currentBrowserSignedIn, t],
+    [globalSettingsEnabled, currentBrowserSignedIn, notificationsAllowed, t],
   );
 
   useEffect(() => {
@@ -925,6 +935,8 @@ export function SettingsModal({
                     scope="my"
                   />
                 )}
+
+                {activeTab === "notifications" && notificationsAllowed && <NotificationsTab />}
 
                 {activeTab === "branding" && (
                   <BrandingTab

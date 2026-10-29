@@ -339,8 +339,8 @@ type ReplyQuestionV1 = {
   v: 1
   context?: string          // the sender's text; at most 4000 characters
   prompt: string            // at most 500 characters
-  options?: {               // none (a free answer), or two or three
-    id: "A" | "B" | "C"     // in this order
+  options?: {               // none (a free answer), or two to four
+    id: "A" | "B" | "C" | "D" // in this order
     label: string           // one line, at most 80 characters
     consequence?: string    // one line, at most 240 characters
   }[]

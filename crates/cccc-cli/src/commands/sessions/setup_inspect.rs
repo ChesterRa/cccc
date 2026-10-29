@@ -235,10 +235,29 @@ mod tests {
             .env("CLAUDE_CONFIG_DIR", temp.path().join("claude"))
             .env("PI_CODING_AGENT_DIR", temp.path().join("pi"))
             .env("XDG_CONFIG_HOME", temp.path().join("config"));
-        let result =
-            cccc_runtime::capture_command(&mut command, None, Duration::from_secs(30), 8192)
-                .await
-                .expect("bounded fixture process");
+        // A process another test spawns while the copy is being written keeps
+        // its write descriptor until that process execs, and starting the copy
+        // in that window fails with ETXTBSY. Retry only a start that provably
+        // did not happen.
+        let mut attempts = 0;
+        let result = loop {
+            match cccc_runtime::capture_command_with_start_evidence(
+                &mut command,
+                None,
+                Duration::from_secs(30),
+                8192,
+            )
+            .await
+            {
+                Err(cccc_runtime::CommandError::NotStarted(error))
+                    if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 50 =>
+                {
+                    attempts += 1;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                result => break result.expect("bounded fixture process"),
+            }
+        };
         assert!(
             result.status.success(),
             "{}",

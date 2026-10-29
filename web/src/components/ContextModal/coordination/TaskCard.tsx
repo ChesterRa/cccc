@@ -4,7 +4,6 @@ import { CSS } from "@dnd-kit/utilities";
 import type { Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
 import {
-  statusTone,
   taskDisplaySummary,
   taskStatus,
   taskTitle,
@@ -24,12 +23,14 @@ interface TaskCardProps {
   selected: boolean;
   onSelectTask: (task: Task) => void;
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
+  onRestoreTask: (task: Task) => void;
 }
 
 function sameTaskRevision(left: Task, right: Task): boolean {
   return (
     left === right ||
     (left.id === right.id &&
+      left.rev === right.rev &&
       left.title === right.title &&
       left.outcome === right.outcome &&
       left.parent_id === right.parent_id &&
@@ -55,14 +56,17 @@ function TaskCardComponent({
   selected,
   onSelectTask,
   onMoveTaskToStatus,
+  onRestoreTask,
 }: TaskCardProps) {
   const status = taskStatus(task);
   const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: `task:${task.id}`,
-    disabled: syncBusy,
-    data: { type: "task", taskId: task.id, status },
-  });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, isDragging } =
+    useDraggable({
+      id: `task:${task.id}`,
+      disabled: syncBusy,
+      data: { type: "task", taskId: task.id, status },
+      attributes: { roleDescription: tr("context.dragRoleDescription", "movable task") },
+    });
   const quickAction =
     status === "planned"
       ? { label: tr("context.start", "Start"), next: "active" as BoardStatus }
@@ -81,7 +85,6 @@ function TaskCardComponent({
       <div
         id={`context-task-${task.id}`}
         data-task-id={task.id}
-        {...attributes}
         onClick={() => onSelectTask(task)}
         className={classNames(
           "min-w-0 w-full cursor-pointer overflow-hidden rounded-2xl border p-3 text-left transition-all",
@@ -93,32 +96,36 @@ function TaskCardComponent({
         )}
       >
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1 text-left">
-            <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+          <button
+            type="button"
+            title={taskTitle(task)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelectTask(task);
+            }}
+            className="min-w-0 flex-1 rounded-sm text-left focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
+          >
+            <span className="line-clamp-2 text-sm font-semibold text-[var(--color-text-primary)] [overflow-wrap:anywhere]">
               {taskTitle(task)}
-            </div>
-            <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>{task.id}</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={classNames(
-                "rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                statusTone(status),
-              )}
-            >
-              {status}
             </span>
-            <button
-              type="button"
-              {...listeners}
-              className="rounded-lg px-2 py-1 text-[11px] glass-btn text-[var(--color-text-secondary)] md:opacity-0 md:group-hover/task:opacity-100"
-              onClick={(event) => event.stopPropagation()}
-              aria-label={tr("context.dragTask", "Drag task")}
-              title={tr("context.dragTask", "Drag task")}
-            >
-              ⋮⋮
-            </button>
-          </div>
+            <span className={classNames("mt-1 block text-xs", ui.mutedTextClass)}>{task.id}</span>
+          </button>
+          <button
+            ref={setActivatorNodeRef}
+            type="button"
+            {...attributes}
+            {...listeners}
+            disabled={syncBusy}
+            className="touch-none rounded-lg px-2 py-1 text-[11px] glass-btn text-[var(--color-text-secondary)] focus:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] md:opacity-0 md:group-hover/task:opacity-100"
+            onClick={(event) => event.stopPropagation()}
+            aria-label={tr("context.dragTaskNamed", "Move {{id}}: {{title}}", {
+              id: task.id,
+              title: taskTitle(task),
+            })}
+            title={tr("context.dragTask", "Drag task")}
+          >
+            <span aria-hidden="true">⋮⋮</span>
+          </button>
         </div>
 
         {taskDisplaySummary(task) ? (
@@ -129,24 +136,17 @@ function TaskCardComponent({
 
         <TaskCardBadges task={task} tr={tr} subtasks={subtasks} />
 
-        <div
-          className="mt-3 flex items-center gap-2 border-t pt-3"
-          onClick={(event) => event.stopPropagation()}
-        >
+        <div className="mt-2 flex items-center" onClick={(event) => event.stopPropagation()}>
           <button
             type="button"
-            onClick={() => onMoveTaskToStatus(task, quickAction.next)}
+            onClick={() => {
+              if (status === "archived") onRestoreTask(task);
+              else onMoveTaskToStatus(task, quickAction.next);
+            }}
             disabled={syncBusy}
-            className={ui.buttonSecondaryClass}
+            className="rounded-md border border-[var(--glass-border-subtle)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] disabled:opacity-50"
           >
             {quickAction.label}
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelectTask(task)}
-            className={ui.buttonSecondaryClass}
-          >
-            {tr("context.edit", "Edit")}
           </button>
         </div>
       </div>
@@ -164,6 +164,7 @@ export const TaskCard = memo(TaskCardComponent, (previous, next) => {
     previous.syncBusy === next.syncBusy &&
     previous.selected === next.selected &&
     previous.onSelectTask === next.onSelectTask &&
-    previous.onMoveTaskToStatus === next.onMoveTaskToStatus
+    previous.onMoveTaskToStatus === next.onMoveTaskToStatus &&
+    previous.onRestoreTask === next.onRestoreTask
   );
 });

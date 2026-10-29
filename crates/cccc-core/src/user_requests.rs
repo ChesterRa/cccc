@@ -60,7 +60,9 @@ pub fn addresses_user(by: &str, data: &Map<String, Value>) -> bool {
             })
 }
 
-fn is_request(event: &Event) -> bool {
+/// Whether a message is a reply request to the user: a message that
+/// [`targets_user`] and asks for a reply.
+pub fn is_request(event: &Event) -> bool {
     targets_user(event)
         && event.data.get("message_mode").and_then(Value::as_str) == Some("request_reply")
 }
@@ -68,7 +70,7 @@ fn is_request(event: &Event) -> bool {
 /// The request a ledger event closes for the user, if any. Only a reply the
 /// user wrote, or a cancellation, closes it; the first one after the request
 /// is terminal.
-fn closes(event: &Event) -> Option<&str> {
+pub fn closes(event: &Event) -> Option<&str> {
     match event.kind.as_str() {
         "chat.message" if event.by == "user" => event.data.get("reply_to"),
         "chat.reply_request.cancelled" => event.data.get("source_event_id"),

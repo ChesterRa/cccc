@@ -1,6 +1,9 @@
 {
-  "expandQuotedMessage": "引用を展開",
-  "collapseQuotedMessage": "引用を折りたたむ",
+  "notifications": {
+    "groupNotFound": "グループが見つかりません：{{groupId}}",
+    "groupsUnavailable": "グループを読み込めませんでした。通知をもう一度開いてください。",
+    "groupsUnavailableForLink": "グループを読み込めなかったため、リンクを開けませんでした。もう一度お試しください。"
+  },
   "messageActions": "その他",
   "voiceFolderEmpty": "このフォルダーにはドキュメントがありません",
   "voiceFolderSave": "保存",
@@ -771,8 +774,8 @@
   "workspaceEmptyHint": "ワークスペースにファイルを追加してから、更新してください。",
   "workspaceEmptyFilteredHint": "Git の除外ルールで非表示になっている可能性があります。",
   "workspaceUnsaved": {
-    "title": "未保存のファイル変更を破棄しますか",
-    "description": "ファイルの変更は保存されていません。このまま保存するか、変更を破棄して移動できます。",
+    "title": "未保存の変更を破棄しますか",
+    "description": "変更は保存されていません。このまま保存するか、変更を破棄して移動できます。",
     "stay": "ここに留まる",
     "discard": "破棄して移動"
   },

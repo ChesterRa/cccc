@@ -64,8 +64,9 @@ it("keeps orientation and warnings visible while the summary opens on demand", (
   render();
   expect(host.textContent).toContain("Ship the maintenance release");
   expect(host.textContent).toContain("Review the layout");
-  expect(host.textContent).toContain("Blocked");
-  expect(host.textContent).toContain("Waiting user");
+  // Task counts and filters are presented on the board instead of duplicated here.
+  expect(host.textContent).not.toContain("Blocked");
+  expect(host.textContent).not.toContain("Waiting user");
   expect(host.textContent).toContain("Summary needs refresh");
   expect(host.textContent).toContain("Updated");
   expect(button("Working summary").getAttribute("aria-expanded")).toBe("false");

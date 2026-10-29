@@ -24,7 +24,7 @@ export function parseQuestion(value: unknown): StructuredQuestion | null {
     return null;
   // The canonical v1 serializer omits the empty options array for a text-only question.
   const values: unknown[] = input.options === undefined ? [] : (input.options as unknown[]);
-  if (![0, 2, 3].includes(values.length)) return null;
+  if (![0, 2, 3, 4].includes(values.length)) return null;
   const options = [];
   for (const [index, value] of values.entries()) {
     const option = record(value);

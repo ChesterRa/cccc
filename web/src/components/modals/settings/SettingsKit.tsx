@@ -4,6 +4,7 @@
 import { useId, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { classNames } from "../../../utils/classNames";
+import { Switch } from "../../ui/switch";
 import { formatDuration } from "./automationUtils";
 import { primaryButtonClass } from "./types";
 
@@ -176,22 +177,13 @@ export function SettingsSwitch({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      role="switch"
+    <Switch
+      checked={checked}
       aria-checked={checked}
       aria-labelledby={labelledBy}
       disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={classNames(
-        "inline-flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)] disabled:opacity-50",
-        checked
-          ? "justify-end bg-[var(--color-text-primary)]"
-          : "justify-start bg-[var(--glass-border-subtle)]",
-      )}
-    >
-      <span className="size-5 rounded-full bg-white shadow-sm" />
-    </button>
+      onChange={(event) => onChange(event.currentTarget.checked)}
+    />
   );
 }
 

@@ -405,11 +405,15 @@ export function normalizeApiResponse<T>(data: unknown): ApiResponse<T> {
 export function normalizeChecklistItem(value: unknown, index: number): TaskChecklistItem | null {
   const record = asRecord(value);
   if (!record) return null;
-  const text = asString(record.text).trim();
-  if (!text) return null;
-  const id = asString(record.id).trim() || `item-${index + 1}`;
-  const status = asString(record.status).trim() || "pending";
+  const text = asString(record.text);
+  if (!text.trim()) return null;
+  const id = asString(record.id) || `item-${index + 1}`;
+  const status = record.status == null ? record.status : asString(record.status);
   return { id, text, status };
+}
+
+export function isTaskRevision(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 export function normalizeTask(value: unknown): Task | null {
@@ -420,14 +424,28 @@ export function normalizeTask(value: unknown): Task | null {
 
   const title = asString(record.title).trim() || id;
   const outcome = asString(record.outcome);
-  const checklist = Array.isArray(record.checklist)
-    ? record.checklist
-        .map((item, index) => normalizeChecklistItem(item, index))
-        .filter((item): item is TaskChecklistItem => !!item)
-    : [];
+  const rawChecklist = Array.isArray(record.checklist) ? record.checklist : [];
+  const checklistIds = new Set(
+    rawChecklist.map((item) => asString(asRecord(item)?.id)).filter(Boolean),
+  );
+  let nextChecklistId = 1;
+  const checklist = rawChecklist
+    .map((item, index) => {
+      const normalized = normalizeChecklistItem(item, index);
+      if (!normalized) return null;
+      if (!asString(asRecord(item)?.id)) {
+        while (checklistIds.has(`item-${nextChecklistId}`)) nextChecklistId += 1;
+        normalized.id = `item-${nextChecklistId}`;
+        checklistIds.add(normalized.id);
+        nextChecklistId += 1;
+      }
+      return normalized;
+    })
+    .filter((item): item is TaskChecklistItem => !!item);
 
   return {
     id,
+    rev: isTaskRevision(record.rev) ? record.rev : undefined,
     title,
     outcome,
     status: asString(record.status).trim() || undefined,

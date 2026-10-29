@@ -231,7 +231,7 @@
         },
         "question": {
           "type": "object",
-          "description": "Ask the user for a decision or information, answered in place. Only with mode=request_reply and to=\"user\" alone, in a new message (not a reply). Ask only for what you cannot responsibly supply yourself: the user's authority or judgment (a change of scope, an irreversible or outward action, spending money or credits, a product preference with a real tradeoff, or conflicting instructions) or information only the user has; otherwise decide and report. For a choice, offer 2-3 mutually exclusive, actionable options, each with its consequence, and recommend one with a reason when you know enough; the user can always answer in their own words instead. Omit options for a value only the user knows (a path, a number, a clarification). Never ask for secrets. text becomes the question's context (at most 4000 characters). Limits count characters. Keep working on what does not depend on the answer, and withdraw a question that is no longer needed with cccc_reply_request_cancel.",
+          "description": "Ask the user for a decision or information, answered in place. Only with mode=request_reply and to=\"user\" alone, in a new message (not a reply). Ask only for what you cannot responsibly supply yourself: the user's authority or judgment (a change of scope, an irreversible or outward action, spending money or credits, a product preference with a real tradeoff, or conflicting instructions) or information only the user has; otherwise decide and report. For a choice, offer 2-4 mutually exclusive, actionable options, each with its consequence, and recommend one with a reason when you know enough; the user can always answer in their own words instead. Omit options for a value only the user knows (a path, a number, a clarification). Never ask for secrets. text becomes the question's context (at most 4000 characters). Limits count characters. Keep working on what does not depend on the answer, and withdraw a question that is no longer needed with cccc_reply_request_cancel.",
           "properties": {
             "v": {
               "type": "integer",
@@ -246,8 +246,8 @@
             },
             "options": {
               "type": "array",
-              "maxItems": 3,
-              "description": "None for a free answer, otherwise 2-3. They are labelled A, B, C in this order.",
+              "maxItems": 4,
+              "description": "None for a free answer, otherwise 2-4. They are labelled A, B, C, D in this order.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -276,7 +276,8 @@
                   "enum": [
                     "A",
                     "B",
-                    "C"
+                    "C",
+                    "D"
                   ]
                 },
                 "reason": {

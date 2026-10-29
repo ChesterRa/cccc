@@ -85,30 +85,39 @@ describe("MessageReferenceSections", () => {
     expect(onOpenPresentationRef).toHaveBeenCalledWith(presentationRef, event);
     expect(onOpenTaskRef).toHaveBeenCalledWith(taskRef, event);
   });
-  it("expands a quote without navigating and preserves the separate source jump", async () => {
+  it("opens the replied message from the quote itself", async () => {
     const onOpenReplyTarget = vi.fn();
+    const onBubbleClick = vi.fn();
     const text = "Quoted context\n".repeat(20);
     await act(async () =>
       root.render(
-        <MessageReplyQuote
-          text={text}
-          replyToEventId="source-event"
-          onOpenReplyTarget={onOpenReplyTarget}
-        />,
+        <div onClick={onBubbleClick}>
+          <MessageReplyQuote
+            text={text}
+            replyToEventId="source-event"
+            onOpenReplyTarget={onOpenReplyTarget}
+          />
+        </div>,
       ),
     );
-    const toggle = host.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
-    expect(document.getElementById(toggle.getAttribute("aria-controls")!)?.textContent).toBe(text);
-    expect(toggle.textContent).toBe(text);
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    await act(async () => toggle.click());
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(onOpenReplyTarget).not.toHaveBeenCalled();
-    await act(async () =>
-      host.querySelector<HTMLButtonElement>('button[aria-label="jumpToRepliedMessage"]')!.click(),
-    );
-    expect(onOpenReplyTarget).toHaveBeenCalledWith("source-event");
-    await act(async () => toggle.click());
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const buttons = host.querySelectorAll<HTMLButtonElement>("button");
+    expect(buttons).toHaveLength(1);
+    const quote = buttons[0];
+    expect(quote.textContent).toBe(`jumpToRepliedMessage: ${text}`);
+    expect(quote.getAttribute("title")).toBe("jumpToRepliedMessage");
+    // The replied message holds the rest.
+    expect(quote.querySelector(".line-clamp-2")).not.toBeNull();
+    await act(async () => quote.click());
+    expect(onOpenReplyTarget).toHaveBeenCalledExactlyOnceWith("source-event");
+    expect(onBubbleClick).not.toHaveBeenCalled();
+  });
+
+  it("shows all of a quote without a known source as plain text", async () => {
+    await act(async () => root.render(<MessageReplyQuote text="Quoted context" />));
+    expect(host.querySelector("button")).toBeNull();
+    const quote = host.querySelector("[data-message-quote]");
+    expect(quote?.textContent).toBe("Quoted context");
+    // Nothing else leads to the rest of it, so none of it is cut off.
+    expect(quote?.querySelector(".line-clamp-2")).toBeNull();
   });
 });

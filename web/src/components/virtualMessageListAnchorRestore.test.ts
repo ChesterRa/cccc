@@ -20,6 +20,14 @@ describe("virtual message anchor offset", () => {
     expect(offsetPx).toBe(120);
     expect(getScrollOffsetForMessageAnchor(520, offsetPx)).toBe(640);
   });
+
+  it.each([0, 93])("places the pending row below a %ipx top overlay", (topInset) => {
+    const itemStart = 1_000;
+    const desiredTop = topInset + 8;
+    const offset = getMessageAnchorOffset(0, desiredTop);
+    const restoredScrollTop = getScrollOffsetForMessageAnchor(itemStart, offset);
+    expect(itemStart - restoredScrollTop).toBe(desiredTop);
+  });
 });
 
 describe("initial virtual message anchor correction", () => {

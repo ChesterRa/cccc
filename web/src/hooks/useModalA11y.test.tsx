@@ -125,6 +125,74 @@ it("honors an initial field and lets a nested popup consume Escape before the mo
   await act(async () => root.unmount());
 });
 
+it("returns focus to the opener after a nested dialog changes its initial field", async () => {
+  // Frames run after effects, as in a browser, so focus lost to a removed
+  // control is seen by an effect that runs again.
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.set(++nextFrame, callback);
+    return nextFrame;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+  const flushFrames = () => {
+    for (const [frame, callback] of [...frames]) {
+      frames.delete(frame);
+      callback(0);
+    }
+  };
+  let setEditorOpen: (open: boolean) => void = () => {};
+  function Editor({ open }: { open: boolean }) {
+    const [creating, setCreating] = useState(false);
+    const title = useRef<HTMLInputElement>(null);
+    const { modalRef } = useModalA11y(open, () => {}, {
+      initialFocusRef: creating ? title : undefined,
+    });
+    if (!open) return null;
+    return (
+      <div ref={modalRef}>
+        {creating ? (
+          <input ref={title} aria-label="title" />
+        ) : (
+          <button onClick={() => setCreating(true)}>Add subtask</button>
+        )}
+      </div>
+    );
+  }
+  function Board() {
+    const [open, setOpen] = useState(false);
+    setEditorOpen = setOpen;
+    const { modalRef } = useModalA11y(true, () => {});
+    return (
+      <div ref={modalRef}>
+        <button>Close board</button>
+        <button id="card" onClick={() => setOpen(true)}>
+          Card
+        </button>
+        <Editor open={open} />
+      </div>
+    );
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<Board />));
+  flushFrames();
+  const card = host.querySelector<HTMLButtonElement>("#card")!;
+  card.focus();
+  await act(async () => card.click());
+  flushFrames();
+  const add = [...host.querySelectorAll("button")].find((b) => b.textContent === "Add subtask")!;
+  expect(document.activeElement).toBe(add);
+  await act(async () => add.click());
+  flushFrames();
+  expect(document.activeElement).toBe(host.querySelector('input[aria-label="title"]'));
+  await act(async () => setEditorOpen(false));
+  flushFrames();
+  expect(document.activeElement).toBe(card);
+  await act(async () => root.unmount());
+});
+
 it("leaves focus inside a portaled child dialog and restores the parent trigger after Escape", async () => {
   const close = vi.fn();
   function NestedFixture() {

@@ -1,6 +1,9 @@
 {
-  "expandQuotedMessage": "Expand quote",
-  "collapseQuotedMessage": "Collapse quote",
+  "notifications": {
+    "groupNotFound": "Group not found: {{groupId}}",
+    "groupsUnavailable": "Could not load groups. Please open the notification again.",
+    "groupsUnavailableForLink": "Could not load groups to open this link. Please try again."
+  },
   "messageActions": "More",
   "voiceFolderEmpty": "No documents in this folder",
   "voiceFolderSave": "Save",
@@ -771,8 +774,8 @@
   "workspaceEmptyHint": "Add files to this workspace, then refresh.",
   "workspaceEmptyFilteredHint": "Files may be hidden by Git ignore rules.",
   "workspaceUnsaved": {
-    "title": "Leave unsaved file edits?",
-    "description": "Your file edits have not been saved. Stay to save them, or discard them and continue.",
+    "title": "Leave unsaved edits?",
+    "description": "Your edits have not been saved. Stay to save them, or discard them and continue.",
     "stay": "Stay here",
     "discard": "Discard and continue"
   },

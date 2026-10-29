@@ -147,7 +147,7 @@ export function PendingReplyCard({
                   }
                   className="mt-1 h-4 w-4 shrink-0 accent-[var(--primary)]"
                 />
-                <span className="min-w-0 text-sm text-[var(--color-text-primary)]">
+                <span className="min-w-0 break-words text-sm text-[var(--color-text-primary)]">
                   <span className="font-semibold">
                     {String.fromCharCode(65 + index)}. {option.label}
                   </span>

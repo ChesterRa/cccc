@@ -16,6 +16,8 @@ import type { ChatWindowState, GroupChatBucket, ObligationStatusPatch } from "./
 
 export interface GroupState {
   groups: GroupMeta[];
+  /** A Group list has been loaded, possibly an empty one. */
+  groupsLoaded: boolean;
   groupOrder: string[];
   archivedGroupIds: string[];
   selectedGroupId: string;

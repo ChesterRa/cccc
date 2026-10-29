@@ -90,6 +90,18 @@ describe("pending user reply projection", () => {
     expect(
       parseQuestion({ ...question, recommended: { option_id: "C", reason: "No" } }),
     ).toBeNull();
+    const option = (id: string) => ({ id, label: `Option ${id}` });
+    expect(parseQuestion({ ...question, options: [option("A")] })).toBeNull();
+    expect(
+      parseQuestion({
+        ...question,
+        options: ["A", "B", "C", "D"].map(option),
+        recommended: { option_id: "D", reason: "Last" },
+      })?.options.map((item) => item.id),
+    ).toEqual(["A", "B", "C", "D"]);
+    expect(
+      parseQuestion({ ...question, options: ["A", "B", "C", "D", "E"].map(option) }),
+    ).toBeNull();
     expect(parseQuestion({ v: 1, prompt: "Text only", options: [] })).toEqual({
       v: 1,
       prompt: "Text only",

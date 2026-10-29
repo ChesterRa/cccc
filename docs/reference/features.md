@@ -76,7 +76,7 @@ superseded.
 ### Questions to the User
 
 When an agent needs the user's decision, it sends a `request_reply` message to
-`user` with a `question`: a prompt, two or three options with their
+`user` with a `question`: a prompt, two to four options with their
 consequences, and optionally a recommendation with its reason. The user picks
 an option or writes their own answer in place, under the message.
 
@@ -111,6 +111,126 @@ an option or writes their own answer in place, under the message.
   may be out of date is marked as such, one that cannot be confirmed is shown
   as unknown rather than zero, and neither appears in read-only (exhibit)
   mode.
+
+### System Notifications
+
+A browser can subscribe to Web Push notifications in the Web UI's settings.
+While CCCC's Web service runs, it then tries to notify that browser of each
+message an agent sends to the user and of each request waiting for the user's
+answer. A notification can appear with no CCCC page open, and opening one
+tries to show its message. Whether and when a notification appears is up to
+the push service, the browser and the device. Setup steps and what each
+platform needs are in the [Web UI guide](../guide/web-ui.md#system-notifications).
+
+- What is announced follows the Inbox rules: a `chat.message` that names
+  `user` (or `@user`) explicitly, from someone other than the user, and not
+  the source copy of a send to another Group. `@all` does not count.
+- Only what is written after a browser subscribed is announced to it, in the
+  best-effort way described here. Subscribing records the newest event of each
+  Group the signed-in token can see, and only later events are announced;
+  requests already waiting are under Waiting for you.
+- Notifications follow the Web service: nothing is announced while it is
+  stopped, and what was written meanwhile is not announced when it starts.
+- A message is sent once, best effort. A request is sent once too, unless a
+  push service does not take it (busy, unreachable or too slow to answer):
+  then it is offered again with backoff, while the Web service runs and the
+  request is open, up to 10 per browser (older ones are dropped and logged).
+  One that a push service took without confirming in time can arrive twice. A
+  request already answered or withdrawn when it is read is not announced, and
+  one closed, or whose Group was deleted, before its next try is not offered
+  again; one closed just as it is sent can still be announced.
+- Browsers are sent to in parallel, each one's notifications in order, and
+  the next notifications wait until every browser's are sent. A push service
+  that does not answer within 20 seconds, says it is busy, or fails is left
+  out of that browser's notifications until its next try, a minute later and
+  twice as long after each failure in a row, up to 30 minutes: messages
+  meanwhile are not sent to it, and requests wait for that try. Each browser
+  waits on its own push service only. One that answers slowly delays the next
+  notifications for every browser.
+- A push service can replace or expire a browser's subscription. That
+  browser then gets no more notifications, and its settings no longer show
+  them as enabled; enabling notifications again in that browser restores
+  them.
+- Disabling removes the browser's subscription even when the server cannot be
+  told; the server forgets it once the push service refuses the next
+  notification to it. Signing out of a browser in Web Access first asks the
+  server, for up to 3 seconds, to stop notifying that browser for the account
+  signing out. Only that account's subscription is removed: the browser keeps
+  its own, and another account in the same browser profile keeps its
+  notifications. If the server cannot be told, the account's notifications to
+  that browser continue until its subscription is removed there.
+- History is not announced. A Group first seen while the Web service runs is
+  announced from after its import when that is among its newest 128 events;
+  otherwise from its start if it has at most 64 events by then, and from its
+  next event if it has more.
+- A push service is asked to keep a notification for up to a day while the
+  device cannot be reached. It can deliver it late or drop it, and the
+  device's notification settings decide whether it is shown; it is not sent
+  again. Messages stay in the chat, and open requests under Waiting for you.
+- A subscription belongs to the access token the page was signed in with, or
+  to the local administrator on this computer. Before every send, the token is
+  checked again, along with the Groups it may see; a deleted token's
+  subscriptions get nothing more and are removed when the next notification
+  would go to them. Subscribing the same browser again keeps its place; under
+  another token, it moves to that token and starts again.
+- Every notification is a declarative push message (`"web_push": 8030`, W3C
+  Push API) linking to its message. Safari 18.5 or later on macOS, and Home
+  Screen web apps on iOS and iPadOS 18.4 or later, show it themselves and
+  try to open that link when it is opened, loading CCCC at the message. A
+  suspended Home Screen app can come forward without following it; the
+  message is then in its Group's chat (a request also under Waiting for
+  you). Where the link replaces an open CCCC page, as in a Home Screen web
+  app, an unsent draft there is lost.
+- Other browsers hand the same message to CCCC's service worker. Opening the
+  notification then brings an open CCCC page forward and shows the message
+  there, or opens a page at it when none is open; other CCCC pages, such as
+  the Capability Center, are passed over. A page the browser reports as open
+  is not reloaded, so a draft there is kept. A page that wakes from the
+  background still goes to the message if it hears of the click within about
+  ten seconds; an older click arriving after a newer one is ignored. When the
+  page does not answer in time, or the browser does not report its pages in
+  time, the page stays as it is and the message is in its Group's chat (a
+  request also under Waiting for you). A browser that leaves an open page
+  unreported, as older iOS versions can, may open or reload a page.
+- The notification carries the Group's title, the sender and up to 140
+  characters of the question's prompt or the message text, which a locked
+  screen may show. Payloads are encrypted for the browser (RFC 8291) and signed
+  with a VAPID key (RFC 8292) that the Web service makes the first time a
+  browser subscribes.
+- The key and the subscriptions are kept in `CCCC_HOME/web_push.json`, created
+  with owner-only permissions on Unix; on Windows it is as private as the
+  permissions of `CCCC_HOME`. An endpoint is the capability to notify one
+  browser, so the API reports it only as a SHA-256 hash and logs never show
+  it. An owner keeps at most 16 subscriptions; binding a 17th removes the one
+  bound longest ago.
+- Only Google, Mozilla, Apple and Microsoft push service hosts are accepted
+  (for Google, also the endpoint that Chrome Beta, Dev and Canary use),
+  over HTTPS on port 443 with the certificate checked and redirects refused.
+  Requests follow the system proxy settings; the address a host name resolves
+  to is not checked.
+- If two Web processes run for one `CCCC_HOME`, only one sends; the other
+  takes over within a minute after it stops, and as after a restart, what was
+  written in between is not announced. Exhibit (read-only) mode neither shows
+  these settings nor sends.
+- While `web_push.json` cannot be read nothing is sent, and the log says so;
+  what is written meanwhile, or just after it can be read again, may not be
+  announced. A Group whose ledger cannot be read when notifications first find
+  it may miss notifications for what is written to it before it can be
+  followed. A subscription whose stored page origin is invalid or not in
+  canonical form is neither sent to nor shown as enabled, and the log says
+  so; enabling notifications again in that browser repairs it.
+- Web API: `GET /api/v1/push/config` (the public key, or `null` before one is
+  made; the hashes of the caller's subscriptions; and `sender`: `here`,
+  `elsewhere` for another Web process, `starting`, or `unavailable` when
+  nothing can send from this process), `POST /api/v1/push/key` (makes the key
+  once), `PUT /api/v1/push/subscription` (the browser's `PushSubscription`
+  JSON plus `application_server_key`; refused with `push_sender_unavailable`
+  when nothing can send) and `DELETE /api/v1/push/subscription`
+  (`{"endpoint": …}`, removes only the caller's own subscription). `PUT` needs
+  an `Origin` or `Referer` that matches the request's `Host` (or trusted
+  proxy headers) or an origin in `CCCC_WEB_CORS_ORIGINS`; notification links
+  lead back to it. A client that sets these headers itself chooses the
+  origin its own notifications link to.
 
 ## IM Bridge
 
@@ -339,7 +459,8 @@ CCCC Web supports Copy Groups export/import for durable group copy, migration, a
 - Export creates a zip package with durable CCCC group state: ledger history, actors, context, blobs, memory, assistants, automation, and settings.
 - Workspace repository/project files are not included. Users provide or remap the workspace root during import.
 - System credentials, browser profiles, provider auth, live runtime state, locks, and rebuildable caches are excluded. Copy packages still contain user content such as ledger history, memory, and attachments, so they should be handled as sensitive data.
-- Imported groups start idle with actors stopped. If the packaged group id already exists, import creates a new copy and does not steal the existing workspace default mapping.
+- Imported groups start idle with actors stopped. If the packaged group id already exists, import creates a new copy and does not steal the existing workspace default mapping. An id still registered, as while a Group is being deleted, counts as existing.
+- An import is assembled out of sight and appears complete, with its history and import marker, before anything can be written to it; nothing sent to the new Group is lost to the import. An interrupted import may leave a hidden `.importing-*` directory in `CCCC_HOME/groups`, which can be removed once no import is running. An import that fails after claiming its Group id but before publishing it keeps that id's directory, and its error names it. The import did not publish it, but a process still writing to an earlier Group with that id may have written into it, so check it before deleting it. That id then counts as taken, and importing again makes a new copy. If a complete import cannot be registered, the error names where its data is kept; that Group is whole and may already hold new messages, so do not delete it blindly.
 - Copy Groups replaces the former group-template Web path; durable group features should be carried by Copy Groups unless explicitly blacklisted as unsafe or runtime-only.
 
 ### MCP Management Surface

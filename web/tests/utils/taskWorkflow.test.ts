@@ -3,7 +3,6 @@ import {
   TASK_TYPES,
   evaluateTaskWorkflow,
   getTaskDisplaySummary,
-  getTaskDoneTransitionBlockers,
   getTaskTypeDefinition,
   recommendTaskType,
   resolveTaskType,
@@ -303,65 +302,5 @@ describe("taskWorkflow", () => {
         outcome: "",
       }),
     ).toContain("Tightened parser cache invalidation");
-  });
-
-  it("blocks done transition only when closeout is incomplete for standard or optimization work", () => {
-    expect(
-      getTaskDoneTransitionBlockers({ taskType: "free", parentId: "T001", outcome: "", notes: "" }),
-    ).toEqual([]);
-
-    expect(
-      getTaskDoneTransitionBlockers({
-        taskType: "standard",
-        assignee: "foreman",
-        outcome: "Shipped the panel refresh.",
-        notes: [
-          "Goal:",
-          "- Refresh the panel",
-          "",
-          "Success Criteria:",
-          "- Users can switch reachability modes clearly",
-          "",
-          "Required Evidence:",
-          "- Manual smoke checks",
-          "",
-          "Closeout Verdict:",
-          "- DONE",
-        ].join("\n"),
-      }),
-    ).toEqual(["Verification summary"]);
-
-    expect(
-      getTaskDoneTransitionBlockers({
-        taskType: "optimization",
-        assignee: "peer1",
-        outcome: "Reduced cold-start time from 410 ms to 290 ms.",
-        notes: [
-          "Goal:",
-          "- Reduce cold-start latency",
-          "",
-          "Success Criteria:",
-          "- Median latency drops without regression",
-          "",
-          "Required Evidence:",
-          "- Bench output and smoke checks",
-          "",
-          "Baseline:",
-          "- 410 ms median",
-          "",
-          "Primary Metric:",
-          "- Median cold-start latency",
-          "",
-          "Verifier Boundary:",
-          "- Same browser profile",
-          "",
-          "Closeout Verdict:",
-          "- DONE",
-          "",
-          "Verification Summary:",
-          "- Bench output captured",
-        ].join("\n"),
-      }),
-    ).toEqual(["Attempt decision"]);
   });
 });

@@ -120,3 +120,67 @@ fn copy_rejects_zip_path_traversal() {
     let bytes = writer.finish().expect("zip").into_inner();
     assert!(group_copy::preview(&store, &bytes).is_err());
 }
+
+#[test]
+fn import_treats_a_registered_group_being_deleted_as_an_id_conflict() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("deleting", "").expect("group");
+    let (package, _, _) = group_copy::export(&store, &group.group_id).expect("export");
+    // Deletion renames the directory before unregistering the Group.
+    let tombstone = home
+        .groups_dir()
+        .join(format!(".{}.deleting-test", group.group_id));
+    std::fs::rename(store.group_dir(&group.group_id).expect("path"), &tombstone)
+        .expect("simulate deletion window");
+
+    assert!(
+        group_copy::preview(&store, &package)
+            .expect("preview")
+            .group_id_conflict
+    );
+    let imported = group_copy::import(&store, &package, "", "").expect("import");
+    assert!(imported.group_id_conflict);
+    assert_ne!(imported.group_id, group.group_id);
+    assert!(tombstone.is_dir());
+    let registered = store.list().expect("registry");
+    assert!(
+        registered
+            .iter()
+            .any(|meta| meta.group_id == group.group_id)
+    );
+    assert!(
+        registered
+            .iter()
+            .any(|meta| meta.group_id == imported.group_id)
+    );
+}
+
+#[test]
+fn import_chooses_a_new_id_when_an_unpublished_directory_is_retained() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_home = HomeLayout::from_path(temp.path().join("source")).expect("source home");
+    let source_store = GroupStore::new(source_home).expect("source store");
+    let source = source_store.create("source", "").expect("source group");
+    let (package, _, _) = group_copy::export(&source_store, &source.group_id).expect("export");
+
+    let target_home = HomeLayout::from_path(temp.path().join("target")).expect("target home");
+    let target = GroupStore::new(target_home).expect("target store");
+    let retained = target.group_dir(&source.group_id).expect("retained path");
+    std::fs::create_dir_all(retained.join("state")).expect("retained directory");
+    std::fs::write(retained.join("state/external.txt"), b"concurrent write").expect("old write");
+    assert!(
+        group_copy::preview(&target, &package)
+            .expect("preview")
+            .group_id_conflict
+    );
+    let imported = group_copy::import(&target, &package, "", "").expect("import with new id");
+    assert!(imported.group_id_conflict);
+    assert_ne!(imported.group_id, source.group_id);
+    assert_eq!(
+        std::fs::read(retained.join("state/external.txt")).expect("old write retained"),
+        b"concurrent write"
+    );
+    assert!(target.load(&imported.group_id).is_ok());
+}

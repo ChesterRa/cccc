@@ -78,6 +78,7 @@ export default function App({
 
   // Zustand stores
   const groups = useGroupStore((state) => state.groups);
+  const groupsLoaded = useGroupStore((state) => state.groupsLoaded);
   const archivedGroupIds = useGroupStore((state) => state.archivedGroupIds);
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const groupDoc = useGroupStore((state) => state.groupDoc);
@@ -90,6 +91,8 @@ export default function App({
     (state) => state.selectedGroupActorStatusProvisional,
   );
   const setSelectedGroupId = useGroupStore((state) => state.setSelectedGroupId);
+  const setGroups = useGroupStore((state) => state.setGroups);
+  const getGroupsSnapshot = useCallback(() => useGroupStore.getState().groups, []);
   const refreshGroups = useGroupStore((state) => state.refreshGroups);
   const refreshActors = useGroupStore((state) => state.refreshActors);
   const refreshInternalRuntimeActors = useGroupStore((state) => state.refreshInternalRuntimeActors);
@@ -326,6 +329,9 @@ export default function App({
 
   const { parseUrlDeepLink, openMessageWindow } = useDeepLink({
     groups,
+    groupsLoaded,
+    setGroups,
+    getGroupsSnapshot,
     selectedGroupId,
     setSelectedGroupId,
     setActiveTab,
@@ -545,6 +551,7 @@ export default function App({
             theme={theme}
             textScale={textScale}
             readOnly={webReadOnly}
+            notificationsAllowed={webModeKnown && !webReadOnly && !connectEmbedded}
             ccccHome={ccccHome}
             composerRef={composerRef}
             onStartReply={startReply}

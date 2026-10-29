@@ -516,8 +516,3 @@ export function evaluateTaskWorkflow(fields: TaskWorkflowFields): TaskWorkflowCo
     goalSummary,
   };
 }
-
-export function getTaskDoneTransitionBlockers(fields: TaskWorkflowFields): string[] {
-  const coverage = evaluateTaskWorkflow({ ...fields, status: "done" });
-  return coverage.needsCloseout ? coverage.missingCloseout : [];
-}

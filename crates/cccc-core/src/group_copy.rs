@@ -10,7 +10,7 @@ use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::fs::{atomic_write, write_yaml};
+use crate::fs::atomic_write;
 use crate::{GroupDoc, GroupStore, Registry, Scope, scope};
 
 const KIND: &str = "cccc.group_copy";
@@ -178,7 +178,9 @@ pub fn import(
     let _operation = operation_guard();
     let package = read_package(bytes)?;
     let source_group_id = package.group.group_id.clone();
-    let conflict = store.group_dir(&source_group_id)?.exists();
+    let registry = Registry::load(store.home())?;
+    let conflict = store.group_dir(&source_group_id)?.exists()
+        || registry.groups.contains_key(&source_group_id);
     let final_group_id = if conflict {
         format!("g_{}", &Uuid::new_v4().simple().to_string()[..12])
     } else {
@@ -201,7 +203,7 @@ pub fn import(
         }
         let mut detected = scope::detect(&root)?;
         if conflict
-            || Registry::load(store.home())?
+            || registry
                 .defaults
                 .get(&detected.scope_key)
                 .is_some_and(|owner| owner != &final_group_id)
@@ -220,27 +222,8 @@ pub fn import(
         }
     }
     sanitize_import_profiles(store, &mut group)?;
-    let imported = store.import(group.clone())?;
-    let target = store.group_dir(&final_group_id)?;
-    let result = (|| {
-        for (relative, data) in package.files {
-            if relative == "group.yaml" || excluded(&relative, false) {
-                continue;
-            }
-            let path = target.join(safe_relative(&relative)?);
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            atomic_write(&path, &data)?;
-        }
-        rewrite_ledger(
-            &target.join("ledger.jsonl"),
-            &source_group_id,
-            &final_group_id,
-            &old_scope,
-            &imported.active_scope_key,
-        )?;
-        write_yaml(&target.join("group.yaml"), &imported)?;
+    let mut files = package.files;
+    let imported = store.import_prepared(group, |target, imported| {
         let mut event = Event::new("group.create", &final_group_id);
         event.by = "system".into();
         event
@@ -250,34 +233,43 @@ pub fn import(
             .data
             .insert("source_group_id".into(), source_group_id.clone().into());
         event.data.insert("imported".into(), true.into());
-        crate::ledger::append(&target.join("ledger.jsonl"), &event)?;
-        Ok(ImportResult {
-            group_id: final_group_id.clone(),
-            source_group_id,
-            group_id_conflict: conflict,
-            workspace_root: active_workspace(&imported),
-            active_scope_key: imported.active_scope_key,
-        })
-    })();
-    rollback_import(result, &final_group_id, || {
-        store.delete(&final_group_id).map(|_| ())
+        // The marker follows the copied history and precedes any future append.
+        // The staged Group is not visible while this ledger is constructed.
+        let mut ledger = match files.remove("ledger.jsonl") {
+            Some(history) => rewritten_ledger(
+                history,
+                &source_group_id,
+                &final_group_id,
+                &old_scope,
+                &imported.active_scope_key,
+            )?,
+            None => Vec::new(),
+        };
+        if ledger.last().is_some_and(|last| *last != b'\n') {
+            ledger.push(b'\n');
+        }
+        ledger.extend(serde_json::to_vec(&event).map_err(io::Error::other)?);
+        ledger.push(b'\n');
+        atomic_write(&target.join("ledger.jsonl"), &ledger)?;
+        for (relative, data) in files {
+            if relative == "group.yaml" || excluded(&relative, false) {
+                continue;
+            }
+            let path = target.join(safe_relative(&relative)?);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            atomic_write(&path, &data)?;
+        }
+        Ok(())
+    })?;
+    Ok(ImportResult {
+        group_id: final_group_id,
+        source_group_id,
+        group_id_conflict: conflict,
+        workspace_root: active_workspace(&imported),
+        active_scope_key: imported.active_scope_key,
     })
-}
-
-fn rollback_import<T>(
-    result: io::Result<T>,
-    group_id: &str,
-    rollback: impl FnOnce() -> io::Result<()>,
-) -> io::Result<T> {
-    let Err(error) = result else {
-        return result;
-    };
-    match rollback() {
-        Ok(()) => Err(error),
-        Err(rollback) => Err(io::Error::other(format!(
-            "{error}; rollback_failed: could not remove imported group {group_id}: {rollback}"
-        ))),
-    }
 }
 
 fn operation_guard() -> MutexGuard<'static, ()> {
@@ -340,6 +332,12 @@ fn read_package(bytes: &[u8]) -> io::Result<Package> {
         if name == "manifest.json" {
             manifest = Some(serde_json::from_slice::<Manifest>(&data).map_err(io::Error::other)?);
         } else if let Some(relative) = name.strip_prefix("group/") {
+            if ["ledger.jsonl", "group.yaml"]
+                .iter()
+                .any(|reserved| relative != *reserved && relative.eq_ignore_ascii_case(reserved))
+            {
+                return Err(io::Error::other("noncanonical reserved group copy entry"));
+            }
             files.insert(relative.into(), data);
         }
     }
@@ -422,7 +420,8 @@ fn preview_package(
         actors,
         source_workspace_root: workspace.clone(),
         workspace_root_exists: Path::new(&workspace).exists(),
-        group_id_conflict: store.group_dir(&group.group_id)?.exists(),
+        group_id_conflict: store.group_dir(&group.group_id)?.exists()
+            || registry.groups.contains_key(&group.group_id),
         target_default_scope_conflict: registry
             .defaults
             .get(&group.active_scope_key)
@@ -605,17 +604,17 @@ fn replace_active_scope(group: &mut GroupDoc, scope: Scope, old_key: &str) {
     }
 }
 
-fn rewrite_ledger(
-    path: &Path,
+fn rewritten_ledger(
+    history: Vec<u8>,
     old_group: &str,
     new_group: &str,
     old_scope: &str,
     new_scope: &str,
-) -> io::Result<()> {
-    if !path.exists() || old_group == new_group && old_scope == new_scope {
-        return Ok(());
+) -> io::Result<Vec<u8>> {
+    if old_group == new_group && old_scope == new_scope {
+        return Ok(history);
     }
-    let raw = fs::read_to_string(path)?;
+    let raw = String::from_utf8(history).map_err(io::Error::other)?;
     let mut output = String::new();
     for line in raw.lines() {
         let Ok(mut value) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -634,7 +633,7 @@ fn rewrite_ledger(
         output.push_str(&serde_json::to_string(&value).map_err(io::Error::other)?);
         output.push('\n');
     }
-    atomic_write(path, output.as_bytes())
+    Ok(output.into_bytes())
 }
 
 fn safe_zip_name(name: &str) -> io::Result<String> {
@@ -748,6 +747,46 @@ mod tests {
     use std::fs::File;
 
     #[test]
+    fn copy_rejects_case_variants_of_reserved_root_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("copy", "").expect("group");
+        let (bytes, _, _) = export(&store, &group.group_id).expect("export");
+        for (canonical, variant) in [
+            ("ledger.jsonl", "Ledger.jsonl"),
+            ("group.yaml", "Group.yaml"),
+        ] {
+            let mut package = read_package(&bytes).expect("package");
+            let content = package.files.remove(canonical).expect("reserved file");
+            package.files.insert(variant.to_owned(), content);
+            package.manifest.content_digest = content_digest(&package.files);
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            let options = SimpleFileOptions::default();
+            writer
+                .start_file("manifest.json", options)
+                .expect("manifest");
+            writer
+                .write_all(&serde_json::to_vec(&package.manifest).expect("manifest json"))
+                .expect("manifest data");
+            for (path, data) in package.files {
+                writer
+                    .start_file(format!("group/{path}"), options)
+                    .expect("entry");
+                writer.write_all(&data).expect("entry data");
+            }
+            let modified = writer.finish().expect("archive").into_inner();
+            let error = read_package(&modified)
+                .err()
+                .expect("noncanonical root name must be rejected");
+            assert!(
+                error.to_string().contains("reserved group copy entry"),
+                "{variant}: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn weixin_reply_credentials_never_cross_group_copy_boundary() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -815,17 +854,6 @@ mod tests {
 
         let error = collect_files(directory.path()).expect_err("oversized export must fail");
         assert!(error.to_string().contains("2 GiB"));
-    }
-
-    #[test]
-    fn rollback_failure_is_explicit() {
-        let error =
-            rollback_import::<()>(Err(io::Error::other("import failed")), "g_import", || {
-                Err(io::Error::other("delete failed"))
-            })
-            .expect_err("rollback failure");
-        assert!(error.to_string().contains("rollback_failed"));
-        assert!(error.to_string().contains("g_import"));
     }
 
     #[test]

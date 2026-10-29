@@ -15,6 +15,8 @@ type MessageTailAutoFollowOptions = {
   shouldAutoScroll: (options: { previousContentSize?: number }) => boolean;
   scheduleScroll: (action: () => void) => void;
   scrollToBottom: () => void;
+  onTailChange?: () => void;
+  onFollowAppend?: (message: LedgerEvent) => void;
 };
 
 export function useMessageTailAutoFollow({
@@ -28,6 +30,8 @@ export function useMessageTailAutoFollow({
   shouldAutoScroll,
   scheduleScroll,
   scrollToBottom,
+  onTailChange,
+  onFollowAppend,
 }: MessageTailAutoFollowOptions) {
   const mutationSignature = useMemo(() => {
     const lastMessage = messages[messages.length - 1];
@@ -65,22 +69,23 @@ export function useMessageTailAutoFollow({
     previousTailRef.current = nextTail;
     previousMutationRef.current = nextMutation;
     previousContentSizeRef.current = getCurrentContentSize();
+    if (previousTail.tailKey !== nextTail.tailKey) onTailChange?.();
     if (
       !didInitialScrollRef.current ||
       isLoadingHistory ||
       !shouldAutoScroll({ previousContentSize })
     )
       return;
-    if (
-      !getAutoFollowTrigger({
-        previousTailSnapshot: previousTail,
-        nextTailSnapshot: nextTail,
-        previousTailMutationSnapshot: previousMutation,
-        nextTailMutationSnapshot: nextMutation,
-      })
-    ) {
+    const trigger = getAutoFollowTrigger({
+      previousTailSnapshot: previousTail,
+      nextTailSnapshot: nextTail,
+      previousTailMutationSnapshot: previousMutation,
+      nextTailMutationSnapshot: nextMutation,
+    });
+    if (!trigger) {
       return;
     }
+    if (trigger === "append" && messages.length) onFollowAppend?.(messages[messages.length - 1]);
     scheduleScroll(() => {
       if (shouldAutoScroll({ previousContentSize })) scrollToBottom();
     });
@@ -90,6 +95,8 @@ export function useMessageTailAutoFollow({
     isLoadingHistory,
     messages,
     mutationSignature,
+    onFollowAppend,
+    onTailChange,
     previousContentSizeRef,
     previousMutationRef,
     previousTailRef,

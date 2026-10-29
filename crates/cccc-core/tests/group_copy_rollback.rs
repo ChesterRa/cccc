@@ -7,7 +7,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 #[test]
-fn failed_import_removes_the_partially_registered_group() {
+fn failed_preparation_leaves_no_published_group_or_temporary_directory() {
     let source = tempfile::tempdir().expect("source");
     let source_home = HomeLayout::from_path(source.path().join("home")).expect("source home");
     let source_store = GroupStore::new(source_home).expect("source store");
@@ -19,7 +19,7 @@ fn failed_import_removes_the_partially_registered_group() {
     let target_home = HomeLayout::from_path(target.path().join("home")).expect("target home");
     let target_store = GroupStore::new(target_home).expect("target store");
     let error = group_copy::import(&target_store, &broken, "", "")
-        .expect_err("conflicting paths must fail after registration");
+        .expect_err("conflicting paths must fail before publication");
 
     assert!(!error.to_string().contains("rollback_failed"));
     assert!(
@@ -34,6 +34,19 @@ fn failed_import_removes_the_partially_registered_group() {
             .group_dir(&group.group_id)
             .expect("target group path")
             .exists()
+    );
+    assert!(
+        target_store
+            .home()
+            .groups_dir()
+            .read_dir()
+            .expect("group entries")
+            .all(|entry| !entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".importing-")),
+        "failed preparation must clean up its temporary directory"
     );
 }
 

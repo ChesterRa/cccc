@@ -36,7 +36,12 @@ export interface UseTaskBoardDataOptions {
 }
 
 export type TaskColumnPages = Record<TaskPageStatus, TaskColumnPage>;
-export type TaskDeleteInfoById = Record<string, TaskDetailResult["deleteInfo"]>;
+/** What a deletion would cover, with the task list version and the task
+ * revision it was read at. */
+export type TaskDeleteInfoById = Record<
+  string,
+  TaskDetailResult["deleteInfo"] & { tasksVersion: string; rev: number | undefined }
+>;
 
 export const EMPTY_TASK_FACETS: TaskPageFacets = {
   statusCounts: {},

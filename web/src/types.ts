@@ -653,6 +653,8 @@ export type TaskChecklistItem = { id: string; text: string; status?: ChecklistSt
 
 export type Task = {
   id: string;
+  /** Daemon-owned revision used to protect edits against concurrent changes. */
+  rev?: number;
   title?: string | null;
   outcome?: string | null;
   parent_id?: string | null;

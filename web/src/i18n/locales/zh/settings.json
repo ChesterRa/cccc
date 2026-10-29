@@ -15,12 +15,48 @@
     "copyGroups": "复制工作组",
     "actorProfiles": "智能体配置库",
     "myProfiles": "我的配置",
+    "notifications": "通知",
     "branding": "品牌",
     "account": "账户",
     "developer": "开发者",
     "webAccess": "Web 访问",
     "webModels": "Web 模型",
     "voice": "语音"
+  },
+  "notifications": {
+    "title": "通知",
+    "description": "页面关闭后也能收到发给你的消息通知。CCCC 的 Web 服务需要保持运行。开启前已有的待答请求不会补发，可在“待你答复”中查看。消息预览可能显示在设备锁屏上。每个浏览器或已安装的应用需要单独开启。iPhone 或 iPad 请先将 CCCC 添加到主屏幕。",
+    "enable": "开启通知",
+    "finish": "完成开启",
+    "disable": "关闭通知",
+    "removeSaved": "移除此浏览器保存的订阅",
+    "removeSavedHelp": "移除此订阅也可能停止同一浏览器配置中其他账户的通知。",
+    "retry": "重试",
+    "ready": "权限已准备好，请点击“完成开启”。",
+    "status": {
+      "checking": "正在检查通知状态…",
+      "enabled": "当前浏览器和账户已开启通知。",
+      "blocked": "通知已被阻止，请在浏览器或设备设置中允许通知。",
+      "disabled": "当前浏览器和账户的通知已关闭。",
+      "unbound": "此浏览器保存了订阅，但未连接到当前账户。在此开启可能会停止此浏览器中其他账户的通知。",
+      "keyMismatch": "此订阅使用了不同或无法验证的服务器密钥。请移除订阅，再重新开启通知。",
+      "senderUnavailable": "通知发送服务正在启动或不可用，请稍后重试，或检查 Web 服务。",
+      "unknown": "无法确认通知状态。",
+      "unsupported": "当前环境无法使用通知。请使用 HTTPS 和支持通知的浏览器；iPhone 或 iPad 请从主屏幕打开 CCCC。"
+    },
+    "error": {
+      "permission": "未获得通知权限，请检查浏览器或设备的通知设置。",
+      "prepare": "无法准备通知，请检查连接后重试。",
+      "subscribe": "无法完成开启，请检查连接或浏览器设置后重试。",
+      "serverUnavailable": "通知服务不可用，请检查连接后重试。",
+      "serviceUnsupported": "当前浏览器的通知服务暂不支持。",
+      "subscriptionInvalid": "浏览器订阅无效，请移除订阅后重新开启通知。",
+      "keyMismatch": "服务器密钥已更改，请移除保存的订阅后重新开启通知。",
+      "verify": "已请求开启，但无法确认状态，请重试。",
+      "disable": "未能完全关闭通知，请检查连接后重试。",
+      "originInvalid": "服务器不接受打开此页面所用的地址。如果 CCCC 在反向代理之后，请转发原始 Host 头，或把这个地址加入 CCCC_WEB_CORS_ORIGINS。",
+      "signedOut": "登录已失效，请重新登录后再开启通知。"
+    }
   },
   "navigation": {
     "targetScope": "目标范围",

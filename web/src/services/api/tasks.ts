@@ -188,7 +188,7 @@ export async function fetchTaskById(
   const params = new URLSearchParams({ task_id: taskId });
   const response = await apiJson<Record<string, unknown>>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/tasks?${params.toString()}`,
-    { signal },
+    { signal, cache: "no-store" },
   );
   if (!response.ok) return response as ApiResponse<TaskDetailResult>;
   const task = normalizeTaskTree(response.result.task);

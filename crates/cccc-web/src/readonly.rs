@@ -87,10 +87,12 @@ fn is_mutating_get(path: &str) -> bool {
             .is_some_and(|session_id| !session_id.is_empty() && !session_id.contains('/'))
 }
 
-/// The user's open reply requests. An exhibit's viewers are spectators, not
-/// the Group's user, so these reads are refused there, not only the answer.
+/// The user's open reply requests and notification subscriptions. An
+/// exhibit's viewers are spectators, not the Group's user, so these reads are
+/// refused there, not only the changes.
 fn is_user_obligation_get(path: &str) -> bool {
     path == "/api/v1/reply-requests/summary"
+        || path == "/api/v1/push/config"
         || path
             .strip_prefix("/api/v1/groups/")
             .and_then(|rest| rest.split_once('/'))

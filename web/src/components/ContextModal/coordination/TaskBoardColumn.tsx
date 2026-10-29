@@ -22,6 +22,7 @@ export function TaskBoardColumn({
   selectedTaskId,
   onSelectTask,
   onMoveTaskToStatus,
+  onRestoreTask,
   onLoadMore,
 }: {
   columnKey: BoardStatus;
@@ -37,6 +38,7 @@ export function TaskBoardColumn({
   selectedTaskId: string;
   onSelectTask: (task: Task) => void;
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
+  onRestoreTask: (task: Task) => void;
   onLoadMore: (status: BoardStatus) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
@@ -49,6 +51,7 @@ export function TaskBoardColumn({
   return (
     <section
       ref={setNodeRef}
+      aria-label={label}
       data-task-column={columnKey}
       data-rendered-task-count={items.length}
       data-total-task-count={totalCount}
@@ -80,6 +83,7 @@ export function TaskBoardColumn({
               selected={selectedTaskId === task.id}
               onSelectTask={onSelectTask}
               onMoveTaskToStatus={onMoveTaskToStatus}
+              onRestoreTask={onRestoreTask}
             />
           ))
         ) : (

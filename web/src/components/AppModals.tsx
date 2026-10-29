@@ -63,6 +63,7 @@ interface AppModalsProps {
   theme: Theme;
   textScale: TextScale;
   readOnly?: boolean;
+  notificationsAllowed?: boolean;
   ccccHome: string;
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
   onStartReply: (ev: LedgerEvent) => void;
@@ -104,6 +105,7 @@ export function AppModals({
   theme,
   textScale,
   readOnly,
+  notificationsAllowed,
   ccccHome,
   composerRef,
   onStartReply,
@@ -1387,6 +1389,7 @@ export function AppModals({
             isDark={isDark}
             groupId={selectedGroupId}
             groupDoc={groupDoc}
+            notificationsAllowed={notificationsAllowed === true}
           />
         </Suspense>
       ) : null}

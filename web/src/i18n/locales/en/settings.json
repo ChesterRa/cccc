@@ -18,12 +18,48 @@
     "copyGroups": "Copy Groups",
     "actorProfiles": "Actor Profiles",
     "myProfiles": "My Profiles",
+    "notifications": "Notifications",
     "branding": "Branding",
     "account": "Account",
     "developer": "Developer",
     "webAccess": "Web Access",
     "webModels": "Web Models",
     "voice": "Voice"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "description": "Get notifications for messages addressed to you, even when the page is closed. Keep the CCCC Web service running. Requests already waiting when you enable notifications stay in Waiting for you; they aren't sent again. Message previews may appear on your lock screen. Enable this separately in each browser or installed app. On iPhone or iPad, add CCCC to your Home Screen first.",
+    "enable": "Enable notifications",
+    "finish": "Finish enabling",
+    "disable": "Disable notifications",
+    "removeSaved": "Remove saved browser subscription",
+    "removeSavedHelp": "Removing this browser's subscription can also stop notifications for other accounts using the same browser profile.",
+    "retry": "Try again",
+    "ready": "Permission is ready. Select Finish enabling to complete setup.",
+    "status": {
+      "checking": "Checking notification status…",
+      "enabled": "Notifications are enabled for this browser and account.",
+      "blocked": "Notifications are blocked. Allow them in your browser or device settings.",
+      "disabled": "Notifications are off for this browser and account.",
+      "unbound": "This browser has a saved subscription that is not connected to the current account. Enabling it here may stop notifications for another account in this browser.",
+      "keyMismatch": "This subscription uses a different or unverifiable server key. Remove it, then enable notifications again.",
+      "senderUnavailable": "The notification sender is starting or unavailable. Try again shortly or check the Web service.",
+      "unknown": "Could not check notification status.",
+      "unsupported": "Notifications are unavailable here. Use HTTPS and a supported browser; on iPhone or iPad, open CCCC from the Home Screen."
+    },
+    "error": {
+      "permission": "Notification permission was not granted. Check this browser or device's notification settings.",
+      "prepare": "Could not prepare notifications. Check your connection and try again.",
+      "subscribe": "Could not complete setup. Check your connection or browser settings and try again.",
+      "serverUnavailable": "The notification service is unavailable. Check your connection and try again.",
+      "serviceUnsupported": "This browser's notification service is not supported.",
+      "subscriptionInvalid": "The browser subscription is invalid. Remove it and enable notifications again.",
+      "keyMismatch": "The server key changed. Remove the saved subscription and enable notifications again.",
+      "verify": "Setup was requested, but its status could not be confirmed. Try again.",
+      "disable": "Could not fully disable notifications. Check your connection and try again.",
+      "originInvalid": "This server does not accept the address this page was opened at. If CCCC runs behind a proxy, forward the original Host header or add this address to CCCC_WEB_CORS_ORIGINS.",
+      "signedOut": "Your sign-in is no longer valid. Sign in again, then enable notifications."
+    }
   },
   "navigation": {
     "targetScope": "Target Scope",

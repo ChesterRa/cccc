@@ -21,9 +21,9 @@ pub const MAX_LABEL_CHARS: usize = 80;
 /// An option's consequence and the recommendation's reason.
 pub const MAX_NOTE_CHARS: usize = 240;
 pub const MAX_ANSWER_CHARS: usize = 4000;
-/// Option ids in display order. A choice offers two or three of them; the
+/// Option ids in display order. A choice offers two to four of them; the
 /// interface always adds its own free-text answer.
-pub const OPTION_IDS: [&str; 3] = ["A", "B", "C"];
+pub const OPTION_IDS: [&str; 4] = ["A", "B", "C", "D"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -174,7 +174,7 @@ impl Question {
                 actual: Some(1),
                 ..FieldError::new(
                     "question.options",
-                    "a choice needs two or three options; ask without options for a free answer",
+                    "a choice needs two to four options; ask without options for a free answer",
                 )
             });
         }
@@ -182,7 +182,7 @@ impl Question {
             return Err(FieldError {
                 limit: Some(OPTION_IDS.len()),
                 actual: Some(self.options.len()),
-                ..FieldError::new("question.options", "offer at most three options")
+                ..FieldError::new("question.options", "offer at most four options")
             });
         }
         for (index, (option, id)) in self.options.iter().zip(OPTION_IDS).enumerate() {
@@ -190,7 +190,7 @@ impl Question {
             if option.id != id {
                 return Err(FieldError::new(
                     format!("{field}.id"),
-                    format!("option ids are A, B and C in order; expected {id}"),
+                    format!("option ids are A, B, C and D in order; expected {id}"),
                 ));
             }
             required(&format!("{field}.label"), &option.label, MAX_LABEL_CHARS)?;
@@ -401,6 +401,30 @@ mod tests {
     }
 
     #[test]
+    fn a_choice_offers_up_to_four_options() {
+        let question = Question::from_request(
+            &json!({
+                "v": 1,
+                "prompt": "Which?",
+                "options": [{"label": "one"}, {"label": "two"}, {"label": "three"}, {"label": "four"}],
+                "recommended": {"option_id": "D", "reason": "last"}
+            }),
+            "",
+        )
+        .expect("question");
+        assert_eq!(
+            question.text(),
+            "Which?\n\nA. one\nB. two\nC. three\nD. four\nRecommended: D — last\n\n\
+             Reply with A, B, C, D, or your own answer."
+        );
+        let selected = Answer::parse(&json!({"v": 1, "option_id": "D"})).expect("choice");
+        assert_eq!(
+            selected.reply_text(&question).expect("text"),
+            "Selected D: four"
+        );
+    }
+
+    #[test]
     fn a_question_without_options_asks_for_free_input_only() {
         let question = Question::from_request(
             &json!({"v": 1, "prompt": "Which directory should I use?"}),
@@ -420,7 +444,7 @@ mod tests {
                 "question.options",
             ),
             (
-                json!({"v": 1, "prompt": "p", "options": [{"label": "a"}, {"label": "b"}, {"label": "c"}, {"label": "d"}]}),
+                json!({"v": 1, "prompt": "p", "options": [{"label": "a"}, {"label": "b"}, {"label": "c"}, {"label": "d"}, {"label": "e"}]}),
                 "question.options",
             ),
             (

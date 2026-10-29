@@ -24,6 +24,7 @@ import {
   isBrowserWebModelRuntime,
 } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
+import { getMessageAnchorOffset } from "../../components/virtualMessageListAnchorRestore";
 import { PendingReplyEditingContext } from "../../components/messageBubble/PendingReplyEditingContext";
 import { LivePendingStatusContext } from "../../features/pendingReplies/liveStatusContext";
 import { PendingSummaryContext } from "../../features/pendingReplies/context";
@@ -1091,7 +1092,10 @@ export function ChatTab({
                           }
                           initialScrollAnchorOffsetPx={
                             pendingActive
-                              ? (overlayMobileChrome ? MOBILE_READING_CHROME_HEIGHT_PX : 0) + 8
+                              ? getMessageAnchorOffset(
+                                  0,
+                                  (overlayMobileChrome ? MOBILE_READING_CHROME_HEIGHT_PX : 0) + 8,
+                                )
                               : chatInitialScrollAnchorOffsetPx
                           }
                           initialScrollOffsetPx={chatInitialScrollOffsetPx}

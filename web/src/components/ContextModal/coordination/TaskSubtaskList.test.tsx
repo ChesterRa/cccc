@@ -42,8 +42,8 @@ it("lists the open task's subtasks with their progress and opens the chosen one"
       expect(host.textContent).toContain("1 of 2 done");
       const rows = [...host.querySelectorAll("button")];
       expect(rows.map((row) => row.textContent)).toEqual([
-        "T2Collect evidencedone",
-        "T3Draft reportplanned",
+        "T2Collect evidenceDone",
+        "T3Draft reportPlanned",
       ]);
       act(() => rows[1].click());
       expect(onOpenTask).toHaveBeenCalledWith("T3");
@@ -70,4 +70,25 @@ it("shows subtask progress on a card only when live subtasks exist", () => {
       expect(host.textContent).not.toContain("Subtasks"),
     );
   }
+});
+
+it("shows actionable task context without treating advisory structure as an error", () => {
+  const task: Task = {
+    id: "T2",
+    title: "Implement",
+    status: "active",
+    parent_id: "T1",
+    blocked_by: ["T3", "T4"],
+    checklist: [
+      { id: "one", text: "First", status: "done" },
+      { id: "two", text: "Second", status: "pending" },
+    ],
+  };
+  rendered(<TaskCardBadges task={task} tr={tr} />, (host) => {
+    expect(host.textContent).toContain("Parent task T1");
+    expect(host.textContent).toContain("Checklist 1/2");
+    expect(host.textContent).toContain("Blocked: T3, T4");
+    expect(host.textContent).not.toContain("Requirements incomplete");
+    expect(host.textContent).not.toContain("Closeout incomplete");
+  });
 });
