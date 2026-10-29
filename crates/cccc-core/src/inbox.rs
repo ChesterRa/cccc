@@ -726,10 +726,17 @@ mod tests {
                 let (_, summary) =
                     overdue_summary(&home, &group, Utc::now()).expect("warm summary");
                 assert_eq!(summary[0].awaiting_count, if committed { 1 } else { 2 });
-                assert_eq!(
-                    summary[0].oldest_awaiting_at.as_deref(),
-                    Some(mails[if committed { 2 } else { 1 }].ts.as_str())
-                );
+                let oldest_at = chrono::DateTime::parse_from_rfc3339(
+                    summary[0]
+                        .oldest_awaiting_at
+                        .as_deref()
+                        .expect("oldest awaiting Mail timestamp"),
+                )
+                .expect("valid summary timestamp");
+                let expected_at =
+                    chrono::DateTime::parse_from_rfc3339(&mails[if committed { 2 } else { 1 }].ts)
+                        .expect("valid Mail fixture timestamp");
+                assert_eq!(oldest_at, expected_at);
                 assert_eq!(TEST_PENDING_FACT_CHECKS.with(std::cell::Cell::get), scans);
                 assert_eq!(
                     projection::TEST_REBUILDS.with(std::cell::Cell::get),
