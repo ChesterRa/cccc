@@ -75,15 +75,18 @@ export function computeObligationSummary({
 }: {
   hideDirectUserObligationSummary: boolean;
   obligationStatus: LedgerEvent["_obligation_status"];
-}): { done: number; total: number } | null {
+}): { replied: number; cancelled: number; total: number } | null {
   if (hideDirectUserObligationSummary) return null;
   if (!obligationStatus || typeof obligationStatus !== "object") return null;
   const ids = Object.keys(obligationStatus).filter((id) => obligationStatus[id]?.reply_requested);
   if (ids.length === 0) return null;
-  const done = ids.reduce(
-    (count, id) =>
-      count + (obligationStatus[id]?.replied || obligationStatus[id]?.cancelled ? 1 : 0),
-    0,
-  );
-  return { done, total: ids.length };
+  let replied = 0;
+  let cancelled = 0;
+  for (const id of ids) {
+    // The daemon never reports both; if stale data does, count the recipient
+    // once and let cancellation win, as the recipients dialog does.
+    if (obligationStatus[id]?.cancelled) cancelled += 1;
+    else if (obligationStatus[id]?.replied) replied += 1;
+  }
+  return { replied, cancelled, total: ids.length };
 }

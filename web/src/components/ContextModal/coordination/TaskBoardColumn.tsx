@@ -19,6 +19,7 @@ export function TaskBoardColumn({
   tr,
   ui,
   syncBusy,
+  searchQuery,
   selectedTaskId,
   onSelectTask,
   onMoveTaskToStatus,
@@ -35,6 +36,7 @@ export function TaskBoardColumn({
   tr: ContextTranslator;
   ui: ContextModalUi;
   syncBusy: boolean;
+  searchQuery: string;
   selectedTaskId: string;
   onSelectTask: (task: Task) => void;
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
@@ -80,6 +82,7 @@ export function TaskBoardColumn({
               tr={tr}
               ui={ui}
               syncBusy={syncBusy}
+              searchQuery={searchQuery}
               selected={selectedTaskId === task.id}
               onSelectTask={onSelectTask}
               onMoveTaskToStatus={onMoveTaskToStatus}

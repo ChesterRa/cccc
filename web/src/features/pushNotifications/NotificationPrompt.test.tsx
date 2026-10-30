@@ -1,7 +1,12 @@
 // @vitest-environment happy-dom
+import { createInstance } from "i18next";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { I18nextProvider, initReactI18next } from "react-i18next";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import enChat from "../../i18n/locales/en/chat.json";
+import jaChat from "../../i18n/locales/ja/chat.json";
+import zhChat from "../../i18n/locales/zh/chat.json";
 import { NotificationPrompt } from "./NotificationPrompt";
 import { useNotificationPromptOffer } from "./useNotificationPromptOffer";
 
@@ -118,6 +123,33 @@ it("moves focus on when the offer closes with focus inside it, and only then", a
   expect(restore).toHaveBeenCalledTimes(2);
   expect(document.activeElement).toBe(elsewhere);
   elsewhere.remove();
+});
+
+it("starts with its call to action in bold in every language", async () => {
+  const i18n = createInstance();
+  await i18n
+    .use(initReactI18next)
+    .init({
+      lng: "en",
+      fallbackLng: "en",
+      defaultNS: "chat",
+      resources: { en: { chat: enChat }, zh: { chat: zhChat }, ja: { chat: jaChat } },
+      interpolation: { escapeValue: false },
+    });
+  for (const language of ["en", "zh", "ja"]) {
+    await act(async () => i18n.changeLanguage(language));
+    await act(async () =>
+      root.render(
+        <I18nextProvider i18n={i18n}>
+          <NotificationPrompt onDismiss={() => {}} restoreFocus={() => {}} />
+        </I18nextProvider>,
+      ),
+    );
+    const lead = host.querySelector("p strong")?.textContent ?? "";
+    expect(lead, language).not.toBe("");
+    expect(host.querySelector("p")?.textContent?.startsWith(lead), language).toBe(true);
+    expect(host.textContent, language).not.toContain("<");
+  }
 });
 
 it("follows Not now from another tab of this browser", async () => {

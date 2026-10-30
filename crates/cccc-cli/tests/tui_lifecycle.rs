@@ -147,6 +147,10 @@ impl Fixture {
     }
 
     fn assert_stopped(&self) {
+        self.assert_stopped_at(self.port);
+    }
+
+    fn assert_stopped_at(&self, port: u16) {
         for filename in ["ccccd.lock", "cccc-web.lock"] {
             assert_lock_free(&self.home.join("daemon").join(filename));
         }
@@ -155,7 +159,7 @@ impl Fixture {
             "daemon descriptor remained"
         );
         assert!(
-            std::net::TcpStream::connect(("127.0.0.1", self.port)).is_err(),
+            std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
             "Web still listening"
         );
     }
@@ -1098,17 +1102,20 @@ fn quit_preserves_an_existing_daemon() {
 }
 
 #[test]
-fn redirected_bare_launch_does_not_read_stdin_or_enter_the_interface() {
+fn redirected_launch_without_a_subcommand_does_not_read_stdin_or_enter_the_interface() {
     let fixture = Fixture::new();
     let mut host = fixture
-        .command(&[])
+        .command(&["--port", "0"])
+        // Let the actual Web listener choose its port; reserving one and
+        // releasing it before spawning leaves a window for another socket.
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("plain host");
     let deadline = Instant::now() + WAIT;
-    while !fixture.home.join("daemon/web_runtime.json").exists() {
+    let runtime_path = fixture.home.join("daemon/web_runtime.json");
+    while !runtime_path.exists() {
         if Instant::now() >= deadline || host.try_wait().expect("status").is_some() {
             let _ = host.kill();
             let output = host.wait_with_output().expect("output");
@@ -1119,6 +1126,14 @@ fn redirected_bare_launch_does_not_read_stdin_or_enter_the_interface() {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+    let runtime: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&runtime_path).expect("read Web runtime descriptor"))
+            .expect("parse Web runtime descriptor");
+    let port = runtime["port"]
+        .as_u64()
+        .and_then(|value| u16::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .expect("Web listener's assigned port");
     let stop = fixture
         .command(&["daemon", "stop"])
         .output()
@@ -1139,7 +1154,7 @@ fn redirected_bare_launch_does_not_read_stdin_or_enter_the_interface() {
             .windows(8)
             .any(|bytes| bytes == b"\x1b[?1049h")
     );
-    fixture.assert_stopped();
+    fixture.assert_stopped_at(port);
 }
 
 #[cfg(unix)]

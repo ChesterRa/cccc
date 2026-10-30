@@ -14,6 +14,23 @@ Open http://127.0.0.1:8848/ in your browser.
 
 `cccc` is the single owner of the default local app session: it starts the daemon and Web together, and pressing `Ctrl+C` stops both together. If another `cccc` session is already running for the same `CCCC_HOME`, a second `cccc` command will refuse to start instead of silently sharing the old daemon.
 
+If the Web server and its daemon report different versions, a dismissible notice
+shows both and says that some features may not work. A difference does not by
+itself establish that they are incompatible. If version information is unavailable,
+the notice is not shown. `cccc daemon start`, `cccc web` and `cccc --headless`
+also report a different running daemon version when they reuse one; they do not
+replace that daemon. Dismissing
+the notice remembers that pair of versions in this browser's site storage; a
+different pair can show a new notice. If storage is unavailable, dismissal lasts
+until the page reloads.
+
+If **Waiting for you** says that the running daemon does not support it, finish
+current work before restarting: on the CCCC host, use the same `CCCC_HOME` to run
+`cccc daemon stop`, then start CCCC from the intended installation. Restarting
+only the Web can leave the old daemon running. If services are managed separately,
+use their service manager to restart them as appropriate; remote users should ask
+the administrator. Stopping the daemon can interrupt work still in progress.
+
 ## Interface Overview
 
 The Web UI has these main areas:
@@ -948,7 +965,12 @@ Enter/Space. Switching sections retains summary/file drafts and task filters.
   cards no longer show blocking, waiting or handoff marks; reopening the task
   shows them again. A Done card whose checklist still has open items says how
   many remain. While a search or filter is active, the board says how many tasks
-  match.
+  match. The filter buttons count every task, so they leave out their counts
+  while a search or assignee filter narrows the board. While searching, a card
+  whose match is not near the start of its title or summary quotes the matched
+  words from its title, notes, outcome or a handoff the card does not show; the
+  quote can repeat words the card already shows. On phone-width screens, where
+  the columns stack, Active comes first.
 
   Opening a task shows its editor: title, status, assignee, priority and waiting
   on first, then the outcome, checklist, notes and subtasks, with **Add subtask**.

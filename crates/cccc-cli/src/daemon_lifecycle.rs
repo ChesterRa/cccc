@@ -39,9 +39,12 @@ pub(crate) async fn resolve_slot(home: &HomeLayout, client: &DaemonClient) -> Re
         return Ok(DaemonSlot::Vacant);
     }
     match probe_existing(client).await {
-        Some(response) if is_compatible(&response) => Ok(DaemonSlot::Adopted {
-            pid: response_pid(&response),
-        }),
+        Some(response) if is_compatible(&response) => {
+            warn_version_difference(&response);
+            Ok(DaemonSlot::Adopted {
+                pid: response_pid(&response),
+            })
+        }
         Some(_) => {
             replace(client, home).await?;
             Ok(DaemonSlot::Vacant)
@@ -105,6 +108,28 @@ pub(crate) fn is_compatible(response: &cccc_contracts::DaemonResponse) -> bool {
             .get("compatibility")
             .and_then(|v| v.as_str())
             == Some(cccc_contracts::RUST_DAEMON_COMPATIBILITY)
+}
+
+/// Different version numbers identify different builds, not whether an
+/// operation is supported. Missing or malformed version data stays unknown.
+fn different_daemon_version(response: &cccc_contracts::DaemonResponse) -> Option<&str> {
+    if !response.ok {
+        return None;
+    }
+    let version = response.result.get("version")?.as_str()?.trim();
+    if version.len() > 128 || semver::Version::parse(version).is_err() {
+        return None;
+    }
+    (version != crate::PRODUCT_VERSION).then_some(version)
+}
+
+fn warn_version_difference(response: &cccc_contracts::DaemonResponse) {
+    if let Some(version) = different_daemon_version(response) {
+        cccc_runtime::diagnostic(format_args!(
+            "[cccc] This CCCC is version {}, but the running daemon is version {version}; some features may not work. When current work is done, run cccc daemon stop and start CCCC again from this installation.",
+            crate::PRODUCT_VERSION,
+        ));
+    }
 }
 
 #[cfg(windows)]
@@ -202,6 +227,7 @@ pub(crate) async fn replace_incompatible(home: &HomeLayout, client: &DaemonClien
         return Ok(());
     };
     if is_compatible(&response) {
+        warn_version_difference(&response);
         return Ok(());
     }
     replace(client, home).await

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useGroupStore, useUIStore, useModalStore } from "../stores";
 import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
 import { groupMessagesVisible } from "../stores/useUIStore";
@@ -133,12 +133,21 @@ export function useAppTabState({
     if (atBottom) setChatUnreadCount(selectedGroupId, 0);
   }, [activeTab, messagesVisible, selectedGroupId, setChatUnreadCount, setShowScrollButton]);
 
+  // Arriving at the messages on a wide screen puts the focus in the composer.
+  // A viewport change alone, such as turning a phone, moves nobody's focus,
+  // and an open dialog keeps the focus it has.
+  const wideScreenRef = useRef(false);
+  useLayoutEffect(() => {
+    wideScreenRef.current = !isSmallScreen && !shortTouchViewport;
+  });
   useEffect(() => {
-    if (!messagesVisible) return;
-    if (isSmallScreen || shortTouchViewport) return;
-    const frame = requestAnimationFrame(() => composerRef.current?.focus());
+    if (!messagesVisible || !wideScreenRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      if (document.activeElement?.closest('[aria-modal="true"]')) return;
+      composerRef.current?.focus();
+    });
     return () => cancelAnimationFrame(frame);
-  }, [activeTab, messagesVisible, isSmallScreen, shortTouchViewport]);
+  }, [activeTab, messagesVisible]);
 
   useEffect(() => {
     actorsRef.current = runtimeActors;

@@ -332,6 +332,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bare_and_port_option_launch_without_a_subcommand() {
+        let bare = Cli::try_parse_from(["cccc"]).expect("bare launch");
+        assert!(bare.command.is_none());
+        assert!(!bare.headless);
+        assert_eq!(bare.port, None);
+
+        let port = Cli::try_parse_from(["cccc", "--port", "0"]).expect("port launch");
+        assert!(port.command.is_none());
+        assert!(!port.headless);
+        assert_eq!(port.port, Some(0));
+    }
+
+    #[test]
     fn parses_membership_verbs() {
         assert!(matches!(
             Cli::try_parse_from(["cccc", "login"])

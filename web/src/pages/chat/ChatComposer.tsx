@@ -643,6 +643,10 @@ export function ChatComposer({
 
   // Handle keyboard shortcuts and mention navigation.
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // While an input method is composing, Enter, Tab, arrows and Escape belong
+    // to it. Safari can report the confirming Enter with key "Enter" and keyCode 229.
+    const nativeKeyboardEvent = e.nativeEvent as KeyboardEvent & { keyCode?: number };
+    if (nativeKeyboardEvent.isComposing || nativeKeyboardEvent.keyCode === 229) return;
     if (showSlashMenu && visibleSlashSuggestions.length > 0) {
       const maxIndex = visibleSlashSuggestions.length - 1;
       if (e.key === "ArrowDown") {
@@ -717,8 +721,6 @@ export function ChatComposer({
       return;
     }
 
-    const nativeKeyboardEvent = e.nativeEvent as KeyboardEvent & { keyCode?: number };
-    const isComposing = nativeKeyboardEvent.isComposing || nativeKeyboardEvent.keyCode === 229;
     const hasModifier = e.shiftKey || e.ctrlKey || e.metaKey || e.altKey;
     let historySession = composerHistoryRef.current;
     if (historySession && historySession.groupId !== selectedGroupId) {
@@ -732,7 +734,7 @@ export function ChatComposer({
         exitComposerHistory();
         return;
       }
-      if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !isComposing && !hasModifier) {
+      if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !hasModifier) {
         e.preventDefault();
         const move = moveComposerHistory(historySession, e.key === "ArrowUp" ? "older" : "newer");
         composerHistoryRef.current = move.session;
@@ -752,7 +754,6 @@ export function ChatComposer({
         selectedGroupId,
         busy,
         menuOpen: showSlashMenu || showMentionMenu,
-        isComposing,
         hasModifier,
       })
     ) {

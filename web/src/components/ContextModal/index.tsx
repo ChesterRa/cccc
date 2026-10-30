@@ -188,6 +188,7 @@ export function ContextModal({
     error: taskLoadError,
     loading: taskLoading,
     matchingCount: taskMatchingCount,
+    searchQuery: taskSearchQuery,
     deleteInfoById,
     refresh: refreshTasks,
     loadMore: loadMoreTasks,
@@ -1484,6 +1485,7 @@ export function ContextModal({
                         taskLoading={taskLoading}
                         taskLoadError={taskLoadError}
                         matchingCount={taskMatchingCount}
+                        searchQuery={taskSearchQuery}
                         taskMap={taskMap}
                         subtaskProgress={subtaskProgress}
                         selectedTaskId={selectedTaskId}

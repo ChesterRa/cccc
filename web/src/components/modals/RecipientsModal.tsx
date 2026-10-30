@@ -111,6 +111,30 @@ export function RecipientsModal({
                 !entry.cancelled &&
                 !["accepted", "claimed"].includes(entry.deliveryState);
               const actionKey = `deliver:${entry.id}`;
+              // An ambiguous delivery counts as handled, but it is not a confirmed success.
+              const deliveryUncertain =
+                !isReply && !isRead && !remoteDelivery && entry.deliveryState === "ambiguous";
+              // A symbol needs an image role to carry its name; the cancelled text reads as itself.
+              const statusSymbol = entry.cancelled
+                ? null
+                : isReply
+                  ? entry.cleared
+                    ? "↩"
+                    : "○"
+                  : isRead
+                    ? entry.cleared
+                      ? "✓✓"
+                      : "✓"
+                    : deliveryUncertain
+                      ? "?"
+                      : entry.cleared
+                        ? "✓"
+                        : "○";
+              const statusName = isReply
+                ? t(entry.cleared ? "recipients.statusReplied" : "recipients.statusReplyPending")
+                : isRead
+                  ? t(entry.cleared ? "recipients.statusRead" : "recipients.statusReadPending")
+                  : deliveryLabel(entry);
               return (
                 <div key={entry.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
@@ -141,35 +165,14 @@ export function RecipientsModal({
                     <div
                       className={classNames(
                         "text-sm font-semibold tracking-tight",
-                        entry.cleared
+                        entry.cleared && !entry.cancelled && !deliveryUncertain
                           ? "text-emerald-600 dark:text-emerald-400"
                           : "text-[var(--color-text-muted)]",
                       )}
-                      aria-label={
-                        entry.cancelled
-                          ? t("recipients.cancelled")
-                          : entry.cleared
-                            ? isReply
-                              ? "replied"
-                              : isRead
-                                ? "read"
-                                : "delivered"
-                            : "pending"
-                      }
+                      role={statusSymbol ? "img" : undefined}
+                      aria-label={statusSymbol ? statusName : undefined}
                     >
-                      {entry.cancelled
-                        ? t("recipients.cancelled")
-                        : isReply
-                          ? entry.cleared
-                            ? "↩"
-                            : "○"
-                          : isRead
-                            ? entry.cleared
-                              ? "✓✓"
-                              : "✓"
-                            : entry.cleared
-                              ? "✓"
-                              : "○"}
+                      {statusSymbol ?? t("recipients.cancelled")}
                     </div>
                   </div>
                 </div>

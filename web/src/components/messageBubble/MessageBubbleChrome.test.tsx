@@ -49,6 +49,43 @@ describe("message chrome", () => {
     expect(host.textContent).toContain("reply 0/1");
   });
 
+  it("tells a cancelled request apart from a replied one, visibly and by name", () => {
+    const props = {
+      actorById: new Map(),
+      actors: [],
+      displayNameMap: new Map(),
+      agentState: null,
+      taskById: new Map(),
+      isDark: false,
+      groupId: "g",
+      groupLabelById: {},
+      onReply: vi.fn(),
+      onShowRecipients: vi.fn(),
+    };
+    const request = (other: { replied: boolean; cancelled: boolean }) => ({
+      id: "event-1",
+      kind: "chat.message",
+      by: "worker",
+      data: { text: "Question", to: ["other"], message_mode: "request_reply" },
+      _obligation_status: { other: { reply_requested: true, delivery_state: "", ...other } },
+    });
+    const host = document.createElement("div");
+
+    host.innerHTML = renderToStaticMarkup(
+      <MessageBubble {...props} event={request({ replied: false, cancelled: true })} />,
+    );
+    const cancelled = host.querySelector('button[aria-label="showObligationStatusCancelled"]');
+    expect(cancelled?.textContent).toBe("reply 0/1 · replyCancelledCount");
+    expect(cancelled?.className).not.toMatch(/emerald|amber/);
+
+    host.innerHTML = renderToStaticMarkup(
+      <MessageBubble {...props} event={request({ replied: true, cancelled: false })} />,
+    );
+    const replied = host.querySelector('button[aria-label="showObligationStatusCounts"]');
+    expect(replied?.textContent).toBe("reply 1/1");
+    expect(replied?.className).toContain("emerald");
+  });
+
   it("keeps Mail, recipients and failure evidence readable in a read-only grouped row", () => {
     const markup = renderToStaticMarkup(
       <MessageBubble

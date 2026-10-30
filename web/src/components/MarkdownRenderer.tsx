@@ -3,6 +3,7 @@ import { GraphicViewer } from "./viewer/GraphicViewer";
 import { FloatingPortal } from "@floating-ui/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
+import markdownItCjkFriendly from "markdown-it-cjk-friendly";
 import { renderToStaticMarkup } from "react-dom/server";
 import { useTranslation } from "react-i18next";
 import { CheckIcon, CloseIcon, CopyIcon, ExpandIcon } from "./Icons";
@@ -211,7 +212,7 @@ export function MarkdownRenderer({
       linkify: true,
       typographer: true,
       breaks: true,
-    });
+    }).use(markdownItCjkFriendly);
     if (resolveUrl) {
       instance.renderer.rules.heading_open = (tokens, index, options, env, renderer) => {
         const title =

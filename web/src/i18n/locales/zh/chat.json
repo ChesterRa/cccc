@@ -73,7 +73,7 @@
   "filterNeedReply": "请求",
   "pendingReply": {
     "loadFailed": "无法刷新待你答复的请求，当前状态未知。",
-    "daemonUnsupported": "运行中的 CCCC daemon 不支持待你答复，daemon 和此页面可能来自不同版本。请重启 CCCC 后重试。",
+    "daemonUnsupported": "运行中的 CCCC daemon 不支持待你答复，版本可能不同。请先完成当前工作，在运行 CCCC 的机器上对同一 CCCC_HOME 执行 cccc daemon stop，再启动 CCCC；远程用户请联系管理员。",
     "empty": "没有符合筛选条件的待答请求。",
     "choose": "选择答复",
     "recommended": "推荐",
@@ -100,7 +100,7 @@
     "openComposer": "在聊天中回复"
   },
   "notificationPrompt": {
-    "text": "开启系统通知后，页面关闭时也能收到发给你的新消息。CCCC 的 Web 服务需要保持运行。",
+    "text": "<0>开启系统通知</0>，页面关闭时也能收到发给你的新消息。",
     "enable": "去开启…",
     "dismiss": "暂不"
   },
@@ -234,7 +234,7 @@
   "modeSendDesc": "立即投递",
   "modeSendReply": "发送 + 回复",
   "modeSendReplyDesc": "立即投递并要求具体回复",
-  "modeSendReplyRequiresConcrete": "使用默认 Foreman，或选择一个或多个具体 Agent",
+  "modeSendReplyRequiresConcrete": "移除 @all 和 @peers，或清除收件人以请 Foreman 回复",
   "modeMail": "邮件",
   "mailMessageHint": "仅存入收件箱，不请求立即触发对方。",
   "modeMailDesc": "仅进入收件箱，暂不打断对方",
@@ -539,7 +539,11 @@
   "imagePreviewUnavailable": "无法预览图片",
   "downloadOriginalImage": "打开原始图片",
   "imagePreviewHint": "点击遮罩或按 ESC 可关闭",
-  "showObligationStatus": "查看回复状态",
+  "showObligationStatusCounts": "查看回复状态：已回复 {{replied}}/{{total}}",
+  "showObligationStatusCancelled": "查看回复状态：已回复 {{replied}}/{{total}}，已取消 {{cancelled}}",
+  "replyCancelledCount": "已取消 {{cancelled}}",
+  "noMoreMessages": "没有更多消息了",
+  "loadingHistory": "正在加载…",
   "showRecipientStatus": "查看收件人状态",
   "read": "已读",
   "pending": "待读",
@@ -560,6 +564,7 @@
   "noResults": "无结果",
   "noResultsHint": "试试不同的关键词、发送者或类型过滤。",
   "replyTo": "↩ 回复",
+  "replyToSender": "回复 {{name}}",
   "openMessage": "↗ 打开",
   "copyId": "⧉ 复制 ID",
   "copyEventId": "复制事件 ID",

@@ -35,7 +35,6 @@ export function canStartComposerHistory(input: {
   selectedGroupId: string;
   busy: string;
   menuOpen: boolean;
-  isComposing: boolean;
   hasModifier: boolean;
 }): boolean {
   return Boolean(
@@ -44,7 +43,6 @@ export function canStartComposerHistory(input: {
     String(input.selectedGroupId || "").trim() &&
     input.busy !== "send" &&
     !input.menuOpen &&
-    !input.isComposing &&
     !input.hasModifier,
   );
 }

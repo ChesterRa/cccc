@@ -56,6 +56,21 @@ function renderModal(entries: RecipientEntry[], overrides: Partial<RecipientsMod
   );
 }
 
+/** Each recipient's status cell: [role, accessible name, visible text, shown as success]. */
+function statusCells(markup: string) {
+  return Array.from(
+    markup.matchAll(
+      /<div class="([^"]*tracking-tight[^"]*)"(?: role="([^"]*)" aria-label="([^"]*)")?>([^<]*)</g,
+    ),
+    ([, className, role, name, text]) => [
+      role ?? null,
+      name ?? null,
+      text,
+      className.includes("emerald"),
+    ],
+  );
+}
+
 describe("RecipientsModal", () => {
   it("offers one visible promotion action for unread Mail", () => {
     const markup = renderModal([entry()]);
@@ -84,6 +99,59 @@ describe("RecipientsModal", () => {
     expect(markup).toContain("Retry anyway");
     expect(markup).toContain("Cancel reply request");
   });
+});
+
+it("does not color a cancelled request as replied and names each state", () => {
+  const markup = renderModal(
+    [
+      entry({ id: "a", cleared: true, replied: true, replyRequested: true }),
+      entry({ id: "b", cleared: true, cancelled: true, replyRequested: true }),
+      entry({ id: "c", replyRequested: true }),
+    ],
+    { statusKind: "reply", messageMode: "request_reply" },
+  );
+  expect(statusCells(markup)).toEqual([
+    ["img", "Replied", "↩", true],
+    [null, null, "Cancelled", false],
+    ["img", "Awaiting reply", "○", false],
+  ]);
+});
+
+it("names read states in the reader's language", () => {
+  const markup = renderModal([entry({ id: "a", cleared: true, read: true }), entry({ id: "b" })]);
+
+  expect(statusCells(markup)).toEqual([
+    ["img", "Read", "✓✓", true],
+    ["img", "Unread", "✓", false],
+  ]);
+});
+
+it("names delivery by its actual stage and does not mark an uncertain delivery as done", () => {
+  const local = renderModal(
+    [
+      entry({ id: "a", cleared: true, deliveryState: "accepted" }),
+      entry({ id: "b", cleared: true, deliveryState: "ambiguous" }),
+    ],
+    { statusKind: "delivery", messageMode: "send" },
+  );
+  expect(statusCells(local)).toEqual([
+    ["img", "Sent to runtime", "✓", true],
+    ["img", "Delivery uncertain", "?", false],
+  ]);
+
+  const sent = renderModal([entry({ cleared: true })], {
+    statusKind: "delivery",
+    messageMode: "send",
+    remoteDelivery: { state: "sent" },
+  });
+  expect(statusCells(sent)).toEqual([["img", "Delivered to remote Group", "✓", true]]);
+
+  const unconfirmed = renderModal([entry()], {
+    statusKind: "delivery",
+    messageMode: "send",
+    remoteDelivery: { state: "unconfirmed" },
+  });
+  expect(statusCells(unconfirmed)).toEqual([["img", "Remote delivery unconfirmed", "○", false]]);
 });
 
 it("does not offer local runtime delivery for a qualified remote recipient", () => {

@@ -97,3 +97,67 @@ it("distinguishes an empty board from a filtered, loading, or failed one", () =>
     host.remove();
   }
 });
+
+it("quotes matches for the search being requested, not the text still being typed", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const task = {
+    id: "T5",
+    title: "Speed up deploys",
+    status: "active",
+    notes: "Warm the cache first.",
+  };
+  const board = { planned: [], active: [task], done: [], archived: [] };
+  const props: ComponentProps<typeof TaskBoard> = {
+    tr: (_key, fallback, values) =>
+      fallback.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => String(values?.[key] ?? "")),
+    ui: createContextModalUi(false),
+    syncBusy: false,
+    taskQuery: "",
+    assigneeFilter: "__all__",
+    assigneeOptions: [],
+    taskFilter: "all",
+    tasksSummary: { total: 1 },
+    attentionCounts: { blocked: 0, waitingUser: 0, pendingHandoffs: 0 },
+    unassignedCount: 0,
+    hasArchivedTasks: false,
+    archivedExpanded: false,
+    hasVisibleTasks: true,
+    hiddenArchivedMatches: 0,
+    filteredBoard: board,
+    columnPages: createTaskColumnPages(),
+    taskLoading: false,
+    taskLoadError: "",
+    taskMap: new Map([[task.id, task]]),
+    subtaskProgress: new Map(),
+    selectedTaskId: "",
+    dragTaskId: "",
+    sensors: [],
+    onTaskQueryChange: vi.fn(),
+    onAssigneeFilterChange: vi.fn(),
+    onTaskFilterChange: vi.fn(),
+    onClearFilters: vi.fn(),
+    onArchivedExpandedChange: vi.fn(),
+    onOpenCreate: vi.fn(),
+    onDragStart: vi.fn(),
+    onDragEnd: vi.fn(),
+    onDragCancel: vi.fn(),
+    onSelectTask: vi.fn(),
+    onMoveTaskToStatus: vi.fn(),
+    onRestoreTask: vi.fn(),
+    onLoadMore: vi.fn(),
+    onRetryLoad: vi.fn(),
+  };
+  const render = (patch: Partial<typeof props>) =>
+    act(() => root.render(<TaskBoard {...props} {...patch} />));
+  try {
+    render({ taskQuery: "cache", searchQuery: "" });
+    expect(host.querySelector("mark")).toBeNull();
+    render({ taskQuery: "cach", searchQuery: "cache" });
+    expect(host.querySelector("mark")?.textContent).toBe("cache");
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
+});

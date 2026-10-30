@@ -9,7 +9,7 @@ vi.mock("../services/api", () => ({ apiJson: vi.fn() }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, values?: Record<string, string>) =>
-      values?.query ? `${key}: ${values.query}` : key,
+      values?.query ? `${key}: ${values.query}` : values?.name ? `${key}: ${values.name}` : key,
   }),
 }));
 let root: ReturnType<typeof createRoot>, host: HTMLDivElement;
@@ -82,6 +82,21 @@ it("distinguishes an empty result from a network failure", async () => {
   await submit();
   expect(host.querySelector('[role="alert"]')!.textContent).toBe("searchFailed");
   expect(host.textContent).not.toContain("noResults");
+});
+it("uses a localized reply label for the sender, including the user and an unknown sender", async () => {
+  await render();
+  const labels = [
+    { by: "worker", expected: "replyToSender: Review lead" },
+    { by: "user", expected: "replyToSender: searchSenderUser" },
+    { by: "", expected: "reply" },
+  ];
+  for (const { by, expected } of labels) {
+    const result = response("example");
+    result.result.events[0].by = by;
+    vi.mocked(apiJson).mockResolvedValueOnce(result);
+    await submit();
+    expect(host.querySelector(`button[aria-label="${expected}"]`)).not.toBeNull();
+  }
 });
 it("uses the submitted query for highlighting, filters and pagination while a new draft is typed", async () => {
   await render();

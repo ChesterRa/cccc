@@ -61,7 +61,6 @@ describe("composer message history activation", () => {
     selectedGroupId: "g_local",
     busy: "",
     menuOpen: false,
-    isComposing: false,
     hasModifier: false,
   };
 
@@ -72,10 +71,9 @@ describe("composer message history activation", () => {
     expect(canStartComposerHistory({ ...eligible, selectedGroupId: "" })).toBe(false);
   });
 
-  it("does not compete with sends, menus, IME, or modified arrows", () => {
+  it("does not compete with sends, menus, or modified arrows", () => {
     expect(canStartComposerHistory({ ...eligible, busy: "send" })).toBe(false);
     expect(canStartComposerHistory({ ...eligible, menuOpen: true })).toBe(false);
-    expect(canStartComposerHistory({ ...eligible, isComposing: true })).toBe(false);
     expect(canStartComposerHistory({ ...eligible, hasModifier: true })).toBe(false);
   });
 });

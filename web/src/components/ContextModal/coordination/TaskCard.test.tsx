@@ -44,6 +44,11 @@ function cardText(task: Task): string {
 
 it("uses separate operable controls for opening and moving a task", () => {
   const host = document.createElement("div");
+  const globalStyle = document.createElement("style");
+  // Mirror the app's unlayered rule: the drag handle must override it, while
+  // the ordinary title button keeps the browser's normal touch gestures.
+  globalStyle.textContent = "button { touch-action: manipulation; }";
+  document.head.append(globalStyle);
   document.body.append(host);
   const root = createRoot(host);
   const task = { id: "T1", title: "Review the detailed plan", status: "planned" };
@@ -80,6 +85,8 @@ it("uses separate operable controls for opening and moving a task", () => {
       'button[aria-label="Move T1: Review the detailed plan"]',
     );
     expect(handle).not.toBeNull();
+    expect(getComputedStyle(handle!).touchAction).toBe("none");
+    expect(getComputedStyle(title!).touchAction).toBe("manipulation");
     // Read out in the page's language, not dnd-kit's English default.
     expect(handle?.getAttribute("aria-roledescription")).toBe("movable task");
     const action = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -90,6 +97,7 @@ it("uses separate operable controls for opening and moving a task", () => {
   } finally {
     act(() => root.unmount());
     host.remove();
+    globalStyle.remove();
   }
 });
 
@@ -254,5 +262,51 @@ it("tells how long ago a task changed, and nothing for a time it cannot place", 
     expect(at("yesterday")).not.toContain("Updated");
   } finally {
     vi.useRealTimers();
+  }
+});
+
+it("quotes a search match the card does not otherwise show", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const render = (task: Task, searchQuery: string) =>
+    act(() =>
+      root.render(
+        <DndContext>
+          <TaskCard
+            task={task}
+            tr={tr}
+            ui={createContextModalUi(false)}
+            syncBusy={false}
+            searchQuery={searchQuery}
+            selected={false}
+            onSelectTask={vi.fn()}
+            onMoveTaskToStatus={vi.fn()}
+            onRestoreTask={vi.fn()}
+          />
+        </DndContext>,
+      ),
+    );
+  const quote = () => host.querySelector("mark")?.parentElement?.textContent ?? null;
+  const notes = "Root cause: the deploy script skips the cache.";
+  const live: Task = { id: "T4", title: "Fix deploys", status: "active", notes };
+  try {
+    render(live, "");
+    expect(host.querySelector("mark")).toBeNull();
+    render(live, "CACHE");
+    expect(host.querySelector("mark")?.textContent).toBe("cache");
+    expect(quote()).toBe("Notes: …script skips the cache.");
+
+    // A match in the title, or in a handoff the live card already shows, needs no quote.
+    render(live, "deploys");
+    expect(host.querySelector("mark")).toBeNull();
+    render({ ...live, handoff_to: "reviewer" }, "review");
+    expect(host.querySelector("mark")).toBeNull();
+    // A Done card hides its handoff, so there the quote says where the match is.
+    render({ ...live, status: "done", handoff_to: "reviewer" }, "review");
+    expect(quote()).toBe("Handoff → reviewer");
+  } finally {
+    act(() => root.unmount());
+    host.remove();
   }
 });

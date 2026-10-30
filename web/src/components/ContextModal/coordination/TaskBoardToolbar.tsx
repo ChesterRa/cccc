@@ -56,6 +56,9 @@ export function TaskBoardToolbar({
     ["handoff", tr("context.pendingHandoffs", "Pending handoffs"), attentionCounts.pendingHandoffs],
     ["unassigned", tr("context.unassigned", "Unassigned"), unassignedCount],
   ];
+  // The counts cover every task, so a search or assignee filter would make
+  // them misstate the board. A filter with no tasks still has none then.
+  const countsApply = !taskQuery.trim() && assigneeFilter === "__all__";
 
   return (
     <div className="flex flex-col gap-3">
@@ -106,7 +109,7 @@ export function TaskBoardToolbar({
                   : "border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
               )}
             >
-              {label} · {count}
+              {countsApply ? `${label} · ${count}` : label}
             </button>
           ))}
         {hasArchivedTasks ? (

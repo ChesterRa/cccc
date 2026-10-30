@@ -1,6 +1,6 @@
 use super::{
-    DaemonSlot, is_compatible, ownership_line, resolve_slot, wait_for_loss,
-    wait_until_ready_or_owner_exits,
+    DaemonSlot, different_daemon_version, is_compatible, ownership_line, resolve_slot,
+    wait_for_loss, wait_until_ready_or_owner_exits,
 };
 use crate::PRODUCT_VERSION;
 use crate::daemon_takeover::{LockState, probe_lock};
@@ -77,6 +77,27 @@ fn distinguishes_rust_from_legacy_daemon_ping() {
     assert!(is_compatible(&compatible_other_version));
     assert!(!is_compatible(&legacy));
     assert!(!is_compatible(&stale_rust));
+}
+
+#[test]
+fn different_known_versions_are_reported_without_assuming_compatibility() {
+    let response = |value: serde_json::Value| {
+        DaemonResponse::success(value.as_object().cloned().expect("object"))
+    };
+    let same = response(json!({"version":PRODUCT_VERSION}));
+    assert_eq!(different_daemon_version(&same), None);
+    let other = response(json!({"version":"0.4.44"}));
+    assert_eq!(different_daemon_version(&other), Some("0.4.44"));
+    let newer = response(json!({"version":"9.0.0-rc2"}));
+    assert_eq!(different_daemon_version(&newer), Some("9.0.0-rc2"));
+    for value in [
+        json!({}),
+        json!({"version":null}),
+        json!({"version":"broken"}),
+        json!({"version":5}),
+    ] {
+        assert_eq!(different_daemon_version(&response(value)), None);
+    }
 }
 
 /// The launch bug this guards: a healthy daemon busy enough to miss a short

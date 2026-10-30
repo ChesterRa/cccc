@@ -353,3 +353,91 @@ fn mail_notice_repeat_generation_change_refreshes_the_cached_group() {
         json!([mail.id])
     );
 }
+
+#[test]
+fn broadcast_mail_is_summarized_but_does_not_issue_a_mail_notice() {
+    let temp = tempfile::tempdir().expect("temporary fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let created = store
+        .create("broadcast notice regression", "")
+        .expect("group");
+    store
+        .mutate(&created.group_id, |group| {
+            group.state = GroupState::Active;
+            actors::add(group, cccc_contracts::Actor::new("recipient"))?;
+            group.extra.insert(
+                "delivery".into(),
+                json!({
+                    "mail_notice_after_seconds": 1,
+                    "mail_notice_idle_after_seconds": 0,
+                    "reply_notice_after_seconds": 0
+                }),
+            );
+            Ok(())
+        })
+        .expect("configure group");
+    let group = store.load(&created.group_id).expect("group");
+    let path = store.ledger_path(&group.group_id).expect("ledger path");
+    let old = (Utc::now() - chrono::Duration::seconds(60)).to_rfc3339();
+    let mut broadcast = Event::new("chat.message", &group.group_id);
+    broadcast.by = "user".into();
+    broadcast.ts = old.clone();
+    broadcast.data = json!({"to":["@all"],"message_mode":"mail","text":"broadcast"})
+        .as_object()
+        .expect("Mail fixture is an object")
+        .clone();
+    ledger::append(&path, &broadcast).expect("broadcast mail");
+    let (_, rows) = inbox::overdue_summary(&home, &group, Utc::now()).expect("summary");
+    assert_eq!(
+        rows.iter()
+            .find(|row| row.actor_id == "recipient")
+            .expect("recipient summary row")
+            .awaiting_count,
+        1
+    );
+    let recipients = HashSet::from(["recipient".to_owned()]);
+    let notices = due_unread_notices(
+        &home,
+        &store,
+        &group,
+        Some(&recipients),
+        &HashSet::new(),
+        UnreadPass::Scheduled,
+    )
+    .expect("broadcast pass")
+    .expect("eligible recipient")
+    .1;
+    assert!(
+        notices.is_empty(),
+        "broadcast Mail must not generate a notice"
+    );
+    let mut direct = Event::new("chat.message", &group.group_id);
+    direct.by = "user".into();
+    direct.ts = old;
+    direct.data = json!({"to":["recipient"],"message_mode":"mail","text":"direct"})
+        .as_object()
+        .expect("Mail fixture is an object")
+        .clone();
+    ledger::append(&path, &direct).expect("direct mail");
+    let notices = due_unread_notices(
+        &home,
+        &store,
+        &group,
+        Some(&recipients),
+        &HashSet::new(),
+        UnreadPass::Scheduled,
+    )
+    .expect("direct pass")
+    .expect("eligible recipient")
+    .1;
+    assert_eq!(
+        notices.len(),
+        1,
+        "direct Mail still generates its usual notice"
+    );
+    assert_eq!(
+        notices[0].data["context"]["source_event_ids"],
+        json!([direct.id])
+    );
+}

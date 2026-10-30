@@ -126,7 +126,11 @@
     "cancelReplyRequest": "返信リクエストを取り消す",
     "cancelReplyConfirm": "このメッセージの未完了の返信義務をすべて取り消しますか？",
     "cancelling": "取り消し中…",
-    "cancelled": "キャンセル済み"
+    "cancelled": "取り消し済み",
+    "statusReplied": "返信済み",
+    "statusReplyPending": "未返信",
+    "statusRead": "既読",
+    "statusReadPending": "未読"
   },
   "relay": {
     "title": "リレーメッセージ",
@@ -300,6 +304,7 @@
     "milestoneLabel": "マイルストーン {{id}}",
     "assigneeLabel": "担当者 {{name}}",
     "notes": "メモ",
+    "searchMatchField": "{{field}}：",
     "addButton": "追加",
     "notePlaceholderShort": "メモ…",
     "noNotes": "メモはありません",

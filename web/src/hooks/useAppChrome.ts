@@ -2,7 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import * as api from "../services/api";
 import { useGroupStore, useObservabilityStore, useUIStore } from "../stores";
 import type { DirSuggestion } from "../types";
+import { daemonVersionDifference, type DaemonVersionDifference } from "../utils/daemonVersion";
 import { MOBILE_VIEWPORT_MEDIA_QUERY } from "../utils/responsiveLayout";
+
+const DISMISSED_VERSION_KEY = "cccc.daemonVersionMismatch.dismissed";
+
+function readDismissedVersion(): string {
+  try {
+    return window.localStorage.getItem(DISMISSED_VERSION_KEY) || "";
+  } catch {
+    return "";
+  }
+}
 
 type UseAppChromeOptions = {
   parseUrlDeepLink: () => void;
@@ -20,6 +31,8 @@ type UseAppChromeResult = {
   canManageGroups: boolean;
   webModeKnown: boolean;
   ccccHome: string;
+  daemonVersionMismatch: DaemonVersionDifference | null;
+  dismissDaemonVersionMismatch: () => void;
   fetchDirSuggestions: () => Promise<void>;
   refreshWebAccessSession: () => Promise<boolean | null>;
 };
@@ -37,6 +50,9 @@ export function useAppChrome({
 }: UseAppChromeOptions): UseAppChromeResult {
   const [ccccHome, setCcccHome] = useState("");
   const [webModeKnown, setWebModeKnown] = useState(false);
+  const [versionDifference, setVersionDifference] = useState<DaemonVersionDifference | null>(null);
+  const [dismissedVersionDifference, setDismissedVersionDifference] =
+    useState(readDismissedVersion);
   const canAccessGlobalSettings = useUIStore((state) => state.canAccessGlobalSettings);
   const setCanAccessGlobalSettings = useUIStore((state) => state.setCanAccessGlobalSettings);
 
@@ -79,24 +95,57 @@ export function useAppChrome({
     refreshGroups();
     let stopped = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    let latest = 0;
+    let modeConfirmed = false;
     const readWebMode = async () => {
+      const reading = ++latest;
       const response = await api.fetchPing().catch(() => null);
-      if (stopped) return;
+      if (stopped || reading !== latest) return;
+      const difference = response?.ok ? daemonVersionDifference(response.result) : null;
+      setVersionDifference((previous) =>
+        previous?.webVersion === difference?.webVersion &&
+        previous?.daemonVersion === difference?.daemonVersion
+          ? previous
+          : difference,
+      );
       const readOnly = response?.ok ? response.result?.web?.read_only : undefined;
       if (typeof readOnly === "boolean") {
+        modeConfirmed = true;
         setWebReadOnly(readOnly);
         setWebModeKnown(true);
-      } else {
+      } else if (!modeConfirmed) {
         // Do not expose user-only controls until the mode is confirmed.
-        retry = setTimeout(() => void readWebMode(), 5000);
+        retry = setTimeout(() => {
+          retry = undefined;
+          void readWebMode();
+        }, 5000);
       }
     };
+    const refreshOnFocus = () => {
+      if (document.visibilityState === "hidden") return;
+      if (retry !== undefined) clearTimeout(retry);
+      retry = undefined;
+      void readWebMode();
+    };
     void readWebMode();
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshOnFocus);
     return () => {
       stopped = true;
       if (retry !== undefined) clearTimeout(retry);
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshOnFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === DISMISSED_VERSION_KEY || event.key === null)
+        setDismissedVersionDifference(readDismissedVersion());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   useEffect(() => {
@@ -147,10 +196,27 @@ export function useAppChrome({
     void ensureRuntimesLoaded();
   }, [addActorOpen, editingActor, ensureRuntimesLoaded]);
 
+  const versionDifferenceKey = versionDifference
+    ? JSON.stringify([versionDifference.webVersion, versionDifference.daemonVersion])
+    : "";
+  const dismissDaemonVersionMismatch = useCallback(() => {
+    if (!versionDifferenceKey) return;
+    try {
+      window.localStorage.setItem(DISMISSED_VERSION_KEY, versionDifferenceKey);
+    } catch {
+      // Without storage, dismissal lasts until this page reloads.
+    }
+    setDismissedVersionDifference(versionDifferenceKey);
+  }, [versionDifferenceKey]);
   return {
     canManageGroups: canAccessGlobalSettings === true,
     webModeKnown,
     ccccHome,
+    daemonVersionMismatch:
+      versionDifferenceKey && versionDifferenceKey !== dismissedVersionDifference
+        ? versionDifference
+        : null,
+    dismissDaemonVersionMismatch,
     fetchDirSuggestions,
     refreshWebAccessSession,
   };

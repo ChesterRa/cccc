@@ -61,15 +61,15 @@ CCCC 只需一条安装命令，无需单独运维数据库、消息队列或 Do
 | **角色化协调** | Foreman + Peer 角色模型，权限边界清晰，收件人路由精确（`@all`、`@peers`、`@foreman`） |
 | **本地优先的运行时状态** | 运行时数据保存在 `CCCC_HOME` 而不是代码仓库里，同时仍可通过 Web Access 与 IM 做远程运维 |
 
-## 0.4.45 要点
+## 0.4.46 要点
 
-- **Grok Bot 原生投递**：使用 Webhook Routine 与远程 MCP 替代画面投递，提供有序任务准入、限定凭据和显式恢复。已有 Grok Actor 需要配置 Routine。
-- **Web Model 设置更清晰**：统一访问和编辑操作，同时保留 ChatGPT 浏览器登录、Dots 事件配对与 Grok Routine 的差异。ChatGPT 适配当前页面结构，并提供共享登录入口。
-- **减少大型 Group 的重复工作**：紧凑 Inbox 投影、有界归档句柄、gzip 批量读取和有界 Web 缓存保留历史及活动输出。可选 Mail 重复提醒默认关闭，不重放任务。
-- **任务操作更稳妥**：创建请求身份及引用支持任务树重试，可选 revision 检查拒绝过期编辑。Context 分页和字节限制约束请求结果，移除 Actor 时清理失效任务引用和工作状态。
-- **恢复行为更明确**：改善 Claude 中断／恢复与停止诊断，遵循 Codex 命令中的模型选择，避免重放 DeepSeek 失败轮次，并展示安全的 Pi 工具活动。直连预览明确 Group 身份和连接重试错误。
+- **接入你已经在用的会话**：自己启动的 Codex、Claude Code、Pi 和 OpenCode V2 会话可以加入 Group、互相联系，进程、对话、账号和授权仍归原应用。实验功能，已在 Linux 和 WSL 上测试。
+- **`cccc` 的终端界面**：状态面板显示 Web 地址、Group、成员和原生会话，提供 `/setup`、`/sessions`、Group 页面、只读的任务列表，以及需要确认的启动和停止。脚本请改用 `cccc --headless`。
+- **在原处答复智能体**：智能体可以请你从几个选项里选，你在消息下方直接答复。「待你答复」列出所有未答的请求，浏览器还能为消息和请求发系统通知。
+- **手机上留给消息的空间更大**：页头更矮，筛选条只占一行，空闲的输入框只占一行，阅读时顶部和底部的栏会让开。各种屏幕上的聊天都更紧凑。
+- **任务板信息更多**：卡片显示任务最近一次变更的时间、下一个清单项、子任务进度和搜索命中。拖动卡片只改状态。
 
-升级步骤与功能边界见 [0.4.45 英文发布说明](docs/release/v0.4.45_release_notes.md)。实时语音仍属实验功能，Grok 声调／音色漂移尚未确认修复。全局秘书仍共享各 Group 的模型历史。本版不包含外部会话热接入。
+升级步骤与功能边界见 [0.4.46 英文发布说明](https://chesterra.github.io/cccc/release/v0.4.46_release_notes)。**由 CCCC 管理的 OpenCode Actor 现在需要 OpenCode V2 2.1.4 或更高版本。** 实时语音仍属实验功能，Grok 声调／音色漂移尚未确认修复。全局秘书仍共享各 Group 的模型历史。
 
 ## 快速上手
 
@@ -233,8 +233,8 @@ CCCC 提供以下运行时接入，另支持通过 `custom` 启动其它命令�
 | Amp | 自动 MCP 配置 | `amp` |
 | Auggie | 原生 TUI 或官方 ACP；ACP 按会话注入 MCP | `auggie` |
 | Kimi Code | 原生 TUI 或官方 ACP；ACP 按会话注入 MCP | `kimi` |
-| OpenCode | 托管 ACP 会话 + 原生 TUI；按会话注入 MCP | `opencode` |
-| Pi | 官方 RPC；按会话注入 MCP；无原生终端附件 | `pi` |
+| OpenCode | 托管 OpenCode V2 服务（HTTP/SSE）+ 原生 TUI；按会话注入 MCP；需 OpenCode V2 2.1.4+ | `opencode` |
+| Pi | 官方 RPC；按会话注入 MCP；托管的 Actor 不嵌入原生终端 | `pi` |
 | Custom | 手动配置 | 任意命令 |
 
 表中列出了运行时命令或浏览器入口。CCCC 会自动套用各运行时的启动默认设置；Actor / Profile 的命令可在设置中查看和自定义。[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)列出了默认自主执行参数，包括 `agy --dangerously-skip-permissions`、`grok --always-approve`、`opencode --auto` 等跳过审批模式。
@@ -255,7 +255,7 @@ GitHub Copilot、Devin CLI、Cursor、Kimi Code、Auggie、Kiro V3、Hermes、Dr
 
 Antigravity 还支持可选的**官方 ACP 模式**，可用于 Actor 与 Voice Analyst，以结构化工作区代替终端。在 Actor／Profile 设置中选择 ACP，并运行一次 `cccc setup --runtime antigravity --runtime-mode acp --login`，完成独立的 CCCC 登录。忙时输入排队和单次权限确认均在工作区中显示。详情见[运行时指南](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp)。
 
-用户只需选择 Runtime，CCCC 会自动确定交互方式。Claude Code、Codex CLI、Grok Build、OpenCode 和 Kilo 在同一个 provider session 上配对原生可写终端与后台结构化协议。消息进入原生终端后，由接收 Runtime 决定是 steer 还是 queue。Pi 使用官方 RPC，没有原生终端附件，要求 Pi 1.1.0 或更新版本（`@earendil-works/pi-coding-agent`）。DeepSeek Harness 使用结构化 ACP，不提供原生终端；ChatGPT Web 使用浏览器投递和远程 MCP；Grok Bot Web Model 使用原生 Webhook Routine 和远程 MCP。
+用户只需选择 Runtime，CCCC 会自动确定交互方式。Claude Code、Codex CLI、Grok Build、OpenCode 和 Kilo 在同一个 provider session 上配对原生可写终端与后台结构化协议。消息进入原生终端后，由接收 Runtime 决定是 steer 还是 queue。托管的 Pi Actor 使用官方 RPC，不嵌入原生终端，要求 Pi 1.1.0 或更新版本（`@earendil-works/pi-coding-agent`）；你自己启动的 Pi 会话则可以作为[原生会话](https://chesterra.github.io/cccc/guide/local-sessions)接入，要求 Pi 1.4.0 或更新版本。托管的 OpenCode Actor 要求 OpenCode V2 2.1.4 或更新版本。DeepSeek Harness 使用结构化 ACP，不提供原生终端；ChatGPT Web 使用浏览器投递和远程 MCP；Grok Bot Web Model 使用原生 Webhook Routine 和远程 MCP。
 
 每个支持 Runtime 的 setup 命令、交互说明和排障方式，见[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)。
 
@@ -488,7 +488,7 @@ CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层�
 | [场景示例](https://chesterra.github.io/cccc/guide/use-cases) | 实际多智能体场景 |
 | [Web UI 指南](https://chesterra.github.io/cccc/guide/web-ui) | 看板导航 |
 | [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | 账户与 Direct 连接、投递和权限边界 |
-| [原生会话](https://chesterra.github.io/cccc/guide/local-sessions) | 连接独立运行的 Codex 和 Claude 会话，无需导入历史 |
+| [原生会话](https://chesterra.github.io/cccc/guide/local-sessions) | 连接独立运行的 Codex、Claude Code、Pi 和 OpenCode V2 会话，无需导入历史 |
 | [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | 听写、文档与输入框工作流 |
 | [IM 桥接配置](https://chesterra.github.io/cccc/guide/im-bridge/) | 连接 Telegram、Slack、Discord、Mattermost、飞书、钉钉、企业微信、微信 |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM 知识集成 |

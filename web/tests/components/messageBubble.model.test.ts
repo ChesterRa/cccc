@@ -95,7 +95,7 @@ describe("messageBubble model", () => {
           },
         }),
       ),
-    ).toEqual({ done: 1, total: 2 });
+    ).toEqual({ replied: 1, cancelled: 0, total: 2 });
   });
 
   it("ignores status entries without a reply request", () => {

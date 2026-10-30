@@ -126,7 +126,11 @@
     "cancelReplyRequest": "取消回复请求",
     "cancelReplyConfirm": "取消这条消息所有尚未完成的回复义务吗？",
     "cancelling": "正在取消…",
-    "cancelled": "已取消"
+    "cancelled": "已取消",
+    "statusReplied": "已回复",
+    "statusReplyPending": "待回复",
+    "statusRead": "已读",
+    "statusReadPending": "待读"
   },
   "relay": {
     "title": "转发消息",
@@ -300,6 +304,7 @@
     "milestoneLabel": "里程碑 {{id}}",
     "assigneeLabel": "负责人 {{name}}",
     "notes": "备注",
+    "searchMatchField": "{{field}}：",
     "addButton": "添加",
     "notePlaceholderShort": "备注…",
     "noNotes": "没有备注",

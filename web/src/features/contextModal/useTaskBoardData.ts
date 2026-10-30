@@ -250,6 +250,8 @@ export function useTaskBoardData(options: UseTaskBoardDataOptions) {
         ? matchResult.count
         : null,
     deleteInfoById,
+    // The search the board is requesting; it changes once typing pauses.
+    searchQuery: query,
     loading: TASK_PAGE_STATUSES.some((status) => columns[status].loading),
     refresh: reload,
     loadMore,

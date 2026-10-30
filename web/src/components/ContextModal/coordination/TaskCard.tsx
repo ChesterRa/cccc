@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
@@ -16,6 +16,7 @@ import {
   type ContextTranslator,
   type SubtaskProgress,
 } from "../model";
+import { taskSearchExcerpt } from "../taskSearchExcerpt";
 import type { ContextModalUi } from "../ui";
 import { TaskCardBadges } from "./TaskCardBadges";
 
@@ -25,6 +26,7 @@ interface TaskCardProps {
   tr: ContextTranslator;
   ui: ContextModalUi;
   syncBusy: boolean;
+  searchQuery?: string;
   selected: boolean;
   onSelectTask: (task: Task) => void;
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
@@ -78,6 +80,7 @@ function TaskCardComponent({
   tr,
   ui,
   syncBusy,
+  searchQuery = "",
   selected,
   onSelectTask,
   onMoveTaskToStatus,
@@ -92,6 +95,22 @@ function TaskCardComponent({
           ?.text
       : undefined;
   const blocked = taskIsLive(task) && Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+  // While searching, quote where the match is when nothing on the card shows
+  // it. Only the openings of the clamped title and summary count as shown.
+  const found = useMemo(
+    () =>
+      searchQuery.trim()
+        ? taskSearchExcerpt(task, searchQuery, [
+            task.id,
+            taskTitle(task).slice(0, 30),
+            task.assignee,
+            task.priority,
+            summary.slice(0, 40),
+            taskIsLive(task) ? task.handoff_to : "",
+          ])
+        : null,
+    [task, searchQuery, summary],
+  );
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, isDragging } =
     useDraggable({
       id: `task:${task.id}`,
@@ -151,7 +170,10 @@ function TaskCardComponent({
             {...attributes}
             {...listeners}
             disabled={syncBusy}
-            className="touch-none rounded-lg px-2 py-1 text-[11px] glass-btn text-[var(--color-text-secondary)] focus:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] md:opacity-0 md:group-hover/task:opacity-100"
+            // The unlayered global button rule overrides Tailwind's touch-none.
+            // Keep the browser's pan/back gestures off this drag handle only.
+            style={{ touchAction: "none" }}
+            className="touch-none rounded-lg px-2 py-1 text-[11px] glass-btn text-[var(--color-text-secondary)] focus:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] md:opacity-0 md:group-hover/task:opacity-100 md:[@media(any-pointer:coarse)]:opacity-100"
             onClick={(event) => event.stopPropagation()}
             aria-label={tr("context.dragTaskNamed", "Move {{id}}: {{title}}", {
               id: task.id,
@@ -171,6 +193,33 @@ function TaskCardComponent({
           <div className={classNames("mt-2 line-clamp-2 text-xs", ui.subtleTextClass)}>
             {tr("context.openChecklistItem", "To do: {{item}}", { item: openItem.trim() })}
           </div>
+        ) : null}
+
+        {found ? (
+          <p
+            className={classNames(
+              "mt-1.5 line-clamp-2 text-xs [overflow-wrap:anywhere]",
+              ui.subtleTextClass,
+            )}
+          >
+            <span className="font-medium">
+              {found.field === "handoff_to"
+                ? tr("context.handoffTo", "Handoff →")
+                : tr("context.searchMatchField", "{{field}}:", {
+                    field:
+                      found.field === "title"
+                        ? tr("context.titleField", "Title")
+                        : found.field === "notes"
+                          ? tr("context.notes", "Notes")
+                          : tr("context.outcome", "Outcome"),
+                  })}
+            </span>{" "}
+            {found.before}
+            <mark className="rounded bg-amber-200 px-0.5 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200">
+              {found.match}
+            </mark>
+            {found.after}
+          </p>
         ) : null}
 
         <TaskCardBadges task={task} tr={tr} subtasks={subtasks} />
@@ -201,6 +250,7 @@ export const TaskCard = memo(TaskCardComponent, (previous, next) => {
     previous.tr === next.tr &&
     previous.ui === next.ui &&
     previous.syncBusy === next.syncBusy &&
+    previous.searchQuery === next.searchQuery &&
     previous.selected === next.selected &&
     previous.onSelectTask === next.onSelectTask &&
     previous.onMoveTaskToStatus === next.onMoveTaskToStatus &&

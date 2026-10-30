@@ -321,6 +321,13 @@ export function SearchModal({
           const insight = ev.kind === "chat.message" ? getMessageInsight(ev.data) : "";
           const evId = ev.id ? String(ev.id) : "";
           const isChat = ev.kind === "chat.message";
+          const senderId = String(ev.by || "").trim();
+          const senderLabel =
+            senderId === "user"
+              ? t("searchSenderUser")
+              : senderId === "system"
+                ? t("searchSenderSystem")
+                : getDisplayName(senderId);
           return (
             <article
               key={evId || `r${idx}`}
@@ -378,7 +385,9 @@ export function SearchModal({
                       variant="ghost"
                       size="sm"
                       onClick={() => onReply(ev)}
-                      aria-label={`Reply to ${getDisplayName(ev.by || "") || "message"}`}
+                      aria-label={
+                        senderLabel ? t("replyToSender", { name: senderLabel }) : t("reply")
+                      }
                       title={t("reply")}
                     >
                       {t("replyTo")}

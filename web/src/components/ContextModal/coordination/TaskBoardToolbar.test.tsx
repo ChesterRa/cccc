@@ -95,3 +95,49 @@ it("keeps a selected empty filter and exposes the archived switch to keyboard us
     host.remove();
   }
 });
+
+it("drops the board-wide counts from the filters while a search or assignee narrows the board", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const props: ComponentProps<typeof TaskBoardToolbar> = {
+    tr: (key, fallback) => fallback || key,
+    ui: createContextModalUi(false),
+    syncBusy: false,
+    taskQuery: "",
+    assigneeFilter: "__all__",
+    assigneeOptions: ["worker"],
+    taskFilter: "all",
+    tasksSummary: { total: 9 },
+    attentionCounts: { blocked: 2, waitingUser: 0, pendingHandoffs: 1 },
+    unassignedCount: 3,
+    hasArchivedTasks: false,
+    archivedExpanded: false,
+    matchingCount: 1,
+    onTaskQueryChange: vi.fn(),
+    onAssigneeFilterChange: vi.fn(),
+    onTaskFilterChange: vi.fn(),
+    onClearFilters: vi.fn(),
+    onArchivedExpandedChange: vi.fn(),
+  };
+  const filters = () =>
+    [...host.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].map(
+      (button) => button.textContent,
+    );
+  try {
+    act(() => root.render(<TaskBoardToolbar {...props} />));
+    expect(filters()).toEqual(["All · 9", "Blocked · 2", "Pending handoffs · 1", "Unassigned · 3"]);
+    for (const narrowing of [{ taskQuery: "report" }, { assigneeFilter: "worker" }]) {
+      act(() => root.render(<TaskBoardToolbar {...props} {...narrowing} />));
+      // A filter without tasks anywhere stays hidden; the others lose their numbers.
+      expect(filters()).toEqual(["All", "Blocked", "Pending handoffs", "Unassigned"]);
+      expect(host.querySelector('[role="status"]')?.textContent).toContain("matching tasks");
+    }
+    // Whitespace is not a search, as on the server.
+    act(() => root.render(<TaskBoardToolbar {...props} taskQuery="  " />));
+    expect(filters()[0]).toBe("All · 9");
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
+});

@@ -61,15 +61,15 @@ CCCC はコマンド一つで導入でき、データベースやメッセージ
 | **ロールベース協調** | Foreman + Peer ロールモデル、権限境界と宛先ルーティング（`@all`、`@peers`、`@foreman`） |
 | **ローカルファーストなランタイム状態** | ランタイムデータはリポジトリではなく `CCCC_HOME` に保持しつつ、Web Access と IM ブリッジで遠隔運用も可能 |
 
-## 0.4.45 の主な変更
+## 0.4.46 の主な変更
 
-- **Grok Bot のネイティブ配信**：画面経由の配信を Webhook Routine とリモート MCP に置き換え、順序を守ったタスク受付、権限を限定した認証情報、明示的な復旧を提供します。既存の Grok Actor には Routine の設定が必要です。
-- **分かりやすい Web Model 設定**：アクセスと編集の操作を統一しつつ、ChatGPT のブラウザーログイン、Dots のイベントペアリング、Grok Routine の違いを維持します。ChatGPT の現在の画面構造に対応し、共有ログインへの入口を設けました。
-- **大規模 Group の重複処理を削減**：コンパクトな Inbox 投影、上限のあるアーカイブハンドル、gzip の一括読み取り、上限付き Web キャッシュにより、履歴と進行中の出力を保持します。任意の Mail 再通知は既定で無効で、タスクを再実行しません。
-- **より確実なタスク操作**：作成要求の識別子と参照によりタスクツリーの再試行を支援し、任意の revision チェックで古い編集を拒否します。Context のページ分割とバイト上限で応答を制限し、Actor 削除時には無効なタスク参照と作業状態をクリアします。
-- **予測しやすい復旧**：Claude の中断・再開と停止診断を改善し、Codex コマンドのモデル指定を反映、DeepSeek の失敗ターンの再送を抑止、Pi の安全なツール活動を表示します。Direct 接続のプレビューでは Group の識別と再接続エラーを明確にします。
+- **手元のセッションをつなぐ**：自分で起動した Codex、Claude Code、Pi、OpenCode V2 のセッションが Group に参加し、互いに連絡できます。プロセス、会話、アカウント、承認は元のアプリが持ち続けます。実験的な機能で、Linux と WSL で検証しています。
+- **`cccc` のターミナル画面**：Web のアドレス、Group、メンバー、ネイティブセッションを表示するステータスパネルに、`/setup`、`/sessions`、Group ページ、読み取り専用のタスク一覧、確認付きの開始と停止を備えました。スクリプトでは `cccc --headless` を使ってください。
+- **その場でエージェントに回答**：エージェントが選択肢で判断を求められるようになり、メッセージの下で回答できます。「あなたの回答待ち」に未回答の依頼がすべて並び、メッセージと依頼はブラウザーのシステム通知でも受け取れます。
+- **スマートフォンでメッセージを広く表示**：ヘッダーを低くし、フィルターと未使用の入力欄をそれぞれ 1 行にまとめ、読んでいる間は上下のバーが退きます。どの画面でもチャットがよりコンパクトになりました。
+- **情報が増えたタスクボード**：カードにタスクの最終更新、次のチェックリスト項目、サブタスクの進み具合、検索での一致箇所を表示します。カードの移動はステータスだけを変更します。
 
-更新手順と機能の範囲は [0.4.45 英語リリースノート](docs/release/v0.4.45_release_notes.md)をご覧ください。ライブ音声は実験的な機能で、Grok の音高・声質の変動は修正を確認できていません。グローバル Secretary は引き続き Group 間でモデルの会話履歴を共有します。外部セッションのホット接続は本版に含まれません。
+更新手順と機能の範囲は [0.4.46 英語リリースノート](https://chesterra.github.io/cccc/release/v0.4.46_release_notes)をご覧ください。**CCCC が管理する OpenCode Actor には OpenCode V2 2.1.4 以降が必要になりました。** ライブ音声は実験的な機能で、Grok の音高・声質の変動は修正を確認できていません。グローバル Secretary は引き続き Group 間でモデルの会話履歴を共有します。
 
 ## クイックスタート
 
@@ -238,8 +238,8 @@ CCCC は以下の Runtime 連携と、その他の CLI エージェント向け�
 | Amp | MCP 自動設定 | `amp` |
 | Auggie | 純正 TUI または公式 ACP、ACP はセッション単位 MCP | `auggie` |
 | Kimi Code | 純正 TUI または公式 ACP、ACP はセッション単位 MCP | `kimi` |
-| OpenCode | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `opencode` |
-| Pi | 公式 RPC、セッション単位 MCP、純正ターミナル接続なし | `pi` |
+| OpenCode | 管理 OpenCode V2 サーバー（HTTP/SSE）+ 純正 TUI、セッション単位 MCP、OpenCode V2 2.1.4 以降 | `opencode` |
+| Pi | 公式 RPC、セッション単位 MCP、管理 Actor には純正ターミナルを埋め込まない | `pi` |
 | Custom | 手動設定 | 任意のコマンド |
 
 ここではランタイムのコマンドまたはブラウザの入口を示します。CCCC はランタイムごとの起動デフォルトを自動適用し、actor/profile のコマンドは設定で確認・変更できます。[サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) には、`agy --dangerously-skip-permissions`、`grok --always-approve`、`opencode --auto` など、承認を省略する既定の autonomy flags も記載しています。
@@ -260,7 +260,7 @@ GitHub Copilot、Devin CLI、Cursor、Kimi Code、Auggie、Kiro V3、Hermes、Dr
 
 Antigravity は Actor と Voice Analyst 向けの任意の**公式 ACP モード**にも対応し、端末の代わりに構造化ワークスペースを使います。Actor／Profile 設定で ACP を選び、`cccc setup --runtime antigravity --runtime-mode acp --login` を一度実行して CCCC 専用ログインを完了してください。待機中の入力と今回のみの権限確認を画面で確認できます。[ランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp)をご覧ください。
 
-Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Claude Code、Codex CLI、Grok Build、OpenCode、Kilo は、同じ provider session で純正の書き込み可能なターミナルと構造化プロトコルを併用します。メッセージはそのターミナルへ渡され、steer と queue は受信 Runtime が判断します。Pi は公式 RPC を使い、純正ターミナルへの接続はありません。Pi 1.1.0 以降（`@earendil-works/pi-coding-agent`）が必要です。DeepSeek Harness は純正ターミナルなしの ACP、ChatGPT Web はブラウザー配信と Remote MCP を使います。Grok Bot Web Model はネイティブ Webhook Routine と Remote MCP を使います。
+Runtime を選ぶと、CCCC が操作方法を自動的に決定します。Claude Code、Codex CLI、Grok Build、OpenCode、Kilo は、同じ provider session で純正の書き込み可能なターミナルと構造化プロトコルを併用します。メッセージはそのターミナルへ渡され、steer と queue は受信 Runtime が判断します。管理 Pi Actor は公式 RPC を使い、純正ターミナルを埋め込みません。Pi 1.1.0 以降（`@earendil-works/pi-coding-agent`）が必要です。自分で起動した Pi セッションは、Pi 1.4.0 以降なら[ネイティブセッション](https://chesterra.github.io/cccc/guide/local-sessions)として接続できます。管理 OpenCode Actor には OpenCode V2 2.1.4 以降が必要です。DeepSeek Harness は純正ターミナルなしの ACP、ChatGPT Web はブラウザー配信と Remote MCP を使います。Grok Bot Web Model はネイティブ Webhook Routine と Remote MCP を使います。
 
 各サポート Runtime の setup コマンド、操作方式、トラブルシュートは [サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) を参照してください。
 
@@ -493,7 +493,7 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 | [ユースケース](https://chesterra.github.io/cccc/guide/use-cases) | 実践的なマルチエージェントシナリオ |
 | [Web UI ガイド](https://chesterra.github.io/cccc/guide/web-ui) | ダッシュボードのナビゲーション |
 | [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | アカウント・Direct 接続、配信と権限境界 |
-| [ネイティブセッション](https://chesterra.github.io/cccc/guide/local-sessions) | 履歴を取り込まずに既存の Codex / Claude セッションを接続 |
+| [ネイティブセッション](https://chesterra.github.io/cccc/guide/local-sessions) | 履歴を取り込まずに既存の Codex / Claude Code / Pi / OpenCode V2 セッションを接続 |
 | [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | 音声入力、文書、入力欄のワークフロー |
 | [IM ブリッジ設定](https://chesterra.github.io/cccc/guide/im-bridge/) | Telegram、Slack、Discord、Mattermost、Feishu、DingTalk、WeCom、Weixin の接続 |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM ナレッジ統合 |

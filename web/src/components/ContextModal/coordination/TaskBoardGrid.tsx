@@ -9,6 +9,7 @@ import type {
 } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import type { TaskColumnPages } from "../../../features/contextModal/taskBoardData";
+import { useUIStore } from "../../../stores/useUIStore";
 import { classNames } from "../../../utils/classNames";
 import {
   taskStatusLabel,
@@ -26,6 +27,7 @@ export function TaskBoardGrid({
   tr,
   ui,
   syncBusy,
+  searchQuery,
   archivedExpanded,
   board,
   pages,
@@ -45,6 +47,7 @@ export function TaskBoardGrid({
   tr: ContextTranslator;
   ui: ContextModalUi;
   syncBusy: boolean;
+  searchQuery: string;
   archivedExpanded: boolean;
   board: BoardColumns;
   pages: TaskColumnPages;
@@ -65,6 +68,7 @@ export function TaskBoardGrid({
     tr,
     ui,
     syncBusy,
+    searchQuery,
     subtaskProgress,
     selectedTaskId,
     onSelectTask,
@@ -120,17 +124,16 @@ export function TaskBoardGrid({
     };
     return { announcements, screenReaderInstructions };
   }, [taskMap, tr]);
-  const column = (status: BoardStatus, label: string) => (
-    <TaskBoardColumn
-      columnKey={status}
-      label={label}
-      items={board[status]}
-      totalCount={pages[status].totalCount}
-      hasMore={pages[status].hasMore}
-      loading={pages[status].loading}
-      {...shared}
-    />
-  );
+  // Phone widths stack the columns, where Active would sit below every planned
+  // task. It comes first there, in the DOM, so focus and screen readers follow
+  // the order that is shown. The store's small screen is the grid's md break.
+  // Columns are keyed, so a flip moves them whole; React refocuses a moved
+  // control that had the focus.
+  const smallScreen = useUIStore((state) => state.isSmallScreen);
+  const statuses: BoardStatus[] = smallScreen
+    ? ["active", "planned", "done"]
+    : ["planned", "active", "done"];
+  if (archivedExpanded) statuses.push("archived");
   return (
     <div className="min-w-0">
       <DndContext
@@ -146,10 +149,18 @@ export function TaskBoardGrid({
             archivedExpanded ? "xl:grid-cols-4" : "xl:grid-cols-3",
           )}
         >
-          {column("planned", taskStatusLabel("planned", tr))}
-          {column("active", taskStatusLabel("active", tr))}
-          {column("done", taskStatusLabel("done", tr))}
-          {archivedExpanded ? column("archived", taskStatusLabel("archived", tr)) : null}
+          {statuses.map((status) => (
+            <TaskBoardColumn
+              key={status}
+              columnKey={status}
+              label={taskStatusLabel(status, tr)}
+              items={board[status]}
+              totalCount={pages[status].totalCount}
+              hasMore={pages[status].hasMore}
+              loading={pages[status].loading}
+              {...shared}
+            />
+          ))}
         </div>
         <DragOverlay>
           {dragTaskId && taskMap.get(dragTaskId) ? (

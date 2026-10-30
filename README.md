@@ -62,15 +62,15 @@ CCCC installs with one command and needs no separately operated database, messag
 | **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
 
-## 0.4.45 Highlights
+## 0.4.46 Highlights
 
-- **Native Grok Bot delivery:** Webhook Routines and remote MCP replace browser delivery, with ordered task admission, scoped credentials and explicit recovery. Existing Grok Actors need Routine setup.
-- **Clearer Web Model setup:** consistent access and editing controls retain ChatGPT browser login, Dots event pairing and Grok Routine differences. ChatGPT recognizes the current page layout and offers a shared-login entry point.
-- **Large Groups with less repeated work:** compact Inbox projections, bounded archive handles, batched gzip reads and bounded Web caches preserve history and active output. Optional repeat Mail reminders default to off and never replay tasks.
-- **Safer task operations:** retry identities and references support task-tree creation; optional revision checks reject stale edits. Context pagination and byte limits bound requested answers, and Actor removal clears stale task references and working state.
-- **More predictable recovery:** improve Claude interruption/resume handling and stop diagnostics, honor Codex command model selection, avoid failed DeepSeek turn replay, and show safe Pi tool activity. Direct connection previews clarify Group identity and retrying errors.
+- **Bring the sessions you already run:** Codex, Claude Code, Pi and OpenCode V2 sessions that you started yourself can join Groups and contact each other, while each application keeps its process, conversation, account and approvals. Experimental; tested on Linux and WSL.
+- **A terminal interface for `cccc`:** a status panel with the Web address, Groups, actors and native sessions, plus `/setup`, `/sessions`, Group pages, read-only tasks and confirmed Start and Stop. Scripts should use `cccc --headless`.
+- **Answer agents in place:** agents can ask you to choose between options, answered under the message. Waiting for you lists every open request, and browsers can show system notifications for messages and requests.
+- **More room on phones:** a shorter header, one-line filters, a single-row message box and bars that slide away while you read. The chat is more compact on every screen.
+- **A task board that tells more:** cards show when a task last changed, its next checklist item, subtask progress and search matches. Moving a card changes only its status.
 
-See the [0.4.45 release notes](docs/release/v0.4.45_release_notes.md) for upgrade steps and feature boundaries. Live voice remains experimental; Grok's reported pitch/timbre drift is not confirmed fixed. The global Secretary still shares model history across Groups. External-session hot attachment is not included.
+See the [0.4.46 release notes](https://chesterra.github.io/cccc/release/v0.4.46_release_notes) for upgrade steps and feature boundaries. **OpenCode Actors that CCCC manages now need OpenCode V2 2.1.4 or later.** Live voice remains experimental; Grok's reported pitch/timbre drift is not confirmed fixed. The global Secretary still shares model history across Groups.
 
 ## Quick Start
 
@@ -243,8 +243,8 @@ CCCC provides the following runtime integrations, plus `custom` for other comman
 | Amp | Auto MCP setup | `amp` |
 | Auggie | Native TUI or official ACP; session MCP | `auggie` |
 | Kimi Code | Native TUI or official ACP; session MCP | `kimi` |
-| OpenCode | Managed ACP session + native TUI; per-session MCP | `opencode` |
-| Pi | Official RPC; per-session MCP; no native attachment | `pi` |
+| OpenCode | Managed OpenCode V2 server (HTTP/SSE) + native TUI; per-session MCP; OpenCode V2 2.1.4+ | `opencode` |
+| Pi | Official RPC; per-session MCP; managed Actors have no embedded native terminal | `pi` |
 | Custom | Manual | Any command |
 
 These are stable runtime entrypoints or surfaces. CCCC applies runtime-specific launch defaults automatically; actor/profile commands can be reviewed and customized in settings. The [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes) lists the default autonomy flags, including approval-bypass modes such as `agy --dangerously-skip-permissions`, `grok --always-approve`, and `opencode --auto`.
@@ -265,7 +265,7 @@ GitHub Copilot, Devin CLI, Cursor, Kimi Code, Auggie, Kiro V3, Hermes and Droid 
 
 Antigravity also supports an optional **official ACP mode** for Actors and Voice Analyst, with a structured workspace instead of a terminal. Select ACP in Actor/Profile settings and run `cccc setup --runtime antigravity --runtime-mode acp --login` once for its separate CCCC login. Busy inputs and one-time permission requests are visible in the workspace. See the [runtime guide](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp).
 
-Choose a Runtime; CCCC derives its interaction surface automatically. Claude Code, Codex CLI, Grok Build, OpenCode and Kilo pair a native writable terminal with a structured background protocol on the same provider session. Messages enter that terminal, leaving queue-versus-steer behavior to the receiving Runtime. Pi uses official RPC without a native terminal attachment and requires Pi 1.1.0 or newer (`@earendil-works/pi-coding-agent`). DeepSeek Harness uses structured ACP without a native terminal; ChatGPT Web uses browser delivery and remote MCP; Grok Bot Web Model uses native Webhook Routines and remote MCP.
+Choose a Runtime; CCCC derives its interaction surface automatically. Claude Code, Codex CLI, Grok Build, OpenCode and Kilo pair a native writable terminal with a structured background protocol on the same provider session. Messages enter that terminal, leaving queue-versus-steer behavior to the receiving Runtime. A managed Pi Actor uses official RPC without an embedded native terminal and requires Pi 1.1.0 or newer (`@earendil-works/pi-coding-agent`); a Pi session you start yourself can instead connect as a [native session](https://chesterra.github.io/cccc/guide/local-sessions) with Pi 1.4.0 or newer. Managed OpenCode Actors require OpenCode V2 2.1.4 or newer. DeepSeek Harness uses structured ACP without a native terminal; ChatGPT Web uses browser delivery and remote MCP; Grok Bot Web Model uses native Webhook Routines and remote MCP.
 
 For setup commands, interaction details, and troubleshooting for every supported Runtime, see the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes).
 
@@ -499,7 +499,7 @@ For security reporting, see [SECURITY.md](SECURITY.md); for operational access c
 | [Use Cases](https://chesterra.github.io/cccc/guide/use-cases) | Practical multi-agent scenarios |
 | [Web UI Guide](https://chesterra.github.io/cccc/guide/web-ui) | Navigating the dashboard |
 | [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | Account and Direct connections, delivery and permissions |
-| [Native sessions](https://chesterra.github.io/cccc/guide/local-sessions) | Connect user-owned Codex and Claude sessions without importing history |
+| [Native sessions](https://chesterra.github.io/cccc/guide/local-sessions) | Connect user-owned Codex, Claude Code, Pi and OpenCode V2 sessions without importing history |
 | [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | Dictation, documents and composer workflows |
 | [IM Bridge Setup](https://chesterra.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Mattermost, Feishu, DingTalk, WeCom, Weixin |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM knowledge integration |

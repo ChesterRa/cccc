@@ -5,6 +5,7 @@ const AppModals = lazy(() =>
 );
 import { AppBackground } from "./components/app/AppBackground";
 import { AppFeedback } from "./components/app/AppFeedback";
+import { DaemonVersionNotice } from "./components/app/DaemonVersionNotice";
 import { useCodexVoiceShell } from "./features/codexVoice/useCodexVoiceShell";
 import { AppShell } from "./components/app/AppShell";
 import { useTextScale } from "./hooks/useTextScale";
@@ -348,18 +349,25 @@ export default function App({
     },
   });
 
-  const { canManageGroups, webModeKnown, ccccHome, fetchDirSuggestions, refreshWebAccessSession } =
-    useAppChrome({
-      parseUrlDeepLink,
-      refreshGroups,
-      setWebReadOnly,
-      setSmallScreen,
-      showError,
-      setDirSuggestions,
-      groupEditOpen,
-      addActorOpen,
-      editingActor,
-    });
+  const {
+    canManageGroups,
+    webModeKnown,
+    ccccHome,
+    daemonVersionMismatch,
+    dismissDaemonVersionMismatch,
+    fetchDirSuggestions,
+    refreshWebAccessSession,
+  } = useAppChrome({
+    parseUrlDeepLink,
+    refreshGroups,
+    setWebReadOnly,
+    setSmallScreen,
+    showError,
+    setDirSuggestions,
+    groupEditOpen,
+    addActorOpen,
+    editingActor,
+  });
   const connect = useConnectWorkbench(!connectEmbedded && !webReadOnly, refreshWebAccessSession);
   const remoteSelected = Boolean(connect.selected);
 
@@ -409,11 +417,18 @@ export default function App({
 
   return (
     <div
-      className="relative min-h-0 w-full overflow-hidden bg-[var(--color-body-bg)] text-[var(--color-text-primary)]"
+      className={`relative min-h-0 w-full overflow-hidden bg-[var(--color-body-bg)] text-[var(--color-text-primary)] ${daemonVersionMismatch ? "grid grid-rows-[auto_minmax(0,1fr)]" : ""}`}
       style={APP_VIEWPORT_BOX}
       {...{ [VISUAL_VIEWPORT_BOX_ATTRIBUTE]: "" }}
     >
       <AppBackground isDark={isDark} />
+
+      {daemonVersionMismatch ? (
+        <DaemonVersionNotice
+          difference={daemonVersionMismatch}
+          onDismiss={dismissDaemonVersionMismatch}
+        />
+      ) : null}
 
       <PendingReplyProvider
         enabled={webModeKnown && !webReadOnly && !connectEmbedded}

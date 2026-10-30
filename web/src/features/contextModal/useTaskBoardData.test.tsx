@@ -94,10 +94,14 @@ it("shows only counts for the currently completed query, without retained tasks 
 
   await render();
   expect(board?.matchingCount).toBe(3);
+  expect(board?.searchQuery).toBe("needle");
   await render({ query: "new query" });
   // The old result is hidden immediately, before the 250ms search debounce.
   expect(board?.matchingCount).toBeNull();
+  // The search being requested, which cards quote, waits for typing to pause.
+  expect(board?.searchQuery).toBe("needle");
   await act(async () => vi.advanceTimersByTimeAsync(250));
+  expect(board?.searchQuery).toBe("new query");
   expect(board?.matchingCount).toBeNull();
   await act(async () => next.resolve(pages({})));
   expect(board?.matchingCount).toBe(0);

@@ -47,6 +47,11 @@ it("switches the single send label without sending and preserves permission gate
     expect(host.querySelector('button[title="Send (⌘+Enter)"]')).not.toBeNull();
     await act(async () => toggle().click());
     expect(option("Send + Reply").disabled).toBe(true);
+    const reasonId = option("Send + Reply").getAttribute("aria-describedby")!;
+    expect(document.getElementById(reasonId)?.textContent).toBe("modeSendReplyRequiresConcrete");
+    expect(document.querySelector('[role="group"]')?.getAttribute("aria-describedby")).toBe(
+      reasonId,
+    );
     await act(async () => option("Mail").click());
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(host.textContent).toBe("Mail");
@@ -60,6 +65,7 @@ it("switches the single send label without sending and preserves permission gate
     expect(toggle().disabled).toBe(false);
     await act(async () => toggle().click());
     expect(option("Send + Reply").disabled).toBe(false);
+    expect(document.getElementById(reasonId)).toBeNull();
     await act(async () => option("Send + Reply").click());
     expect(host.textContent).toBe("Send + Reply");
     await act(async () => root.render(<Harness busy />));

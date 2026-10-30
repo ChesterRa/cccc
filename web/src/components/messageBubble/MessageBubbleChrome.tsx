@@ -28,7 +28,7 @@ export function MessageFooter({
   event,
 }: {
   readOnly?: boolean;
-  obligationSummary: { done: number; total: number } | null;
+  obligationSummary: { replied: number; cancelled: number; total: number } | null;
   visibleReadStatusEntries: readonly (readonly [string, boolean])[];
   webModelDeliveryStatus?: WebModelDeliveryStatus;
   readPreviewEntries: readonly (readonly [string, boolean])[];
@@ -96,6 +96,21 @@ export function MessageFooter({
       : webModelDeliveryStatus?.state === "submitted" || webModelDeliveryStatus?.state === "bound"
         ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
         : "border-amber-500/20 bg-amber-500/8 text-amber-700 dark:text-amber-300";
+  // A cancellation closes an obligation without a reply, so it must not look like one.
+  const obligationState = obligationSummary
+    ? obligationSummary.replied >= obligationSummary.total
+      ? "replied"
+      : obligationSummary.replied + obligationSummary.cancelled >= obligationSummary.total
+        ? "closed"
+        : "open"
+    : null;
+  const obligationText = obligationSummary
+    ? `${t("reply")} ${obligationSummary.replied}/${obligationSummary.total}${
+        obligationSummary.cancelled
+          ? ` · ${t("replyCancelledCount", { cancelled: obligationSummary.cancelled })}`
+          : ""
+      }`
+    : "";
   const allRead =
     visibleReadStatusEntries.length > 0 &&
     visibleReadStatusEntries.every(([_, cleared]) => cleared);
@@ -191,30 +206,39 @@ export function MessageFooter({
             <div
               className={classNames(
                 "flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1",
-                obligationSummary.done >= obligationSummary.total
+                obligationState === "replied"
                   ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/5"
-                  : "border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5",
+                  : obligationState === "closed"
+                    ? "border-black/5 bg-black/[0.025] dark:border-white/8 dark:bg-white/[0.035]"
+                    : "border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5",
               )}
             >
-              <span className="text-xs font-semibold tracking-tight">
-                {t("reply")} {obligationSummary.done}/{obligationSummary.total}
-              </span>
+              <span className="text-xs font-semibold tracking-tight">{obligationText}</span>
             </div>
           ) : (
             <button
               type="button"
               className={classNames(
                 "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1 transition-all duration-150",
-                obligationSummary.done >= obligationSummary.total
+                obligationState === "replied"
                   ? "border-emerald-500/25 bg-emerald-500/6 hover:bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/8 dark:hover:bg-emerald-500/15"
-                  : "border-amber-500/25 bg-amber-500/6 hover:bg-amber-500/12 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/8 dark:hover:bg-amber-500/15",
+                  : obligationState === "closed"
+                    ? "border-black/5 bg-black/[0.025] hover:bg-black/[0.045] dark:border-white/8 dark:bg-white/[0.035] dark:hover:bg-white/[0.055]"
+                    : "border-amber-500/25 bg-amber-500/6 hover:bg-amber-500/12 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/8 dark:hover:bg-amber-500/15",
               )}
               onClick={onShowRecipients}
-              aria-label={t("showObligationStatus")}
+              aria-label={t(
+                obligationSummary.cancelled
+                  ? "showObligationStatusCancelled"
+                  : "showObligationStatusCounts",
+                {
+                  replied: obligationSummary.replied,
+                  cancelled: obligationSummary.cancelled,
+                  total: obligationSummary.total,
+                },
+              )}
             >
-              <span className="text-xs font-semibold tracking-tight">
-                {t("reply")} {obligationSummary.done}/{obligationSummary.total}
-              </span>
+              <span className="text-xs font-semibold tracking-tight">{obligationText}</span>
             </button>
           )
         ) : visibleReadStatusEntries.length > 0 ? (

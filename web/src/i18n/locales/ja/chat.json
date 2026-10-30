@@ -69,7 +69,7 @@
   "filterNeedReply": "リクエスト",
   "pendingReply": {
     "loadFailed": "回答待ちを更新できません。現在の状態は不明です。",
-    "daemonUnsupported": "実行中の CCCC デーモンは回答待ちに対応していません。デーモンとこのページのバージョンが異なる可能性があります。CCCC を再起動してから再試行してください。",
+    "daemonUnsupported": "実行中の CCCC daemon は回答待ちに対応していません。バージョンが異なる可能性があります。作業を終え、CCCC を実行しているマシンで同じ CCCC_HOME を使って cccc daemon stop を実行し、CCCC を再起動してください。リモートユーザーは管理者に連絡してください。",
     "empty": "条件に一致する回答待ちはありません。",
     "choose": "回答を選択",
     "recommended": "おすすめ",
@@ -96,7 +96,7 @@
     "openComposer": "会話で返信"
   },
   "notificationPrompt": {
-    "text": "システム通知をオンにすると、ページを閉じていても、あなた宛ての新しいメッセージを通知します。CCCC の Web サービスは起動したままにしてください。",
+    "text": "<0>通知をオン</0>。ページを閉じても自分宛ての新着メッセージを受け取れます。",
     "enable": "オンにする…",
     "dismiss": "今はしない"
   },
@@ -230,7 +230,7 @@
   "modeSendDesc": "今すぐ配信",
   "modeSendReply": "送信 + 返信",
   "modeSendReplyDesc": "今すぐ配信し、具体的な返信を依頼",
-  "modeSendReplyRequiresConcrete": "既定の Foreman を使うか、具体的なエージェントを1人以上選択してください",
+  "modeSendReplyRequiresConcrete": "@all と @peers を外すか、宛先をクリアして Foreman に返信を依頼してください",
   "modeMail": "メール",
   "mailMessageHint": "受信トレイに保存し、相手をすぐには呼び出しません。",
   "modeMailDesc": "今は中断せず受信箱に追加",
@@ -539,7 +539,11 @@
   "imagePreviewUnavailable": "画像をプレビューできません",
   "downloadOriginalImage": "元の画像を開く",
   "imagePreviewHint": "背景をクリックするか Escape キーで閉じます",
-  "showObligationStatus": "対応状況を表示",
+  "showObligationStatusCounts": "返信ステータスを表示：返信済み {{replied}}/{{total}}",
+  "showObligationStatusCancelled": "返信ステータスを表示：返信済み {{replied}}/{{total}}、取り消し済み {{cancelled}}",
+  "replyCancelledCount": "取り消し済み {{cancelled}}",
+  "noMoreMessages": "これ以上メッセージはありません",
+  "loadingHistory": "読み込み中…",
   "showRecipientStatus": "受信者の状況を表示",
   "read": "既読",
   "pending": "未読",
@@ -560,6 +564,7 @@
   "noResults": "結果はありません",
   "noResultsHint": "別のクエリ、送信者、または種類のフィルターを試してください。",
   "replyTo": "↩ 返信",
+  "replyToSender": "{{name}}に返信",
   "openMessage": "↗ 開く",
   "copyId": "⧉ ID をコピー",
   "copyEventId": "イベント ID をコピー",

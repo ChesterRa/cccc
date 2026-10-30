@@ -35,6 +35,8 @@ interface TaskBoardProps {
   taskLoading: boolean;
   taskLoadError: string;
   matchingCount?: number | null;
+  // The search the board is requesting, which cards quote; it lags typing.
+  searchQuery?: string;
   taskMap: Map<string, Task>;
   subtaskProgress: ReadonlyMap<string, SubtaskProgress>;
   selectedTaskId: string;
@@ -76,6 +78,7 @@ export function TaskBoard({
   taskLoading,
   taskLoadError,
   matchingCount,
+  searchQuery = "",
   taskMap,
   subtaskProgress,
   selectedTaskId,
@@ -199,6 +202,7 @@ export function TaskBoard({
             tr={tr}
             ui={ui}
             syncBusy={syncBusy}
+            searchQuery={searchQuery}
             archivedExpanded={archivedExpanded}
             board={filteredBoard}
             pages={columnPages}

@@ -32,6 +32,7 @@
     "i18next-browser-languagedetector": "^8.2.1",
     "lucide-react": "^1.24.0",
     "markdown-it": "^14.3.0",
+    "markdown-it-cjk-friendly": "^3.0.0",
     "mermaid": "11.16.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",

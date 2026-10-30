@@ -73,7 +73,7 @@
   "filterNeedReply": "Requests",
   "pendingReply": {
     "loadFailed": "Could not refresh waiting replies. Their status is unknown.",
-    "daemonUnsupported": "The running CCCC daemon does not support Waiting for you; the daemon and this page may be from different versions. Restart CCCC, then retry.",
+    "daemonUnsupported": "The running CCCC daemon does not support Waiting for you; the versions may differ. Finish current work, then run cccc daemon stop on the CCCC host with the same CCCC_HOME and start CCCC again. Remote users should contact an administrator.",
     "empty": "No matching requests are waiting for your reply.",
     "choose": "Choose an answer",
     "recommended": "Recommended",
@@ -100,7 +100,7 @@
     "openComposer": "Reply in chat"
   },
   "notificationPrompt": {
-    "text": "Turn on system notifications to get new messages addressed to you even when this page is closed. Keep the CCCC Web service running.",
+    "text": "<0>Get notified</0> of new messages for you, even if this page is closed.",
     "enable": "Turn on…",
     "dismiss": "Not now"
   },
@@ -234,7 +234,7 @@
   "modeSendDesc": "Deliver now",
   "modeSendReply": "Send + Reply",
   "modeSendReplyDesc": "Deliver now and request a concrete reply",
-  "modeSendReplyRequiresConcrete": "Use the default Foreman or choose one or more specific agents",
+  "modeSendReplyRequiresConcrete": "Remove @all and @peers, or clear recipients to ask the Foreman",
   "modeMail": "Mail",
   "mailMessageHint": "Stored in Inbox without requesting an immediate prompt.",
   "modeMailDesc": "Add to the inbox without interrupting now",
@@ -539,7 +539,11 @@
   "imagePreviewUnavailable": "Image preview unavailable",
   "downloadOriginalImage": "Open the original image",
   "imagePreviewHint": "Click the backdrop or press Escape to close",
-  "showObligationStatus": "Show obligation status",
+  "showObligationStatusCounts": "Show reply status: {{replied}} of {{total}} replied",
+  "showObligationStatusCancelled": "Show reply status: {{replied}} of {{total}} replied, {{cancelled}} cancelled",
+  "replyCancelledCount": "{{cancelled}} cancelled",
+  "noMoreMessages": "No more messages",
+  "loadingHistory": "Loading…",
   "showRecipientStatus": "Show recipient status",
   "read": "read",
   "pending": "pending",
@@ -560,6 +564,7 @@
   "noResults": "No results",
   "noResultsHint": "Try a different query, sender, or kind filter.",
   "replyTo": "↩ Reply",
+  "replyToSender": "Reply to {{name}}",
   "openMessage": "↗ Open",
   "copyId": "⧉ Copy ID",
   "copyEventId": "Copy event id",

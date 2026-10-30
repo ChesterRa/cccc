@@ -238,6 +238,7 @@ Options:
 - `--runtime`: Agent runtime (claude, codex, web_model, droid, etc.)
 - `--command`: Custom command (for custom runtime)
 - `--title`: Display title
+- `--model-label`: Optional model name the operator declares for people and external tools; CCCC does not check it or use it to launch the runtime
 
 For the ChatGPT Web Model actor, create and start the actor from the target CCCC Web group, then finish ChatGPT sign-in, MCP URL, and chat binding in `Settings > Global > ChatGPT Web Model`.
 
@@ -253,6 +254,7 @@ cccc actor stop <actor_id>         # Stop actor
 cccc actor restart <actor_id>      # Restart actor
 cccc actor remove <actor_id>       # Remove actor
 cccc actor update <actor_id> --scope /path/to/project
+cccc actor update <actor_id> --model-label "gpt-5-codex"   # An empty value clears it
 cccc actor secrets <actor_id> ...  # Manage runtime-only secrets
 ```
 
@@ -339,6 +341,18 @@ Use `cccc tail` or Web chat to view recorded messages without consuming Mail.
 cccc inbox --actor-id <id>         # Read and consume the next unread Mail batch
 cccc inbox --actor-id <id> --limit 10
 ```
+
+### `cccc inbox-summary`
+
+Summarize the Mail still waiting for every actor in a Group, without consuming it.
+
+```bash
+cccc inbox-summary --cutoff 2026-10-30T00:00:00Z   # Per actor: waiting Mail, how much was sent at or before the cutoff, the oldest's age when known
+```
+
+It does not move read cursors, start actors or send notices, and returns no
+message text. The user, the system and the Group's Foreman may use it (`--by`,
+default `user`); peers may not.
 
 ### `cccc tail`
 

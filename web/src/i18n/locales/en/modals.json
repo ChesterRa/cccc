@@ -126,7 +126,11 @@
     "cancelReplyRequest": "Cancel reply request",
     "cancelReplyConfirm": "Cancel every outstanding reply obligation for this message?",
     "cancelling": "Cancelling…",
-    "cancelled": "Cancelled"
+    "cancelled": "Cancelled",
+    "statusReplied": "Replied",
+    "statusReplyPending": "Awaiting reply",
+    "statusRead": "Read",
+    "statusReadPending": "Unread"
   },
   "relay": {
     "title": "Relay Message",
@@ -300,6 +304,7 @@
     "milestoneLabel": "milestone {{id}}",
     "assigneeLabel": "assignee {{name}}",
     "notes": "Notes",
+    "searchMatchField": "{{field}}:",
     "addButton": "Add",
     "notePlaceholderShort": "Note…",
     "noNotes": "No notes",
