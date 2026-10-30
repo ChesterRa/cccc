@@ -1429,6 +1429,84 @@ fn rust_daemon_provider_auth_mutations_do_not_report_synthetic_lifecycle() {
 }
 
 #[test]
+fn an_actor_carries_the_model_label_its_operator_gives_it() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"models"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    let added = call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "runtime":"custom",
+            "command":["sh"],
+            "enabled":false,
+            "model_label":"  gpt-5-codex  ",
+            "by":"user"
+        }),
+    );
+    assert_eq!(added.result["actor"]["model_label"], "gpt-5-codex");
+    assert_eq!(
+        added.result["event"]["data"]["actor"]["model_label"],
+        "gpt-5-codex"
+    );
+    let row = |home: &HomeLayout| {
+        call(home, "actor_list", json!({"group_id":group_id})).result["actors"]
+            .as_array()
+            .expect("actors")
+            .iter()
+            .find(|actor| actor["id"] == "peer1")
+            .cloned()
+            .expect("peer1 row")
+    };
+    let original = row(&home);
+    assert_eq!(original["model_label"], "gpt-5-codex");
+
+    let update = |label: Value| {
+        raw_call(
+            &home,
+            "actor_update",
+            json!({"group_id":group_id,"actor_id":"peer1","by":"user","patch":{"model_label":label}}),
+        )
+    };
+    assert!(update(json!("claude-sonnet-4-5")).ok);
+    assert_eq!(row(&home)["model_label"], "claude-sonnet-4-5");
+    for key in [
+        "runtime",
+        "runtime_mode",
+        "command",
+        "env",
+        "enabled",
+        "submit",
+        "external_session_id",
+    ] {
+        assert_eq!(row(&home)[key], original[key], "label update changed {key}");
+    }
+    for invalid in [json!("x".repeat(129)), json!("two\nlines")] {
+        let refused = update(invalid);
+        assert!(!refused.ok, "{:?}", refused.result);
+        assert_eq!(row(&home)["model_label"], "claude-sonnet-4-5");
+    }
+    assert!(update(json!("")).ok);
+    assert!(row(&home).get("model_label").is_none());
+    let path = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .ledger_path(group_id)
+        .expect("ledger path");
+    let events = cccc_core::ledger::read_all(&path).expect("ledger");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.kind.as_str(), "actor.start" | "actor.restart")),
+        "label-only updates must not produce lifecycle events"
+    );
+}
+
+#[test]
 fn a_foreman_retrying_a_tree_after_a_lost_reply_gets_the_same_tasks() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

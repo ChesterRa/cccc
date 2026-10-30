@@ -3471,6 +3471,7 @@ Args:
   group_id: string
   actor_id?: string
   title?: string
+  model_label?: string // optional operator-maintained declaration; at most 128 characters, no control characters
   runtime?: string
   runtime_mode?: "default" | "acp" // optional headless ACP for Antigravity, Auggie, Copilot, Devin, Cursor, Kimi Code, Kiro, Hermes and Droid
   command?: string[]
@@ -3528,12 +3529,19 @@ Args:
 ```
 
 Patch keys used by CCCC v0.4.x include:
-- Identity/UI: `title`
+- Identity/UI: `title`, `model_label` (optional operator-maintained declaration; omission leaves it unchanged, an empty string clears it)
 - Runtime: `runtime`, `runtime_mode`, `command`, `submit`
 - Scope: `default_scope_key`
 - Enable/disable: `enabled`
 - Environment (use with care): `env`
 - Capability startup baseline: `capability_autoload`
+
+`model_label` is declared metadata only. Absence means undeclared, not a detected
+or default model. It neither configures launch nor verifies the serving model;
+updating/clearing it does not restart the Actor or change launch settings. The
+CLI spelling is `--model-label`, with no `model` / `--model` alias. Cost tables,
+rankings, allocation policy, runtime detection, registries and automatic
+synchronization are outside this field's contract.
 
 A linked Profile owns `runtime`, `runtime_mode`, `command`, `submit` and its explicit environment.
 Actor-local `title`, notes, Web Model conversation bindings and `capability_autoload` remain editable; the Actor's

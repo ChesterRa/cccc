@@ -21,6 +21,9 @@ pub enum ActorAction {
         /// Display title.
         #[arg(long, default_value = "")]
         title: String,
+        /// Optional operator-maintained model declaration; does not configure launch.
+        #[arg(long, default_value = "")]
+        model_label: String,
         /// Agent runtime to configure or launch.
         #[arg(long, default_value = "codex")]
         runtime: String,
@@ -64,6 +67,9 @@ pub enum ActorAction {
         /// Display title.
         #[arg(long)]
         title: Option<String>,
+        /// Operator-maintained model declaration; an empty value clears it.
+        #[arg(long)]
+        model_label: Option<String>,
         /// Agent runtime to configure or launch.
         #[arg(long)]
         runtime: Option<String>,

@@ -540,4 +540,42 @@ mod tests {
         };
         assert_eq!(args.event_id, "event-2");
     }
+
+    #[test]
+    fn parses_the_actor_model_label_on_add_and_update() {
+        let cli = Cli::try_parse_from([
+            "cccc",
+            "actor",
+            "add",
+            "peer1",
+            "--runtime",
+            "codex",
+            "--model-label",
+            "gpt-5-codex",
+        ])
+        .expect("actor add");
+        let Some(CommandKind::Actor(ActorArgs {
+            action: ActorAction::Add { model_label, .. },
+        })) = cli.command
+        else {
+            panic!("wrong command");
+        };
+        assert_eq!(model_label, "gpt-5-codex");
+
+        let cli = Cli::try_parse_from(["cccc", "actor", "update", "peer1", "--model-label", ""])
+            .expect("actor update");
+        let Some(CommandKind::Actor(ActorArgs {
+            action: ActorAction::Update { model_label, .. },
+        })) = cli.command
+        else {
+            panic!("wrong command");
+        };
+        assert_eq!(model_label.as_deref(), Some(""));
+        for action in ["add", "update"] {
+            assert!(
+                Cli::try_parse_from(["cccc", "actor", action, "peer1", "--model", "label"])
+                    .is_err()
+            );
+        }
+    }
 }

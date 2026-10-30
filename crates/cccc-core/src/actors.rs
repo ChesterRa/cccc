@@ -39,6 +39,18 @@ pub fn validate_actor_id(value: &str) -> io::Result<String> {
     Ok(id.to_owned())
 }
 
+/// An Actor's `model_label`, trimmed: at most 128 characters and no control
+/// characters. Empty clears it.
+pub fn validate_model_label(value: &str) -> io::Result<String> {
+    let label = value.trim();
+    if label.chars().count() > 128 || label.chars().any(char::is_control) {
+        return Err(io::Error::other(
+            "model_label must be at most 128 characters, without control characters",
+        ));
+    }
+    Ok(label.to_owned())
+}
+
 pub fn visible(group: &GroupDoc) -> impl Iterator<Item = &Actor> {
     group
         .actors
@@ -95,6 +107,7 @@ pub fn add(group: &mut GroupDoc, mut actor: Actor) -> io::Result<Actor> {
     }
 
     actor.id = validate_actor_id(&actor.id)?;
+    actor.model_label = validate_model_label(&actor.model_label)?;
     if !actor.external_session_id.is_empty()
         && !matches!(
             actor.runtime,
@@ -187,6 +200,7 @@ pub fn update(
         ));
     }
     actor.role = None;
+    actor.model_label = validate_model_label(&actor.model_label)?;
     actor
         .runtime_mode
         .validate(actor.runtime)

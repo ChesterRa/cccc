@@ -1417,6 +1417,10 @@
         "title": {
           "type": "string"
         },
+        "model_label": {
+          "type": "string",
+          "description": "On add: optional operator-maintained model declaration; absence means undeclared. Does not configure launch or verify the serving model."
+        },
         "command": {
           "type": "array",
           "items": {
