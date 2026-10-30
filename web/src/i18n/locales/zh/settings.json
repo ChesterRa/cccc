@@ -1243,6 +1243,8 @@
     "offProviderConflict": "provider=关闭 只适用于仅本机绑定。请改用“仅本机”预设，或者先把 provider 切换为 Manual / Tailscale。",
     "saveFailed": "保存 Web Access 设置失败。",
     "applyFailed": "应用 Web 绑定失败。",
+    "applyVoiceCleanupPending": "语音资源尚未确认清理完成，Web 没有重启，新的绑定还没生效。请再点一次「立即应用」；一直失败的话，请查看 CCCC 日志。",
+    "applyVoiceBusy": "语音正在重启或清理，Web 没有重启。请稍后再点一次「立即应用」。",
     "applyReady": "已保存。当前 Web 仍在旧绑定上运行，点击“立即应用”即可切换。",
     "applying": "正在应用新的 Web 绑定...",
     "applyNotNeeded": "当前运行中的 Web 绑定已经与保存配置一致。",

@@ -171,8 +171,10 @@ impl AnalystLifecycle {
                         );
                         if let Some(lifecycle) = Weak::upgrade(&weak) {
                             lifecycle.invalidate().await;
-                            if let Err(error) =
-                                lifecycle.session.stop(lifecycle.session.generation()).await
+                            if let Err(error) = lifecycle
+                                .session
+                                .stop_for_voice(lifecycle.session.generation())
+                                .await
                             {
                                 tracing::warn!(%error, "failed to stop invalid Voice Analyst session");
                             }

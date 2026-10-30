@@ -1251,6 +1251,8 @@
     "offProviderConflict": "Provider=Off only makes sense with local-only binding. Choose the Local only preset, or switch provider to Manual/Tailscale first.",
     "saveFailed": "Failed to save Web Access settings.",
     "applyFailed": "Failed to apply the saved Web binding.",
+    "applyVoiceCleanupPending": "Voice resources have not been confirmed as cleaned up, so the Web service did not restart and the new binding is not live yet. Click “Apply now” again; if it keeps failing, check the CCCC logs.",
+    "applyVoiceBusy": "Voice is restarting or cleaning up, so the Web service did not restart. Click “Apply now” again shortly.",
     "applyReady": "Saved. The running Web service is still on the old binding. Click Apply now to switch it.",
     "applying": "Applying the new Web binding...",
     "applyNotNeeded": "The running Web binding already matches the saved configuration.",

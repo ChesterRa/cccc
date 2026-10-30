@@ -272,6 +272,29 @@ fn codex_voice_uses_the_existing_global_recording_lease() {
     );
 }
 
+#[test]
+fn codex_voice_can_retry_a_failed_recording_lease_release() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let call = CallLease::acquire(&home, "g_voice", "Voice", "codex-voice:test")
+        .expect("acquire recording lease");
+    let lock_path = home
+        .root()
+        .join("state/voice_secretary_recording_lease.json.lock");
+    std::fs::remove_file(&lock_path).expect("remove fixture lock file");
+    std::fs::create_dir(&lock_path).expect("replace fixture lock with a directory");
+
+    assert!(call.release().is_err(), "an inaccessible lock must fail");
+
+    std::fs::remove_dir(&lock_path).expect("restore fixture lock path");
+    call.release().expect("release can be retried");
+    assert_eq!(
+        voice_recording_lease::current(&home).expect("recording lease state"),
+        json!({})
+    );
+}
+
 #[tokio::test]
 async fn realtime_answer_rejects_an_oversized_chunked_body_while_streaming() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");

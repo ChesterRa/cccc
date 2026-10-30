@@ -26,6 +26,18 @@ impl ChildOwner {
         self.stop_with(stop_child)
     }
 
+    /// Emergency signal for this exact owner; confirmation and reaping still
+    /// belong to `stop`. This does not wait for the child mutex.
+    pub(in crate::ops::codex_voice_analyst) fn terminate_now(&self) -> io::Result<()> {
+        #[cfg(unix)]
+        if let Some((pgid, started_at)) = self.process_tree.registered_group_identity() {
+            cccc_runtime::diagnostic(format_args!(
+                "[cccc] Voice cleanup targeting owned process: pgid={pgid} started_at={started_at}"
+            ));
+        }
+        self.process_tree.terminate()
+    }
+
     fn stop_with(
         &self,
         operation: impl FnOnce(&mut Child, &OwnedProcessTree) -> io::Result<()>,

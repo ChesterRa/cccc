@@ -38,17 +38,26 @@ pub(super) async fn fixture() -> (
     CodexVoiceAnalystSettings,
     BTreeMap<String, String>,
 ) {
+    fixture_with_source(include_str!(
+        "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/native_acp_fixture.py"
+    ))
+    .await
+}
+
+async fn fixture_with_source(
+    source: &str,
+) -> (
+    tempfile::TempDir,
+    HomeLayout,
+    CodexVoiceSessions,
+    CodexVoiceAnalystSettings,
+    BTreeMap<String, String>,
+) {
     let temp = tempfile::tempdir().expect("fixture");
     let home = HomeLayout::from_path(temp.path().join("cccc")).expect("home");
     home.initialize().expect("initialize");
     let program = temp.path().join("devin");
-    std::fs::write(
-        &program,
-        include_str!(
-            "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/native_acp_fixture.py"
-        ),
-    )
-    .expect("protocol fixture");
+    std::fs::write(&program, source).expect("protocol fixture");
     std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).expect("executable");
     let settings = CodexVoiceAnalystSettings {
         runtime: ActorRuntime::Devin,
@@ -92,6 +101,245 @@ pub(super) async fn fixture() -> (
     let sessions = CodexVoiceSessions::default();
     sessions.state.lock().await.analyst = Some(runtime);
     (temp, home, sessions, settings, env)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn reset_replacement_failures_report_pending_and_keep_owners_recoverable() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::reset_replacement_failures_report_pending_and_keep_owners_recoverable",
+    ) {
+        return;
+    }
+    for fail_persistence in [false, true] {
+        let (temp, home, sessions, _, _) = fixture().await;
+        let sessions = Arc::new(sessions);
+        let old = sessions
+            .state
+            .lock()
+            .await
+            .analyst
+            .clone()
+            .expect("old owner");
+        let generation = old.analyst.generation().to_owned();
+        let state_path = home.daemon_dir().join(persistence::TEST_ANALYST_STATE_FILE);
+        if fail_persistence {
+            std::fs::remove_file(&state_path).expect("remove fixture receipt");
+            std::fs::create_dir(&state_path).expect("block fixture receipt write");
+        } else {
+            std::fs::remove_file(temp.path().join("devin")).expect("remove fake executable");
+        }
+        let result = sessions.reset_analyst(&home, &generation).await;
+        let pending = match result {
+            Err(error) => {
+                error.downcast_ref::<super::restart::VoiceGateError>()
+                    == Some(&super::restart::VoiceGateError::ResetRecoveryPending)
+            }
+            Ok(_) => false,
+        };
+        if fail_persistence {
+            let retained = sessions
+                .state
+                .lock()
+                .await
+                .analyst
+                .clone()
+                .expect("new owner retained");
+            assert_ne!(retained.analyst.generation(), generation);
+            std::fs::remove_dir(&state_path).expect("restore fixture receipt path");
+        }
+        sessions
+            .recover_before_start()
+            .await
+            .expect("cleanup retry");
+        assert!(sessions.state.lock().await.analyst.is_none());
+        assert!(pending, "post-admission reset failure must report pending");
+        if fail_persistence {
+            // Cleanup must finish before a later launch is allowed to own a new process.
+            let next = persistence::launch_fresh_analyst(&home, String::new())
+                .await
+                .expect("new owner after recovery");
+            next.analyst.shutdown().await.expect("stop new owner");
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn slow_analyst_cleanup_does_not_block_a_single_thread_web_runtime() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::slow_analyst_cleanup_does_not_block_a_single_thread_web_runtime",
+    ) {
+        return;
+    }
+    let source = include_str!(
+        "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/native_acp_fixture.py"
+    );
+    let marker = "session_id = \"\"";
+    assert!(source.contains(marker));
+    let injection = r#"
+import signal, time
+def slow_stop(signum, frame):
+    Path(os.environ["HOME"]).joinpath("fixture-term").write_text("term")
+    time.sleep(6)
+signal.signal(signal.SIGTERM, slow_stop)
+"#;
+    let source = format!(
+        "{}\nimport time\nwhile True:\n    time.sleep(1)\n",
+        source.replacen(marker, &format!("{injection}\n{marker}"), 1)
+    );
+    let (temp, _home, sessions, _, _) = fixture_with_source(&source).await;
+    let sessions = Arc::new(sessions);
+    let request_sessions = Arc::clone(&sessions);
+    let request = tokio::spawn(async move { request_sessions.prepare_web_restart().await });
+    let marker_path = temp.path().join("provider/fixture-term");
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let observer = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        while std::time::Instant::now() < deadline {
+            if marker_path.exists() {
+                let _ = sender.send(std::time::Instant::now());
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+    let marked_at = tokio::time::timeout(Duration::from_secs(10), receiver)
+        .await
+        .expect("old Analyst did not receive stop")
+        .expect("stop observer");
+    let delay = marked_at.elapsed();
+    observer.join().expect("stop observer exits");
+    request.await.expect("cleanup worker").expect("cleanup");
+    assert!(
+        delay < Duration::from_secs(1),
+        "Web runtime stalled for {delay:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "current_thread")]
+async fn timed_out_cleanup_can_target_its_analyst_without_releasing_the_gate() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::timed_out_cleanup_can_target_its_analyst_without_releasing_the_gate",
+    ) {
+        return;
+    }
+    let source = include_str!(
+        "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/native_acp_fixture.py"
+    );
+    let marker = "session_id = \"\"";
+    assert!(source.contains(marker));
+    let injection = r#"
+import signal, time
+Path(os.environ["HOME"]).mkdir(parents=True, exist_ok=True)
+Path(os.environ["HOME"]).joinpath("fixture-pid").write_text(str(os.getpid()))
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+"#;
+    let source = format!(
+        "{}\nimport time\nwhile True:\n    time.sleep(1)\n",
+        source.replacen(marker, &format!("{injection}\n{marker}"), 1)
+    );
+    let (temp, home, sessions, _, _) = fixture_with_source(&source).await;
+    let sessions = Arc::new(sessions);
+    let analyst = sessions
+        .state
+        .lock()
+        .await
+        .analyst
+        .clone()
+        .expect("fixture Analyst");
+    let pid: u32 = std::fs::read_to_string(temp.path().join("provider/fixture-pid"))
+        .expect("fake PID")
+        .parse()
+        .expect("PID");
+
+    let context = cccc_contracts::codex_voice::VoiceApplicationContext::new_with_mode(
+        "fixture".into(),
+        "local test".into(),
+        cccc_contracts::codex_voice::VoiceCallMode::Persona,
+    )
+    .expect("persona");
+    let call = Arc::new(
+        CodexVoiceCall::start(&home, None, Some(context))
+            .await
+            .expect("local recording lease"),
+    );
+    let session = Arc::new(ActiveSession {
+        verbosity: Default::default(),
+        notification_paused: tokio::sync::watch::channel(false).0,
+        call,
+        analyst: None,
+        client_session_id: "fixture".into(),
+        offer_digest: [0; 32],
+        answer_sdp: String::new(),
+        provider_connection: None,
+        voice: "cove".into(),
+        connection_state: AtomicU8::new(CONNECTION_UNATTACHED),
+    });
+    sessions.state.lock().await.active = Some(session);
+    let lock_path = home
+        .root()
+        .join("state/voice_secretary_recording_lease.json.lock");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .expect("fixture lock");
+    fs2::FileExt::lock_exclusive(&lock).expect("hold fixture lock");
+    let (release, wait) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let _ = wait.recv_timeout(Duration::from_secs(8));
+        fs2::FileExt::unlock(&lock).expect("unlock fixture");
+    });
+
+    sessions.reserve_cleanup(false).expect("reserve cleanup");
+    assert_eq!(
+        sessions
+            .cleanup_reserved_with_timeout(super::restart::PREPARED, Duration::from_millis(300))
+            .await,
+        Err(super::restart::VoiceGateError::RecoveryPending)
+    );
+    assert!(
+        sessions
+            .state
+            .lock()
+            .await
+            .analyst
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &analyst)),
+        "the old owner remains available for targeted termination"
+    );
+    assert_eq!(
+        sessions.recover_before_start().await,
+        Err(super::restart::VoiceGateError::RecoveryPending),
+        "the blocking cleanup still holds the gate"
+    );
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let exited = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .map(|stat| {
+                    stat.rsplit_once(')')
+                        .and_then(|(_, tail)| tail.split_whitespace().next())
+                        .is_some_and(|state| matches!(state, "Z" | "X"))
+                })
+                .unwrap_or(true);
+            if exited {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("targeted Analyst process did not exit");
+    release.send(()).expect("release fixture lock");
+    holder.join().expect("lock holder exits");
+    let cleanup = tokio::time::timeout(Duration::from_secs(5), sessions.cleanup_gate.lock())
+        .await
+        .expect("blocking cleanup finishes");
+    drop(cleanup);
+    sessions
+        .recover_before_start()
+        .await
+        .expect("recovery can finish after cleanup");
 }
 
 #[tokio::test]
@@ -709,4 +957,385 @@ async fn manual_result_traverses_the_actual_voice_socket_without_provider_delega
     sessions.state.lock().await.analyst = None;
     web.abort();
     let _ = web.await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_settings_replacement_does_not_let_web_restart_pass_a_live_owner() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::cancelled_settings_replacement_does_not_let_web_restart_pass_a_live_owner",
+    ) {
+        return;
+    }
+    let source = slow_replacement_source();
+    let (temp, home, sessions, mut settings, _) = fixture_with_source(&source).await;
+    let sessions = Arc::new(sessions);
+    let pid: u32 = std::fs::read_to_string(temp.path().join("provider/fixture-pid"))
+        .expect("fixture pid")
+        .parse()
+        .expect("pid");
+    settings
+        .command
+        .extend(["--permission-mode".into(), "smart".into()]);
+    let work_sessions = Arc::clone(&sessions);
+    let work_home = home.clone();
+    let task = tokio::spawn(async move {
+        work_sessions
+            .apply_analyst_settings(
+                &work_home,
+                settings,
+                BTreeMap::new(),
+                Vec::new(),
+                false,
+                false,
+            )
+            .await
+    });
+    let term = temp.path().join("provider/fixture-term");
+    tokio::time::timeout(Duration::from_secs(12), async {
+        while !term.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("old process signalled");
+    task.abort();
+    let _ = task.await;
+    let barrier_sessions = Arc::clone(&sessions);
+    let mut barrier = tokio::spawn(async move { barrier_sessions.prepare_web_restart().await });
+    match tokio::time::timeout(Duration::from_millis(250), &mut barrier).await {
+        Ok(Ok(result)) => assert!(
+            result.is_err() || !fixture_pid_alive(pid),
+            "restart barrier accepted while cancelled settings replacement still had a live fixture Analyst"
+        ),
+        Ok(Err(error)) => panic!("restart task failed: {error}"),
+        Err(_) => {
+            let result = tokio::time::timeout(Duration::from_secs(15), barrier)
+                .await
+                .expect("restart barrier finished")
+                .expect("restart task");
+            assert!(
+                result.is_err() || !fixture_pid_alive(pid),
+                "restart barrier completed before the old fixture Analyst exited"
+            );
+        }
+    }
+    sessions.shutdown().await.expect("finish fixture cleanup");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_start_replacement_does_not_let_web_restart_pass_a_live_owner() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::cancelled_start_replacement_does_not_let_web_restart_pass_a_live_owner",
+    ) {
+        return;
+    }
+    let source = slow_replacement_source();
+    let (temp, home, sessions, _, _) = fixture_with_source(&source).await;
+    let sessions = Arc::new(sessions);
+    let pid: u32 = std::fs::read_to_string(temp.path().join("provider/fixture-pid"))
+        .expect("fixture pid")
+        .parse()
+        .expect("pid");
+    {
+        let state = sessions.state.lock().await;
+        state
+            .analyst
+            .as_ref()
+            .expect("old owner")
+            .mark_failed("analyst_disconnected");
+    }
+    let config = RealtimeCallConfig {
+        provider: cccc_contracts::codex_voice::VoiceProvider::Codex,
+        grok_executable: None,
+        auth_path: temp.path().join("missing-auth.json"),
+        base_url: "http://127.0.0.1:1".into(),
+        voice: "cove".into(),
+        preferences: Default::default(),
+        application_context: None,
+    };
+    let work_sessions = Arc::clone(&sessions);
+    let work_home = home.clone();
+    let task = tokio::spawn(async move {
+        work_sessions
+            .start_with_realtime(&work_home, "fixture-retry", "offer", config)
+            .await
+    });
+    let term = temp.path().join("provider/fixture-term");
+    tokio::time::timeout(Duration::from_secs(12), async {
+        while !term.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("old process signalled");
+    task.abort();
+    let _ = task.await;
+    let barrier_sessions = Arc::clone(&sessions);
+    let mut barrier = tokio::spawn(async move { barrier_sessions.prepare_web_restart().await });
+    match tokio::time::timeout(Duration::from_millis(250), &mut barrier).await {
+        Ok(Ok(result)) => assert!(
+            result.is_err() || !fixture_pid_alive(pid),
+            "restart barrier accepted while cancelled Start replacement still had a live fixture Analyst"
+        ),
+        Ok(Err(error)) => panic!("restart task failed: {error}"),
+        Err(_) => {
+            let result = tokio::time::timeout(Duration::from_secs(15), barrier)
+                .await
+                .expect("restart barrier finished")
+                .expect("restart task");
+            assert!(
+                result.is_err() || !fixture_pid_alive(pid),
+                "restart barrier completed before the old fixture Analyst exited"
+            );
+        }
+    }
+    sessions.shutdown().await.expect("finish fixture cleanup");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retry_after_cancelled_start_reuses_replacement_without_owner_overlap() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::retry_after_cancelled_start_reuses_replacement_without_owner_overlap",
+    ) {
+        return;
+    }
+    let source = slow_replacement_source();
+    let (temp, home, sessions, _, _) = fixture_with_source(&source).await;
+    let sessions = Arc::new(sessions);
+    {
+        let state = sessions.state.lock().await;
+        state
+            .analyst
+            .as_ref()
+            .expect("old owner")
+            .mark_failed("analyst_disconnected");
+    }
+    let config = RealtimeCallConfig {
+        provider: cccc_contracts::codex_voice::VoiceProvider::Codex,
+        grok_executable: None,
+        auth_path: temp.path().join("missing-auth.json"),
+        base_url: "http://127.0.0.1:1".into(),
+        voice: "cove".into(),
+        preferences: Default::default(),
+        application_context: None,
+    };
+    let first_sessions = Arc::clone(&sessions);
+    let first_home = home.clone();
+    let first_config = config.clone();
+    let first = tokio::spawn(async move {
+        first_sessions
+            .start_with_realtime(&first_home, "fixture-first", "offer", first_config)
+            .await
+    });
+    let term = temp.path().join("provider/fixture-term");
+    tokio::time::timeout(Duration::from_secs(12), async {
+        while !term.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("old process signalled");
+    first.abort();
+    let _ = first.await;
+    let second_sessions = Arc::clone(&sessions);
+    let second_home = home.clone();
+    let second = tokio::spawn(async move {
+        second_sessions
+            .start_with_realtime(&second_home, "fixture-second", "offer", config)
+            .await
+    });
+    let retry = tokio::time::timeout(Duration::from_secs(15), second)
+        .await
+        .expect("retry finished")
+        .expect("retry task");
+    assert!(
+        retry.is_err(),
+        "fixture deliberately lacks real-time credentials"
+    );
+    let overlap = std::fs::read_to_string(temp.path().join("provider/fixture-overlap"))
+        .expect("replacement started");
+    let spawns =
+        std::fs::read_to_string(temp.path().join("provider/fixture-spawns")).expect("spawn record");
+    assert_eq!(
+        overlap, "0",
+        "replacement started while old Analyst was alive"
+    );
+    assert_eq!(
+        spawns.lines().count(),
+        2,
+        "retry started a second replacement instead of reusing the first"
+    );
+    sessions.shutdown().await.expect("finish fixture cleanup");
+}
+
+#[cfg(target_os = "linux")]
+fn fixture_pid_alive(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .is_some_and(|stat| {
+            stat.rsplit_once(')')
+                .map(|(_, rest)| !matches!(rest.trim_start().chars().next(), Some('Z' | 'X')))
+                .unwrap_or(false)
+        })
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_does_not_open_a_call_after_web_restart_was_reserved() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::start_does_not_open_a_call_after_web_restart_was_reserved",
+    ) {
+        return;
+    }
+    let source = slow_replacement_source();
+    let (temp, home, sessions, _, _) = fixture_with_source(&source).await;
+    let sessions = Arc::new(sessions);
+    {
+        let state = sessions.state.lock().await;
+        state
+            .analyst
+            .as_ref()
+            .expect("old owner")
+            .mark_failed("analyst_disconnected");
+    }
+    let config = RealtimeCallConfig {
+        provider: cccc_contracts::codex_voice::VoiceProvider::Codex,
+        grok_executable: None,
+        auth_path: temp.path().join("missing-auth.json"),
+        base_url: "http://127.0.0.1:1".into(),
+        voice: "cove".into(),
+        preferences: Default::default(),
+        application_context: None,
+    };
+    let starter = Arc::clone(&sessions);
+    let start_home = home.clone();
+    let start = tokio::spawn(async move {
+        starter
+            .start_with_realtime(&start_home, "fixture", "offer", config)
+            .await
+    });
+    let term = temp.path().join("provider/fixture-term");
+    tokio::time::timeout(Duration::from_secs(12), async {
+        while !term.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("old process signalled");
+    let restarter = Arc::clone(&sessions);
+    let restart = tokio::spawn(async move { restarter.prepare_web_restart().await });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while sessions.restart_phase.load(Ordering::Acquire) == super::restart::OPEN {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("restart reserved");
+    let start_result = tokio::time::timeout(Duration::from_secs(15), start)
+        .await
+        .expect("start finished")
+        .expect("start task");
+    let rejected = match start_result {
+        Err(error) => {
+            error.downcast_ref::<super::restart::VoiceGateError>()
+                == Some(&super::restart::VoiceGateError::Restarting)
+        }
+        Ok(_) => false,
+    };
+    assert!(
+        rejected,
+        "Start must recheck the restart phase before opening the call"
+    );
+    assert!(
+        sessions.state.lock().await.active.is_none(),
+        "no real-time call was created"
+    );
+    let _ = tokio::time::timeout(Duration::from_secs(15), restart)
+        .await
+        .expect("restart finished")
+        .expect("restart task");
+    sessions.shutdown().await.expect("finish fixture cleanup");
+}
+
+#[cfg(target_os = "linux")]
+fn slow_replacement_source() -> String {
+    let source = include_str!(
+        "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/native_acp_fixture.py"
+    );
+    let marker = "session_id = \"\"";
+    assert!(source.contains(marker));
+    let injection = r#"
+import signal, time
+folder=Path(os.environ["HOME"])
+folder.mkdir(parents=True, exist_ok=True)
+first=folder.joinpath("fixture-first-pid")
+if first.exists():
+    prior=int(first.read_text())
+    try:
+        stat=Path(f"/proc/{prior}/stat").read_text()
+        alive=stat[stat.rfind(")")+2:].split()[0] not in ("Z", "X")
+    except FileNotFoundError:
+        alive=False
+    folder.joinpath("fixture-overlap").write_text("1" if alive else "0")
+else:
+    first.write_text(str(os.getpid()))
+folder.joinpath("fixture-pid").write_text(str(os.getpid()))
+with folder.joinpath("fixture-spawns").open("a") as f:
+    f.write(str(os.getpid())+"\n")
+def slow_stop(signum, frame):
+    folder.joinpath("fixture-term").write_text("term")
+    time.sleep(6)
+signal.signal(signal.SIGTERM, slow_stop)
+"#;
+    format!(
+        "{}\nimport time\nwhile True:\n    time.sleep(1)\n",
+        source.replacen(marker, &format!("{injection}\n{marker}"), 1)
+    )
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_settings_receipt_and_rollback_leave_no_untracked_analyst() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::failed_settings_receipt_and_rollback_leave_no_untracked_analyst",
+    ) {
+        return;
+    }
+    let source = slow_replacement_source();
+    let (temp, home, sessions, mut settings, _) = fixture_with_source(&source).await;
+    let previous = settings.clone();
+    let receipt = home.daemon_dir().join(persistence::TEST_ANALYST_STATE_FILE);
+    std::fs::remove_file(&receipt).expect("remove fixture receipt");
+    std::fs::create_dir(&receipt).expect("make receipt unwritable");
+    settings
+        .command
+        .extend(["--permission-mode".into(), "smart".into()]);
+    let result = sessions
+        .apply_analyst_settings(&home, settings, BTreeMap::new(), Vec::new(), false, false)
+        .await;
+    assert!(result.is_err(), "receipt write must fail");
+    assert!(
+        sessions.state.lock().await.analyst.is_none(),
+        "successfully stopped rollback owner must be removed"
+    );
+    assert_eq!(
+        cccc_core::codex_voice_settings::load(&home).expect("settings"),
+        previous
+    );
+    let spawns =
+        std::fs::read_to_string(temp.path().join("provider/fixture-spawns")).expect("spawn record");
+    let pids = spawns
+        .lines()
+        .map(|line| line.parse::<u32>().expect("fixture pid"))
+        .collect::<Vec<_>>();
+    assert!(pids.len() >= 2, "candidate or rollback was not launched");
+    assert!(
+        pids.iter().all(|pid| !fixture_pid_alive(*pid)),
+        "a failed replacement left a fixture process alive"
+    );
+    std::fs::remove_dir(&receipt).expect("restore receipt path");
+    sessions.shutdown().await.expect("finish fixture cleanup");
 }

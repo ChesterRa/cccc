@@ -85,12 +85,18 @@ async fn apply(State(state): State<AppState>) -> ApiResult {
             json!({}),
         )
     })?;
-    restart.request().map_err(|error| {
-        ApiError::unavailable(
+    state
+        .codex_voice
+        .prepare_web_restart()
+        .await
+        .map_err(crate::codex_voice::restart::VoiceGateError::into_api_error)?;
+    if let Err(error) = restart.request() {
+        state.codex_voice.cancel_prepared_restart();
+        return Err(ApiError::unavailable(
             "web_apply_failed",
             format!("failed to request restart: {error}"),
-        )
-    })?;
+        ));
+    }
     let diagnostics = remote.get("diagnostics").cloned().unwrap_or_default();
     Ok(Json(json!({"ok":true,"result":{
         "accepted":true,

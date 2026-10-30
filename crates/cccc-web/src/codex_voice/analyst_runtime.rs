@@ -48,6 +48,7 @@ impl AnalystRuntime {
             analyst: Arc::new(analyst),
             launch_runtime,
             terminal_gate: Mutex::new(()),
+            terminal_retired: AtomicBool::new(false),
             snapshot: StdMutex::new(AnalystSnapshot {
                 phase: phase.to_owned(),
                 last_result: String::new(),
@@ -62,6 +63,9 @@ impl AnalystRuntime {
     }
 
     pub(super) fn reusable_for_call(&self) -> bool {
+        if self.terminal_retired.load(Ordering::Acquire) {
+            return false;
+        }
         self.snapshot
             .lock()
             .unwrap_or_else(|error| error.into_inner())

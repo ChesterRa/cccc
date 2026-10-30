@@ -42,7 +42,7 @@ impl AnalystLifecycle {
                 "Voice Analyst managed session disconnected"
             );
             self.invalidate().await;
-            if let Err(error) = self.session.stop(self.session.generation()).await {
+            if let Err(error) = self.session.stop_for_voice(self.session.generation()).await {
                 tracing::error!(%error, "failed to stop disconnected Voice Analyst session");
             }
             return;

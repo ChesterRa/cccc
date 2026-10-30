@@ -195,9 +195,51 @@ impl AnalystSession {
     }
 
     pub(crate) async fn stop(&self, expected_generation: &str) -> io::Result<()> {
-        self.require_generation(expected_generation)?;
-        lifecycle_timing::run("runtime.protocol_close", self.protocol.close()).await?;
+        self.close_for_stop(expected_generation).await?;
         lifecycle_timing::run_sync("runtime.process_cleanup", || self.cleanup_owned_resources())
+    }
+
+    /// Voice cleanup may wait on OS processes. Keep it off the Web runtime's
+    /// worker threads so a stalled child cannot prevent the deadline firing.
+    pub(crate) async fn stop_for_voice(
+        self: &Arc<Self>,
+        expected_generation: &str,
+    ) -> io::Result<()> {
+        self.close_for_stop(expected_generation).await?;
+        let session = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            lifecycle_timing::run_sync("runtime.process_cleanup", || {
+                session.cleanup_owned_resources()
+            })
+        })
+        .await
+        .map_err(|error| {
+            io::Error::other(format!("Voice process cleanup worker failed: {error}"))
+        })?
+    }
+
+    async fn close_for_stop(&self, expected_generation: &str) -> io::Result<()> {
+        self.require_generation(expected_generation)?;
+        lifecycle_timing::run("runtime.protocol_close", self.protocol.close()).await
+    }
+
+    /// Signal only processes this session owns. Remote jobs have no such local
+    /// handle and still require their own confirmed protocol shutdown.
+    pub(crate) fn terminate_local_processes(&self) -> io::Result<bool> {
+        let mut attempted = false;
+        let mut first_error = None;
+        for process in self.process.iter().chain(self.auxiliary_processes.iter()) {
+            attempted = true;
+            if let Err(error) = process.terminate_now()
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(attempted),
+        }
     }
 
     fn cleanup_owned_resources(&self) -> io::Result<()> {

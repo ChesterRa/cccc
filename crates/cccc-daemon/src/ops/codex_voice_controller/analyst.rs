@@ -118,8 +118,16 @@ impl CodexVoiceAnalyst {
 
     pub async fn shutdown(&self) -> Result<()> {
         self.session
-            .stop(self.session.generation())
+            .stop_for_voice(self.session.generation())
             .await
             .context("stop Voice Analyst")
+    }
+
+    /// Send an emergency signal only to this Analyst's owned local processes.
+    /// A successful signal does not itself confirm shutdown.
+    pub fn terminate_local_processes(&self) -> Result<bool> {
+        self.session
+            .terminate_local_processes()
+            .context("terminate owned Voice Analyst processes")
     }
 }

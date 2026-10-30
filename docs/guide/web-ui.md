@@ -1177,6 +1177,21 @@ In **Settings > Web Access**, `127.0.0.1` means local-only and `0.0.0.0` means l
 
 `Save` stores the target binding. If Web was started by `cccc` or `cccc web`, use `Apply now` in **Settings > Web Access** to perform the short supervised restart. If Web is managed by Docker, systemd, or another external supervisor, restart that service instead.
 
+Before an address change restarts the supervised Web service, CCCC attempts to
+stop its active Voice work and Analyst. If their cleanup cannot be confirmed,
+the current Web remains available and the saved address has not yet taken
+effect. Check the Voice state and retry **Apply now** after cleanup. A Voice
+start can likewise be delayed while resources from a previous Web process are
+being recovered; retry after cleanup and check the host diagnostics if the
+condition persists. If an Analyst reset fails after cleanup began, refresh the
+Voice state before deciding whether to try again.
+
+An incomplete Web process recovery record can require manual attention. The
+host diagnostics identify its filename under `CCCC_HOME/web-processes`. Before
+removing that record, confirm all related processes owned by the previous Web
+instance have exited; if you cannot establish this, seek help rather than
+removing it. Then retry starting Voice.
+
 For the default local app flow, prefer restarting from the owning `cccc` session itself: `Ctrl+C` to stop the whole app, then run `cccc` again. That keeps daemon and Web on the same fresh code/runtime.
 
 `Start` / `Stop` are only for Tailscale remote access and do not rebind the already-running Web socket.

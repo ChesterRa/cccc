@@ -6,6 +6,133 @@ use std::process::Child;
 const T: u64 = 1_000_000;
 
 #[test]
+fn web_ledger_recovery_stops_its_old_group_without_touching_daemon_files() {
+    let temp = tempfile::tempdir().expect("temp");
+    let web = temp.path().join("web");
+    let daemon = temp.path().join("daemon");
+    std::fs::create_dir_all(&web).expect("web directory");
+    std::fs::create_dir_all(&daemon).expect("daemon directory");
+    let ledger = web.join("owned-process-groups.json");
+    let daemon_ledger = daemon.join("owned-process-groups.json");
+    let daemon_watch = daemon.join("owned-process-groups.other.watchdog");
+    let web_watch = web.join("owned-process-groups.old.watchdog");
+    let daemon_group = KillOnDrop(orphan_leader());
+    let daemon_entry = LedgerEntry {
+        pgid: daemon_group.0.id() as i32,
+        spawned_at: now(),
+        observed_at: now(),
+    };
+    std::fs::write(
+        &daemon_ledger,
+        serde_json::to_vec(&[daemon_entry]).expect("daemon ledger"),
+    )
+    .expect("persist daemon ledger");
+    let daemon_list = format!(
+        "{} {}:{}\n",
+        now(),
+        daemon_entry.pgid,
+        daemon_entry.spawned_at
+    );
+    std::fs::write(&daemon_watch, &daemon_list).expect("daemon watch");
+    std::fs::write(&web_watch, format!("{}\n", now())).expect("web watch");
+    let mut leader = KillOnDrop(orphan_leader());
+    let entry = LedgerEntry {
+        pgid: leader.0.id() as i32,
+        spawned_at: now(),
+        observed_at: now(),
+    };
+    std::fs::write(&ledger, serde_json::to_vec(&[entry]).expect("ledger")).expect("persist ledger");
+
+    let first = recover_ledger(&ledger);
+    if first.is_err() {
+        assert!(exited_within(entry.pgid, Duration::from_secs(5)));
+        recover_ledger(&ledger).expect("retry confirmed cleanup");
+    }
+    assert!(!running(entry.pgid), "old Web group must be gone");
+    assert!(!ledger.exists());
+    assert!(!web_watch.exists());
+    assert!(
+        running(daemon_entry.pgid),
+        "daemon-owned group must survive"
+    );
+    assert_eq!(
+        read_ledger(&daemon_ledger).expect("daemon ledger survives"),
+        [daemon_entry]
+    );
+    assert_eq!(
+        std::fs::read(&daemon_watch).expect("daemon watch survives"),
+        daemon_list.as_bytes()
+    );
+    let _ = leader.0.wait();
+}
+
+#[test]
+fn web_recovery_includes_a_watch_list_newer_than_the_ledger() {
+    let temp = tempfile::tempdir().expect("temp");
+    let ledger = temp.path().join("owned-process-groups.json");
+    let watch = temp.path().join("owned-process-groups.old.watchdog");
+    std::fs::write(&ledger, b"[]").expect("old empty ledger");
+    let mut leader = KillOnDrop(orphan_leader());
+    let group = OwnedGroup {
+        pgid: leader.0.id() as i32,
+        spawned_at: now(),
+    };
+    write_watch_list(&watch, &[group]).expect("newer watch list");
+
+    if recover_ledger(&ledger).is_err() {
+        assert!(exited_within(group.pgid, Duration::from_secs(5)));
+        recover_ledger(&ledger).expect("retry confirmed cleanup");
+    }
+    assert!(!running(group.pgid), "the newer watch list was ignored");
+    assert!(!watch.exists());
+    assert!(!ledger.exists());
+    let _ = leader.0.wait();
+}
+
+#[test]
+fn invalid_web_watch_list_blocks_recovery_without_erasing_evidence() {
+    let temp = tempfile::tempdir().expect("temp");
+    let ledger = temp.path().join("owned-process-groups.json");
+    let watch = temp.path().join("owned-process-groups.old.watchdog.tmp");
+    std::fs::write(&ledger, b"[]").expect("empty ledger");
+    for contents in [String::new(), format!("{} 500:123", now())] {
+        std::fs::write(&watch, contents).expect("interrupted write");
+        let error = recover_ledger(&ledger).expect_err("unreadable evidence");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            error
+                .to_string()
+                .contains("owned-process-groups.old.watchdog.tmp")
+        );
+        assert!(
+            !error
+                .to_string()
+                .contains(&temp.path().display().to_string())
+        );
+        assert!(ledger.exists());
+        assert!(watch.exists());
+    }
+}
+
+#[test]
+fn invalid_web_ledger_is_not_removed_or_treated_as_clean() {
+    let temp = tempfile::tempdir().expect("temp");
+    let ledger = temp.path().join("owned-process-groups.json");
+    let watch = temp.path().join("owned-process-groups.old.watchdog");
+    std::fs::write(&ledger, b"not json").expect("invalid ledger");
+    std::fs::write(&watch, b"fixture").expect("watch");
+    let error = recover_ledger(&ledger).expect_err("invalid ledger");
+    assert!(error.to_string().contains("owned-process-groups.json"));
+    assert!(
+        !error
+            .to_string()
+            .contains(&temp.path().display().to_string())
+    );
+    assert!(ledger.exists());
+    assert!(watch.exists());
+}
+
+#[test]
 fn legacy_cleanup_records_survive_restart_format_change() {
     const MODE: &str = "CCCC_GUARD_LEGACY_RESTART_TEST";
     if std::env::var_os(MODE).is_none() {

@@ -195,6 +195,7 @@ pub(crate) async fn launch(
     } else {
         DaemonState::External { pid: external_pid }
     };
+    let voice_recovery = crate::web_voice_recovery::new(&home, daemon_owned);
 
     let (mut interface, startup_error) = if let Some(control) = terminal_control.as_mut() {
         if control.controller.is_requested() {
@@ -272,13 +273,14 @@ pub(crate) async fn launch(
                 }
             };
             let outcome = {
-                let serving = cccc_web::serve_until_mode_supervised(
+                let serving = cccc_web::serve_until_mode_supervised_with_voice_recovery(
                     home.clone(),
                     &binding.host,
                     binding.port,
                     mode,
                     shutdown,
                     interface.as_ref().map(Interface::listening),
+                    std::sync::Arc::clone(&voice_recovery),
                 );
                 tokio::pin!(serving);
                 if let Some(control) = &terminal_control {

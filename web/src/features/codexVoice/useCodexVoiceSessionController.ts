@@ -311,12 +311,21 @@ export function useCodexVoiceSessionController(enabled = true) {
     const response = await resetCodexVoiceAnalyst(analyst.generation);
     if (!mountedRef.current) return false;
     if (!response.ok) {
-      setError(codexVoiceErrorText(t, response.error.code));
+      // A failed reset may still have stopped the old session, so read the state again.
+      setError(
+        codexVoiceErrorText(
+          t,
+          response.error.code === "codex_voice_recovery_pending"
+            ? "codex_voice_reset_recovery_pending"
+            : response.error.code,
+        ),
+      );
+      void refresh();
       return false;
     }
     setAnalyst(response.result.analyst);
     return true;
-  }, [analyst, analystWorking, call, t]);
+  }, [analyst, analystWorking, call, refresh, t]);
 
   const clearError = useCallback(() => {
     setError("");

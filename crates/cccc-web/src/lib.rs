@@ -56,6 +56,10 @@ pub enum ServeOutcome {
 
 pub type ListeningCallback = Arc<dyn Fn(SocketAddr) + Send + Sync>;
 
+/// Recovery provided only by a Web host holding the corresponding instance
+/// lock. A standalone library app has no authority to reconcile another host.
+pub type VoiceProcessRecovery = Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>;
+
 #[derive(Clone)]
 pub(crate) struct LiveBinding {
     host: String,
@@ -178,12 +182,41 @@ fn app_with_shutdown(
     Arc<browser_surface::BrowserSurfaces>,
     AppState,
 ) {
+    app_with_shutdown_and_recovery(
+        home,
+        shutdown,
+        web_mode,
+        restart,
+        live_binding,
+        runtime_id,
+        None,
+    )
+}
+
+fn app_with_shutdown_and_recovery(
+    home: HomeLayout,
+    shutdown: broadcast::Sender<()>,
+    web_mode: WebMode,
+    restart: Option<Arc<RestartHandle>>,
+    live_binding: LiveBinding,
+    runtime_id: String,
+    process_recovery: Option<VoiceProcessRecovery>,
+) -> (
+    Router,
+    Arc<im_runtime::ImWorkerRegistry>,
+    Arc<browser_surface::BrowserSurfaces>,
+    AppState,
+) {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let ledger_events = ledger_event_hub::LedgerEventHub::new(home.clone());
     let im_workers = Arc::new(im_runtime::ImWorkerRegistry::new(ledger_events.clone()));
     im_workers.restore_enabled(home.clone(), DaemonClient::new(home.clone()));
     let browser_surfaces = Arc::new(browser_surface::BrowserSurfaces::default());
-    let codex_voice = Arc::new(codex_voice::CodexVoiceSessions::new());
+    let codex_voice = Arc::new(if process_recovery.is_some() {
+        codex_voice::CodexVoiceSessions::with_process_recovery(process_recovery)
+    } else {
+        codex_voice::CodexVoiceSessions::new()
+    });
     let notebooklm_auth = Arc::new(notebooklm_auth::AuthFlowManager::default());
     spawn_notebooklm_auth_shutdown(
         Arc::clone(&notebooklm_auth),
@@ -430,6 +463,7 @@ where
         shutdown,
         restart_behavior,
         None,
+        None,
     )
     .await?
     {
@@ -457,10 +491,37 @@ where
         shutdown,
         RestartBehavior::ReturnToSupervisor,
         on_listening,
+        None,
     )
     .await
 }
 
+pub async fn serve_until_mode_supervised_with_voice_recovery<F>(
+    home: HomeLayout,
+    host: &str,
+    port: u16,
+    web_mode: WebMode,
+    shutdown: F,
+    on_listening: Option<ListeningCallback>,
+    process_recovery: VoiceProcessRecovery,
+) -> Result<ServeOutcome>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    serve_until_mode_with_restart(
+        home,
+        host,
+        port,
+        web_mode,
+        shutdown,
+        RestartBehavior::ReturnToSupervisor,
+        on_listening,
+        Some(process_recovery),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn serve_until_mode_with_restart<F>(
     home: HomeLayout,
     host: &str,
@@ -469,6 +530,7 @@ async fn serve_until_mode_with_restart<F>(
     shutdown: F,
     restart_behavior: RestartBehavior,
     on_listening: Option<ListeningCallback>,
+    process_recovery: Option<VoiceProcessRecovery>,
 ) -> Result<ServeOutcome>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -496,7 +558,7 @@ where
         .then(|| Arc::new(RestartHandle::new(web_shutdown.clone())));
     let mut restart_rx = web_shutdown.subscribe();
     let (shutdown_started, mut shutdown_started_rx) = tokio::sync::oneshot::channel();
-    let (app, im_workers, browser_surfaces, app_state) = app_with_shutdown(
+    let (app, im_workers, browser_surfaces, app_state) = app_with_shutdown_and_recovery(
         home,
         web_shutdown.clone(),
         web_mode,
@@ -506,6 +568,7 @@ where
             port: address.port(),
         },
         runtime_id,
+        process_recovery,
     );
     if let Err(error) = web_runtime_state::write(
         &app_state.home,

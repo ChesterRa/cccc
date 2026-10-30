@@ -67,16 +67,17 @@ impl CallLease {
     }
 
     pub(super) fn release(&self) -> Result<()> {
-        let lease_id = self
+        let mut lease_id = self
             .lease_id
             .lock()
-            .map_err(|_| anyhow!("Codex Voice lease lock poisoned"))?
-            .take();
-        let Some(lease_id) = lease_id else {
+            .map_err(|_| anyhow!("Codex Voice lease lock poisoned"))?;
+        let Some(id) = lease_id.as_deref() else {
             return Ok(());
         };
-        voice_recording_lease::release(&self.home, &self.group_id, &self.owner_id, &lease_id)
+        voice_recording_lease::release(&self.home, &self.group_id, &self.owner_id, id)
             .map_err(|error| anyhow!(error))?;
+        // Keep the identity on error so the same owner can retry a release.
+        *lease_id = None;
         Ok(())
     }
 

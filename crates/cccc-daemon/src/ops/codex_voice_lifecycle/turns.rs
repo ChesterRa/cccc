@@ -351,7 +351,9 @@ impl AnalystLifecycle {
             };
             if let Err(error) = settled {
                 self.invalidate().await;
-                if let Err(stop_error) = self.session.stop(self.session.generation()).await {
+                if let Err(stop_error) =
+                    self.session.stop_for_voice(self.session.generation()).await
+                {
                     tracing::warn!(%stop_error, "failed to stop an untrustworthy managed Runtime after cancellation");
                 }
                 return Err(error);

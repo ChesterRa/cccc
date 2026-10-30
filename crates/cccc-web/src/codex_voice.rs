@@ -5,7 +5,7 @@ use cccc_daemon::experimental_codex_voice::{
     RealtimeCallConfig, create_grok_connection, create_realtime_answer,
 };
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -26,6 +26,7 @@ mod notifications;
 mod persistence;
 #[cfg(test)]
 mod persona_tests;
+pub(crate) mod restart;
 mod sessions_lifecycle;
 mod sessions_start;
 #[cfg(all(test, unix))]
@@ -112,6 +113,7 @@ pub(crate) struct AnalystRuntime {
     analyst: Arc<CodexVoiceAnalyst>,
     launch_runtime: ResolvedAgentRuntime,
     terminal_gate: Mutex<()>,
+    terminal_retired: AtomicBool,
     snapshot: StdMutex<AnalystSnapshot>,
     monitor: StdMutex<Option<JoinHandle<()>>>,
 }
@@ -146,6 +148,10 @@ pub(crate) struct AnalystSettingsOutcome {
     pub discarded_work: bool,
 }
 
+#[derive(Clone)]
 pub(crate) struct CodexVoiceSessions {
-    state: Mutex<ManagedState>,
+    state: Arc<Mutex<ManagedState>>,
+    restart_phase: Arc<AtomicU8>,
+    cleanup_gate: Arc<Mutex<()>>,
+    process_recovery: Option<crate::VoiceProcessRecovery>,
 }

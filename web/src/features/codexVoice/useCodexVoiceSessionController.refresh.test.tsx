@@ -9,6 +9,7 @@ const fixture = vi.hoisted(() => ({
   active: vi.fn(),
   cancel: vi.fn(),
   control: vi.fn(),
+  reset: vi.fn(),
   sessions: [] as Array<{
     callbacks: {
       onPhase(value: string): void;
@@ -24,7 +25,7 @@ vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: fixture.t }) }));
 vi.mock("../../services/api", () => ({
   fetchActiveCodexVoiceCall: fixture.active,
   cancelCodexVoiceAnalyst: fixture.cancel,
-  resetCodexVoiceAnalyst: vi.fn(),
+  resetCodexVoiceAnalyst: fixture.reset,
   stopCodexVoiceCall: vi.fn(),
 }));
 vi.mock("../../services/api/codexVoice", () => ({
@@ -156,6 +157,7 @@ beforeEach(() => {
   fixture.active.mockReset().mockResolvedValue(snapshot());
   fixture.cancel.mockReset().mockResolvedValue({ ok: true, result: { cancelled: true } });
   fixture.control.mockReset();
+  fixture.reset.mockReset();
   fixture.sessions.length = 0;
   vi.stubGlobal("matchMedia", () => ({
     matches: true,
@@ -454,4 +456,26 @@ it("resumes scheduled controller polling after its owned call ends without an An
   await act(async () => current.disconnect());
   await act(async () => vi.advanceTimersByTimeAsync(5000));
   expect(fixture.active).toHaveBeenCalledTimes(2);
+});
+
+it("names an unconfirmed reset and refreshes the Voice status instead of retrying it", async () => {
+  fixture.active.mockResolvedValue(snapshot("last result", false, "ready"));
+  fixture.reset.mockResolvedValue({
+    ok: false,
+    error: {
+      code: "codex_voice_recovery_pending",
+      message: "Voice reset cleanup is not yet confirmed.",
+      details: { retryable: false },
+    },
+  });
+  await mount();
+  const reads = fixture.active.mock.calls.length;
+  let started = true;
+  await act(async () => {
+    started = await current.startNewAnalyst();
+  });
+  expect(started).toBe(false);
+  expect(fixture.reset).toHaveBeenCalledOnce();
+  expect(current.error).toBe("codexVoiceErrors.codex_voice_reset_recovery_pending");
+  expect(fixture.active.mock.calls.length).toBeGreaterThan(reads);
 });

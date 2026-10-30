@@ -136,6 +136,17 @@ impl OwnedProcessTree {
         registry().terminate(self.id)
     }
 
+    /// Identity of a currently registered Unix group, for safe diagnostics.
+    /// The registration can disappear before a later operation; this does not
+    /// itself authorize signalling a numeric PID.
+    #[cfg(unix)]
+    pub fn registered_group_identity(&self) -> Option<(i32, u64)> {
+        registry().resources.get(&self.id).map(|resource| {
+            let group = resource.owned_group();
+            (group.pgid, group.spawned_at)
+        })
+    }
+
     pub fn request_stop(&self) -> io::Result<()> {
         let mut registry = registry();
         if let Some(resource) = registry.resources.get_mut(&self.id) {
@@ -204,6 +215,42 @@ pub fn protect_owned_process_groups(ledger: &std::path::Path) -> io::Result<()> 
     let registry = registry();
     if guard::enable(ledger)? {
         registry.publish();
+    }
+    Ok(())
+}
+
+/// Recover an old Web owner's separate ledger, optionally enabling protection
+/// for this process. The caller must hold that Web owner's instance lock.
+/// Never replace a different live guard (such as an embedded daemon's guard).
+#[cfg(unix)]
+pub fn prepare_web_process_guard(ledger: &std::path::Path, activate: bool) -> io::Result<()> {
+    let registry = registry();
+    if guard::active_for(ledger) {
+        let groups = registry
+            .resources
+            .values()
+            .map(Resource::owned_group)
+            .collect::<Vec<_>>();
+        guard::publish(&groups)?;
+        return guard::refresh_active(ledger);
+    }
+    if activate && guard::has_active_guard() {
+        return Err(io::Error::other(
+            "another owned process guard is active in this process",
+        ));
+    }
+    guard::recover_ledger(ledger)?;
+    if activate {
+        guard::enable(ledger)?;
+        let groups = registry
+            .resources
+            .values()
+            .map(Resource::owned_group)
+            .collect::<Vec<_>>();
+        // Unlike routine registry publication, startup must report a failure
+        // before allowing the new Voice owner to launch.
+        guard::publish(&groups)?;
+        guard::refresh_active(ledger)?;
     }
     Ok(())
 }

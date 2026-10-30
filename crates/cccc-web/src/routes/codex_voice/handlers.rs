@@ -71,7 +71,11 @@ pub(super) async fn structured_control(
             body["response"].clone(),
         )
         .await
-        .map_err(|error| ApiError::unavailable("analyst_control_failed", error.to_string()))?;
+        .map_err(|error| {
+            crate::codex_voice::restart::api_error(&error).unwrap_or_else(|| {
+                ApiError::unavailable("analyst_control_failed", error.to_string())
+            })
+        })?;
     let analyst = state
         .codex_voice
         .current()
@@ -127,6 +131,11 @@ pub(super) async fn start(State(state): State<AppState>, Json(body): Json<Value>
             "application_context must contain a valid id, mode and nonempty instructions up to 24576 UTF-8 bytes",
         )
     })?;
+    state
+        .codex_voice
+        .recover_before_start()
+        .await
+        .map_err(crate::codex_voice::restart::VoiceGateError::into_api_error)?;
     let started = std::time::Instant::now();
     let outcome = match provider {
         VoiceProvider::Codex => {
@@ -149,6 +158,9 @@ pub(super) async fn start(State(state): State<AppState>, Json(body): Json<Value>
         }
     }
     .map_err(|error| {
+        if let Some(error) = crate::codex_voice::restart::api_error(&error) {
+            return error;
+        }
         let diagnostic = StartDiagnostic::from_error(&error, started.elapsed().as_millis() as u64);
         // The packaged cccc entrypoint has no tracing subscriber. Emit one
         // safe line on failure without globally enabling unrelated logs.
@@ -190,6 +202,9 @@ pub(super) async fn reset_analyst(
         .reset_analyst(&state.home, &generation)
         .await
         .map_err(|error| {
+            if let Some(error) = crate::codex_voice::restart::api_error(&error) {
+                return error;
+            }
             tracing::warn!(%error, %generation, "Voice Analyst reset failed");
             ApiError::conflict(
                 "codex_voice_analyst_reset_failed",
@@ -249,6 +264,9 @@ pub(super) async fn upgrade(
         .attach(&generation)
         .await
         .map_err(|error| {
+            if let Some(error) = crate::codex_voice::restart::api_error(&error) {
+                return error;
+            }
             tracing::warn!(%error, %generation, "Codex Voice call attach failed");
             ApiError::conflict(
                 "codex_voice_not_attachable",
@@ -272,6 +290,9 @@ pub(super) async fn upgrade_terminal(
         .terminal_session(&generation)
         .await
         .map_err(|error| {
+            if let Some(error) = crate::codex_voice::restart::api_error(&error) {
+                return error;
+            }
             tracing::warn!(%error, %generation, "Voice Analyst terminal lookup failed");
             ApiError::conflict(
                 "codex_voice_terminal_unavailable",

@@ -85,6 +85,9 @@ impl AnalystRuntime {
             );
         }
         let _gate = self.terminal_gate.lock().await;
+        if self.terminal_retired.load(Ordering::Acquire) {
+            anyhow::bail!("Voice Analyst terminal is closing");
+        }
         let (scope_id, session_id) = self.terminal_runtime_key();
         if cccc_runtime::status(&scope_id, &session_id)
             .map(|status| status.running)
@@ -124,12 +127,44 @@ impl AnalystRuntime {
             .map_err(Into::into)
     }
 
+    #[cfg(test)]
     pub(super) fn stop_terminal(&self) {
         let (scope_id, session_id) = self.terminal_runtime_key();
         match cccc_runtime::stop(&scope_id, &session_id) {
             Ok(_) | Err(cccc_runtime::RuntimeError::NotFound(_, _)) => {}
             Err(error) => tracing::warn!(%error, "failed to stop Voice Analyst terminal"),
         }
+    }
+
+    /// Prevent a previously obtained Analyst handle from starting a terminal
+    /// after its owner has begun shutdown. Keep a failed stop registered so a
+    /// later recovery attempt can retry it.
+    pub(super) async fn retire_terminal(&self) -> Result<()> {
+        let _gate = self.terminal_gate.lock().await;
+        self.terminal_retired.store(true, Ordering::Release);
+        let (scope_id, session_id) = self.terminal_runtime_key();
+        tokio::task::spawn_blocking(move || {
+            let status = match cccc_runtime::status(&scope_id, &session_id) {
+                Ok(status) => status,
+                Err(cccc_runtime::RuntimeError::NotFound(_, _)) => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            cccc_runtime::stop_if_started_at(&scope_id, &session_id, &status.started_at)?;
+            Ok(())
+        })
+        .await
+        .map_err(|error| anyhow!("Voice Analyst terminal cleanup task failed: {error}"))??;
+        Ok(())
+    }
+
+    /// Stop both owned parts before allowing a replacement. Even if one part
+    /// fails, attempt the other; a failed owner stays in manager state.
+    pub(super) async fn retire_for_replacement(&self) -> Result<()> {
+        let terminal = self.retire_terminal().await;
+        let analyst = self.analyst.shutdown().await;
+        terminal?;
+        analyst?;
+        Ok(())
     }
 
     fn terminal_runtime_key(&self) -> (String, String) {

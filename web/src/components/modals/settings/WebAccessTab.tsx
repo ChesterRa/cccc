@@ -43,6 +43,7 @@ import {
   isRemoteAccessBlockedByMissingAdminToken,
   isWildcardHost,
   keepsActiveReach,
+  webApplyErrorText,
   type AccessGoal,
 } from "./webAccessReachabilityModel";
 
@@ -798,7 +799,7 @@ export function WebAccessTab({
     try {
       const resp = await api.applyRemoteAccess();
       if (!resp.ok || !resp.result?.remote_access) {
-        setError(resp.error?.message || t("webAccess.applyFailed"));
+        setError(webApplyErrorText(t, resp.error));
         return;
       }
       commitRemoteState(resp.result.remote_access, true);

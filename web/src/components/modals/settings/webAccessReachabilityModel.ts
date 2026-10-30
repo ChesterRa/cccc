@@ -84,3 +84,14 @@ export function isReachabilityActionBlockedByMissingAdminToken(
     hasAdminToken,
   );
 }
+
+/** Apply stops Voice before the Web rebinds; if that is refused, the Web keeps its binding. */
+export function webApplyErrorText(
+  t: (key: string) => string,
+  error: { code?: string; message?: string } | null | undefined,
+) {
+  if (error?.code === "codex_voice_recovery_pending")
+    return t("webAccess.applyVoiceCleanupPending");
+  if (error?.code === "codex_voice_restarting") return t("webAccess.applyVoiceBusy");
+  return error?.message || t("webAccess.applyFailed");
+}

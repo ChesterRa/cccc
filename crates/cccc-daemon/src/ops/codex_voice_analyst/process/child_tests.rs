@@ -96,3 +96,27 @@ fn failed_stop_retains_identity_and_can_be_retried() {
     assert!(!owner.running());
     owner.stop().expect("stop owned runtime");
 }
+
+#[test]
+fn emergency_stop_targets_only_this_child_without_waiting_for_its_lock() {
+    let (process, tree) =
+        OwnedProcessTree::spawn(Command::new("sh").args(["-c", "sleep 60"])).expect("spawn target");
+    let owner = ChildOwner::new(process, tree);
+    let (mut other, other_tree) =
+        OwnedProcessTree::spawn(Command::new("sh").args(["-c", "sleep 60"]))
+            .expect("spawn unrelated process");
+    let held = owner.child.lock().expect("hold target child lock");
+    owner
+        .terminate_now()
+        .expect("signal target without its lock");
+    assert!(
+        other_tree
+            .try_wait(|| other.try_wait())
+            .expect("poll unrelated child")
+            .is_none()
+    );
+    drop(held);
+    owner.stop().expect("confirm and reap target");
+    other_tree.terminate().expect("clean unrelated fixture");
+    other.wait().expect("reap unrelated fixture");
+}

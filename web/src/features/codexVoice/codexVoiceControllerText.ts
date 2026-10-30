@@ -89,6 +89,32 @@ export function codexVoiceErrorText(
   return t(`codexVoiceErrors.${normalized}`, { defaultValue: t("codexVoiceErrors.unknown") });
 }
 
+/** Voice Analyst settings errors; an unknown code shows the host's detail. */
+export function codexVoiceSettingsErrorText(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  code: string,
+  detail: string,
+  details?: unknown,
+) {
+  if (code === "codex_voice_call_active") return t("codexVoiceAnalystSettingsCallActive");
+  if (code === "codex_voice_settings_busy") return t("codexVoiceAnalystSettingsWorkActive");
+  if (code === "codex_voice_settings_unavailable") return t("codexVoiceAnalystSettingsUnavailable");
+  if (code === "codex_voice_settings_invalid") {
+    return t("codexVoiceAnalystSettingsInvalid", { detail });
+  }
+  // Not retryable means the replacement had begun, so the saved settings may have changed.
+  if (
+    code === "codex_voice_recovery_pending" &&
+    (details as { retryable?: unknown } | undefined)?.retryable === false
+  ) {
+    return codexVoiceErrorText(t, "codex_voice_settings_recovery_pending");
+  }
+  if (code === "codex_voice_restarting" || code === "codex_voice_recovery_pending") {
+    return codexVoiceErrorText(t, code);
+  }
+  return detail;
+}
+
 export function codexVoiceWarningText(
   t: (key: string, options?: Record<string, unknown>) => string,
   code: string,

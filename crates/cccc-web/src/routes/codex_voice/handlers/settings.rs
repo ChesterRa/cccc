@@ -170,6 +170,9 @@ pub(in crate::routes::codex_voice) async fn update_analyst_settings(
         )
         .await
         .map_err(|error| {
+            if let Some(error) = crate::codex_voice::restart::api_error(&error) {
+                return error;
+            }
             let message = error.to_string();
             tracing::warn!(%error, "Voice Analyst settings update failed");
             if message.contains("Stop the active") {

@@ -15,9 +15,38 @@ impl CodexVoiceSessions {
     ) -> Result<AnalystSettingsOutcome> {
         let settings = cccc_core::codex_voice_settings::normalize(settings)
             .context("validate Voice Analyst launch settings")?;
+        self.ensure_open()?;
+        let sessions = self.clone();
+        let home = home.clone();
+        tokio::spawn(async move {
+            sessions
+                .apply_analyst_settings_transaction(
+                    &home,
+                    settings,
+                    environment_set,
+                    environment_unset,
+                    environment_clear,
+                    discard_current_work,
+                )
+                .await
+        })
+        .await
+        .context("Voice Analyst settings worker failed")?
+    }
+
+    async fn apply_analyst_settings_transaction(
+        &self,
+        home: &HomeLayout,
+        settings: CodexVoiceAnalystSettings,
+        environment_set: BTreeMap<String, String>,
+        environment_unset: Vec<String>,
+        environment_clear: bool,
+        discard_current_work: bool,
+    ) -> Result<AnalystSettingsOutcome> {
         // Serialize the read/compare/write/restart transaction. Reading the two files before this
         // lock would let concurrent administrators restore or overwrite one another's settings.
         let mut state = self.state.lock().await;
+        self.ensure_open()?;
         let previous_settings = cccc_core::codex_voice_settings::load(home)?;
         let previous_environment = cccc_core::codex_voice_settings::private_environment(home)?;
         let resolved_previous_runtime = cccc_core::codex_voice_settings::resolve(
@@ -78,7 +107,7 @@ impl CodexVoiceSessions {
             &previous_settings,
             &previous_environment,
         )?;
-        let Some(previous) = state.analyst.take() else {
+        let Some(previous) = state.analyst.clone() else {
             return Ok(AnalystSettingsOutcome {
                 analyst: None,
                 restarted: false,
@@ -100,12 +129,16 @@ impl CodexVoiceSessions {
         );
         let resume_thread_id =
             (materialized && !identity_changed).then(|| previous.analyst.thread_id().to_owned());
-        previous.stop_terminal();
-        if let Err(error) = previous.analyst.shutdown().await {
-            restore_configuration(home, &previous_settings, &previous_environment)?;
-            state.analyst = Some(previous);
-            return Err(error.context("stop previous Voice Analyst before applying settings"));
+        if previous.retire_for_replacement().await.is_err() {
+            let pending = self.replacement_recovery_pending();
+            if restore_configuration(home, &previous_settings, &previous_environment).is_err() {
+                cccc_runtime::diagnostic(format_args!(
+                    "[cccc] Voice settings rollback failed; verify the saved configuration"
+                ));
+            }
+            return Err(pending.into());
         }
+        state.analyst = None;
 
         let workdir = cccc_core::codex_voice_settings::workdir(home)?;
         let warning = if identity_changed && materialized {
@@ -145,20 +178,35 @@ impl CodexVoiceSessions {
                         "Voice Analyst candidate failed: {candidate_error}; previous runtime could not be restored: {restore_error}"
                     )
                 })?;
+                state.analyst = Some(Arc::clone(&restored));
                 restored.start_monitor(home.clone());
-                persistence::persist_analyst(home, &restored, materialized)?;
-                state.analyst = Some(restored);
+                if let Err(error) = persistence::persist_analyst(home, &restored, materialized) {
+                    if restored.retire_for_replacement().await.is_err() {
+                        return Err(self.replacement_recovery_pending().into());
+                    }
+                    state.analyst = None;
+                    return Err(error.context("persist restored Voice Analyst receipt"));
+                }
                 return Err(candidate_error.context(
                     "Voice Analyst settings were rejected; previous settings and runtime were restored",
                 ));
             }
         };
+        state.analyst = Some(Arc::clone(&replacement));
         replacement.start_monitor(home.clone());
         if let Err(error) =
             persistence::persist_analyst(home, &replacement, resume_thread_id.is_some())
         {
-            replacement.stop_terminal();
-            replacement.analyst.shutdown().await.ok();
+            if replacement.retire_for_replacement().await.is_err() {
+                let pending = self.replacement_recovery_pending();
+                if restore_configuration(home, &previous_settings, &previous_environment).is_err() {
+                    cccc_runtime::diagnostic(format_args!(
+                        "[cccc] Voice settings rollback failed; verify the saved configuration"
+                    ));
+                }
+                return Err(pending.into());
+            }
+            state.analyst = None;
             restore_configuration(home, &previous_settings, &previous_environment)?;
             let restored = Arc::new(
                 persistence::launch_exact(
@@ -172,9 +220,16 @@ impl CodexVoiceSessions {
                 .await
                 .context("restore previous Voice Analyst after receipt persistence failed")?,
             );
+            state.analyst = Some(Arc::clone(&restored));
             restored.start_monitor(home.clone());
-            persistence::persist_analyst(home, &restored, materialized)?;
-            state.analyst = Some(restored);
+            if let Err(restore_error) = persistence::persist_analyst(home, &restored, materialized)
+            {
+                if restored.retire_for_replacement().await.is_err() {
+                    return Err(self.replacement_recovery_pending().into());
+                }
+                state.analyst = None;
+                return Err(restore_error.context("persist restored Voice Analyst receipt"));
+            }
             return Err(error.context("persist replacement Voice Analyst receipt"));
         }
         let info = replacement.info();

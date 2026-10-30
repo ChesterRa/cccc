@@ -29,6 +29,7 @@ import {
   type VoiceProfileCheckpoint,
 } from "../voice/saveVoiceRuntimeProfile";
 import { saveVoiceAnalystSettingsWithConsent } from "./codexVoiceAnalystSettingsSave";
+import { codexVoiceSettingsErrorText } from "./codexVoiceControllerText";
 
 export function useCodexVoiceAnalystSettings(
   active: boolean,
@@ -57,17 +58,8 @@ export function useCodexVoiceAnalystSettings(
   const loadInFlight = useRef(false);
 
   const settingsError = useCallback(
-    (code: string, detail: string) => {
-      if (code === "codex_voice_call_active") return t("codexVoiceAnalystSettingsCallActive");
-      if (code === "codex_voice_settings_busy") return t("codexVoiceAnalystSettingsWorkActive");
-      if (code === "codex_voice_settings_unavailable") {
-        return t("codexVoiceAnalystSettingsUnavailable");
-      }
-      if (code === "codex_voice_settings_invalid") {
-        return t("codexVoiceAnalystSettingsInvalid", { detail });
-      }
-      return detail;
-    },
+    (error: { code: string; message: string; details?: unknown }) =>
+      codexVoiceSettingsErrorText(t, error.code, error.message, error.details),
     [t],
   );
 
@@ -95,7 +87,7 @@ export function useCodexVoiceAnalystSettings(
           setError("");
         } else {
           setSettingsLoadFailed(true);
-          setError(settingsError(settingsResponse.error.code, settingsResponse.error.message));
+          setError(settingsError(settingsResponse.error));
         }
         if (profilesResponse.ok) {
           setProfiles(profilesResponse.result.profiles);
@@ -202,7 +194,7 @@ export function useCodexVoiceAnalystSettings(
       setEnvironmentKeys(response.result.environment_keys);
       setError("");
     } else {
-      setError(settingsError(response.error.code, response.error.message));
+      setError(settingsError(response.error));
     }
     setEnvironmentRefreshing(false);
   };
@@ -256,7 +248,7 @@ export function useCodexVoiceAnalystSettings(
       await load(true);
       await controller.refresh(false);
     } else {
-      setError(settingsError(response.error.code, response.error.message));
+      setError(settingsError(response.error));
     }
     setSaving(false);
   };

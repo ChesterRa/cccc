@@ -14,6 +14,7 @@ mod web_endpoint;
 mod web_host;
 mod web_instance;
 mod web_launch;
+mod web_voice_recovery;
 
 use anyhow::{Result, bail};
 use args::{Cli, CommandKind, DaemonAction, HermesAction, RuntimeAction, WebModeArg};

@@ -163,6 +163,155 @@ pub(super) fn recovery_pending() -> bool {
         .is_some_and(|guard| !guard.retained.is_empty())
 }
 
+pub(super) fn active_for(ledger: &Path) -> bool {
+    guard().as_ref().is_some_and(|guard| guard.ledger == ledger)
+}
+
+pub(super) fn has_active_guard() -> bool {
+    guard().is_some()
+}
+
+/// Reconcile an old, separately owned ledger without replacing this process's
+/// current guard. The caller must hold the old owner's exclusive instance lock.
+pub(super) fn recover_ledger(ledger: &Path) -> io::Result<()> {
+    let mut entries = read_ledger(ledger).map_err(|error| {
+        let name = ledger
+            .file_name()
+            .map(|name| name.to_string_lossy().escape_debug().to_string())
+            .unwrap_or_else(|| "<unknown>".to_owned());
+        io::Error::new(
+            error.kind(),
+            format!("cannot read Web process ledger {name}: {:?}", error.kind()),
+        )
+    })?;
+    // The watchdog list is persisted before the ledger. Include it even if
+    // the ledger is absent or older, including an interrupted atomic write.
+    let (watch_entries, watch_paths) = read_recovery_watch_lists(ledger)?;
+    entries.extend(watch_entries);
+    entries.sort_by_key(|entry| (entry.pgid, entry.spawned_at, entry.observed_at));
+    entries.dedup();
+    let retained = reconcile_verified(&entries);
+    if retained.is_empty() {
+        // Do not let an old watchdog wake later and act on a replacement.
+        // Failure to delete any list keeps recovery pending.
+        for path in watch_paths {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        match std::fs::remove_file(ledger) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        return Ok(());
+    }
+    write_atomically(ledger, &serde_json::to_vec(&retained)?)?;
+    report_retained(&retained);
+    Err(io::Error::other(
+        "owned process recovery is not yet confirmed",
+    ))
+}
+
+fn read_recovery_watch_lists(ledger: &Path) -> io::Result<(Vec<LedgerEntry>, Vec<PathBuf>)> {
+    let Some(directory) = ledger.parent() else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let directory = match std::fs::read_dir(directory) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        Err(error) => return Err(error),
+    };
+    let prefix = watch_list_prefix(ledger);
+    let mut entries = Vec::new();
+    let mut paths = Vec::new();
+    for entry in directory {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(&prefix)
+            || !(name.ends_with(".watchdog") || name.ends_with(".watchdog.tmp"))
+        {
+            continue;
+        }
+        let path = entry.path();
+        let text = std::fs::read_to_string(&path).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "cannot read Web process watch list {}: {:?}",
+                    name.escape_debug(),
+                    error.kind()
+                ),
+            )
+        })?;
+        let mut fields = text.split_whitespace();
+        let invalid = || {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid Web process watch list {}", name.escape_debug()),
+            )
+        };
+        // A partial write can contain parseable numeric prefixes; the writer
+        // adds a newline only after constructing the complete list.
+        if !text.ends_with('\n') {
+            return Err(invalid());
+        }
+        let observed_at: u64 = fields
+            .next()
+            .ok_or_else(invalid)?
+            .parse()
+            .map_err(|_| invalid())?;
+        for field in fields {
+            let (pgid, spawned_at) = field.split_once(':').ok_or_else(invalid)?;
+            let pgid: i32 = pgid.parse().map_err(|_| invalid())?;
+            let spawned_at: u64 = spawned_at.parse().map_err(|_| invalid())?;
+            if pgid <= 1 || spawned_at == 0 {
+                return Err(invalid());
+            }
+            entries.push(LedgerEntry {
+                pgid,
+                spawned_at,
+                observed_at,
+            });
+        }
+        paths.push(path);
+    }
+    Ok((entries, paths))
+}
+
+/// Retry only previously retained groups, never the current owner's live set.
+pub(super) fn refresh_active(ledger: &Path) -> io::Result<()> {
+    let mut current = guard();
+    let current = current
+        .as_mut()
+        .filter(|current| current.ledger == ledger)
+        .ok_or_else(|| io::Error::other("owned process guard is not active"))?;
+    current.retained = reconcile_verified(&current.retained);
+    persist(current)?;
+    if current.retained.is_empty() {
+        Ok(())
+    } else {
+        report_retained(&current.retained);
+        Err(io::Error::other(
+            "owned process recovery is not yet confirmed",
+        ))
+    }
+}
+
+fn report_retained(entries: &[LedgerEntry]) {
+    for entry in entries {
+        crate::diagnostic(format_args!(
+            "owned process recovery pending: pgid={} started_at={}",
+            entry.pgid, entry.spawned_at
+        ));
+    }
+}
+
 /// Terminate what a previous owner using `ledger` left behind, then record this
 /// process's groups there. A process that already guards another ledger (a daemon
 /// restarted for another home) moves to it with a new watchdog. Returns false when
@@ -368,6 +517,23 @@ pub(super) fn reconcile(entries: &[LedgerEntry]) -> Vec<LedgerEntry> {
     }
     retained.extend(terminate_groups(&terminate));
     retained
+}
+
+/// A successful signal is not itself proof that a group has exited. Keep
+/// anything still live or unidentifiable for a later, user-triggered retry.
+fn reconcile_verified(entries: &[LedgerEntry]) -> Vec<LedgerEntry> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let _ = reconcile(entries);
+    let Some(rows) = process_rows() else {
+        return entries.to_vec();
+    };
+    entries
+        .iter()
+        .copied()
+        .filter(|entry| !matches!(classify(entry, &rows), Verdict::Forget))
+        .collect()
 }
 
 /// No PID is reused while a process group with that ID exists. So a live leader

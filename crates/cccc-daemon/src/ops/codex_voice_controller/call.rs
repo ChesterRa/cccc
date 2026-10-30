@@ -127,6 +127,16 @@ impl CodexVoiceCall {
         self.lease.heartbeat()
     }
 
+    /// The recording lease uses synchronous file locking. Web callers must not
+    /// run that I/O on an async runtime worker.
+    pub async fn heartbeat_for_web(self: &Arc<Self>, expected_generation: &str) -> Result<()> {
+        let call = Arc::clone(self);
+        let generation = expected_generation.to_owned();
+        tokio::task::spawn_blocking(move || call.heartbeat(&generation))
+            .await
+            .context("join Codex Voice lease heartbeat worker")?
+    }
+
     #[cfg(test)]
     pub async fn begin_provider_event(
         &self,
@@ -376,6 +386,20 @@ impl CodexVoiceCall {
     }
 
     pub async fn stop(&self, expected_generation: &str) -> Result<()> {
+        self.stop_sync(expected_generation)
+    }
+
+    /// Lease file locking is blocking; the Web cleanup barrier must not wait
+    /// for it on an async worker thread.
+    pub async fn stop_for_web(self: &Arc<Self>, expected_generation: &str) -> Result<()> {
+        let call = Arc::clone(self);
+        let generation = expected_generation.to_owned();
+        tokio::task::spawn_blocking(move || call.stop_sync(&generation))
+            .await
+            .context("join Codex Voice lease cleanup worker")?
+    }
+
+    fn stop_sync(&self, expected_generation: &str) -> Result<()> {
         self.require_generation(expected_generation)?;
         self.lease
             .release()

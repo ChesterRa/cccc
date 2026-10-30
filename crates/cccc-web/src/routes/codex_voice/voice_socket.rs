@@ -39,8 +39,24 @@ impl RecordingLeaseHeartbeat {
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 ticker.tick().await;
-                if let Err(error) = heartbeat() {
-                    let _ = failure_sender.send(error.to_string());
+                // A file lock can outlast a socket request. Keep it off the
+                // async worker even on a single-worker Web host.
+                let joined = tokio::task::spawn_blocking(move || {
+                    let result = heartbeat().map_err(|error| error.to_string());
+                    (heartbeat, result)
+                })
+                .await;
+                let (next_heartbeat, result) = match joined {
+                    Ok(result) => result,
+                    Err(_) => {
+                        let _ = failure_sender
+                            .send("recording lease heartbeat worker failed".to_owned());
+                        return;
+                    }
+                };
+                heartbeat = next_heartbeat;
+                if let Err(error) = result {
+                    let _ = failure_sender.send(error);
                     return;
                 }
             }
@@ -686,5 +702,56 @@ mod tests {
             .expect("lease failure must be reported promptly");
         assert_eq!(failure, "lease lost");
         heartbeat.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn recording_lease_heartbeat_keeps_web_responsive_while_file_lock_is_held() {
+        use cccc_contracts::codex_voice::{VoiceApplicationContext, VoiceCallMode};
+
+        let temp = tempfile::tempdir().expect("temporary home");
+        let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize home");
+        let context = VoiceApplicationContext::new_with_mode(
+            "fixture".into(),
+            "local test".into(),
+            VoiceCallMode::Persona,
+        )
+        .expect("persona context");
+        let call = Arc::new(
+            CodexVoiceCall::start(&home, None, Some(context))
+                .await
+                .expect("acquire lease"),
+        );
+        let generation = call.generation().to_owned();
+        let path = home
+            .root()
+            .join("state/voice_secretary_recording_lease.json.lock");
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .expect("open fixture lock");
+        fs2::FileExt::lock_exclusive(&lock).expect("hold fixture lock");
+        let (release, wait) = std::sync::mpsc::channel();
+        // The deadline also releases the lock if a broken implementation
+        // blocks the single async worker before it can send the release.
+        let holder = std::thread::spawn(move || {
+            let _ = wait.recv_timeout(Duration::from_secs(3));
+            fs2::FileExt::unlock(&lock).expect("unlock fixture");
+        });
+
+        let heartbeat = RecordingLeaseHeartbeat::start(Arc::clone(&call), generation.clone());
+        let started = Instant::now();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let elapsed = started.elapsed();
+        let _ = release.send(());
+        holder.join().expect("lock holder exits");
+        heartbeat.stop().await;
+        call.stop_for_web(&generation).await.expect("release lease");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Web runtime stalled for {elapsed:?}"
+        );
     }
 }
