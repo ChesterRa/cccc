@@ -143,6 +143,9 @@ async fn main() -> Result<()> {
         }
         Some(CommandKind::Tail(args)) => commands::messaging::tail(&client, &home, args).await,
         Some(CommandKind::Inbox(args)) => commands::messaging::inbox(&client, &home, args).await,
+        Some(CommandKind::InboxSummary(args)) => {
+            commands::messaging::inbox_summary(&client, &home, args).await
+        }
         Some(CommandKind::Ledger(args)) => commands::messaging::ledger(&client, &home, args).await,
         Some(CommandKind::Daemon { action }) => daemon(action, home, &client).await,
         Some(CommandKind::Runtime { action }) => runtime(&client, action).await,

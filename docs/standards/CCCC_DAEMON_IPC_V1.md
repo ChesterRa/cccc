@@ -5180,6 +5180,67 @@ Result:
 { messages: CCCSEventV1[]; cursor: { event_id: string; ts: string } }
 ```
 
+#### `inbox_summary`
+
+Passively summarize current-generation awaiting Mail across a Group. This is a
+Group-wide Inbox view: the existing user/system and Foreman permissions apply;
+Peers and unknown actors cannot use it. Stopped and disabled Actors are included.
+The operation is a Read and does not start Actors, deliver notices, advance Mail
+cursors, write an index, or schedule background sampling.
+
+Args:
+```ts
+{ group_id: string; cutoff: string; by?: string }
+```
+
+`cutoff` MUST be an RFC3339 timestamp no later than the server's `observed_at`.
+The boundary is inclusive: an awaiting Mail is overdue when its original
+`chat.message.ts <= cutoff`. The cutoff filters **current** awaiting state; it
+does not reconstruct Inbox state as of that timestamp. Age is measured from the
+original Mail timestamp to `observed_at`, independently of notice delivery or
+Actor restart. The observation time is sampled after the captured projection
+prefix is loaded, and is resampled if publication validation retries.
+A malformed or future Mail timestamp has unknown age and cannot
+establish overdue status. Invalid/future request cutoffs are errors.
+
+Result:
+```ts
+{
+  group_id: string
+  observed_at: string
+  cutoff: string
+  actors: {
+    actor_id: string
+    awaiting_count: number
+    overdue_count: number
+    oldest_awaiting_at: string | null
+    oldest_age_seconds: number | null
+  }[]
+}
+```
+
+Each current Actor has one row, including zero-count rows. Awaiting uses the
+existing Mail predicate: unread, not replied, and no `accepted` or `ambiguous`
+delivery of the Mail itself to that recipient in the current Actor generation.
+Delivery of an Inbox notice is distinct and does not clear its source Mail.
+Send, Send + Reply, and `system.notify` are not Mail. The recipient, cursor and
+latest-`actor.add` append-order boundaries are the same as Inbox. A reply,
+read/cursor advance, or delivery may remove Mail from the current result even
+when its original timestamp precedes the cutoff.
+
+`oldest_awaiting_at` and `oldest_age_seconds` are null for an empty row or when
+any awaiting Mail has an invalid/future timestamp, since its oldest age cannot
+be established. Known ages are nonnegative whole seconds. No message bodies,
+source ids, escalation policy or notification action are returned.
+
+All Actor rows MUST share one incremental Group projection snapshot. Warm
+polls reuse committed projection offsets rather than rescan full ledger history
+per Actor or per poll. The projection retains the existing bounded Group cache,
+generation/cursor validation and rotation publication checks.
+
+CLI: `cccc inbox-summary --group <group> --cutoff <RFC3339> [--by <identity>]`.
+The consuming `cccc inbox` command is unchanged. No default MCP tool is added.
+
 #### `inbox_read`
 
 Atomically return and consume the next unread Mail prefix for an actor.

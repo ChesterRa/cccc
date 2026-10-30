@@ -13,6 +13,82 @@ struct MailClaim {
     sources: Vec<String>,
 }
 
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    use cccc_contracts::Actor;
+
+    #[test]
+    fn unresolved_cache_follows_recipient_generation_and_delivery_facts() {
+        // Reducer unit controls: these in-memory facts are synthetic, unlike
+        // the IPC integration tests' daemon-produced events.
+        let temp = tempfile::tempdir().expect("create temporary test directory");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("create test home");
+        let store = GroupStore::new(home).expect("open test group store");
+        let mut group = store.create("Mail reducer", "").expect("create test group");
+        group.actors.push(Actor::new("reader"));
+        group.actors.push(Actor::new("other"));
+        let mut state = NoticeState::default();
+        let mut mail = Event::new("chat.message", &group.group_id);
+        mail.by = "user".into();
+        mail.data = json!({"to":["reader"],"message_mode":"mail"})
+            .as_object()
+            .expect("Mail fixture is an object")
+            .clone();
+        state.note(&group, &mail);
+        let cutoff = Utc::now();
+        let summarize = |state: &mut NoticeState| {
+            state.overdue_summary(&group, &BTreeMap::new(), cutoff, cutoff)
+        };
+        assert_eq!(summarize(&mut state)[0].awaiting_count, 1);
+        assert_eq!(summarize(&mut state)[1].awaiting_count, 0);
+
+        let mut delivery = Event::new("runtime.delivery", &group.group_id);
+        delivery.data =
+            json!({"actor_id":"reader","source_event_id":"notice-id","state":"accepted"})
+                .as_object()
+                .expect("delivery fixture is an object")
+                .clone();
+        state.note(&group, &delivery);
+        assert_eq!(summarize(&mut state)[0].awaiting_count, 1);
+        delivery
+            .data
+            .insert("source_event_id".into(), json!(mail.id));
+        for status in ["accepted", "ambiguous"] {
+            delivery.data.insert("state".into(), json!(status));
+            state.note(&group, &delivery);
+            assert_eq!(summarize(&mut state)[0].awaiting_count, 0);
+            delivery.data.insert("state".into(), json!("failed"));
+            state.note(&group, &delivery);
+            assert_eq!(summarize(&mut state)[0].awaiting_count, 1);
+        }
+        let mut reply = Event::new("chat.message", &group.group_id);
+        reply.by = "reader".into();
+        reply.data.insert("reply_to".into(), json!(mail.id));
+        state.note(&group, &reply);
+        assert_eq!(summarize(&mut state)[0].awaiting_count, 0);
+
+        mail.id = "second-mail".into();
+        state.note(&group, &mail);
+        assert_eq!(summarize(&mut state)[0].awaiting_count, 1);
+        let cursor = BTreeMap::from([("reader".into(), mail.id.clone())]);
+        assert_eq!(
+            state.overdue_summary(&group, &cursor, cutoff, cutoff)[0].awaiting_count,
+            0
+        );
+        mail.id = "third-mail".into();
+        state.note(&group, &mail);
+        assert_eq!(summarize(&mut state)[0].awaiting_count, 1);
+        let mut added = Event::new("actor.add", &group.group_id);
+        added.data.insert("actor".into(), json!({"id":"reader"}));
+        state.note(&group, &added);
+        assert_eq!(summarize(&mut state)[0].awaiting_count, 0);
+        mail.id = "current-generation".into();
+        state.note(&group, &mail);
+        assert_eq!(summarize(&mut state)[0].awaiting_count, 1);
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct NoticeState {
     pub positions: HashMap<String, usize>,
@@ -20,6 +96,10 @@ pub(crate) struct NoticeState {
     mail_ids: HashSet<String>,
     pub next_position: usize,
     sources: Vec<Source>,
+    mail_sources: HashMap<String, usize>,
+    // Payload-free references to unresolved Mail only. Resolved history is
+    // removed on each fact, so a summary poll never walks historical sources.
+    awaiting_mail: BTreeMap<String, BTreeMap<usize, usize>>,
     generations: HashMap<String, usize>,
     mail_reads: HashMap<String, Vec<(usize, String)>>,
     replies: HashMap<(String, String), usize>,
@@ -35,6 +115,7 @@ struct Source {
     ts: String,
     position: usize,
     mail: bool,
+    notice: bool,
     recipients: Vec<String>,
 }
 
@@ -90,6 +171,7 @@ impl NoticeState {
         }
         if let Some(actor) = actor_add_id(event) {
             self.generations.insert(actor.to_owned(), position);
+            self.awaiting_mail.remove(actor);
         }
         if event.kind == "group.start"
             || (event.kind == "group.set_state"
@@ -115,6 +197,11 @@ impl NoticeState {
                         .entry(actor.to_owned())
                         .or_default()
                         .push((position, boundary.to_owned()));
+                    if let Some(boundary) = self.positions.get(boundary)
+                        && let Some(pending) = self.awaiting_mail.get_mut(actor)
+                    {
+                        pending.retain(|position, _| position > boundary);
+                    }
                 }
             }
             "chat.message" => {
@@ -122,6 +209,7 @@ impl NoticeState {
                     self.replies
                         .entry((id.to_owned(), event.by.clone()))
                         .or_insert(position);
+                    self.refresh_mail(id, &event.by);
                 }
                 let broadcast = event
                     .data
@@ -134,7 +222,7 @@ impl NoticeState {
                                 .filter_map(Value::as_str)
                                 .any(|id| matches!(id, "@all" | "@peers" | "@foreman"))
                     });
-                if source && (mode != "mail" || !broadcast) {
+                if source {
                     let recipients = group
                         .actors
                         .iter()
@@ -142,13 +230,21 @@ impl NoticeState {
                         .map(|actor| actor.id.clone())
                         .collect::<Vec<_>>();
                     if !recipients.is_empty() {
+                        let index = self.sources.len();
                         self.sources.push(Source {
                             id: event.id.clone(),
                             ts: event.ts.clone(),
                             position,
                             mail: mode == "mail",
+                            notice: mode != "mail" || !broadcast,
                             recipients,
                         });
+                        if mode == "mail" {
+                            self.mail_sources.insert(event.id.clone(), index);
+                            for actor in self.sources[index].recipients.clone() {
+                                self.refresh_mail(&event.id, &actor);
+                            }
+                        }
                     }
                 }
             }
@@ -167,6 +263,7 @@ impl NoticeState {
                         (id.to_owned(), actor.to_owned()),
                         (state.to_owned(), event.ts.clone(), position),
                     );
+                    self.refresh_mail(id, actor);
                 }
             }
             "system.notify" => {
@@ -213,6 +310,63 @@ impl NoticeState {
         if matches!(event.kind.as_str(), "system.notify" | "runtime.delivery") {
             self.prune_mail_claims(group);
         }
+    }
+
+    fn refresh_mail(&mut self, id: &str, actor: &str) {
+        let Some(&index) = self.mail_sources.get(id) else {
+            return;
+        };
+        let source = &self.sources[index];
+        let generation = self.generations.get(actor).copied().unwrap_or(0);
+        let read = self.mail_reads.get(actor).is_some_and(|reads| {
+            reads.iter().any(|(_, boundary)| {
+                self.positions
+                    .get(boundary)
+                    .is_some_and(|position| *position >= source.position)
+            })
+        });
+        let key = (id.to_owned(), actor.to_owned());
+        let awaiting = source.position >= generation
+            && source.recipients.iter().any(|recipient| recipient == actor)
+            && crate::mail_pending::awaiting(
+                read,
+                self.replies.contains_key(&key),
+                self.deliveries.get(&key).map(|value| value.0.as_str()),
+            );
+        let pending = self.awaiting_mail.entry(actor.to_owned()).or_default();
+        if awaiting {
+            pending.insert(source.position, index);
+        } else {
+            pending.remove(&source.position);
+        }
+    }
+
+    pub fn overdue_summary(
+        &mut self,
+        group: &GroupDoc,
+        cursors: &BTreeMap<String, String>,
+        cutoff: DateTime<Utc>,
+        observed_at: DateTime<Utc>,
+    ) -> Vec<OverdueMailSummary> {
+        group
+            .actors
+            .iter()
+            .map(|actor| {
+                let cursor = cursors.get(&actor.id).and_then(|id| self.positions.get(id));
+                let pending = self.awaiting_mail.entry(actor.id.clone()).or_default();
+                if let Some(cursor) = cursor {
+                    pending.retain(|position, _| position > cursor);
+                }
+                OverdueMailSummary::from_timestamps(
+                    &actor.id,
+                    pending
+                        .values()
+                        .map(|index| self.sources[*index].ts.as_str()),
+                    cutoff,
+                    observed_at,
+                )
+            })
+            .collect()
     }
 
     fn prune_mail_claims(&mut self, group: &GroupDoc) {
@@ -325,7 +479,9 @@ impl NoticeState {
             let mut mail = Vec::new();
             let mut replies = Vec::new();
             for source in self.sources.iter().filter(|source| {
-                source.position >= generation && source.recipients.contains(&actor.id)
+                source.notice
+                    && source.position >= generation
+                    && source.recipients.contains(&actor.id)
             }) {
                 let key = (source.id.clone(), actor.id.clone());
                 let replied = self.replies.contains_key(&key);

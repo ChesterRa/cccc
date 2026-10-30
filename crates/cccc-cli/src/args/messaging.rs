@@ -149,6 +149,19 @@ pub struct TailArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct InboxSummaryArgs {
+    /// Target Group ID; omit to use the current Group.
+    #[arg(long = "group")]
+    pub group_id: Option<String>,
+    /// Inclusive original-Mail timestamp boundary (RFC3339, not in the future).
+    #[arg(long)]
+    pub cutoff: String,
+    /// Author identity: user or the Group's Foreman.
+    #[arg(long, default_value = "user")]
+    pub by: String,
+}
+
+#[derive(Debug, Args)]
 pub struct InboxArgs {
     /// Target Group ID; omit to use the current Group.
     #[arg(long = "group")]

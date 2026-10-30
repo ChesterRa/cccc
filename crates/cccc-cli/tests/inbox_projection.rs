@@ -2,7 +2,7 @@
 
 use cccc_client::DaemonClient;
 use cccc_contracts::DaemonRequest;
-use cccc_core::HomeLayout;
+use cccc_core::{GroupStore, HomeLayout, ledger};
 use serde_json::{Value, json};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -27,6 +27,351 @@ async fn call(client: &DaemonClient, op: &str, args: Value) -> Value {
         .expect("daemon API response");
     assert!(response.ok, "{op}: {:?}", response.error);
     Value::Object(response.result)
+}
+
+fn summary_row<'a>(summary: &'a Value, actor_id: &str) -> &'a Value {
+    summary["actors"]
+        .as_array()
+        .expect("actors")
+        .iter()
+        .find(|actor| actor["actor_id"] == actor_id)
+        .expect("actor row")
+}
+
+#[tokio::test]
+async fn overdue_summary_distinguishes_worker_mail_delivery_from_notice_delivery() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let mut daemon = Daemon(
+        Command::new(env!("CARGO_BIN_EXE_cccc"))
+            .args(["daemon", "run", "--host", "127.0.0.1", "--port", "0"])
+            .env("CCCC_HOME", home.root())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("daemon"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !home.daemon_dir().join("ccccd.addr.json").exists() {
+        assert!(daemon.0.try_wait().expect("check daemon status").is_none());
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let client = DaemonClient::new(home.clone()).with_timeout(Duration::from_secs(30));
+    let runtime_home = home.clone();
+    // Always shut down the real daemon (and its owned local actor), including
+    // when a test assertion panics. No provider or external account is used.
+    let outcome = tokio::spawn(async move {
+        let created = call(&client, "group_create", json!({"title":"Delivery summary","by":"user"})).await;
+        let group = created["group"]["group_id"].as_str().expect("created group ID");
+        let project = runtime_home.root().join("project");
+        std::fs::create_dir(&project).expect("create fixture project directory");
+        call(&client, "attach", json!({"group_id":group,"path":project,"by":"user"})).await;
+        call(&client, "group_preamble_set", json!({"group_id":group,"content":"Use the delivery protocol.","by":"user"})).await;
+        call(&client, "actor_add", json!({"group_id":group,"actor_id":"reader","runtime":"custom","submit":"newline",
+            "command":["sh","-c","stty -echo -icanon min 1 time 0; while IFS= read -r line; do printf '%s\\n' \"$line\"; done"],"by":"user"})).await;
+        call(&client, "actor_start", json!({"group_id":group,"actor_id":"reader","by":"user"})).await;
+        let mail = call(&client, "message_send", json!({"group_id":group,"to":["reader"],"by":"user","message_mode":"mail","text":"Please review the delivery result."})).await;
+        let mail_id = mail["event"]["id"].as_str().expect("Mail event ID");
+        let cutoff = mail["event"]["ts"].as_str().expect("original Mail timestamp");
+        let before = call(&client, "inbox_summary", json!({"group_id":group,"cutoff":cutoff})).await;
+        assert_eq!(summary_row(&before, "reader")["awaiting_count"], 1);
+        let notice = call(&client, "system_notify", json!({"group_id":group,"by":"system","to":["reader"],"text":"A separate delivery notice."})).await;
+        let notice_id = notice["event"]["id"].as_str().expect("notice event ID");
+        let path = GroupStore::new(runtime_home.clone()).expect("open fixture group store").ledger_path(group).expect("fixture group ledger path");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let events = ledger::read_all(&path).expect("read notice-delivery evidence");
+            if events.iter().any(|event| event.kind == "runtime.delivery"
+                && event.data["source_event_id"] == notice_id && event.data["state"] == "accepted") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "notice worker did not settle");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let noticed = call(&client, "inbox_summary", json!({"group_id":group,"cutoff":cutoff})).await;
+        assert_eq!(summary_row(&noticed, "reader")["awaiting_count"], 1, "notice delivery settled the Mail itself");
+        assert_eq!(summary_row(&noticed, "reader")["oldest_awaiting_at"], summary_row(&before, "reader")["oldest_awaiting_at"]);
+        call(&client, "actor_stop", json!({"group_id":group,"actor_id":"reader","by":"user"})).await;
+        let parked = call(&client, "inbox_summary", json!({"group_id":group,"cutoff":cutoff})).await;
+        assert_eq!(summary_row(&parked, "reader")["awaiting_count"], 1, "stopping an Actor must not hide its awaiting Mail");
+        assert_eq!(summary_row(&parked, "reader")["oldest_awaiting_at"], summary_row(&before, "reader")["oldest_awaiting_at"]);
+        call(&client, "actor_start", json!({"group_id":group,"actor_id":"reader","by":"user"})).await;
+        let restarted = call(&client, "inbox_summary", json!({"group_id":group,"cutoff":cutoff})).await;
+        assert_eq!(summary_row(&restarted, "reader")["awaiting_count"], 1);
+        assert_eq!(summary_row(&restarted, "reader")["oldest_awaiting_at"], summary_row(&before, "reader")["oldest_awaiting_at"], "restart must not reset Mail age");
+        call(&client, "message_deliver", json!({"group_id":group,"source_event_id":mail_id,"actor_ids":["reader"],"by":"user"})).await;
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let events = ledger::read_all(&path).expect("read Mail-delivery evidence");
+            if events.iter().any(|event| event.kind == "runtime.delivery"
+                && event.data["source_event_id"] == mail_id && event.data["state"] == "accepted") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "Mail worker did not settle");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let delivered = call(&client, "inbox_summary", json!({"group_id":group,"cutoff":cutoff})).await;
+        assert_eq!(summary_row(&delivered, "reader")["awaiting_count"], 0);
+        let peek = call(&client, "inbox_peek", json!({"group_id":group,"actor_id":"reader"})).await;
+        assert_eq!(peek["messages"][0]["id"], mail_id, "delivery is distinct from reading Mail");
+        call(&client, "actor_stop", json!({"group_id":group,"actor_id":"reader","by":"user"})).await;
+        let stopped = call(&client, "inbox_summary", json!({"group_id":group,"cutoff":cutoff})).await;
+        assert_eq!(summary_row(&stopped, "reader")["awaiting_count"], 0);
+    }).await;
+    let cleanup = DaemonClient::new(home);
+    call(&cleanup, "shutdown", json!({})).await;
+    outcome.expect("delivery test task");
+}
+
+#[tokio::test]
+async fn overdue_mail_summary_is_passive_authorized_and_generation_scoped() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let mut daemon = Daemon(
+        Command::new(env!("CARGO_BIN_EXE_cccc"))
+            .args(["daemon", "run", "--host", "127.0.0.1", "--port", "0"])
+            .env("CCCC_HOME", home.root())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("daemon"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !home.daemon_dir().join("ccccd.addr.json").exists() {
+        assert!(daemon.0.try_wait().expect("status").is_none());
+        assert!(Instant::now() < deadline, "startup timed out");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let client = DaemonClient::new(home.clone()).with_timeout(Duration::from_secs(30));
+    let created = call(
+        &client,
+        "group_create",
+        json!({"title":"Mail summary","by":"user"}),
+    )
+    .await;
+    let group = created["group"]["group_id"].as_str().expect("group");
+    // These Actors are never started. The first visible Actor is Foreman.
+    for actor in ["coordinator", "reader", "other"] {
+        call(
+            &client,
+            "actor_add",
+            json!({"group_id":group,"actor_id":actor,"runtime":"custom","by":"user"}),
+        )
+        .await;
+    }
+    let sent = call(&client, "message_send", json!({"group_id":group,"by":"user","to":["reader"],"message_mode":"mail","text":"Please review this change."})).await;
+    let id = sent["event"]["id"].as_str().expect("id");
+    let timestamp = sent["event"]["ts"].as_str().expect("original timestamp");
+    let before = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":"1970-01-01T00:00:00Z"}),
+    )
+    .await;
+    assert_eq!(summary_row(&before, "reader")["awaiting_count"], 1);
+    assert_eq!(summary_row(&before, "reader")["overdue_count"], 0);
+    let summary = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":timestamp}),
+    )
+    .await;
+    assert_eq!(
+        summary["actors"]
+            .as_array()
+            .expect("actor summary rows")
+            .len(),
+        3
+    );
+    assert_eq!(
+        summary_row(&summary, "reader")["overdue_count"],
+        1,
+        "cutoff equality is inclusive"
+    );
+    assert_eq!(summary_row(&summary, "coordinator")["awaiting_count"], 0);
+    assert_eq!(summary_row(&summary, "other")["awaiting_count"], 0);
+    let after = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":summary["observed_at"],"by":"coordinator"}),
+    )
+    .await;
+    assert_eq!(summary_row(&after, "reader")["overdue_count"], 1);
+    assert_eq!(
+        summary_row(&after, "reader")["oldest_awaiting_at"],
+        summary_row(&summary, "reader")["oldest_awaiting_at"]
+    );
+    for by in ["reader", "unknown"] {
+        let response = client
+            .call(&DaemonRequest {
+                v: 1,
+                op: "inbox_summary".into(),
+                args: json!({"group_id":group,"cutoff":timestamp,"by":by})
+                    .as_object()
+                    .expect("permission-test request arguments")
+                    .clone(),
+            })
+            .await
+            .expect("permission-test daemon response");
+        assert!(!response.ok, "{by} obtained a Group-wide Inbox view");
+    }
+    for cutoff in ["not-a-time", "9999-01-01T00:00:00Z"] {
+        let response = client
+            .call(&DaemonRequest {
+                v: 1,
+                op: "inbox_summary".into(),
+                args: json!({"group_id":group,"cutoff":cutoff})
+                    .as_object()
+                    .expect("cutoff-test request arguments")
+                    .clone(),
+            })
+            .await
+            .expect("cutoff-test daemon response");
+        assert!(!response.ok);
+    }
+    let peek = call(
+        &client,
+        "inbox_peek",
+        json!({"group_id":group,"actor_id":"reader"}),
+    )
+    .await;
+    assert_eq!(peek["messages"][0]["id"], id, "summary consumed Mail");
+    let disabled = call(
+        &client,
+        "actor_update",
+        json!({"group_id":group,"actor_id":"reader","patch":{"enabled":false},"by":"user"}),
+    )
+    .await;
+    assert_eq!(disabled["actor"]["enabled"], false);
+    let disabled_summary = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":timestamp}),
+    )
+    .await;
+    assert_eq!(
+        summary_row(&disabled_summary, "reader")["awaiting_count"],
+        1
+    );
+    call(&client, "reply", json!({"group_id":group,"by":"reader","to":["user"],"reply_to":id,"message_mode":"send","text":"Reviewed."})).await;
+    let replied = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":timestamp}),
+    )
+    .await;
+    assert_eq!(summary_row(&replied, "reader")["awaiting_count"], 0);
+    let mail_reply = call(&client, "reply", json!({"group_id":group,"by":"reader","to":["coordinator"],"reply_to":id,"message_mode":"mail","text":"Review result for the coordinator."})).await;
+    let reply_summary = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":mail_reply["event"]["ts"]}),
+    )
+    .await;
+    assert_eq!(
+        summary_row(&reply_summary, "coordinator")["awaiting_count"],
+        1
+    );
+    assert_eq!(summary_row(&reply_summary, "reader")["awaiting_count"], 0);
+    call(&client, "message_send", json!({"group_id":group,"by":"user","to":["reader"],"message_mode":"send","text":"An immediate non-Mail message."})).await;
+    let sent_only = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":mail_reply["event"]["ts"]}),
+    )
+    .await;
+    assert_eq!(summary_row(&sent_only, "reader")["awaiting_count"], 0);
+    assert_eq!(
+        call(
+            &client,
+            "inbox_peek",
+            json!({"group_id":group,"actor_id":"reader"})
+        )
+        .await["messages"][0]["id"],
+        id,
+        "a reply is not an Inbox read"
+    );
+    call(&client, "message_send", json!({"group_id":group,"by":"user","to":["reader"],"message_mode":"mail","text":"Please check the next change."})).await;
+    call(
+        &client,
+        "inbox_read",
+        json!({"group_id":group,"actor_id":"reader"}),
+    )
+    .await;
+    let read = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":timestamp}),
+    )
+    .await;
+    assert_eq!(summary_row(&read, "reader")["awaiting_count"], 0);
+    call(&client, "message_send", json!({"group_id":group,"by":"user","to":["reader"],"message_mode":"mail","text":"Review after the next session."})).await;
+    call(
+        &client,
+        "actor_remove",
+        json!({"group_id":group,"actor_id":"reader","by":"user"}),
+    )
+    .await;
+    call(
+        &client,
+        "actor_add",
+        json!({"group_id":group,"actor_id":"reader","runtime":"custom","by":"user"}),
+    )
+    .await;
+    let generation = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":timestamp}),
+    )
+    .await;
+    assert_eq!(summary_row(&generation, "reader")["awaiting_count"], 0);
+    let current = call(&client, "message_send", json!({"group_id":group,"by":"user","to":["reader"],"message_mode":"mail","text":"Review in this session."})).await;
+    let current_cutoff = current["event"]["ts"]
+        .as_str()
+        .expect("current-generation Mail timestamp");
+    let warm = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":current_cutoff}),
+    )
+    .await;
+    call(
+        &client,
+        "ledger_compact",
+        json!({"group_id":group,"reason":"summary snapshot rebuild"}),
+    )
+    .await;
+    let rebuilt = call(
+        &client,
+        "inbox_summary",
+        json!({"group_id":group,"cutoff":current_cutoff}),
+    )
+    .await;
+    assert_eq!(summary_row(&warm, "reader")["awaiting_count"], 1);
+    assert_eq!(summary_row(&rebuilt, "reader")["awaiting_count"], 1);
+    assert_eq!(summary_row(&rebuilt, "reader")["overdue_count"], 1);
+    // Exercise the public CLI entry point against the same real daemon.
+    let output = Command::new(env!("CARGO_BIN_EXE_cccc"))
+        .args([
+            "inbox-summary",
+            "--group",
+            group,
+            "--cutoff",
+            current_cutoff,
+        ])
+        .env("CCCC_HOME", home.root())
+        .output()
+        .expect("CLI summary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let cli: Value = serde_json::from_slice(&output.stdout).expect("CLI JSON");
+    assert_eq!(summary_row(&cli, "reader")["overdue_count"], 1);
 }
 
 #[tokio::test]
