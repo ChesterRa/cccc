@@ -937,13 +937,15 @@ export function ChatComposer({
     }
     return "Ctrl+Enter";
   }, []);
-  const sendButtonTitle =
-    effectiveMessageMode === "request_reply" && !requestReplyRecipientsReady
-      ? t("modeSendReplyRequiresConcrete")
-      : t("sendMessageWithShortcut", {
-          shortcut: sendShortcutLabel,
-          defaultValue: "Send message ({{shortcut}})",
-        });
+  // Send + Reply needs concrete recipients; say why Send is off where the recipients are chosen.
+  const replyRecipientsBlocked =
+    effectiveMessageMode === "request_reply" && !requestReplyRecipientsReady;
+  const sendButtonTitle = replyRecipientsBlocked
+    ? t("modeSendReplyRequiresConcrete")
+    : t("sendMessageWithShortcut", {
+        shortcut: sendShortcutLabel,
+        defaultValue: "Send message ({{shortcut}})",
+      });
   const showTypingPlaceholder = Boolean(
     !compactViewport &&
     selectedGroupId &&
@@ -1005,6 +1007,7 @@ export function ChatComposer({
   return (
     <footer
       ref={footerRef}
+      data-lcd-scope
       data-composer-compact={compact ? "true" : undefined}
       onPointerDownCapture={(event) => {
         if (
@@ -1217,6 +1220,14 @@ export function ChatComposer({
               onToggleRecipient={onToggleRecipient}
               onClearRecipients={onClearRecipients}
             />
+            {replyRecipientsBlocked ? (
+              <p
+                data-composer-send-blocked
+                className="px-3 pb-1 text-xs text-[var(--color-text-secondary)]"
+              >
+                {t("modeSendReplyRequiresConcrete")}
+              </p>
+            ) : null}
 
             <div ref={setVoiceStatusTarget} data-voice-mobile-status-slot />
 

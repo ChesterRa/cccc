@@ -39,6 +39,7 @@ export function ComposerSendControl({
   return (
     <div
       data-composer-send-control
+      data-mode={mode}
       className="ml-auto flex shrink-0 items-stretch rounded-xl bg-[var(--glass-tab-bg)]"
     >
       <Button
@@ -94,6 +95,7 @@ export function ComposerSendControl({
           align="end"
           className="w-64 max-w-[calc(100vw-2rem)] p-1.5"
           aria-label={t("messageTypeOptions")}
+          data-lcd-scope
         >
           <div
             role="group"

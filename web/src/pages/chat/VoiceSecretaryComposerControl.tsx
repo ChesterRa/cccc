@@ -5889,6 +5889,7 @@ export function VoiceSecretaryComposerControl({
           ) : null}
           <div
             data-voice-assistant-row-control
+            data-recording={recording || undefined}
             className={classNames(
               "inline-flex h-[44px] min-w-0 max-w-full shrink items-center gap-0.5 rounded-lg border transition-colors @min-[600px]/composer:h-9 @min-[600px]/composer:shrink-0 @min-[600px]/composer:p-0.5",
               recording

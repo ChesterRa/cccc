@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { TextScale, Theme } from "../../types";
 import { AppSettingsMenu } from "./AppSettingsMenu";
 import { MobileMenuSheet } from "./MobileMenuSheet";
+import { setUiStylePrefs } from "../../utils/uiStyle";
 
 const { changeLanguage } = vi.hoisted(() => ({ changeLanguage: vi.fn() }));
 vi.mock("react-i18next", () => ({
@@ -132,5 +133,40 @@ describe("appearance choices inside their real hosts", () => {
         },
       );
     }
+  }
+
+  for (const host of ["desktop", "sheet"] as const) {
+    it(`${host}: previews the LCD style and offers its body-font choice only while it is on`, async () => {
+      await renderHost(host, "light");
+      const choice = (name: string) =>
+        document.querySelector<HTMLElement>(
+          `[data-appearance-preferences] [data-appearance-choice="${name}"]`,
+        );
+      const radios = (name: string) => [
+        ...(choice(name)?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []),
+      ];
+      expect(radios("uiStyle").map((radio) => radio.textContent)).toEqual([
+        "uiStyleClassic",
+        "uiStyleLcd",
+      ]);
+      expect(choice("lcdBody")).toBeNull();
+      try {
+        await click(radios("uiStyle")[1]!);
+        expect(document.documentElement.dataset.uiStyle).toBe("lcd");
+        expect(radios("lcdBody").map((radio) => radio.textContent)).toEqual([
+          "lcdBodyMono",
+          "lcdBodyPixel",
+        ]);
+        await click(radios("lcdBody")[1]!);
+        expect(document.documentElement.dataset.lcdBody).toBe("pixel");
+        expect(outerOpen(host)).toBe(true);
+        await click(radios("uiStyle")[0]!);
+        expect(document.documentElement.dataset.uiStyle).toBeUndefined();
+        expect(document.documentElement.dataset.lcdBody).toBeUndefined();
+        expect(choice("lcdBody")).toBeNull();
+      } finally {
+        await act(async () => setUiStylePrefs({ style: "classic", lcdBody: "mono" }));
+      }
+    });
   }
 });

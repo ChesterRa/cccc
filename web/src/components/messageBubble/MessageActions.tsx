@@ -81,6 +81,7 @@ export function MessageActions(props: MessageActionsProps) {
             align={props.event.by === "user" ? "end" : "start"}
             side="top"
             className="min-w-36 p-1"
+            data-lcd-scope
             onCloseAutoFocus={(event) => {
               if (replySelected.current) {
                 event.preventDefault();

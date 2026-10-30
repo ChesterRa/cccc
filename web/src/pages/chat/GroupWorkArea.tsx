@@ -270,6 +270,7 @@ export function GroupWorkArea({
         inert={tiled ? true : undefined}
         aria-hidden={tiled ? true : undefined}
         data-group-message-view
+        data-lcd-scope
       >
         {children}
       </div>

@@ -11,6 +11,7 @@ import type {
   ReplyState,
 } from "../../features/pendingReplies/types";
 import { MAX_REPLY_SCALARS } from "../../features/pendingReplies/types";
+import { useLcdStyle } from "../../utils/uiStyle";
 
 /** A controlled draft survives a virtualized message row being unmounted. */
 export function PendingReplyCard({
@@ -37,7 +38,7 @@ export function PendingReplyCard({
   checking?: boolean;
   error?: string;
   showRetainedDraft?: boolean;
-  answeredOption?: string | null;
+  answeredOption?: { id: string; label: string } | null;
   draft: ReplyDraft;
   onDraftChange: (draft: ReplyDraft) => void;
   onSubmit: (answer: ReplyAnswer) => void;
@@ -48,6 +49,7 @@ export function PendingReplyCard({
   const groupName = useId();
   const textId = useId();
   const onEditingChange = useContext(PendingReplyEditingContext);
+  const lcd = useLcdStyle();
   const editing = useRef(false);
   const options = question?.options ?? [];
   const other = options.length === 0 || draft.selection?.kind === "other";
@@ -70,10 +72,14 @@ export function PendingReplyCard({
       <div
         className="border-t border-[var(--glass-border-subtle)] pt-3 text-sm text-[var(--color-text-secondary)]"
         role="status"
+        data-pending-reply-closed
       >
         <p>
           {state === "answered" && answeredOption
-            ? t("pendingReply.answeredChoice", { choice: answeredOption })
+            ? t("pendingReply.answeredChoice", {
+                // LCD keeps the options listed above, so the letter is enough.
+                choice: lcd ? answeredOption.id : `${answeredOption.id}. ${answeredOption.label}`,
+              })
             : t(`pendingReply.${state}`)}
         </p>
         {showRetainedDraft && (draft.text || draft.selection) && (
@@ -113,67 +119,55 @@ export function PendingReplyCard({
     if (answer && !locked && !checking) onSubmit(answer);
   };
 
-  return (
-    <form
-      className="border-t border-[var(--glass-border-subtle)] pt-3"
-      data-pending-reply
-      onSubmit={submit}
+  const action = uncertain ? (
+    <Button type="button" disabled={sending} onClick={onRetry}>
+      {t("pendingReply.retrySame")}
+    </Button>
+  ) : (
+    <Button type="submit" disabled={!answer || sending || checking}>
+      {t(sending ? "pendingReply.sending" : "pendingReply.send")}
+    </Button>
+  );
+
+  const otherChoice = (
+    <label
+      className={classNames(
+        "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-sm",
+        draft.selection?.kind === "other"
+          ? "border-[var(--color-border-focus)] bg-[var(--glass-tab-bg)]"
+          : "border-[var(--glass-border-subtle)]",
+      )}
     >
-      {options.length > 0 && (
-        <fieldset disabled={locked} className="min-w-0 space-y-2">
-          <legend className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">
-            {t("pendingReply.choose")}
-          </legend>
-          {options.map((option, index) => {
-            const selected = draft.selection?.kind === "option" && draft.selection.id === option.id;
-            const recommended = question?.recommended?.option_id === option.id;
-            return (
-              <label
-                key={option.id}
-                className={classNames(
-                  "flex min-h-[44px] cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5",
-                  selected
-                    ? "border-[var(--color-border-focus)] bg-[var(--glass-tab-bg)]"
-                    : "border-[var(--glass-border-subtle)]",
-                )}
-              >
-                <input
-                  type="radio"
-                  name={groupName}
-                  disabled={locked}
-                  checked={selected}
-                  onChange={() =>
-                    onDraftChange({ ...draft, selection: { kind: "option", id: option.id } })
-                  }
-                  className="mt-1 h-4 w-4 shrink-0 accent-[var(--primary)]"
-                />
-                <span className="min-w-0 break-words text-sm text-[var(--color-text-primary)]">
-                  <span className="font-semibold">
-                    {String.fromCharCode(65 + index)}. {option.label}
-                  </span>
-                  {recommended && (
-                    <span className="ml-2 rounded bg-[var(--glass-tab-bg)] px-1.5 py-0.5 text-xs text-[var(--color-text-secondary)]">
-                      {t("pendingReply.recommended")}
-                    </span>
-                  )}
-                  {option.consequence && (
-                    <span className="mt-1 block whitespace-pre-wrap text-[var(--color-text-secondary)]">
-                      {option.consequence}
-                    </span>
-                  )}
-                  {recommended && question?.recommended?.reason && (
-                    <span className="mt-1 block whitespace-pre-wrap text-xs text-[var(--color-text-tertiary)]">
-                      {t("pendingReply.reason", { reason: question.recommended.reason })}
-                    </span>
-                  )}
-                </span>
-              </label>
-            );
-          })}
+      <input
+        type="radio"
+        name={groupName}
+        disabled={locked}
+        checked={draft.selection?.kind === "other"}
+        onChange={() => onDraftChange({ ...draft, selection: { kind: "other" } })}
+        className="h-4 w-4 shrink-0 accent-[var(--primary)]"
+      />
+      {t("pendingReply.other")}
+    </label>
+  );
+
+  // Each radio is disabled on its own, so the fieldset never disables the action
+  // that the LCD preview places in its last row.
+  const choices = options.length > 0 && (
+    <fieldset className="min-w-0 space-y-2">
+      <legend
+        className={lcd ? "sr-only" : "mb-2 text-sm font-semibold text-[var(--color-text-primary)]"}
+      >
+        {t("pendingReply.choose")}
+      </legend>
+      {options.map((option, index) => {
+        const selected = draft.selection?.kind === "option" && draft.selection.id === option.id;
+        const recommended = question?.recommended?.option_id === option.id;
+        return (
           <label
+            key={option.id}
             className={classNames(
-              "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-sm",
-              draft.selection?.kind === "other"
+              "flex min-h-[44px] cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5",
+              selected
                 ? "border-[var(--color-border-focus)] bg-[var(--glass-tab-bg)]"
                 : "border-[var(--glass-border-subtle)]",
             )}
@@ -182,36 +176,106 @@ export function PendingReplyCard({
               type="radio"
               name={groupName}
               disabled={locked}
-              checked={draft.selection?.kind === "other"}
-              onChange={() => onDraftChange({ ...draft, selection: { kind: "other" } })}
-              className="h-4 w-4 shrink-0 accent-[var(--primary)]"
+              checked={selected}
+              onChange={() =>
+                onDraftChange({ ...draft, selection: { kind: "option", id: option.id } })
+              }
+              className="mt-1 h-4 w-4 shrink-0 accent-[var(--primary)]"
             />
-            {t("pendingReply.other")}
+            <span className="min-w-0 break-words text-sm text-[var(--color-text-primary)]">
+              <span className="font-semibold">
+                {String.fromCharCode(65 + index)}. {option.label}
+              </span>
+              {recommended && (
+                <span
+                  className="ml-2 rounded bg-[var(--glass-tab-bg)] px-1.5 py-0.5 text-xs text-[var(--color-text-secondary)]"
+                  data-recommended-tag
+                >
+                  {t("pendingReply.recommended")}
+                </span>
+              )}
+              {option.consequence && (
+                <span className="mt-1 block whitespace-pre-wrap text-[var(--color-text-secondary)]">
+                  {option.consequence}
+                </span>
+              )}
+              {recommended && question?.recommended?.reason && (
+                <span className="mt-1 block whitespace-pre-wrap text-xs text-[var(--color-text-tertiary)]">
+                  {t("pendingReply.reason", { reason: question.recommended.reason })}
+                </span>
+              )}
+            </span>
           </label>
-        </fieldset>
-      )}
-      {other && (
-        <div className={options.length ? "mt-3" : ""}>
-          <label
-            htmlFor={textId}
-            className="mb-1 block text-sm font-medium text-[var(--color-text-primary)]"
-          >
-            {t("pendingReply.answer")}
-          </label>
-          <Textarea
-            id={textId}
-            rows={3}
-            value={draft.text}
-            disabled={locked}
-            onFocus={() => {
-              editing.current = true;
-              onEditingChange?.(textId, true);
-            }}
-            onBlur={releaseEditor}
-            onChange={(event) => onDraftChange({ ...draft, text: event.target.value })}
-            placeholder={t("pendingReply.placeholder")}
-          />
+        );
+      })}
+      {lcd && !other ? (
+        // LCD preview: the action shares the last row and wraps below it when the row is short.
+        <div className="lcd-ask-other">
+          {otherChoice}
+          <div className="lcd-ask-action">{action}</div>
         </div>
+      ) : (
+        otherChoice
+      )}
+    </fieldset>
+  );
+
+  const editor = (
+    <Textarea
+      id={textId}
+      rows={lcd ? 2 : 3}
+      value={draft.text}
+      disabled={locked}
+      onFocus={() => {
+        editing.current = true;
+        onEditingChange?.(textId, true);
+      }}
+      onBlur={releaseEditor}
+      onChange={(event) => onDraftChange({ ...draft, text: event.target.value })}
+      placeholder={t("pendingReply.placeholder")}
+    />
+  );
+
+  return (
+    <form
+      className="border-t border-[var(--glass-border-subtle)] pt-3"
+      data-pending-reply
+      onSubmit={submit}
+    >
+      {lcd ? (
+        // LCD preview: a small title set into the frame, in the product's existing words.
+        // The button says when the answer is being sent; the title does not repeat it.
+        <p className="lcd-ask-title">{t("filterWaitingForYou")}</p>
+      ) : null}
+      {lcd ? (
+        // LCD preview: the action sits beside "Other" (above) or beside the answer box.
+        <>
+          {choices}
+          {other && (
+            <div className="lcd-ask-answer">
+              <label htmlFor={textId} className="sr-only">
+                {t("pendingReply.answer")}
+              </label>
+              {editor}
+              {action}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {choices}
+          {other && (
+            <div className={options.length ? "mt-3" : ""}>
+              <label
+                htmlFor={textId}
+                className="mb-1 block text-sm font-medium text-[var(--color-text-primary)]"
+              >
+                {t("pendingReply.answer")}
+              </label>
+              {editor}
+            </div>
+          )}
+        </>
       )}
       {error && (
         <p className="mt-2 whitespace-pre-wrap text-sm text-[var(--destructive)]" role="alert">
@@ -228,17 +292,7 @@ export function PendingReplyCard({
           {t("pendingReply.tooLong", { count: textLength, limit: MAX_REPLY_SCALARS })}
         </p>
       )}
-      <div className="mt-3 flex justify-end">
-        {uncertain ? (
-          <Button type="button" disabled={sending} onClick={onRetry}>
-            {t("pendingReply.retrySame")}
-          </Button>
-        ) : (
-          <Button type="submit" disabled={!answer || sending || checking}>
-            {t(sending ? "pendingReply.sending" : "pendingReply.send")}
-          </Button>
-        )}
-      </div>
+      {lcd ? null : <div className="mt-3 flex justify-end">{action}</div>}
     </form>
   );
 }

@@ -25,6 +25,7 @@ import {
   useTopHistoryLoadCoordinator,
 } from "./virtualMessageListPrependCompensation";
 import { classNames } from "../utils/classNames";
+import { subscribeUiStylePrefs } from "../utils/uiStyle";
 import { getNonVirtualMessageListTopMargin } from "./virtualMessageListLayout";
 import { useVirtualMessageMetadata } from "./virtualMessageList/useVirtualMessageMetadata";
 import type { VirtualMessageListProps } from "./virtualMessageList/types";
@@ -903,6 +904,26 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     followLatestMessage,
     shouldAutoScrollNow,
   ]);
+
+  // An interface style change reflows every message at the same width, so the
+  // observer above would re-anchor on whichever message now sits at the top.
+  // The store notifies before any re-render, font load, or observer callback,
+  // while the saved anchor still names the message being read. A reader who
+  // follows the latest message keeps following it, as after a view change.
+  useEffect(
+    () =>
+      subscribeUiStylePrefs(() => {
+        if (followModeRef.current === "follow") {
+          scheduleForceStickToBottom();
+          return;
+        }
+        if (anchorRestoration.extend()) return;
+        const snapshot = latestSnapshotRef.current;
+        if (snapshot?.mode !== "detached" || !snapshot.anchorId) return;
+        anchorRestoration.begin({ anchorId: snapshot.anchorId, offsetPx: snapshot.offsetPx });
+      }),
+    [anchorRestoration, followModeRef, latestSnapshotRef, scheduleForceStickToBottom],
+  );
 
   useLayoutEffect(() => {
     onScrollSnapshotRef.current = onScrollSnapshot;

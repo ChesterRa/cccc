@@ -1978,10 +1978,14 @@ function _fnv1a32(input: string): number {
   return hash >>> 0;
 }
 
-export function getActorAccentColor(actorId?: string, isDark: boolean = true) {
+/** Stable per-actor slot in the accent palette (shared by the classic and LCD styles). */
+export function getActorAccentIndex(actorId?: string): number {
   const id = String(actorId || "").trim();
-  const idx = id ? _fnv1a32(id) % ACTOR_ACCENTS.length : 0;
-  const a = ACTOR_ACCENTS[idx] || ACTOR_ACCENTS[0];
+  return id ? _fnv1a32(id) % ACTOR_ACCENTS.length : 0;
+}
+
+export function getActorAccentColor(actorId?: string, isDark: boolean = true) {
+  const a = ACTOR_ACCENTS[getActorAccentIndex(actorId)] || ACTOR_ACCENTS[0];
   if (isDark) return { ring: a.ring, text: a.text };
   return { ring: a.ringLight, text: a.textLight };
 }

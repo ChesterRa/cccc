@@ -60,7 +60,9 @@ export const ActorAvatar = memo(function ActorAvatar({
           ? "h-[72%] w-[72%] object-contain"
           : runtimeKey === "copilot"
             ? "h-[88%] w-[88%] object-contain"
-            : "h-full w-full object-contain";
+            : runtimeKey === "opencode"
+              ? "h-[77%] w-[77%] object-contain"
+              : "h-full w-full object-contain";
 
   const logoSrc = useMemo(() => {
     if (isUser || usesInlineClaudeLogo) return null;

@@ -33,6 +33,8 @@ import { useLivePendingStatuses } from "../../features/pendingReplies/useLivePen
 import { NotificationPrompt } from "../../features/pushNotifications/NotificationPrompt";
 import { useNotificationPromptOffer } from "../../features/pushNotifications/useNotificationPromptOffer";
 import { classNames } from "../../utils/classNames";
+import { useLcdStyle } from "../../utils/uiStyle";
+import { createPortal } from "react-dom";
 import { ChatComposer } from "./ChatComposer";
 import { ChatFilterTabs } from "./ChatFilterTabs";
 import { GroupWorkArea, type RuntimeActorRenderer } from "./GroupWorkArea";
@@ -160,6 +162,7 @@ export interface ChatTabProps {
   activeRuntimeActorId?: string;
   renderRuntimeActor: RuntimeActorRenderer;
   workControlsHost?: HTMLElement | null;
+  memberStatusHost?: HTMLElement | null;
   sidePanelControlsHost?: HTMLElement | null;
 
   // Recipient actors for cross-group messaging
@@ -213,6 +216,7 @@ export function ChatTab({
   activeRuntimeActorId,
   renderRuntimeActor,
   workControlsHost = null,
+  memberStatusHost = null,
   sidePanelControlsHost = null,
   recipientActors,
   recipientActorsBusy,
@@ -236,6 +240,7 @@ export function ChatTab({
   setMentionActorScope,
   setMentionTargetGroupId,
 }: ChatTabProps) {
+  const lcd = useLcdStyle();
   const pendingSummary = useContext(PendingSummaryContext);
   const shortTouchViewport = useShortTouchViewport();
   const [composerInputFocused, setComposerInputFocused] = useState(false);
@@ -843,6 +848,7 @@ export function ChatTab({
                     inert={showWorkspaceFileViewer || undefined}
                     aria-hidden={showWorkspaceFileViewer || undefined}
                     data-chat-notices
+                    data-lcd-scope
                   >
                     {/* Jump-to window banner */}
                     {chatWindowProps && (
@@ -1167,27 +1173,48 @@ export function ChatTab({
                   )}
 
                   {!chatWindowProps && runtimeActors.length > 0 ? (
-                    <div
-                      className={classNames(
-                        "pointer-events-none z-20",
-                        isSmallScreen ? "shrink-0" : "absolute inset-x-0 bottom-2",
-                        (hideDockForKeyboard || reading.hidden) && "hidden",
-                      )}
-                      data-runtime-dock-keyboard-hidden={hideDockForKeyboard || undefined}
-                    >
-                      <RuntimeDock
-                        groupId={selectedGroupId}
-                        runtimeActors={runtimeActors}
-                        liveWorkCards={liveWorkCards}
-                        activeRuntimeActorId={activeRuntimeActorId}
-                        isDark={isDark}
-                        isSmallScreen={isSmallScreen}
-                        readOnly={readOnly}
-                        actorStatusProvisional={selectedGroupActorStatusProvisional}
-                        onAddAgent={!readOnly ? addAgent : undefined}
-                        onOpenRuntimeActor={onOpenRuntimeActor}
-                      />
-                    </div>
+                    lcd && !isSmallScreen && memberStatusHost && workView === "messages" ? (
+                      // LCD preview: members sit in the header instead of over the messages.
+                      createPortal(
+                        <RuntimeDock
+                          placement="header"
+                          groupId={selectedGroupId}
+                          runtimeActors={runtimeActors}
+                          liveWorkCards={liveWorkCards}
+                          activeRuntimeActorId={activeRuntimeActorId}
+                          isDark={isDark}
+                          isSmallScreen={isSmallScreen}
+                          readOnly={readOnly}
+                          actorStatusProvisional={selectedGroupActorStatusProvisional}
+                          onAddAgent={!readOnly ? addAgent : undefined}
+                          onOpenRuntimeActor={onOpenRuntimeActor}
+                        />,
+                        memberStatusHost,
+                      )
+                    ) : (
+                      <div
+                        className={classNames(
+                          "pointer-events-none z-20",
+                          isSmallScreen ? "shrink-0" : "absolute inset-x-0 bottom-2",
+                          (hideDockForKeyboard || reading.hidden) && "hidden",
+                        )}
+                        data-runtime-dock-keyboard-hidden={hideDockForKeyboard || undefined}
+                        data-lcd-scope
+                      >
+                        <RuntimeDock
+                          groupId={selectedGroupId}
+                          runtimeActors={runtimeActors}
+                          liveWorkCards={liveWorkCards}
+                          activeRuntimeActorId={activeRuntimeActorId}
+                          isDark={isDark}
+                          isSmallScreen={isSmallScreen}
+                          readOnly={readOnly}
+                          actorStatusProvisional={selectedGroupActorStatusProvisional}
+                          onAddAgent={!readOnly ? addAgent : undefined}
+                          onOpenRuntimeActor={onOpenRuntimeActor}
+                        />
+                      </div>
+                    )
                   ) : null}
                 </GroupWorkArea>
 

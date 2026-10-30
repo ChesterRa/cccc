@@ -1,9 +1,23 @@
 import { useTranslation } from "react-i18next";
 
 import { useSseErrorDetailText } from "../../hooks/useSseErrorDetailText";
-import type { GroupStatus } from "../../utils/groupStatus";
+import type { GroupStatus, GroupStatusKey } from "../../utils/groupStatus";
 import { GROUP_STATUS_DOT_BASE_CLASS, GROUP_STATUS_LABEL_KEYS } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
+import { useLcdStyle } from "../../utils/uiStyle";
+
+/**
+ * LCD preview: the same shapes as member states. Offline shares the stopped shape,
+ * as it shares the dot. Paused is drawn in CSS as two bars, which no font
+ * renders legibly at this size.
+ */
+const LCD_GROUP_SYMBOLS: Record<GroupStatusKey, string> = {
+  run: "\u25CF",
+  idle: "\u25CB",
+  paused: "",
+  offline: "\u25A1",
+  stop: "\u25A1",
+};
 
 interface GroupStatusIndicatorProps {
   status: GroupStatus;
@@ -21,6 +35,7 @@ export function GroupStatusIndicator({
   connectionStatus,
 }: GroupStatusIndicatorProps) {
   const { t } = useTranslation("layout");
+  const lcd = useLcdStyle();
   const label = t(GROUP_STATUS_LABEL_KEYS[status.key]);
   const interrupted = connectionStatus && connectionStatus !== "connected";
   const errorDetail = useSseErrorDetailText();
@@ -35,6 +50,27 @@ export function GroupStatusIndicator({
       ? "bg-amber-400 animate-pulse motion-reduce:animate-none"
       : "bg-rose-500"
     : status.dotClass;
+
+  const lcdSymbol = interrupted
+    ? connectionStatus === "connecting"
+      ? "\u2026"
+      : "\u00D7"
+    : LCD_GROUP_SYMBOLS[status.key];
+  const lcdShape = !interrupted && status.key === "paused" ? "paused" : undefined;
+
+  if (variant === "dot" && lcd) {
+    return (
+      <span
+        className={classNames("lcd-group-symbol", className)}
+        data-lcd-shape={lcdShape}
+        role="img"
+        aria-label={description}
+        title={description}
+      >
+        {lcdSymbol}
+      </span>
+    );
+  }
 
   if (variant === "dot") {
     return (
@@ -62,7 +98,13 @@ export function GroupStatusIndicator({
       role={connectionStatus ? "status" : undefined}
       data-connection-state={connectionStatus}
     >
-      <span className={classNames(GROUP_STATUS_DOT_BASE_CLASS, dotClass)} aria-hidden="true" />
+      {lcd ? (
+        <span className="lcd-group-symbol" data-lcd-shape={lcdShape} aria-hidden="true">
+          {lcdSymbol}
+        </span>
+      ) : (
+        <span className={classNames(GROUP_STATUS_DOT_BASE_CLASS, dotClass)} aria-hidden="true" />
+      )}
       {/* While the page is cut off the run state may be stale, so the visible text
           names what the dot shows; the run state stays in the description. */}
       <span>{interrupted ? connectionLabel : label}</span>

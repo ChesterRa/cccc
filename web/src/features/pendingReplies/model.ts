@@ -1,7 +1,7 @@
 import type { ChatMessageData, LedgerEvent, LedgerEventStatusPayload } from "../../types";
 import type { PendingReplyAnswer } from "../../services/api/pendingReplies";
 import { projectMessageMode } from "../../utils/crossGroupRecipients";
-import type { ReplyState, StructuredQuestion } from "./types";
+import type { ReplyOption, ReplyState, StructuredQuestion } from "./types";
 
 type ReplyView = { state: ReplyState; question: StructuredQuestion | null };
 
@@ -84,7 +84,7 @@ export function recordedOption(
   requestId: string,
   requester: string,
   reply: LedgerEvent | undefined,
-): string | null {
+): ReplyOption | null {
   if (!question || reply?.kind !== "chat.message" || reply.by !== "user") return null;
   const data = record(reply.data);
   const answer = record(data?.answer);
@@ -102,7 +102,35 @@ export function recordedOption(
     return null;
   const option = question.options.find((item) => item.id === answer.option_id);
   if (!option || data.text !== `Selected ${option.id}: ${option.label}`) return null;
-  return `${option.id}. ${option.label}`;
+  return option;
+}
+
+/**
+ * The contract writes answer receipts with English prefixes ("Selected A: …", "Other: …").
+ * Show the prefix in the reader's language only when the stored answer and the text agree
+ * exactly; otherwise null, and the text is shown as written. Ledger, copy and search keep it.
+ */
+export function localizedAnswerReceipt(
+  data: unknown,
+  text: string,
+  labels: { selected: (optionId: string) => string; other: string },
+): string | null {
+  const answer = record(record(data)?.answer);
+  if (
+    answer?.v !== 1 ||
+    Object.keys(answer).some((key) => !["v", "option_id", "text"].includes(key))
+  )
+    return null;
+  if (typeof answer.option_id === "string" && answer.option_id && answer.text == null) {
+    const prefix = `Selected ${answer.option_id}: `;
+    return text.startsWith(prefix) && text.length > prefix.length
+      ? `${labels.selected(answer.option_id)}${text.slice(prefix.length)}`
+      : null;
+  }
+  if (typeof answer.text === "string" && answer.option_id == null) {
+    return text === `Other: ${answer.text}` ? `${labels.other}${answer.text}` : null;
+  }
+  return null;
 }
 
 /** A successful response must contain the answer that was actually sent. */

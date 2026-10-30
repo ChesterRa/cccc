@@ -313,6 +313,7 @@ export function GroupSidebar({
     <>
       <aside
         ref={sidebarRef}
+        data-lcd-scope
         className={classNames(
           "h-full min-h-0 flex flex-col glass-sidebar",
           "fixed inset-y-0 left-0 z-50 md:relative md:inset-auto md:z-40",
@@ -348,7 +349,10 @@ export function GroupSidebar({
               </div>
               {!isCollapsed && (
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[15px] font-semibold tracking-[-0.035em] text-[var(--color-text-primary)]">
+                  <div
+                    className="truncate text-[15px] font-semibold tracking-[-0.035em] text-[var(--color-text-primary)]"
+                    data-brand-name
+                  >
                     {branding.product_name}
                   </div>
                 </div>

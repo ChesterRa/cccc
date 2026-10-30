@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+
+- An LCD look for the Web chat, as a preview. In the header's settings menu, under Appearance, choose **Style → LCD (preview)**. The chat page then takes a pixel-terminal look, light or dark with the theme: the message list, authors and recipients, request cards, the composer and its menus, and, on desktop, the members' status as icons in the header. **Body font (preview)** sets most of the page's text in monospace or in a pixel font. Characters a font lacks fall back to other available fonts; this includes Chinese and Japanese characters in monospace, and some Japanese and Traditional Chinese characters in pixel. Classic stays the default for a browser without a saved choice, and the other pages and dialogs are not migrated yet. The fonts, about 1.7 MiB in all, download only when LCD is chosen, and only those in use; their licenses ship with the Web assets. Tested in Chromium on Linux; Windows display scaling, macOS and phones still need acceptance testing.
+
+### Changed
+
+- When **Send + reply** is chosen while @all or @peers is among the recipients, the composer now shows how to fix it below the recipients: remove @all and @peers, or clear the recipients to ask the Foreman.
+- Answers you give under a request, which agents receive as `Selected B: <label>` or `Other: <text>`, show that prefix in the interface language in the chat when the message has that recognized form. The stored message, copying and search keep the original text.
+- OpenCode actors show the official OpenCode mark, unchanged from OpenCode's repository; its MIT license notice ships with the Web assets.
+
 ### Fixed
 
 - Voice lifecycle and Web Access: applying a saved Web binding now stops the active Voice call and Analyst before restarting Web. If cleanup cannot be confirmed, the current Web remains available and the new binding is not yet active; retry **Apply now** or start Voice again to retry cleanup.

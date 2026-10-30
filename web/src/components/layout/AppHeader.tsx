@@ -14,6 +14,7 @@ import { AppSettingsMenu } from "./AppSettingsMenu";
 import { PendingSummaryContext } from "../../features/pendingReplies/context";
 import { aggregatePendingIndicator } from "../../features/pendingReplies/indicator";
 import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndicator";
+import { useLcdStyle } from "../../utils/uiStyle";
 
 export interface AppHeaderProps {
   theme: Theme;
@@ -38,6 +39,8 @@ export interface AppHeaderProps {
   onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
   workControlsRef?: Ref<HTMLDivElement>;
+  /** LCD preview: where the chat places the member status strip on desktop. */
+  memberStatusRef?: Ref<HTMLDivElement>;
   sidePanelControlsRef?: Ref<HTMLDivElement>;
   mobileReadingHidden?: boolean;
   mobileReadingOverlay?: boolean;
@@ -65,6 +68,7 @@ export function AppHeader({
   onOpenMobileMenu,
   sseStatus,
   workControlsRef,
+  memberStatusRef,
   sidePanelControlsRef,
   mobileReadingHidden = false,
   mobileReadingOverlay = false,
@@ -75,6 +79,7 @@ export function AppHeader({
     ? aggregatePendingIndicator(pending.summaries, Object.keys(pending.summaries))
     : null;
   const controlsBusy = useUIStore((state) => state.busy.startsWith("group-"));
+  const isSmallScreen = useUIStore((state) => state.isSmallScreen);
   const groupTitle = groupDoc?.title || (selectedGroupId ? selectedGroupId : t("selectGroup"));
   const canEditGroup = !!selectedGroupId && !webReadOnly && !!onOpenGroupEdit;
   const selectedStatus = selectedGroupId
@@ -108,8 +113,10 @@ export function AppHeader({
         )
       : [],
   );
+  const lcd = useLcdStyle();
   return (
     <header
+      data-lcd-scope
       className={`@container/group-header absolute inset-x-0 top-0 z-20 flex h-[48px] shrink-0 items-center px-[12px] glass-header transition-transform duration-150 motion-reduce:transition-none md:relative md:inset-auto md:h-11 md:px-3 ${mobileReadingHidden ? "pointer-events-none -translate-y-full" : ""}`}
       inert={mobileReadingHidden || undefined}
       aria-hidden={mobileReadingHidden || undefined}
@@ -154,6 +161,7 @@ export function AppHeader({
             <h1
               className="min-w-0 truncate text-base font-semibold leading-tight text-[var(--color-text-primary)]"
               title={groupTitle}
+              data-group-title
             >
               {groupTitle}
             </h1>
@@ -196,7 +204,12 @@ export function AppHeader({
                     status={selectedStatus}
                     connectionStatus={sseStatus}
                     variant="badge"
-                    className="min-h-8 min-w-8 justify-center pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] md:pointer-coarse:min-h-10 md:pointer-coarse:min-w-10 [&>span:last-child]:hidden @min-[480px]/group-work-header:[&>span:last-child]:inline !border-transparent !bg-transparent @min-[480px]/group-work-header:!rounded-full @min-[480px]/group-work-header:!border-[var(--glass-border-subtle)] @min-[480px]/group-work-header:pr-6 cursor-pointer transition-colors hover:text-[var(--color-text-primary)]"
+                    className={`min-h-8 min-w-8 justify-center pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] md:pointer-coarse:min-h-10 md:pointer-coarse:min-w-10 [&>span:last-child]:hidden !border-transparent !bg-transparent @min-[480px]/group-work-header:!border-[var(--glass-border-subtle)] @min-[480px]/group-work-header:pr-6 cursor-pointer transition-colors hover:text-[var(--color-text-primary)] ${
+                      // LCD shows the state symbol alone; the word stays in the tooltip.
+                      lcd
+                        ? ""
+                        : "@min-[480px]/group-work-header:[&>span:last-child]:inline @min-[480px]/group-work-header:!rounded-full"
+                    }`}
                   />
                   <ChevronDownIcon
                     size={13}
@@ -221,7 +234,17 @@ export function AppHeader({
           className="flex shrink-0 items-center gap-1"
           data-group-work-controls-host
         />
-        <div className="hidden min-w-0 flex-1 basis-0 items-center justify-end @min-[760px]/group-header:flex">
+        {lcd && !isSmallScreen ? (
+          <div
+            ref={memberStatusRef}
+            className="flex min-w-0 flex-1 basis-0 items-center justify-end"
+            data-lcd-members-host
+          />
+        ) : null}
+        <div
+          className="hidden min-w-0 flex-1 basis-0 items-center justify-end @min-[760px]/group-header:flex"
+          data-group-work-shortcuts-host
+        >
           {!webReadOnly && (
             <div
               className="flex shrink-0 items-center gap-0.5 border-r border-[var(--glass-border-subtle)] pr-2"

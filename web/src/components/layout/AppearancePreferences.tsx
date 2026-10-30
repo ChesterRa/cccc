@@ -3,6 +3,12 @@ import { useTranslation } from "react-i18next";
 import type { TextScale, Theme } from "../../types";
 import { normalizeLanguageCode } from "../../i18n/languages";
 import { getTextScaleLabel, TEXT_SCALE_OPTIONS } from "../../utils/textScale";
+import {
+  setUiStylePrefs,
+  useUiStylePrefs,
+  type LcdBodyFont,
+  type UiStyle,
+} from "../../utils/uiStyle";
 import { SegmentedChoice, type SegmentedOption } from "../ui/segmented-choice";
 
 export interface AppearancePreferencesProps {
@@ -20,7 +26,7 @@ function AppearanceChoice<Value extends string | number>({
   options,
   onChange,
 }: {
-  name: "theme" | "textScale" | "language";
+  name: "theme" | "uiStyle" | "lcdBody" | "textScale" | "language";
   label: string;
   value: Value;
   options: SegmentedOption<Value>[];
@@ -50,6 +56,7 @@ export function AppearancePreferences({
   onTextScaleChange,
 }: AppearancePreferencesProps) {
   const { t, i18n } = useTranslation(["layout", "common"]);
+  const uiStyle = useUiStylePrefs();
   return (
     <fieldset className="min-w-0" data-appearance-preferences>
       <legend className="px-2 pt-1.5 pb-1 text-xs font-semibold text-[var(--color-text-tertiary)]">
@@ -66,6 +73,28 @@ export function AppearancePreferences({
           { value: "system", label: t("themeSystem") },
         ]}
       />
+      <AppearanceChoice<UiStyle>
+        name="uiStyle"
+        label={t("uiStyleLabel")}
+        value={uiStyle.style}
+        onChange={(style) => setUiStylePrefs({ style })}
+        options={[
+          { value: "classic", label: t("uiStyleClassic") },
+          { value: "lcd", label: t("uiStyleLcd") },
+        ]}
+      />
+      {uiStyle.style === "lcd" ? (
+        <AppearanceChoice<LcdBodyFont>
+          name="lcdBody"
+          label={t("lcdBodyLabel")}
+          value={uiStyle.lcdBody}
+          onChange={(lcdBody) => setUiStylePrefs({ lcdBody })}
+          options={[
+            { value: "mono", label: t("lcdBodyMono") },
+            { value: "pixel", label: t("lcdBodyPixel") },
+          ]}
+        />
+      ) : null}
       <AppearanceChoice<TextScale>
         name="textScale"
         label={t("textSizeLabel")}

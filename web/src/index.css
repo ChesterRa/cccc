@@ -3,6 +3,7 @@
 @import "./styles/chatTypography.css";
 @import "./styles/chatMessage.css";
 @import "./styles/chatComposer.css";
+@import "./styles/lcd.css";
 @import "tailwindcss";
 
 @config "../tailwind.config.ts";

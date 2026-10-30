@@ -9,6 +9,7 @@ import "./index.css";
 import { useBrandingStore } from "./stores";
 import { applyBrandingToDocument, DEFAULT_WEB_BRANDING } from "./utils/branding";
 import { applyTextScale, getStoredTextScale } from "./utils/textScale";
+import { applyUiStylePrefs, getUiStylePrefs } from "./utils/uiStyle";
 import { ConnectEmbeddedApp } from "./features/connect/ConnectEmbeddedApp";
 import { isConnectFramePath } from "./features/connect/protocol";
 import { claimVitePreloadReload, recoverDynamicImportError } from "./utils/vitePreloadRecovery";
@@ -52,6 +53,7 @@ if (
 
 applyBrandingToDocument(DEFAULT_WEB_BRANDING);
 applyTextScale(getStoredTextScale());
+applyUiStylePrefs(getUiStylePrefs());
 void useBrandingStore.getState().refreshBranding();
 const isCapabilityCenterPage = isCapabilityCenterPath(window.location.pathname);
 

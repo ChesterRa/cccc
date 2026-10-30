@@ -39,8 +39,8 @@ export function LocalSessionsButton({
         title={t("localSessions.connect")}
         aria-label={t("localSessions.connect")}
       >
-        <MessagesSquare size={18} />
-        {!collapsed && t("localSessions.connect")}
+        <MessagesSquare size={18} className="shrink-0" />
+        {!collapsed && <span className="min-w-0 truncate">{t("localSessions.connect")}</span>}
       </Button>
       {open &&
         createPortal(

@@ -88,7 +88,20 @@ export function useScrollAnchorRestoration(
     return !!active && performance.now() < active.expiresAt;
   }, []);
 
+  // Another reflow during an active restoration keeps the same anchor for a
+  // full window from now, so settling layout cannot outlast the correction.
+  const extend = useCallback(() => {
+    const active = activeRef.current;
+    if (!active || performance.now() >= active.expiresAt) return false;
+    active.expiresAt = performance.now() + RESTORATION_WINDOW_MS;
+    correct();
+    return true;
+  }, [correct]);
+
   useLayoutEffect(() => cancel, [cancel]);
 
-  return useMemo(() => ({ begin, cancel, correct, isActive }), [begin, cancel, correct, isActive]);
+  return useMemo(
+    () => ({ begin, cancel, correct, extend, isActive }),
+    [begin, cancel, correct, extend, isActive],
+  );
 }

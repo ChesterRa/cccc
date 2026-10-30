@@ -20,6 +20,7 @@ describe("useScrollAnchorRestoration lifecycle", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
+    vi.restoreAllMocks();
   });
 
   it("releases forced bottom follow before applying a restored anchor", async () => {
@@ -47,5 +48,30 @@ describe("useScrollAnchorRestoration lifecycle", () => {
     expect(releaseForcedBottom.mock.invocationCallOrder[0]).toBeLessThan(
       applyAnchor.mock.invocationCallOrder[0],
     );
+  });
+
+  it("extends only an active restoration, by a full window from the latest reflow", async () => {
+    let now = 1_000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    let restoration: ReturnType<typeof useScrollAnchorRestoration> | undefined;
+
+    function Probe() {
+      restoration = useScrollAnchorRestoration(() => true);
+      return null;
+    }
+
+    await act(async () => root.render(<Probe />));
+    expect(restoration?.extend()).toBe(false);
+
+    act(() => {
+      restoration?.begin({ anchorId: "event-1", offsetPx: 0 });
+    });
+    now += 4_000;
+    expect(restoration?.extend()).toBe(true);
+    now += 4_000;
+    expect(restoration?.isActive()).toBe(true);
+    now += 1_500;
+    expect(restoration?.isActive()).toBe(false);
+    expect(restoration?.extend()).toBe(false);
   });
 });

@@ -5,11 +5,16 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { PendingReplyCard } from "./PendingReplyCard";
 import type { ReplyDraft } from "../../features/pendingReplies/types";
 import { PendingReplyEditingContext } from "./PendingReplyEditingContext";
+import { setUiStylePrefs } from "../../utils/uiStyle";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, values?: { reason?: string }) =>
-      values?.reason ? `${key}: ${values.reason}` : key,
+    t: (key: string, values?: { reason?: string; choice?: string }) =>
+      values?.reason
+        ? `${key}: ${values.reason}`
+        : values?.choice
+          ? `${key}: ${values.choice}`
+          : key,
   }),
 }));
 
@@ -195,4 +200,70 @@ it("offers the existing chat reply for an unsupported source only when available
   expect(onSubmit).not.toHaveBeenCalled();
   await render({ state: "unsupported", onSubmit });
   expect(host.querySelector("button")).toBeNull();
+});
+
+it("adds the title block, in the product's existing words, only in the LCD preview", async () => {
+  const onSubmit = vi.fn();
+  await render({ question, state: "pending", onSubmit });
+  expect(host.querySelector(".lcd-ask-title")).toBeNull();
+  try {
+    await act(async () => setUiStylePrefs({ style: "lcd" }));
+    expect(host.querySelector("form .lcd-ask-title")?.textContent).toBe("filterWaitingForYou");
+    await render({ question, state: "pending", sending: true, onSubmit });
+    // The button says it is sending; the title keeps its words instead of repeating that.
+    expect(host.querySelector(".lcd-ask-title")?.textContent).toBe("filterWaitingForYou");
+    expect(
+      [...host.querySelectorAll("button")].filter((b) => b.textContent === "pendingReply.sending"),
+    ).toHaveLength(1);
+    await render({ question, state: "answered", onSubmit });
+    expect(host.querySelector(".lcd-ask-title")).toBeNull();
+    expect(host.querySelector("[data-pending-reply-closed]")?.textContent).toContain(
+      "pendingReply.answered",
+    );
+  } finally {
+    await act(async () => setUiStylePrefs({ style: "classic" }));
+  }
+});
+
+it("keeps the LCD action in the last row, enabled while the choices are locked", async () => {
+  const onRetry = vi.fn();
+  try {
+    await act(async () => setUiStylePrefs({ style: "lcd" }));
+    await render({ question, state: "pending", onSubmit: vi.fn() });
+    // "Other" and the action share one row, which wraps instead of overlapping.
+    const row = host.querySelector(".lcd-ask-other");
+    expect(row?.querySelector('input[type="radio"]')).not.toBeNull();
+    expect(row?.querySelector('.lcd-ask-action button[type="submit"]')).not.toBeNull();
+    expect(host.querySelector("legend")?.className).toBe("sr-only");
+
+    await act(async () => radios()[0]!.click());
+    await render({ question, state: "pending", uncertain: true, onSubmit: vi.fn(), onRetry });
+    const retry = host.querySelector<HTMLButtonElement>(".lcd-ask-other .lcd-ask-action button")!;
+    expect(retry.textContent).toBe("pendingReply.retrySame");
+    expect(radios().every((radio) => radio.disabled)).toBe(true);
+    expect(retry.disabled).toBe(false);
+    await act(async () => retry.click());
+    expect(onRetry).toHaveBeenCalledOnce();
+
+    await render({ question, state: "pending", onSubmit: vi.fn() });
+    await act(async () => radios()[2]!.click());
+    expect(host.querySelector(".lcd-ask-answer textarea")).not.toBeNull();
+    expect(host.querySelector('.lcd-ask-answer button[type="submit"]')).not.toBeNull();
+    expect(host.querySelector(".lcd-ask-other")).toBeNull();
+  } finally {
+    await act(async () => setUiStylePrefs({ style: "classic" }));
+  }
+});
+
+it("names only the chosen letter when LCD already lists the options above", async () => {
+  const answered = { id: "second", label: "Second" };
+  await render({ question, state: "answered", answeredOption: answered, onSubmit: vi.fn() });
+  const closed = () => host.querySelector("[data-pending-reply-closed]")?.textContent;
+  expect(closed()).toBe("pendingReply.answeredChoice: second. Second");
+  try {
+    await act(async () => setUiStylePrefs({ style: "lcd" }));
+    expect(closed()).toBe("pendingReply.answeredChoice: second");
+  } finally {
+    await act(async () => setUiStylePrefs({ style: "classic" }));
+  }
 });

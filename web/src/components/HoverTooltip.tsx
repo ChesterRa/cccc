@@ -8,6 +8,7 @@ import {
   shift,
   useDismiss,
   useFloating,
+  useFocus,
   useHover,
   useInteractions,
   useRole,
@@ -15,13 +16,22 @@ import {
 
 interface HoverTooltipProps {
   label: ReactNode;
+  /** Also show for keyboard focus, for controls whose name and state live only here. */
+  openOnFocus?: boolean;
+  /** Render in the LCD preview's styling scope. */
+  lcdScope?: boolean;
   children: (
     getReferenceProps: (userProps?: HTMLAttributes<HTMLElement>) => Record<string, unknown>,
     setReference: (node: HTMLElement | null) => void,
   ) => ReactNode;
 }
 
-export function HoverTooltip({ label, children }: HoverTooltipProps) {
+export function HoverTooltip({
+  label,
+  openOnFocus = false,
+  lcdScope = false,
+  children,
+}: HoverTooltipProps) {
   const [isOpen, setIsOpen] = useState(false);
   const { refs, floatingStyles, context } = useFloating({
     open: isOpen,
@@ -34,9 +44,10 @@ export function HoverTooltip({ label, children }: HoverTooltipProps) {
 
   const isPositioned = context.isPositioned;
   const hover = useHover(context, { delay: 150, restMs: 80 });
+  const focus = useFocus(context, { enabled: openOnFocus, visibleOnly: true });
   const dismiss = useDismiss(context);
   const role = useRole(context, { role: "tooltip" });
-  const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss, role]);
+  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus, dismiss, role]);
 
   const setReference = useCallback((node: HTMLElement | null) => refs.setReference(node), [refs]);
   const setFloating = useCallback((node: HTMLElement | null) => refs.setFloating(node), [refs]);
@@ -50,6 +61,7 @@ export function HoverTooltip({ label, children }: HoverTooltipProps) {
             ref={setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
+            data-lcd-scope={lcdScope || undefined}
             className={`z-max max-w-[220px] rounded-md border border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-2 py-1 text-xs text-[var(--color-text-primary)] shadow-xl transition-opacity duration-150 ${
               isPositioned ? "opacity-100" : "opacity-0"
             }`}

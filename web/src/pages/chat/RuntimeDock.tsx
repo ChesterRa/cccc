@@ -1,9 +1,11 @@
 import { RuntimeDockRing } from "./RuntimeDockRing";
-import { memo, useId, useMemo } from "react";
+import { memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Mail } from "lucide-react";
+import { Hourglass, Mail } from "lucide-react";
 
 import { ActorAvatar } from "../../components/ActorAvatar";
+import { HoverTooltip } from "../../components/HoverTooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { PlusIcon } from "../../components/Icons";
 import { useActorDisplayState } from "../../hooks/useActorDisplayState";
 import { useGroupStore } from "../../stores";
@@ -15,6 +17,7 @@ import { RuntimeDockTicker } from "./RuntimeDockTicker";
 import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
+import { useLcdStyle } from "../../utils/uiStyle";
 
 type RuntimeRingPresentation = {
   ringClassName: string;
@@ -100,6 +103,9 @@ function RuntimeDockActorButtonView({
   isInspectorOpen,
   actorStatusProvisional,
   onOpenInspector,
+  variant = "ring",
+  hidden = false,
+  showName = false,
 }: {
   groupId: string;
   item: RuntimeDockItem;
@@ -108,9 +114,17 @@ function RuntimeDockActorButtonView({
   isInspectorOpen: boolean;
   actorStatusProvisional: boolean;
   onOpenInspector: (actorId: string) => void;
+  /** "chip" is the LCD preview's header member: a tile whose line and dimming show the state. */
+  variant?: "ring" | "chip";
+  /** A chip clipped by the header's overflow: kept for layout, out of reach until shown. */
+  hidden?: boolean;
+  /** In the "+N" list the name sits beside the tile. */
+  showName?: boolean;
 }) {
   const { t } = useTranslation(["chat", "actors", "common"]);
   const activityGradientId = useId();
+  const chipStatusId = useId();
+  const lcd = useLcdStyle();
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
     actor: item.actor,
@@ -147,6 +161,78 @@ function RuntimeDockActorButtonView({
     onOpenInspector(item.actorId);
   };
 
+  if (variant === "chip") {
+    // LCD preview: the tile itself shows the state (dimmed when stopped, its line
+    // for busy, idle or needing attention); words live in the tooltip and names.
+    const tooltip = [item.actorLabel, statusLabel, queuedLabel, mailLabel]
+      .filter(Boolean)
+      .join(" \u00B7 ");
+    const description = [item.actorLabel, item.runtime, statusLabel, queuedLabel, mailLabel]
+      .filter(Boolean)
+      .join(" \u00B7 ");
+    return (
+      <div
+        className="lcd-member-cell"
+        data-lcd-member-chip
+        inert={hidden || undefined}
+        aria-hidden={hidden || undefined}
+      >
+        <HoverTooltip label={tooltip} openOnFocus lcdScope>
+          {(getReferenceProps, setReference) => (
+            <button
+              ref={setReference}
+              type="button"
+              className="lcd-member"
+              data-active={isInspectorOpen || undefined}
+              data-tone={ringTone}
+              data-listed={showName || undefined}
+              {...getReferenceProps({
+                onClick: handleOpenInspector,
+                "aria-label":
+                  item.runner === "headless"
+                    ? t("chat:runtimeDockOpenLiveWork", {
+                        name: item.actorLabel,
+                        defaultValue: `Open live work for ${item.actorLabel}`,
+                      })
+                    : t("chat:runtimeDockOpenTerminal", {
+                        name: item.actorLabel,
+                        defaultValue: `Open terminal for ${item.actorLabel}`,
+                      }),
+                "aria-describedby": chipStatusId,
+              })}
+            >
+              <span className="lcd-member-tile">
+                <ActorAvatar
+                  avatarUrl={item.actor.avatar_url || undefined}
+                  runtime={item.runtime}
+                  title={item.actorLabel}
+                  isDark={isDark}
+                  sizeClassName="h-[22px] w-[22px]"
+                  textClassName="text-[11px]"
+                  className="lcd-tile"
+                />
+                {mailCount > 0 ? (
+                  <span className="lcd-member-mark" data-mark="mail" aria-hidden="true">
+                    {mailCount > 99 ? "99+" : mailCount}
+                  </span>
+                ) : null}
+                {queuedCount > 0 ? (
+                  <span className="lcd-member-mark" data-mark="queue" aria-hidden="true">
+                    {queuedCount > 99 ? "99+" : queuedCount}
+                  </span>
+                ) : null}
+              </span>
+              {showName ? <span className="lcd-member-name">{item.actorLabel}</span> : null}
+            </button>
+          )}
+        </HoverTooltip>
+        <span id={chipStatusId} className="sr-only">
+          {description}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex items-end">
       <span
@@ -171,6 +257,9 @@ function RuntimeDockActorButtonView({
             ? classNames("scale-[1.04] shadow-[0_18px_40px_-28px_rgba(62,80,103,0.32)]")
             : "hover:scale-[1.05] active:scale-[0.95]",
         )}
+        data-lcd-dock-button
+        data-tone={ringTone}
+        data-active={isInspectorOpen || undefined}
         aria-label={
           item.runner === "headless"
             ? t("chat:runtimeDockOpenLiveWork", {
@@ -185,12 +274,15 @@ function RuntimeDockActorButtonView({
         aria-describedby={`runtime-dock-status-${item.actorId}`}
         title={[item.actorLabel, statusLabel, mailLabel, queuedLabel].filter(Boolean).join("\n")}
       >
-        <RuntimeDockRing
-          size={ringFrameSize}
-          active={ringTone === "active"}
-          colorClassName={ringPresentation.ringClassName}
-          gradientId={activityGradientId}
-        />
+        {lcd ? null : (
+          // LCD preview: the frame's line shows the state instead of the ring.
+          <RuntimeDockRing
+            size={ringFrameSize}
+            active={ringTone === "active"}
+            colorClassName={ringPresentation.ringClassName}
+            gradientId={activityGradientId}
+          />
+        )}
 
         <ActorAvatar
           avatarUrl={item.actor.avatar_url || undefined}
@@ -200,7 +292,7 @@ function RuntimeDockActorButtonView({
           sizeClassName={isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]"}
           className={classNames(
             "relative z-10 border-transparent shadow-[0_18px_34px_-22px_rgba(15,23,42,0.68)]",
-            ringPresentation.avatarClassName,
+            lcd ? "lcd-tile" : ringPresentation.avatarClassName,
             item.runner === "headless" ? (isDark ? "bg-slate-900" : "bg-slate-50") : undefined,
           )}
           accentRingClassName={
@@ -215,6 +307,7 @@ function RuntimeDockActorButtonView({
             )}
             aria-hidden="true"
             title={queuedLabel}
+            data-dock-badge="queue"
           >
             {queuedCount > 99 ? "99+" : queuedCount}
           </span>
@@ -230,6 +323,7 @@ function RuntimeDockActorButtonView({
             )}
             aria-hidden="true"
             title={mailLabel}
+            data-dock-badge="mail"
           >
             <Mail
               className={isSmallScreen ? "h-[9px] w-[9px]" : "h-[10px] w-[10px]"}
@@ -264,7 +358,10 @@ const RuntimeDockActorButton = memo(
     previous.isSmallScreen === next.isSmallScreen &&
     previous.isInspectorOpen === next.isInspectorOpen &&
     previous.actorStatusProvisional === next.actorStatusProvisional &&
-    previous.onOpenInspector === next.onOpenInspector,
+    previous.onOpenInspector === next.onOpenInspector &&
+    previous.variant === next.variant &&
+    previous.hidden === next.hidden &&
+    previous.showName === next.showName,
 );
 
 export interface RuntimeDockProps {
@@ -279,6 +376,8 @@ export interface RuntimeDockProps {
   actorStatusProvisional: boolean;
   onAddAgent?: () => void;
   onOpenRuntimeActor: (actorId: string) => void;
+  /** "header": the LCD preview's member strip in the app header (desktop). */
+  placement?: "dock" | "header";
 }
 
 export function RuntimeDock({
@@ -293,8 +392,10 @@ export function RuntimeDock({
   actorStatusProvisional,
   onAddAgent,
   onOpenRuntimeActor,
+  placement = "dock",
 }: RuntimeDockProps) {
   const { t } = useTranslation("chat");
+  const lcd = useLcdStyle();
   const storeRuntimeEvents = useGroupStore(
     (state) => state.chatByGroup?.[String(groupId || "").trim()]?.rawHeadlessEventsByActorId,
   );
@@ -310,6 +411,21 @@ export function RuntimeDock({
   );
 
   if (items.length <= 0) return null;
+
+  if (placement === "header") {
+    return (
+      <RuntimeDockHeaderStrip
+        groupId={groupId}
+        items={items}
+        activeRuntimeActorId={activeRuntimeActorId}
+        isDark={isDark}
+        readOnly={readOnly}
+        actorStatusProvisional={actorStatusProvisional}
+        onAddAgent={onAddAgent}
+        onOpenRuntimeActor={onOpenRuntimeActor}
+      />
+    );
+  }
 
   return (
     <div className="pointer-events-none relative z-30 px-3 md:px-4 md:pt-2.5">
@@ -334,6 +450,7 @@ export function RuntimeDock({
                 ? "max-w-[calc(100vw-2.5rem)] gap-2 overflow-x-auto px-2 py-1 scrollbar-hide"
                 : "gap-2",
             )}
+            data-runtime-dock-strip
           >
             <div className="relative flex items-end gap-2">
               {items.map((item) => (
@@ -360,14 +477,17 @@ export function RuntimeDock({
                 )}
                 aria-label={t("addAgent", { defaultValue: "Add an agent" })}
                 title={t("addAgent", { defaultValue: "Add an agent" })}
+                data-lcd-dock-add
               >
                 <span
                   aria-hidden="true"
                   className={classNames(
                     "relative z-[1] flex items-center justify-center rounded-full border shadow-[0_18px_34px_-22px_rgba(15,23,42,0.4)] transition-[transform,box-shadow,border-color,background-color,color] duration-200",
+                    // Classic matches the ring's outer size; LCD tiles have no ring.
+                    lcd && isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]",
                     isDark
-                      ? "h-[37px] w-[37px] border-white/10 bg-slate-900 text-slate-100 group-hover/add-agent:border-white/16 group-hover/add-agent:bg-slate-950"
-                      : "h-[37px] w-[37px] border-black/10 bg-white text-[rgb(35,36,37)] group-hover/add-agent:border-black/14 group-hover/add-agent:bg-white/96",
+                      ? "border-white/10 bg-slate-900 text-slate-100 group-hover/add-agent:border-white/16 group-hover/add-agent:bg-slate-950"
+                      : "border-black/10 bg-white text-[rgb(35,36,37)] group-hover/add-agent:border-black/14 group-hover/add-agent:bg-white/96",
                   )}
                 >
                   <PlusIcon size={18} strokeWidth={2.1} />
@@ -377,6 +497,148 @@ export function RuntimeDock({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * LCD preview: members in one header row. Chips that do not fit wrap onto a
+ * clipped second line; they become unreachable there and move into "+N",
+ * which still says whether any of them has unread Mail or queued work.
+ */
+function RuntimeDockHeaderStrip({
+  groupId,
+  items,
+  activeRuntimeActorId,
+  isDark,
+  readOnly,
+  actorStatusProvisional,
+  onAddAgent,
+  onOpenRuntimeActor,
+}: {
+  groupId: string;
+  items: RuntimeDockItem[];
+  activeRuntimeActorId?: string;
+  isDark: boolean;
+  readOnly?: boolean;
+  actorStatusProvisional: boolean;
+  onAddAgent?: () => void;
+  onOpenRuntimeActor: (actorId: string) => void;
+}) {
+  const { t } = useTranslation("chat");
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  const measure = useCallback(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const cells = Array.from(row.querySelectorAll<HTMLElement>("[data-lcd-member-chip]"));
+    const firstTop = cells[0]?.offsetTop ?? 0;
+    const next = cells
+      .map((cell, index) => (cell.offsetTop > firstTop ? items[index]?.actorId : undefined))
+      .filter((id): id is string => Boolean(id));
+    setHiddenIds((previous) =>
+      previous.length === next.length && previous.every((id, index) => id === next[index])
+        ? previous
+        : next,
+    );
+  }, [items]);
+
+  useLayoutEffect(() => {
+    measure();
+    const row = rowRef.current;
+    if (!row || typeof ResizeObserver === "undefined") return;
+    // Tiles have a fixed size, so only the row's width decides what fits.
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [measure]);
+
+  const hidden = new Set(hiddenIds);
+  const hiddenItems = items.filter((item) => hidden.has(item.actorId));
+  const hiddenWithMail = hiddenItems.filter((item) => item.unreadCount > 0).length;
+  const hiddenWithQueued = hiddenItems.filter(
+    (item) => Number(item.webModelQueuedCount || 0) > 0,
+  ).length;
+  const moreLabel = [
+    t("runtimeDockMoreMembers", { count: hiddenItems.length }),
+    hiddenWithMail > 0 ? t("runtimeDockMoreMembersMail", { count: hiddenWithMail }) : "",
+    hiddenWithQueued > 0 ? t("runtimeDockMoreMembersQueued", { count: hiddenWithQueued }) : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="lcd-members" role="group" aria-label={t("runtimeDockMembers")}>
+      <div ref={rowRef} className="lcd-members-row">
+        {items.map((item) => (
+          <RuntimeDockActorButton
+            key={item.actorId}
+            variant="chip"
+            hidden={hidden.has(item.actorId)}
+            groupId={groupId}
+            item={item}
+            isDark={isDark}
+            isSmallScreen={false}
+            isInspectorOpen={activeRuntimeActorId === item.actorId}
+            actorStatusProvisional={actorStatusProvisional}
+            onOpenInspector={onOpenRuntimeActor}
+          />
+        ))}
+      </div>
+      {hiddenItems.length > 0 ? (
+        <Popover open={moreOpen} onOpenChange={setMoreOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="lcd-member lcd-member-more"
+              aria-label={moreLabel}
+              title={moreLabel}
+            >
+              +{hiddenItems.length}
+              {hiddenWithMail > 0 ? (
+                <Mail className="h-[10px] w-[10px]" strokeWidth={2} aria-hidden="true" />
+              ) : null}
+              {hiddenWithQueued > 0 ? (
+                <Hourglass className="h-[10px] w-[10px]" strokeWidth={2} aria-hidden="true" />
+              ) : null}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="lcd-members-popover" data-lcd-scope>
+            <div className="flex flex-col items-stretch gap-1 p-2">
+              {hiddenItems.map((item) => (
+                <RuntimeDockActorButton
+                  key={item.actorId}
+                  variant="chip"
+                  showName
+                  groupId={groupId}
+                  item={item}
+                  isDark={isDark}
+                  isSmallScreen={false}
+                  isInspectorOpen={activeRuntimeActorId === item.actorId}
+                  actorStatusProvisional={actorStatusProvisional}
+                  onOpenInspector={(actorId) => {
+                    setMoreOpen(false);
+                    onOpenRuntimeActor(actorId);
+                  }}
+                />
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+      ) : null}
+      {!readOnly && onAddAgent ? (
+        <button
+          type="button"
+          onClick={onAddAgent}
+          className="lcd-member lcd-member-add"
+          aria-label={t("addAgent", { defaultValue: "Add an agent" })}
+          title={t("addAgent", { defaultValue: "Add an agent" })}
+        >
+          <PlusIcon size={14} strokeWidth={2} />
+        </button>
+      ) : null}
     </div>
   );
 }

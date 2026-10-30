@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { LedgerEvent, LedgerEventStatusPayload } from "../../types";
+import { createInstance } from "i18next";
+import en from "../../i18n/locales/en/chat.json";
+import ja from "../../i18n/locales/ja/chat.json";
+import zh from "../../i18n/locales/zh/chat.json";
 import {
+  localizedAnswerReceipt,
   matchesSubmittedAnswer,
   parseQuestion,
   pendingReplyView,
@@ -136,7 +141,10 @@ describe("pending user reply projection", () => {
         text: "Selected B: There",
       },
     };
-    expect(recordedOption(parsed, "request", "worker", reply)).toBe("B. There");
+    expect(recordedOption(parsed, "request", "worker", reply)).toMatchObject({
+      id: "B",
+      label: "There",
+    });
     expect(matchesSubmittedAnswer(parsed, { v: 1, option_id: "B" }, reply)).toBe(true);
     const wrong = { ...reply, data: { ...reply.data, text: "Selected A: Here" } };
     expect(recordedOption(parsed, "request", "worker", wrong)).toBeNull();
@@ -145,5 +153,53 @@ describe("pending user reply projection", () => {
     const plain = { ...reply, data: { reply_to: "request", message_mode: "send", text: "words" } };
     expect(matchesSubmittedAnswer(null, { v: 1, text: "words" }, plain)).toBe(true);
     expect(matchesSubmittedAnswer(parsed, { v: 1, text: "words" }, plain)).toBe(false);
+  });
+});
+
+describe("answer receipt prefixes", () => {
+  const labels = { selected: (id: string) => `已选 ${id}：`, other: "其他：" };
+  const receipt = (answer: unknown, text: string) =>
+    localizedAnswerReceipt({ answer, text }, text, labels);
+
+  it("localizes every option and a free answer beside options, without the question", () => {
+    for (const id of ["A", "B", "C", "D"]) {
+      expect(receipt({ v: 1, option_id: id }, `Selected ${id}: Label ${id}`)).toBe(
+        `已选 ${id}：Label ${id}`,
+      );
+    }
+    expect(receipt({ v: 1, text: "Later, with finance" }, "Other: Later, with finance")).toBe(
+      "其他：Later, with finance",
+    );
+  });
+
+  it("shows anything else as written", () => {
+    // A free answer to a question without options has no prefix to replace.
+    expect(receipt({ v: 1, text: "Just this" }, "Just this")).toBeNull();
+    expect(receipt({ v: 2, option_id: "A" }, "Selected A: Here")).toBeNull();
+    expect(receipt({ v: 1, option_id: "A", note: "x" }, "Selected A: Here")).toBeNull();
+    expect(receipt({ v: 1, option_id: "A", text: "Here" }, "Selected A: Here")).toBeNull();
+    expect(receipt({ v: 1, option_id: "" }, "Selected : Here")).toBeNull();
+    expect(receipt({ v: 1, option_id: "B" }, "Selected A: Here")).toBeNull();
+    expect(receipt({ v: 1, option_id: "A" }, "Selected A: ")).toBeNull();
+    expect(receipt({ v: 1, text: "y" }, "Other: x")).toBeNull();
+    expect(receipt("not an answer", "Selected A: Here")).toBeNull();
+    expect(localizedAnswerReceipt(null, "Selected A: Here", labels)).toBeNull();
+  });
+
+  it.each(["en", "zh", "ja"])("has %s prefixes for the receipt", async (language) => {
+    const i18n = createInstance();
+    await i18n.init({
+      lng: language,
+      resources: { en: { translation: en }, zh: { translation: zh }, ja: { translation: ja } },
+    });
+    const selected = String(i18n.t("answerReceiptSelected", { id: "C" }));
+    const other = String(i18n.t("answerReceiptOther"));
+    expect(selected).toContain("C");
+    expect(selected).not.toContain("answerReceipt");
+    expect(other).not.toContain("answerReceipt");
+    if (language === "en") {
+      expect(`${selected}Third`).toBe("Selected C: Third");
+      expect(`${other}Later`).toBe("Other: Later");
+    }
   });
 });

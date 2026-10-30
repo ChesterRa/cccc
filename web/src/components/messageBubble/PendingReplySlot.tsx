@@ -51,9 +51,7 @@ function ReplyEntry({
   const localOption = view.question?.options.find((option) => option.id === localOptionId);
   const answeredOption =
     state === "answered"
-      ? localOption
-        ? `${localOption.id}. ${localOption.label}`
-        : recordedOption(view.question, eventId, event.by ?? "", loadedReply)
+      ? (localOption ?? recordedOption(view.question, eventId, event.by ?? "", loadedReply))
       : null;
 
   const send = async (answer: PendingReplyAnswer) => {

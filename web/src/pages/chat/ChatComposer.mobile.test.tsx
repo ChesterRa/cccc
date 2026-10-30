@@ -12,10 +12,16 @@ vi.mock("./LazyVoiceSecretaryComposerControl", () => ({
   LazyVoiceSecretaryComposerControl: () => <button onClick={voice}>voice</button>,
 }));
 
-function Harness() {
+function Harness({
+  mode = "send",
+  initialTokens = [],
+}: {
+  mode?: "send" | "request_reply";
+  initialTokens?: string[];
+}) {
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [tokens, setTokens] = useState<string[]>([]);
+  const [tokens, setTokens] = useState<string[]>(initialTokens);
   const noop = () => {};
   return (
     <ChatComposer
@@ -45,7 +51,7 @@ function Harness() {
       fileInputRef={fileInputRef}
       composerRef={composerRef}
       setComposerText={useComposerStore.getState().setComposerText}
-      messageMode="send"
+      messageMode={mode}
       setMessageMode={noop}
       onSendMessage={noop}
       showMentionMenu={false}
@@ -106,6 +112,36 @@ it("keeps a compact control in place until its first click and preserves recipie
     expect(host.querySelector(".compact-composer-recipients")?.textContent).toContain("@foreman");
   } finally {
     await act(async () => root.unmount());
+    useGroupStore.setState({ refreshSettings: originalRefreshSettings });
+    host.remove();
+  }
+});
+
+it("says under the recipients why Send + Reply cannot go to @all, and clears it when fixed", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  useComposerStore.setState({ composerText: "check this" });
+  const originalRefreshSettings = useGroupStore.getState().refreshSettings;
+  useGroupStore.setState({ refreshSettings: async () => {} });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const reason = () => host.querySelector("[data-composer-send-blocked]")?.textContent ?? null;
+  try {
+    await act(async () => root.render(<Harness mode="send" initialTokens={["@all"]} />));
+    expect(reason()).toBeNull();
+
+    await act(async () =>
+      root.render(<Harness key="reply" mode="request_reply" initialTokens={["@all"]} />),
+    );
+    expect(reason()).toBe("modeSendReplyRequiresConcrete");
+    const all = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "@all",
+    )!;
+    await act(async () => all.click());
+    expect(reason()).toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+    useComposerStore.setState({ composerText: "" });
     useGroupStore.setState({ refreshSettings: originalRefreshSettings });
     host.remove();
   }
