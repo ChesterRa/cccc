@@ -86,7 +86,9 @@
    screened with APCA Lc, which estimates perceived contrast on mid-tone grounds, with
    WCAG 2 ratios as a floor and a review of the real page: body >= 85, secondary >= 75,
    placeholder >= 60 and 4.5:1, control outlines >= 45 and 3:1, dividers >= 15. The
-   earlier #c6ceb8 gave body Lc 73. */
+   earlier #c6ceb8 gave body Lc 73. The panel, a step darker for menus and cards, costs
+   text about 5 Lc: placeholder and outline tones are dark enough to keep their floors on
+   it too, while body and secondary text keep Lc 80 and 70 there, enough for labels. */
 :root[data-ui-style="lcd"] {
   --lcd-bg: #dae2cb;
   --lcd-panel: #d1d9c1;
@@ -96,9 +98,9 @@
   --lcd-ink: #161a0d;
   --lcd-ink-strong: #0e120c;
   --lcd-dim: #3e4236;
-  --lcd-muted: #606458;
+  --lcd-muted: #575b4f;
   --lcd-rule: #bcc2b1;
-  --lcd-rule-strong: #7c8073;
+  --lcd-rule-strong: #767a6d;
   --lcd-wait: #832c0d;
   --lcd-on-wait: #eef0e6;
   --lcd-danger: #7e2f18;
