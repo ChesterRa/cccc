@@ -1,0 +1,139 @@
+/* Voice Secretary document list, workspace, transcript and recording meter. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-documents-title] {
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-document-create] {
+  border-color: var(--lcd-rule);
+  background: transparent;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-document-new-input] {
+  background: var(--lcd-bg);
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-document-new-input]::placeholder {
+  color: var(--lcd-muted);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-document-row],
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-folder] {
+  background: transparent;
+  box-shadow: none;
+  color: var(--lcd-ink);
+  transition: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-folder] > button {
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-document-row="normal"]:hover,
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-folder]:hover {
+  background: var(--lcd-sel-soft);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-document-row="selected"] {
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-document-row="selected"] * {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-document-default] {
+  border: 1px solid currentColor;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-folder-drop] {
+  outline: 1px dashed var(--lcd-ink);
+  outline-offset: -1px;
+  background: var(--lcd-sel-soft);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-document-drag-overlay] {
+  border-color: var(--lcd-ink);
+  border-radius: 0;
+  background: var(--lcd-raised);
+  color: var(--lcd-ink);
+  box-shadow: none;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-voice-document-row], [data-voice-folder] > button):focus-visible {
+  outline: 1px dashed currentColor;
+  outline-offset: -2px;
+  --tw-ring-shadow: 0 0 #0000;
+}
+
+/* Transcript entries keep their speaker and source labels, using dividers
+   instead of colored status cards. The source is provenance, not success. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-transcript-row] {
+  border: 0;
+  border-bottom: 1px solid var(--lcd-rule);
+  background: transparent;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-voice-transcript-speaker], [data-voice-transcript-text]) {
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-transcript-source] {
+  border: 1px solid var(--lcd-rule-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--lcd-dim);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-transcript-recording] {
+  border-color: var(--lcd-rule-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-transcript-recording] > div {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-live-transcript] {
+  border: 1px dashed var(--lcd-rule-strong);
+  border-radius: 0;
+  background: transparent;
+}
+
+/* The line replaces the beam in LCD mode but still reacts to the microphone. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-workspace-meter] {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-workspace-meter="recording"] {
+  height: 3px;
+  background: var(--lcd-rule);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-workspace-meter="recording"] > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--lcd-ink);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-workspace-meter="processing"] {
+  border-bottom: 1px dashed var(--lcd-rule-strong);
+}

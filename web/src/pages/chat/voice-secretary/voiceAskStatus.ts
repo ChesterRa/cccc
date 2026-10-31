@@ -44,6 +44,18 @@ export function currentVoiceAskTask(
   return candidate || retained;
 }
 
+/** What an Ask status means; the classic badge colours and the LCD tone both follow it. An
+ *  unconfirmed outcome waits for the user to confirm a retry, like a request that needs input. */
+export function voiceAskStatusTone(status: string): "warning" | "error" | "info" | undefined {
+  const key = String(status || "pending")
+    .trim()
+    .toLowerCase();
+  if (key === "needs_user" || key === "unconfirmed") return "warning";
+  if (key === "failed") return "error";
+  if (key === "handed_off") return "info";
+  return undefined;
+}
+
 /** A retry preserves the old reply until the successor's result is actually projected. */
 export function voiceAskReplyIsCurrent(
   task: SecretaryTaskSummary | null,

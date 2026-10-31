@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { AssistantVoiceAskFeedback, SecretaryTaskSummary } from "../../../types";
 import { normalizeAssistantStateResult } from "../../../services/api/groups";
-import { currentVoiceAskTask, voiceAskReplyIsCurrent } from "./voiceAskStatus";
+import { currentVoiceAskTask, voiceAskReplyIsCurrent, voiceAskStatusTone } from "./voiceAskStatus";
 import { resolveAutoOpenVoiceReplyBubbleRequestId } from "./voiceReplyBubbleModel";
 import { voiceReplyDismissKey } from "./voiceComposerUtils";
 
@@ -113,5 +113,16 @@ describe("Ask task and reply authority", () => {
         secretary_task_id: "successor-task",
       }),
     ).toBe("request");
+  });
+});
+
+describe("Ask status tone", () => {
+  it("gives the badge colours and the LCD tone one meaning per status", () => {
+    expect(voiceAskStatusTone("needs_user")).toBe("warning");
+    expect(voiceAskStatusTone("unconfirmed")).toBe("warning");
+    expect(voiceAskStatusTone(" FAILED ")).toBe("error");
+    expect(voiceAskStatusTone("handed_off")).toBe("info");
+    for (const status of ["pending", "working", "done", "cancelled", "", "unknown"])
+      expect(voiceAskStatusTone(status)).toBeUndefined();
   });
 });

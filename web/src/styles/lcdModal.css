@@ -88,8 +88,9 @@
 /* A switch is one control of keys sharing edges, framed in ink, the current one in
    reverse, like the chat page's view switch: the settings scope, every segmented
    choice (settings pages, the appearance menu), the search kinds, the Voice
-   panes on phones, the workspace's Files and Changes, a Group's connection mode, and
-   a Web Model's page or browser view and its delivery choice.
+   panes on phones, the workspace's Files and Changes, a Group's connection mode, a Web
+   Model's page or browser view and its delivery choice, and the Voice Secretary's views
+   and document views.
    Reversed keys switch at once: a colour transition would pass through text the colour
    of its ground. */
 :root[data-ui-style="lcd"]
@@ -102,6 +103,8 @@
     [data-workspace-mode-switch],
     [data-connect-mode-switch],
     [data-browser-view-switch],
+    [data-voice-panel-views],
+    [data-voice-document-views],
     [data-web-model-delivery]
   ) {
   gap: 0;
@@ -120,6 +123,8 @@
     [data-workspace-mode-switch] > button,
     [data-connect-mode-switch] > button,
     [data-browser-view-switch] > button,
+    [data-voice-panel-views] > button,
+    [data-voice-document-views] > button,
     [data-web-model-delivery] > label > input + span
   ) {
   border: 1px solid var(--lcd-ink);
@@ -138,6 +143,8 @@
     [data-workspace-mode-switch] > button + button,
     [data-connect-mode-switch] > button + button,
     [data-browser-view-switch] > button + button,
+    [data-voice-panel-views] > button + button,
+    [data-voice-document-views] > button + button,
     [data-web-model-delivery] > label + label
   ) {
   margin-left: -1px;
@@ -153,6 +160,8 @@
     [data-workspace-mode-switch] > button[aria-pressed="true"],
     [data-connect-mode-switch] > button[aria-pressed="true"],
     [data-browser-view-switch] > button[aria-pressed="true"],
+    [data-voice-panel-views] > button[aria-pressed="true"],
+    [data-voice-document-views] > button[aria-pressed="true"],
     [data-web-model-delivery] > label > input:checked + span
   ) {
   background: var(--lcd-sel-bg);
@@ -212,6 +221,8 @@
     [data-workspace-mode-switch] > button[aria-pressed="false"],
     [data-connect-mode-switch] > button[aria-pressed="false"],
     [data-browser-view-switch] > button[aria-pressed="false"],
+    [data-voice-panel-views] > button[aria-pressed="false"],
+    [data-voice-document-views] > button[aria-pressed="false"],
     [data-web-model-delivery] > label > input:not(:checked):where(:not(:disabled)) + span
   ):hover:not(:disabled) {
   background: var(--lcd-sel-soft);

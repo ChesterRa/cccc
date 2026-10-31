@@ -1,3 +1,28 @@
+/* A long source and time cannot share a very narrow row. Reorder only that
+   row's metadata so both remain readable, without affecting wider layouts. */
+[data-voice-transcript-row] {
+  container-type: inline-size;
+}
+
+@container (max-width: 18rem) {
+  [data-voice-transcript-meta] {
+    flex-wrap: wrap;
+  }
+  [data-voice-transcript-source] {
+    order: 0;
+    margin-left: 0;
+  }
+  [data-voice-transcript-meta] > time {
+    order: 1;
+    margin-left: auto;
+  }
+  [data-voice-transcript-detail] {
+    order: 2;
+    flex: 1 0 auto;
+    max-width: 100%;
+  }
+}
+
 @media (max-width: 639px) {
   [data-voice-mobile-sheet].glass-modal {
     padding: 12px 8px max(8px, env(safe-area-inset-bottom, 0px));
@@ -75,7 +100,6 @@
     min-height: 0;
     margin-top: 8px;
     padding: 12px;
-    overscroll-behavior-y: contain;
     scroll-padding-block: 12px;
   }
   [data-voice-document-panel] > .voice-document-footer {
@@ -87,6 +111,8 @@
   }
   [data-voice-document-panel] > .voice-document-content:has(> textarea) {
     padding: 0;
+    /* Editing keeps its own scroll; read-only content can pass boundary scrolls to the panel. */
+    overscroll-behavior-y: contain;
   }
   [data-voice-document-panel] .voice-document-content textarea {
     min-height: 0;

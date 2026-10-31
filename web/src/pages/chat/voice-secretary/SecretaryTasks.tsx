@@ -102,7 +102,11 @@ export function SecretaryTasks({
         </p>
       )}
       {visibleError && (
-        <p role="alert" className="mt-2 text-xs text-rose-600 dark:text-rose-300">
+        <p
+          role="alert"
+          data-status-tone="error"
+          className="mt-2 text-xs text-rose-600 dark:text-rose-300"
+        >
           {visibleError}
         </p>
       )}
@@ -146,6 +150,13 @@ export function SecretaryTasks({
           >
             <span
               aria-hidden="true"
+              data-status-dot={
+                summary.kind === "attention"
+                  ? "attention"
+                  : summary.kind === "running"
+                    ? "active"
+                    : "inactive"
+              }
               className={
                 summary.kind === "attention"
                   ? "h-2 w-2 shrink-0 rounded-full bg-amber-500"

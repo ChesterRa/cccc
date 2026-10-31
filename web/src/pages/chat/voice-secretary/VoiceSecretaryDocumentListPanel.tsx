@@ -53,6 +53,7 @@ export function VoiceSecretaryDocumentListPanel(props: VoiceSecretaryDocumentLis
     <aside className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center justify-between gap-2 px-3 pb-2 pt-3">
         <div
+          data-voice-documents-title
           className={classNames(
             "min-w-0 truncate text-sm font-semibold",
             isDark ? "text-slate-100" : "text-gray-900",
@@ -64,6 +65,7 @@ export function VoiceSecretaryDocumentListPanel(props: VoiceSecretaryDocumentLis
           {headerActions}
           <button
             type="button"
+            data-lcd-key
             onClick={onStartCreateDocument}
             disabled={!!actionBusy}
             className="inline-flex min-h-8 items-center gap-1 whitespace-nowrap rounded-lg px-2 text-xs font-semibold text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
@@ -79,12 +81,15 @@ export function VoiceSecretaryDocumentListPanel(props: VoiceSecretaryDocumentLis
         {navigation}
         {creatingDocument ? (
           <div
+            data-voice-document-create
             className={classNames(
               "mb-2 space-y-2 rounded-2xl border p-2.5",
               isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
             )}
           >
             <input
+              data-lcd-field
+              data-voice-document-new-input
               value={newDocumentTitleDraft}
               autoFocus
               onChange={(event) => onNewDocumentTitleChange(event.target.value)}
@@ -102,7 +107,7 @@ export function VoiceSecretaryDocumentListPanel(props: VoiceSecretaryDocumentLis
                 defaultValue: "Document name",
               })}
               className={classNames(
-                "w-full rounded-lg border px-2.5 py-1.5 text-xs outline-none transition-colors",
+                "w-full rounded-lg border px-2.5 py-1.5 text-xs outline-none transition-colors pointer-coarse:min-h-[44px]",
                 isDark
                   ? "border-white/10 bg-black/20 text-slate-100 placeholder:text-slate-500 focus:border-white/30"
                   : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/25",
@@ -111,6 +116,7 @@ export function VoiceSecretaryDocumentListPanel(props: VoiceSecretaryDocumentLis
             <div className="flex items-center justify-end gap-1.5">
               <button
                 type="button"
+                data-lcd-key
                 onClick={onCancelCreateDocument}
                 disabled={actionBusy === "new_doc"}
                 className={classNames(
@@ -122,6 +128,7 @@ export function VoiceSecretaryDocumentListPanel(props: VoiceSecretaryDocumentLis
               </button>
               <button
                 type="button"
+                data-lcd-primary
                 onClick={onCreateDocument}
                 disabled={actionBusy === "new_doc"}
                 className={classNames(

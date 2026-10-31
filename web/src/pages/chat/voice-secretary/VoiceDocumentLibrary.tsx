@@ -1,5 +1,6 @@
 import { useState, type ComponentProps } from "react";
-import { Archive, FolderPlus } from "lucide-react";
+import { FolderPlus } from "lucide-react";
+import { GroupArchiveIcon } from "../../../components/Icons";
 import { Button } from "../../../components/ui/button";
 import { IconButton } from "../../../components/ui/icon-button";
 import type { AssistantVoiceDocument } from "../../../types";
@@ -69,7 +70,11 @@ function Library(props: Props) {
         }
         navigation={
           library.error ? (
-            <p role="alert" className="mb-2 break-words text-xs text-rose-600">
+            <p
+              role="alert"
+              data-status-tone="error"
+              className="mb-2 break-words text-xs text-rose-600"
+            >
               {library.error}
             </p>
           ) : null
@@ -82,7 +87,7 @@ function Library(props: Props) {
               className="w-full justify-start gap-2 text-[var(--color-text-secondary)]"
               onClick={() => setArchiveOpen(true)}
             >
-              <Archive size={15} aria-hidden="true" />
+              <GroupArchiveIcon size={15} aria-hidden="true" />
               {t("voiceArchiveTitle", { defaultValue: "Archived documents" })}
               <span className="ml-auto text-xs tabular-nums">{archived.length}</span>
             </Button>

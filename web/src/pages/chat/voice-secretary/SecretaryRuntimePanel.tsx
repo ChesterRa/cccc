@@ -156,7 +156,11 @@ export function SecretaryRuntimePanel({ active, isDark }: { active: boolean; isD
         )}
       </header>
       {diagnostic && (
-        <p role="alert" className="shrink-0 break-words text-sm text-rose-600 dark:text-rose-300">
+        <p
+          role="alert"
+          data-status-tone="error"
+          className="shrink-0 break-words text-sm text-rose-600 dark:text-rose-300"
+        >
           {diagnostic}
         </p>
       )}

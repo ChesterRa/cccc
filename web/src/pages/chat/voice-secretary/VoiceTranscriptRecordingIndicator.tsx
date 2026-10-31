@@ -10,6 +10,7 @@ export function VoiceTranscriptRecordingIndicator({
 }: VoiceTranscriptRecordingIndicatorProps) {
   return (
     <div
+      data-voice-transcript-recording
       className={classNames(
         "flex items-center justify-center border text-center",
         compact
@@ -23,10 +24,9 @@ export function VoiceTranscriptRecordingIndicator({
       <div
         className={classNames(
           "min-w-0 font-semibold",
-          compact ? "truncate text-[11px]" : "text-sm",
+          compact ? "break-words text-[11px]" : "text-sm",
           isDark ? "text-slate-200" : "text-gray-700",
         )}
-        title={compact ? label : undefined}
       >
         {label}
       </div>

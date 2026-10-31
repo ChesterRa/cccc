@@ -19,6 +19,7 @@ import {
   readVoiceAskNotice,
   saveVoiceAskNotice,
   voiceAskReplyIsCurrent,
+  voiceAskStatusTone,
   type VoiceAskNotice,
 } from "./voice-secretary/voiceAskStatus";
 import { queueVoiceSocketError } from "./voice-secretary/voiceSocketError";
@@ -4820,15 +4821,12 @@ export function VoiceSecretaryComposerControl({
   );
   const askFeedbackStatusClassName = useCallback(
     (status: string) => {
-      const key = String(status || "pending")
-        .trim()
-        .toLowerCase();
-      if (key === "needs_user")
+      const tone = voiceAskStatusTone(status);
+      if (tone === "warning")
         return isDark ? "bg-amber-400/14 text-amber-100" : "bg-amber-50 text-amber-800";
-      if (key === "failed")
+      if (tone === "error")
         return isDark ? "bg-rose-400/14 text-rose-100" : "bg-rose-50 text-rose-800";
-      if (key === "handed_off")
-        return isDark ? "bg-sky-400/14 text-sky-100" : "bg-sky-50 text-sky-800";
+      if (tone === "info") return isDark ? "bg-sky-400/14 text-sky-100" : "bg-sky-50 text-sky-800";
       return isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]";
     },
     [isDark],
@@ -5329,6 +5327,7 @@ export function VoiceSecretaryComposerControl({
               <section
                 ref={modalRef}
                 data-voice-mobile-sheet
+                data-lcd-scope
                 data-voice-sheet-mode={executionOpen ? "execution" : panelView}
                 role="dialog"
                 aria-modal="true"
@@ -5406,6 +5405,7 @@ export function VoiceSecretaryComposerControl({
                         <button
                           type="button"
                           data-voice-workstage-toggle
+                          data-lcd-key
                           aria-pressed={executionOpen}
                           disabled={controlDisabled}
                           onClick={() => {
@@ -5430,6 +5430,7 @@ export function VoiceSecretaryComposerControl({
                         <button
                           type="button"
                           data-voice-settings
+                          data-lcd-key
                           className="inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-lg text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
                           aria-label={t("settings:voiceSettings.title")}
                           title={t("settings:voiceSettings.title")}
@@ -5444,6 +5445,7 @@ export function VoiceSecretaryComposerControl({
                     <p
                       role="status"
                       data-voice-header-notice
+                      data-status-tone={recordingGroupNoticeText ? "warning" : undefined}
                       className={classNames(
                         "mt-2 line-clamp-2 break-words text-xs leading-5",
                         recordingGroupNoticeText
@@ -5463,6 +5465,7 @@ export function VoiceSecretaryComposerControl({
                   <div
                     role="status"
                     data-voice-readiness={secretaryIssue?.code}
+                    data-status-tone="warning"
                     className={classNames(
                       "mx-4 mt-3 flex shrink-0 flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs leading-5 sm:mx-5",
                       isDark
@@ -5485,6 +5488,7 @@ export function VoiceSecretaryComposerControl({
                       <button
                         type="button"
                         data-voice-readiness-action
+                        data-lcd-key
                         onClick={() => {
                           if (secretaryIssue?.action === "execution") {
                             setExecutionTaskId("");
@@ -5789,6 +5793,7 @@ export function VoiceSecretaryComposerControl({
                 </div>
                 <button
                   data-voice-sheet-close
+                  data-modal-close
                   type="button"
                   onClick={closePanel}
                   className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]/45 sm:right-4 sm:top-4"
@@ -5806,6 +5811,7 @@ export function VoiceSecretaryComposerControl({
         <div className="relative flex min-w-0 max-w-full items-center gap-1.5">
           {voiceReplyBubbleFeedback && voiceReplyBubbleText ? (
             <div
+              data-voice-reply-bubble
               className={classNames(
                 "absolute bottom-full left-0 z-[80] mb-2 w-[min(28rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border shadow-2xl",
                 isDark
@@ -5818,6 +5824,7 @@ export function VoiceSecretaryComposerControl({
               })}
             >
               <div
+                data-voice-reply-bubble-head
                 className={classNames(
                   "flex items-center justify-between gap-2 border-b px-3 py-2",
                   isDark ? "border-white/[0.08]" : "border-black/[0.06]",
@@ -5828,6 +5835,7 @@ export function VoiceSecretaryComposerControl({
                     {t("voiceSecretaryReplyBubbleTitle", { defaultValue: "Voice Secretary reply" })}
                   </div>
                   <div
+                    data-status-tone="muted"
                     className={classNames(
                       "mt-0.5 text-[10px]",
                       isDark ? "text-slate-400" : "text-gray-500",
@@ -5841,6 +5849,7 @@ export function VoiceSecretaryComposerControl({
                 <div className="flex shrink-0 items-center gap-1">
                   <button
                     type="button"
+                    data-lcd-key
                     onClick={() => void copyVoiceReplyBubble()}
                     className={classNames(
                       "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors",
@@ -5861,6 +5870,7 @@ export function VoiceSecretaryComposerControl({
                   </button>
                   <button
                     type="button"
+                    data-lcd-key
                     onClick={closeVoiceReplyBubble}
                     className={classNames(
                       "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors",
@@ -5903,6 +5913,7 @@ export function VoiceSecretaryComposerControl({
           >
             <button
               type="button"
+              data-voice-row-record
               className={classNames(
                 "relative inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 @min-[600px]/composer:h-8 @min-[600px]/composer:w-8",
                 recording
@@ -6116,6 +6127,7 @@ export function VoiceSecretaryComposerControl({
                 <button
                   type="button"
                   data-voice-optimize
+                  data-status-tone={promptOptimizePending ? "warning" : undefined}
                   className={classNames(
                     "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
                     promptOptimizePending
@@ -6231,6 +6243,7 @@ export function VoiceSecretaryComposerControl({
               <button
                 type="button"
                 data-voice-expand
+                data-open={open || undefined}
                 className={classNames(
                   "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
                   open
@@ -6259,6 +6272,7 @@ export function VoiceSecretaryComposerControl({
             {composerErrorText ? (
               <div
                 data-voice-secretary-error
+                data-status-tone="error"
                 role="status"
                 className={classNames(
                   "max-w-[min(34rem,calc(100vw-6rem))] break-words rounded-lg px-2.5 py-1 text-[11px]",
@@ -6281,6 +6295,7 @@ export function VoiceSecretaryComposerControl({
             {speechErrorHint ? (
               <div
                 data-voice-recognition-error
+                data-status-tone="error"
                 role="status"
                 className={classNames(
                   "max-w-[min(34rem,calc(100vw-6rem))] rounded-lg px-2.5 py-1 text-[11px]",
@@ -6294,14 +6309,16 @@ export function VoiceSecretaryComposerControl({
               <div
                 data-voice-composer-activity="recording"
                 className={classNames(
-                  "inline-flex max-w-[min(40rem,calc(100vw-6rem))] items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]",
+                  "inline-flex max-w-[min(40rem,calc(100vw-6rem))] flex-wrap items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]",
                   isDark ? "bg-rose-400/12 text-rose-100" : "bg-rose-50 text-rose-800",
                 )}
                 title={recordingGroupNoticeText ? recordingSettingsLockedTitle : undefined}
               >
-                <span className="shrink-0 font-semibold">{recordingTargetText}</span>
+                <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">
+                  {recordingTargetText}
+                </span>
                 {liveTranscriptSummaryPreview ? (
-                  <span className="min-w-0 truncate opacity-80">
+                  <span className="min-w-0 flex-1 truncate opacity-80">
                     {liveTranscriptSummaryPreview}
                   </span>
                 ) : null}
@@ -6318,6 +6335,9 @@ export function VoiceSecretaryComposerControl({
             ) : composerActivity === "promptWaiting" || composerActivity === "promptReady" ? (
               <div
                 data-voice-composer-activity={composerActivity}
+                data-status-tone={
+                  composerActivity === "promptReady" && !promptNeedsReview ? "ok" : "warning"
+                }
                 className={classNames(
                   "inline-flex max-w-[min(34rem,calc(100vw-6rem))] items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]",
                   composerActivity === "promptReady" && !promptNeedsReview
@@ -6381,6 +6401,7 @@ export function VoiceSecretaryComposerControl({
             ) : composerActivity === "ask" && pendingAskFeedback ? (
               <div
                 data-voice-composer-activity="ask"
+                data-status-tone={voiceAskStatusTone(pendingAskFeedbackStatus) || "neutral"}
                 className={classNames(
                   "inline-flex max-w-[min(34rem,calc(100vw-6rem))] items-center rounded-full pl-2.5 pr-1 text-left text-[11px]",
                   askFeedbackStatusClassName(pendingAskFeedbackStatus),
@@ -6424,6 +6445,7 @@ export function VoiceSecretaryComposerControl({
             ) : composerActivity === "transcript" ? (
               <div
                 data-voice-composer-activity="transcript"
+                data-status-tone="info"
                 className={classNames(
                   "inline-flex max-w-[min(40rem,calc(100vw-6rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px]",
                   isDark ? "bg-cyan-400/12 text-cyan-100" : "bg-cyan-50 text-cyan-900",

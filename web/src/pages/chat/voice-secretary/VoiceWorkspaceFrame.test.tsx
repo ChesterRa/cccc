@@ -1,0 +1,82 @@
+// @vitest-environment happy-dom
+
+import { act, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { setUiStylePrefs } from "../../../utils/uiStyle";
+import { VoiceWorkspaceFrame } from "./VoiceWorkspaceFrame";
+
+const beam = vi.hoisted(() => ({
+  current: null as null | {
+    active: boolean;
+    processing: boolean;
+    strength?: number;
+    coreLight?: number;
+    onLevel?: (level: number) => void;
+  },
+}));
+
+vi.mock("voice-glow", () => ({
+  VoiceBeam: (props: NonNullable<typeof beam.current> & { children: ReactNode }) => {
+    beam.current = props;
+    return <div>{props.children}</div>;
+  },
+}));
+
+describe("VoiceWorkspaceFrame", () => {
+  let host: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  const level = () => 0.5;
+  const frame = (recording: boolean, processing: boolean) => (
+    <VoiceWorkspaceFrame recording={recording} processing={processing} level={level} isDark={false}>
+      <p>Recording status</p>
+    </VoiceWorkspaceFrame>
+  );
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    setUiStylePrefs({ style: "lcd" });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    beam.current = null;
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    setUiStylePrefs({ style: "classic" });
+  });
+
+  it("shows the existing smoothed audio level in LCD and keeps the meter out of the accessibility tree", async () => {
+    await act(async () => root.render(frame(true, false)));
+    const meter = host.querySelector<HTMLElement>('[data-voice-workspace-meter="recording"]');
+    expect(meter?.getAttribute("aria-hidden")).toBe("true");
+    expect(beam.current?.active).toBe(true);
+    expect(beam.current?.strength).toBe(0);
+    expect(beam.current?.coreLight).toBe(0);
+    expect(beam.current?.onLevel).toBeTypeOf("function");
+    beam.current?.onLevel?.(0.75);
+    expect(meter?.firstElementChild?.getAttribute("style")).toContain("scaleX(0.75)");
+    beam.current?.onLevel?.(2);
+    expect(meter?.firstElementChild?.getAttribute("style")).toContain("scaleX(1)");
+    expect(host.textContent).toContain("Recording status");
+  });
+
+  it("stops the LCD meter during analysis and restores the classic beam on style change", async () => {
+    await act(async () => root.render(frame(true, false)));
+    await act(async () => root.render(frame(false, true)));
+    expect(host.querySelector('[data-voice-workspace-meter="recording"]')).toBeNull();
+    expect(host.querySelector('[data-voice-workspace-meter="processing"]')).not.toBeNull();
+    expect(beam.current?.onLevel).toBeUndefined();
+    expect(beam.current?.active).toBe(true);
+    expect(beam.current?.processing).toBe(true);
+
+    await act(async () => setUiStylePrefs({ style: "classic" }));
+    expect(host.querySelector("[data-voice-workspace-meter]")).toBeNull();
+    expect(beam.current?.active).toBe(true);
+    expect(beam.current?.strength).toBeUndefined();
+    expect(beam.current?.coreLight).toBeUndefined();
+    expect(beam.current?.onLevel).toBeUndefined();
+  });
+});

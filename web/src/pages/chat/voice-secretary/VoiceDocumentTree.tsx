@@ -171,6 +171,7 @@ export function VoiceDocumentTree(props: Props) {
       <DragOverlay dropAnimation={null}>
         {dragging ? (
           <div
+            data-voice-document-drag-overlay
             className={classNames(
               "flex max-w-56 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm font-medium shadow-lg",
               ctx.isDark

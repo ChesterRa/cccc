@@ -29,6 +29,7 @@ export function VoiceFinalTranscriptRows({
         return (
           <div
             key={item.id}
+            data-voice-transcript-row
             className={classNames(
               "rounded-lg border px-2 py-1.5",
               isDark ? "border-white/10 bg-white/[0.04]" : "border-black/[0.08] bg-white",
@@ -36,6 +37,7 @@ export function VoiceFinalTranscriptRows({
           >
             {speakerLabel ? (
               <div
+                data-voice-transcript-speaker
                 className={classNames(
                   "mb-0.5 text-xs font-semibold",
                   isDark ? "text-sky-100" : "text-sky-800",
@@ -46,6 +48,7 @@ export function VoiceFinalTranscriptRows({
             ) : null}
             {itemText ? (
               <div
+                data-voice-transcript-text
                 className={classNames(
                   "whitespace-pre-wrap break-words text-sm leading-5",
                   isDark ? "text-slate-100" : "text-gray-900",
@@ -55,14 +58,18 @@ export function VoiceFinalTranscriptRows({
               </div>
             ) : null}
             {sourceLabel || sourceDetail || timeLabel ? (
-              <div className="mt-1 flex min-w-0 items-center gap-2">
+              <div data-voice-transcript-meta className="mt-1 flex min-w-0 items-center gap-2">
                 {sourceDetail ? (
-                  <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-text-muted)]">
+                  <span
+                    data-voice-transcript-detail
+                    className="min-w-0 flex-1 truncate text-xs text-[var(--color-text-muted)]"
+                  >
                     {sourceDetail}
                   </span>
                 ) : null}
                 {sourceLabel ? (
                   <span
+                    data-voice-transcript-source
                     className={classNames(
                       "ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-xs font-semibold",
                       isDark

@@ -43,7 +43,11 @@ export function SecretaryTaskRow({
         </p>
       )}
       {task.projection_error && (
-        <p role="alert" className="break-words text-rose-600 dark:text-rose-300">
+        <p
+          role="alert"
+          data-status-tone="error"
+          className="break-words text-rose-600 dark:text-rose-300"
+        >
           {task.projection_error}
         </p>
       )}

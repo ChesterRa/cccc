@@ -1277,7 +1277,8 @@
 /* No round corners in the LCD grid. The radius tokens are zero; this also reaches
    literal radii (`rounded`, `rounded-full`) and product classes that hard-code theirs.
    A busy spinner keeps its ring: it is still while animations are off, and a square
-   with one open side would read as a glyph. */
+   with one open side would read as a glyph. A record mark keeps its dot as well
+   (lcdVoiceSecretary.css): a square reads as stop. */
 :root[data-ui-style="lcd"] :is([data-lcd-scope], [data-lcd-scope] *):not(.animate-spin) {
   border-radius: 0;
 }

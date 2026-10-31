@@ -67,9 +67,12 @@ export function VoicePanelInputBar({
         >
           <span
             aria-hidden="true"
+            data-status-dot="active"
             className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-rose-500"
           />
-          <span className="shrink-0 font-semibold">{recordingTargetLabel}</span>
+          <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">
+            {recordingTargetLabel}
+          </span>
           {liveSnippet ? (
             <span className="min-w-0 flex-1 truncate opacity-80" title={liveSnippet}>
               {liveSnippet}
@@ -80,11 +83,18 @@ export function VoicePanelInputBar({
         </div>
       ) : null}
       {notice ? (
-        <p id={noticeId} className="mb-2 text-xs text-amber-700 dark:text-amber-300">
+        <p
+          id={noticeId}
+          data-status-tone="warning"
+          className="mb-2 text-xs text-amber-700 dark:text-amber-300"
+        >
           {notice}
         </p>
       ) : null}
-      <div className="rounded-xl border border-[var(--glass-panel-border)] bg-[var(--color-bg-primary)] shadow-sm transition-colors focus-within:border-[var(--color-border-focus)]">
+      <div
+        data-voice-input-field
+        className="rounded-xl border border-[var(--glass-panel-border)] bg-[var(--color-bg-primary)] shadow-sm transition-colors focus-within:border-[var(--color-border-focus)]"
+      >
         <textarea
           data-voice-instruction-input
           value={value}
@@ -100,12 +110,13 @@ export function VoicePanelInputBar({
           <button
             type="button"
             data-voice-record
+            data-lcd-key
             aria-pressed={active}
             disabled={recordingStarting || (!active && recordDisabled)}
             title={recordTitle}
             onClick={onToggleRecord}
             className={classNames(
-              "inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]",
+              "inline-flex min-h-9 min-w-0 max-w-full items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]",
               active
                 ? isDark
                   ? "bg-rose-500/20 text-rose-100 hover:bg-rose-500/28"
@@ -114,9 +125,13 @@ export function VoicePanelInputBar({
             )}
           >
             {active ? (
-              <StopIcon size={13} aria-hidden="true" />
+              <StopIcon size={13} aria-hidden="true" className="shrink-0" />
             ) : (
-              <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full bg-rose-600" />
+              <span
+                aria-hidden="true"
+                data-voice-record-dot
+                className="h-2.5 w-2.5 shrink-0 rounded-full bg-rose-600"
+              />
             )}
             {active ? stopLabel : recordLabel}
           </button>
@@ -126,6 +141,7 @@ export function VoicePanelInputBar({
                 key={action.key}
                 type="button"
                 data-voice-input-action={action.key}
+                data-lcd-key={action.primary ? undefined : ""}
                 disabled={action.disabled}
                 onClick={action.onClick}
                 className={classNames(

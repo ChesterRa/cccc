@@ -66,6 +66,7 @@ export function VoiceDocumentRow({
         <div
           ref={drag?.ref}
           {...drag?.props}
+          data-voice-document-row={viewing ? "selected" : "normal"}
           role="button"
           tabIndex={0}
           onClick={select}
