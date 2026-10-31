@@ -70,6 +70,12 @@ it("switches the single send label without sending and preserves permission gate
     expect(host.textContent).toBe("Send + Reply");
     await act(async () => root.render(<Harness busy />));
     expect(Array.from(host.querySelectorAll("button")).every((b) => b.disabled)).toBe(true);
+    // While sending, the key's name and tip say so at once.
+    const primary = host.querySelector<HTMLButtonElement>("[data-composer-send-primary]")!;
+    expect(primary.getAttribute("aria-label")).toBe("sending");
+    expect(primary.getAttribute("title")).toBe("sending");
+    await act(async () => root.render(<Harness />));
+    expect(primary.getAttribute("title")).toBe("Send (⌘+Enter)");
   } finally {
     await act(async () => root.unmount());
     host.remove();

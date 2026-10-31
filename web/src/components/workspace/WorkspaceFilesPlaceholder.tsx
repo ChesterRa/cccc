@@ -1,11 +1,14 @@
 import { FolderOpen, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui/button";
+import { LcdSpinner } from "../LcdSpinner";
+import { useLcdStyle } from "../../utils/uiStyle";
 
 type Props = { loading: boolean; showIgnored: boolean; onShowIgnored: () => void };
 
 export function WorkspaceFilesPlaceholder({ loading, showIgnored, onShowIgnored }: Props) {
   const { t } = useTranslation("chat");
+  const lcd = useLcdStyle();
   return (
     <div
       role="status"
@@ -13,10 +16,14 @@ export function WorkspaceFilesPlaceholder({ loading, showIgnored, onShowIgnored 
     >
       {loading ? (
         <>
-          <Loader2
-            aria-hidden="true"
-            className="mb-3 h-5 w-5 animate-spin text-[var(--color-text-tertiary)] motion-reduce:animate-none"
-          />
+          {lcd ? (
+            <LcdSpinner className="mb-3 h-5 w-5 text-[var(--color-text-tertiary)]" />
+          ) : (
+            <Loader2
+              aria-hidden="true"
+              className="mb-3 h-5 w-5 animate-spin text-[var(--color-text-tertiary)] motion-reduce:animate-none"
+            />
+          )}
           <p className="text-[13px] text-[var(--color-text-secondary)]">
             {t("workspaceLoading", { defaultValue: "Loading…" })}
           </p>

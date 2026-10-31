@@ -102,11 +102,12 @@
   flex-shrink: 0;
 }
 
-/* A narrow busy button has room for the spinner or the mode, not both. */
+/* A narrow busy button has room for the spinner or the mode, not both. The mode stays
+   until the spinner shows, after 250 ms, so a quick send changes nothing. */
 @container composer (max-width: 599px) {
   :root[data-ui-style="lcd"]
     [data-lcd-scope]
-    [data-composer-send-primary][data-busy]
+    [data-composer-send-primary][data-busy]:has(.lcd-spinner[data-shown])
     > [data-composer-send-label] {
     display: none;
   }

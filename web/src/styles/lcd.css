@@ -1011,27 +1011,29 @@
   border-color: var(--lcd-ink);
 }
 
-/* Members: the runtime tile alone, in one line. The tile shows the state; the
-   tooltip (hover or keyboard focus) and the accessible name carry the words. */
+/* Members: the runtime tile alone, in one centred line above the composer. The tile
+   shows the state; the tooltip (hover or keyboard focus) and the accessible name carry
+   the words. */
 :root[data-ui-style="lcd"] .lcd-members {
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  align-items: flex-start;
+  justify-content: center;
   gap: 0.25rem;
   width: 100%;
   min-width: 0;
 }
 
 /* Tiles that do not fit wrap onto a clipped second line; RuntimeDock reads that
-   and offers them behind "+N". */
+   and offers them behind "+N". The row holds the keys and the open line under them;
+   the row gap starts a wrapped line below the clipped box. */
 :root[data-ui-style="lcd"] .lcd-members-row {
   display: flex;
   flex: 0 1 auto;
   flex-wrap: wrap;
   align-content: flex-start;
-  justify-content: flex-end;
-  gap: 0 0.25rem;
-  height: 2rem;
+  justify-content: center;
+  gap: 0.375rem 0.25rem;
+  height: calc(2.5rem + 0.375rem);
   min-width: 0;
   overflow: hidden;
 }
@@ -1062,14 +1064,42 @@
   background: var(--lcd-sel-soft);
 }
 
-/* The member whose terminal or live work is open: underlined, like a chosen tab.
-   A header tile fills its key, so there the line is drawn on the tile. */
+/* In the row a key is larger than its drawing, so the hover shade keeps to the 2rem box
+   (under a member's tile it stays hidden, as before; "+N" spans its own width). */
+:root[data-ui-style="lcd"] .lcd-member:not([data-listed]):hover {
+  background: linear-gradient(var(--lcd-sel-soft), var(--lcd-sel-soft)) center / 2rem 2rem no-repeat;
+}
+
+:root[data-ui-style="lcd"] .lcd-member-more:hover {
+  background-size: 100% 2rem;
+}
+
+/* A member key is 2.5rem with its 2rem tile in the middle, leaving room for the state
+   lines drawn outside the tile (lcdMotion.css). */
+:root[data-ui-style="lcd"] .lcd-member:not([data-listed]) {
+  position: relative;
+  min-width: 2.5rem;
+  height: 2.5rem;
+}
+
+/* The member whose terminal or live work is open: underlined, like a chosen tab. In
+   the row the line runs under the key, clear of the busy ring. */
 :root[data-ui-style="lcd"] .lcd-member[data-active] {
   box-shadow: inset 0 -2px 0 var(--lcd-ink);
 }
 
-:root[data-ui-style="lcd"] .lcd-member[data-active]:not([data-listed]) .lcd-tile {
-  border-bottom: 3px solid var(--lcd-ink);
+:root[data-ui-style="lcd"] .lcd-member[data-active]:not([data-listed]) {
+  box-shadow: none;
+}
+
+:root[data-ui-style="lcd"] .lcd-member[data-active]:not([data-listed])::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -0.3125rem;
+  left: 0;
+  height: 2px;
+  background: var(--lcd-ink);
 }
 
 /* The tile covers the key's hover background, so its thin line darkens instead;
@@ -1113,11 +1143,11 @@
   line-height: 0.625rem;
 }
 
-/* In the "+N" list the name sits beside the tile. */
+/* In the "+N" list the name sits beside the tile; the row has room for the ring. */
 :root[data-ui-style="lcd"] .lcd-member[data-listed] {
   justify-content: flex-start;
   width: 100%;
-  height: 2rem;
+  height: 2.5rem;
   padding: 0 0.75ch;
 }
 
@@ -1153,14 +1183,16 @@
 }
 
 /* Touch screens give every button a 44px square target (index.css). The member keys
-   keep it, so the row grows to hold them; the tiles keep their key-sized drawing. */
+   keep it, and at larger text sizes grow with the ring instead; the row grows to hold
+   them, and the tiles keep their 2rem drawing. */
 @media (pointer: coarse) {
   :root[data-ui-style="lcd"] .lcd-members-row {
-    height: 44px;
+    height: calc(max(2.5rem, 44px) + 0.375rem);
   }
 
   :root[data-ui-style="lcd"] .lcd-member:not([data-listed]) {
-    min-width: 44px;
+    min-width: max(2.5rem, 44px);
+    height: max(2.5rem, 44px);
   }
 }
 
@@ -1408,41 +1440,19 @@
 }
 
 /* Phones keep the classic dock's place and order; the avatar tile replaces the ring. */
+/* Tailwind's scale utilities set the separate `scale` property, which `transform: none`
+   does not clear; the LCD keys keep their size when opened, hovered or pressed. */
 :root[data-ui-style="lcd"] [data-lcd-scope] :is([data-lcd-dock-button], [data-lcd-dock-add]) {
   border-radius: 0;
   --tw-shadow: 0 0 #0000;
   transform: none;
+  scale: none;
   transition: none;
 }
 
-/* Tile lines, shared by header tiles and the phone dock: thin when idle, solid
-   when busy, double when it needs attention; stopped is dimmed, as in the classic
-   dock. On the phone dock the rings sit outside the tile so the logo keeps its
-   size; a header tile fills its key, so its lines are drawn inside. */
-:root[data-ui-style="lcd"] [data-lcd-dock-button][data-tone="active"] .lcd-tile {
-  border-color: var(--lcd-ink);
-  box-shadow: 0 0 0 1px var(--lcd-ink);
-}
-
-:root[data-ui-style="lcd"] [data-lcd-dock-button][data-tone="attention"] .lcd-tile {
-  border-color: var(--lcd-ink-strong);
-  box-shadow:
-    0 0 0 1px var(--lcd-bg),
-    0 0 0 2px var(--lcd-ink-strong);
-}
-
-:root[data-ui-style="lcd"] .lcd-member[data-tone="active"] .lcd-tile {
-  border-color: var(--lcd-ink);
-  outline: 1px solid var(--lcd-ink);
-  outline-offset: -2px;
-}
-
-:root[data-ui-style="lcd"] .lcd-member[data-tone="attention"] .lcd-tile {
-  border-color: var(--lcd-ink-strong);
-  outline: 1px solid var(--lcd-ink-strong);
-  outline-offset: -3px;
-}
-
+/* Tile states, shared by header tiles and the phone dock: a thin plate edge when idle,
+   dimmed when stopped, as in the classic dock. Busy and attention lines sit outside the
+   tile, with the motion rules (lcdMotion.css). */
 :root[data-ui-style="lcd"] :is(.lcd-member, [data-lcd-dock-button])[data-tone="stopped"] .lcd-tile {
   filter: grayscale(1);
   opacity: 0.45;
@@ -1545,6 +1555,7 @@
 }
 
 :root[data-ui-style="lcd"] .lcd-ask-answer {
+  container-type: inline-size;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
@@ -1561,6 +1572,29 @@
 
 :root[data-ui-style="lcd"] .lcd-ask-answer > button {
   flex: 0 1 auto;
+}
+
+/* The send key shows its words; its send mark is for a narrow answer box only. */
+:root[data-ui-style="lcd"] [data-ask-send-mark] {
+  display: none;
+}
+
+/* Beside a narrow answer box (a phone) the words would take a third of the row, so
+   the key keeps only the send mark, square; the words stay its name and tooltip. */
+@container (max-width: 30rem) {
+  :root[data-ui-style="lcd"] .lcd-ask-answer > [data-ask-send] {
+    flex: 0 0 auto;
+    width: 2rem;
+    padding: 0;
+  }
+
+  :root[data-ui-style="lcd"] .lcd-ask-answer [data-ask-send-label] {
+    display: none;
+  }
+
+  :root[data-ui-style="lcd"] .lcd-ask-answer [data-ask-send-mark] {
+    display: inline-flex;
+  }
 }
 
 /* With a mouse the rows and the action can be compact; touch keeps 44px targets. */

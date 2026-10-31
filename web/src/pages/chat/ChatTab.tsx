@@ -34,7 +34,6 @@ import { NotificationPrompt } from "../../features/pushNotifications/Notificatio
 import { useNotificationPromptOffer } from "../../features/pushNotifications/useNotificationPromptOffer";
 import { classNames } from "../../utils/classNames";
 import { useLcdStyle } from "../../utils/uiStyle";
-import { createPortal } from "react-dom";
 import { ChatComposer } from "./ChatComposer";
 import { ChatFilterTabs } from "./ChatFilterTabs";
 import { GroupWorkArea, type RuntimeActorRenderer } from "./GroupWorkArea";
@@ -162,7 +161,6 @@ export interface ChatTabProps {
   activeRuntimeActorId?: string;
   renderRuntimeActor: RuntimeActorRenderer;
   workControlsHost?: HTMLElement | null;
-  memberStatusHost?: HTMLElement | null;
   sidePanelControlsHost?: HTMLElement | null;
 
   // Recipient actors for cross-group messaging
@@ -216,7 +214,6 @@ export function ChatTab({
   activeRuntimeActorId,
   renderRuntimeActor,
   workControlsHost = null,
-  memberStatusHost = null,
   sidePanelControlsHost = null,
   recipientActors,
   recipientActorsBusy,
@@ -1129,12 +1126,9 @@ export function ChatTab({
                             !chatWindowProps &&
                             runtimeActors.length > 0 &&
                             !hideDockForKeyboard &&
-                            !reading.hidden
-                              ? isSmallScreen
-                                ? "pb-1"
-                                : lcd
-                                  ? "pb-[calc(4rem_-_10px)]"
-                                  : undefined
+                            !reading.hidden &&
+                            isSmallScreen
+                              ? "pb-1"
                               : undefined
                           }
                           scrollRef={scrollRef}
@@ -1149,7 +1143,13 @@ export function ChatTab({
                           onOpenSource={openSourceMessage}
                           onOpenPresentationRef={openPresentationRef}
                           onOpenTaskRef={openTaskRef}
-                          showScrollButton={showScrollButton && !(pendingActive && isSmallScreen)}
+                          // The jump key floats over the list's corner; while an answer is being
+                          // written it would cover that card's send key, so it waits.
+                          showScrollButton={
+                            showScrollButton &&
+                            !(pendingActive && isSmallScreen) &&
+                            inlineReplyEditor === null
+                          }
                           onScrollButtonClick={handleScrollButtonClick}
                           chatUnreadCount={chatUnreadCount}
                           sendScrollRequest={sendScrollRequest}
@@ -1177,24 +1177,35 @@ export function ChatTab({
                   )}
 
                   {!chatWindowProps && runtimeActors.length > 0 ? (
-                    lcd && !isSmallScreen && memberStatusHost && workView === "messages" ? (
-                      // LCD preview: members sit in the header instead of over the messages.
-                      createPortal(
-                        <RuntimeDock
-                          placement="header"
-                          groupId={selectedGroupId}
-                          runtimeActors={runtimeActors}
-                          liveWorkCards={liveWorkCards}
-                          activeRuntimeActorId={activeRuntimeActorId}
-                          isDark={isDark}
-                          isSmallScreen={isSmallScreen}
-                          readOnly={readOnly}
-                          actorStatusProvisional={selectedGroupActorStatusProvisional}
-                          onAddAgent={!readOnly ? addAgent : undefined}
-                          onOpenRuntimeActor={onOpenRuntimeActor}
-                        />,
-                        memberStatusHost,
-                      )
+                    lcd && !isSmallScreen && workView === "messages" ? (
+                      // LCD preview: members in one centred row above the composer, in the
+                      // reading column, in the page flow so they never cover a message.
+                      <div
+                        className={classNames(
+                          "shrink-0 px-2 sm:px-4",
+                          // A touch screen's keyboard leaves little height; the input needs it.
+                          hideDockForKeyboard && "hidden",
+                        )}
+                        data-lcd-members-band
+                        data-lcd-scope
+                      >
+                        <div className="chat-reading-width">
+                          <RuntimeDock
+                            placement="row"
+                            motionVisible={!hideDockForKeyboard}
+                            groupId={selectedGroupId}
+                            runtimeActors={runtimeActors}
+                            liveWorkCards={liveWorkCards}
+                            activeRuntimeActorId={activeRuntimeActorId}
+                            isDark={isDark}
+                            isSmallScreen={isSmallScreen}
+                            readOnly={readOnly}
+                            actorStatusProvisional={selectedGroupActorStatusProvisional}
+                            onAddAgent={!readOnly ? addAgent : undefined}
+                            onOpenRuntimeActor={onOpenRuntimeActor}
+                          />
+                        </div>
+                      </div>
                     ) : (
                       <div
                         className={classNames(
@@ -1205,7 +1216,10 @@ export function ChatTab({
                         data-runtime-dock-keyboard-hidden={hideDockForKeyboard || undefined}
                         data-lcd-scope
                       >
+                        {/* Hidden by display, its rings restart on return; this lets them
+                            take the shared phase again instead of their old offsets. */}
                         <RuntimeDock
+                          motionVisible={!(hideDockForKeyboard || reading.hidden)}
                           groupId={selectedGroupId}
                           runtimeActors={runtimeActors}
                           liveWorkCards={liveWorkCards}

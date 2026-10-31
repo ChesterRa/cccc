@@ -654,6 +654,21 @@ describe("secretary task status line", () => {
     host.remove();
   });
 
+  it("marks only executing tasks as moving, not queued or attention states", async () => {
+    for (const [phase, moving] of [
+      ["queued", false],
+      ["running", true],
+      ["failed", false],
+    ] as const) {
+      mocks.fetch.mockResolvedValue(response([{ ...task, phase }]));
+      await act(async () =>
+        root.render(<SecretaryTasks groupId={`group-${phase}`} active isDark={false} />),
+      );
+      const dot = host.querySelector("[data-secretary-tasks] [data-status-dot]");
+      expect(dot?.getAttribute("data-status-motion") === "working").toBe(moving);
+    }
+  });
+
   it("keeps the line to the requested kinds and shows the next problem without expanding", async () => {
     mocks.fetch.mockResolvedValue(
       response([

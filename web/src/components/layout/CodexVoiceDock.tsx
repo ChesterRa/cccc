@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { VoiceStatusDot } from "../../features/codexVoice/CodexVoiceStatus";
+import { voicePhaseHasLocalActivity } from "../../features/codexVoice/codexVoicePhase";
 import {
   codexVoiceCallStatus,
   codexVoiceDisplayIdentity,
@@ -43,6 +44,11 @@ export function CodexVoiceDock({
   );
   const startDisabled = controller.checking || controller.isStarting;
   const identityTitle = [providerLabel, identity.voice, statusLabel].filter(Boolean).join(" · ");
+  const working = voicePhaseHasLocalActivity(controller.phase, {
+    microphoneMuted: controller.microphoneMuted,
+    externalCall: controller.externalCall,
+    playbackBlocked: controller.playbackBlocked,
+  });
 
   const callControl = controller.isEngaged ? (
     <IconButton
@@ -79,6 +85,7 @@ export function CodexVoiceDock({
           onOpen={onOpen}
           attention={attention || callStatus.blocked}
           active={controller.isEngaged}
+          working={working}
           status={statusLabel}
           provider={providerLabel}
           voice={identity.voice}
@@ -109,6 +116,7 @@ export function CodexVoiceDock({
             <VoiceStatusDot
               active={controller.isEngaged}
               attention={attention || callStatus.blocked}
+              working={working}
             />
           </span>
         </IconButton>
@@ -124,6 +132,7 @@ export function CodexVoiceDock({
           onOpen={onOpen}
           attention={attention || callStatus.blocked}
           active={controller.isEngaged}
+          working={working}
           status={statusLabel}
           provider={providerLabel}
           voice={identity.voice}
@@ -139,6 +148,7 @@ function ConsoleButton({
   onOpen,
   attention,
   active,
+  working,
   status,
   provider,
   voice,
@@ -147,6 +157,7 @@ function ConsoleButton({
   onOpen: () => void;
   attention: boolean;
   active: boolean;
+  working: boolean;
   status: string;
   provider: string;
   voice: string;
@@ -163,7 +174,7 @@ function ConsoleButton({
       <span className="relative flex h-8 w-8 flex-none items-center justify-center rounded-xl bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
         {attention ? <AlertIcon size={17} /> : <HeadphonesIcon size={17} />}
         <span className="absolute bottom-0.5 right-0.5">
-          <VoiceStatusDot active={active} attention={attention} />
+          <VoiceStatusDot active={active} attention={attention} working={working} />
         </span>
       </span>
       <span className="min-w-0 flex-1">

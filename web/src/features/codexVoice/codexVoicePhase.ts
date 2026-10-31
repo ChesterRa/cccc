@@ -4,6 +4,17 @@ import type { CodexVoicePhase } from "./codexVoiceSession";
 // look reads the same state from data-status-dot.
 export type VoiceDotState = "active" | "attention" | "failed" | "inactive";
 
+/** A connected or external call alone does not establish activity on this page. */
+export function voicePhaseHasLocalActivity(
+  phase: CodexVoicePhase,
+  options: { microphoneMuted: boolean; externalCall: boolean; playbackBlocked: boolean },
+): boolean {
+  if (options.externalCall) return false;
+  if (phase === "listening") return !options.microphoneMuted;
+  if (phase === "speaking") return !options.playbackBlocked;
+  return ["responding", "analysing"].includes(phase);
+}
+
 const PHASE_DOT_CLASS: Record<VoiceDotState, string> = {
   active: "bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.12)]",
   attention: "animate-pulse bg-amber-400",

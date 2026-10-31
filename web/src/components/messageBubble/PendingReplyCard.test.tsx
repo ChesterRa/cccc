@@ -267,3 +267,72 @@ it("names only the chosen letter when LCD already lists the options above", asyn
     await act(async () => setUiStylePrefs({ style: "classic" }));
   }
 });
+
+it("grows the answer box with its text and fits it again when the box gets narrower", async () => {
+  const observers: Array<() => void> = [];
+  class ResizeObserverStub {
+    constructor(callback: () => void) {
+      observers.push(callback);
+    }
+    observe() {}
+    disconnect() {}
+  }
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  });
+  let natural = 60;
+  let width = 300;
+  const scrollHeight = vi
+    .spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+    .mockImplementation(() => natural);
+  const clientWidth = vi
+    .spyOn(HTMLTextAreaElement.prototype, "clientWidth", "get")
+    .mockImplementation(() => width);
+  try {
+    await render({ question: { options: [] }, state: "pending", onSubmit: vi.fn() });
+    const box = host.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(box.style.height).toBe("60px");
+    natural = 140;
+    await changeText("a long answer that wraps onto several lines");
+    expect(box.style.height).toBe("140px");
+    // The same text wraps onto more lines in a narrower box (a turned phone).
+    natural = 200;
+    width = 240;
+    await act(async () => observers.forEach((notify) => notify()));
+    expect(box.style.height).toBe("200px");
+    // Its own height change does not count as a width change.
+    natural = 260;
+    await act(async () => observers.forEach((notify) => notify()));
+    expect(box.style.height).toBe("200px");
+  } finally {
+    scrollHeight.mockRestore();
+    clientWidth.mockRestore();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("keeps the LCD send key's words as its name and its own icon while sending starts", async () => {
+  vi.useFakeTimers();
+  try {
+    await act(async () => setUiStylePrefs({ style: "lcd" }));
+    await render({ question: { options: [] }, state: "pending", onSubmit: vi.fn() });
+    const key = () => host.querySelector<HTMLButtonElement>("[data-ask-send]")!;
+    expect(key().getAttribute("aria-label")).toBe("pendingReply.send");
+    expect(key().getAttribute("title")).toBe("pendingReply.send");
+    expect(key().querySelector("[data-ask-send-label]")?.textContent).toBe("pendingReply.send");
+    expect(key().querySelector("[data-ask-send-mark] svg")).not.toBeNull();
+
+    await render({ question: { options: [] }, state: "pending", sending: true, onSubmit: vi.fn() });
+    expect(key().getAttribute("aria-label")).toBe("pendingReply.sending");
+    expect(key().disabled).toBe(true);
+    // A quick send never blinks to an empty key: the send mark stays for 250 ms.
+    expect(key().querySelector("[data-ask-send-mark] .lcd-spinner")).toBeNull();
+    await act(async () => vi.advanceTimersByTime(250));
+    expect(key().querySelector("[data-ask-send-mark] .lcd-spinner[data-shown]")).not.toBeNull();
+  } finally {
+    vi.useRealTimers();
+    await act(async () => setUiStylePrefs({ style: "classic" }));
+  }
+});

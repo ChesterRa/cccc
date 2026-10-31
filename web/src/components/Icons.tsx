@@ -196,6 +196,7 @@ export const MessageSquareTextIcon = createIcon(MessageSquareText, 1.5, "message
 export const BellIcon = createIcon(Bell);
 export const SparklesIcon = createIcon(Sparkles, 1.5, "sparkles");
 export const ArrowDownIcon = createIcon(ArrowDown, 2);
+export const ScrollLatestIcon = createIcon(ArrowDown, 2, "arrow-down");
 export const ChevronLeftIcon = createIcon(ChevronLeft, 1.5, "chevron-left");
 export const ChevronRightIcon = createIcon(ChevronRight, 1.5, "chevron-right");
 export const GlobeIcon = createIcon(Globe);

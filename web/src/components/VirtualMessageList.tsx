@@ -1,7 +1,8 @@
 import { memo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
-import { ArrowDownIcon } from "./Icons";
+import { ScrollLatestIcon } from "./Icons";
+import { LcdSpinner } from "./LcdSpinner";
 import { getChatTailMutationSnapshot, getChatTailSnapshot } from "../utils/chatAutoFollow";
 import {
   CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
@@ -25,7 +26,7 @@ import {
   useTopHistoryLoadCoordinator,
 } from "./virtualMessageListPrependCompensation";
 import { classNames } from "../utils/classNames";
-import { subscribeUiStylePrefs } from "../utils/uiStyle";
+import { subscribeUiStylePrefs, useLcdStyle } from "../utils/uiStyle";
 import { getNonVirtualMessageListTopMargin } from "./virtualMessageListLayout";
 import { useVirtualMessageMetadata } from "./virtualMessageList/useVirtualMessageMetadata";
 import type { VirtualMessageListProps } from "./virtualMessageList/types";
@@ -103,6 +104,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   resetKey,
 }: VirtualMessageListInnerProps) {
   const { t } = useTranslation("chat");
+  const lcd = useLcdStyle();
   const parentRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const onScrollSnapshotRef = useRef(onScrollSnapshot);
@@ -998,6 +1000,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         onTouchStart={cancelForcedFollowForUserScroll}
         onScroll={displayMessages.length > 0 ? handleScroll : undefined}
         role="log"
+        tabIndex={-1}
         aria-label="Chat messages"
       >
         {displayMessages.length === 0 ? (
@@ -1017,7 +1020,11 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               >
                 {isLoadingHistory ? (
                   <div className="glass-panel flex items-center gap-2 rounded-full px-3 py-1.5 text-[var(--color-text-secondary)] shadow-md">
-                    <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
+                    {lcd ? (
+                      <LcdSpinner className="h-4 w-4" />
+                    ) : (
+                      <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
+                    )}
                     <span className="text-xs">
                       {t("loadingHistory", { defaultValue: "Loading..." })}
                     </span>
@@ -1076,21 +1083,27 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         )}
       </div>
 
-      {/* This action occupies its own row, so it cannot cover message text or controls. */}
+      {/* Float over the log so returning to the latest message takes no reading height. */}
       {!readOnly && showScrollButton && (
         <button
           type="button"
           data-scroll-latest
-          onClick={() => {
+          onClick={(event) => {
+            // The button disappears after activation. Keep keyboard and assistive
+            // technology users in the log instead of dropping focus onto the body.
+            // Focus first: entering the log cancels any earlier forced follow.
+            if (event.detail === 0 && document.activeElement === event.currentTarget) {
+              parentRef.current?.focus({ preventScroll: true });
+            }
             cancelPendingReplyFollow();
             anchorRestoration.cancel();
             scrollToBottom({ force: true });
             onScrollButtonClick();
           }}
           aria-label={unreadLabel ? `${scrollLatestLabel} · ${unreadLabel}` : scrollLatestLabel}
+          title={unreadLabel ? `${scrollLatestLabel} · ${unreadLabel}` : scrollLatestLabel}
         >
-          <ArrowDownIcon className="h-4 w-4" aria-hidden="true" />
-          <span>{scrollLatestLabel}</span>
+          <ScrollLatestIcon className="h-4 w-4" aria-hidden="true" />
           {unreadLabel ? (
             <span data-scroll-latest-count title={unreadLabel} aria-hidden="true">
               {unreadDisplayCount}

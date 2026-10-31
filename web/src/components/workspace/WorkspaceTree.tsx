@@ -11,7 +11,9 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { LcdIcon } from "../Icons";
+import { LcdSpinner } from "../LcdSpinner";
 import { classNames } from "../../utils/classNames";
+import { useLcdStyle } from "../../utils/uiStyle";
 import type { WorkspaceEntry, WorkspaceGitStatus } from "../../types";
 import type { TreeNode } from "./workspaceTreeModel";
 
@@ -68,6 +70,7 @@ function WorkspaceTreeRows({
   onReveal,
 }: Props) {
   const { t } = useTranslation("chat");
+  const lcd = useLcdStyle();
   const treeRef = useRef<HTMLDivElement>(null);
   const dragFromRow = useRef(true);
   const [focusedKey, setFocusedKey] = useState("");
@@ -206,7 +209,17 @@ function WorkspaceTreeRows({
               <span className="flex w-4 shrink-0 items-center justify-center opacity-70">
                 {entry.is_dir ? (
                   node.loading ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
+                    lcd ? (
+                      <LcdSpinner className="h-3 w-3">
+                        <LcdIcon
+                          icon={ChevronRight}
+                          glyph="chevron-right"
+                          className="h-3.5 w-3.5"
+                        />
+                      </LcdSpinner>
+                    ) : (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    )
                   ) : node.expanded ? (
                     <LcdIcon icon={ChevronDown} glyph="chevron-down" className="h-3.5 w-3.5" />
                   ) : (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -10,6 +10,7 @@ import {
 import type { HeadlessPreviewSession, StreamingActivity } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { formatTime } from "../../utils/time";
+import { useLcdStyle } from "../../utils/uiStyle";
 import {
   formatStreamingActivityKind,
   getStructuredStreamingActivityLabel,
@@ -191,6 +192,99 @@ function getMessageTextClassName(density: HeadlessLiveTraceDensity, isDark: bool
   return classNames(
     "whitespace-pre-wrap break-words text-[13px] leading-[1.55]",
     isDark ? "text-slate-100" : "text-gray-900",
+  );
+}
+
+type LiveCursorState = "solid" | "waiting" | "quiet";
+type LiveMessageGroup = Extract<HeadlessPreviewRenderGroup, { kind: "message" }>;
+
+/** Only observed text changes count as a new chunk; initial history is a baseline. */
+function useLiveTraceCursor(
+  group: LiveMessageGroup | undefined,
+  enabled: boolean,
+): LiveCursorState {
+  const [state, setState] = useState<LiveCursorState>("waiting");
+  const previous = useRef<{ session: string; id: string; text: string } | null>(null);
+  const session = group?.pendingEventId;
+  const id = group?.id;
+  const text = group?.entry.text;
+
+  useLayoutEffect(() => {
+    if (!enabled || !id || text === undefined) {
+      previous.current = null;
+      setState("waiting");
+      return;
+    }
+    const before = previous.current;
+    const changed =
+      before !== null &&
+      before.session === (session || "") &&
+      (before.id !== id || before.text !== text);
+    previous.current = { session: session || "", id, text };
+    setState(changed ? "solid" : "waiting");
+    const waitingTimer = window.setTimeout(() => setState("waiting"), 700);
+    const quietTimer = window.setTimeout(() => setState("quiet"), 10_000);
+    return () => {
+      window.clearTimeout(waitingTimer);
+      window.clearTimeout(quietTimer);
+    };
+  }, [enabled, id, session, text]);
+
+  return state;
+}
+
+function TraceMessageBody({
+  group,
+  density,
+  isDark,
+  lcd,
+  cursor,
+}: {
+  group: LiveMessageGroup;
+  density: HeadlessLiveTraceDensity;
+  isDark: boolean;
+  lcd: boolean;
+  cursor?: LiveCursorState;
+}) {
+  const cursorElement = cursor ? <span data-lcd-live-cursor={cursor} aria-hidden="true" /> : null;
+  if (!shouldRenderPreviewMarkdown(group.entry.streamPhase)) {
+    return (
+      <div className={getMessageTextClassName(density, isDark)}>
+        {group.entry.text}
+        {cursorElement}
+      </div>
+    );
+  }
+
+  const markdown = (
+    <LazyMarkdownRenderer
+      content={group.entry.text}
+      isDark={isDark}
+      invertText={isDark}
+      className={classNames(
+        density === "expanded"
+          ? "text-[13.5px] leading-[1.65] [&_p]:mb-2.5 [&_pre]:border [&_pre]:p-3.5 [&_.code-block-header]:rounded-t-2xl [&_.code-block-header]:border [&_.code-block-header]:px-3.5 [&_.code-block-header]:py-2.5"
+          : "text-[13px] leading-[1.58] [&_p]:mb-2 [&_pre]:border [&_pre]:p-3 [&_.code-block-header]:rounded-t-2xl [&_.code-block-header]:border [&_.code-block-header]:px-3 [&_.code-block-header]:py-2",
+        isDark
+          ? "[&_pre]:border-white/10 [&_pre]:bg-white/[0.03] [&_.code-block-header]:border-white/10 [&_.code-block-header]:bg-white/[0.04] [&_.code-block-header]:text-slate-300"
+          : "[&_pre]:border-slate-200 [&_pre]:bg-white [&_.code-block-header]:border-slate-200 [&_.code-block-header]:bg-slate-100 [&_.code-block-header]:text-slate-600",
+      )}
+      fallback={
+        <div className={getMessageTextClassName(density, isDark)}>
+          {group.entry.text}
+          {cursorElement}
+        </div>
+      }
+    />
+  );
+  // Keep the Markdown subtree mounted when streaming ends. Removing the
+  // wrapper at that moment would discard focus inside the rendered message.
+  return lcd ? (
+    <div data-lcd-live-markdown={cursor ? "" : undefined} data-lcd-live-cursor={cursor}>
+      {markdown}
+    </div>
+  ) : (
+    markdown
   );
 }
 
@@ -394,6 +488,7 @@ export function HeadlessLiveTrace({
   className,
 }: HeadlessLiveTraceProps) {
   const { t, i18n } = useTranslation("actors");
+  const lcd = useLcdStyle();
   const outputRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const labels = useMemo<HeadlessLiveTraceLabels>(
@@ -442,6 +537,21 @@ export function HeadlessLiveTrace({
     () => buildHeadlessPreviewRenderGroups(timelineEntries),
     [timelineEntries],
   );
+  const latestPreview = previewSessions?.[previewSessions.length - 1];
+  // The fallback renderer can infer a streaming phase from saved text. Only
+  // an explicit streaming session is evidence that the text is live now.
+  const streaming =
+    String(latestPreview?.phase || fallbackPhase || "")
+      .trim()
+      .toLowerCase() === "streaming";
+  const liveMessageGroup = streaming
+    ? (timelineGroups
+        .slice()
+        .reverse()
+        .find((group): group is LiveMessageGroup => group.kind === "message" && group.live) ??
+      undefined)
+    : undefined;
+  const liveCursor = useLiveTraceCursor(liveMessageGroup, lcd);
   const sessionCount =
     Array.isArray(previewSessions) && previewSessions.length > 0
       ? previewSessions.length
@@ -585,7 +695,10 @@ export function HeadlessLiveTrace({
                 data-status-tone="ok"
               >
                 <span
-                  className="h-1.5 w-1.5 rounded-full bg-current animate-pulse motion-reduce:animate-none"
+                  className={classNames(
+                    "h-1.5 w-1.5 rounded-full bg-current",
+                    !lcd && "animate-pulse motion-reduce:animate-none",
+                  )}
                   data-status-dot="active"
                 />
                 {labels.live}
@@ -709,7 +822,10 @@ export function HeadlessLiveTrace({
                         {group.live ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-300">
                             <span
-                              className="h-1.5 w-1.5 rounded-full bg-current animate-pulse motion-reduce:animate-none"
+                              className={classNames(
+                                "h-1.5 w-1.5 rounded-full bg-current",
+                                !lcd && "animate-pulse motion-reduce:animate-none",
+                              )}
                               data-status-dot="active"
                             />
                             {labels.streaming}
@@ -717,30 +833,13 @@ export function HeadlessLiveTrace({
                         ) : null}
                       </div>
                     ) : null}
-                    {shouldRenderPreviewMarkdown(group.entry.streamPhase) ? (
-                      <LazyMarkdownRenderer
-                        content={group.entry.text}
-                        isDark={isDark}
-                        invertText={isDark}
-                        className={classNames(
-                          density === "expanded"
-                            ? "text-[13.5px] leading-[1.65] [&_p]:mb-2.5 [&_pre]:border [&_pre]:p-3.5 [&_.code-block-header]:rounded-t-2xl [&_.code-block-header]:border [&_.code-block-header]:px-3.5 [&_.code-block-header]:py-2.5"
-                            : "text-[13px] leading-[1.58] [&_p]:mb-2 [&_pre]:border [&_pre]:p-3 [&_.code-block-header]:rounded-t-2xl [&_.code-block-header]:border [&_.code-block-header]:px-3 [&_.code-block-header]:py-2",
-                          isDark
-                            ? "[&_pre]:border-white/10 [&_pre]:bg-white/[0.03] [&_.code-block-header]:border-white/10 [&_.code-block-header]:bg-white/[0.04] [&_.code-block-header]:text-slate-300"
-                            : "[&_pre]:border-slate-200 [&_pre]:bg-white [&_.code-block-header]:border-slate-200 [&_.code-block-header]:bg-slate-100 [&_.code-block-header]:text-slate-600",
-                        )}
-                        fallback={
-                          <div className={getMessageTextClassName(density, isDark)}>
-                            {group.entry.text}
-                          </div>
-                        }
-                      />
-                    ) : (
-                      <div className={getMessageTextClassName(density, isDark)}>
-                        {group.entry.text}
-                      </div>
-                    )}
+                    <TraceMessageBody
+                      group={group}
+                      density={density}
+                      isDark={isDark}
+                      lcd={lcd}
+                      cursor={lcd && group.id === liveMessageGroup?.id ? liveCursor : undefined}
+                    />
                   </div>
                 </div>
               ) : (

@@ -10,33 +10,44 @@ import { useSyncExternalStore } from "react";
 export type UiStyle = "classic" | "lcd";
 export type LcdBodyFont = "mono" | "pixel";
 export type LcdWidth = "column" | "wide" | "full";
-export type UiStylePrefs = { style: UiStyle; lcdBody: LcdBodyFont; lcdWidth: LcdWidth };
+export type LcdMotion = "on" | "off";
+export type UiStylePrefs = {
+  style: UiStyle;
+  lcdBody: LcdBodyFont;
+  lcdWidth: LcdWidth;
+  lcdMotion: LcdMotion;
+};
 
 export const UI_STYLE_STORAGE_KEY = "cccc-ui-style";
 export const LCD_BODY_STORAGE_KEY = "cccc-ui-lcd-body";
 export const LCD_WIDTH_STORAGE_KEY = "cccc-ui-lcd-width";
+export const LCD_MOTION_STORAGE_KEY = "cccc-ui-lcd-motion";
 
 const STORAGE_KEYS: Record<keyof UiStylePrefs, string> = {
   style: UI_STYLE_STORAGE_KEY,
   lcdBody: LCD_BODY_STORAGE_KEY,
   lcdWidth: LCD_WIDTH_STORAGE_KEY,
+  lcdMotion: LCD_MOTION_STORAGE_KEY,
 };
 
 export const DEFAULT_UI_STYLE_PREFS: UiStylePrefs = {
   style: "classic",
   lcdBody: "mono",
   lcdWidth: "column",
+  lcdMotion: "on",
 };
 
 export function normalizeUiStylePrefs(raw: {
   style?: unknown;
   lcdBody?: unknown;
   lcdWidth?: unknown;
+  lcdMotion?: unknown;
 }): UiStylePrefs {
   return {
     style: raw.style === "lcd" ? "lcd" : "classic",
     lcdBody: raw.lcdBody === "pixel" ? "pixel" : "mono",
     lcdWidth: raw.lcdWidth === "wide" || raw.lcdWidth === "full" ? raw.lcdWidth : "column",
+    lcdMotion: raw.lcdMotion === "off" ? "off" : "on",
   };
 }
 
@@ -62,9 +73,19 @@ export function readStoredUiStylePrefs(): UiStylePrefs {
     style: readStorage(UI_STYLE_STORAGE_KEY),
     lcdBody: readStorage(LCD_BODY_STORAGE_KEY),
     lcdWidth: readStorage(LCD_WIDTH_STORAGE_KEY),
+    lcdMotion: readStorage(LCD_MOTION_STORAGE_KEY),
   });
 }
 
+function reducedMotionQuery(): MediaQueryList | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null;
+  return window.matchMedia("(prefers-reduced-motion: reduce)");
+}
+
+/**
+ * `data-lcd-motion` is the effective setting: off when the user turns LCD motion
+ * off or the system asks for reduced motion, so each still form needs one rule.
+ */
 export function applyUiStylePrefs(prefs: UiStylePrefs) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
@@ -72,15 +93,19 @@ export function applyUiStylePrefs(prefs: UiStylePrefs) {
     root.dataset.uiStyle = "lcd";
     root.dataset.lcdBody = prefs.lcdBody;
     root.dataset.lcdWidth = prefs.lcdWidth;
+    root.dataset.lcdMotion =
+      prefs.lcdMotion === "off" || reducedMotionQuery()?.matches ? "off" : "on";
   } else {
     delete root.dataset.uiStyle;
     delete root.dataset.lcdBody;
     delete root.dataset.lcdWidth;
+    delete root.dataset.lcdMotion;
   }
 }
 
 let current: UiStylePrefs = readStoredUiStylePrefs();
 const listeners = new Set<() => void>();
+reducedMotionQuery()?.addEventListener?.("change", () => applyUiStylePrefs(current));
 
 export function getUiStylePrefs(): UiStylePrefs {
   return current;
@@ -108,6 +133,21 @@ export function subscribeUiStylePrefs(listener: () => void) {
 
 export function useUiStylePrefs(): UiStylePrefs {
   return useSyncExternalStore(subscribeUiStylePrefs, getUiStylePrefs, () => DEFAULT_UI_STYLE_PREFS);
+}
+
+function subscribeReducedMotion(listener: () => void) {
+  const query = reducedMotionQuery();
+  query?.addEventListener?.("change", listener);
+  return () => query?.removeEventListener?.("change", listener);
+}
+
+/** True while the system asks for reduced motion (it stills LCD motion whatever is chosen). */
+export function useSystemReducedMotion(): boolean {
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    () => reducedMotionQuery()?.matches ?? false,
+    () => false,
+  );
 }
 
 /** True while the LCD preview is on; layout containers branch on this. */

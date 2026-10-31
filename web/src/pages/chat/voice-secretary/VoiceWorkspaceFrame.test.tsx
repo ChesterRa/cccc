@@ -48,7 +48,7 @@ describe("VoiceWorkspaceFrame", () => {
     setUiStylePrefs({ style: "classic" });
   });
 
-  it("shows the existing smoothed audio level in LCD and keeps the meter out of the accessibility tree", async () => {
+  it("shows the existing smoothed audio level in LCD segments and keeps the meter out of the accessibility tree", async () => {
     await act(async () => root.render(frame(true, false)));
     const meter = host.querySelector<HTMLElement>('[data-voice-workspace-meter="recording"]');
     expect(meter?.getAttribute("aria-hidden")).toBe("true");
@@ -56,10 +56,14 @@ describe("VoiceWorkspaceFrame", () => {
     expect(beam.current?.strength).toBe(0);
     expect(beam.current?.coreLight).toBe(0);
     expect(beam.current?.onLevel).toBeTypeOf("function");
+    // The level lights whole segments, 16 of them, from the left.
+    const lit = () => (meter?.firstElementChild as HTMLElement | null)?.style.clipPath;
     beam.current?.onLevel?.(0.75);
-    expect(meter?.firstElementChild?.getAttribute("style")).toContain("scaleX(0.75)");
+    expect(lit()).toBe("inset(0 25% 0 0)");
+    beam.current?.onLevel?.(0.02);
+    expect(lit()).toBe("inset(0 100% 0 0)");
     beam.current?.onLevel?.(2);
-    expect(meter?.firstElementChild?.getAttribute("style")).toContain("scaleX(1)");
+    expect(lit()).toBe("inset(0 0% 0 0)");
     expect(host.textContent).toContain("Recording status");
   });
 

@@ -64,7 +64,8 @@ URLs are released when a file is replaced or removed.
 On wider screens, an empty, unfocused composer cycles through four localized typing hints for tasks,
 Skills (`/` and `/install`), Actors (`@`), and Groups (`#`). Focusing the composer
 pauses the hint; any draft text hides it, and a suggested reply takes precedence.
-Reduced-motion preferences show a static hint, and hidden tabs pause the animation.
+Reduced-motion preferences show a static hint, and hidden tabs pause the animation. In the LCD
+look, **Motion** set to **Off** also shows a static hint.
 Hints are decorative and never become draft content or screen-reader live announcements.
 
 Message bubbles retain their framed surfaces. Sender, recipient routing, Mail mode
@@ -117,6 +118,13 @@ With **Style** set to **LCD**, **Message area width** sets how wide the conversa
 screens 768px and wider: **Medium** keeps a centered reading column, **Wide** gives tables and
 code more room and **Full** uses the whole chat area. The choice is saved in this browser. It
 does not appear on narrower screens, where the conversation already has no width limit.
+In the LCD look, the members' status sits in one centered row above the composer on desktop.
+Activity and feedback move in whole steps: a busy member's ring of pixel dots, three blinks when
+the page sees a member start needing attention, a pixel spinner for waits longer than a quarter of
+a second, and a block cursor that can follow a headless agent's live text, though not after code
+blocks, tables and some other structures. **Motion** under Appearance stills these and the typing
+hint; the system's reduced-motion setting does the same, and Appearance says so. The Voice
+Secretary level meter keeps showing the live level.
 Reading controls share the application theme; embedded PDFs, web pages, images and terminal
 ANSI content retain their own colors. Image and diagram viewers zoom with their buttons,
 Ctrl/⌘ + wheel or a pinch, while the plain wheel keeps scrolling; see

@@ -1,5 +1,15 @@
 import { RuntimeDockRing } from "./RuntimeDockRing";
-import { memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Hourglass, Mail } from "lucide-react";
 
@@ -17,13 +27,148 @@ import { RuntimeDockTicker } from "./RuntimeDockTicker";
 import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
-import { useLcdStyle } from "../../utils/uiStyle";
+import { useLcdStyle, useUiStylePrefs, type LcdMotion } from "../../utils/uiStyle";
 
 type RuntimeRingPresentation = {
   ringClassName: string;
   queuedBadgeClassName: string;
   avatarClassName?: string;
 };
+
+function lcdRingDelay(): number {
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue("--lcd-ring-lap")
+    .trim();
+  const parsed = Number.parseFloat(value);
+  const lap =
+    Number.isFinite(parsed) && parsed > 0 ? parsed * (value.endsWith("ms") ? 1 : 1000) : 2000;
+  const timelineTime = document.timeline?.currentTime;
+  const now = typeof timelineTime === "number" ? timelineTime : performance.now();
+  return -(now % lap);
+}
+
+/** Align a newly visible ring without resetting its phase on ordinary renders. */
+function useLcdRingDelay(moving: boolean, motionPreference: LcdMotion): number {
+  const [delay, setDelay] = useState(0);
+  useLayoutEffect(() => {
+    if (!moving) return;
+    const align = () => setDelay(lcdRingDelay());
+    align();
+    // CSS can recreate the animation when the OS motion preference changes,
+    // even though the working and visibility state stayed the same.
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    reduced?.addEventListener?.("change", align);
+    return () => reduced?.removeEventListener?.("change", align);
+  }, [moving, motionPreference]);
+  return delay;
+}
+
+function useLcdTileTransitions({
+  groupId,
+  actorId,
+  tone,
+  working,
+  managed,
+  liveWorkPhase,
+  liveWorkId,
+  hidden,
+  provisional,
+  lcd,
+  onHiddenAttention,
+}: {
+  groupId: string;
+  actorId: string;
+  tone: RuntimeRingTone;
+  working: boolean;
+  managed: boolean;
+  liveWorkPhase: LiveWorkCard["phase"] | undefined;
+  liveWorkId: string;
+  hidden: boolean;
+  provisional: boolean;
+  lcd: boolean;
+  onHiddenAttention?: (actorId: string) => void;
+}) {
+  const previous = useRef({
+    groupId,
+    actorId,
+    tone,
+    working,
+    liveWorkPhase,
+    liveWorkId,
+    provisional,
+    lcd,
+  });
+  const [attentionFlash, setAttentionFlash] = useState(false);
+  const [flourish, setFlourish] = useState(false);
+
+  useLayoutEffect(() => {
+    const before = previous.current;
+    previous.current = {
+      groupId,
+      actorId,
+      tone,
+      working,
+      liveWorkPhase,
+      liveWorkId,
+      provisional,
+      lcd,
+    };
+    // Hydration, a new group or entering LCD establishes a baseline rather than
+    // announcing an old state as a new transition.
+    if (
+      !lcd ||
+      !before.lcd ||
+      before.groupId !== groupId ||
+      before.actorId !== actorId ||
+      before.provisional ||
+      provisional
+    ) {
+      setAttentionFlash(false);
+      setFlourish(false);
+      return;
+    }
+    if (tone === "attention" && before.tone !== "attention") {
+      if (hidden) onHiddenAttention?.(actorId);
+      else setAttentionFlash(true);
+    } else if (tone !== "attention" || hidden) {
+      setAttentionFlash(false);
+    }
+    const becameIdle = managed && before.working && !working && tone === "idle";
+    const finishedStream =
+      !!liveWorkId &&
+      before.liveWorkId === liveWorkId &&
+      before.liveWorkPhase === "streaming" &&
+      liveWorkPhase === "completed";
+    // An unmanaged PTY's output signal can expire after five quiet seconds;
+    // expiry alone is not evidence that its work finished.
+    if ((becameIdle || finishedStream) && tone === "idle" && !hidden) setFlourish(true);
+    else if (tone !== "idle" || hidden) setFlourish(false);
+  }, [
+    actorId,
+    groupId,
+    hidden,
+    lcd,
+    liveWorkId,
+    liveWorkPhase,
+    managed,
+    onHiddenAttention,
+    provisional,
+    tone,
+    working,
+  ]);
+
+  useEffect(() => {
+    if (!attentionFlash) return;
+    const timer = window.setTimeout(() => setAttentionFlash(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [attentionFlash]);
+  useEffect(() => {
+    if (!flourish) return;
+    const timer = window.setTimeout(() => setFlourish(false), 250);
+    return () => window.clearTimeout(timer);
+  }, [flourish]);
+  return { attentionFlash, flourish };
+}
 
 function getRuntimeStatusLabel(
   isRunning: boolean,
@@ -105,7 +250,10 @@ function RuntimeDockActorButtonView({
   onOpenInspector,
   variant = "ring",
   hidden = false,
+  motionVisible = true,
   showName = false,
+  onToneChange,
+  onHiddenAttention,
 }: {
   groupId: string;
   item: RuntimeDockItem;
@@ -114,23 +262,55 @@ function RuntimeDockActorButtonView({
   isInspectorOpen: boolean;
   actorStatusProvisional: boolean;
   onOpenInspector: (actorId: string) => void;
-  /** "chip" is the LCD preview's header member: a tile whose line and dimming show the state. */
+  /** "chip" is the LCD member row: a tile whose line and dimming show the state. */
   variant?: "ring" | "chip";
-  /** A chip clipped by the header's overflow: kept for layout, out of reach until shown. */
+  /** A chip clipped by the row's overflow: kept for layout, out of reach until shown. */
   hidden?: boolean;
+  /** The whole dock may be hidden while the user is typing or viewing another surface. */
+  motionVisible?: boolean;
   /** In the "+N" list the name sits beside the tile. */
   showName?: boolean;
+  onToneChange?: (actorId: string, tone: RuntimeRingTone | null) => void;
+  onHiddenAttention?: (actorId: string) => void;
 }) {
   const { t } = useTranslation(["chat", "actors", "common"]);
   const activityGradientId = useId();
   const chipStatusId = useId();
-  const lcd = useLcdStyle();
+  const stylePrefs = useUiStylePrefs();
+  const lcd = stylePrefs.style === "lcd";
+  const motionPreference = stylePrefs.lcdMotion;
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
     actor: item.actor,
     actorStatusProvisional,
   });
   const ringTone = getRuntimeRingTone(item, isRunning, workingState);
+  // The existing active tone also covers queued tasks. A moving ring must
+  // describe work actually in progress, not merely a pending item.
+  const working =
+    ringTone === "active" &&
+    (workingState === "working" || item.liveWorkCard?.phase === "streaming");
+  const moving = lcd && working && !hidden && motionVisible;
+  const delay = useLcdRingDelay(moving, motionPreference);
+  const { attentionFlash, flourish } = useLcdTileTransitions({
+    groupId,
+    actorId: item.actorId,
+    tone: ringTone,
+    working,
+    managed: hasManagedRuntimeOutput(item.actor),
+    liveWorkPhase: item.liveWorkCard?.phase,
+    liveWorkId: item.liveWorkCard?.pendingEventId || item.liveWorkCard?.streamId || "",
+    hidden,
+    provisional: actorStatusProvisional,
+    lcd,
+    onHiddenAttention,
+  });
+  // Report the same resolved state that this tile displays. Terminal signals
+  // can change independently of the actor object passed to the parent.
+  useLayoutEffect(() => {
+    onToneChange?.(item.actorId, ringTone);
+  }, [item.actorId, onToneChange, ringTone]);
+  useLayoutEffect(() => () => onToneChange?.(item.actorId, null), [item.actorId, onToneChange]);
   const ringPresentation = getRuntimeRingPresentation(ringTone, isDark);
   const useRuntimeStatus = hasManagedRuntimeOutput(item.actor) || workingState === "error";
   const statusLabel =
@@ -160,6 +340,23 @@ function RuntimeDockActorButtonView({
   const handleOpenInspector = () => {
     onOpenInspector(item.actorId);
   };
+  const lcdRing =
+    lcd && (ringTone === "active" || flourish) ? (
+      <span
+        className="lcd-member-ring"
+        data-ring={moving ? "moving" : "still"}
+        style={{ "--lcd-ring-delay": `${delay}ms` } as CSSProperties}
+        aria-hidden="true"
+      >
+        <i />
+        <i />
+        <i />
+        <i />
+        <i />
+        <i />
+        <i />
+      </span>
+    ) : null;
 
   if (variant === "chip") {
     // LCD preview: the tile itself shows the state (dimmed when stopped, its line
@@ -174,6 +371,7 @@ function RuntimeDockActorButtonView({
       <div
         className="lcd-member-cell"
         data-lcd-member-chip
+        data-lcd-member-id={item.actorId}
         inert={hidden || undefined}
         aria-hidden={hidden || undefined}
       >
@@ -186,6 +384,8 @@ function RuntimeDockActorButtonView({
               data-active={isInspectorOpen || undefined}
               data-tone={ringTone}
               data-listed={showName || undefined}
+              data-attention-flash={attentionFlash || undefined}
+              data-flourish={flourish || undefined}
               {...getReferenceProps({
                 onClick: handleOpenInspector,
                 "aria-label":
@@ -211,6 +411,7 @@ function RuntimeDockActorButtonView({
                   textClassName="text-[0.8125rem]"
                   className="lcd-tile"
                 />
+                {lcdRing}
                 {mailCount > 0 ? (
                   <span className="lcd-member-mark" data-mark="mail" aria-hidden="true">
                     {mailCount > 99 ? "99+" : mailCount}
@@ -232,6 +433,22 @@ function RuntimeDockActorButtonView({
       </div>
     );
   }
+
+  const dockAvatar = (
+    <ActorAvatar
+      avatarUrl={item.actor.avatar_url || undefined}
+      runtime={item.runtime}
+      title={item.actorLabel}
+      isDark={isDark}
+      sizeClassName={isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]"}
+      className={classNames(
+        "relative z-10 border-transparent shadow-[0_18px_34px_-22px_rgba(15,23,42,0.68)]",
+        lcd ? "lcd-tile" : ringPresentation.avatarClassName,
+        item.runner === "headless" ? (isDark ? "bg-slate-900" : "bg-slate-50") : undefined,
+      )}
+      accentRingClassName={isInspectorOpen ? (isDark ? "ring-white/10" : "ring-black/10") : null}
+    />
+  );
 
   return (
     <div className="relative flex items-end">
@@ -260,6 +477,8 @@ function RuntimeDockActorButtonView({
         data-lcd-dock-button
         data-tone={ringTone}
         data-active={isInspectorOpen || undefined}
+        data-attention-flash={attentionFlash || undefined}
+        data-flourish={flourish || undefined}
         aria-label={
           item.runner === "headless"
             ? t("chat:runtimeDockOpenLiveWork", {
@@ -284,21 +503,14 @@ function RuntimeDockActorButtonView({
           />
         )}
 
-        <ActorAvatar
-          avatarUrl={item.actor.avatar_url || undefined}
-          runtime={item.runtime}
-          title={item.actorLabel}
-          isDark={isDark}
-          sizeClassName={isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]"}
-          className={classNames(
-            "relative z-10 border-transparent shadow-[0_18px_34px_-22px_rgba(15,23,42,0.68)]",
-            lcd ? "lcd-tile" : ringPresentation.avatarClassName,
-            item.runner === "headless" ? (isDark ? "bg-slate-900" : "bg-slate-50") : undefined,
-          )}
-          accentRingClassName={
-            isInspectorOpen ? (isDark ? "ring-white/10" : "ring-black/10") : null
-          }
-        />
+        {lcd ? (
+          <span className="lcd-member-tile">
+            {dockAvatar}
+            {lcdRing}
+          </span>
+        ) : (
+          dockAvatar
+        )}
         {queuedCount > 0 ? (
           <span
             className={classNames(
@@ -361,7 +573,10 @@ const RuntimeDockActorButton = memo(
     previous.onOpenInspector === next.onOpenInspector &&
     previous.variant === next.variant &&
     previous.hidden === next.hidden &&
-    previous.showName === next.showName,
+    previous.motionVisible === next.motionVisible &&
+    previous.showName === next.showName &&
+    previous.onToneChange === next.onToneChange &&
+    previous.onHiddenAttention === next.onHiddenAttention,
 );
 
 export interface RuntimeDockProps {
@@ -376,8 +591,10 @@ export interface RuntimeDockProps {
   actorStatusProvisional: boolean;
   onAddAgent?: () => void;
   onOpenRuntimeActor: (actorId: string) => void;
-  /** "header": the LCD preview's member strip in the app header (desktop). */
-  placement?: "dock" | "header";
+  /** "row": the LCD member strip above the composer (desktop). */
+  placement?: "dock" | "row";
+  /** False while the caller has hidden the entire dock. */
+  motionVisible?: boolean;
 }
 
 export function RuntimeDock({
@@ -393,6 +610,7 @@ export function RuntimeDock({
   onAddAgent,
   onOpenRuntimeActor,
   placement = "dock",
+  motionVisible = true,
 }: RuntimeDockProps) {
   const { t } = useTranslation("chat");
   const lcd = useLcdStyle();
@@ -412,14 +630,16 @@ export function RuntimeDock({
 
   if (items.length <= 0) return null;
 
-  if (placement === "header") {
+  if (placement === "row") {
     return (
-      <RuntimeDockHeaderStrip
+      <RuntimeDockMemberRow
+        key={groupId}
         groupId={groupId}
         items={items}
         activeRuntimeActorId={activeRuntimeActorId}
         isDark={isDark}
         readOnly={readOnly}
+        motionVisible={motionVisible}
         actorStatusProvisional={actorStatusProvisional}
         onAddAgent={onAddAgent}
         onOpenRuntimeActor={onOpenRuntimeActor}
@@ -499,6 +719,7 @@ export function RuntimeDock({
                     isSmallScreen={isSmallScreen}
                     isInspectorOpen={activeRuntimeActorId === item.actorId}
                     actorStatusProvisional={actorStatusProvisional}
+                    motionVisible={motionVisible}
                     onOpenInspector={onOpenRuntimeActor}
                   />
                 ))}
@@ -515,17 +736,18 @@ export function RuntimeDock({
 }
 
 /**
- * LCD preview: members in one header row. Chips that do not fit wrap onto a
+ * LCD preview: members in one row. Chips that do not fit wrap onto a
  * clipped second line; they become unreachable there and move into "+N",
  * which still says whether any of them has unread Mail or queued work.
  */
-function RuntimeDockHeaderStrip({
+function RuntimeDockMemberRow({
   groupId,
   items,
   activeRuntimeActorId,
   isDark,
   readOnly,
   actorStatusProvisional,
+  motionVisible,
   onAddAgent,
   onOpenRuntimeActor,
 }: {
@@ -535,22 +757,109 @@ function RuntimeDockHeaderStrip({
   isDark: boolean;
   readOnly?: boolean;
   actorStatusProvisional: boolean;
+  motionVisible: boolean;
   onAddAgent?: () => void;
   onOpenRuntimeActor: (actorId: string) => void;
 }) {
   const { t } = useTranslation("chat");
   const rowRef = useRef<HTMLDivElement | null>(null);
+  const moreRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const foldedFocusRef = useRef<HTMLElement | null>(null);
+  const expandedFocusRef = useRef<{ previousFocus: HTMLElement; actorId?: string } | null>(null);
+  const preventCloseAutoFocusRef = useRef(false);
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+  const [tones, setTones] = useState<Record<string, RuntimeRingTone>>({});
   const [moreOpen, setMoreOpen] = useState(false);
+  const [moreAttentionFlash, setMoreAttentionFlash] = useState(false);
+
+  const reportHiddenAttention = useCallback(() => setMoreAttentionFlash(true), []);
+  useEffect(() => {
+    if (!moreAttentionFlash) return;
+    const timer = window.setTimeout(() => setMoreAttentionFlash(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [moreAttentionFlash]);
+
+  const reportTone = useCallback((actorId: string, tone: RuntimeRingTone | null) => {
+    setTones((previous) => {
+      if (tone === null) {
+        if (!(actorId in previous)) return previous;
+        const next = { ...previous };
+        delete next[actorId];
+        return next;
+      }
+      return previous[actorId] === tone ? previous : { ...previous, [actorId]: tone };
+    });
+  }, []);
 
   const measure = useCallback(() => {
     const row = rowRef.current;
     if (!row) return;
     const cells = Array.from(row.querySelectorAll<HTMLElement>("[data-lcd-member-chip]"));
     const firstTop = cells[0]?.offsetTop ?? 0;
-    const next = cells
-      .map((cell, index) => (cell.offsetTop > firstTop ? items[index]?.actorId : undefined))
+    const rowBounds = row.getBoundingClientRect();
+    let next = cells
+      .map((cell, index) => {
+        const buttonBounds = cell.querySelector("button")?.getBoundingClientRect();
+        // Even the first cell can be clipped when the row is narrower than one
+        // key. In that case it belongs in +N as much as a wrapped cell does.
+        const clipped =
+          buttonBounds !== undefined &&
+          buttonBounds.width > 0 &&
+          (buttonBounds.left < rowBounds.left - 0.5 || buttonBounds.right > rowBounds.right + 0.5);
+        return cell.offsetTop > firstTop || clipped ? items[index]?.actorId : undefined;
+      })
       .filter((id): id is string => Boolean(id));
+    // A visible +N consumes row space. If all tiles fit after giving that
+    // space back, remove +N instead of keeping one member hidden indefinitely.
+    const more = moreRef.current;
+    if (next.length > 0 && more && cells.length > 0) {
+      const widths = cells.map((cell) =>
+        Math.max(
+          cell.getBoundingClientRect().width,
+          cell.querySelector("button")?.getBoundingClientRect().width ?? 0,
+        ),
+      );
+      const rowGap = Number.parseFloat(getComputedStyle(row).columnGap) || 0;
+      const groupGap = Number.parseFloat(getComputedStyle(row.parentElement!).columnGap) || 0;
+      const naturalWidth =
+        widths.reduce((total, width) => total + width, 0) + rowGap * (cells.length - 1);
+      const availableWithoutMore =
+        row.getBoundingClientRect().width + more.getBoundingClientRect().width + groupGap;
+      if (widths.every((width) => width > 0) && naturalWidth <= availableWithoutMore) {
+        next = [];
+      }
+    }
+    const activeElement = document.activeElement;
+    const focusInPopover =
+      activeElement instanceof HTMLElement && popoverRef.current?.contains(activeElement);
+    const focusedPopoverActor = focusInPopover
+      ? activeElement.closest<HTMLElement>("[data-lcd-member-id]")?.dataset.lcdMemberId
+      : undefined;
+    const focusedPopoverActorIsRevealed =
+      focusedPopoverActor !== undefined &&
+      !next.includes(focusedPopoverActor) &&
+      cells.some((cell) => cell.dataset.lcdMemberId === focusedPopoverActor);
+    if (more && (next.length === 0 || focusedPopoverActorIsRevealed)) {
+      if (activeElement instanceof HTMLElement && (activeElement === more || focusInPopover)) {
+        const actorId =
+          focusedPopoverActor ??
+          cells.find((cell) => cell.hasAttribute("inert"))?.dataset.lcdMemberId;
+        expandedFocusRef.current = { previousFocus: activeElement, actorId };
+      }
+      // The trigger and its popover are about to unmount. Suppress Radix's
+      // return to that removed trigger; focus the restored member below.
+      if (popoverRef.current) preventCloseAutoFocusRef.current = true;
+      setMoreOpen(false);
+    }
+    if (
+      activeElement instanceof HTMLElement &&
+      cells.some(
+        (cell, index) => next.includes(items[index]?.actorId) && cell.contains(activeElement),
+      )
+    ) {
+      foldedFocusRef.current = activeElement;
+    }
     setHiddenIds((previous) =>
       previous.length === next.length && previous.every((id, index) => id === next[index])
         ? previous
@@ -568,16 +877,53 @@ function RuntimeDockHeaderStrip({
     return () => observer.disconnect();
   }, [measure]);
 
+  useLayoutEffect(() => {
+    const previousFocus = foldedFocusRef.current;
+    foldedFocusRef.current = null;
+    if (
+      previousFocus &&
+      (document.activeElement === previousFocus || document.activeElement === document.body)
+    ) {
+      moreRef.current?.focus({ preventScroll: true });
+    }
+    const expanded = expandedFocusRef.current;
+    expandedFocusRef.current = null;
+    if (
+      expanded &&
+      (document.activeElement === expanded.previousFocus ||
+        document.activeElement === document.body)
+    ) {
+      const cells = Array.from(
+        rowRef.current?.querySelectorAll<HTMLElement>("[data-lcd-member-id]") ?? [],
+      );
+      const target =
+        cells.find((cell) => cell.dataset.lcdMemberId === expanded.actorId) ?? cells[0];
+      const button = target?.querySelector<HTMLButtonElement>("button");
+      (
+        button ?? rowRef.current?.parentElement?.querySelector<HTMLButtonElement>(".lcd-member-add")
+      )?.focus({ preventScroll: true });
+    }
+  }, [hiddenIds]);
+
   const hidden = new Set(hiddenIds);
   const hiddenItems = items.filter((item) => hidden.has(item.actorId));
   const hiddenWithMail = hiddenItems.filter((item) => item.unreadCount > 0).length;
   const hiddenWithQueued = hiddenItems.filter(
     (item) => Number(item.webModelQueuedCount || 0) > 0,
   ).length;
+  const hiddenWithAttention = hiddenItems.filter(
+    (item) => tones[item.actorId] === "attention",
+  ).length;
+  useEffect(() => {
+    if (hiddenWithAttention === 0) setMoreAttentionFlash(false);
+  }, [hiddenWithAttention]);
   const moreLabel = [
     t("runtimeDockMoreMembers", { count: hiddenItems.length }),
     hiddenWithMail > 0 ? t("runtimeDockMoreMembersMail", { count: hiddenWithMail }) : "",
     hiddenWithQueued > 0 ? t("runtimeDockMoreMembersQueued", { count: hiddenWithQueued }) : "",
+    hiddenWithAttention > 0
+      ? t("runtimeDockMoreMembersAttention", { count: hiddenWithAttention })
+      : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -596,7 +942,10 @@ function RuntimeDockHeaderStrip({
             isSmallScreen={false}
             isInspectorOpen={activeRuntimeActorId === item.actorId}
             actorStatusProvisional={actorStatusProvisional}
+            motionVisible={motionVisible}
             onOpenInspector={onOpenRuntimeActor}
+            onToneChange={reportTone}
+            onHiddenAttention={reportHiddenAttention}
           />
         ))}
       </div>
@@ -604,8 +953,11 @@ function RuntimeDockHeaderStrip({
         <Popover open={moreOpen} onOpenChange={setMoreOpen}>
           <PopoverTrigger asChild>
             <button
+              ref={moreRef}
               type="button"
               className="lcd-member lcd-member-more"
+              data-tone={hiddenWithAttention > 0 ? "attention" : undefined}
+              data-attention-flash={moreAttentionFlash || undefined}
               aria-label={moreLabel}
               title={moreLabel}
             >
@@ -618,8 +970,20 @@ function RuntimeDockHeaderStrip({
               ) : null}
             </button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="lcd-members-popover" data-lcd-scope>
+          <PopoverContent
+            ref={popoverRef}
+            align="end"
+            className="lcd-members-popover"
+            data-lcd-scope
+            onCloseAutoFocus={(event) => {
+              if (preventCloseAutoFocusRef.current) {
+                event.preventDefault();
+                preventCloseAutoFocusRef.current = false;
+              }
+            }}
+          >
             <div className="flex flex-col items-stretch gap-1 p-2">
+              {/* Only row tiles report tone; closing these duplicates must not clear it. */}
               {hiddenItems.map((item) => (
                 <RuntimeDockActorButton
                   key={item.actorId}
@@ -631,6 +995,7 @@ function RuntimeDockHeaderStrip({
                   isSmallScreen={false}
                   isInspectorOpen={activeRuntimeActorId === item.actorId}
                   actorStatusProvisional={actorStatusProvisional}
+                  motionVisible={motionVisible}
                   onOpenInspector={(actorId) => {
                     setMoreOpen(false);
                     onOpenRuntimeActor(actorId);

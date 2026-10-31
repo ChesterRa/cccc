@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { CodexVoicePhase } from "./codexVoiceSession";
-import { type VoiceDotState, voicePhaseDotClass, voicePhaseDotState } from "./codexVoicePhase";
+import {
+  type VoiceDotState,
+  voicePhaseDotClass,
+  voicePhaseDotState,
+  voicePhaseHasLocalActivity,
+} from "./codexVoicePhase";
 
 const ACTIVE = "bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.12)]";
 const ATTENTION = "animate-pulse bg-amber-400";
@@ -25,5 +30,54 @@ describe("Voice phase dot", () => {
     expect(voicePhaseDotState("idle", true)).toBe("active");
     expect(voicePhaseDotState("failed", true)).toBe("active");
     expect(voicePhaseDotClass("failed", true)).toBe(ACTIVE);
+  });
+
+  it("does not animate preparation, external calls or muted listening as local work", () => {
+    for (const phase of ["idle", "preparing", "connecting", "stopping", "failed"] as const) {
+      expect(
+        voicePhaseHasLocalActivity(phase, {
+          microphoneMuted: false,
+          externalCall: false,
+          playbackBlocked: false,
+        }),
+      ).toBe(false);
+    }
+    for (const phase of ["listening", "responding", "speaking", "analysing"] as const) {
+      expect(
+        voicePhaseHasLocalActivity(phase, {
+          microphoneMuted: false,
+          externalCall: false,
+          playbackBlocked: false,
+        }),
+      ).toBe(true);
+      expect(
+        voicePhaseHasLocalActivity(phase, {
+          microphoneMuted: false,
+          externalCall: true,
+          playbackBlocked: false,
+        }),
+      ).toBe(false);
+    }
+    expect(
+      voicePhaseHasLocalActivity("listening", {
+        microphoneMuted: true,
+        externalCall: false,
+        playbackBlocked: false,
+      }),
+    ).toBe(false);
+    expect(
+      voicePhaseHasLocalActivity("speaking", {
+        microphoneMuted: true,
+        externalCall: false,
+        playbackBlocked: false,
+      }),
+    ).toBe(true);
+    expect(
+      voicePhaseHasLocalActivity("speaking", {
+        microphoneMuted: false,
+        externalCall: false,
+        playbackBlocked: true,
+      }),
+    ).toBe(false);
   });
 });

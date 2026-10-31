@@ -150,6 +150,7 @@ export function SecretaryTasks({
           >
             <span
               aria-hidden="true"
+              data-status-motion={summary.kind === "running" ? "working" : undefined}
               data-status-dot={
                 summary.kind === "attention"
                   ? "attention"

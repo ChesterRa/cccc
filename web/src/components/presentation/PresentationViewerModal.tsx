@@ -1,5 +1,7 @@
 import { buttonVariants } from "../ui/button-variants";
 import { PanelRightClose } from "lucide-react";
+import { LcdSpinner } from "../LcdSpinner";
+import { useLcdStyle } from "../../utils/uiStyle";
 import { PresentationPreviewModeToggle } from "./PresentationPreviewModeToggle";
 import { PresentationSlotNavigation } from "./PresentationSlotNavigation";
 import { PresentationViewerTitle } from "./PresentationViewerTitle";
@@ -166,6 +168,7 @@ function PresentationViewer({
   onClose,
 }: PresentationViewerProps) {
   const { t, i18n } = useTranslation("chat");
+  const lcd = useLcdStyle();
   const showError = useUIStore((state) => state.showError);
   const isModal = variant === "modal";
   const slotButtonRef = useRef<HTMLButtonElement>(null);
@@ -721,10 +724,16 @@ function PresentationViewer({
         title={name}
       >
         {inDetails && quotePending ? (
-          <span
-            aria-hidden="true"
-            className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none"
-          />
+          lcd ? (
+            <LcdSpinner className="h-4 w-4">
+              <MessageSquareTextIcon aria-hidden="true" className="h-4 w-4" strokeWidth={1.5} />
+            </LcdSpinner>
+          ) : (
+            <span
+              aria-hidden="true"
+              className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none"
+            />
+          )
         ) : (
           <MessageSquareTextIcon aria-hidden="true" className="h-4 w-4" strokeWidth={1.5} />
         )}

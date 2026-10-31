@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   DEFAULT_UI_STYLE_PREFS,
   LCD_BODY_STORAGE_KEY,
+  LCD_MOTION_STORAGE_KEY,
   LCD_WIDTH_STORAGE_KEY,
   UI_STYLE_STORAGE_KEY,
   normalizeUiStylePrefs,
@@ -21,6 +22,7 @@ beforeEach(() => {
   delete root.dataset.uiStyle;
   delete root.dataset.lcdBody;
   delete root.dataset.lcdWidth;
+  delete root.dataset.lcdMotion;
 });
 
 afterEach(() => {
@@ -29,23 +31,27 @@ afterEach(() => {
 
 describe("interface style preference", () => {
   it("accepts only known values and falls back to the classic defaults", () => {
-    expect(normalizeUiStylePrefs({ style: "lcd", lcdBody: "pixel", lcdWidth: "full" })).toEqual({
-      style: "lcd",
-      lcdBody: "pixel",
-      lcdWidth: "full",
-    });
+    expect(
+      normalizeUiStylePrefs({ style: "lcd", lcdBody: "pixel", lcdWidth: "full", lcdMotion: "off" }),
+    ).toEqual({ style: "lcd", lcdBody: "pixel", lcdWidth: "full", lcdMotion: "off" });
     expect(normalizeUiStylePrefs({ style: "lcd", lcdWidth: "wide" }).lcdWidth).toBe("wide");
-    expect(normalizeUiStylePrefs({ style: "LCD", lcdBody: 1, lcdWidth: "max" })).toEqual(
-      DEFAULT_UI_STYLE_PREFS,
-    );
+    expect(
+      normalizeUiStylePrefs({ style: "LCD", lcdBody: 1, lcdWidth: "max", lcdMotion: false }),
+    ).toEqual(DEFAULT_UI_STYLE_PREFS);
   });
 
   it("restores the stored choice and ignores invalid stored values", async () => {
     window.localStorage.setItem(UI_STYLE_STORAGE_KEY, "lcd");
     window.localStorage.setItem(LCD_BODY_STORAGE_KEY, "serif");
     window.localStorage.setItem(LCD_WIDTH_STORAGE_KEY, "full");
+    window.localStorage.setItem(LCD_MOTION_STORAGE_KEY, "off");
     const store = await loadStore();
-    expect(store.getUiStylePrefs()).toEqual({ style: "lcd", lcdBody: "mono", lcdWidth: "full" });
+    expect(store.getUiStylePrefs()).toEqual({
+      style: "lcd",
+      lcdBody: "mono",
+      lcdWidth: "full",
+      lcdMotion: "off",
+    });
   });
 
   it("starts classic when storage cannot be read", async () => {
@@ -86,6 +92,42 @@ describe("interface style preference", () => {
     expect(store.getUiStylePrefs().lcdWidth).toBe("full");
     expect(listener).toHaveBeenCalledTimes(3);
     unsubscribe();
+  });
+
+  it("marks motion off for the user's choice or the system's reduced-motion setting", async () => {
+    let reduce = false;
+    let notify: (() => void) | undefined;
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query: string) =>
+        ({
+          media: query,
+          get matches() {
+            return reduce;
+          },
+          addEventListener: (_type: string, listener: () => void) => {
+            notify = listener;
+          },
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+    const store = await loadStore();
+    const root = document.documentElement;
+
+    store.setUiStylePrefs({ style: "lcd" });
+    expect(root.dataset.lcdMotion).toBe("on");
+    store.setUiStylePrefs({ lcdMotion: "off" });
+    expect(root.dataset.lcdMotion).toBe("off");
+    expect(window.localStorage.getItem(LCD_MOTION_STORAGE_KEY)).toBe("off");
+    store.setUiStylePrefs({ lcdMotion: "on" });
+    expect(root.dataset.lcdMotion).toBe("on");
+
+    reduce = true;
+    notify?.();
+    expect(root.dataset.lcdMotion).toBe("off");
+    expect(store.getUiStylePrefs().lcdMotion).toBe("on");
+
+    store.setUiStylePrefs({ style: "classic" });
+    expect(root.dataset.lcdMotion).toBeUndefined();
   });
 
   it("stores only the changed choice, keeping what another tab stored for the rest", async () => {

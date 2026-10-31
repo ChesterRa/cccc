@@ -537,6 +537,8 @@
   "runtimeDockMoreMembersMail_other": "{{count}} with unread mail",
   "runtimeDockMoreMembersQueued_one": "{{count}} with queued messages",
   "runtimeDockMoreMembersQueued_other": "{{count}} with queued messages",
+  "runtimeDockMoreMembersAttention_one": "{{count}} needs attention",
+  "runtimeDockMoreMembersAttention_other": "{{count}} need attention",
   "runtimeDockQueuedForNextTurn_one": "{{count}} queued for next turn",
   "runtimeDockQueuedForNextTurn_other": "{{count}} queued for next turn",
   "needReply": "Reply requested",

@@ -1,7 +1,17 @@
-import { useCallback, useContext, useEffect, useId, useRef, type FormEvent } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type FormEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
+import { SendIcon } from "../Icons";
+import { LcdSpinner } from "../LcdSpinner";
 import { classNames } from "../../utils/classNames";
 import { PendingReplyEditingContext } from "./PendingReplyEditingContext";
 import type {
@@ -65,6 +75,54 @@ export function PendingReplyCard({
   useEffect(() => {
     if (!editorVisible) releaseEditor();
   }, [editorVisible, releaseEditor]);
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  // The answer box grows with its text from its starting rows up to its max-height,
+  // then scrolls inside, so a long answer stays readable while it is written.
+  const fitEditor = useCallback(() => {
+    const node = editorRef.current;
+    if (!node) return;
+    node.style.height = "auto";
+    const style = window.getComputedStyle(node);
+    const borders =
+      (Number.parseFloat(style.borderTopWidth) || 0) +
+      (Number.parseFloat(style.borderBottomWidth) || 0);
+    const natural = node.scrollHeight + borders;
+    const max = Number.parseFloat(style.maxHeight);
+    node.style.height = `${Number.isFinite(max) ? Math.min(natural, max) : natural}px`;
+  }, []);
+  useLayoutEffect(fitEditor, [fitEditor, draft.text, other, lcd, state]);
+  // A narrower box wraps the same text onto more lines (a turned phone, a side panel),
+  // so it fits again when its width changes, and once the layout and fonts settle after
+  // it appears; its own height changes are ignored.
+  useEffect(() => {
+    const node = editorRef.current;
+    if (!node) return;
+    let cancelled = false;
+    void document.fonts?.ready.then(() => {
+      if (!cancelled) fitEditor();
+    });
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        cancelled = true;
+      };
+    }
+    let width = -1;
+    let frame = 0;
+    // Fit on the next frame: resizing the observed box inside its own callback leaves
+    // WebKit with an undelivered notification (a "loop" error).
+    const observer = new ResizeObserver(() => {
+      if (node.clientWidth === width) return;
+      width = node.clientWidth;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fitEditor);
+    });
+    observer.observe(node);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [fitEditor, other, lcd, state]);
   if (readOnly) return null;
 
   if (state !== "pending") {
@@ -119,13 +177,35 @@ export function PendingReplyCard({
     if (answer && !locked && !checking) onSubmit(answer);
   };
 
+  const sendLabel = t(sending ? "pendingReply.sending" : "pendingReply.send");
   const action = uncertain ? (
     <Button type="button" disabled={sending} onClick={onRetry}>
       {t("pendingReply.retrySame")}
     </Button>
+  ) : lcd ? (
+    // LCD preview: beside a narrow answer box the key keeps only its send mark
+    // (lcd.css); the words stay its name and tooltip.
+    <Button
+      type="submit"
+      disabled={!answer || sending || checking}
+      data-ask-send
+      aria-label={sendLabel}
+      title={sendLabel}
+    >
+      <span data-ask-send-mark aria-hidden="true">
+        {sending ? (
+          <LcdSpinner className="h-4 w-4">
+            <SendIcon size={16} strokeWidth={1.25} />
+          </LcdSpinner>
+        ) : (
+          <SendIcon size={16} strokeWidth={1.25} />
+        )}
+      </span>
+      <span data-ask-send-label>{sendLabel}</span>
+    </Button>
   ) : (
     <Button type="submit" disabled={!answer || sending || checking}>
-      {t(sending ? "pendingReply.sending" : "pendingReply.send")}
+      {sendLabel}
     </Button>
   );
 
@@ -222,8 +302,10 @@ export function PendingReplyCard({
 
   const editor = (
     <Textarea
+      ref={editorRef}
       id={textId}
       rows={lcd ? 2 : 3}
+      className="max-h-[min(12rem,40dvh)] resize-none"
       value={draft.text}
       disabled={locked}
       onFocus={() => {

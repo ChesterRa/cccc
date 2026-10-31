@@ -53,6 +53,35 @@ function controller(
 
 describe("CodexVoiceDock", () => {
   it.each(["sidebar", "mobile", "collapsed"] as const)(
+    "animates only verified local voice activity in the %s dock",
+    (surface) => {
+      const markup = (overrides: Partial<CodexVoiceSessionController>) =>
+        renderToStaticMarkup(
+          <CodexVoiceDock
+            controller={controller({
+              phase: "listening",
+              owned: true,
+              isEngaged: true,
+              ...overrides,
+            })}
+            variant={surface === "mobile" ? "mobile" : "sidebar"}
+            collapsed={surface === "collapsed"}
+            onOpen={vi.fn()}
+            onStart={vi.fn()}
+          />,
+        );
+      expect(markup({})).toContain('data-status-motion="working"');
+      expect(markup({ microphoneMuted: true })).not.toContain('data-status-motion="working"');
+      expect(markup({ externalCall: true })).not.toContain('data-status-motion="working"');
+      expect(markup({ phase: "connecting" })).not.toContain('data-status-motion="working"');
+      expect(markup({ error: "Needs attention" })).not.toContain('data-status-motion="working"');
+      expect(markup({ phase: "speaking", playbackBlocked: true })).not.toContain(
+        'data-status-motion="working"',
+      );
+    },
+  );
+
+  it.each(["sidebar", "mobile", "collapsed"] as const)(
     "identifies the selected service and voice in the %s dock before a call",
     (surface) => {
       const html = renderToStaticMarkup(

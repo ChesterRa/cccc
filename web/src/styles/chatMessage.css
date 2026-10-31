@@ -61,19 +61,24 @@
     transition: none;
   }
 }
-/* Back-to-latest is a row below the log, never an overlay over message content. */
+/* Float the latest action above the log without reducing its reading height. */
 [data-scroll-latest] {
-  display: flex;
-  flex: none;
+  position: absolute;
+  z-index: 30;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  width: 100%;
-  min-height: 2rem;
-  border-top: 1px solid var(--color-border-primary);
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 1px solid var(--glass-panel-border);
+  border-radius: 999px;
   background: var(--glass-panel-bg);
+  box-shadow: var(--glass-shadow), var(--glass-inner-glow);
   color: var(--color-text-secondary);
-  font-size: 0.8125rem;
+  cursor: pointer;
 }
 
 [data-scroll-latest]:focus-visible {
@@ -82,12 +87,29 @@
 }
 
 [data-scroll-latest-count] {
-  min-width: 1.25rem;
-  padding: 0 0.25rem;
+  position: absolute;
+  top: -0.25rem;
+  right: -0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding: 0 0.2rem;
   border-radius: 999px;
   background: #6366f1;
   color: white;
+  font-size: 0.625rem;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-scroll-latest] {
+  border-color: var(--lcd-ink);
+  border-radius: 0;
+  background: var(--lcd-panel);
+  box-shadow: none;
+  color: var(--lcd-ink);
 }
 
 /* New messages use the same neutral filled mark as unread Mail. The waiting
@@ -103,10 +125,16 @@
     background: var(--glass-tab-bg-hover);
     color: var(--color-text-primary);
   }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-scroll-latest]:hover {
+    background: var(--lcd-sel-soft);
+    color: var(--lcd-ink);
+  }
 }
 
 @media (pointer: coarse) {
   [data-scroll-latest] {
-    min-height: 44px;
+    width: max(2.5rem, 44px);
+    height: max(2.5rem, 44px);
   }
 }

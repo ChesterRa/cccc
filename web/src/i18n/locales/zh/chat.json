@@ -537,6 +537,8 @@
   "runtimeDockMoreMembersMail_other": "{{count}} 位有未读邮件",
   "runtimeDockMoreMembersQueued_one": "{{count}} 位有消息排队",
   "runtimeDockMoreMembersQueued_other": "{{count}} 位有消息排队",
+  "runtimeDockMoreMembersAttention_one": "{{count}} 位需要处理",
+  "runtimeDockMoreMembersAttention_other": "{{count}} 位需要处理",
   "runtimeDockQueuedForNextTurn_one": "{{count}} 条消息排队等下一轮",
   "runtimeDockQueuedForNextTurn_other": "{{count}} 条消息排队等下一轮",
   "needReply": "请求回复",

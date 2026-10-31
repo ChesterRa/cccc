@@ -9,6 +9,36 @@ import { MessageActions } from "./MessageActions";
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 describe("message chrome", () => {
+  it.each(["submitting", "submitted", "pending", "bound", "ambiguous", "failed"] as const)(
+    "marks delivery %s as moving only during submission",
+    (state) => {
+      const markup = renderToStaticMarkup(
+        <MessageBubble
+          event={{ id: "e", kind: "chat.message", by: "user", data: { text: "hello" } }}
+          actorById={new Map()}
+          actors={[]}
+          displayNameMap={new Map()}
+          agentState={null}
+          taskById={new Map()}
+          isDark={false}
+          readOnly
+          groupId="g"
+          groupLabelById={{}}
+          onReply={vi.fn()}
+          onShowRecipients={vi.fn()}
+          webModelDeliveryStatus={{
+            state,
+            actorId: "worker",
+            deliveryId: "delivery",
+            updatedAt: "",
+            detail: "",
+          }}
+        />,
+      );
+      expect(markup.includes('data-status-motion="working"')).toBe(state === "submitting");
+    },
+  );
+
   it("shows one reply-request label and preserves recipient progress", () => {
     const props = {
       actorById: new Map(),

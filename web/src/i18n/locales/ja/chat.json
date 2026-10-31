@@ -537,6 +537,8 @@
   "runtimeDockMoreMembersMail_other": "{{count}} 人に未読メール",
   "runtimeDockMoreMembersQueued_one": "{{count}} 人に待機中のメッセージ",
   "runtimeDockMoreMembersQueued_other": "{{count}} 人に待機中のメッセージ",
+  "runtimeDockMoreMembersAttention_one": "{{count}} 人に対応が必要",
+  "runtimeDockMoreMembersAttention_other": "{{count}} 人に対応が必要",
   "runtimeDockQueuedForNextTurn_one": "{{count}} 件のメッセージが次のターン待ち",
   "runtimeDockQueuedForNextTurn_other": "{{count}} 件のメッセージが次のターン待ち",
   "needReply": "返信リクエスト",

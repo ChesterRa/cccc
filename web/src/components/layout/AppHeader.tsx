@@ -39,8 +39,6 @@ export interface AppHeaderProps {
   onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
   workControlsRef?: Ref<HTMLDivElement>;
-  /** LCD preview: where the chat places the member status strip on desktop. */
-  memberStatusRef?: Ref<HTMLDivElement>;
   sidePanelControlsRef?: Ref<HTMLDivElement>;
   mobileReadingHidden?: boolean;
   mobileReadingOverlay?: boolean;
@@ -68,7 +66,6 @@ export function AppHeader({
   onOpenMobileMenu,
   sseStatus,
   workControlsRef,
-  memberStatusRef,
   sidePanelControlsRef,
   mobileReadingHidden = false,
   mobileReadingOverlay = false,
@@ -272,17 +269,12 @@ export function AppHeader({
           data-group-work-controls-host
         />
         {lcd && !isSmallScreen ? (
-          // LCD preview: members and tools share the right half, as wide as the
-          // identity on the left, so the view switch between them stays centred.
+          // LCD preview: the tools take the right half, as wide as the identity on
+          // the left, so the view switch between them stays centred.
           <div
             className="flex min-w-0 flex-1 basis-0 items-center justify-end gap-2"
             data-lcd-header-end
           >
-            <div
-              ref={memberStatusRef}
-              className="flex min-w-0 flex-1 items-center justify-end"
-              data-lcd-members-host
-            />
             {workShortcuts}
           </div>
         ) : (

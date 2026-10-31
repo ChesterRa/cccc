@@ -8,7 +8,11 @@ import {
 import { CodexVoiceSplitLayout } from "../../features/codexVoice/CodexVoiceSplitLayout";
 import { useModalStore } from "../../stores";
 import { CodexVoiceMessageSources } from "../../features/codexVoice/CodexVoiceMessageSources";
-import { voicePhaseDotClass, voicePhaseDotState } from "../../features/codexVoice/codexVoicePhase";
+import {
+  voicePhaseDotClass,
+  voicePhaseDotState,
+  voicePhaseHasLocalActivity,
+} from "../../features/codexVoice/codexVoicePhase";
 import {
   codexVoiceAnalystReadinessProblem,
   codexVoiceCallReadinessProblem,
@@ -170,6 +174,16 @@ export function CodexVoiceAnalystModal({
             ) : null}
             <div className="flex min-w-0 items-center gap-1.5">
               <span
+                data-status-motion={
+                  !callBlocked &&
+                  voicePhaseHasLocalActivity(controller.phase, {
+                    microphoneMuted: controller.microphoneMuted,
+                    externalCall: controller.externalCall,
+                    playbackBlocked: controller.playbackBlocked,
+                  })
+                    ? "working"
+                    : undefined
+                }
                 data-status-dot={
                   callBlocked
                     ? "attention"

@@ -120,9 +120,13 @@
   pointer-events: none;
 }
 
+/* The level meter: 16 segments with a 2px gap; the voice lights whole segments from the
+   left. It shows live data, so it keeps moving when motion is off. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-workspace-meter="recording"] {
   height: 3px;
   background: var(--lcd-rule);
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 calc(6.25% - 2px), transparent 0 6.25%);
+  mask: repeating-linear-gradient(90deg, #000 0 calc(6.25% - 2px), transparent 0 6.25%);
 }
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-workspace-meter="recording"] > span {
@@ -130,8 +134,7 @@
   width: 100%;
   height: 100%;
   background: var(--lcd-ink);
-  transform: scaleX(0);
-  transform-origin: left;
+  clip-path: inset(0 100% 0 0);
 }
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-workspace-meter="processing"] {

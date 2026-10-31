@@ -51,7 +51,39 @@ it("names the shape after the Group state", async () => {
 it("shows the connection state instead of a run state it cannot vouch for", async () => {
   const connecting = await render(getGroupStatus(true, "active"), "connecting");
   expect(connecting.dataset.lcdShape).toBeUndefined();
-  expect(connecting.textContent).toBe("…");
+  expect(connecting.querySelectorAll(".lcd-reconnect-dots i")).toHaveLength(3);
+  expect(connecting.querySelector(".lcd-reconnect-dots")?.getAttribute("aria-hidden")).toBe("true");
+  expect(connecting.getAttribute("aria-label")).toContain("reconnecting");
   const lost = await render(getGroupStatus(true, "active"), "disconnected");
   expect(lost.textContent).toBe("×");
+  expect(lost.querySelector(".lcd-reconnect-dots")).toBeNull();
+});
+
+it("also shows the reconnecting dots in the badge without changing its accessible name", async () => {
+  await act(async () =>
+    root.render(
+      <GroupStatusIndicator
+        status={getGroupStatus(true, "active")}
+        connectionStatus="connecting"
+        variant="badge"
+      />,
+    ),
+  );
+  const badge = host.querySelector<HTMLElement>('[role="status"]')!;
+  expect(badge.getAttribute("aria-label")).toContain("reconnecting");
+  expect(badge.querySelectorAll(".lcd-reconnect-dots i")).toHaveLength(3);
+});
+
+it("keeps the Classic reconnecting dot", async () => {
+  act(() => setUiStylePrefs({ style: "classic" }));
+  await act(async () =>
+    root.render(
+      <GroupStatusIndicator
+        status={getGroupStatus(true, "active")}
+        connectionStatus="connecting"
+      />,
+    ),
+  );
+  expect(host.querySelector(".lcd-reconnect-dots")).toBeNull();
+  expect(host.querySelector('[role="img"]')?.className).toContain("animate-pulse");
 });

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { formatElapsed } from "../../utils/time";
 import { AlertIcon, CheckIcon, ClockIcon, RefreshIcon } from "../Icons";
+import { LcdSpinner } from "../LcdSpinner";
+import { useLcdStyle } from "../../utils/uiStyle";
 import { DELIVERY_STEPS, deliveryProgress, type StepState } from "./nativeActorStatus";
 
 type T = (key: string, options?: Record<string, unknown>) => string;
@@ -89,6 +91,7 @@ export function NativeActorDelivery({
   compact?: boolean;
   children?: ReactNode;
 }) {
+  const lcd = useLcdStyle();
   const progress = deliveryProgress(phase);
   if (!progress) return children ? <>{children}</> : null;
   const messages = `${provider}Actor`;
@@ -147,7 +150,13 @@ export function NativeActorDelivery({
                 ) : stepState === "error" ? (
                   <AlertIcon className="size-3.5" />
                 ) : sending ? (
-                  <RefreshIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
+                  lcd ? (
+                    <LcdSpinner className="size-3.5">
+                      <RefreshIcon className="size-3.5" />
+                    </LcdSpinner>
+                  ) : (
+                    <RefreshIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
+                  )
                 ) : stepState === "current" ? (
                   <ClockIcon className="size-3.5" />
                 ) : (

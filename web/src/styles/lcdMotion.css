@@ -1,0 +1,480 @@
+/* LCD motion (T071), in whole steps (no easing, fades or glow): loops that run while
+   their work runs and stop with it, one-shot feedback (the attention blink, the finish
+   flash) and the composer's typing hint. Each loop and blink has a still form, shown
+   while motion is off: `data-lcd-motion="off"` on the root marks both the user's choice
+   (Appearance) and the system's reduced-motion setting (utils/uiStyle.ts). The index.css
+   reduce rule only cuts each animation to one 0.01 ms run, so each still form is an
+   explicit rule here, placed after the moving one it replaces. */
+
+:root[data-ui-style="lcd"] {
+  /* One lap of the busy ring. RuntimeDock reads it to align newly moving rings. */
+  --lcd-ring-lap: 2s;
+  --lcd-ring-head: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"].dark {
+  --lcd-ring-head: var(--lcd-ink-strong);
+}
+
+/* ---- Member tiles: header row, "+N" list and phone dock ---- */
+
+/* Busy: a ring of 2px pixel dots one hairline outside the 2rem plate, on a 3px pitch:
+   48 dots, 12 a side. A bright head with a fading tail steps round it one dot at a time.
+   Still form: every dot lit. */
+:root[data-ui-style="lcd"] .lcd-member-ring {
+  --dot: 0.125rem;
+  --pitch: 0.1875rem;
+  --near: 0.0625rem;
+  --far: 2.3125rem;
+  --side: 2.375rem;
+  --dots: var(--lcd-ring-head);
+  position: absolute;
+  inset: -0.25rem;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(90deg, var(--dots) 0 var(--dot), transparent 0 var(--pitch))
+      var(--near) var(--near) / var(--side) var(--dot) no-repeat,
+    repeating-linear-gradient(90deg, var(--dots) 0 var(--dot), transparent 0 var(--pitch))
+      var(--near) var(--far) / var(--side) var(--dot) no-repeat,
+    repeating-linear-gradient(180deg, var(--dots) 0 var(--dot), transparent 0 var(--pitch))
+      var(--near) var(--near) / var(--dot) var(--side) no-repeat,
+    repeating-linear-gradient(180deg, var(--dots) 0 var(--dot), transparent 0 var(--pitch))
+      var(--far) var(--near) / var(--dot) var(--side) no-repeat;
+}
+
+/* Moving, the dots dim to a track and the head runs over them. */
+:root[data-ui-style="lcd"] .lcd-member-ring[data-ring="moving"] {
+  --dots: color-mix(in srgb, var(--lcd-ring-head) 20%, transparent);
+}
+
+/* The head and six tail dots. Each trails the one before by a step (1/48 lap). A whole
+   lap is taken off every delay so all are negative: no dot waits in a corner first.
+   Literal lengths keep the transform cheap whenever the page draws a main frame. */
+:root[data-ui-style="lcd"] .lcd-member-ring i {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: none;
+  width: var(--dot);
+  height: var(--dot);
+  background: var(--lcd-ring-head);
+  animation: lcd-ring-orbit var(--lcd-ring-lap) steps(12, end) infinite;
+  animation-delay: calc(
+    var(--lcd-ring-delay, 0ms) + var(--k) * var(--lcd-ring-lap) / 48 - var(--lcd-ring-lap)
+  );
+}
+
+:root[data-ui-style="lcd"] .lcd-member-ring[data-ring="moving"] i {
+  display: block;
+}
+
+:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(1) {
+  --k: 0;
+}
+
+:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(2) {
+  --k: 1;
+  opacity: 0.78;
+}
+
+:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(3) {
+  --k: 2;
+  opacity: 0.6;
+}
+
+:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(4) {
+  --k: 3;
+  opacity: 0.45;
+}
+
+:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(5) {
+  --k: 4;
+  opacity: 0.32;
+}
+
+:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(6) {
+  --k: 5;
+  opacity: 0.2;
+}
+
+:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(7) {
+  --k: 6;
+  opacity: 0.1;
+}
+
+@keyframes lcd-ring-orbit {
+  0%,
+  100% {
+    transform: translate(0.0625rem, 0.0625rem);
+  }
+
+  25% {
+    transform: translate(2.3125rem, 0.0625rem);
+  }
+
+  50% {
+    transform: translate(2.3125rem, 2.3125rem);
+  }
+
+  75% {
+    transform: translate(0.0625rem, 2.3125rem);
+  }
+}
+
+:root[data-ui-style="lcd"][data-lcd-motion="off"] .lcd-member-ring[data-ring] {
+  --dots: var(--lcd-ring-head);
+}
+
+:root[data-ui-style="lcd"][data-lcd-motion="off"] .lcd-member-ring[data-ring] i {
+  display: none;
+}
+
+/* The ring is a busy tile's line, so the plate's own edge goes and the dots sit one
+   hairline off the face. A runtime logo's white (its own colour) reaches the edge. The
+   finish flash keeps the same plate for its moment. */
+:root[data-ui-style="lcd"]
+  :is(.lcd-member, [data-lcd-dock-button]):is([data-tone="active"], [data-flourish])
+  .lcd-tile {
+  border-color: transparent;
+}
+
+:root[data-ui-style="lcd"] .lcd-member-tile .lcd-tile:has(> [data-runtime-logo]) {
+  background: #fff;
+}
+
+/* Needs attention: a double line in the waiting colour, whose gap is truly empty. When
+   the page sees a member change to it, the lines blink three times (2 Hz), then hold. */
+:root[data-ui-style="lcd"]
+  :is(.lcd-member, [data-lcd-dock-button])[data-tone="attention"]
+  .lcd-tile {
+  border-color: var(--lcd-wait);
+  outline: 1px solid var(--lcd-wait);
+  outline-offset: 1px;
+}
+
+:root[data-ui-style="lcd"]
+  :is(.lcd-member, [data-lcd-dock-button])[data-attention-flash]
+  .lcd-tile {
+  animation: lcd-attention-blink 1.5s steps(1, end) 1 both;
+}
+
+/* "+N" says that a hidden member needs attention with the same lines on its box. */
+:root[data-ui-style="lcd"] .lcd-member-more[data-tone="attention"]::before {
+  border-color: var(--lcd-wait);
+  outline: 1px solid var(--lcd-wait);
+  outline-offset: 1px;
+}
+
+:root[data-ui-style="lcd"] .lcd-member-more[data-attention-flash]::before {
+  animation: lcd-attention-blink 1.5s steps(1, end) 1 both;
+}
+
+@keyframes lcd-attention-blink {
+  0%,
+  33.333%,
+  66.667%,
+  100% {
+    border-color: var(--lcd-wait);
+    outline-color: var(--lcd-wait);
+  }
+
+  16.667%,
+  50%,
+  83.333% {
+    border-color: var(--lcd-rule-strong);
+    outline-color: transparent;
+  }
+}
+
+:root[data-ui-style="lcd"][data-lcd-motion="off"] [data-attention-flash] .lcd-tile,
+:root[data-ui-style="lcd"][data-lcd-motion="off"] .lcd-member-more[data-attention-flash]::before {
+  animation: none;
+}
+
+/* Phones: the dock is one touch key tall. Its tiles are the 2rem member plates, so the
+   ring has one geometry everywhere, and the strip adds no padding of its own. */
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-lcd-dock-button], [data-lcd-dock-add]) {
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-bottom: 0;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-lcd-dock-button] .lcd-tile,
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-lcd-dock-add] > span {
+  width: 2rem;
+  height: 2rem;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-runtime-dock-strip] {
+  padding-block: 0;
+}
+
+/* ---- Pixel spinner (LcdSpinner): a lit cell and its tail step round a 3x3 grid ---- */
+
+:root[data-ui-style="lcd"] .lcd-spinner {
+  flex-shrink: 0;
+  visibility: hidden;
+  shape-rendering: crispEdges;
+}
+
+:root[data-ui-style="lcd"] .lcd-spinner[data-shown] {
+  visibility: visible;
+}
+
+:root[data-ui-style="lcd"] .lcd-spinner rect {
+  fill: currentColor;
+  opacity: 0.12;
+  animation: lcd-spinner-cell 1s steps(1, end) infinite;
+}
+
+@keyframes lcd-spinner-cell {
+  0% {
+    opacity: 1;
+  }
+
+  12.5% {
+    opacity: 0.6;
+  }
+
+  25% {
+    opacity: 0.3;
+  }
+
+  37.5%,
+  100% {
+    opacity: 0.12;
+  }
+}
+
+/* Still form: the head at the top right with its tail along the top. */
+:root[data-ui-style="lcd"][data-lcd-motion="off"] .lcd-spinner rect {
+  animation: none;
+}
+
+:root[data-ui-style="lcd"][data-lcd-motion="off"] .lcd-spinner rect:nth-child(1) {
+  opacity: 0.3;
+}
+
+:root[data-ui-style="lcd"][data-lcd-motion="off"] .lcd-spinner rect:nth-child(2) {
+  opacity: 0.6;
+}
+
+:root[data-ui-style="lcd"][data-lcd-motion="off"] .lcd-spinner rect:nth-child(3) {
+  opacity: 1;
+}
+
+/* ---- Live text: a block cursor after the newest character ---- */
+
+/* It takes no width (its negative margin returns its own), so a full last line never
+   rewraps when it appears or goes. Solid while text arrives, blinking at 1 Hz after
+   0.7 s without new text, hollow after 10 s: no new text, not "stuck". */
+:root[data-ui-style="lcd"] span[data-lcd-live-cursor],
+:root[data-ui-style="lcd"]
+  [data-lcd-live-markdown]
+  .markdown-body
+  > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+:root[data-ui-style="lcd"]
+  [data-lcd-live-markdown]
+  .markdown-body
+  > :is(ul, ol):last-child
+  > li:last-child:not(:has(> p, > ul, > ol))::after,
+:root[data-ui-style="lcd"]
+  [data-lcd-live-markdown]
+  .markdown-body
+  > :is(ul, ol):last-child
+  > li:last-child
+  > p:last-child::after,
+:root[data-ui-style="lcd"]
+  [data-lcd-live-markdown]
+  .markdown-body
+  > blockquote:last-child
+  > p:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.55em;
+  height: 1.1em;
+  margin: 0 -0.7em 0 0.15em;
+  vertical-align: text-bottom;
+  background: currentColor;
+}
+
+:root[data-ui-style="lcd"] span[data-lcd-live-cursor="waiting"],
+:root[data-ui-style="lcd"]
+  [data-lcd-live-markdown][data-lcd-live-cursor="waiting"]
+  .markdown-body
+  > *:last-child::after,
+:root[data-ui-style="lcd"]
+  [data-lcd-live-markdown][data-lcd-live-cursor="waiting"]
+  .markdown-body
+  > :is(ul, ol, blockquote):last-child
+  > :last-child::after,
+:root[data-ui-style="lcd"]
+  [data-lcd-live-markdown][data-lcd-live-cursor="waiting"]
+  .markdown-body
+  > :is(ul, ol):last-child
+  > li:last-child
+  > p:last-child::after {
+  animation: lcd-cursor-blink 1s steps(1, end) infinite;
+}
+
+:root[data-ui-style="lcd"] span[data-lcd-live-cursor="quiet"],
+:root[data-ui-style="lcd"]
+  [data-lcd-live-markdown][data-lcd-live-cursor="quiet"]
+  .markdown-body
+  > *:last-child::after,
+:root[data-ui-style="lcd"]
+  [data-lcd-live-markdown][data-lcd-live-cursor="quiet"]
+  .markdown-body
+  > :is(ul, ol, blockquote):last-child
+  > :last-child::after,
+:root[data-ui-style="lcd"]
+  [data-lcd-live-markdown][data-lcd-live-cursor="quiet"]
+  .markdown-body
+  > :is(ul, ol):last-child
+  > li:last-child
+  > p:last-child::after {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+@keyframes lcd-cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+:root[data-ui-style="lcd"][data-lcd-motion="off"] span[data-lcd-live-cursor],
+:root[data-ui-style="lcd"][data-lcd-motion="off"]
+  [data-lcd-live-markdown]
+  .markdown-body
+  > *:last-child::after,
+:root[data-ui-style="lcd"][data-lcd-motion="off"]
+  [data-lcd-live-markdown]
+  .markdown-body
+  > :is(ul, ol, blockquote):last-child
+  > :last-child::after,
+:root[data-ui-style="lcd"][data-lcd-motion="off"]
+  [data-lcd-live-markdown]
+  .markdown-body
+  > :is(ul, ol):last-child
+  > li:last-child
+  > p:last-child::after {
+  animation: none;
+}
+
+/* The composer's hint types with the same block cursor: solid while it types, blinking
+   at 1 Hz while the phrase holds. With motion off the hint does not type at all. */
+:root[data-ui-style="lcd"] [data-composer-caret] {
+  width: 0.5em;
+  margin-left: 0.1em;
+  border: 0;
+  background: currentColor;
+  animation: none;
+}
+
+:root[data-ui-style="lcd"] [data-composer-caret="hold"] {
+  animation: lcd-cursor-blink 1s steps(1, end) infinite;
+}
+
+/* ---- Waiting on something outside: reconnecting ---- */
+
+/* Three dots fill one by one, then clear. Still form: all three. */
+:root[data-ui-style="lcd"] .lcd-reconnect-dots {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 0.125rem;
+  height: 0.75em;
+}
+
+:root[data-ui-style="lcd"] .lcd-reconnect-dots i {
+  width: 0.1875rem;
+  height: 0.1875rem;
+  background: currentColor;
+  animation: lcd-dots-1 1.5s steps(1, end) infinite;
+}
+
+:root[data-ui-style="lcd"] .lcd-reconnect-dots i:nth-child(2) {
+  animation-name: lcd-dots-2;
+}
+
+:root[data-ui-style="lcd"] .lcd-reconnect-dots i:nth-child(3) {
+  animation-name: lcd-dots-3;
+}
+
+@keyframes lcd-dots-1 {
+  0% {
+    opacity: 1;
+  }
+
+  75% {
+    opacity: 0;
+  }
+}
+
+@keyframes lcd-dots-2 {
+  0% {
+    opacity: 0;
+  }
+
+  25% {
+    opacity: 1;
+  }
+
+  75% {
+    opacity: 0;
+  }
+}
+
+@keyframes lcd-dots-3 {
+  0% {
+    opacity: 0;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  75% {
+    opacity: 0;
+  }
+}
+
+:root[data-ui-style="lcd"][data-lcd-motion="off"] .lcd-reconnect-dots i {
+  animation: none;
+  opacity: 1;
+}
+
+/* ---- Small working marks: one lit quarter steps round a 2x2 grid ---- */
+
+/* For status dots of 8px or less whose work is running now (data-status-motion).
+   Still form: the top left quarter lit. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-status-motion="working"] {
+  border-radius: 0;
+  background:
+    linear-gradient(currentColor, currentColor) 0 0 / 50% 50% no-repeat,
+    color-mix(in srgb, currentColor 25%, transparent);
+  animation: lcd-micro-chase 1s steps(1, end) infinite;
+}
+
+@keyframes lcd-micro-chase {
+  0% {
+    background-position: 0 0;
+  }
+
+  25% {
+    background-position: 100% 0;
+  }
+
+  50% {
+    background-position: 100% 100%;
+  }
+
+  75% {
+    background-position: 0 100%;
+  }
+}
+
+:root[data-ui-style="lcd"][data-lcd-motion="off"] [data-lcd-scope] [data-status-motion="working"] {
+  animation: none;
+}

@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { setUiStylePrefs } from "../utils/uiStyle";
 import type { VirtualMessageListProps } from "./virtualMessageList/types";
 import { VirtualMessageList } from "./VirtualMessageList";
 
@@ -139,7 +140,9 @@ it("cancels forced bottom follow when keyboard focus enters a message", async ()
 it("keeps the latest action outside the log and reports capped unread messages", async () => {
   const input = props();
   await act(async () => root.render(<VirtualMessageList {...input} />));
-  expect(host.querySelector("[data-scroll-latest]")?.textContent).toContain("Back to latest");
+  expect(host.querySelector("[data-scroll-latest]")?.getAttribute("aria-label")).toBe(
+    "Back to latest",
+  );
   expect(host.querySelector("[data-scroll-latest-count]")).toBeNull();
 
   input.chatUnreadCount = 101;
@@ -147,9 +150,10 @@ it("keeps the latest action outside the log and reports capped unread messages",
   const log = host.querySelector('[role="log"]')!;
   const button = host.querySelector<HTMLButtonElement>("[data-scroll-latest]")!;
   expect(log.contains(button)).toBe(false);
-  expect(button.textContent).toContain("Back to latest");
+  expect(button.textContent).toBe("99+");
   expect(button.querySelector("[data-scroll-latest-count]")?.textContent).toBe("99+");
   expect(button.getAttribute("aria-label")).toBe("Back to latest · 99+ new messages");
+  expect(button.title).toBe("Back to latest · 99+ new messages");
   await act(async () => button.click());
   expect(mocks.scroll).toHaveBeenCalledWith({ force: true });
   expect(input.onScrollButtonClick).toHaveBeenCalledOnce();
@@ -157,4 +161,44 @@ it("keeps the latest action outside the log and reports capped unread messages",
   expect(host.querySelector("[data-scroll-latest]")).toBeNull();
   await act(async () => root.render(<VirtualMessageList {...input} readOnly />));
   expect(host.querySelector("[data-scroll-latest]")).toBeNull();
+});
+
+it("returns keyboard focus to the log before forcing the latest position", async () => {
+  const input = props();
+  await act(async () => root.render(<VirtualMessageList {...input} />));
+  const button = host.querySelector<HTMLButtonElement>("[data-scroll-latest]")!;
+  const log = host.querySelector<HTMLElement>('[role="log"]')!;
+  await act(async () => button.focus());
+  mocks.cancel.mockClear();
+  mocks.scroll.mockClear();
+  mocks.state.forced = true;
+
+  await act(async () => button.click());
+  expect(document.activeElement).toBe(log);
+  expect(mocks.cancel).toHaveBeenCalled();
+  expect(mocks.scroll).toHaveBeenCalledWith({ force: true });
+  expect(mocks.cancel.mock.invocationCallOrder[0]).toBeLessThan(
+    mocks.scroll.mock.invocationCallOrder[0],
+  );
+
+  await act(async () => root.render(<VirtualMessageList {...input} showScrollButton={false} />));
+  expect(document.activeElement).toBe(log);
+});
+
+it("uses the delayed pixel spinner for history in LCD and keeps the classic spinner", async () => {
+  vi.useFakeTimers();
+  try {
+    act(() => setUiStylePrefs({ style: "lcd" }));
+    await act(async () => root.render(<VirtualMessageList {...props()} isLoadingHistory />));
+    expect(host.querySelector(".lcd-spinner")?.hasAttribute("data-shown")).toBe(false);
+    expect(host.querySelector(".animate-spin")).toBeNull();
+    await act(async () => vi.advanceTimersByTime(250));
+    expect(host.querySelector(".lcd-spinner")?.hasAttribute("data-shown")).toBe(true);
+    act(() => setUiStylePrefs({ style: "classic" }));
+    expect(host.querySelector(".lcd-spinner")).toBeNull();
+    expect(host.querySelector(".animate-spin")).not.toBeNull();
+  } finally {
+    act(() => setUiStylePrefs({ style: "classic" }));
+    vi.useRealTimers();
+  }
 });

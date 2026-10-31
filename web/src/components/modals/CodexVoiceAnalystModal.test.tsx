@@ -73,6 +73,47 @@ const readyAnalyst = {
 
 describe("CodexVoiceAnalystModal", () => {
   it.each([
+    ["preparing", false],
+    ["connecting", false],
+    ["listening", true],
+    ["responding", true],
+    ["speaking", true],
+    ["analysing", true],
+    ["stopping", false],
+    ["failed", false],
+  ] as const)("marks %s as moving only while a voice operation is active", (phase, moving) => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceAnalystModal
+        isOpen
+        isDark={false}
+        isSmallScreen={false}
+        controller={controller({ phase })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(html.includes('data-status-motion="working"')).toBe(moving);
+  });
+
+  it("does not animate muted, external or blocked voice activity", () => {
+    const markup = (overrides: Partial<CodexVoiceSessionController>) =>
+      renderToStaticMarkup(
+        <CodexVoiceAnalystModal
+          isOpen
+          isDark={false}
+          isSmallScreen={false}
+          controller={controller({ phase: "listening", isEngaged: true, ...overrides })}
+          onClose={vi.fn()}
+        />,
+      );
+    expect(markup({})).toContain('data-status-motion="working"');
+    expect(markup({ microphoneMuted: true })).not.toContain('data-status-motion="working"');
+    expect(markup({ externalCall: true })).not.toContain('data-status-motion="working"');
+    expect(markup({ phase: "speaking", playbackBlocked: true })).not.toContain(
+      'data-status-motion="working"',
+    );
+  });
+
+  it.each([
     { provider: "grok" as const, voice: "eve", name: "Eve" },
     { provider: "codex" as const, voice: "himari", name: "Himari" },
   ])("shows the selected $provider voice before starting a call", ({ provider, voice, name }) => {

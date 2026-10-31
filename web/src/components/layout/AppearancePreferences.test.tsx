@@ -171,6 +171,14 @@ describe("appearance choices inside their real hosts", () => {
         expect(document.documentElement.dataset.lcdWidth).toBe("wide");
         await click(radios("lcdWidth")[2]!);
         expect(document.documentElement.dataset.lcdWidth).toBe("full");
+        expect(radios("lcdMotion").map((radio) => radio.textContent)).toEqual([
+          "lcdMotionOn",
+          "lcdMotionOff",
+        ]);
+        expect(document.documentElement.dataset.lcdMotion).toBe("on");
+        await click(radios("lcdMotion")[1]!);
+        expect(document.documentElement.dataset.lcdMotion).toBe("off");
+        expect(document.querySelector("[data-lcd-motion-system]")).toBeNull();
         expect(outerOpen(host)).toBe(true);
         await click(radios("uiStyle")[0]!);
         expect(document.documentElement.dataset.uiStyle).toBeUndefined();
@@ -178,11 +186,40 @@ describe("appearance choices inside their real hosts", () => {
         expect(document.documentElement.dataset.lcdWidth).toBeUndefined();
         expect(choice("lcdBody")).toBeNull();
         expect(choice("lcdWidth")).toBeNull();
+        expect(choice("lcdMotion")).toBeNull();
       } finally {
         await act(async () =>
-          setUiStylePrefs({ style: "classic", lcdBody: "mono", lcdWidth: "column" }),
+          setUiStylePrefs({
+            style: "classic",
+            lcdBody: "mono",
+            lcdWidth: "column",
+            lcdMotion: "on",
+          }),
         );
       }
     });
   }
+
+  it("says under Motion when the system's reduced-motion setting keeps the LCD still", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query: string) =>
+        ({
+          media: query,
+          matches: query.includes("prefers-reduced-motion"),
+          addEventListener: noop,
+          removeEventListener: noop,
+        }) as unknown as MediaQueryList,
+    );
+    try {
+      await act(async () => setUiStylePrefs({ style: "lcd" }));
+      await renderHost("sheet", "light");
+      const hint = document.querySelector("[data-lcd-motion-system]");
+      expect(hint?.textContent).toBe("lcdMotionSystemStill");
+      // The stored choice stays the user's; only what shows is still.
+      expect(document.documentElement.dataset.lcdMotion).toBe("off");
+    } finally {
+      vi.restoreAllMocks();
+      await act(async () => setUiStylePrefs({ style: "classic" }));
+    }
+  });
 });

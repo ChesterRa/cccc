@@ -71,8 +71,30 @@ size smaller than the keys beside them and labels looked thin.
   sharpest at 24px, but a single size across the screen matters more than a crisp exception.
 - Words on a key are 0.75rem at weight 500. Do not set 600 or 700: the pixel font has
   no true bold, and a synthetic one blurs.
-- A member avatar is a key: its tile fills the 2rem frame, and its state lines (busy,
-  needs attention, open) are drawn inside the tile.
+- A member avatar is a 2.5rem key around its 2rem tile. Its state lines are drawn outside
+  the tile: the busy ring of pixel dots, the double line for needs attention, and the
+  open line under the key (`lcdMotion.css`).
+
+## Motion
+
+Motion moves in whole steps (`lcdMotion.css`): loops for work that runs now, which stop
+with it; one-shot feedback; and the composer's typing hint. Each loop and blink has a still
+form for `data-lcd-motion="off"`, which the root carries when the user turns motion off in
+Appearance or the system asks for reduced motion; write the still form as its own rule
+rather than relying on the `index.css` reduce rule.
+
+- Busy member: `.lcd-member-ring` with `data-ring="moving|still"` (RuntimeDock sets
+  `--lcd-ring-delay` so rings that start at different times move in step).
+- Work the page sees return to idle: `data-flourish` lights the ring for 250 ms.
+- Waiting on the person: `data-attention-flash` blinks the attention lines three times.
+- A wait of unknown length: `LcdSpinner` in LCD; the classic look keeps its spinner. The
+  caller changes its label and disabled state at once; the cells appear after 250 ms, and
+  a button passes its own icon as `children` to keep it until then.
+- A status dot of 8px or less whose work runs now: `data-status-motion="working"`.
+- Live text: `data-lcd-live-cursor="solid|waiting|quiet"` (HeadlessLiveTrace).
+- Reconnecting: `.lcd-reconnect-dots`.
+- The composer's typing hint: `data-composer-caret="typing|hold"`
+  (ComposerTypingPlaceholder); with motion off the hint does not type.
 
 ## A surface built from many palette classes
 

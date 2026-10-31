@@ -17,12 +17,14 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  ArrowDownIcon,
   ConnectMonitorIcon,
   GroupArchiveIcon,
   GroupArchiveRestoreIcon,
   GroupDeleteIcon,
   LcdIcon,
   LocalSessionsIcon,
+  ScrollLatestIcon,
   SearchIcon,
   WorkGridIcon,
   WorkMessagesIcon,
@@ -113,6 +115,15 @@ describe("LCD icon adaptation", () => {
     adapted.querySelector(":scope > [data-lcd-glyph]")?.remove();
     adapted.removeAttribute("data-lcd-icon");
     expect(adapted.outerHTML).toBe(original.outerHTML);
+  });
+
+  it("adds a pixel arrow to the latest-message action without changing the classic icon", () => {
+    const adapted = svg(renderToStaticMarkup(<ScrollLatestIcon aria-hidden="true" />));
+    expect(adapted.querySelectorAll(":scope > [data-lcd-glyph]")).toHaveLength(1);
+    adapted.querySelector(":scope > [data-lcd-glyph]")?.remove();
+    adapted.removeAttribute("data-lcd-icon");
+    const existing = svg(renderToStaticMarkup(<ArrowDownIcon aria-hidden="true" />));
+    expect(adapted.outerHTML).toBe(existing.outerHTML);
   });
 
   it("preserves the compact view switch's original SVG attributes", () => {

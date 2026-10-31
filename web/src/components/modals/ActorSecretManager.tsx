@@ -1,6 +1,8 @@
 import { useId, useMemo, useReducer, useState } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { LcdSpinner } from "../LcdSpinner";
+import { useLcdStyle } from "../../utils/uiStyle";
 import {
   SecretAddIcon,
   SecretClearIcon,
@@ -45,6 +47,7 @@ export function ActorSecretManager({
   onChangesChange,
 }: ActorSecretManagerProps) {
   const { t } = useTranslation("actors");
+  const lcd = useLcdStyle();
   const inputId = useId();
   const [drafts, dispatchDraft] = useReducer(
     actorSecretDraftReducer,
@@ -81,7 +84,13 @@ export function ActorSecretManager({
       title={t("refreshConfiguredKeys")}
       onClick={onRefresh}
     >
-      <RefreshCw size={14} className={loading ? "animate-spin" : ""} aria-hidden="true" />
+      {lcd && loading ? (
+        <LcdSpinner className="h-3.5 w-3.5">
+          <RefreshCw size={14} aria-hidden="true" />
+        </LcdSpinner>
+      ) : (
+        <RefreshCw size={14} className={loading ? "animate-spin" : ""} aria-hidden="true" />
+      )}
     </Button>
   );
   const submitAdd = () => {

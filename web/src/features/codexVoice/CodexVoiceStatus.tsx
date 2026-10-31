@@ -1,7 +1,15 @@
 import { classNames } from "../../utils/classNames";
 import type { VoiceDotState } from "./codexVoicePhase";
 
-export function VoiceStatusDot({ active, attention }: { active: boolean; attention: boolean }) {
+export function VoiceStatusDot({
+  active,
+  attention,
+  working = false,
+}: {
+  active: boolean;
+  attention: boolean;
+  working?: boolean;
+}) {
   const state: VoiceDotState = attention ? "attention" : active ? "active" : "inactive";
   return (
     <span
@@ -14,6 +22,7 @@ export function VoiceStatusDot({ active, attention }: { active: boolean; attenti
             : "bg-[var(--color-text-tertiary)]",
       )}
       data-status-dot={state}
+      data-status-motion={working && active && !attention ? "working" : undefined}
       aria-hidden="true"
     />
   );

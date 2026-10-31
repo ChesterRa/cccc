@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { useUiStylePrefs } from "../../utils/uiStyle";
 
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
 
@@ -20,9 +21,14 @@ function getMotionState() {
 
 function TypingText({ words, focused }: { words: string[]; focused: boolean }) {
   const motion = useSyncExternalStore(subscribeMotionState, getMotionState, () => "reduced");
+  const stylePrefs = useUiStylePrefs();
+  // The LCD look's own motion switch stills the hint as the system setting does.
+  const still =
+    motion === "reduced" || (stylePrefs.style === "lcd" && stylePrefs.lcdMotion === "off");
   const [frame, setFrame] = useState({ index: 0, count: 0, deleting: false });
   const characters = Array.from(words[frame.index]);
-  const playing = !focused && motion === "running";
+  const playing = !focused && motion === "running" && !still;
+  const holding = !frame.deleting && frame.count === characters.length;
 
   useEffect(() => {
     if (!playing) return;
@@ -41,12 +47,15 @@ function TypingText({ words, focused }: { words: string[]; focused: boolean }) {
     return () => window.clearTimeout(timer);
   }, [playing, frame, characters.length, words.length]);
 
-  const text = motion === "reduced" ? words[0] : characters.slice(0, frame.count).join("");
+  const text = still ? words[0] : characters.slice(0, frame.count).join("");
   return (
     <>
       <span data-composer-typing-text>{text || (focused ? words[0] : "")}</span>
       {playing && (
-        <span className="ml-px inline-block h-[1em] border-r border-current align-[-0.12em] motion-safe:animate-pulse" />
+        <span
+          data-composer-caret={holding ? "hold" : "typing"}
+          className="ml-px inline-block h-[1em] border-r border-current align-[-0.12em] motion-safe:animate-pulse"
+        />
       )}
     </>
   );

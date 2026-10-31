@@ -38,7 +38,18 @@ export function GroupStatusIndicator({
       : "bg-rose-500"
     : status.dotClass;
 
-  const lcdSymbol = interrupted ? (connectionStatus === "connecting" ? "\u2026" : "\u00D7") : "";
+  const lcdSymbol =
+    connectionStatus === "connecting" ? (
+      <span className="lcd-reconnect-dots" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+    ) : interrupted ? (
+      "\u00D7"
+    ) : (
+      ""
+    );
   // LCD preview: the screen has no green, so each state has its own shape, drawn in
   // CSS from this key rather than taken from a font (fonts differ; some draw U+25B6
   // as emoji). Offline is a dash: nothing else uses it, and no one reads it as a checkbox.

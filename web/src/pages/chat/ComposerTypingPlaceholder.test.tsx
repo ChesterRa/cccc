@@ -5,6 +5,7 @@ import { createInstance } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { ComposerTypingPlaceholder } from "./ComposerTypingPlaceholder";
+import { setUiStylePrefs } from "../../utils/uiStyle";
 import en from "../../i18n/locales/en/chat.json";
 import zh from "../../i18n/locales/zh/chat.json";
 import ja from "../../i18n/locales/ja/chat.json";
@@ -94,6 +95,36 @@ describe("composer typing placeholder", () => {
     }
     expect(host.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
     expect(host.querySelector("[aria-live]")).toBeNull();
+  });
+
+  it("marks the caret solid while typing and holding while a sentence holds", async () => {
+    await render();
+    const caret = () =>
+      host.querySelector("[data-composer-caret]")?.getAttribute("data-composer-caret");
+    await tick(60);
+    expect(caret()).toBe("typing");
+    await tick(60);
+    expect(text()).toBe("ab");
+    expect(caret()).toBe("hold");
+    await tick(3000);
+    expect(caret()).toBe("typing");
+  });
+
+  it("keeps the first sentence still when the LCD look's motion is off", async () => {
+    try {
+      await act(async () => setUiStylePrefs({ style: "lcd", lcdMotion: "off" }));
+      await render();
+      expect(text()).toBe("ab");
+      expect(host.querySelector("[data-composer-caret]")).toBeNull();
+      await tick(500);
+      expect(text()).toBe("ab");
+      await act(async () => setUiStylePrefs({ style: "classic" }));
+      // The switch belongs to the LCD look; classic follows only the system setting.
+      await tick(60);
+      expect(host.querySelector("[data-composer-caret]")).not.toBeNull();
+    } finally {
+      await act(async () => setUiStylePrefs({ style: "classic", lcdMotion: "on" }));
+    }
   });
 
   it("pauses on focus and resumes on blur", async () => {

@@ -190,6 +190,7 @@ export function MessageFooter({
             {webModelDeliveryStatus.state === "submitting" ? (
               <span
                 className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-current"
+                data-status-motion="working"
                 aria-hidden="true"
               />
             ) : null}

@@ -216,7 +216,6 @@ export function AppShell({
   } as CSSProperties;
   const setGroupConnections = useModalStore((state) => state.setGroupConnections);
   const [workControlsHost, setWorkControlsHost] = useState<HTMLDivElement | null>(null);
-  const [memberStatusHost, setMemberStatusHost] = useState<HTMLDivElement | null>(null);
   const [sidePanelControlsHost, setSidePanelControlsHost] = useState<HTMLDivElement | null>(null);
   const [mobileReadingHidden, setMobileReadingHidden] = useState(false);
   const [mobileReadingOverlay, setMobileReadingOverlay] = useState(false);
@@ -292,7 +291,6 @@ export function AppShell({
                 mobileReadingHidden={isSmallScreen && mobileReadingHidden}
                 mobileReadingOverlay={isSmallScreen && mobileReadingOverlay}
                 workControlsRef={setWorkControlsHost}
-                memberStatusRef={setMemberStatusHost}
                 sidePanelControlsRef={setSidePanelControlsHost}
                 theme={theme}
                 textScale={textScale}
@@ -332,7 +330,6 @@ export function AppShell({
                       onMobileReadingHiddenChange={setMobileReadingHidden}
                       onMobileReadingOverlayChange={setMobileReadingOverlay}
                       workControlsHost={workControlsHost}
-                      memberStatusHost={memberStatusHost}
                       sidePanelControlsHost={sidePanelControlsHost}
                       isDark={isDark}
                       isSmallScreen={isSmallScreen}

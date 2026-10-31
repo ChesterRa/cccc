@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Code, Download, Eye, ExternalLink, Paperclip, RotateCcw, Save, X } from "lucide-react";
 import { LcdIcon } from "../Icons";
+import { LcdSpinner } from "../LcdSpinner";
+import { useLcdStyle } from "../../utils/uiStyle";
 import { classNames } from "../../utils/classNames";
 import type { WorkspaceFile } from "../../types";
 import { baseName } from "./workspaceTreeModel";
@@ -72,6 +74,7 @@ function FileViewer({
   navigation,
 }: Props) {
   const { t } = useTranslation("chat");
+  const lcd = useLcdStyle();
   const [showSource, setShowSource] = useState(false);
   const [confirmReload, setConfirmReload] = useState(false);
   const cancelReload = useRef<HTMLButtonElement>(null);
@@ -132,11 +135,17 @@ function FileViewer({
           aria-label={t("workspaceReload", { defaultValue: "Reload file" })}
           className={fileActionClass}
         >
-          <LcdIcon
-            icon={RotateCcw}
-            glyph="reload"
-            className={classNames("h-3.5 w-3.5", loading && "animate-spin")}
-          />
+          {lcd && loading ? (
+            <LcdSpinner className="h-3.5 w-3.5">
+              <LcdIcon icon={RotateCcw} glyph="reload" className="h-3.5 w-3.5" />
+            </LcdSpinner>
+          ) : (
+            <LcdIcon
+              icon={RotateCcw}
+              glyph="reload"
+              className={classNames("h-3.5 w-3.5", loading && "animate-spin")}
+            />
+          )}
         </button>
         {hasSourcePreview && (
           <button

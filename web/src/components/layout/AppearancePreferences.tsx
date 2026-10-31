@@ -5,8 +5,10 @@ import { normalizeLanguageCode } from "../../i18n/languages";
 import { getTextScaleLabel, TEXT_SCALE_OPTIONS } from "../../utils/textScale";
 import {
   setUiStylePrefs,
+  useSystemReducedMotion,
   useUiStylePrefs,
   type LcdBodyFont,
+  type LcdMotion,
   type LcdWidth,
   type UiStyle,
 } from "../../utils/uiStyle";
@@ -28,7 +30,7 @@ function AppearanceChoice<Value extends string | number>({
   onChange,
   className = "",
 }: {
-  name: "theme" | "uiStyle" | "lcdBody" | "lcdWidth" | "textScale" | "language";
+  name: "theme" | "uiStyle" | "lcdBody" | "lcdWidth" | "lcdMotion" | "textScale" | "language";
   label: string;
   value: Value;
   options: SegmentedOption<Value>[];
@@ -60,6 +62,7 @@ export function AppearancePreferences({
 }: AppearancePreferencesProps) {
   const { t, i18n } = useTranslation(["layout", "common"]);
   const uiStyle = useUiStylePrefs();
+  const systemReducedMotion = useSystemReducedMotion();
   return (
     <fieldset className="min-w-0" data-appearance-preferences>
       <legend className="px-2 pt-1.5 pb-1 text-xs font-semibold text-[var(--color-text-tertiary)]">
@@ -111,6 +114,27 @@ export function AppearancePreferences({
             ]}
             className="max-md:hidden"
           />
+          <AppearanceChoice<LcdMotion>
+            name="lcdMotion"
+            label={t("lcdMotionLabel")}
+            value={uiStyle.lcdMotion}
+            onChange={(lcdMotion) => setUiStylePrefs({ lcdMotion })}
+            options={[
+              { value: "on", label: t("lcdMotionOn") },
+              { value: "off", label: t("lcdMotionOff") },
+            ]}
+            className={systemReducedMotion ? "pb-1" : ""}
+          />
+          {/* The system's reduced-motion setting stills it whatever is chosen; say so
+              where the choice is made, without changing the stored choice. */}
+          {systemReducedMotion ? (
+            <p
+              className="px-2 pb-2 text-xs text-[var(--color-text-secondary)]"
+              data-lcd-motion-system
+            >
+              {t("lcdMotionSystemStill")}
+            </p>
+          ) : null}
         </>
       ) : null}
       <AppearanceChoice<TextScale>
