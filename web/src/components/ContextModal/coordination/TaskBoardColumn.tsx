@@ -2,6 +2,7 @@ import { useDroppable } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import { TASK_PAGE_SIZE } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
+import { useLcdStyle } from "../../../utils/uiStyle";
 import type { BoardStatus, ContextTranslator, SubtaskProgress } from "../model";
 import type { ContextModalUi } from "../ui";
 import { TaskCard } from "./TaskCard";
@@ -43,6 +44,7 @@ export function TaskBoardColumn({
   onRestoreTask: (task: Task) => void;
   onLoadMore: (status: BoardStatus) => void;
 }) {
+  const lcd = useLcdStyle();
   const { setNodeRef, isOver } = useDroppable({
     id: `column:${columnKey}`,
     data: { type: "column", status: columnKey },
@@ -55,6 +57,9 @@ export function TaskBoardColumn({
       ref={setNodeRef}
       aria-label={label}
       data-task-column={columnKey}
+      data-drop-target={isOver || undefined}
+      // The phone column jump moves focus here, so Tab continues in this column.
+      tabIndex={lcd ? -1 : undefined}
       data-rendered-task-count={items.length}
       data-total-task-count={totalCount}
       className={classNames(
@@ -64,15 +69,18 @@ export function TaskBoardColumn({
           : "glass-panel",
       )}
     >
-      <div className="flex items-center justify-between gap-2">
+      <div data-task-column-head className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="text-sm font-semibold text-[var(--color-text-primary)]">{label}</div>
         </div>
-        <span className="rounded-full px-2 py-0.5 text-xs glass-panel text-[var(--color-text-tertiary)]">
+        <span
+          data-task-column-count
+          className="rounded-full px-2 py-0.5 text-xs glass-panel text-[var(--color-text-tertiary)]"
+        >
           {totalCount}
         </span>
       </div>
-      <div className="mt-3 space-y-2">
+      <div data-task-column-items className="mt-3 space-y-2">
         {items.length > 0 ? (
           items.map((task) => (
             <TaskCard
@@ -90,7 +98,10 @@ export function TaskBoardColumn({
             />
           ))
         ) : (
-          <div className="rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-3 py-5 text-xs text-[var(--color-text-muted)]">
+          <div
+            data-task-column-empty
+            className="rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-3 py-5 text-xs text-[var(--color-text-muted)]"
+          >
             {tr(`context.empty.${columnKey}`, "No tasks here")}
           </div>
         )}
@@ -101,6 +112,7 @@ export function TaskBoardColumn({
           onClick={() => onLoadMore(columnKey)}
           disabled={loading}
           className={classNames(ui.buttonSecondaryClass, "mt-3 w-full justify-center")}
+          data-task-column-more
         >
           {loading
             ? tr("context.loadingTasks", "Loading tasks…")

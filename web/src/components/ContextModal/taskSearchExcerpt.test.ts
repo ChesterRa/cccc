@@ -1,6 +1,6 @@
 import { expect, it } from "vite-plus/test";
 import type { Task } from "../../types";
-import { taskSearchExcerpt } from "./taskSearchExcerpt";
+import { taskSearchExcerpt, taskSearchMatch, taskSearchTextMatch } from "./taskSearchExcerpt";
 
 const task = (fields: Partial<Task>): Task => ({ id: "T7", title: "Board polish", ...fields });
 // What a card shows: its title and id, plus whatever a case adds.
@@ -83,4 +83,38 @@ it("starts the lead-in at a whole word and quotes a title the card clips", () =>
   const found = taskSearchExcerpt(task({ title }), "zebra", ["T7", title.slice(0, 30)]);
   expect(found?.field).toBe("title");
   expect(found?.match).toBe("zebra");
+});
+
+it("finds every daemon-searchable field without assuming a rendered width", () => {
+  const fields = ["title", "id", "outcome", "notes", "assignee", "priority", "handoff_to"] as const;
+  for (const field of fields) {
+    const text = `prefix needle-${field} suffix`;
+    const value = task({ [field]: text });
+    const found = taskSearchMatch(value, `NEEDLE-${field.toUpperCase()}`);
+    expect(found?.field).toBe(field);
+    expect(text.slice(found!.start, found!.end)).toBe(`needle-${field}`);
+    expect(found?.match).toBe(`needle-${field}`);
+  }
+  expect(taskSearchMatch(task({ notes: "nothing" }), "   ")).toBeNull();
+  expect(taskSearchMatch(task({ notes: "nothing" }), "absent")).toBeNull();
+});
+
+it("returns indexes for the exact displayed title, including casing expansion and emoji", () => {
+  const text = "  İ🌟ZEBRA  ";
+  const found = taskSearchTextMatch(text, "zebra");
+  expect(found).toEqual([5, 10]);
+  expect(text.slice(...found!)).toBe("ZEBRA");
+  const trimmed = text.trim();
+  expect(trimmed.slice(...taskSearchTextMatch(trimmed, "zebra")!)).toBe("ZEBRA");
+  expect(taskSearchTextMatch(text, " ")).toBeNull();
+  expect(taskSearchTextMatch(text, "absent")).toBeNull();
+});
+
+it("keeps a long match intact and maps offsets through Unicode casing", () => {
+  const matching = "long-needle-".repeat(40);
+  const text = `İ🌟${"before ".repeat(5)}${matching} tail`;
+  const found = taskSearchMatch(task({ notes: text }), matching.toUpperCase());
+  expect(found?.field).toBe("notes");
+  expect(found?.match).toBe(matching);
+  expect(text.slice(found!.start, found!.end)).toBe(matching);
 });

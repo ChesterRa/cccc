@@ -176,3 +176,42 @@ it("still accepts a mouse choice in a non-searchable list", async () => {
   expect(trigger.textContent).toBe("Second");
   expect(trigger.getAttribute("aria-expanded")).toBe("false");
 });
+
+it.each(["classic", "lcd"])(
+  "inherits the trigger's scope into the portalled list in %s style",
+  async (style) => {
+    const oldStyle = document.documentElement.getAttribute("data-ui-style");
+    document.documentElement.setAttribute("data-ui-style", style);
+    host.setAttribute("data-lcd-scope", "");
+    try {
+      const trigger = await open(true);
+      const popover = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      expect(popover.hasAttribute("data-lcd-scope")).toBe(true);
+      expect(popover.contains(document.querySelector("[cmdk-input]"))).toBe(true);
+      expect(trigger.querySelector("svg[data-lcd-icon] [data-lcd-glyph]")).not.toBeNull();
+      expect(
+        popover.querySelectorAll("svg[data-lcd-icon] [data-lcd-glyph]").length,
+      ).toBeGreaterThan(1);
+      const input = popover.querySelector<HTMLInputElement>("[cmdk-input]")!;
+      expect(document.activeElement).toBe(input);
+    } finally {
+      if (oldStyle === null) document.documentElement.removeAttribute("data-ui-style");
+      else document.documentElement.setAttribute("data-ui-style", oldStyle);
+    }
+  },
+);
+
+it("rechecks scope each time the same trigger opens", async () => {
+  const trigger = await open();
+  expect(document.querySelector('[role="dialog"]')!.hasAttribute("data-lcd-scope")).toBe(false);
+  await act(async () => trigger.click());
+  host.setAttribute("data-lcd-scope", "");
+  await act(async () => trigger.click());
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  expect(document.querySelector('[role="dialog"]')!.hasAttribute("data-lcd-scope")).toBe(true);
+  await act(async () => trigger.click());
+  host.removeAttribute("data-lcd-scope");
+  await act(async () => trigger.click());
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  expect(document.querySelector('[role="dialog"]')!.hasAttribute("data-lcd-scope")).toBe(false);
+});

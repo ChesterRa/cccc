@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronsUpDown,
   CircleAlert,
   CircleUserRound,
   Clock3,
@@ -190,6 +191,11 @@ export const GripIcon = createIcon(GripVertical);
 // These call sites previously used lucide directly, without our stroke defaults.
 export function ConnectLinkIcon(props: IconProps) {
   return renderIcon(Link2, "link", props);
+}
+
+// Match lucide's defaults here: these controls already used it directly.
+export function ComboboxCaretIcon(props: IconProps) {
+  return renderIcon(ChevronsUpDown, "chevron-down", props);
 }
 export function ConnectMonitorIcon(props: IconProps) {
   return renderIcon(Monitor, "monitor", props);

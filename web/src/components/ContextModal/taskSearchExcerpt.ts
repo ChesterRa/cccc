@@ -8,6 +8,16 @@ export interface TaskSearchExcerpt {
   after: string;
 }
 
+/** A match in the original source field; offsets are JavaScript string indexes. */
+export interface TaskSearchMatch {
+  field: "title" | "id" | "outcome" | "notes" | "assignee" | "priority" | "handoff_to";
+  before: string;
+  match: string;
+  after: string;
+  start: number;
+  end: number;
+}
+
 // Text before the match is kept short, measured in display width, so the
 // match stays within the quote's two lines even after wide emoji or CJK.
 const BEFORE_WIDTH = 20;
@@ -54,6 +64,12 @@ function findMatch(text: string, query: string): [number, number] | null {
   if (lowered.length === text.length) return [at, at + query.length];
   // Casing lengthened a character (İ becomes two units): map both ends back.
   return [originalCharacter(text, at)[0], originalCharacter(text, at + query.length - 1)[1]];
+}
+
+/** Search a displayed string without assuming how much of it fits on screen. */
+export function taskSearchTextMatch(text: string, query: string): [number, number] | null {
+  const wanted = query.trim().toLowerCase();
+  return wanted ? findMatch(text, wanted) : null;
 }
 
 // Intl.Segmenter is not in the ES2020 lib this project compiles against.
@@ -107,6 +123,31 @@ function excerpt(text: string, [start, end]: [number, number]) {
     match: flatten(text.slice(start, end)),
     after: flatten(after).trimEnd() + (end + after.length < text.length ? "…" : ""),
   };
+}
+
+/**
+ * The first searchable field that matches, without guessing rendered width.
+ * Prefer title and ID because they have their own visible location on a card.
+ */
+export function taskSearchMatch(task: Task, query: string): TaskSearchMatch | null {
+  const wanted = query.trim().toLowerCase();
+  if (!wanted) return null;
+  for (const field of [
+    "title",
+    "id",
+    "outcome",
+    "notes",
+    "assignee",
+    "priority",
+    "handoff_to",
+  ] as const) {
+    const text = String(task[field] || "");
+    const found = text && findMatch(text, wanted);
+    if (found) {
+      return { field, ...excerpt(text, found), start: found[0], end: found[1] };
+    }
+  }
+  return null;
 }
 
 /**

@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Command as CommandPrimitive } from "cmdk";
-import { Search } from "lucide-react";
+import { SearchIcon } from "@/components/Icons";
 
 import { cn } from "@/lib/utils";
 
@@ -25,7 +25,12 @@ const CommandInput = React.forwardRef<
 >(({ className, style, ...props }, ref) => (
   <div className="border-b border-[var(--glass-border-subtle)] p-2">
     <div className="flex items-center gap-2 rounded-xl bg-[var(--glass-tab-bg)] px-3">
-      <Search className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
+      <SearchIcon
+        size={24}
+        strokeWidth={2}
+        absoluteStrokeWidth={false}
+        className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]"
+      />
       <CommandPrimitive.Input
         ref={ref}
         style={{ border: "none", outline: "none", boxShadow: "none", ...style }}

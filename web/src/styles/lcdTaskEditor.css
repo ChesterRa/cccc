@@ -1,0 +1,82 @@
+/* Task status edits the draft; it is saved with the rest of the drawer. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor-status] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor-status] button {
+  min-width: 0;
+  min-height: 2rem;
+  border: 1px solid var(--lcd-rule-strong);
+  padding: 0.25rem 0.5rem;
+  color: var(--lcd-ink);
+  overflow-wrap: anywhere;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor-status] button[aria-pressed="true"] {
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor-status] button:disabled {
+  opacity: 0.55;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor] .glass-input {
+  border-color: var(--lcd-rule-strong);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor-blocked] textarea {
+  min-height: 4.5rem;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-coverage] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--lcd-dim);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-coverage]::before {
+  content: "– ";
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-coverage="present"] {
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-coverage="present"]::before {
+  content: "✓ ";
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-subtask-status],
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-attempt],
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-unsaved] {
+  border: 1px solid var(--lcd-rule-strong);
+  background: transparent;
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-attempt="crash"],
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor-alert] {
+  border-color: var(--lcd-danger);
+  background: transparent;
+  color: var(--lcd-danger);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor] .glass-input:focus {
+  box-shadow: none;
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor-status] button {
+    min-height: 44px;
+  }
+}
+
+@media (min-width: 640px) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor-status] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

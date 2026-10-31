@@ -155,6 +155,7 @@ export function AgentStateCard({
         <div className="flex flex-wrap items-center justify-end gap-2">
           {hot.activeTaskId ? (
             <span
+              data-agent-chip
               className={classNames(
                 "rounded-full px-2 py-0.5 text-xs",
                 "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white",

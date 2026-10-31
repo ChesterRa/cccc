@@ -1,8 +1,11 @@
+import { useRef } from "react";
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import type { SensorDescriptor, SensorOptions } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import type { TaskColumnPages } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
+import { useLcdStyle } from "../../../utils/uiStyle";
+import { PlusIcon } from "../../Icons";
 import type {
   BoardColumns,
   BoardStatus,
@@ -14,6 +17,8 @@ import type { ContextModalUi } from "../ui";
 import { TaskBoardGrid } from "./TaskBoardGrid";
 import { TaskBoardLoadNotice } from "./TaskBoardLoadNotice";
 import { TaskBoardToolbar } from "./TaskBoardToolbar";
+import { TaskColumnJump } from "./TaskColumnJump";
+import { useTaskKeysPlacement } from "./useTaskKeysPlacement";
 
 interface TaskBoardProps {
   tr: ContextTranslator;
@@ -99,6 +104,9 @@ export function TaskBoard({
   onLoadMore,
   onRetryLoad,
 }: TaskBoardProps) {
+  const lcd = useLcdStyle();
+  // The column jump keys scroll within this element.
+  const boardRef = useRef<HTMLDivElement>(null);
   const hasActiveFilters = Boolean(
     taskQuery.trim() || assigneeFilter !== "__all__" || taskFilter !== "all",
   );
@@ -111,22 +119,50 @@ export function TaskBoard({
   const showBoard = !showEmpty && (hasRenderedTasks || (!taskLoading && !taskLoadError));
   const emptyBoard =
     showEmpty && !hasActiveFilters && !hasArchivedTasks && Number(tasksSummary.total || 0) === 0;
+  useTaskKeysPlacement(boardRef, lcd && showBoard);
+
+  const grid = showBoard ? (
+    <TaskBoardGrid
+      tr={tr}
+      ui={ui}
+      syncBusy={syncBusy}
+      searchQuery={searchQuery}
+      archivedExpanded={archivedExpanded}
+      board={filteredBoard}
+      pages={columnPages}
+      taskMap={taskMap}
+      subtaskProgress={subtaskProgress}
+      selectedTaskId={selectedTaskId}
+      dragTaskId={dragTaskId}
+      sensors={sensors}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragCancel={onDragCancel}
+      onSelectTask={onSelectTask}
+      onMoveTaskToStatus={onMoveTaskToStatus}
+      onRestoreTask={onRestoreTask}
+      onLoadMore={onLoadMore}
+    />
+  ) : null;
 
   return (
-    <section className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-3">
+    <section data-taskboard className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-3">
       <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-lg font-semibold text-[var(--color-text-primary)]">
-            {tr("context.tasks", "Tasks")}
+        {/* The tab already names the board; LCD keeps New task on the toolbar row. */}
+        {lcd ? null : (
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-lg font-semibold text-[var(--color-text-primary)]">
+              {tr("context.tasks", "Tasks")}
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenCreate("planned")}
+              className={ui.buttonPrimaryClass}
+            >
+              {tr("context.newTask", "New task")}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => onOpenCreate("planned")}
-            className={ui.buttonPrimaryClass}
-          >
-            {tr("context.newTask", "New task")}
-          </button>
-        </div>
+        )}
 
         <TaskBoardToolbar
           tr={tr}
@@ -149,6 +185,30 @@ export function TaskBoard({
           onTaskFilterChange={onTaskFilterChange}
           onClearFilters={onClearFilters}
           onArchivedExpandedChange={onArchivedExpandedChange}
+          actions={
+            lcd ? (
+              <button
+                type="button"
+                onClick={() => onOpenCreate("planned")}
+                className={ui.buttonPrimaryClass}
+                aria-label={tr("context.newTask", "New task")}
+                data-taskboard-new
+              >
+                <PlusIcon size={16} aria-hidden="true" />
+                <span data-taskboard-new-label>{tr("context.newTask", "New task")}</span>
+              </button>
+            ) : undefined
+          }
+          jump={
+            lcd && showBoard ? (
+              <TaskColumnJump
+                boardRef={boardRef}
+                columnPages={columnPages}
+                archivedExpanded={archivedExpanded}
+                tr={tr}
+              />
+            ) : undefined
+          }
         />
 
         <TaskBoardLoadNotice
@@ -183,7 +243,8 @@ export function TaskBoard({
             ) : (
               <>
                 {tr("context.noMatchingTasks", "No tasks match the current filters")}
-                {hasActiveFilters ? (
+                {/* LCD keeps Clear on the toolbar, in view above this notice. */}
+                {hasActiveFilters && !lcd ? (
                   <button
                     type="button"
                     onClick={onClearFilters}
@@ -197,29 +258,13 @@ export function TaskBoard({
           </div>
         ) : null}
 
-        {showBoard ? (
-          <TaskBoardGrid
-            tr={tr}
-            ui={ui}
-            syncBusy={syncBusy}
-            searchQuery={searchQuery}
-            archivedExpanded={archivedExpanded}
-            board={filteredBoard}
-            pages={columnPages}
-            taskMap={taskMap}
-            subtaskProgress={subtaskProgress}
-            selectedTaskId={selectedTaskId}
-            dragTaskId={dragTaskId}
-            sensors={sensors}
-            onDragStart={onDragStart}
-            onDragEnd={onDragEnd}
-            onDragCancel={onDragCancel}
-            onSelectTask={onSelectTask}
-            onMoveTaskToStatus={onMoveTaskToStatus}
-            onRestoreTask={onRestoreTask}
-            onLoadMore={onLoadMore}
-          />
-        ) : null}
+        {grid && lcd ? (
+          <div ref={boardRef} data-taskboard-columns>
+            {grid}
+          </div>
+        ) : (
+          grid
+        )}
       </div>
     </section>
   );

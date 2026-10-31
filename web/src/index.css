@@ -6,6 +6,8 @@
 @import "./styles/lcd.css";
 @import "./styles/lcdIcons.css";
 @import "./styles/lcdComposer.css";
+@import "./styles/lcdContextModal.css";
+@import "./styles/lcdTaskEditor.css";
 @import "tailwindcss";
 
 @config "../tailwind.config.ts";

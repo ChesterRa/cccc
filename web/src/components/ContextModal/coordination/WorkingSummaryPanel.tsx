@@ -3,6 +3,7 @@ import { useId, useState } from "react";
 import { ChevronDownIcon } from "../../Icons";
 import type { CoordinationBrief } from "../../../types";
 import { classNames } from "../../../utils/classNames";
+import { useLcdStyle } from "../../../utils/uiStyle";
 import { noteTimestamp, type BriefDraft, type ContextTranslator } from "../model";
 import type { ContextModalUi } from "../ui";
 
@@ -41,6 +42,7 @@ export function WorkingSummaryPanel({
   onBriefDraftChange,
 }: WorkingSummaryPanelProps) {
   const { i18n } = useTranslation("modals");
+  const lcd = useLcdStyle();
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const summaryId = useId();
   const summaryOpen = summaryExpanded || editingBrief;
@@ -52,6 +54,252 @@ export function WorkingSummaryPanel({
     brief?.objective || brief?.current_focus || brief?.project_brief_stale,
   );
   const hasSummary = Boolean(brief?.project_brief || brief?.constraints?.length);
+
+  const summarySection = (
+    <section id={summaryId} hidden={!summaryOpen} className="min-w-0">
+      {summaryOpen ? (
+        <>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              {!editingBrief && !hasSummary ? (
+                <p className={classNames("text-sm", ui.subtleTextClass)}>
+                  {tr(
+                    "context.emptySummaryHint",
+                    "Add a working summary and constraints to guide the next task.",
+                  )}
+                </p>
+              ) : brief?.updated_at ? (
+                <p className={classNames("text-xs", ui.mutedTextClass)}>
+                  {tr("context.updated", "Updated {{time}}", {
+                    time: noteTimestamp({ at: brief.updated_at }, i18n?.language),
+                  })}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              {editingBrief ? (
+                <span
+                  data-goal-unsaved
+                  className={classNames(
+                    "rounded-full px-2 py-0.5 text-xs font-medium",
+                    "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+                  )}
+                >
+                  {tr("context.unsaved", "Unsaved")}
+                </span>
+              ) : null}
+              {editingBrief ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={onCancelBriefEdit}
+                    disabled={syncBusy}
+                    className={ui.buttonSecondaryClass}
+                  >
+                    {tr("context.cancel", "Cancel")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onSaveBrief}
+                    disabled={syncBusy}
+                    className={ui.buttonPrimaryClass}
+                  >
+                    {syncBusy
+                      ? tr("context.saving", "Saving…")
+                      : tr("context.saveBrief", "Save summary")}
+                  </button>
+                </>
+              ) : lcd ? null : (
+                <button type="button" onClick={editBrief} className={ui.buttonPrimaryClass}>
+                  {tr("context.editButton", "Edit")}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {editingBrief ? (
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              <label className="block text-sm lg:col-span-1">
+                <span
+                  className={classNames(
+                    "mb-1 block text-xs font-medium uppercase tracking-wide",
+                    ui.mutedTextClass,
+                  )}
+                >
+                  {tr("context.objective", "Objective")}
+                </span>
+                <input
+                  value={briefDraft.objective}
+                  onChange={(event) =>
+                    onBriefDraftChange((prev) => ({ ...prev, objective: event.target.value }))
+                  }
+                  className={ui.inputClass}
+                />
+              </label>
+              <label className="block text-sm lg:col-span-1">
+                <span
+                  className={classNames(
+                    "mb-1 block text-xs font-medium uppercase tracking-wide",
+                    ui.mutedTextClass,
+                  )}
+                >
+                  {tr("context.currentFocus", "Current focus")}
+                </span>
+                <input
+                  value={briefDraft.currentFocus}
+                  onChange={(event) =>
+                    onBriefDraftChange((prev) => ({ ...prev, currentFocus: event.target.value }))
+                  }
+                  className={ui.inputClass}
+                />
+              </label>
+              <label className="block text-sm lg:col-span-2">
+                <span
+                  className={classNames(
+                    "mb-1 block text-xs font-medium uppercase tracking-wide",
+                    ui.mutedTextClass,
+                  )}
+                >
+                  {tr("context.constraints", "Constraints")}
+                </span>
+                <textarea
+                  value={briefDraft.constraints}
+                  onChange={(event) =>
+                    onBriefDraftChange((prev) => ({ ...prev, constraints: event.target.value }))
+                  }
+                  className={classNames(ui.textareaClass, "min-h-[110px]")}
+                  placeholder={tr("context.constraintsPlaceholder", "One per line")}
+                />
+              </label>
+              <label className="block text-sm lg:col-span-2">
+                <span
+                  className={classNames(
+                    "mb-1 block text-xs font-medium uppercase tracking-wide",
+                    ui.mutedTextClass,
+                  )}
+                >
+                  {tr("context.projectBrief", "Working summary")}
+                </span>
+                <textarea
+                  value={briefDraft.projectBrief}
+                  onChange={(event) =>
+                    onBriefDraftChange((prev) => ({ ...prev, projectBrief: event.target.value }))
+                  }
+                  className={classNames(ui.textareaClass, "min-h-[180px]")}
+                />
+              </label>
+              <label
+                className={classNames(
+                  "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm lg:col-span-2",
+                  "glass-card text-[var(--color-text-primary)]",
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={briefDraft.projectBriefStale}
+                  onChange={(event) =>
+                    onBriefDraftChange((prev) => ({
+                      ...prev,
+                      projectBriefStale: event.target.checked,
+                    }))
+                  }
+                />
+                {tr("context.projectBriefStale", "Mark working summary as stale")}
+              </label>
+            </div>
+          ) : !hasSummary ? null : (
+            <div className="mt-3 space-y-3">
+              {brief?.project_brief ? (
+                <div>
+                  <div
+                    className={classNames(
+                      "text-xs font-medium uppercase tracking-wide",
+                      ui.mutedTextClass,
+                    )}
+                  >
+                    {tr("context.projectBrief", "Working summary")}
+                  </div>
+                  <div
+                    data-goal-brief
+                    className={classNames("mt-1 whitespace-pre-wrap text-sm", ui.subtleTextClass)}
+                  >
+                    {brief.project_brief}
+                  </div>
+                </div>
+              ) : null}
+              {brief?.constraints?.length ? (
+                <div>
+                  <div className={classNames("text-xs font-medium", ui.mutedTextClass)}>
+                    {tr("context.constraints", "Constraints")}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {brief.constraints.map((constraint, index) => (
+                      <span
+                        key={`${constraint}-${index}`}
+                        data-goal-constraint
+                        className={classNames(
+                          "rounded-full px-2 py-1 text-xs",
+                          "glass-panel text-[var(--color-text-secondary)]",
+                        )}
+                      >
+                        {constraint}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </>
+      ) : null}
+    </section>
+  );
+
+  if (lcd) {
+    // One strip: the objective and focus beside the summary and edit keys, clamped
+    // until the summary opens, which shows them whole with the rest of the brief.
+    return (
+      <section data-goal-strip data-expanded={summaryOpen || undefined}>
+        <div data-goal-head>
+          {hasOverview ? (
+            <div data-goal-text>
+              <p data-goal-objective>{brief?.objective || tr("context.brief", "Summary")}</p>
+              {brief?.current_focus ? <p data-goal-focus>{brief.current_focus}</p> : null}
+              {brief?.project_brief_stale ? (
+                <button type="button" onClick={editBrief} data-goal-stale>
+                  {tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          <div data-goal-keys>
+            <button
+              type="button"
+              aria-expanded={summaryOpen}
+              aria-controls={summaryId}
+              onClick={() => {
+                if (!editingBrief) setSummaryExpanded((expanded) => !expanded);
+              }}
+              data-goal-summary-key
+            >
+              {tr("context.projectBrief", "Working summary")}
+              <ChevronDownIcon
+                size={14}
+                aria-hidden="true"
+                className={summaryOpen ? "rotate-180" : ""}
+              />
+            </button>
+            {editingBrief ? null : (
+              <button type="button" onClick={editBrief} data-goal-edit-key>
+                {tr("context.editButton", "Edit")}
+              </button>
+            )}
+          </div>
+        </div>
+        {summarySection}
+      </section>
+    );
+  }
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
@@ -129,212 +377,7 @@ export function WorkingSummaryPanel({
             ) : null}
           </div>
 
-          <section id={summaryId} hidden={!summaryOpen} className="min-w-0">
-            {summaryOpen ? (
-              <>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    {!editingBrief && !hasSummary ? (
-                      <p className={classNames("text-sm", ui.subtleTextClass)}>
-                        {tr(
-                          "context.emptySummaryHint",
-                          "Add a working summary and constraints to guide the next task.",
-                        )}
-                      </p>
-                    ) : brief?.updated_at ? (
-                      <p className={classNames("text-xs", ui.mutedTextClass)}>
-                        {tr("context.updated", "Updated {{time}}", {
-                          time: noteTimestamp({ at: brief.updated_at }, i18n?.language),
-                        })}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {editingBrief ? (
-                      <span
-                        className={classNames(
-                          "rounded-full px-2 py-0.5 text-xs font-medium",
-                          "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-                        )}
-                      >
-                        {tr("context.unsaved", "Unsaved")}
-                      </span>
-                    ) : null}
-                    {editingBrief ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={onCancelBriefEdit}
-                          disabled={syncBusy}
-                          className={ui.buttonSecondaryClass}
-                        >
-                          {tr("context.cancel", "Cancel")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={onSaveBrief}
-                          disabled={syncBusy}
-                          className={ui.buttonPrimaryClass}
-                        >
-                          {syncBusy
-                            ? tr("context.saving", "Saving…")
-                            : tr("context.saveBrief", "Save summary")}
-                        </button>
-                      </>
-                    ) : (
-                      <button type="button" onClick={editBrief} className={ui.buttonPrimaryClass}>
-                        {tr("context.editButton", "Edit")}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {editingBrief ? (
-                  <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                    <label className="block text-sm lg:col-span-1">
-                      <span
-                        className={classNames(
-                          "mb-1 block text-xs font-medium uppercase tracking-wide",
-                          ui.mutedTextClass,
-                        )}
-                      >
-                        {tr("context.objective", "Objective")}
-                      </span>
-                      <input
-                        value={briefDraft.objective}
-                        onChange={(event) =>
-                          onBriefDraftChange((prev) => ({ ...prev, objective: event.target.value }))
-                        }
-                        className={ui.inputClass}
-                      />
-                    </label>
-                    <label className="block text-sm lg:col-span-1">
-                      <span
-                        className={classNames(
-                          "mb-1 block text-xs font-medium uppercase tracking-wide",
-                          ui.mutedTextClass,
-                        )}
-                      >
-                        {tr("context.currentFocus", "Current focus")}
-                      </span>
-                      <input
-                        value={briefDraft.currentFocus}
-                        onChange={(event) =>
-                          onBriefDraftChange((prev) => ({
-                            ...prev,
-                            currentFocus: event.target.value,
-                          }))
-                        }
-                        className={ui.inputClass}
-                      />
-                    </label>
-                    <label className="block text-sm lg:col-span-2">
-                      <span
-                        className={classNames(
-                          "mb-1 block text-xs font-medium uppercase tracking-wide",
-                          ui.mutedTextClass,
-                        )}
-                      >
-                        {tr("context.constraints", "Constraints")}
-                      </span>
-                      <textarea
-                        value={briefDraft.constraints}
-                        onChange={(event) =>
-                          onBriefDraftChange((prev) => ({
-                            ...prev,
-                            constraints: event.target.value,
-                          }))
-                        }
-                        className={classNames(ui.textareaClass, "min-h-[110px]")}
-                        placeholder={tr("context.constraintsPlaceholder", "One per line")}
-                      />
-                    </label>
-                    <label className="block text-sm lg:col-span-2">
-                      <span
-                        className={classNames(
-                          "mb-1 block text-xs font-medium uppercase tracking-wide",
-                          ui.mutedTextClass,
-                        )}
-                      >
-                        {tr("context.projectBrief", "Working summary")}
-                      </span>
-                      <textarea
-                        value={briefDraft.projectBrief}
-                        onChange={(event) =>
-                          onBriefDraftChange((prev) => ({
-                            ...prev,
-                            projectBrief: event.target.value,
-                          }))
-                        }
-                        className={classNames(ui.textareaClass, "min-h-[180px]")}
-                      />
-                    </label>
-                    <label
-                      className={classNames(
-                        "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm lg:col-span-2",
-                        "glass-card text-[var(--color-text-primary)]",
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={briefDraft.projectBriefStale}
-                        onChange={(event) =>
-                          onBriefDraftChange((prev) => ({
-                            ...prev,
-                            projectBriefStale: event.target.checked,
-                          }))
-                        }
-                      />
-                      {tr("context.projectBriefStale", "Mark working summary as stale")}
-                    </label>
-                  </div>
-                ) : !hasSummary ? null : (
-                  <div className="mt-3 space-y-3">
-                    {brief?.project_brief ? (
-                      <div>
-                        <div
-                          className={classNames(
-                            "text-xs font-medium uppercase tracking-wide",
-                            ui.mutedTextClass,
-                          )}
-                        >
-                          {tr("context.projectBrief", "Working summary")}
-                        </div>
-                        <div
-                          className={classNames(
-                            "mt-1 whitespace-pre-wrap text-sm",
-                            ui.subtleTextClass,
-                          )}
-                        >
-                          {brief.project_brief}
-                        </div>
-                      </div>
-                    ) : null}
-                    {brief?.constraints?.length ? (
-                      <div>
-                        <div className={classNames("text-xs font-medium", ui.mutedTextClass)}>
-                          {tr("context.constraints", "Constraints")}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {brief.constraints.map((constraint, index) => (
-                            <span
-                              key={`${constraint}-${index}`}
-                              className={classNames(
-                                "rounded-full px-2 py-1 text-xs",
-                                "glass-panel text-[var(--color-text-secondary)]",
-                              )}
-                            >
-                              {constraint}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                )}
-              </>
-            ) : null}
-          </section>
+          {summarySection}
         </div>
       </div>
     </section>

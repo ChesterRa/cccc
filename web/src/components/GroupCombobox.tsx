@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { defaultFilter } from "cmdk";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { CheckIcon, ComboboxCaretIcon } from "@/components/Icons";
 
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -55,6 +55,7 @@ export function GroupCombobox({
   matchTriggerWidth = false,
 }: GroupComboboxProps) {
   const [open, setOpen] = useState(false);
+  const [lcdScope, setLcdScope] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [triggerWidth, setTriggerWidth] = useState<number | null>(null);
@@ -84,7 +85,13 @@ export function GroupCombobox({
   }, [matchTriggerWidth, open]);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) setLcdScope(Boolean(triggerRef.current?.closest("[data-lcd-scope]")));
+        setOpen(nextOpen);
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           ref={triggerRef}
@@ -101,10 +108,11 @@ export function GroupCombobox({
           )}
         >
           <span className="min-w-0 truncate text-left">{triggerLabel}</span>
-          <ChevronsUpDown className={cn("h-3.5 w-3.5 shrink-0 opacity-70", caretClassName)} />
+          <ComboboxCaretIcon className={cn("h-3.5 w-3.5 shrink-0 opacity-70", caretClassName)} />
         </button>
       </PopoverTrigger>
       <PopoverContent
+        data-lcd-scope={lcdScope ? "" : undefined}
         align="start"
         onOpenAutoFocus={(event) => {
           // With no search input, put focus inside cmdk so its arrow-key and
@@ -145,7 +153,9 @@ export function GroupCombobox({
                       setOpen(false);
                     }}
                   >
-                    <Check
+                    <CheckIcon
+                      size={24}
+                      absoluteStrokeWidth={false}
                       className={cn("h-4 w-4 shrink-0", selected ? "opacity-100" : "opacity-0")}
                     />
                     <div className="min-w-0 flex-1">

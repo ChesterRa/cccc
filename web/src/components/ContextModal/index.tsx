@@ -1367,10 +1367,12 @@ export function ContextModal({
         panelClassName="h-full w-full overflow-hidden rounded-none sm:h-[94vh] sm:max-w-[96vw]"
         headerClassName="!px-4 !pb-2 sm:!px-5"
         modalRef={modalRef}
+        lcdScope
       >
         <div
           ref={navigationRef}
           role="tablist"
+          data-context-tabs
           aria-label={tr("context.tabsAria", "Context sections")}
           className="flex shrink-0 gap-5 overflow-x-auto scroll-px-4 sm:scroll-px-5 border-b border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-4 sm:px-5"
           onKeyDown={(event) => {
@@ -1419,6 +1421,8 @@ export function ContextModal({
         <div
           ref={contentRef}
           className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]"
+          // The task board's column jump scrolls this element, not the page behind.
+          data-context-scroll
         >
           <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5">
             {[boardError, taskEditorVisible ? "" : syncError].map((message, index) =>
@@ -1551,13 +1555,17 @@ export function ContextModal({
             <div
               ref={taskDrawerRef}
               className="fixed inset-0 z-[65] animate-fade-in"
+              data-lcd-scope
               role="dialog"
               aria-modal="true"
               aria-labelledby="context-task-drawer-title"
             >
               <div className="absolute inset-0 glass-overlay" onPointerDown={closeTaskEditor} />
               <div className="absolute inset-y-0 right-0 flex w-full justify-end">
-                <div className="h-full w-full sm:w-[min(860px,calc(100vw-1.5rem))]">
+                <div
+                  data-task-drawer-panel
+                  className="h-full w-full sm:w-[min(860px,calc(100vw-1.5rem))]"
+                >
                   <div className="flex h-full flex-col border-l border-[var(--glass-border-subtle)] shadow-2xl glass-modal">
                     <div className="sr-only" id="context-task-drawer-title">
                       {taskEditorMode === "create"
@@ -1618,6 +1626,7 @@ export function ContextModal({
         ? createPortal(
             <div
               className="fixed inset-0 z-[70] animate-fade-in"
+              data-lcd-scope
               role="dialog"
               aria-modal="true"
               aria-label={tr("context.agentsMd", "AGENTS.md")}

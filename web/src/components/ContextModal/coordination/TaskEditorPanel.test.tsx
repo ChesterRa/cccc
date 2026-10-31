@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { Task } from "../../../types";
 import { evaluateTaskWorkflow, getTaskTypeDefinition } from "../../../utils/taskWorkflow";
+import { setUiStylePrefs } from "../../../utils/uiStyle";
 import { taskToDraft, type TaskDraft } from "../model";
 import { createContextModalUi } from "../ui";
 import { TaskEditorPanel } from "./TaskEditorPanel";
@@ -36,6 +37,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount());
+  act(() => setUiStylePrefs({ style: "classic", lcdBody: "mono" }));
   host.remove();
 });
 
@@ -238,6 +240,82 @@ it("saves only an edit, and never a task deleted elsewhere", () => {
   render({ hasTaskUnsaved: true, taskGone: true });
   expect(button("Save task").disabled).toBe(true);
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("no longer exists");
+});
+
+it("edits LCD status as a draft without saving it immediately", () => {
+  act(() => setUiStylePrefs({ style: "lcd" }));
+  const onSaveTask = vi.fn();
+  render({ onSaveTask });
+  const status = host.querySelector<HTMLElement>("[data-task-editor-status]")!;
+  const done = [...status.querySelectorAll("button")].find((item) => item.textContent === "Done")!;
+  expect(status.querySelector('[aria-pressed="true"]')?.textContent).toBe("Active");
+  act(() => done.click());
+  expect(current?.status).toBe("done");
+  expect(done.getAttribute("aria-pressed")).toBe("true");
+  expect(onSaveTask).not.toHaveBeenCalled();
+  render({ onSaveTask, syncBusy: true });
+  expect([...status.querySelectorAll("button")].every((item) => item.disabled)).toBe(true);
+});
+
+it("keeps common and advanced field drafts when appearance changes", async () => {
+  render({}, { ...task, handoff_to: "claude-1", blocked_by: ["T3"] });
+  const details = host.querySelector("details")!;
+  const findBlocked = () =>
+    host.querySelector<HTMLTextAreaElement>('textarea[placeholder="Task IDs, one per line"]')!;
+  expect(details.contains(findBlocked())).toBe(true);
+  act(() => setUiStylePrefs({ style: "lcd" }));
+  expect(details.contains(findBlocked())).toBe(false);
+  type(findBlocked(), "T3\nT9");
+  const handoff = host.querySelector<HTMLButtonElement>(
+    'button[role="combobox"][aria-label="Hand off to"]',
+  )!;
+  await act(async () => handoff.click());
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (item) => item.textContent === "codex-1",
+  )!;
+  await act(async () => option.click());
+  expect(current?.handoffTo).toBe("codex-1");
+  expect(current?.blockedBy).toBe("T3\nT9");
+
+  const title = host.querySelector<HTMLInputElement>("input")!;
+  title.focus();
+  const scroll = host.querySelector<HTMLElement>("[data-task-editor-scroll]")!;
+  scroll.scrollTop = 123;
+  act(() => setUiStylePrefs({ style: "classic" }));
+  expect(details.contains(findBlocked())).toBe(true);
+  expect(findBlocked().value).toBe("T3\nT9");
+  expect(host.querySelector('button[role="combobox"][aria-label="Hand off to"]')?.textContent).toBe(
+    "codex-1",
+  );
+  expect(host.querySelector("input")).toBe(title);
+  expect(document.activeElement).toBe(title);
+  expect(scroll.scrollTop).toBe(123);
+});
+
+it("shows an unfamiliar status without changing the draft", () => {
+  act(() => setUiStylePrefs({ style: "lcd" }));
+  render({}, { ...task, status: "reviewing" });
+  expect(host.querySelector('[data-task-editor-status] [aria-pressed="true"]')?.textContent).toBe(
+    "reviewing",
+  );
+  expect(current?.status).toBe("reviewing");
+});
+
+it("retains the meaning of workflow and subtask states inside LCD", () => {
+  act(() => setUiStylePrefs({ style: "lcd" }));
+  render({
+    taskWorkflowCoverage: evaluateTaskWorkflow({ status: "active", assignee: "codex-1" }),
+    subtasks: [{ ...task, id: "T8", title: "Subtask", status: "active" }],
+  });
+  const badges = [...host.querySelectorAll<HTMLElement>("[data-task-coverage]")];
+  expect(badges.find((badge) => badge.textContent === "Owner")?.dataset.taskCoverage).toBe(
+    "present",
+  );
+  expect(badges.find((badge) => badge.textContent === "Goal")?.dataset.taskCoverage).toBe(
+    "missing",
+  );
+  expect(host.querySelector("[data-task-subtask-status]")?.textContent).toBe("Active");
+  expect(button("Add subtask").querySelector("svg[data-lcd-icon] [data-lcd-glyph]")).not.toBeNull();
 });
 
 it("offers Delete only when it can be used, and says why not with the details", () => {

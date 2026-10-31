@@ -21,6 +21,8 @@ interface ModalFrameProps {
   floatingCloseClassName?: string;
   floatingCloseButtonClassName?: string;
   modalRef?: Ref<HTMLDivElement>;
+  /** Takes the LCD style when it is on. Modals not yet adapted to it leave this off. */
+  lcdScope?: boolean;
   children: ReactNode;
 }
 
@@ -43,6 +45,7 @@ export function ModalFrame({
   floatingCloseClassName = "",
   floatingCloseButtonClassName = "",
   modalRef,
+  lcdScope = false,
   children,
 }: ModalFrameProps) {
   const hasHeaderContent = Boolean(title) || Boolean(headerActions);
@@ -54,6 +57,7 @@ export function ModalFrame({
       disabled={closeDisabled}
       className={`flex min-h-10 min-w-10 max-sm:min-h-11 max-sm:min-w-11 items-center justify-center rounded-lg border border-[var(--color-border-primary)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] disabled:cursor-not-allowed disabled:opacity-50 ${floatingCloseButtonClassName}`}
       aria-label={closeAriaLabel}
+      data-modal-close
     >
       {closeIcon || (
         <svg
@@ -102,12 +106,14 @@ export function ModalFrame({
               }`
         }
         ref={modalRef}
+        data-lcd-scope={lcdScope || undefined}
         role={inline ? undefined : "dialog"}
         aria-modal={!inline && isOpen ? "true" : undefined}
         aria-labelledby={titleId}
       >
         {hasHeaderContent ? (
           <div
+            data-modal-header
             className={`flex flex-shrink-0 items-center justify-between gap-4 border-b safe-area-inset-top border-[var(--glass-border-subtle)] ${surface === "solid" ? "px-4 py-3 sm:px-5" : "px-5 py-4 sm:px-6 sm:py-5"} ${
               surface === "solid" ? "bg-[var(--color-bg-primary)]" : "bg-[var(--glass-panel-bg)]"
             } ${headerClassName}`}

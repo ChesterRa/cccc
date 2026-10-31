@@ -38,6 +38,7 @@ export function AgentsView({ agents, tr, ui }: AgentsViewProps) {
             {tr("context.totalAgents", "{{count}} agents", { count: agents.length })}
           </span>
           <span
+            data-agent-chip
             className={classNames(
               "rounded-full px-2.5 py-1 text-xs",
               "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white",

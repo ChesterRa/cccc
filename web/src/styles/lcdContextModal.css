@@ -1,0 +1,787 @@
+/* ---------- Context modal (T047) ----------
+   The context modal is one LCD scope. Its chrome takes the chat header's key
+   language; the board is a log of task records in rule-framed columns.
+   Keys are sized by pointer, not width: a touch screen keeps the 44px targets of
+   the global coarse-pointer rule, in px so text scaling cannot shrink them, and
+   a fine pointer gets the compact 2rem keys of the chat header. */
+
+/* The header and the section tabs give their height back to the board. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-header] {
+  padding-top: max(0.375rem, env(safe-area-inset-top, 0px));
+  padding-bottom: 0.375rem;
+}
+
+@media (pointer: fine) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-close] {
+    min-width: 2rem;
+    min-height: 2rem;
+    width: 2rem;
+    height: 2rem;
+  }
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-close] {
+  border-color: var(--lcd-rule-strong);
+  background: transparent;
+  color: var(--lcd-ink);
+}
+
+/* The sections are one row of keys sharing edges, the current one in reverse,
+   like the chat page's view switch. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-context-tabs] {
+  gap: 0;
+  padding-block: 0.375rem;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-context-tabs] > [role="tab"] {
+  min-height: 44px;
+  padding: 0 1.5ch;
+  border: 1px solid var(--lcd-ink);
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-context-tabs] > [role="tab"] + [role="tab"] {
+  margin-left: -1px;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-context-tabs] > [aria-selected="true"] {
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+@media (pointer: fine) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-context-tabs] > [role="tab"] {
+    min-height: 2rem;
+  }
+}
+
+@media (hover: hover) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-context-tabs] > [aria-selected="false"]:hover {
+    background: var(--lcd-sel-soft);
+  }
+}
+
+/* Inputs in the modal take the control outline; the classic hairline is too faint
+   on the LCD ground. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-context-scroll] .glass-input {
+  border-color: var(--lcd-rule-strong);
+}
+
+/* ---------- Goal strip ---------- */
+/* The objective and the current focus beside the summary and edit keys. Closed,
+   the objective takes two lines and the focus one; the open summary shows them
+   whole, with the rest of the brief, since a phone has no hover to read them. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-strip] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  /* The toolbar under the rule brings its own padding. */
+  margin-block-end: 0.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--lcd-rule);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-head] {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-text] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-objective] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-focus] {
+  margin-top: 0.125rem;
+  overflow: hidden;
+  color: var(--lcd-dim);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-goal-strip][data-expanded]
+  :is([data-goal-objective], [data-goal-focus]) {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* A stale summary is noted under the focus; the note opens the editor. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-stale] {
+  margin-top: 0.25rem;
+  color: var(--lcd-ink);
+  font-size: 0.75rem;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-keys] {
+  display: flex;
+  flex: none;
+  margin-left: auto;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-keys] > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75ch;
+  min-height: 44px;
+  padding: 0 1.25ch;
+  border: 1px solid var(--lcd-rule-strong);
+  color: var(--lcd-ink);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-keys] > button + button {
+  margin-left: -1px;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-summary-key][aria-expanded="true"] {
+  border-color: var(--lcd-sel-bg);
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+@media (pointer: fine) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-keys] > button {
+    min-height: 2rem;
+  }
+}
+
+@media (hover: hover) {
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    [data-goal-keys]
+    > button:not([aria-expanded="true"]):hover {
+    background: var(--lcd-sel-soft);
+  }
+}
+
+/* A narrow screen puts the keys under the text instead of squeezing it. */
+@media (max-width: 639px) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-head] {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-keys] {
+    margin-left: 0;
+  }
+}
+
+/* In the open brief: unsaved is a note, and constraints read as a list. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-unsaved] {
+  padding: 0;
+  background: none;
+  color: var(--lcd-dim);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-unsaved]::before {
+  content: "[";
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-unsaved]::after {
+  content: "]";
+}
+
+/* The dash hangs in the gutter, outside line breaking, so a wrapped constraint
+   keeps its first word beside it and its other lines under that word. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-constraint] {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0 0 0 2ch;
+  border-width: 0;
+  background: none;
+  color: var(--lcd-dim);
+  font-size: 0.8125rem;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-goal-constraint]::before {
+  content: "-";
+  position: absolute;
+  left: 0;
+}
+
+/* A long link or identifier wraps instead of widening the modal: a phone reads
+   the open summary here. */
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-goal-brief], [data-goal-constraint]) {
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Toolbar ---------- */
+/* The tab already names the board, so the toolbar opens it. It stays in view as
+   one layer; rows pass under its rule. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard] {
+  border-top-width: 0;
+  padding-top: 0;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-sticky] {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding-block: 0.5rem;
+  border-bottom: 1px solid var(--lcd-rule);
+  background: var(--lcd-bg);
+}
+
+/* A phone pins only the column jump and the status: search and filters are what
+   the top of the list is for, and pinning them too would cover a fifth of the
+   screen. The outer layer gives way, so the inner one sticks across the board. */
+@media (max-width: 767px) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-sticky] {
+    display: contents;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-jump-layer] {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    padding-block: 0.5rem;
+    border-bottom: 1px solid var(--lcd-rule);
+    background: var(--lcd-bg);
+  }
+}
+
+/* Keyboard focus scrolls clear of the pinned layer: a key or title tabbed to just
+   under it would otherwise be covered. The toolbar measures the layer's height. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-context-scroll]:has([data-taskboard-sticky]) {
+  scroll-padding-top: calc(var(--taskboard-pinned-height, 0px) + 0.5rem);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-toolbar] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-search] {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Phones: search and New first, then every other control on one line that
+   scrolls sideways. Clear leads that line, so it is in view whenever it exists. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-controls] {
+  display: flex;
+  flex: 1 0 100%;
+  order: 1;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  /* Room for the focus outline, which the scroller would clip. */
+  padding-block: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-controls]::-webkit-scrollbar {
+  display: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-controls] > * {
+  flex: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-assignee] {
+  width: 10rem;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is(
+    [data-taskboard-search] input,
+    [data-taskboard-assignee] button,
+    [data-taskboard-filters] > button,
+    [data-taskboard-archive],
+    [data-taskboard-clear],
+    [data-taskboard-new]
+  ) {
+  min-height: 44px;
+  height: 44px;
+  font-size: 0.8125rem;
+  box-shadow: none;
+}
+
+@media (pointer: fine) {
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    :is(
+      [data-taskboard-search] input,
+      [data-taskboard-assignee] button,
+      [data-taskboard-filters] > button,
+      [data-taskboard-archive],
+      [data-taskboard-clear],
+      [data-taskboard-new],
+      [data-taskboard-jump-column],
+      [data-task-column-more]
+    ) {
+    min-height: 2rem;
+    height: 2rem;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-new] {
+    min-width: 2rem;
+  }
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-taskboard-search] input, [data-taskboard-assignee] button) {
+  padding-inline: 1ch;
+}
+
+/* The trigger fills its slot; its classic width would run past it. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-assignee] button {
+  width: 100%;
+}
+
+/* New is the board's one filled key. A phone shows its plus alone. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-new] {
+  flex: none;
+  gap: 0.75ch;
+  min-width: 44px;
+  padding: 0;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-new-label] {
+  display: none;
+}
+
+/* The attention filters are one control: keys framed in ink that share edges,
+   the current filter in reverse. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-filters] {
+  display: flex;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-filters] > button {
+  padding: 0 1.25ch;
+  border: 1px solid var(--lcd-ink);
+  background: transparent;
+  color: var(--lcd-ink);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-filters] > button + button {
+  margin-left: -1px;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-taskboard-filters] > button, [data-taskboard-archive])[aria-pressed="true"] {
+  border-color: var(--lcd-sel-bg);
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-taskboard-archive], [data-taskboard-clear]) {
+  padding: 0 1.25ch;
+  border: 1px solid var(--lcd-rule-strong);
+  background: transparent;
+  color: var(--lcd-ink);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    :is([data-taskboard-filters] > button, [data-taskboard-archive])[aria-pressed="false"]:hover,
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-clear]:hover {
+    background: var(--lcd-sel-soft);
+  }
+}
+
+/* Past the phone layout the toolbar is one line that wraps where it must, New
+   last; its controls flow as the toolbar's own items. */
+@media (min-width: 768px) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-search] {
+    flex: 1 1 14rem;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-controls] {
+    display: contents;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-new] {
+    order: 2;
+    padding: 0 1.25ch;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-new-label] {
+    display: inline;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-assignee] {
+    width: 12rem;
+  }
+}
+
+/* The phone's column jump: keys framed in the strong rule, sharing edges. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-jump] {
+  padding-block: 3px;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-jump-column] {
+  min-height: 44px;
+  padding: 0 1.25ch;
+  border: 1px solid var(--lcd-rule-strong);
+  color: var(--lcd-ink);
+  font-size: 0.8125rem;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-taskboard-jump-column]
+  + [data-taskboard-jump-column] {
+  margin-left: -1px;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-jump-more] {
+  color: var(--lcd-dim);
+}
+
+/* ---------- Columns ---------- */
+/* A column is a rule frame on the main ground: the panel surface would lower the
+   text's contrast. The head reads "Active 4"; a drop target's frame turns dashed. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column] {
+  padding: 0;
+  border: 1px solid var(--lcd-rule-strong);
+  background: transparent;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column][data-drop-target] {
+  border-style: dashed;
+  border-color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-head] {
+  justify-content: flex-start;
+  gap: 1ch;
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid var(--lcd-rule-strong);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-count] {
+  padding: 0;
+  border-width: 0;
+  background: none;
+  color: var(--lcd-dim);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-items] {
+  margin-top: 0;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-items] > * {
+  margin-block: 0;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-empty] {
+  border-width: 0;
+  padding: 0.75rem;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-more] {
+  margin-top: 0;
+  border-width: 1px 0 0;
+  border-color: var(--lcd-rule);
+  background: transparent;
+  color: var(--lcd-ink);
+  box-shadow: none;
+}
+
+/* ---------- Rows ---------- */
+/* A task is a record, not a card: title, one line of summary, then the meta line.
+   As in the sidebar's group list, the row under the pointer is soft and the row
+   open in the drawer is reversed. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-row] {
+  --task-row-bg: var(--lcd-bg);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--task-row-bg);
+  color: var(--lcd-ink);
+  cursor: pointer;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-items] > * + * > [data-task-row] {
+  border-top: 1px solid var(--lcd-rule);
+}
+
+@media (hover: hover) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-row]:hover {
+    --task-row-bg: var(--lcd-sel-soft);
+  }
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-row][data-selected] {
+  --task-row-bg: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+/* The whole row opens the task on a tap, so the title, which carries keyboard
+   focus, needs no touch-size box of its own. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-title] {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  text-align: left;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-title] > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* While a search is on, the whole title shows, so a match in it is always seen. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-task-row][data-searching]
+  [data-task-title]
+  > span {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-task-summary], [data-task-excerpt]) {
+  margin-top: 0.125rem;
+  color: var(--lcd-dim);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-summary] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-excerpt] {
+  overflow-wrap: anywhere;
+}
+
+/* A match is marked soft, never reversed, so it is not read as the open row; the
+   underline keeps it visible on the soft row under the pointer. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-row] mark {
+  background: var(--lcd-sel-soft);
+  color: var(--lcd-ink);
+  text-decoration: underline 2px;
+  text-underline-offset: 0.15em;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-meta] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.125rem 1ch;
+  margin-top: 0.25rem;
+  color: var(--lcd-dim);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-meta-id] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Notes are bracketed text, not chips. Blocked takes the danger tone; waiting on
+   the user is the one filled tag, as it is the one state that asks for the reader. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-note] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-note="assignee"] {
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-note="blocked"] {
+  color: var(--lcd-danger);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-note="waiting-user"] {
+  padding: 0 0.5ch;
+  background: var(--lcd-wait);
+  color: var(--lcd-on-wait);
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-task-row][data-selected]
+  :is(
+    [data-task-summary],
+    [data-task-excerpt],
+    [data-task-meta],
+    [data-task-note]:not([data-task-note="waiting-user"])
+  ) {
+  color: var(--lcd-sel-fg);
+}
+
+/* The danger tone cannot hold on the reversed ground; an underline keeps the
+   blocked note apart from the others there. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-task-row][data-selected]
+  [data-task-note="blocked"] {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* The quick action and the drag handle. A touch screen keeps them in a column
+   beside the text, at touch size, so they never add a line to the row. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-body] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-actions] {
+  display: flex;
+  flex: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-actions] > button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 1ch;
+  border: 1px solid var(--lcd-rule-strong);
+  background: var(--task-row-bg);
+  color: inherit;
+  font-size: 0.75rem;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-actions] > button + button {
+  margin-left: -1px;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-actions] > [data-task-drag] {
+  cursor: grab;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-task-row][data-selected]
+  [data-task-actions]
+  > button {
+  border-color: var(--lcd-sel-fg);
+  color: var(--lcd-sel-fg);
+}
+
+/* A pointer that can hover shows them only while the row is hovered or holds
+   focus, on the row's top rule at the right end, as a message list shows its
+   hover toolbar. They straddle the padding between two rows, so they cover no
+   text and take no room: rows keep their height. Hidden keys are not
+   clickable: visibility, not opacity. */
+@media (hover: hover) and (pointer: fine) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-actions] {
+    position: absolute;
+    top: -0.5625rem;
+    right: 0.75rem;
+    height: 1.125rem;
+    visibility: hidden;
+  }
+
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    :is([data-task-row]:hover, [data-task-row]:focus-within)
+    [data-task-actions] {
+    visibility: visible;
+  }
+
+  /* A row whose rule meets the pinned toolbar lifts its keys over the toolbar's
+     bottom edge (the toolbar sits at z-index 10). */
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    [data-task-row][data-task-keys-raised]
+    [data-task-actions] {
+    z-index: 11;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-actions] > button {
+    min-width: 1.125rem;
+    min-height: 0;
+    height: 1.125rem;
+    line-height: 1;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-actions] > button:hover:not(:disabled) {
+    border-color: var(--lcd-sel-bg);
+    background: var(--lcd-sel-bg);
+    color: var(--lcd-sel-fg);
+  }
+
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    [data-task-row][data-selected]
+    [data-task-actions]
+    > button:hover:not(:disabled) {
+    border-color: var(--lcd-sel-fg);
+    background: var(--lcd-sel-fg);
+    color: var(--lcd-sel-bg);
+  }
+}
+
+/* The dragged task is lifted as a framed card; it has no shadow to float on. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-ghost] {
+  border: 2px solid var(--lcd-ink);
+  background: var(--lcd-bg);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-ghost] span {
+  flex-shrink: 0;
+  border-color: var(--lcd-rule-strong);
+  background: transparent;
+  color: var(--lcd-dim);
+  /* Beside a long title the status label would otherwise break per character. */
+  white-space: nowrap;
+}
+
+/* Agent state: the neutral chips hard-code a light ground; here they are framed
+   text. The tab's other tags wait for its own adaptation. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-agent-chip] {
+  border-color: var(--lcd-rule-strong);
+  background: transparent;
+  color: var(--lcd-ink);
+}
+
+/* The task drawer leaves the board beside it in view on wider screens. */
+@media (min-width: 640px) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-drawer-panel] {
+    width: min(560px, calc(100vw - 1.5rem));
+  }
+}
