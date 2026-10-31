@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import type { CSSProperties } from "react";
 import type { AgentState } from "../../../types";
@@ -90,6 +91,7 @@ export function AgentStateCard({
   mutedTextClass,
   subtleTextClass,
 }: AgentStateCardProps) {
+  const { i18n } = useTranslation("modals");
   const hot = agentHot(agent);
   const warm = agentWarm(agent);
   const stale = isAgentStale(agent);
@@ -133,7 +135,9 @@ export function AgentStateCard({
               title={agent.updated_at ? formatFullTime(agent.updated_at) : undefined}
             >
               {agent.updated_at
-                ? tr("context.updated", "Updated {{time}}", { time: formatTime(agent.updated_at) })
+                ? tr("context.updated", "Updated {{time}}", {
+                    time: formatTime(agent.updated_at, i18n?.language),
+                  })
                 : tr("context.notUpdatedYet", "Not updated yet")}
             </span>
             {stale ? (

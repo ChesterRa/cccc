@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useId, useState } from "react";
 import { ChevronDownIcon } from "../../Icons";
 import type { CoordinationBrief } from "../../../types";
@@ -39,6 +40,7 @@ export function WorkingSummaryPanel({
   onSaveBrief,
   onBriefDraftChange,
 }: WorkingSummaryPanelProps) {
+  const { i18n } = useTranslation("modals");
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const summaryId = useId();
   const summaryOpen = summaryExpanded || editingBrief;
@@ -112,7 +114,7 @@ export function WorkingSummaryPanel({
             {!summaryOpen && brief?.updated_at ? (
               <span className={classNames("text-xs", ui.mutedTextClass)}>
                 {tr("context.updated", "Updated {{time}}", {
-                  time: noteTimestamp({ at: brief.updated_at }),
+                  time: noteTimestamp({ at: brief.updated_at }, i18n?.language),
                 })}
               </span>
             ) : null}
@@ -142,7 +144,7 @@ export function WorkingSummaryPanel({
                     ) : brief?.updated_at ? (
                       <p className={classNames("text-xs", ui.mutedTextClass)}>
                         {tr("context.updated", "Updated {{time}}", {
-                          time: noteTimestamp({ at: brief.updated_at }),
+                          time: noteTimestamp({ at: brief.updated_at }, i18n?.language),
                         })}
                       </p>
                     ) : null}

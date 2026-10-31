@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useRef } from "react";
 
 import type { HeadlessStreamEvent } from "../../types";
@@ -154,6 +155,7 @@ export function HeadlessRawTrace({
   className,
   compact = false,
 }: HeadlessRawTraceProps) {
+  const { i18n } = useTranslation("actors");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const entries = useMemo(() => buildHeadlessRawTraceEntries(events), [events]);
@@ -242,7 +244,7 @@ export function HeadlessRawTrace({
                   {entry.ts ? (
                     <span className="ml-auto inline-flex items-center gap-1 text-[var(--color-text-tertiary)]">
                       <ClockIcon className="h-3.5 w-3.5" />
-                      {formatTime(entry.ts)}
+                      {formatTime(entry.ts, i18n?.language)}
                     </span>
                   ) : null}
                 </div>
@@ -322,7 +324,7 @@ export function HeadlessRawTrace({
                           <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
                           {group.live ? "live" : bandBadge}
                         </span>
-                        {group.ts ? <span>{formatTime(group.ts)}</span> : null}
+                        {group.ts ? <span>{formatTime(group.ts, i18n?.language)}</span> : null}
                       </div>
                     </div>
                     <div
@@ -475,7 +477,7 @@ export function HeadlessRawTrace({
                         </span>
                       ) : null}
                       {entry.tone === "error" ? <AlertIcon className="h-4 w-4" /> : null}
-                      {entry.ts ? <span>{formatTime(entry.ts)}</span> : null}
+                      {entry.ts ? <span>{formatTime(entry.ts, i18n?.language)}</span> : null}
                     </div>
                   </div>
                   {hasDetails ? (

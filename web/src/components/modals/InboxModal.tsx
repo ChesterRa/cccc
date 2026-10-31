@@ -34,7 +34,7 @@ export function InboxModal({
   onClose,
   onMarkAllRead,
 }: InboxModalProps) {
-  const { t } = useTranslation("modals");
+  const { t, i18n } = useTranslation("modals");
   const { modalRef } = useModalA11y(isOpen, onClose);
 
   // Helper to get display name for actor
@@ -101,7 +101,7 @@ export function InboxModal({
                   className="text-xs shrink-0 text-[var(--color-text-muted)]"
                   title={formatFullTime(ev.ts)}
                 >
-                  {formatTime(ev.ts)}
+                  {formatTime(ev.ts, i18n?.language)}
                 </div>
               </div>
               <div className="mt-2 text-sm break-words">

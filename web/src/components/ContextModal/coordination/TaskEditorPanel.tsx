@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import {
   useCallback,
   useEffect,
@@ -112,6 +113,7 @@ export function TaskEditorPanel({
   onOpenTask,
   onAddSubtask,
 }: TaskEditorPanelProps) {
+  const { i18n } = useTranslation("modals");
   if (taskEditorMode === "none" || !taskDraft) {
     return null;
   }
@@ -418,7 +420,7 @@ export function TaskEditorPanel({
                 : "",
               selectedTask.updated_at
                 ? tr("context.updated", "Updated {{time}}", {
-                    time: formatTime(selectedTask.updated_at),
+                    time: formatTime(selectedTask.updated_at, i18n?.language),
                   })
                 : "",
               selectedTask.archived_from

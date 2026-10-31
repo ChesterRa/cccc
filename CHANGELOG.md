@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Answers you give under a request, which agents receive as `Selected B: <label>` or `Other: <text>`, show that prefix in the interface language in the chat when the message has that recognized form. The stored message, copying and search keep the original text.
 - OpenCode actors show the official OpenCode mark, unchanged from OpenCode's repository; its MIT license notice ships with the Web assets.
 - License notices for the Bootstrap Icons, LobeHub Icons, Pi, Cline and Pixelarticons artwork used in the Web interface now ship with the Web assets, next to the existing OpenCode notice. The unused Claude PNG logo is removed; Claude actors keep the same icon.
+- Short times such as "5m ago" and "Oct 23" in the Agents tab and agent state, the context panel, the task editor, message search, Inbox, the Web Model panel and headless traces now follow the interface language, for example 5分钟前 in Chinese and 5分前 in Japanese. English keeps its familiar short forms.
 
 ### Fixed
 

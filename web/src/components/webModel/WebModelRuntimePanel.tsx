@@ -58,7 +58,7 @@ function RuntimePanel({
   compact = false,
   onOpenSharedSettings,
 }: WebModelRuntimePanelProps) {
-  const { t } = useTranslation("chat");
+  const { t, i18n } = useTranslation("chat");
   const openActorEditor = useModalStore((state) => state.openActorEditor);
   const [pairing, setPairing] = useState<WebModelPairing>();
   const [session, setSession] = useState<WebModelBrowserSession | null>(null);
@@ -263,7 +263,9 @@ function RuntimePanel({
       : ["pending", "pending_bind", "submitting"].includes(deliveryState)
         ? t("webModelDelivery.activity.submitting")
         : session?.last_delivery_at
-          ? t("webModelDelivery.activity.last", { time: formatTime(session.last_delivery_at) })
+          ? t("webModelDelivery.activity.last", {
+              time: formatTime(session.last_delivery_at, i18n?.language),
+            })
           : "";
   const surfaceDisabledMessage = !isVisible
     ? ""

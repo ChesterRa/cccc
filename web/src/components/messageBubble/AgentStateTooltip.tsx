@@ -30,7 +30,7 @@ export function AgentStateTooltip({
   stateNext: string;
   stateChanged: string;
 }) {
-  const { t } = useTranslation("chat");
+  const { t, i18n } = useTranslation("chat");
   if (!isOpen || !canShow) return null;
 
   return (
@@ -53,7 +53,7 @@ export function AgentStateTooltip({
             className="ml-auto text-xs tabular-nums text-[var(--color-text-tertiary)]"
             title={formatFullTime(updatedAt)}
           >
-            {t("updated", { time: formatTime(updatedAt) })}
+            {t("updated", { time: formatTime(updatedAt, i18n?.language) })}
           </div>
         ) : null}
       </div>

@@ -1,27 +1,65 @@
-import { normalizeLanguageCode } from "../i18n/languages";
+import { normalizeLanguageCode, type LanguageCode } from "../i18n/languages";
 
-// Format ISO timestamp to friendly relative/absolute time
-export function formatTime(isoStr: string | undefined): string {
+const JUST_NOW: Record<LanguageCode, string> = { en: "just now", zh: "刚刚", ja: "たった今" };
+const relativeFormats = new Map<string, Intl.RelativeTimeFormat>();
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
+
+function relativeFormatter(locale: LanguageCode, style: "narrow" | "long") {
+  const key = `${locale}:${style}`;
+  let formatter = relativeFormats.get(key);
+  if (!formatter) {
+    formatter = new Intl.RelativeTimeFormat(locale, { style, numeric: "always" });
+    relativeFormats.set(key, formatter);
+  }
+  return formatter;
+}
+
+function localDateFormatter(locale: LanguageCode, withYear: boolean) {
+  const key = `${locale}:${withYear}`;
+  let formatter = dateFormats.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, {
+      timeZone: "UTC",
+      month: "short",
+      day: "numeric",
+      ...(withYear ? { year: "numeric" } : {}),
+    });
+    dateFormats.set(key, formatter);
+  }
+  return formatter;
+}
+
+// DateTimeFormat captures the device time zone on construction. Format the
+// current local calendar day in UTC instead, so cached instances still follow
+// a device time zone change and daylight-saving offsets for each timestamp.
+function localCalendarDay(date: Date): Date {
+  const day = new Date(0);
+  day.setUTCFullYear(date.getFullYear(), date.getMonth(), date.getDate());
+  return day;
+}
+
+// Format an ISO timestamp in the interface language, retaining the existing
+// relative/absolute time boundaries and the device's local time zone.
+export function formatTime(isoStr: string | undefined, language: string | undefined): string {
   if (!isoStr) return "—";
   try {
     const date = new Date(isoStr);
     if (isNaN(date.getTime())) return isoStr;
     const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffSec = Math.floor(diffMs / 1000);
+    const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
     const diffMin = Math.floor(diffSec / 60);
     const diffHour = Math.floor(diffMin / 60);
     const diffDay = Math.floor(diffHour / 24);
-    if (diffSec < 60) return "just now";
-    if (diffMin < 60) return `${diffMin}m ago`;
-    if (diffHour < 24) return `${diffHour}h ago`;
-    if (diffDay < 7) return `${diffDay}d ago`;
-    const month = date.toLocaleString("en", { month: "short" });
-    const day = date.getDate();
-    const year = date.getFullYear();
-    const currentYear = now.getFullYear();
-    if (year === currentYear) return `${month} ${day}`;
-    return `${month} ${day}, ${year}`;
+    const locale = normalizeLanguageCode(language);
+    if (diffSec < 60) {
+      return JUST_NOW[locale];
+    }
+    if (diffMin < 60) return relativeFormatter(locale, "narrow").format(-diffMin, "minute");
+    if (diffHour < 24) return relativeFormatter(locale, "narrow").format(-diffHour, "hour");
+    if (diffDay < 7) return relativeFormatter(locale, "narrow").format(-diffDay, "day");
+    return localDateFormatter(locale, date.getFullYear() !== now.getFullYear()).format(
+      localCalendarDay(date),
+    );
   } catch {
     return isoStr;
   }
@@ -82,8 +120,5 @@ export function formatElapsed(seconds: number, language: string | undefined): st
         : seconds >= 60
           ? [Math.floor(seconds / 60), "minute"]
           : [seconds, "second"];
-  return new Intl.RelativeTimeFormat(normalizeLanguageCode(language), { numeric: "always" }).format(
-    -value,
-    unit,
-  );
+  return relativeFormatter(normalizeLanguageCode(language), "long").format(-value, unit);
 }

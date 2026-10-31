@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { CoordinationNote, Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
 import { SelectCombobox } from "../../SelectCombobox";
@@ -33,6 +34,7 @@ export function CoordinationLogPanel({
   onHandoffDraftChange,
   onAddCoordinationNote,
 }: CoordinationLogPanelProps) {
+  const { i18n } = useTranslation("modals");
   const notesCardClass = classNames("rounded-xl border p-3 text-sm", "glass-card");
   return (
     <div className="space-y-3">
@@ -110,7 +112,7 @@ export function CoordinationLogPanel({
                     {note.summary}
                   </div>
                   <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
-                    {[note.by || "", note.task_id || "", noteTimestamp(note)]
+                    {[note.by || "", note.task_id || "", noteTimestamp(note, i18n?.language)]
                       .filter(Boolean)
                       .join(" · ") || tr("context.noMetadata", "No metadata")}
                   </div>
@@ -174,7 +176,7 @@ export function CoordinationLogPanel({
                     {note.summary}
                   </div>
                   <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
-                    {[note.by || "", note.task_id || "", noteTimestamp(note)]
+                    {[note.by || "", note.task_id || "", noteTimestamp(note, i18n?.language)]
                       .filter(Boolean)
                       .join(" · ") || tr("context.noMetadata", "No metadata")}
                   </div>

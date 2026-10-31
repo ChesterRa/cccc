@@ -95,7 +95,7 @@ export function SearchModal({
 
   const [results, setResults] = useState<LedgerEvent[]>([]);
   const [hasMore, setHasMore] = useState(false);
-  const { t } = useTranslation("chat");
+  const { t, i18n } = useTranslation("chat");
 
   const actorIds = useMemo(() => {
     const ids = actors.map((a) => String(a.id || "")).filter(Boolean);
@@ -340,7 +340,7 @@ export function SearchModal({
                       className="text-xs text-[var(--color-text-muted)]"
                       title={formatFullTime(ev.ts)}
                     >
-                      {formatTime(ev.ts)}
+                      {formatTime(ev.ts, i18n?.language)}
                     </span>
                     <span className="text-xs font-medium text-[var(--color-text-primary)]">
                       {getDisplayName(ev.by || "") || "—"}

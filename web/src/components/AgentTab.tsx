@@ -160,7 +160,7 @@ export function AgentTab({
   isSmallScreen,
   onStatusChange,
 }: AgentTabProps) {
-  const { t } = useTranslation("actors");
+  const { t, i18n } = useTranslation("actors");
   // Derived state (must be defined before refs that use them)
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
@@ -1015,7 +1015,7 @@ export function AgentTab({
                   </div>
                   {agentState?.updated_at ? (
                     <div className="shrink-0 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-2 py-0.5 text-xs font-medium leading-4 text-[var(--color-text-tertiary)]">
-                      {formatTime(agentState.updated_at)}
+                      {formatTime(agentState.updated_at, i18n?.language)}
                     </div>
                   ) : null}
                 </div>

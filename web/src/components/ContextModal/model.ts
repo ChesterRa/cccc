@@ -606,9 +606,9 @@ export function waitingLabel(value: string, tr: ContextTranslator): string {
   return match ? match.label : value || tr("context.none", "None");
 }
 
-export function noteTimestamp(note: CoordinationNote): string {
+export function noteTimestamp(note: CoordinationNote, language: string | undefined): string {
   const at = String(note.at || "").trim();
-  return at ? formatTime(at) : "";
+  return at ? formatTime(at, language) : "";
 }
 
 export function emptyNoteDraft(): NoteDraft {

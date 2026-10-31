@@ -388,7 +388,7 @@ export function HeadlessLiveTrace({
   density = "compact",
   className,
 }: HeadlessLiveTraceProps) {
-  const { t } = useTranslation("actors");
+  const { t, i18n } = useTranslation("actors");
   const outputRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const labels = useMemo<HeadlessLiveTraceLabels>(
@@ -573,7 +573,9 @@ export function HeadlessLiveTrace({
               )}
             >
               <ClockIcon size={12} />
-              {latestTimelineGroup?.ts ? formatTime(latestTimelineGroup.ts) : recentDisplayLabel}
+              {latestTimelineGroup?.ts
+                ? formatTime(latestTimelineGroup.ts, i18n?.language)
+                : recentDisplayLabel}
             </span>
           </div>
         </div>
@@ -606,7 +608,7 @@ export function HeadlessLiveTrace({
                         : "border-black/8 bg-black/[0.03] text-slate-500",
                     )}
                   >
-                    {group.ts ? formatTime(group.ts) : recentDisplayLabel}
+                    {group.ts ? formatTime(group.ts, i18n?.language) : recentDisplayLabel}
                   </span>
                   <span
                     className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")}
