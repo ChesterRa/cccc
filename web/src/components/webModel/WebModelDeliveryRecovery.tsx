@@ -134,6 +134,7 @@ function RecoveryDialog({
   const label = (key: string) => t(`webModelDelivery.recovery.${key}`);
   return (
     <ModalFrame
+      lcdScope
       isDark={isDark}
       surface="solid"
       onClose={onClose}
@@ -165,7 +166,11 @@ function RecoveryDialog({
           {label(resolved ? "resolved" : result && !sameDelivery ? "changed" : "observing")}
         </p>
         {loadError || actionError ? (
-          <p role="alert" className="break-words text-rose-700 dark:text-rose-300">
+          <p
+            role="alert"
+            className="break-words text-rose-700 dark:text-rose-300"
+            data-status-tone="error"
+          >
             {actionError || loadError}
           </p>
         ) : null}

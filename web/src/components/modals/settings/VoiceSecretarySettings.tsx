@@ -81,12 +81,20 @@ export function VoiceSecretarySettings({
       )}
       <div className="space-y-3 border-t border-[var(--glass-border-subtle)] pt-4">
         {form.error && (
-          <p role="alert" className="break-words text-sm text-rose-600 dark:text-rose-300">
+          <p
+            role="alert"
+            className="break-words text-sm text-rose-600 dark:text-rose-300"
+            data-status-tone="error"
+          >
             {form.error}
           </p>
         )}
         {form.notice && (
-          <p role="status" className="text-sm text-emerald-700 dark:text-emerald-300">
+          <p
+            role="status"
+            className="text-sm text-emerald-700 dark:text-emerald-300"
+            data-status-tone="ok"
+          >
             {form.notice}
           </p>
         )}
@@ -267,6 +275,7 @@ export function VoiceSecretarySettings({
           <div className="mt-3 flex flex-wrap justify-end gap-2">
             <Button
               variant="ghost"
+              data-lcd-key
               size="sm"
               disabled={form.preferencesDisabled || !form.rulesChanged}
               onClick={form.discardRules}
@@ -294,6 +303,7 @@ export function VoiceSecretarySettings({
           <div aria-live="polite" className="space-y-2 px-5 py-3.5 text-xs leading-5">
             <p
               role={form.preferencesError ? "alert" : "status"}
+              data-status-tone={form.preferencesError ? "error" : undefined}
               className={
                 form.preferencesError
                   ? "text-rose-600 dark:text-rose-300"
@@ -359,7 +369,11 @@ export function VoiceSecretarySettings({
         </fieldset>
       )}
       {leaveError && (
-        <p role="alert" className="text-sm text-rose-600 dark:text-rose-300">
+        <p
+          role="alert"
+          className="text-sm text-rose-600 dark:text-rose-300"
+          data-status-tone="error"
+        >
           {leaveError}
         </p>
       )}

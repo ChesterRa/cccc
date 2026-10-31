@@ -630,7 +630,11 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
         </p>
       ) : null}
       {err ? (
-        <div role="alert" className="text-sm text-rose-600 dark:text-rose-400">
+        <div
+          role="alert"
+          className="text-sm text-rose-600 dark:text-rose-400"
+          data-status-tone="error"
+        >
           {err}
         </div>
       ) : null}
@@ -639,7 +643,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
       {renderHelpCard()}
 
       {expandedKind ? (
-        <BodyPortal>
+        <BodyPortal lcdScope>
           <div
             ref={expandedModalRef}
             key={expandedKind}

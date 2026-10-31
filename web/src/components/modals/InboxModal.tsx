@@ -1,12 +1,12 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Mail } from "lucide-react";
 import { Actor, LedgerEvent } from "../../types";
 import { formatFullTime, formatTime } from "../../utils/time";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { ModalFrame } from "./ModalFrame";
 import { getMessageInsight } from "../../utils/messagePerspective";
+import { InboxEmptyIcon } from "../Icons";
 
 function mailText(ev: LedgerEvent): string {
   const data = ev.data && typeof ev.data === "object" ? (ev.data as Record<string, unknown>) : {};
@@ -55,6 +55,8 @@ export function InboxModal({
   const headerActions = (
     <button
       className="rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-50 transition-colors min-h-[40px] glass-btn text-[var(--color-text-secondary)]"
+      data-lcd-key
+      data-inbox-action
       onClick={onMarkAllRead}
       disabled={!messages.length || busy.startsWith("inbox")}
     >
@@ -65,8 +67,8 @@ export function InboxModal({
   const titleContent = (
     <div className="min-w-0 pr-2">
       <div
-        id="inbox-title"
         className="text-lg font-semibold truncate text-[var(--color-text-primary)]"
+        data-inbox-heading
       >
         {t("inbox.title", { actorId })}
       </div>
@@ -84,6 +86,8 @@ export function InboxModal({
       titleId="inbox-title"
       title={titleContent}
       closeAriaLabel={t("common:close")}
+      lcdScope
+      headerClassName="inbox-modal-header"
       panelClassName="w-full h-full sm:h-auto sm:max-h-[calc(100dvh-8rem)] sm:max-w-2xl sm:mt-16"
       headerActions={headerActions}
       modalRef={modalRef}
@@ -94,7 +98,10 @@ export function InboxModal({
           return (
             <div key={String(ev.id || idx)} className="rounded-xl px-4 py-3 glass-panel">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-xs font-semibold truncate text-[var(--color-text-primary)]">
+                <div
+                  className="text-xs font-semibold truncate text-[var(--color-text-primary)]"
+                  data-inbox-sender
+                >
                   {getDisplayName(ev.by || "") || "—"}
                 </div>
                 <div
@@ -129,7 +136,7 @@ export function InboxModal({
         {!messages.length && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]">
-              <Mail size={22} aria-hidden="true" />
+              <InboxEmptyIcon size={22} aria-hidden="true" />
             </div>
             <div className="text-sm text-[var(--color-text-muted)]">{t("inbox.noUnread")}</div>
           </div>

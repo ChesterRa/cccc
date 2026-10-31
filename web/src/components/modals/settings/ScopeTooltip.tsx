@@ -1,77 +1,54 @@
-import { useCallback, useState } from "react";
-import type { HTMLAttributes, ReactNode } from "react";
-import {
-  FloatingPortal,
-  autoUpdate,
-  flip,
-  offset,
-  shift,
-  useDismiss,
-  useFloating,
-  useHover,
-  useInteractions,
-  useRole,
-} from "@floating-ui/react";
+import { useRef, useState, type ReactNode } from "react";
+import { InfoIcon } from "../../Icons";
+import { Popover, PopoverContent, PopoverTrigger } from "../../ui/popover";
 
 interface ScopeTooltipProps {
-  isDark: boolean;
   title: string;
   content: ReactNode;
-  children: (
-    getReferenceProps: (userProps?: HTMLAttributes<HTMLElement>) => Record<string, unknown>,
-    setReference: (node: HTMLElement | null) => void,
-  ) => ReactNode;
 }
 
-export function ScopeTooltip({ isDark: _isDark, title, content, children }: ScopeTooltipProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const { refs, floatingStyles, context } = useFloating({
-    open: isOpen,
-    onOpenChange: setIsOpen,
-    placement: "top",
-    middleware: [offset(8), flip(), shift({ padding: 8 })],
-    whileElementsMounted: autoUpdate,
-    strategy: "fixed",
-  });
-
-  const isPositioned = context.isPositioned;
-  const hover = useHover(context, { delay: 150, restMs: 100 });
-  const dismiss = useDismiss(context);
-  const role = useRole(context, { role: "tooltip" });
-  const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss, role]);
-
-  const setReference = useCallback(
-    (node: HTMLElement | null) => {
-      refs.setReference(node);
-    },
-    [refs],
-  );
-
-  const setFloating = useCallback(
-    (node: HTMLElement | null) => {
-      refs.setFloating(node);
-    },
-    [refs],
-  );
-
+/** An independent control: scope selection stays separate from its explanation. */
+export function ScopeTooltip({ title, content }: ScopeTooltipProps) {
+  const [open, setOpen] = useState(false);
+  const [lcdScope, setLcdScope] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   return (
-    <>
-      {children(getReferenceProps, setReference)}
-      <FloatingPortal>
-        {isOpen && (
-          <div
-            ref={setFloating}
-            style={floatingStyles}
-            {...getFloatingProps()}
-            className={`z-max w-max max-w-[220px] rounded-lg shadow-xl px-3 py-2 text-xs transition-opacity duration-150 glass-panel ${
-              isPositioned ? "opacity-100" : "opacity-0"
-            } text-[var(--color-text-secondary)]`}
-          >
-            <div className="font-semibold mb-1 text-emerald-500">{title}</div>
-            {content}
-          </div>
-        )}
-      </FloatingPortal>
-    </>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setLcdScope(Boolean(triggerRef.current?.closest("[data-lcd-scope]")));
+        setOpen(next);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          ref={triggerRef}
+          type="button"
+          aria-label={title}
+          title={title}
+          data-scope-help-trigger
+          data-lcd-key
+          className="flex h-8 w-8 min-h-8 min-w-8 shrink-0 items-center justify-center rounded-lg border border-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] focus-visible:outline-2 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+        >
+          <InfoIcon size={16} />
+        </button>
+      </PopoverTrigger>
+      {/* The unlayered glass-modal rule sets overflow: hidden, so a utility alone
+          cannot make long scope descriptions scrollable. */}
+      <PopoverContent
+        align="end"
+        sideOffset={6}
+        collisionPadding={8}
+        data-lcd-scope={lcdScope || undefined}
+        data-scope-help-popup
+        aria-label={title}
+        onEscapeKeyDown={(event) => event.stopPropagation()}
+        style={{ overflowY: "auto" }}
+        className="w-[min(22rem,calc(100vw-1rem))] max-h-[min(60vh,30rem)] p-3 text-sm text-[var(--color-text-primary)] [overflow-wrap:anywhere]"
+      >
+        <div className="font-semibold">{title}</div>
+        <div className="mt-2 leading-relaxed">{content}</div>
+      </PopoverContent>
+    </Popover>
   );
 }

@@ -564,6 +564,9 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
           </div>
           <span
             className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${statusChipClass(headerTone)}`}
+            data-status-tone={
+              headerTone === "good" ? "ok" : headerTone === "warn" ? "warning" : undefined
+            }
           >
             {notebookStateText}
           </span>
@@ -627,7 +630,10 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
             {t("groupSpace.createAndBind")}
           </button>
           {notebookActionsHint ? (
-            <div className="w-full text-xs text-amber-600 dark:text-amber-400">
+            <div
+              className="w-full text-xs text-amber-600 dark:text-amber-400"
+              data-status-tone="warning"
+            >
               {notebookActionsHint}
             </div>
           ) : connectionConnected && !notebookOptions.length ? (
@@ -651,7 +657,11 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
   return (
     <SettingsPage title={t("groupSpace.title")} description={t("groupSpace.description")}>
       {err ? (
-        <div role="alert" className="text-sm text-rose-700 dark:text-rose-300">
+        <div
+          role="alert"
+          className="text-sm text-rose-700 dark:text-rose-300"
+          data-status-tone="error"
+        >
           {err}
         </div>
       ) : null}
@@ -683,7 +693,16 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
               : undefined
           }
         >
-          <span className={`text-[13px] font-semibold ${connectionStatusTone}`}>
+          <span
+            className={`text-[13px] font-semibold ${connectionStatusTone}`}
+            data-status-tone={
+              connectionRunning || connectionConnected
+                ? "ok"
+                : connectionNeedsReconnect || connectionState === "failed"
+                  ? "warning"
+                  : undefined
+            }
+          >
             {connectionStatusText}
           </span>
           {connectionRunning ? (
@@ -733,7 +752,10 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
               </div>
             ) : null}
             {authFlow?.error?.message ? (
-              <div className="text-xs text-amber-600 dark:text-amber-400">
+              <div
+                className="text-xs text-amber-600 dark:text-amber-400"
+                data-status-tone="warning"
+              >
                 {String(authFlow.error.message)}
               </div>
             ) : null}
@@ -768,7 +790,11 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         <>
           {NOTEBOOK_LANES.map((lane) => renderNotebookCard(lane))}
           {connectionWarning ? (
-            <div role="status" className="text-sm text-amber-700 dark:text-amber-300">
+            <div
+              role="status"
+              className="text-sm text-amber-700 dark:text-amber-300"
+              data-status-tone="warning"
+            >
               {t("groupSpace.summaryWarning")}: {connectionWarning}
             </div>
           ) : null}

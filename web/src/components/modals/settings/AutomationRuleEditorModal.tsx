@@ -223,10 +223,18 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
         </div>
 
         {errorMessage ? (
-          <div className="px-4 pt-3 text-xs text-rose-600 dark:text-rose-300">{errorMessage}</div>
+          <div
+            className="px-4 pt-3 text-xs text-rose-600 dark:text-rose-300"
+            data-status-tone="error"
+          >
+            {errorMessage}
+          </div>
         ) : null}
         {status.last_error && !isNewRule ? (
-          <div className="px-4 pt-1 text-xs text-rose-600 dark:text-rose-300">
+          <div
+            className="px-4 pt-1 text-xs text-rose-600 dark:text-rose-300"
+            data-status-tone="error"
+          >
             {status.last_error}
           </div>
         ) : null}
@@ -304,7 +312,10 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
             </div>
 
             {scope === "personal" ? (
-              <div className="text-xs text-amber-700 dark:text-amber-300">
+              <div
+                className="text-xs text-amber-700 dark:text-amber-300"
+                data-status-tone="warning"
+              >
                 {t("ruleEditor.personalRule", { owner: ownerActorId || "unknown" })}
               </div>
             ) : null}
@@ -671,7 +682,10 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       matchTriggerWidth
                     />
                     {snippetIds.length === 0 ? (
-                      <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                      <div
+                        className="mt-1 text-xs text-amber-700 dark:text-amber-300"
+                        data-status-tone="warning"
+                      >
                         {t("automation.noSnippetsYet")}
                       </div>
                     ) : null}
@@ -855,5 +869,5 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
     </div>
   );
 
-  return <BodyPortal>{content}</BodyPortal>;
+  return <BodyPortal lcdScope>{content}</BodyPortal>;
 }

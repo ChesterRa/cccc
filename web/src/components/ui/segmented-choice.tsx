@@ -39,6 +39,7 @@ export function SegmentedChoice<Value extends string | number>({
       aria-labelledby={labelledBy}
       aria-label={ariaLabel}
       aria-disabled={disabled || undefined}
+      data-segmented-choice=""
       {...rest}
       className={classNames(
         "rounded-[10px] bg-[var(--glass-tab-bg)] p-[3px]",

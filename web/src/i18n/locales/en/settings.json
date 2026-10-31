@@ -69,6 +69,7 @@
     "global": "This instance",
     "groupScopeTitle": "Group Scope",
     "groupScopeContent": "Applies to {{scopeRoot}} only. Useful for group-specific timeouts and integrations.",
+    "groupScopeNoGroup": "No group is open. Open Settings from a group to change its settings.",
     "globalScopeTitle": "Global Scope",
     "globalScopeContent": "Applies to your whole CCCC instance (daemon + Web). These settings affect all groups unless overridden.",
     "globalLockedTitle": "Admin access required",

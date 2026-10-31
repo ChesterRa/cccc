@@ -17,6 +17,7 @@ import {
   Clock3,
   Check,
   Clipboard,
+  ClipboardPaste,
   Compass,
   Copy,
   EllipsisVertical,
@@ -36,6 +37,7 @@ import {
   LayoutPanelLeft,
   Link2,
   LockKeyhole,
+  Mail,
   Maximize2,
   Menu,
   Mic,
@@ -64,6 +66,7 @@ import {
   Sun,
   TextCursorInput,
   Trash2,
+  Undo2,
   Download,
   Volume2,
   X,
@@ -220,4 +223,25 @@ export function WorkMessagesIcon(props: IconProps) {
 }
 export function WorkGridIcon(props: IconProps) {
   return renderIcon(LayoutGrid, "grid-2x2-2", props);
+}
+export function InboxEmptyIcon(props: IconProps) {
+  return renderIcon(Mail, "inbox", props);
+}
+export function SecretAddIcon(props: IconProps) {
+  return renderIcon(Plus, "plus", props);
+}
+export function SecretEditIcon(props: IconProps) {
+  return renderIcon(Pencil, "pencil", props);
+}
+export function SecretDeleteIcon(props: IconProps) {
+  return renderIcon(Trash2, "trash", props);
+}
+export function SecretUndoIcon(props: IconProps) {
+  return renderIcon(Undo2, "undo", props);
+}
+export function SecretClearIcon(props: IconProps) {
+  return renderIcon(X, "close", props);
+}
+export function SecretPasteIcon(props: IconProps) {
+  return renderIcon(ClipboardPaste, "clipboard", props);
 }

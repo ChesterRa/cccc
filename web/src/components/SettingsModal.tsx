@@ -670,10 +670,10 @@ export function SettingsModal({
       closeAriaLabel={t("closeAriaLabel")}
       panelClassName="w-full h-full sm:h-[min(90dvh,920px)] sm:max-w-[min(1280px,calc(100vw-2rem))] sm:max-h-[90dvh]"
       modalRef={modalRef}
+      lcdScope
     >
       <div className="min-h-0 flex-1 flex flex-col sm:flex-row overflow-hidden">
         <SettingsNavigation
-          isDark={isDark}
           groupId={groupId}
           groupTitle={groupDoc?.title}
           scope={scope}
@@ -701,6 +701,7 @@ export function SettingsModal({
           <div className="px-4 pt-5 pb-4 sm:px-8 sm:pt-7 lg:px-10 space-y-6">
             {scope === "global" && !globalSettingsEnabled && !currentBrowserSignedIn ? (
               <div
+                data-status-tone="warning"
                 className={`rounded-xl border p-6 ${isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}
               >
                 <div className="text-sm font-semibold">{t("navigation.globalLockedTitle")}</div>
@@ -1023,6 +1024,7 @@ export function SettingsModal({
             {saveFeedback?.context === saveContext && (
               <p
                 role={saveFeedback.error ? "alert" : "status"}
+                data-status-tone={saveFeedback.error ? "error" : "ok"}
                 className={`text-sm ${saveFeedback.error ? "text-rose-700 dark:text-rose-300" : "text-[var(--color-accent-success)]"}`}
               >
                 {saveFeedback.message}

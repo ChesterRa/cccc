@@ -1000,7 +1000,10 @@ export function CapabilitiesTab({
         <section className={settingsWorkspaceShellClass(_isDark)}>
           <div className={settingsWorkspaceHeaderClass(_isDark)}>
             <div>
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+              <div
+                className="text-sm font-semibold text-[var(--color-text-primary)]"
+                data-settings-page-title
+              >
                 {t("capabilities.title")}
               </div>
               <div className="mt-1 text-xs text-[var(--color-text-muted)]">
@@ -1031,6 +1034,7 @@ export function CapabilitiesTab({
             <div className={settingsWorkspaceBodyClass}>
               <div
                 className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400"
+                data-status-tone="error"
                 role="alert"
               >
                 {err}
@@ -1041,6 +1045,7 @@ export function CapabilitiesTab({
       ) : err ? (
         <div
           className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400"
+          data-status-tone="error"
           role="alert"
         >
           {err}
@@ -1050,7 +1055,11 @@ export function CapabilitiesTab({
       <section className={settingsWorkspaceShellClass(_isDark)}>
         <div className={settingsWorkspaceHeaderClass(_isDark)}>
           <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+            {/* Without the overview above, this section heads the page. */}
+            <div
+              className="text-sm font-semibold text-[var(--color-text-primary)]"
+              data-settings-page-title={selfEvolvingSurface || undefined}
+            >
               {t(
                 selfEvolvingSurface
                   ? "capabilities.selfEvolvingGroupTitle"
@@ -1120,7 +1129,10 @@ export function CapabilitiesTab({
                         {String(row.name || capId)}
                       </span>
                       {isBlocked ? (
-                        <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[0.625rem] text-rose-600 dark:text-rose-300">
+                        <span
+                          className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[0.625rem] text-rose-600 dark:text-rose-300"
+                          data-status-tone="error"
+                        >
                           {t("capabilities.manageStatusBlocked")}
                         </span>
                       ) : null}
@@ -1186,7 +1198,10 @@ export function CapabilitiesTab({
                               {String(row.name || capId)}
                             </span>
                             {isBlocked ? (
-                              <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[0.625rem] text-rose-600 dark:text-rose-300">
+                              <span
+                                className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[0.625rem] text-rose-600 dark:text-rose-300"
+                                data-status-tone="error"
+                              >
                                 {t("capabilities.manageStatusBlocked")}
                               </span>
                             ) : null}

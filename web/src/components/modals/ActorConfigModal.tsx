@@ -377,6 +377,7 @@ function CreateActorConfigModal({
 
   return (
     <ModalFrame
+      lcdScope
       isOpen={isOpen}
       isDark={isDark}
       onClose={handleCancel}
@@ -398,6 +399,7 @@ function CreateActorConfigModal({
             <div
               className="mb-3 rounded-xl border px-3 py-2 text-xs border-rose-500/20 bg-rose-500/5 text-rose-600 dark:text-rose-400"
               role="alert"
+              data-status-tone="error"
             >
               <div className="flex items-start justify-between gap-3">
                 <span>{error}</span>
@@ -436,7 +438,10 @@ function CreateActorConfigModal({
                     : t("addAgent")}
               </Button>
               {scopeUnavailable || submitDisabledReason ? (
-                <div className="text-[10px] text-amber-700 dark:text-amber-400 mt-1.5">
+                <div
+                  className="text-[10px] text-amber-700 dark:text-amber-400 mt-1.5"
+                  data-status-tone="warning"
+                >
                   {scopeUnavailable ? t("workingDirectoryUnavailable") : submitDisabledReason}
                 </div>
               ) : null}
@@ -636,7 +641,10 @@ function CreateActorConfigModal({
                     />
 
                     {webModelSetupIsActorBound ? (
-                      <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
+                      <div
+                        className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                        data-status-tone="info"
+                      >
                         <div className="font-medium">
                           {runtime === "grok_web_model"
                             ? "Grok Bot Web Model"
@@ -679,7 +687,10 @@ function CreateActorConfigModal({
                           id: "connection",
                           label: t("runtimeSetupSection"),
                           panel: (
-                            <div className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400">
+                            <div
+                              className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400"
+                              data-status-tone="warning"
+                            >
                               <div className="font-medium">{t("manualMcpRequired")}</div>
                               <div className="mt-1">
                                 {t("configureMcpStdio")}{" "}
@@ -1434,6 +1445,7 @@ function EditActorConfigModal({
 
   return (
     <ModalFrame
+      lcdScope
       isOpen={isOpen && !suspended}
       isDark={isDark}
       onClose={closeEdit}
@@ -1455,6 +1467,7 @@ function EditActorConfigModal({
             <div
               className="mb-3 rounded-xl border px-3 py-2 text-xs border-rose-500/20 bg-rose-500/5 text-rose-600 dark:text-rose-400"
               role="alert"
+              data-status-tone="error"
             >
               {secretsError}
             </div>
@@ -1558,7 +1571,7 @@ function EditActorConfigModal({
                       <span className="text-xs font-medium text-[var(--color-text-muted)]">
                         {t("groupRole", { defaultValue: "Group role" })}
                       </span>
-                      <span className={groupRoleBadgeClass(normalizedGroupRole)}>
+                      <span className={groupRoleBadgeClass(normalizedGroupRole)} data-role-badge>
                         {groupRoleLabel}
                       </span>
                     </div>
@@ -1702,7 +1715,10 @@ function EditActorConfigModal({
                     </div>
 
                     {isWebModelRuntime(runtime) ? (
-                      <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">
+                      <div
+                        className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                        data-status-tone="info"
+                      >
                         <div className="font-medium">
                           {runtime === "grok_web_model"
                             ? "Grok Bot Web Model"
@@ -1864,7 +1880,10 @@ function EditActorConfigModal({
                           id: "connection",
                           label: t("runtimeSetupSection", "Connection setup"),
                           panel: (
-                            <div className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400">
+                            <div
+                              className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400"
+                              data-status-tone="warning"
+                            >
                               <div className="font-medium">{t("manualMcpRequired")}</div>
                               <div className="mt-1">
                                 {t("configureMcpStdio")}{" "}

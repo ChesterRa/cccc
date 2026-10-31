@@ -258,6 +258,7 @@ function LocalSessionsDialog({
   };
   return (
     <ModalFrame
+      lcdScope
       isDark={isDark}
       onClose={onClose}
       titleId="local-sessions-title"
@@ -322,13 +323,13 @@ function LocalSessionsDialog({
           {t(joining ? "localSessions.joinHint" : "localSessions.groupHint")}
         </p>
         {error && (
-          <p role="alert" className="mb-3 text-sm text-red-600">
+          <p role="alert" className="mb-3 text-sm text-red-600" data-status-tone="error">
             {t("localSessions.loadFailed")}
             <span className="block text-xs">{error}</span>
           </p>
         )}
         {targetUnavailable && (
-          <p role="alert" className="mb-3 text-sm text-red-600">
+          <p role="alert" className="mb-3 text-sm text-red-600" data-status-tone="error">
             {t("localSessions.targetUnavailable")}
           </p>
         )}
@@ -343,7 +344,11 @@ function LocalSessionsDialog({
           </p>
         ) : null}
         {unavailableCount > 0 && (
-          <p role="alert" className="mb-3 text-sm text-amber-700 dark:text-amber-300">
+          <p
+            role="alert"
+            className="mb-3 text-sm text-amber-700 dark:text-amber-300"
+            data-status-tone="warning"
+          >
             {t("localSessions.selectionUnavailable", { count: unavailableCount })}
           </p>
         )}
@@ -425,7 +430,10 @@ function LocalSessionsDialog({
                         {source.cwd}
                       </span>
                       {!source.connected && (
-                        <span className="block text-xs text-amber-700 dark:text-amber-300">
+                        <span
+                          className="block text-xs text-amber-700 dark:text-amber-300"
+                          data-status-tone="warning"
+                        >
                           {t("localSessions.unavailable")}
                         </span>
                       )}

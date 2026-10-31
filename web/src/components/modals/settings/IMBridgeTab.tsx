@@ -113,7 +113,10 @@ function WeixinQrCode({
 
   if (error) {
     return (
-      <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-500">
+      <div
+        className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-500"
+        data-status-tone="error"
+      >
         {errorLabel}: {error}
       </div>
     );
@@ -490,7 +493,9 @@ export function IMBridgeTab({
       <section className={settingsWorkspaceShellClass(_isDark)}>
         <div className={settingsWorkspaceHeaderClass(_isDark)}>
           <div>
-            <h3 className={sectionTitleClass}>{t("imBridge.title")}</h3>
+            <h3 className={sectionTitleClass} data-settings-page-title>
+              {t("imBridge.title")}
+            </h3>
             <p className="mt-1 max-w-3xl text-xs text-[var(--color-text-muted)]">
               {t("imBridge.description")}
             </p>
@@ -503,6 +508,7 @@ export function IMBridgeTab({
               <div className="flex items-center gap-2">
                 <span
                   className={`w-2 h-2 rounded-full ${imStatus.running ? "bg-emerald-500" : "bg-gray-400"}`}
+                  data-settings-status-dot={imStatus.running ? "running" : "stopped"}
                 />
                 <span className="text-sm text-[var(--color-text-primary)]">
                   {imStatus.running ? t("imBridge.running") : t("imBridge.stopped")}
@@ -520,7 +526,10 @@ export function IMBridgeTab({
                 </div>
               )}
               {imStatus.last_error && (
-                <div className="mt-2 break-words text-xs text-red-600 dark:text-red-400">
+                <div
+                  className="mt-2 break-words text-xs text-red-600 dark:text-red-400"
+                  data-status-tone="error"
+                >
                   {imStatus.last_error}
                 </div>
               )}
@@ -584,6 +593,7 @@ export function IMBridgeTab({
                       id="im-mattermost-url-error"
                       role="alert"
                       className="mt-2 break-words text-xs text-red-600 dark:text-red-400"
+                      data-status-tone="error"
                     >
                       {t("imBridge.mattermostUrlInvalid")}
                     </p>
@@ -766,7 +776,10 @@ export function IMBridgeTab({
                         <div className="text-sm font-medium text-[var(--color-text-primary)]">
                           {t("imBridge.weixinLoginTitle")}
                         </div>
-                        <div className="mt-2 inline-flex rounded-full border border-emerald-500/15 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)]">
+                        <div
+                          className="mt-2 inline-flex rounded-full border border-emerald-500/15 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)]"
+                          data-status-tone="ok"
+                        >
                           {t("imBridge.weixinLoginStatus")}: {getWeixinStatusLabel()}
                         </div>
                         {weixinLoginStatus?.account_id && (
@@ -795,11 +808,17 @@ export function IMBridgeTab({
                       </div>
                     </div>
                     {weixinErrorText && (
-                      <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-600 dark:text-red-400">
+                      <div
+                        className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-600 dark:text-red-400"
+                        data-status-tone="error"
+                      >
                         <div className="font-medium">{t("imBridge.weixinErrorDetails")}</div>
                         <div className="mt-1 break-words">{weixinErrorText}</div>
                         {weixinLoginStatus?.updated_at && (
-                          <div className="mt-2 text-xs text-red-500/80 dark:text-red-300/80">
+                          <div
+                            className="mt-2 text-xs text-red-500/80 dark:text-red-300/80"
+                            data-status-tone="error"
+                          >
                             {t("imBridge.weixinLastUpdated")}: {weixinLoginStatus.updated_at}
                           </div>
                         )}
@@ -821,12 +840,14 @@ export function IMBridgeTab({
                             {t("imBridge.weixinCopyQrLink")}
                           </button>
                           {weixinQrCopyState === "done" && (
-                            <span className="text-emerald-600">
+                            <span className="text-emerald-600" data-status-tone="ok">
                               {t("imBridge.weixinCopySuccess")}
                             </span>
                           )}
                           {weixinQrCopyState === "failed" && (
-                            <span className="text-red-500">{t("imBridge.weixinCopyFailed")}</span>
+                            <span className="text-red-500" data-status-tone="error">
+                              {t("imBridge.weixinCopyFailed")}
+                            </span>
                           )}
                         </div>
                         <details
@@ -975,7 +996,11 @@ export function IMBridgeTab({
           </div>
 
           {imConfigError && (
-            <p role="alert" className="mt-2 break-words text-xs text-red-600 dark:text-red-400">
+            <p
+              role="alert"
+              className="mt-2 break-words text-xs text-red-600 dark:text-red-400"
+              data-status-tone="error"
+            >
               {imConfigError}
             </p>
           )}
@@ -998,7 +1023,11 @@ export function IMBridgeTab({
                 </div>
               </div>
 
-              {pendingError && <p className="text-xs text-red-500">{pendingError}</p>}
+              {pendingError && (
+                <p className="text-xs text-red-500" data-status-tone="error">
+                  {pendingError}
+                </p>
+              )}
 
               {!pendingLoading && pendingRequests.length === 0 && !pendingError && (
                 <p className="text-xs text-[var(--color-text-muted)]">
@@ -1041,6 +1070,7 @@ export function IMBridgeTab({
                             onClick={() => handleApprovePending(request)}
                             disabled={actionBusy}
                             className="inline-flex items-center justify-center rounded-lg border border-emerald-500/25 bg-emerald-500/12 px-3 py-1.5 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-500/18 dark:text-emerald-300 disabled:opacity-50"
+                            data-status-tone="ok"
                           >
                             {pendingActionKey === approveKey
                               ? "..."
@@ -1192,9 +1222,15 @@ export function IMBridgeTab({
                 </div>
               )}
 
-              {authError && <p className="text-xs text-red-500">{authError}</p>}
+              {authError && (
+                <p className="text-xs text-red-500" data-status-tone="error">
+                  {authError}
+                </p>
+              )}
               {!authError && authInfo && (
-                <p className="text-xs text-emerald-600 dark:text-emerald-400">{authInfo}</p>
+                <p className="text-xs text-emerald-600 dark:text-emerald-400" data-status-tone="ok">
+                  {authInfo}
+                </p>
               )}
 
               {!authLoading && authChats.length === 0 && !authError && (

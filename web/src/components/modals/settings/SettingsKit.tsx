@@ -26,7 +26,12 @@ export function SettingsPage({
       data-settings-page
     >
       <header>
-        <h2 className="text-xl font-semibold text-[var(--color-text-primary)]">{title}</h2>
+        <h2
+          className="text-xl font-semibold text-[var(--color-text-primary)]"
+          data-settings-page-title
+        >
+          {title}
+        </h2>
         {description ? (
           <p className="mt-1.5 text-[13px] leading-6 text-[var(--color-text-secondary)]">
             {description}
@@ -137,7 +142,7 @@ export function SettingsRow({
           ? ""
           : "@min-[600px]/settings:grid-cols-[minmax(0,220px)_minmax(0,1fr)] @min-[600px]/settings:items-start @min-[600px]/settings:gap-6 @min-[900px]/settings:grid-cols-[280px_minmax(0,1fr)]",
       )}
-      data-settings-row
+      data-settings-row={stacked ? "stacked" : "split"}
     >
       <div className="min-w-0 @min-[600px]/settings:pt-1.5">
         {htmlFor ? (

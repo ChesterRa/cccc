@@ -1,0 +1,144 @@
+/* ---------- LCD dialogs ----------
+   Every dialog that takes the LCD scope (ModalFrame's or BodyPortal's lcdScope)
+   shares this frame. Keys are sized by pointer, not width: a touch screen keeps
+   the 44px targets of the global coarse-pointer rule, in px so text scaling cannot
+   shrink them, and a fine pointer gets the compact 2rem keys of the chat header. */
+
+/* The header gives its height back to the content. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-header] {
+  padding-top: max(0.375rem, env(safe-area-inset-top, 0px));
+  padding-bottom: 0.375rem;
+}
+
+@media (pointer: fine) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-close] {
+    min-width: 2rem;
+    min-height: 2rem;
+    width: 2rem;
+    height: 2rem;
+  }
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-close] {
+  border-color: var(--lcd-rule-strong);
+  background: transparent;
+  color: var(--lcd-ink);
+}
+
+/* A text field is a control, framed in the strong rule like a key; the plain rule
+   separates sections. The chat page's fields keep their own styles. */
+:root[data-ui-style="lcd"]
+  :is([role="dialog"][data-lcd-scope], [data-lcd-scope] [role="dialog"])
+  .glass-input {
+  border-color: var(--lcd-rule-strong);
+}
+
+/* Native checkboxes and radios tick in ink, not the browser's blue. */
+:root[data-ui-style="lcd"]
+  :is([role="dialog"][data-lcd-scope], [data-lcd-scope] [role="dialog"])
+  :is(input[type="checkbox"], input[type="radio"]) {
+  accent-color: var(--lcd-ink);
+}
+
+/* A status note is one colour: what it nests (a dismiss key, a footnote) takes the
+   note's colour, and its code sits on the code ground, not a tint of the old hue. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-status-tone]
+  :is(
+    [class*="text-rose-"],
+    [class*="text-red-"],
+    [class*="text-amber-"],
+    [class*="text-orange-"]
+  ) {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-status-tone] :is(code, pre) {
+  border-radius: 0;
+  background: var(--lcd-code-bg);
+  color: inherit;
+}
+
+/* A role is not a status: the foreman and peer badges are plain framed tags. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-role-badge] {
+  border-color: var(--lcd-rule-strong);
+  background: transparent;
+  color: var(--lcd-ink);
+}
+
+/* Secrets waiting for Save are a draft, not a success: framed in the strong rule, in
+   ink. A key marked for removal keeps its strike-through inside a dashed danger frame. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-secret-pending] {
+  border: 1px solid var(--lcd-rule-strong);
+  background: transparent;
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-secret-pending] [class*="text-emerald-"] {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-secret-row="remove"] {
+  border-style: dashed;
+  border-color: var(--lcd-danger);
+  background: transparent;
+}
+
+/* A switch is one control of keys sharing edges, framed in ink, the current one in
+   reverse, like the chat page's view switch: the settings scope, every segmented
+   choice (settings pages, the appearance menu) and the search kinds. Reversed keys
+   switch at once: a colour transition would pass through text the colour of its
+   ground. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-settings-scope-switch], [data-segmented-choice], [data-search-kind]) {
+  gap: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is(
+    [data-settings-scope-switch] > button,
+    [data-segmented-choice] > [role="radio"],
+    [data-search-kind] > button
+  ) {
+  border: 1px solid var(--lcd-ink);
+  color: var(--lcd-ink);
+  font-weight: 400;
+  transition: none;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is(
+    [data-settings-scope-switch] > button + button,
+    [data-segmented-choice] > [role="radio"] + [role="radio"],
+    [data-search-kind] > button + button
+  ) {
+  margin-left: -1px;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is(
+    [data-settings-scope-switch] > button[aria-pressed="true"],
+    [data-segmented-choice] > [role="radio"][aria-checked="true"],
+    [data-search-kind] > button[aria-pressed="true"]
+  ) {
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is(
+    [data-settings-scope-switch] > button[aria-pressed="false"],
+    [data-segmented-choice] > [role="radio"][aria-checked="false"],
+    [data-search-kind] > button[aria-pressed="false"]
+  ):hover:not(:disabled) {
+  background: var(--lcd-sel-soft);
+}

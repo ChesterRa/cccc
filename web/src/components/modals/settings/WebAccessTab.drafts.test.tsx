@@ -104,6 +104,53 @@ describe("Web Access connection drafts", () => {
   const choose = async (goal: string) => click(`webAccess.goals.${goal}.title`);
   const refresh = async () => click("webAccess.refresh");
 
+  it("distinguishes the selected draft from the saved access goal", async () => {
+    await render();
+    const local = button("webAccess.goals.local.title");
+    const lan = button("webAccess.goals.lan.title");
+    expect(local.getAttribute("aria-pressed")).toBe("true");
+    expect(local.querySelector("[data-settings-choice-saved]")).not.toBeNull();
+
+    await choose("lan");
+    expect(lan.getAttribute("aria-pressed")).toBe("true");
+    expect(local.getAttribute("aria-pressed")).toBe("false");
+    expect(local.querySelector("[data-settings-choice-saved]")).not.toBeNull();
+    expect(lan.querySelector("[data-settings-choice-saved]")).toBeNull();
+
+    await click("webAccess.saveChanges");
+    expect(local.querySelector("[data-settings-choice-saved]")).toBeNull();
+    expect(lan.querySelector("[data-settings-choice-saved]")).not.toBeNull();
+  });
+
+  it("keeps the access-token dialog in the settings style scope after it is portaled", async () => {
+    await render();
+    await click("common:create");
+    const dialog = document.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="webAccess.createAccessToken"]',
+    );
+    expect(dialog).not.toBeNull();
+    expect(host.contains(dialog)).toBe(false);
+    expect(dialog?.closest("[data-lcd-scope]")).not.toBeNull();
+  });
+
+  it("keeps the restart instructions in the settings style scope", async () => {
+    vi.mocked(api.updateRemoteAccessConfig).mockResolvedValue({
+      ok: true,
+      result: {
+        remote_access: { ...privateState, restart_required: true, apply_supported: false },
+      },
+    });
+    await render();
+    await choose("lan");
+    await click("webAccess.saveChanges");
+    const dialog = document.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="webAccess.restartDialogTitle"]',
+    );
+    expect(dialog).not.toBeNull();
+    expect(host.contains(dialog)).toBe(false);
+    expect(dialog?.closest("[data-lcd-scope]")).not.toBeNull();
+  });
+
   it.each(["lan", "public"])(
     "keeps a pending %s goal through refresh and saves its connection",
     async (goal) => {

@@ -9,7 +9,7 @@ export const buttonVariants = cva(
           "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm hover:brightness-95",
         secondary: "glass-btn text-[var(--color-text-secondary)]",
         destructive:
-          "border border-[color-mix(in_srgb,var(--destructive)_30%,transparent)] bg-[color-mix(in_srgb,var(--destructive)_12%,transparent)] text-[var(--destructive)] hover:bg-[color-mix(in_srgb,var(--destructive)_18%,transparent)]",
+          "destructive-key border border-[color-mix(in_srgb,var(--destructive)_30%,transparent)] bg-[color-mix(in_srgb,var(--destructive)_12%,transparent)] text-[var(--destructive)] hover:bg-[color-mix(in_srgb,var(--destructive)_18%,transparent)]",
         outline:
           "border border-[var(--color-border-primary)] bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)]",
         ghost:

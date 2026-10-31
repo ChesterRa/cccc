@@ -173,7 +173,6 @@ describe("settings pages on the kit", () => {
     const renderNav = (globalEnabled: boolean) =>
       render(
         <SettingsNavigation
-          isDark={false}
           groupId="g1"
           groupTitle="cccc"
           scope="group"
@@ -196,9 +195,40 @@ describe("settings pages on the kit", () => {
     expect(host.textContent).toContain("navigation.appliesToGroup");
     await click(buttons()[1]);
     expect(onScope).not.toHaveBeenCalled();
+    // Desktop and phone each put one help key beside the switch, never inside a scope
+    // key, so a tap on it cannot switch scope and a disabled key does not hide it.
+    const switches = [...host.querySelectorAll<HTMLElement>("[data-settings-scope-switch]")];
+    expect(switches).toHaveLength(2);
+    for (const group of switches) {
+      expect(group.querySelector("button button, [data-scope-help-trigger]")).toBeNull();
+      expect(group.parentElement?.querySelectorAll("[data-scope-help-trigger]")).toHaveLength(1);
+    }
+    // The help explains both scopes, including why the instance is locked.
+    await click(host.querySelector<HTMLButtonElement>("[data-scope-help-trigger]")!);
+    const help = document.querySelector<HTMLElement>("[data-scope-help-popup]")!;
+    expect(help.textContent).toContain("navigation.groupScopeContent");
+    expect(help.textContent).toContain("navigation.globalLockedContent");
 
     await renderNav(true);
     await click(buttons()[1]);
     expect(onScope).toHaveBeenCalledWith("global");
+  });
+
+  it("navigation: with no group open, the help says so instead of naming an empty target", async () => {
+    await render(
+      <SettingsNavigation
+        scope="global"
+        scopeRootUrl=""
+        globalEnabled
+        tabs={[{ id: "account", label: "account" }]}
+        activeTab="account"
+        onScopeChange={vi.fn()}
+        onTabChange={vi.fn()}
+      />,
+    );
+    await click(host.querySelector<HTMLButtonElement>("[data-scope-help-trigger]")!);
+    const help = document.querySelector<HTMLElement>("[data-scope-help-popup]")!;
+    expect(help.textContent).toContain("navigation.groupScopeNoGroup");
+    expect(help.textContent).not.toContain("navigation.groupScopeContent");
   });
 });

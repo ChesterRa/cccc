@@ -1,30 +1,7 @@
 /* ---------- Context modal (T047) ----------
    The context modal is one LCD scope. Its chrome takes the chat header's key
    language; the board is a log of task records in rule-framed columns.
-   Keys are sized by pointer, not width: a touch screen keeps the 44px targets of
-   the global coarse-pointer rule, in px so text scaling cannot shrink them, and
-   a fine pointer gets the compact 2rem keys of the chat header. */
-
-/* The header and the section tabs give their height back to the board. */
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-header] {
-  padding-top: max(0.375rem, env(safe-area-inset-top, 0px));
-  padding-bottom: 0.375rem;
-}
-
-@media (pointer: fine) {
-  :root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-close] {
-    min-width: 2rem;
-    min-height: 2rem;
-    width: 2rem;
-    height: 2rem;
-  }
-}
-
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-close] {
-  border-color: var(--lcd-rule-strong);
-  background: transparent;
-  color: var(--lcd-ink);
-}
+   Keys are sized by pointer, not width, as in every LCD dialog (lcdModal.css). */
 
 /* The sections are one row of keys sharing edges, the current one in reverse,
    like the chat page's view switch. */

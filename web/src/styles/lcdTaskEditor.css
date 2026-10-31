@@ -23,10 +23,6 @@
   opacity: 0.55;
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor] .glass-input {
-  border-color: var(--lcd-rule-strong);
-}
-
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-editor-blocked] textarea {
   min-height: 4.5rem;
 }

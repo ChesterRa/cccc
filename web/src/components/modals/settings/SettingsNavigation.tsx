@@ -1,6 +1,5 @@
 import { useActiveSettingsTab } from "./useActiveSettingsTab";
 import { useTranslation } from "react-i18next";
-import { InfoIcon } from "../../Icons";
 import { ScrollFade } from "../../ScrollFade";
 import type { SettingsScope } from "./types";
 import { ScopeTooltip } from "./ScopeTooltip";
@@ -11,7 +10,6 @@ interface SettingsTabOption {
 }
 
 interface SettingsNavigationProps {
-  isDark: boolean;
   groupId?: string;
   groupTitle?: string;
   scope: SettingsScope;
@@ -24,7 +22,6 @@ interface SettingsNavigationProps {
 }
 
 export function SettingsNavigation({
-  isDark,
   groupId,
   groupTitle,
   scope,
@@ -43,6 +40,27 @@ export function SettingsNavigation({
   const globalScopeContent = globalEnabled
     ? t("navigation.globalScopeContent")
     : t("navigation.globalLockedContent");
+  const groupTarget = scopeRootUrl || groupId;
+  // One explanation of both scopes beside the switch, not on its keys: a disabled
+  // key cannot carry why the instance is locked.
+  const scopeHelp = (
+    <ScopeTooltip
+      title={t("navigation.targetScope")}
+      content={
+        <>
+          <p>
+            <strong>{t("navigation.groupScopeTitle")}</strong>{" "}
+            {groupTarget
+              ? t("navigation.groupScopeContent", { scopeRoot: groupTarget })
+              : t("navigation.groupScopeNoGroup")}
+          </p>
+          <p className="mt-1.5">
+            <strong>{globalScopeTitle}</strong> {globalScopeContent}
+          </p>
+        </>
+      }
+    />
+  );
   const tabButtonClass = (active: boolean) =>
     `w-full flex h-9 items-center rounded-lg px-3 text-sm transition-[background-color,color,box-shadow] ${
       active
@@ -50,7 +68,7 @@ export function SettingsNavigation({
         : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
     }`;
   const mobileScopeButtonClass = (active: boolean) =>
-    `min-w-0 flex-1 relative flex items-center justify-center px-3 py-2.5 rounded-xl text-sm min-h-[44px] font-medium transition-[background-color,border-color,color,box-shadow] ${
+    `min-w-0 flex-1 flex items-center justify-center px-3 py-2.5 rounded-xl text-sm min-h-[44px] font-medium transition-[background-color,border-color,color,box-shadow] ${
       active
         ? "border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg-active)] text-[var(--color-text-primary)] shadow-sm"
         : "border border-transparent bg-transparent text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
@@ -58,7 +76,10 @@ export function SettingsNavigation({
 
   return (
     <>
-      <aside className="hidden min-h-0 w-64 shrink-0 flex-col border-r border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] sm:flex">
+      <aside
+        className="hidden min-h-0 w-64 shrink-0 flex-col border-r border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] sm:flex"
+        data-settings-nav
+      >
         <div className="flex flex-col gap-3 px-3 pt-4 pb-2">
           <div
             role="group"
@@ -89,34 +110,14 @@ export function SettingsNavigation({
             ))}
           </div>
           <div className="flex items-center gap-1 px-2 text-xs text-[var(--color-text-muted)]">
-            <span className="min-w-0 truncate">
+            <span className="min-w-0 truncate" data-settings-applies-to>
               {scope === "group"
                 ? t("navigation.appliesToGroup", {
                     name: groupTitle || scopeRootUrl || groupId || "—",
                   })
                 : t("navigation.appliesToGlobal")}
             </span>
-            <ScopeTooltip
-              isDark={isDark}
-              title={scope === "group" ? t("navigation.groupScopeTitle") : globalScopeTitle}
-              content={
-                scope === "group" ? (
-                  <>{t("navigation.groupScopeContent", { scopeRoot: scopeRootUrl || groupId })}</>
-                ) : (
-                  <>{globalScopeContent}</>
-                )
-              }
-            >
-              {(getReferenceProps, setReference) => (
-                <span
-                  ref={setReference}
-                  {...getReferenceProps()}
-                  className="shrink-0 rounded-full p-1 opacity-60 hover:bg-black/5 dark:hover:bg-white/5"
-                >
-                  <InfoIcon size={12} />
-                </span>
-              )}
-            </ScopeTooltip>
+            {scopeHelp}
           </div>
         </div>
 
@@ -137,70 +138,45 @@ export function SettingsNavigation({
       </aside>
 
       <div className="sm:hidden flex flex-col flex-shrink-0">
-        <div className="px-4 py-3 border-b border-[var(--glass-border-subtle)]">
-          <div className="flex items-stretch gap-2">
-            <button
-              type="button"
-              onClick={() => onScopeChange("group")}
-              aria-pressed={scope === "group"}
-              disabled={!groupId}
-              className={`${mobileScopeButtonClass(scope === "group")} disabled:opacity-40`}
+        <div
+          className="px-4 py-3 border-b border-[var(--glass-border-subtle)]"
+          data-settings-scope-row
+        >
+          <div className="flex items-center gap-2">
+            <div
+              role="group"
+              aria-label={t("navigation.targetScope")}
+              className="flex min-w-0 flex-1 items-stretch gap-2"
+              data-settings-scope-switch
             >
-              <span className="min-w-0 pr-2">
-                <span className="block">{t("navigation.thisGroup")}</span>
-                {groupTitle && (
-                  <span className="block truncate text-xs font-normal text-[var(--color-text-secondary)]">
-                    {groupTitle}
-                  </span>
-                )}
-              </span>
-              <div className="absolute right-1 top-1/2 -translate-y-1/2">
-                <ScopeTooltip
-                  isDark={isDark}
-                  title={t("navigation.groupScopeTitle")}
-                  content={
-                    <>{t("navigation.groupScopeContent", { scopeRoot: scopeRootUrl || groupId })}</>
-                  }
-                >
-                  {(getReferenceProps, setReference) => (
-                    <div
-                      ref={setReference}
-                      {...getReferenceProps({ onClick: (e) => e.stopPropagation() })}
-                      className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors opacity-50"
-                    >
-                      <InfoIcon size={14} />
-                    </div>
+              <button
+                type="button"
+                onClick={() => onScopeChange("group")}
+                aria-pressed={scope === "group"}
+                disabled={!groupId}
+                className={`${mobileScopeButtonClass(scope === "group")} disabled:opacity-40`}
+              >
+                <span className="min-w-0">
+                  <span className="block">{t("navigation.thisGroup")}</span>
+                  {groupTitle && (
+                    <span className="block truncate text-xs font-normal text-[var(--color-text-secondary)]">
+                      {groupTitle}
+                    </span>
                   )}
-                </ScopeTooltip>
-              </div>
-            </button>
+                </span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => onScopeChange("global")}
-              aria-pressed={scope === "global"}
-              disabled={!globalEnabled}
-              className={`${mobileScopeButtonClass(scope === "global")} disabled:opacity-40`}
-            >
-              <span className="min-w-0 pr-2">{t("navigation.global")}</span>
-              <div className="absolute right-1 top-1/2 -translate-y-1/2">
-                <ScopeTooltip
-                  isDark={isDark}
-                  title={globalScopeTitle}
-                  content={<>{globalScopeContent}</>}
-                >
-                  {(getReferenceProps, setReference) => (
-                    <div
-                      ref={setReference}
-                      {...getReferenceProps({ onClick: (e) => e.stopPropagation() })}
-                      className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors opacity-50"
-                    >
-                      <InfoIcon size={14} />
-                    </div>
-                  )}
-                </ScopeTooltip>
-              </div>
-            </button>
+              <button
+                type="button"
+                onClick={() => onScopeChange("global")}
+                aria-pressed={scope === "global"}
+                disabled={!globalEnabled}
+                className={`${mobileScopeButtonClass(scope === "global")} disabled:opacity-40`}
+              >
+                <span className="min-w-0">{t("navigation.global")}</span>
+              </button>
+            </div>
+            {scopeHelp}
           </div>
         </div>
 
@@ -215,6 +191,7 @@ export function SettingsNavigation({
               ref={activeTab === tab.id ? activeMobileTabRef : undefined}
               aria-current={activeTab === tab.id ? "page" : undefined}
               onClick={() => onTabChange(tab.id)}
+              data-settings-tab
               className={`min-h-10 shrink-0 rounded-lg border px-3 py-2 text-xs font-medium whitespace-nowrap ${
                 activeTab === tab.id
                   ? "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg-active)] text-[var(--color-text-primary)]"

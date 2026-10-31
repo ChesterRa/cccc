@@ -75,6 +75,10 @@ function statusChipClass(_isDark: boolean, tone: "neutral" | "good" | "warn") {
   return "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]";
 }
 
+function lcdStatusTone(tone: "neutral" | "good" | "warn") {
+  return tone === "good" ? "ok" : tone === "warn" ? "warning" : undefined;
+}
+
 function resolveApplyRedirectUrl(
   remote: RemoteAccessState,
   targetLocalUrl?: string | null,
@@ -1056,11 +1060,20 @@ export function WebAccessTab({
           {newToken ? (
             <>
               <div className={`${settingsDialogBodyClass} space-y-5`}>
-                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 p-4">
-                  <div className="break-all rounded-lg border border-emerald-500/20 bg-[var(--color-bg-primary)] px-3 py-3 text-xs font-mono text-emerald-600 dark:text-emerald-400">
+                <div
+                  className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 p-4"
+                  data-status-tone="ok"
+                >
+                  <div
+                    className="break-all rounded-lg border border-emerald-500/20 bg-[var(--color-bg-primary)] px-3 py-3 text-xs font-mono text-emerald-600 dark:text-emerald-400"
+                    data-status-tone="ok"
+                  >
                     {newToken}
                   </div>
-                  <div className="mt-3 space-y-1 text-xs leading-6 text-emerald-600 dark:text-emerald-400">
+                  <div
+                    className="mt-3 space-y-1 text-xs leading-6 text-emerald-600 dark:text-emerald-400"
+                    data-status-tone="ok"
+                  >
                     <div>
                       {newTokenAutoBound
                         ? t("webAccess.newTokenAutoLoginHint")
@@ -1200,7 +1213,12 @@ export function WebAccessTab({
                 ) : null}
 
                 {createError && (
-                  <div className={`mt-3 text-xs text-red-600 dark:text-red-400`}>{createError}</div>
+                  <div
+                    className={`mt-3 text-xs text-red-600 dark:text-red-400`}
+                    data-status-tone="error"
+                  >
+                    {createError}
+                  </div>
                 )}
               </div>
               <div className={settingsDialogFooterClass}>
@@ -1260,7 +1278,10 @@ export function WebAccessTab({
         </div>
 
         <div className={`${settingsDialogBodyClass} space-y-5`}>
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/12 px-4 py-3 text-xs leading-6 text-[var(--color-text-secondary)]">
+          <div
+            className="rounded-xl border border-amber-500/30 bg-amber-500/12 px-4 py-3 text-xs leading-6 text-[var(--color-text-secondary)]"
+            data-status-tone="warning"
+          >
             {t("webAccess.restartDialogWhy")}
           </div>
 
@@ -1366,7 +1387,10 @@ export function WebAccessTab({
         <div className={settingsWorkspaceHeaderClass(isDark)}>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              <h3
+                className="text-sm font-semibold text-[var(--color-text-primary)]"
+                data-settings-page-title
+              >
                 {t("webAccess.title")}
               </h3>
               <InfoPopover
@@ -1380,7 +1404,7 @@ export function WebAccessTab({
                   </ul>
                 }
                 placement="bottom-start"
-                maxWidthClassName="max-w-[320px]"
+                maxWidth={320}
               >
                 {(getReferenceProps, setReference) => (
                   <button
@@ -1415,6 +1439,7 @@ export function WebAccessTab({
           {(error || hint) && (
             <div
               role={error ? "alert" : "status"}
+              data-status-tone={error ? "error" : "ok"}
               className={`rounded-lg border px-3 py-2 text-xs ${
                 error
                   ? "border-red-500/30 bg-red-500/15 text-red-600 dark:text-red-400"
@@ -1432,6 +1457,7 @@ export function WebAccessTab({
               </div>
               <div
                 className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, reachabilitySummary.tone)}`}
+                data-status-tone={lcdStatusTone(reachabilitySummary.tone)}
               >
                 {reachabilitySummary.label}
               </div>
@@ -1446,6 +1472,7 @@ export function WebAccessTab({
               </div>
               <div
                 className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, accessSummary.tone)}`}
+                data-status-tone={lcdStatusTone(accessSummary.tone)}
               >
                 {accessSummary.label}
               </div>
@@ -1486,6 +1513,7 @@ export function WebAccessTab({
                         {...getReferenceProps()}
                         className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors ${statusChipClass(isDark, currentBrowserSummary.tone)}`}
                         aria-label={t("webAccess.currentBrowserTitle")}
+                        data-status-tone={lcdStatusTone(currentBrowserSummary.tone)}
                       >
                         <InfoIcon size={12} />
                       </button>
@@ -1525,6 +1553,7 @@ export function WebAccessTab({
           <span className="flex shrink-0 items-center gap-2">
             <span
               className={`rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, accessSummary.tone)}`}
+              data-status-tone={lcdStatusTone(accessSummary.tone)}
             >
               {accessSummary.label}
             </span>
@@ -1549,7 +1578,10 @@ export function WebAccessTab({
               </div>
             ) : null}
             {!canAccessGlobalSettings ? (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/15 p-6 text-sm text-amber-600 dark:text-amber-400">
+              <div
+                className="rounded-lg border border-amber-500/30 bg-amber-500/15 p-6 text-sm text-amber-600 dark:text-amber-400"
+                data-status-tone="warning"
+              >
                 <div className="font-medium">{t("webAccess.managementLockedTitle")}</div>
                 <div className="mt-2 text-xs leading-6">{t("webAccess.managementLockedHint")}</div>
               </div>
@@ -1584,6 +1616,7 @@ export function WebAccessTab({
                           </div>
                           <span
                             className={`rounded-full border px-2 py-0.5 text-xs ${statusChipClass(isDark, token.is_admin ? "good" : "neutral")}`}
+                            data-status-tone={token.is_admin ? "ok" : undefined}
                           >
                             {token.is_admin
                               ? t("webAccess.adminBadge")
@@ -1638,6 +1671,7 @@ export function WebAccessTab({
                           }}
                           disabled={!tokenId || deleteBusyTokenId === tokenId}
                           className="inline-flex min-h-[36px] items-center justify-center rounded-xl border border-rose-500/30 bg-rose-500/12 px-3 py-1.5 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-500/18 disabled:opacity-50 dark:text-rose-300"
+                          data-status-tone="error"
                         >
                           {t("webAccess.delete")}
                         </button>
@@ -1645,8 +1679,14 @@ export function WebAccessTab({
                     </div>
 
                     {pendingDeleteTokenId === tokenId && (
-                      <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/15 p-3">
-                        <div className="text-xs text-red-600 dark:text-red-400">
+                      <div
+                        className="mt-3 rounded-lg border border-red-500/30 bg-red-500/15 p-3"
+                        data-status-tone="error"
+                      >
+                        <div
+                          className="text-xs text-red-600 dark:text-red-400"
+                          data-status-tone="error"
+                        >
                           {t("webAccess.deleteConfirm")}
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -1655,6 +1695,7 @@ export function WebAccessTab({
                             onClick={() => void handleDeleteAccessToken(tokenId)}
                             disabled={deleteBusyTokenId === tokenId}
                             className="inline-flex min-h-[36px] items-center justify-center rounded-xl border border-rose-600 bg-rose-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-rose-700 disabled:opacity-50"
+                            data-status-tone="error"
                           >
                             {deleteBusyTokenId === tokenId
                               ? t("common:loading")
@@ -1796,6 +1837,8 @@ export function WebAccessTab({
                     key={goal}
                     type="button"
                     onClick={() => applyAccessGoal(goal)}
+                    aria-pressed={active}
+                    data-settings-choice={active ? "active" : "inactive"}
                     className={`rounded-xl border px-3 py-3 text-left transition-colors ${
                       active
                         ? "border-emerald-500/35 bg-emerald-500/12"
@@ -1803,16 +1846,26 @@ export function WebAccessTab({
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="text-sm font-medium text-[var(--color-text-primary)]">
+                      <div
+                        className="text-sm font-medium text-[var(--color-text-primary)]"
+                        data-settings-choice-title
+                      >
                         {t(`webAccess.goals.${goal}.title`)}
                       </div>
                       {current ? (
-                        <span className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/12 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                        <span
+                          className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/12 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400"
+                          data-settings-choice-saved
+                          data-status-tone="ok"
+                        >
                           {t("webAccess.goalSelected")}
                         </span>
                       ) : null}
                     </div>
-                    <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                    <div
+                      className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]"
+                      data-settings-choice-hint
+                    >
                       {t(`webAccess.goals.${goal}.hint`)}
                     </div>
                   </button>
@@ -1843,6 +1896,13 @@ export function WebAccessTab({
                       : "warn"
                     : "neutral",
                 )}`}
+                data-status-tone={
+                  accessGoal === "public"
+                    ? publicAccessTokenConfigured
+                      ? "ok"
+                      : "warning"
+                    : undefined
+                }
               >
                 {accessGoal === "public"
                   ? publicAccessTokenConfigured
@@ -1915,7 +1975,10 @@ export function WebAccessTab({
                   </div>
                 ) : null}
                 {runningInWsl ? (
-                  <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-3 text-xs leading-6 text-amber-700 dark:text-amber-300">
+                  <div
+                    className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-3 text-xs leading-6 text-amber-700 dark:text-amber-300"
+                    data-status-tone="warning"
+                  >
                     <div className="font-medium">{t("webAccess.wslHintTitle")}</div>
                     <div className="mt-1">{t("webAccess.wslHintBody")}</div>
                   </div>
@@ -1949,6 +2012,7 @@ export function WebAccessTab({
                       ? "border-emerald-500/30 bg-emerald-500/12"
                       : "border-amber-500/30 bg-amber-500/12"
                   }`}
+                  data-status-tone={publicAccessTokenConfigured ? "ok" : "warning"}
                 >
                   <div
                     className={`text-sm font-medium ${
@@ -1956,6 +2020,7 @@ export function WebAccessTab({
                         ? "text-emerald-700 dark:text-emerald-300"
                         : "text-amber-700 dark:text-amber-300"
                     }`}
+                    data-status-tone={publicAccessTokenConfigured ? "ok" : "warning"}
                   >
                     {publicAccessTokenConfigured
                       ? t("webAccess.publicTokenProtectedTitle")
@@ -1967,6 +2032,7 @@ export function WebAccessTab({
                         ? "text-emerald-700 dark:text-emerald-300"
                         : "text-amber-700 dark:text-amber-300"
                     }`}
+                    data-status-tone={publicAccessTokenConfigured ? "ok" : "warning"}
                   >
                     {publicAccessTokenConfigured
                       ? t("webAccess.publicTokenProtectedHint")
@@ -2106,7 +2172,10 @@ export function WebAccessTab({
               ) : null}
 
               {lastApplyError ? (
-                <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-3 text-xs leading-6 text-amber-700 dark:text-amber-300">
+                <div
+                  className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-3 text-xs leading-6 text-amber-700 dark:text-amber-300"
+                  data-status-tone="warning"
+                >
                   <div className="font-medium">{t("webAccess.lastApplyErrorTitle")}</div>
                   <div className="mt-1 break-words">{lastApplyError}</div>
                 </div>
@@ -2238,8 +2307,8 @@ export function WebAccessTab({
         </div>
       </section>
 
-      {createDialog ? <BodyPortal>{createDialog}</BodyPortal> : null}
-      {restartRequiredDialog ? <BodyPortal>{restartRequiredDialog}</BodyPortal> : null}
+      {createDialog ? <BodyPortal lcdScope>{createDialog}</BodyPortal> : null}
+      {restartRequiredDialog ? <BodyPortal lcdScope>{restartRequiredDialog}</BodyPortal> : null}
     </div>
   );
 }

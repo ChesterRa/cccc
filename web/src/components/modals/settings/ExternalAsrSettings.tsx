@@ -179,6 +179,7 @@ export function ExternalAsrSettings({
               className="min-h-[44px]"
               type="button"
               variant="ghost"
+              data-status-tone="error"
               disabled={
                 locked ||
                 !(selected.has_api_key || selected.has_app_id || selected.has_access_token)
@@ -192,7 +193,7 @@ export function ExternalAsrSettings({
         </>
       )}
       {error && (
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400" data-status-tone="error">
           {error}
         </p>
       )}

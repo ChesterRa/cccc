@@ -1,8 +1,7 @@
 import { useId, useState } from "react";
-import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-
 import { parsePrivateEnvSetText } from "../../utils/privateEnvInput";
+import { SecretClearIcon } from "../Icons";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 
@@ -47,6 +46,7 @@ export function ActorSecretBulkInput({ disabled, onCancel, onApply }: ActorSecre
         <Button
           type="button"
           variant="ghost"
+          data-lcd-key
           size="sm"
           className="w-9 shrink-0 px-0"
           disabled={disabled}
@@ -54,7 +54,7 @@ export function ActorSecretBulkInput({ disabled, onCancel, onApply }: ActorSecre
           title={t("common:cancel")}
           onClick={close}
         >
-          <X size={15} aria-hidden="true" />
+          <SecretClearIcon size={15} aria-hidden="true" />
         </Button>
       </div>
       <Textarea
@@ -76,6 +76,7 @@ export function ActorSecretBulkInput({ disabled, onCancel, onApply }: ActorSecre
           id={errorId}
           role="alert"
           className="mt-2 text-[10px] text-rose-600 dark:text-rose-400"
+          data-status-tone="error"
         >
           {error}
         </div>

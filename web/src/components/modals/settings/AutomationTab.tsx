@@ -629,7 +629,10 @@ export function AutomationTab(props: AutomationTabProps) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div>
-        <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">
+        <h3
+          className="text-sm font-medium text-[var(--color-text-secondary)]"
+          data-settings-page-title
+        >
           {t("automation.title")}
         </h3>
         <p className="text-xs mt-1 text-[var(--color-text-muted)]">
@@ -667,7 +670,9 @@ export function AutomationTab(props: AutomationTabProps) {
         description={t("automation.rulesDescription")}
       >
         {rulesErr ? (
-          <div className="text-xs text-rose-600 dark:text-rose-300">{rulesErr}</div>
+          <div className="text-xs text-rose-600 dark:text-rose-300" data-status-tone="error">
+            {rulesErr}
+          </div>
         ) : null}
 
         <div className="space-y-2">

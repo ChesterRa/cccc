@@ -90,6 +90,7 @@ export function MobileMenuSheet({
         role="dialog"
         aria-modal="true"
         aria-label={t("menu")}
+        data-lcd-scope
       >
         <div className="flex justify-center pt-3 pb-1 md:hidden" onClick={onClose}>
           <div className="w-12 h-1.5 rounded-full bg-black/15 dark:bg-white/20" />

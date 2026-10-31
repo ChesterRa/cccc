@@ -35,7 +35,10 @@ export function OpenCodeManagedModelHint({ runtime }: { runtime?: string | null 
   )
     return null;
   return (
-    <p className="mt-1.5 flex items-start gap-1.5 text-xs font-medium leading-5 text-orange-700 dark:text-orange-300">
+    <p
+      className="mt-1.5 flex items-start gap-1.5 text-xs font-medium leading-5 text-orange-700 dark:text-orange-300"
+      data-status-tone="warning"
+    >
       <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
       <span className="min-w-0">{t("opencodeManagedModelHint")}</span>
     </p>

@@ -103,6 +103,7 @@ export function CreateGroupDirectoryBrowser({
               <Button
                 type="button"
                 variant="ghost"
+                data-lcd-key
                 className="h-8 shrink-0 gap-1.5 px-2 text-xs"
                 onClick={() => setShowCreateForm(true)}
                 disabled={creatingDirectory}
@@ -129,6 +130,7 @@ export function CreateGroupDirectoryBrowser({
                 <Button
                   type="button"
                   variant="ghost"
+                  data-lcd-key
                   className="flex-1 sm:flex-none"
                   onClick={() => {
                     setDirectoryName("");

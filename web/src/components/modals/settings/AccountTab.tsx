@@ -81,7 +81,10 @@ export function AccountTab({
     <section className={settingsWorkspaceShellClass(isDark)}>
       <div className={settingsWorkspaceHeaderClass(isDark)}>
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+          <h3
+            className="text-sm font-semibold text-[var(--color-text-primary)]"
+            data-settings-page-title
+          >
             {t("account.title")}
           </h3>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
@@ -105,6 +108,13 @@ export function AccountTab({
             <div className="flex flex-wrap items-center gap-2">
               <span
                 className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(kind)}`}
+                data-status-tone={
+                  kind === "linked"
+                    ? "ok"
+                    : kind === "cut" || kind === "pending"
+                      ? "warning"
+                      : undefined
+                }
                 role="status"
                 aria-live="polite"
               >
@@ -206,6 +216,7 @@ export function AccountTab({
         {membership?.account_reachable === false && membership?.logged_in ? (
           <p
             className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-700 dark:text-amber-300"
+            data-status-tone="warning"
             role="status"
           >
             {t("account.accountUnavailable")}
@@ -215,6 +226,7 @@ export function AccountTab({
         {membershipError ? (
           <p
             className="rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-xs leading-5 text-red-700 dark:text-red-300"
+            data-status-tone="error"
             role="alert"
           >
             {membershipError}

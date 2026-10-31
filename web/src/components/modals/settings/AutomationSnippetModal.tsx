@@ -89,10 +89,14 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
         <div className={settingsDialogBodyClass}>
           <div className="space-y-4">
             {templateErr ? (
-              <div className="text-xs text-rose-600 dark:text-rose-300">{templateErr}</div>
+              <div className="text-xs text-rose-600 dark:text-rose-300" data-status-tone="error">
+                {templateErr}
+              </div>
             ) : null}
             {!templateErr && saveErr ? (
-              <div className="text-xs text-rose-600 dark:text-rose-300">{saveErr}</div>
+              <div className="text-xs text-rose-600 dark:text-rose-300" data-status-tone="error">
+                {saveErr}
+              </div>
             ) : null}
             <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
               <input
@@ -213,5 +217,5 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
     </div>
   );
 
-  return <BodyPortal>{content}</BodyPortal>;
+  return <BodyPortal lcdScope>{content}</BodyPortal>;
 }

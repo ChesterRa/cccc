@@ -82,6 +82,9 @@ export function RuntimeSelector({
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
         <span
           role="status"
+          data-status-tone={
+            captionKey === "failed" || captionKey === "missing" ? "warning" : undefined
+          }
           className={
             captionKey === "failed" || captionKey === "missing"
               ? "text-orange-700 dark:text-orange-300"
@@ -94,6 +97,7 @@ export function RuntimeSelector({
         <Button
           type="button"
           variant="ghost"
+          data-lcd-key
           size="sm"
           className="min-h-[44px] gap-1.5 text-xs"
           disabled={disabled || checking}

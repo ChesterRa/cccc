@@ -271,6 +271,201 @@
   --tw-ring-offset-shadow: 0 0 #0000;
 }
 
+/* The native switch input is transparent; put its focus mark on the visible track. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  input[role="switch"]:focus-visible
+  + [data-switch-track] {
+  outline: 1px dashed var(--lcd-ink);
+  outline-offset: 2px;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-switch-track]::after {
+  border-radius: 0;
+}
+
+/* Status colours describe meaning rather than remapping palette shades,
+   which can otherwise turn a foreground and its background into the same colour. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-status-tone="error"], [data-settings-notice="error"], .destructive-key) {
+  border-color: var(--lcd-danger);
+  background-color: transparent;
+  color: var(--lcd-danger);
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-status-tone="warning"], [data-settings-notice="warning"]) {
+  border-color: var(--lcd-wait);
+  background-color: transparent;
+  color: var(--lcd-wait);
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-status-tone="info"], [data-settings-notice="info"]) {
+  border-color: var(--lcd-link);
+  background-color: transparent;
+  color: var(--lcd-link);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-status-tone="ok"] {
+  border-color: var(--lcd-rule-strong);
+  background-color: transparent;
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-status-tone="muted"] {
+  color: var(--lcd-dim);
+}
+
+/* Reversing both colours through a transition can make the text vanish midway. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is(button[data-status-tone="error"], .destructive-key) {
+  transition: none;
+}
+
+@media (hover: hover) {
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    :is(button[data-status-tone="error"], .destructive-key):hover:not(:disabled) {
+    background-color: var(--lcd-danger);
+    color: var(--lcd-bg);
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] button[data-status-tone="ok"]:hover:not(:disabled) {
+    background-color: var(--lcd-sel-soft);
+  }
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-card="danger"] {
+  border-color: var(--lcd-danger);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-card="danger"] h3 {
+  color: var(--lcd-danger);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-code] {
+  background: var(--lcd-code-bg);
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-status-dot="running"] {
+  background: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-status-dot="stopped"] {
+  background: var(--lcd-dim);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-search-match] {
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+/* Recipient state remains distinguishable by its symbol and its accessible name. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-recipient-result="success"] [role="img"] {
+  color: var(--lcd-ink);
+}
+
+/* An actor or destination can matter to the operation; keep its name readable. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is(
+    [data-inbox-heading],
+    [data-inbox-sender],
+    [data-recipient-name],
+    [data-recipient-destination]
+  ) {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+/* The mark-read label can fill a phone header at enlarged text sizes. Give the
+   heading and close key their own row, then place the action below them. */
+@media (max-width: 480px) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-header].inbox-modal-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] .inbox-modal-header [data-inbox-heading] {
+    font-size: 1rem;
+    line-height: 1.35;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] .inbox-modal-header > #inbox-title {
+    grid-column: 1;
+    grid-row: 1;
+    padding-right: 0;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] .inbox-modal-header > div:last-child {
+    display: contents;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] .inbox-modal-header [data-modal-close] {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] .inbox-modal-header [data-inbox-action] {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+
+  /* Keep a readable name column; wrap the controls only when they cannot fit. */
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-recipient-row] {
+    flex-wrap: wrap;
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-recipient-summary] {
+    flex: 1 1 min(100%, 10rem);
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-recipient-controls] {
+    max-width: 100%;
+    margin-left: auto;
+  }
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope][data-settings-info-popover] [data-settings-info-title] {
+  color: var(--lcd-ink);
+}
+
+/* The chosen access goal is a draft; the saved badge remains a separate fact. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-choice] {
+  transition: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-choice="active"] {
+  border-color: var(--lcd-ink);
+  background: var(--lcd-sel-bg);
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-settings-choice="active"]
+  :is([data-settings-choice-title], [data-settings-choice-hint], [data-settings-choice-saved]) {
+  color: var(--lcd-sel-fg);
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-settings-choice="active"]
+  [data-settings-choice-saved] {
+  border-color: var(--lcd-sel-fg);
+  background: transparent;
+}
+
 /* ---------- Message log rows (S1) ---------- */
 :root[data-ui-style="lcd"] {
   --lcd-name-0: #164a63;
@@ -666,6 +861,7 @@
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-lcd-key] {
   border: 1px solid var(--lcd-rule-strong);
   color: var(--lcd-ink);
+  transition: none;
 }
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-lcd-key]:hover:not(:disabled) {
