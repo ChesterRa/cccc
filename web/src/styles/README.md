@@ -36,6 +36,9 @@ the LCD rules in this folder read the hooks.
 - `data-lcd-field`: a text field or select built by hand instead of with `Input` (whose
   `glass-input` already takes the strong rule in dialogs). It is framed in the strong rule,
   and in ink while focused.
+- Recipient chips are independent `aria-pressed` toggles, so they do not share edges.
+  Selected chips in `data-composer-recipient-row` and `data-relay-recipient-row` use the
+  same reversed treatment in `lcdComposer.css`.
 - Switches: a container of `aria-pressed` buttons (or `role="radio"` items) whose keys
   share edges, the current one reversed. Add a new switch's selector to the shared lists
   in `lcdModal.css` (`data-settings-scope-switch`, `data-segmented-choice`,

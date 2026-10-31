@@ -10,7 +10,7 @@
 
 :root[data-ui-style="lcd"]
   [data-lcd-scope]
-  [data-composer-recipient-row]
+  :is([data-composer-recipient-row], [data-relay-recipient-row])
   button[aria-pressed="true"] {
   background: var(--lcd-sel-bg);
   color: var(--lcd-sel-fg);
