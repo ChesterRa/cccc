@@ -22,7 +22,19 @@ describe("Voice Secretary document content loading", () => {
         title: "Doc",
         status: "active",
         content: "body",
+        content_sha256: "a".repeat(64),
+        content_target_id: "b".repeat(64),
         content_chars: 12,
+      }),
+    ).toBe(false);
+    expect(
+      documentNeedsContentLoad({
+        document_id: "d1",
+        title: "Doc",
+        status: "active",
+        content: "",
+        content_sha256: "a".repeat(64),
+        content_target_id: "b".repeat(64),
       }),
     ).toBe(false);
     expect(
@@ -32,7 +44,7 @@ describe("Voice Secretary document content loading", () => {
         status: "active",
         content_chars: 0,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("lets only the newest overlapping load clear the indicator", () => {

@@ -36,6 +36,8 @@ type VoiceSecretaryWorkspacePanelProps = {
   documentEditing: boolean;
   documentHasUnsavedEdits: boolean;
   documentLoading: boolean;
+  documentError: string;
+  documentConflict: "content" | "target" | "missing" | "unavailable" | null;
   documentRemoteChanged: boolean;
   isDark: boolean;
   recording: boolean;
@@ -50,6 +52,7 @@ type VoiceSecretaryWorkspacePanelProps = {
   onDownloadDocument: () => void;
   onEditDocumentChange: (value: string) => void;
   onLoadLatestDocument: () => void;
+  onOverwriteDocument: () => void;
   onQuoteDocument: () => void;
   onSaveDocument: () => void;
   onToggleDocumentEditing: () => void;
@@ -72,6 +75,8 @@ export function VoiceSecretaryWorkspacePanel({
   documentEditing,
   documentHasUnsavedEdits,
   documentLoading,
+  documentError,
+  documentConflict,
   documentRemoteChanged,
   isDark,
   recording,
@@ -85,6 +90,7 @@ export function VoiceSecretaryWorkspacePanel({
   onDownloadDocument,
   onEditDocumentChange,
   onLoadLatestDocument,
+  onOverwriteDocument,
   onQuoteDocument,
   onSaveDocument,
   onToggleDocumentEditing,
@@ -111,7 +117,8 @@ export function VoiceSecretaryWorkspacePanel({
     "flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:pointer-events-none disabled:opacity-40";
   const isDefaultDocument =
     !!activeDocumentWritePath && activeDocumentWritePath === captureTargetDocumentPath;
-  const documentEmpty = !documentEditing && !documentLoading && !documentDraft.trim();
+  const documentEmpty =
+    !documentEditing && !documentLoading && !documentError && !documentDraft.trim();
   const metaItems: ReactNode[] =
     view === "document"
       ? [
@@ -227,7 +234,9 @@ export function VoiceSecretaryWorkspacePanel({
               );
             })}
           </div>
-          {view === "document" && documentRemoteChanged ? (
+          {view === "document" &&
+          documentConflict !== "unavailable" &&
+          (documentRemoteChanged || documentError) ? (
             <button
               type="button"
               data-lcd-key
@@ -251,7 +260,12 @@ export function VoiceSecretaryWorkspacePanel({
                 "font-semibold text-[var(--color-text-primary)]",
               )}
               onClick={onSaveDocument}
-              disabled={!!actionBusy || documentLoading}
+              disabled={
+                !!actionBusy ||
+                documentLoading ||
+                !!documentError ||
+                documentConflict === "unavailable"
+              }
             >
               {actionBusy === "save_doc"
                 ? t("voiceSecretarySavingDocument", { defaultValue: "Saving..." })
@@ -263,7 +277,7 @@ export function VoiceSecretaryWorkspacePanel({
               type="button"
               data-lcd-key
               onClick={onToggleDocumentEditing}
-              disabled={documentLoading}
+              disabled={documentLoading || !!documentError}
               className={actionClassName}
             >
               {documentEditing
@@ -354,6 +368,37 @@ export function VoiceSecretaryWorkspacePanel({
       </div>
       {statusLine}
 
+      {view === "document" && documentConflict ? (
+        <div
+          data-status-tone="warning"
+          role="alert"
+          className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border p-2 text-sm"
+        >
+          <span className="min-w-0 flex-1">
+            {t(
+              documentConflict === "unavailable"
+                ? "voiceSecretaryDocumentUnavailableDraft"
+                : documentConflict === "target"
+                  ? "voiceSecretaryDocumentTargetConflict"
+                  : documentConflict === "missing"
+                    ? "voiceSecretaryDocumentMissingConflict"
+                    : "voiceSecretaryDocumentContentConflict",
+            )}
+          </span>
+          {documentConflict === "content" ? (
+            <button
+              type="button"
+              data-lcd-key
+              className={actionClassName}
+              disabled={!!actionBusy || documentLoading}
+              onClick={onOverwriteDocument}
+            >
+              {t("voiceSecretaryOverwriteWithDraft")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {view === "document" && documentEmpty ? (
         <div
           data-voice-document-empty
@@ -387,6 +432,7 @@ export function VoiceSecretaryWorkspacePanel({
           })}
           isDark={isDark}
           loading={documentLoading}
+          error={documentError}
           loadingLabel={t("voiceSecretaryDocumentLoading", {
             defaultValue: "Loading document content...",
           })}

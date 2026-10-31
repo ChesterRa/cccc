@@ -4,8 +4,12 @@ export function documentNeedsContentLoad(
   document: AssistantVoiceDocument | null | undefined,
 ): boolean {
   if (!document) return false;
-  if (document.content !== undefined) return false;
-  return Number(document.content_chars || 0) > 0;
+  // Even an empty document needs a real body and version before it can be saved.
+  return (
+    typeof document.content !== "string" ||
+    !/^[0-9a-f]{64}$/i.test(document.content_sha256 || "") ||
+    !/^[0-9a-f]{64}$/i.test(document.content_target_id || "")
+  );
 }
 
 export function documentContentLoadingMatches(loadingPath: string, documentPath: string): boolean {

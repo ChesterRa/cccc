@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   workspace: vi.fn(),
   status: vi.fn(),
   save: vi.fn(),
+  instruction: vi.fn(),
   document: vi.fn(),
   t: (key: string, values?: { defaultValue?: string }) => values?.defaultValue || key,
 }));
@@ -19,6 +21,7 @@ vi.mock("../../../services/api", async (original) => ({
   fetchVoiceAssistantWorkspace: mocks.workspace,
   fetchVoiceAssistantStatus: mocks.status,
   saveVoiceAssistantDocument: mocks.save,
+  sendVoiceAssistantDocumentInstruction: mocks.instruction,
   fetchVoiceAssistantDocumentContent: mocks.document,
   fetchVoiceAssistantMeetingSession: vi.fn(async () => ({ ok: true, result: {} })),
   fetchLatestVoiceAssistantMeetingSession: vi.fn(async () => ({ ok: true, result: {} })),
@@ -47,25 +50,44 @@ vi.mock("./VoiceSecretaryWorkspacePanel", () => ({
     onEditDocumentChange,
     onSaveDocument,
     onLoadLatestDocument,
+    onOverwriteDocument,
+    documentConflict,
     documentRemoteChanged,
+    documentHasUnsavedEdits,
+    documentEditing,
+    onToggleDocumentEditing,
+    footer,
   }: {
     documentDraft: string;
     activeDocumentWritePath: string;
     onEditDocumentChange: (value: string) => void;
     onSaveDocument: () => void;
     onLoadLatestDocument: () => void;
+    onOverwriteDocument: () => void;
+    documentConflict: string | null;
     documentRemoteChanged: boolean;
+    documentHasUnsavedEdits: boolean;
+    documentEditing: boolean;
+    onToggleDocumentEditing: () => void;
+    footer: React.ReactNode;
   }) => (
     <>
       <output
         data-workspace-document={activeDocumentWritePath}
         data-remote-changed={documentRemoteChanged}
+        data-dirty={documentHasUnsavedEdits}
+        data-editing={documentEditing}
       >
         {documentDraft}
       </output>
       <button onClick={() => onEditDocumentChange("saved edit")} data-edit-document />
+      <button onClick={() => onEditDocumentChange("second edit")} data-edit-document-later />
       <button onClick={onSaveDocument} data-save-document />
+      <button onClick={onToggleDocumentEditing} data-toggle-editor />
       <button onClick={onLoadLatestDocument} data-load-document />
+      <button onClick={onOverwriteDocument} data-overwrite-document />
+      <output data-save-conflict>{documentConflict}</output>
+      {footer}
     </>
   ),
 }));
@@ -87,6 +109,8 @@ function workspace(group: string, text: string): AssistantStateResult {
         workspace_path: `${group}.md`,
         title: `${group} notes`,
         content: text,
+        content_sha256: createHash("sha256").update(text).digest("hex"),
+        content_target_id: createHash("sha256").update(`${group}.md`).digest("hex"),
         status: "active",
       },
     ],
@@ -116,6 +140,10 @@ describe("Voice Secretary workspace refresh ownership", () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
+    vi.stubGlobal(
       "ResizeObserver",
       class {
         observe() {}
@@ -134,6 +162,7 @@ describe("Voice Secretary workspace refresh ownership", () => {
             ...workspace(group, payload.content).documents![0],
             document_path: payload.documentPath,
             workspace_path: payload.documentPath,
+            content_target_id: createHash("sha256").update(payload.documentPath).digest("hex"),
           },
         },
       }),
@@ -274,8 +303,193 @@ describe("Voice Secretary workspace refresh ownership", () => {
     await act(async () => finish({ ok: true, result: workspace("A", "remote contents") }));
     expect(documentText()).toBe("saved edit");
     // Explicitly discarding the local draft still reads the accepted remote snapshot.
+    mocks.document.mockResolvedValue({
+      ok: true,
+      result: { document: workspace("A", "remote contents").documents![0] },
+    });
     await click("[data-load-document]");
     expect(documentText()).toBe("remote contents");
+  });
+
+  it("keeps a conflicting draft and only overwrites the version the user confirmed", async () => {
+    const current = createHash("sha256").update("remote").digest("hex");
+    mocks.save.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: "voice_document_conflict",
+        message: "conflict",
+        details: { current_sha256: current },
+      },
+    });
+    await render();
+    await click("[data-toggle-editor]");
+    await click("[data-edit-document]");
+    await click("[data-save-document]");
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("content");
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    await click("[data-overwrite-document]");
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+    await click("[data-overwrite-document]");
+    expect(mocks.save).toHaveBeenCalledTimes(2);
+    expect(mocks.save).toHaveBeenLastCalledWith(
+      "A",
+      expect.objectContaining({
+        content: "saved edit",
+        expectedContentSha256: current,
+        expectedTargetId: workspace("A", "original").documents![0].content_target_id,
+      }),
+    );
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-dirty]")?.getAttribute("data-dirty")).toBe("false");
+  });
+
+  it("does not discard a draft when a successful save response has no usable version", async () => {
+    const saved = workspace("A", "saved edit").documents![0];
+    delete saved.content_target_id;
+    mocks.save.mockResolvedValueOnce({ ok: true, result: { document: saved } });
+    await render();
+    await click("[data-toggle-editor]");
+    await click("[data-edit-document]");
+    await click("[data-save-document]");
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-dirty]")?.getAttribute("data-dirty")).toBe("true");
+    expect(document.querySelector("[data-editing]")?.getAttribute("data-editing")).toBe("true");
+  });
+
+  it("keeps the editor mounted when an unchanged workspace refresh has no target token", async () => {
+    const summary = workspace("A", "original");
+    delete summary.documents![0].content_target_id;
+    mocks.workspace.mockResolvedValue({ ok: true, result: summary });
+    mocks.document.mockResolvedValue({
+      ok: true,
+      result: { document: workspace("A", "original").documents![0] },
+    });
+    await render();
+    expect(mocks.document).toHaveBeenCalledTimes(1);
+    await click("[data-toggle-editor]");
+    await advance(30_000);
+    expect(mocks.document).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("[data-editing]")?.getAttribute("data-editing")).toBe("true");
+  });
+
+  it("preserves the dirty draft when the selected document disappears from a refresh", async () => {
+    await render();
+    await click("[data-toggle-editor]");
+    await click("[data-edit-document]");
+    const remote = workspace("A", "remote");
+    remote.documents = [];
+    mocks.workspace.mockResolvedValue({ ok: true, result: remote });
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-dirty]")?.getAttribute("data-dirty")).toBe("true");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("unavailable");
+    await click("[data-save-document]");
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it("does not offer a write to a changed target or a deleted document", async () => {
+    mocks.save.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "voice_document_target_conflict", message: "changed location" },
+    });
+    await render();
+    await click("[data-edit-document]");
+    await click("[data-save-document]");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("target");
+    await click("[data-overwrite-document]");
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+    expect(documentText()).toBe("saved edit");
+  });
+
+  it("requires another confirmation when the document changes again during overwrite", async () => {
+    const first = createHash("sha256").update("first remote").digest("hex");
+    const second = createHash("sha256").update("second remote").digest("hex");
+    mocks.save
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          code: "voice_document_conflict",
+          message: "conflict",
+          details: { current_sha256: first },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          code: "voice_document_conflict",
+          message: "conflict",
+          details: { current_sha256: second },
+        },
+      });
+    await render();
+    await click("[data-edit-document]");
+    await click("[data-save-document]");
+    await click("[data-overwrite-document]");
+    expect(mocks.save).toHaveBeenLastCalledWith(
+      "A",
+      expect.objectContaining({ expectedContentSha256: first }),
+    );
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("content");
+    await click("[data-overwrite-document]");
+    expect(mocks.save).toHaveBeenLastCalledWith(
+      "A",
+      expect.objectContaining({ expectedContentSha256: second }),
+    );
+    expect(window.confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the draft and cannot overwrite when the document disappeared", async () => {
+    mocks.save.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: "voice_document_conflict",
+        message: "missing",
+        details: { current_sha256: null },
+      },
+    });
+    await render();
+    await click("[data-edit-document]");
+    await click("[data-save-document]");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("missing");
+    await click("[data-overwrite-document]");
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+    expect(documentText()).toBe("saved edit");
+  });
+
+  it("keeps the draft when loading the latest is cancelled or fails", async () => {
+    await render();
+    await click("[data-edit-document]");
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    await click("[data-load-document]");
+    expect(mocks.document).not.toHaveBeenCalled();
+    mocks.document.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "failed", message: "offline" },
+    });
+    await click("[data-load-document]");
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-dirty]")?.getAttribute("data-dirty")).toBe("true");
+  });
+
+  it("keeps later typing if the confirmed reload returns late", async () => {
+    let finish!: (value: unknown) => void;
+    mocks.document.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render();
+    await click("[data-edit-document]");
+    await click("[data-load-document]");
+    await click("[data-edit-document-later]");
+    await act(async () =>
+      finish({ ok: true, result: { document: workspace("A", "remote").documents![0] } }),
+    );
+    expect(documentText()).toBe("second edit");
+    expect(document.querySelector("[data-dirty]")?.getAttribute("data-dirty")).toBe("true");
   });
 
   it("coalesces ledger updates into one follow-up and displays the latest snapshot", async () => {
@@ -392,7 +606,7 @@ describe("Voice Secretary workspace refresh ownership", () => {
     expect(documentText()).toBe("saved edit");
   });
 
-  it("rejects a previous content read after an accepted save to the same selected document", async () => {
+  it("does not save a selected document before its content and version have loaded", async () => {
     const contents = workspace("A", "original");
     const selected = {
       document_id: "B",
@@ -414,14 +628,330 @@ describe("Voice Secretary workspace refresh ownership", () => {
     await click('[data-select-document="B.md"]');
     await click("[data-edit-document]");
     await click("[data-save-document]");
-    expect(mocks.save).toHaveBeenLastCalledWith(
-      "A",
-      expect.objectContaining({ documentPath: "B.md", content: "saved edit" }),
-    );
+    expect(mocks.save).not.toHaveBeenCalled();
     await act(async () =>
       finish({ ok: true, result: { document: { ...selected, content: "before save" } } }),
     );
     expect(documentText()).toBe("saved edit");
+  });
+
+  it("keeps edits made after a save was sent while its response is pending", async () => {
+    let finish!: (value: unknown) => void;
+    mocks.save.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render();
+    await click("[data-toggle-editor]");
+    await click("[data-edit-document]");
+    await click("[data-save-document]");
+    expect(mocks.save).toHaveBeenCalledWith(
+      "A",
+      expect.objectContaining({ content: "saved edit" }),
+    );
+    await click("[data-edit-document-later]");
+    await act(async () =>
+      finish({ ok: true, result: { document: workspace("A", "saved edit").documents![0] } }),
+    );
+    expect(documentText()).toBe("second edit");
+    expect(document.querySelector("[data-workspace-document]")?.getAttribute("data-dirty")).toBe(
+      "true",
+    );
+    expect(document.querySelector("[data-workspace-document]")?.getAttribute("data-editing")).toBe(
+      "true",
+    );
+    await click("[data-save-document]");
+    expect(mocks.save).toHaveBeenLastCalledWith(
+      "A",
+      expect.objectContaining({ content: "second edit" }),
+    );
+    expect(document.querySelector("[data-workspace-document]")?.getAttribute("data-dirty")).toBe(
+      "false",
+    );
+  });
+
+  it("keeps edits made while a document instruction response is pending", async () => {
+    let finish!: (value: unknown) => void;
+    mocks.instruction.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render();
+    await act(async () => {
+      const input = document.querySelector<HTMLTextAreaElement>("[data-voice-instruction-input]")!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        input,
+        "Review this",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click('[data-voice-input-action="update"]');
+    expect(mocks.instruction).toHaveBeenCalled();
+    await click("[data-toggle-editor]");
+    await click("[data-edit-document-later]");
+    await act(async () =>
+      finish({
+        ok: true,
+        result: { document: workspace("A", "original").documents![0], request_id: "r" },
+      }),
+    );
+    expect(documentText()).toBe("second edit");
+    expect(document.querySelector("[data-workspace-document]")?.getAttribute("data-dirty")).toBe(
+      "true",
+    );
+    expect(document.querySelector("[data-workspace-document]")?.getAttribute("data-editing")).toBe(
+      "true",
+    );
+  });
+
+  it("does not treat a metadata-only instruction reply as a new document version", async () => {
+    const oldMetadata = workspace("A", "original").documents![0];
+    delete oldMetadata.content_target_id;
+    mocks.instruction.mockResolvedValueOnce({
+      ok: true,
+      result: { document: oldMetadata, request_id: "metadata-only" },
+    });
+    await render();
+    await act(async () => {
+      const input = document.querySelector<HTMLTextAreaElement>("[data-voice-instruction-input]")!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        input,
+        "Review this",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click('[data-voice-input-action="update"]');
+    expect(documentText()).toBe("original");
+    expect(
+      document.querySelector("[data-remote-changed]")?.getAttribute("data-remote-changed"),
+    ).toBe("false");
+    await click("[data-edit-document]");
+    await click("[data-save-document]");
+    expect(mocks.save).toHaveBeenCalledWith(
+      "A",
+      expect.objectContaining({
+        expectedTargetId: workspace("A", "original").documents![0].content_target_id,
+      }),
+    );
+  });
+
+  it("restores a Group's unsaved draft and original write base after switching away", async () => {
+    await render("A");
+    await click("[data-toggle-editor]");
+    await click("[data-edit-document]");
+    await render("B");
+    mocks.workspace.mockImplementation((group: string) =>
+      Promise.resolve({
+        ok: true,
+        result: workspace(group, group === "A" ? "remote change" : "B content"),
+      }),
+    );
+    await render("A");
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-dirty]")?.getAttribute("data-dirty")).toBe("true");
+    expect(document.querySelector("[data-editing]")?.getAttribute("data-editing")).toBe("true");
+    expect(
+      document.querySelector("[data-remote-changed]")?.getAttribute("data-remote-changed"),
+    ).toBe("true");
+    await click("[data-save-document]");
+    expect(mocks.save).toHaveBeenCalledWith(
+      "A",
+      expect.objectContaining({
+        content: "saved edit",
+        expectedContentSha256: workspace("A", "original").documents![0].content_sha256,
+      }),
+    );
+  });
+
+  it("keeps separate drafts for two Groups without writing them into browser storage", async () => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    await render("A");
+    await click("[data-edit-document]");
+    await render("B");
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    await click("[data-edit-document-later]");
+    await render("A");
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(documentText()).toBe("saved edit");
+    await render("B");
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(documentText()).toBe("second edit");
+    for (const storage of [window.localStorage, window.sessionStorage]) {
+      for (let index = 0; index < storage.length; index++) {
+        const value = storage.getItem(storage.key(index)!) || "";
+        expect(value).not.toContain("saved edit");
+        expect(value).not.toContain("second edit");
+      }
+    }
+  });
+
+  it("keeps an already unavailable draft unavailable after switching Groups and a failed refresh", async () => {
+    await render("A");
+    await click("[data-toggle-editor]");
+    await click("[data-edit-document]");
+    const absent = workspace("A", "original");
+    absent.documents = [];
+    mocks.workspace.mockResolvedValueOnce({ ok: true, result: absent });
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("unavailable");
+    await render("B");
+    mocks.workspace.mockImplementation((group: string) =>
+      group === "A"
+        ? Promise.resolve({ ok: false, error: { message: "offline", code: "offline" } })
+        : Promise.resolve({ ok: true, result: workspace(group, "original") }),
+    );
+    await render("A");
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("unavailable");
+    await click("[data-save-document]");
+    expect(mocks.save).not.toHaveBeenCalled();
+    mocks.workspace.mockResolvedValue({ ok: true, result: workspace("A", "original") });
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("");
+    expect(documentText()).toBe("saved edit");
+    await click("[data-save-document]");
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a restored draft if its document was archived while another Group was open", async () => {
+    await render("A");
+    await click("[data-toggle-editor]");
+    await click("[data-edit-document]");
+    await render("B");
+    mocks.workspace.mockImplementation((group: string) => {
+      const state = workspace(group, "original");
+      if (group === "A") state.documents = [];
+      return Promise.resolve({ ok: true, result: state });
+    });
+    await render("A");
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("unavailable");
+    await click("[data-save-document]");
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it("restores a content conflict and its conditional overwrite after switching Groups", async () => {
+    const remoteSha = createHash("sha256").update("remote edit").digest("hex");
+    mocks.save.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: "voice_document_conflict",
+        message: "changed",
+        details: { current_sha256: remoteSha },
+      },
+    });
+    await render("A");
+    await click("[data-edit-document]");
+    await click("[data-save-document]");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("content");
+    await render("B");
+    await render("A");
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("content");
+    await click("[data-overwrite-document]");
+    expect(mocks.save).toHaveBeenCalledTimes(2);
+    expect(mocks.save).toHaveBeenLastCalledWith(
+      "A",
+      expect.objectContaining({
+        expectedContentSha256: remoteSha,
+        expectedTargetId: workspace("A", "original").documents![0].content_target_id,
+      }),
+    );
+  });
+
+  it("restores a target conflict without allowing overwrite after switching Groups", async () => {
+    mocks.save.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "voice_document_target_conflict", message: "changed location" },
+    });
+    await render("A");
+    await click("[data-edit-document]");
+    await click("[data-save-document]");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("target");
+    await render("B");
+    await render("A");
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(documentText()).toBe("saved edit");
+    expect(document.querySelector("[data-save-conflict]")?.textContent).toBe("target");
+    await click("[data-overwrite-document]");
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not apply an old save response to a restored and edited draft", async () => {
+    let finish!: (value: unknown) => void;
+    mocks.save.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render("A");
+    await click("[data-edit-document]");
+    await click("[data-save-document]");
+    await render("B");
+    mocks.workspace.mockImplementation((group: string) =>
+      Promise.resolve({
+        ok: true,
+        result: workspace(group, group === "A" ? "newer remote" : "B content"),
+      }),
+    );
+    await render("A");
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(documentText()).toBe("saved edit");
+    await click("[data-edit-document-later]");
+    await act(async () =>
+      finish({ ok: true, result: { document: workspace("A", "saved edit").documents![0] } }),
+    );
+    expect(documentText()).toBe("second edit");
+    expect(document.querySelector("[data-dirty]")?.getAttribute("data-dirty")).toBe("true");
+  });
+
+  it("does not apply an old instruction response after switching away and reloading a newer version", async () => {
+    let finish!: (value: unknown) => void;
+    mocks.instruction.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render("A");
+    await act(async () => {
+      const input = document.querySelector<HTMLTextAreaElement>("[data-voice-instruction-input]")!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        input,
+        "Review this",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click('[data-voice-input-action="update"]');
+    await render("B");
+    mocks.workspace.mockImplementation((group: string) =>
+      Promise.resolve({
+        ok: true,
+        result: workspace(group, group === "A" ? "newer remote" : "B content"),
+      }),
+    );
+    await render("A");
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    expect(documentText()).toBe("newer remote");
+    // Keep the follow-up read pending so it cannot mask an incorrect late reply.
+    mocks.workspace.mockImplementation(() => new Promise(() => {}));
+    await act(async () =>
+      finish({
+        ok: true,
+        result: { document: workspace("A", "old result").documents![0], request_id: "r" },
+      }),
+    );
+    expect(documentText()).toBe("newer remote");
   });
 
   it("keeps an accepted document save when a previous workspace read returns late", async () => {

@@ -112,8 +112,9 @@ export function normalizeAssistantVoiceDocument(
     status: asOptionalString(record.status) || "active",
     storage_kind: asOptionalString(record.storage_kind) || undefined,
     workspace_path: asOptionalString(record.workspace_path) || undefined,
-    content: asOptionalString(record.content) || undefined,
+    content: typeof record.content === "string" ? record.content : undefined,
     content_sha256: asOptionalString(record.content_sha256) || undefined,
+    content_target_id: asOptionalString(record.content_target_id) || undefined,
     content_chars: Number.isFinite(Number(record.content_chars))
       ? Number(record.content_chars)
       : undefined,
@@ -862,6 +863,8 @@ export async function saveVoiceAssistantDocument(
     title?: string;
     content: string;
     status?: string;
+    expectedContentSha256?: string;
+    expectedTargetId?: string;
     createNew?: boolean;
     by?: string;
   },
@@ -876,6 +879,12 @@ export async function saveVoiceAssistantDocument(
   };
   if (payload.title !== undefined) {
     body.title = String(payload.title || "");
+  }
+  if (payload.expectedContentSha256 !== undefined) {
+    body.expected_content_sha256 = payload.expectedContentSha256;
+  }
+  if (payload.expectedTargetId !== undefined) {
+    body.expected_target_id = payload.expectedTargetId;
   }
   if (!payload.createNew || String(payload.content || "").trim()) {
     body.content = String(payload.content || "");

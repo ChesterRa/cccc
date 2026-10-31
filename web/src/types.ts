@@ -1015,6 +1015,7 @@ export type AssistantVoiceDocument = {
   workspace_path?: string;
   content?: string;
   content_sha256?: string;
+  content_target_id?: string;
   content_chars?: number;
   revision_count?: number;
   source_segment_count?: number;

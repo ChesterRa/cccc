@@ -17,13 +17,40 @@ use super::{
 const MAX_DISCOVERED_DOCUMENTS: usize = 100;
 
 pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> Result<Value, OpError> {
+    run_with_selection(home, request, None)
+}
+
+pub(super) fn run_for_document(
+    home: &HomeLayout,
+    request: &DaemonRequest,
+    requested_path: &str,
+) -> Result<Value, OpError> {
+    run_with_selection(home, request, Some(requested_path))
+}
+
+fn run_with_selection(
+    home: &HomeLayout,
+    request: &DaemonRequest,
+    requested_path: Option<&str>,
+) -> Result<Value, OpError> {
     let group_id = required_arg(request, "group_id")?;
     let group = GroupStore::new(home.clone())
         .map_err(OpError::io)?
         .load(&group_id)
         .map_err(OpError::not_found)?;
     let mut state = voice_document_state::load(home, &group_id).map_err(OpError::io)?;
-    let discovered = discover_workspace_documents(&group, &state)?;
+    let indexed = requested_path.is_some_and(|path| {
+        state["documents"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|document| document["document_path"] == path)
+    });
+    let discovered = if indexed {
+        Vec::new()
+    } else {
+        discover_workspace_documents(&group, &state)?
+    };
     if !discovered.is_empty() {
         state = voice_document_state::update(home, &group_id, |state| {
             let documents = array(state, "documents");
@@ -44,6 +71,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> Result<Value, O
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|document| requested_path.is_none_or(|path| document["document_path"] == path))
         .filter_map(|document| document["document_path"].as_str())
         .map(|path| {
             let (storage_path, storage_kind) = document_storage_path(home, &group, path)?;

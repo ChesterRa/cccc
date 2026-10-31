@@ -46,6 +46,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Voice Secretary: the compact recording notice wraps instead of being cut off, and when space is tight, a transcript entry's source, time and details wrap without being squeezed out.
 - Voice Secretary: an Ask whose outcome could not be confirmed is marked like one that needs your input (amber in the classic look instead of grey), since it waits for you to confirm before it is retried.
 - On narrow screens, a presentation opened from a quote in the chat shows **Jump to chat** and **Reply in chat** as icon keys, so its title is no longer squeezed out of the header and the header keys stay on screen.
+- In the Voice Secretary editor, saving a document that changed since it was opened no longer silently overwrites the newer text. Your draft stays, and you can load the latest version or, after confirming, overwrite it with your draft; a document that moved or is no longer available cannot be overwritten from the old draft. Text typed while a save or request is in progress is kept, and an unsaved draft survives switching Groups in the same page.
+- The Voice Secretary editor keeps leading and trailing whitespace, empty documents and consistent CRLF or CR line endings when a document is edited and saved.
 
 ## [0.4.46]
 

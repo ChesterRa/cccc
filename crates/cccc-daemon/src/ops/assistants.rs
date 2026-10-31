@@ -139,10 +139,14 @@ fn require_voice_status_permission(group: &cccc_core::GroupDoc, by: &str) -> Res
 
 fn documents(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    let value = document_reconcile::run(home, request)?;
     let requested_path = string_arg(request, "document_path").unwrap_or_default();
+    let value = if requested_path.is_empty() {
+        document_reconcile::run(home, request)?
+    } else {
+        document_reconcile::run_for_document(home, request, &requested_path)?
+    };
     let include_archived = bool_arg(request, "include_archived", false);
-    let documents = items(&value, "documents")
+    let mut documents = items(&value, "documents")
         .iter()
         .filter(|document| {
             !voice_document_state::is_deleted(document)
@@ -151,6 +155,22 @@ fn documents(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         })
         .cloned()
         .collect::<Vec<_>>();
+    if !requested_path.is_empty() {
+        let group = GroupStore::new(home.clone())
+            .map_err(OpError::io)?
+            .load(&group_id)
+            .map_err(OpError::not_found)?;
+        for document in &mut documents {
+            annotate_document_target(home, &group, document)?;
+        }
+    } else {
+        for document in &mut documents {
+            if let Some(object) = document.as_object_mut() {
+                // A broad list cannot bind this token to a fresh content read.
+                object.remove("content_target_id");
+            }
+        }
+    }
     object(
         json!({"group_id":group_id,"documents":documents,"active_document_id":value["active_document_id"],"active_document_path":value["active_document_path"]}),
     )
@@ -186,13 +206,38 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     validate_path(&path)?;
     let title = string_arg(request, "title").unwrap_or_default();
     let content = string_arg(request, "content");
+    let expected = optional_digest(request, "expected_content_sha256")?;
+    let expected_target = optional_digest(request, "expected_target_id")?;
+    if expected.is_some() != expected_target.is_some() {
+        return Err(OpError::invalid(
+            "expected_content_sha256 and expected_target_id must be supplied together",
+        ));
+    }
+    if expected.is_some() && content.is_none() {
+        return Err(OpError::invalid(
+            "content is required with expected_content_sha256",
+        ));
+    }
     let group = GroupStore::new(home.clone())
         .map_err(OpError::io)?
         .load(&group_id)
         .map_err(OpError::not_found)?;
     let (storage_path, storage_kind) = document_storage_path(home, &group, &path)?;
+    let target_id = document_target_id(&storage_path);
+    if expected_target
+        .as_deref()
+        .is_some_and(|expected| expected != target_id)
+    {
+        let mut error = OpError::new(
+            "voice_document_target_conflict",
+            "The document target changed since it was opened.",
+        );
+        error.details.insert("document_path".into(), json!(path));
+        return Err(error);
+    }
     let mut previous_file = None::<Option<Vec<u8>>>;
     let mut attempted_content = None::<String>;
+    let mut conflict_sha = None::<Option<String>>;
     let result = voice_document_state::update(home, &group_id, |state| {
         let docs = array(state, "documents");
         let index = docs.iter().position(|item| item["document_path"] == path);
@@ -202,8 +247,23 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .cloned()
             .unwrap_or_else(|| json!({}));
         voice_document_status::ensure_writable(&old)?;
+        if let Some(expected) = expected.as_deref() {
+            let current = match std::fs::read(&storage_path) {
+                Ok(bytes) => Some(bytes),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            };
+            let current_sha = current.as_ref().map(|bytes| format!("{:x}", Sha256::digest(bytes)));
+            if current_sha.as_deref() != Some(expected) {
+                conflict_sha = Some(current_sha);
+                return Err(io::Error::other("voice document changed since it was read"));
+            }
+            previous_file = Some(current);
+        }
         let text = if let Some(content) = content.as_deref() {
-            previous_file = Some(std::fs::read(&storage_path).ok());
+            if previous_file.is_none() {
+                previous_file = Some(std::fs::read(&storage_path).ok());
+            }
             write_document(&storage_path, content)?;
             attempted_content = Some(content.to_owned());
             content.to_owned()
@@ -230,17 +290,32 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         let changed = is_new
             || old["content"].as_str() != Some(text.as_str())
             || old["title"].as_str() != Some(effective_title);
-        let document = json!({"document_id":old["document_id"].as_str().map(str::to_owned).unwrap_or_else(||format!("vdoc_{}",short_id())),"scope_key":group.active_scope_key,"folder_id":old["folder_id"].as_str().unwrap_or(""),"document_path":path,"workspace_path":path,"absolute_path":storage_path,"filename":path.rsplit('/').next().unwrap_or(&path),"assistant_id":"voice_secretary","title":effective_title,"status":old["status"].as_str().unwrap_or("active"),"storage_kind":storage_kind,"content":text,"content_sha256":format!("{:x}",Sha256::digest(text.as_bytes())),"content_chars":text.chars().count(),"revision_count":old["revision_count"].as_u64().unwrap_or(0)+u64::from(changed),"created_at":created_at,"updated_at":utc_now(),"created_by":string_arg(request,"by").unwrap_or_else(||"user".into())});
+        let document = json!({"document_id":old["document_id"].as_str().map(str::to_owned).unwrap_or_else(||format!("vdoc_{}",short_id())),"scope_key":group.active_scope_key,"folder_id":old["folder_id"].as_str().unwrap_or(""),"document_path":path,"workspace_path":path,"absolute_path":storage_path,"filename":path.rsplit('/').next().unwrap_or(&path),"assistant_id":"voice_secretary","title":effective_title,"status":old["status"].as_str().unwrap_or("active"),"storage_kind":storage_kind,"content":text,"content_sha256":format!("{:x}",Sha256::digest(text.as_bytes())),"content_target_id":target_id,"content_chars":text.chars().count(),"revision_count":old["revision_count"].as_u64().unwrap_or(0)+u64::from(changed),"created_at":created_at,"updated_at":utc_now(),"created_by":string_arg(request,"by").unwrap_or_else(||"user".into())});
+        let mut stored_document = document.clone();
+        if let Some(object) = stored_document.as_object_mut() {
+            object.remove("content_target_id");
+        }
         if let Some(index) = index {
-            docs[index] = document.clone();
+            docs[index] = stored_document;
         } else {
-            docs.push(document.clone());
+            docs.push(stored_document);
         }
         state.insert("active_document_id".into(), document["document_id"].clone());
         state.insert("active_document_path".into(), json!(path));
         Ok(document)
     })
     .map_err(OpError::io);
+    if let Some(current_sha) = conflict_sha {
+        let mut error = OpError::new(
+            "voice_document_conflict",
+            "The document changed since it was opened.",
+        );
+        error.details.insert("document_path".into(), json!(path));
+        error
+            .details
+            .insert("current_sha256".into(), json!(current_sha));
+        return Err(error);
+    }
     let document = match result {
         Ok(document) => document,
         Err(error) => {
@@ -286,6 +361,71 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
     };
     document_result(home, request, &group_id, document, "saved")
+}
+
+fn optional_digest(request: &DaemonRequest, name: &str) -> Result<Option<String>, OpError> {
+    match request.args.get(name) {
+        None => Ok(None),
+        Some(Value::String(value))
+            if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+        {
+            Ok(Some(value.to_ascii_lowercase()))
+        }
+        Some(_) => Err(OpError::invalid(format!(
+            "{name} must be a SHA-256 hex digest"
+        ))),
+    }
+}
+
+fn document_target_id(path: &std::path::Path) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"cccc-voice-document-target-v1\0");
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        digest.update(path.as_os_str().as_bytes());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        for unit in path.as_os_str().encode_wide() {
+            digest.update(unit.to_le_bytes());
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    digest.update(path.to_string_lossy().as_bytes());
+    format!("{:x}", digest.finalize())
+}
+
+fn annotate_document_target(
+    home: &HomeLayout,
+    group: &cccc_core::GroupDoc,
+    document: &mut Value,
+) -> Result<(), OpError> {
+    let Some(path) = document["document_path"]
+        .as_str()
+        .filter(|path| !path.is_empty())
+    else {
+        return Ok(());
+    };
+    let (storage_path, _) = document_storage_path(home, group, path)?;
+    let content = match std::fs::read_to_string(&storage_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if let Some(object) = document.as_object_mut() {
+                object.remove("content");
+                object.remove("content_sha256");
+                object.remove("content_target_id");
+            }
+            return Ok(());
+        }
+        Err(error) => return Err(OpError::io(error)),
+    };
+    document["content_sha256"] = json!(format!("{:x}", Sha256::digest(content.as_bytes())));
+    document["content_chars"] = json!(content.chars().count());
+    document["content"] = json!(content);
+    document["content_target_id"] = json!(document_target_id(&storage_path));
+    Ok(())
 }
 
 fn document_storage_path(

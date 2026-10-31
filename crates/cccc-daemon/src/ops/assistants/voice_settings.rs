@@ -59,13 +59,19 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     } else {
         "ready"
     });
-    let docs = document_state["documents"]
+    let mut docs = document_state["documents"]
         .as_array()
         .into_iter()
         .flatten()
         .filter(|document| voice_document_state::is_active(document))
         .cloned()
         .collect::<Vec<_>>();
+    for document in &mut docs {
+        if let Some(object) = document.as_object_mut() {
+            // The workspace summary is not a fresh, single-document read.
+            object.remove("content_target_id");
+        }
+    }
     let asks = state["ask_requests"]
         .as_array()
         .cloned()

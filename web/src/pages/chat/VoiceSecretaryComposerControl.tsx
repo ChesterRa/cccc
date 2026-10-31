@@ -224,6 +224,16 @@ import {
   voiceCaptureTransportMode,
 } from "./voice-secretary/voiceDictationRoute";
 import {
+  documentLineEnding,
+  documentTextareaText,
+  serializeDocumentText,
+} from "./voice-secretary/documentLineEndings";
+import {
+  sameVoiceDocumentGeneration,
+  sameVoiceDocumentSession,
+  type VoiceDocumentDraftOwner,
+} from "./voice-secretary/documentDraftSession";
+import {
   createDocumentContentLoadTracker,
   documentContentLoadingMatches,
   documentNeedsContentLoad,
@@ -284,6 +294,41 @@ const TWO_LINE_STATUS_STYLE = {
   WebkitBoxOrient: "vertical",
   overflow: "hidden",
 } as const;
+
+type VoiceDocumentWriteBase = { path: string; contentSha256: string; targetId: string };
+type SuspendedVoiceDraft = {
+  document: AssistantVoiceDocument;
+  path: string;
+  content: string;
+  baseContent: string;
+  title: string;
+  baseTitle: string;
+  writeBase: VoiceDocumentWriteBase;
+  lineEnding: "\n" | "\r\n" | "\r";
+  editing: boolean;
+  remoteChanged: boolean;
+  unavailable: boolean;
+  conflict: VoiceDocumentConflict | null;
+};
+type VoiceDocumentConflict = {
+  path: string;
+  session: number;
+  currentSha: string | null;
+  targetChanged: boolean;
+  unavailable: boolean;
+};
+
+function voiceDocumentWriteBase(
+  document: AssistantVoiceDocument | null | undefined,
+): VoiceDocumentWriteBase | null {
+  if (!document || typeof document.content !== "string") return null;
+  const path = voiceDocumentPath(document);
+  const contentSha256 = document.content_sha256 || "";
+  const targetId = document.content_target_id || "";
+  if (!path || !/^[0-9a-f]{64}$/i.test(contentSha256) || !/^[0-9a-f]{64}$/i.test(targetId))
+    return null;
+  return { path, contentSha256: contentSha256.toLowerCase(), targetId: targetId.toLowerCase() };
+}
 
 function voiceDocumentRevisionKey(document: AssistantVoiceDocument | null | undefined): string {
   if (!document) return "";
@@ -409,6 +454,16 @@ export function VoiceSecretaryComposerControl({
   const transcriptDocumentPathRef = useRef("");
   const documentBaseTitleRef = useRef("");
   const documentBaseContentRef = useRef("");
+  const documentWriteBaseRef = useRef<VoiceDocumentWriteBase | null>(null);
+  const documentLineEndingRef = useRef<"\n" | "\r\n" | "\r">("\n");
+  const documentDraftSessionRef = useRef(0);
+  // In-memory only: one unsaved working document per Group, for tab switching.
+  const suspendedVoiceDraftsRef = useRef(new Map<string, SuspendedVoiceDraft>());
+  const documentOwnerGroupRef = useRef(String(selectedGroupId || "").trim());
+  const documentEditingRef = useRef(false);
+  const documentRemoteChangedRef = useRef(false);
+  const documentSaveConflictRef = useRef<VoiceDocumentConflict | null>(null);
+  const detachedDocumentRef = useRef<AssistantVoiceDocument | null>(null);
   const documentTitleDraftRef = useRef("");
   const documentDraftRef = useRef("");
   const voiceStreamItemIdRef = useRef("");
@@ -504,6 +559,7 @@ export function VoiceSecretaryComposerControl({
   );
   const [assistant, setAssistant] = useState<BuiltinAssistant | null>(null);
   const [documents, setDocuments] = useState<AssistantVoiceDocument[]>([]);
+  const [detachedDocument, setDetachedDocument] = useState<AssistantVoiceDocument | null>(null);
   const documentsRef = useRef<AssistantVoiceDocument[]>([]);
   const [viewedDocumentPath, setViewedDocumentPath] = useState("");
   const [captureTargetDocumentPath, setCaptureTargetDocumentPath] = useState("");
@@ -511,8 +567,12 @@ export function VoiceSecretaryComposerControl({
   const [documentDraft, setDocumentDraft] = useState("");
   const [documentBaseTitle, setDocumentBaseTitle] = useState("");
   const [documentBaseContent, setDocumentBaseContent] = useState("");
+  const [documentWriteBase, setDocumentWriteBase] = useState<VoiceDocumentWriteBase | null>(null);
   const [documentEditing, setDocumentEditing] = useState(false);
   const [documentRemoteChanged, setDocumentRemoteChanged] = useState(false);
+  const [documentSaveConflict, setDocumentSaveConflict] = useState<VoiceDocumentConflict | null>(
+    null,
+  );
   const [documentContentLoadingPath, setDocumentContentLoadingPath] = useState("");
   const documentContentLoadTracker = useRef(createDocumentContentLoadTracker());
   const [creatingDocument, setCreatingDocument] = useState(false);
@@ -731,9 +791,10 @@ export function VoiceSecretaryComposerControl({
     if (path) {
       const match = findVoiceDocument(documents, path);
       if (match) return match;
+      if (detachedDocument && voiceDocumentMatches(detachedDocument, path)) return detachedDocument;
     }
     return documents.find((document) => String(document.status || "active") === "active") || null;
-  }, [viewedDocumentPath, documents]);
+  }, [viewedDocumentPath, documents, detachedDocument]);
   const activeDocumentWritePath = useMemo(
     () => voiceDocumentPath(activeDocument),
     [activeDocument],
@@ -747,6 +808,11 @@ export function VoiceSecretaryComposerControl({
   const documentContentLoading = documentContentLoadingMatches(
     documentContentLoadingPath,
     activeDocumentWritePath,
+  );
+  const documentContentUnavailable = Boolean(
+    activeDocumentWritePath &&
+    !documentContentLoading &&
+    documentWriteBase?.path !== activeDocumentWritePath,
   );
   const defaultCaptureDocument = useMemo(() => {
     const targetPath = String(captureTargetDocumentPath || "").trim();
@@ -1017,10 +1083,21 @@ export function VoiceSecretaryComposerControl({
   documentDraftRef.current = documentDraft;
   documentBaseTitleRef.current = documentBaseTitle;
   documentBaseContentRef.current = documentBaseContent;
+  documentEditingRef.current = documentEditing;
+  documentRemoteChangedRef.current = documentRemoteChanged;
+  documentSaveConflictRef.current = documentSaveConflict;
 
   const loadDocumentDraft = useCallback((document: AssistantVoiceDocument | null) => {
+    documentDraftSessionRef.current += 1;
+    detachedDocumentRef.current = null;
+    setDetachedDocument(null);
+    const base = voiceDocumentWriteBase(document);
+    documentWriteBaseRef.current = base;
+    setDocumentWriteBase(base);
     const title = String(document?.title || "");
-    const content = String(document?.content || "");
+    const rawContent = String(document?.content || "");
+    const content = documentTextareaText(rawContent);
+    documentLineEndingRef.current = documentLineEnding(rawContent);
     documentTitleDraftRef.current = title;
     documentDraftRef.current = content;
     documentBaseTitleRef.current = title;
@@ -1030,11 +1107,35 @@ export function VoiceSecretaryComposerControl({
     setDocumentBaseTitle(title);
     setDocumentBaseContent(content);
     setDocumentRemoteChanged(false);
+    setDocumentSaveConflict(null);
   }, []);
 
   const updateDocumentDraft = useCallback((value: string) => {
     documentDraftRef.current = value;
     setDocumentDraft(value);
+  }, []);
+
+  const getDraftSnapshot = useCallback(
+    () => ({
+      path: viewedDocumentPathRef.current,
+      session: documentDraftSessionRef.current,
+      content: documentDraftRef.current,
+      dirty: documentDraftRef.current !== documentBaseContentRef.current,
+    }),
+    [],
+  );
+
+  const preserveUnavailableDraft = useCallback((document: AssistantVoiceDocument, path: string) => {
+    detachedDocumentRef.current = document;
+    setDetachedDocument(document);
+    setDocumentRemoteChanged(true);
+    setDocumentSaveConflict({
+      path,
+      session: documentDraftSessionRef.current,
+      currentSha: null,
+      targetChanged: false,
+      unavailable: true,
+    });
   }, []);
 
   const clearLiveTranscriptPreview = useCallback(() => {
@@ -1281,6 +1382,7 @@ export function VoiceSecretaryComposerControl({
       });
       if (ownership.shouldShowLoading) setLoading(true);
       const askRevision = askObservationRevisionRef.current;
+      const documentOwner = getDraftSnapshot();
       try {
         const promptRequestId =
           String(pendingPromptGroupIdRef.current || "").trim() === gid
@@ -1292,7 +1394,8 @@ export function VoiceSecretaryComposerControl({
             currentOwnership(),
             ownership.request,
             isCurrentGroup(gid),
-          )
+          ) ||
+          !sameVoiceDocumentGeneration(getDraftSnapshot(), documentOwner)
         )
           return;
         if (!resp.ok) {
@@ -1360,10 +1463,44 @@ export function VoiceSecretaryComposerControl({
           );
         const currentViewedPath = String(viewedDocumentPathRef.current || "").trim();
         const currentViewedDocument = findVoiceDocument(nextDocuments, currentViewedPath);
+        if (
+          currentViewedPath &&
+          !currentViewedDocument &&
+          documentDraftRef.current !== documentBaseContentRef.current
+        ) {
+          const detached =
+            findVoiceDocument(documentsRef.current, currentViewedPath) ||
+            detachedDocumentRef.current;
+          if (detached && voiceDocumentMatches(detached, currentViewedPath)) {
+            preserveUnavailableDraft(detached, currentViewedPath);
+            return;
+          }
+        }
+        if (currentViewedDocument) {
+          detachedDocumentRef.current = null;
+          setDetachedDocument(null);
+          setDocumentSaveConflict((previous) => (previous?.unavailable ? null : previous));
+        }
         const serverViewedDocument = findVoiceDocument(nextDocuments, serverViewedPath);
         let nextActiveDocument =
           currentViewedDocument || serverViewedDocument || nextDocuments[0] || null;
         const nextViewedPath = voiceDocumentPath(nextActiveDocument);
+        const loadedBase = documentWriteBaseRef.current;
+        // Broad workspace responses do not carry a target token. Reuse the
+        // token already read with this exact body, rather than reload and
+        // unmount the editor on every unchanged polling response. A changed
+        // storage target is still rejected by the conditional save.
+        if (
+          nextActiveDocument &&
+          currentViewedPath === nextViewedPath &&
+          loadedBase?.path === nextViewedPath &&
+          !nextActiveDocument.content_target_id &&
+          typeof nextActiveDocument.content === "string" &&
+          nextActiveDocument.content_sha256?.toLowerCase() === loadedBase.contentSha256 &&
+          documentTextareaText(nextActiveDocument.content) === documentBaseContentRef.current
+        ) {
+          nextActiveDocument = { ...nextActiveDocument, content_target_id: loadedBase.targetId };
+        }
         const previousActiveDocument = nextViewedPath
           ? findVoiceDocument(documentsRef.current, nextViewedPath)
           : null;
@@ -1391,7 +1528,8 @@ export function VoiceSecretaryComposerControl({
                   currentOwnership(),
                   ownership.request,
                   isCurrentGroup(gid),
-                )
+                ) ||
+                !sameVoiceDocumentGeneration(getDraftSnapshot(), documentOwner)
               )
                 return;
               if (docResp.ok && docResp.result.document) {
@@ -1412,7 +1550,7 @@ export function VoiceSecretaryComposerControl({
             }
           }
           const serverTitle = String(nextActiveDocument.title || "");
-          const serverContent = String(nextActiveDocument.content || "");
+          const serverContent = documentTextareaText(String(nextActiveDocument.content || ""));
           const localDirty = documentDraftRef.current !== documentBaseContentRef.current;
           const sameDocument = currentViewedPath
             ? voiceDocumentMatches(nextActiveDocument, currentViewedPath)
@@ -1421,8 +1559,25 @@ export function VoiceSecretaryComposerControl({
             serverTitle !== documentBaseTitleRef.current ||
             (nextActiveDocument.content !== undefined &&
               serverContent !== documentBaseContentRef.current);
-          if (!localDirty || !sameDocument) {
+          const sameLoadedBase = Boolean(
+            sameDocument &&
+            loadedBase &&
+            voiceDocumentWriteBase(nextActiveDocument)?.contentSha256 ===
+              loadedBase.contentSha256 &&
+            voiceDocumentWriteBase(nextActiveDocument)?.targetId === loadedBase.targetId &&
+            serverContent === documentBaseContentRef.current,
+          );
+          if ((!localDirty || !sameDocument) && !sameLoadedBase) {
             loadDocumentDraft(nextActiveDocument);
+          } else if (
+            !localDirty &&
+            sameLoadedBase &&
+            serverTitle !== documentBaseTitleRef.current
+          ) {
+            documentTitleDraftRef.current = serverTitle;
+            documentBaseTitleRef.current = serverTitle;
+            setDocumentTitleDraft(serverTitle);
+            setDocumentBaseTitle(serverTitle);
           } else if (serverChangedFromBase) {
             setDocumentRemoteChanged(true);
           }
@@ -1449,8 +1604,10 @@ export function VoiceSecretaryComposerControl({
     [
       applyAskSnapshot,
       clearVoiceDocumentReferences,
+      getDraftSnapshot,
       isCurrentGroup,
       loadDocumentDraft,
+      preserveUnavailableDraft,
       selectedGroupId,
       showError,
     ],
@@ -1722,6 +1879,45 @@ export function VoiceSecretaryComposerControl({
   }, [loadAudioDevices, open, serviceAsrReady]);
 
   useEffect(() => {
+    const previousGroup = documentOwnerGroupRef.current;
+    const nextGroup = String(selectedGroupId || "").trim();
+    if (previousGroup && previousGroup !== nextGroup) {
+      const path = String(viewedDocumentPathRef.current || "").trim();
+      const document = findVoiceDocument(documentsRef.current, path) || detachedDocumentRef.current;
+      const base = documentWriteBaseRef.current;
+      if (
+        path &&
+        document &&
+        base?.path === path &&
+        documentDraftRef.current !== documentBaseContentRef.current
+      ) {
+        suspendedVoiceDraftsRef.current.set(previousGroup, {
+          document,
+          path,
+          content: documentDraftRef.current,
+          baseContent: documentBaseContentRef.current,
+          title: documentTitleDraftRef.current,
+          baseTitle: documentBaseTitleRef.current,
+          writeBase: base,
+          lineEnding: documentLineEndingRef.current,
+          editing: documentEditingRef.current,
+          remoteChanged: documentRemoteChangedRef.current,
+          unavailable: Boolean(
+            detachedDocumentRef.current && voiceDocumentMatches(detachedDocumentRef.current, path),
+          ),
+          conflict:
+            documentSaveConflictRef.current?.path === path &&
+            documentSaveConflictRef.current.session === documentDraftSessionRef.current
+              ? documentSaveConflictRef.current
+              : null,
+        });
+      } else {
+        suspendedVoiceDraftsRef.current.delete(previousGroup);
+      }
+    }
+    documentOwnerGroupRef.current = nextGroup;
+    const suspended =
+      previousGroup !== nextGroup ? suspendedVoiceDraftsRef.current.get(nextGroup) : undefined;
     const ownership = resetVoiceAssistantVisibleLoading({
       dataSeq: refreshSeq.current,
       visibleLoadingSeq: visibleLoadSeqRef.current,
@@ -1768,6 +1964,33 @@ export function VoiceSecretaryComposerControl({
     setCaptureTargetDocumentPath("");
     loadDocumentDraft(null);
     setDocumentEditing(false);
+    if (suspended) {
+      suspendedVoiceDraftsRef.current.delete(nextGroup);
+      viewedDocumentPathRef.current = suspended.path;
+      documentsRef.current = suspended.unavailable ? [] : [suspended.document];
+      documentTitleDraftRef.current = suspended.title;
+      documentBaseTitleRef.current = suspended.baseTitle;
+      documentDraftRef.current = suspended.content;
+      documentBaseContentRef.current = suspended.baseContent;
+      documentWriteBaseRef.current = suspended.writeBase;
+      documentLineEndingRef.current = suspended.lineEnding;
+      setDocuments(suspended.unavailable ? [] : [suspended.document]);
+      setViewedDocumentPath(suspended.path);
+      setDocumentTitleDraft(suspended.title);
+      setDocumentBaseTitle(suspended.baseTitle);
+      setDocumentDraft(suspended.content);
+      setDocumentBaseContent(suspended.baseContent);
+      setDocumentWriteBase(suspended.writeBase);
+      setDocumentEditing(suspended.editing);
+      setDocumentRemoteChanged(suspended.remoteChanged);
+      if (suspended.conflict) {
+        setDocumentSaveConflict({
+          ...suspended.conflict,
+          session: documentDraftSessionRef.current,
+        });
+      }
+      if (suspended.unavailable) preserveUnavailableDraft(suspended.document, suspended.path);
+    }
     setDocumentInstruction("");
     setExecutionTaskId("");
     if (!keepActiveRecording) {
@@ -1843,6 +2066,7 @@ export function VoiceSecretaryComposerControl({
   }, [
     clearPendingPromptRequest,
     loadDocumentDraft,
+    preserveUnavailableDraft,
     releaseVoiceRecordingGuards,
     selectedGroupId,
     resetVoiceAudioLevel,
@@ -1964,6 +2188,9 @@ export function VoiceSecretaryComposerControl({
       if (result.assistant) setAssistant(result.assistant);
       if ((result.document_updated || result.input_event_created) && result.document) {
         const document = result.document;
+        // Transcript acknowledgements may contain index metadata, not a
+        // content/version pair read from the current storage target.
+        if (!voiceDocumentWriteBase(document)) return;
         const docPath = voiceDocumentPath(document);
         if (
           docPath &&
@@ -2000,11 +2227,36 @@ export function VoiceSecretaryComposerControl({
   );
 
   const applyDocumentMutationResult = useCallback(
-    (document: AssistantVoiceDocument | undefined, assistantNext?: BuiltinAssistant) => {
+    (
+      document: AssistantVoiceDocument | undefined,
+      assistantNext?: BuiltinAssistant,
+      saved?: {
+        draft: string;
+        base: string;
+        path: string;
+        session: number;
+        writeBase: VoiceDocumentWriteBase;
+      },
+      owner?: VoiceDocumentDraftOwner,
+    ): boolean => {
+      if (owner && !sameVoiceDocumentSession(getDraftSnapshot(), owner)) return false;
       if (assistantNext) setAssistant(assistantNext);
-      if (!document) return;
+      if (!document) return false;
       const docPath = voiceDocumentPath(document);
-      if (!docPath) return;
+      if (!docPath) return false;
+      if (saved && !sameVoiceDocumentSession(getDraftSnapshot(), saved)) return false;
+      const responseBase = voiceDocumentWriteBase(document);
+      if (saved && (!responseBase || responseBase.targetId !== saved.writeBase.targetId))
+        return false;
+      if (!saved && !responseBase) {
+        if (
+          viewedDocumentPathRef.current === docPath &&
+          document.content !== undefined &&
+          documentTextareaText(document.content) !== documentBaseContentRef.current
+        )
+          setDocumentRemoteChanged(true);
+        return false;
+      }
       // An accepted write is newer than every workspace read already in flight.
       invalidateWorkspaceRefresh();
       if (viewedDocumentPathRef.current === docPath) {
@@ -2020,10 +2272,45 @@ export function VoiceSecretaryComposerControl({
       });
       if (!viewedDocumentPathRef.current || viewedDocumentPathRef.current === docPath) {
         setViewedDocumentPath(docPath);
+        const currentDraft = documentDraftRef.current;
+        const currentBase = documentBaseContentRef.current;
+        if (saved && saved.path === docPath && currentBase === saved.base) {
+          if (currentDraft !== saved.draft) {
+            const savedContent = document.content;
+            if (savedContent !== undefined) {
+              const normalized = documentTextareaText(savedContent);
+              documentLineEndingRef.current = documentLineEnding(savedContent);
+              documentBaseContentRef.current = normalized;
+              setDocumentBaseContent(normalized);
+              documentWriteBaseRef.current = responseBase;
+              setDocumentWriteBase(responseBase);
+            } else {
+              setDocumentRemoteChanged(true);
+            }
+            return false;
+          }
+        } else if (currentDraft !== currentBase) {
+          if (
+            document.content !== undefined &&
+            documentTextareaText(document.content) !== currentBase
+          ) {
+            setDocumentRemoteChanged(true);
+          }
+          return false;
+        } else if (
+          !responseBase ||
+          (documentWriteBaseRef.current &&
+            responseBase.targetId !== documentWriteBaseRef.current.targetId)
+        ) {
+          setDocumentRemoteChanged(true);
+          return false;
+        }
         loadDocumentDraft(document);
+        return true;
       }
+      return false;
     },
-    [invalidateWorkspaceRefresh, loadDocumentDraft],
+    [getDraftSnapshot, invalidateWorkspaceRefresh, loadDocumentDraft],
   );
 
   const appendTranscriptSegment = useCallback(
@@ -2049,6 +2336,7 @@ export function VoiceSecretaryComposerControl({
       const targetDocumentPath = recordingTargetDocumentPath(
         opts?.documentPath || captureTargetDocumentPathRef.current,
       );
+      const documentOwner = getDraftSnapshot();
       const segmentSeq = transcriptSegmentSeqRef.current + 1;
       transcriptSegmentSeqRef.current = segmentSeq;
       try {
@@ -2082,7 +2370,20 @@ export function VoiceSecretaryComposerControl({
           return false;
         }
         if (isCurrentGroup(gid)) {
-          applyTranscriptAppendResult(resp.result);
+          if (sameVoiceDocumentSession(getDraftSnapshot(), documentOwner)) {
+            applyTranscriptAppendResult(resp.result);
+            const responseDocument = resp.result.document;
+            const responsePath = voiceDocumentPath(responseDocument);
+            if (
+              responseDocument &&
+              !voiceDocumentWriteBase(responseDocument) &&
+              (resp.result.document_updated ||
+                (resp.result.input_event_created &&
+                  responsePath &&
+                  !findVoiceDocument(documentsRef.current, responsePath)))
+            )
+              void refreshAssistant({ quiet: true, passive: true });
+          }
           const resultDocumentPath = voiceDocumentPath(resp.result.document) || targetDocumentPath;
           if (cleanText && resultDocumentPath) {
             pushVoiceTranscriptItem(cleanText, {
@@ -2106,10 +2407,12 @@ export function VoiceSecretaryComposerControl({
     [
       applyTranscriptAppendResult,
       captureNeedsSecretary,
+      getDraftSnapshot,
       getRecordingRecognitionLanguage,
       isCurrentGroup,
       pushVoiceTranscriptItem,
       recognitionBackend,
+      refreshAssistant,
       recordingTargetDocumentPath,
       recordingTargetGroupId,
       selectedAudioDeviceLabel,
@@ -2213,6 +2516,7 @@ export function VoiceSecretaryComposerControl({
       const currentDocumentPath = explicitGroupId
         ? String(fallbackDocumentPath || "").trim()
         : recordingTargetDocumentPath(fallbackDocumentPath);
+      const documentOwner = getDraftSnapshot();
       try {
         const resp = await appendVoiceAssistantInput(gid, {
           kind: "voice_instruction",
@@ -2255,7 +2559,12 @@ export function VoiceSecretaryComposerControl({
             ].slice(0, 10),
           );
           finalizeLiveTranscriptPreview();
-          applyDocumentMutationResult(resp.result.document, resp.result.assistant);
+          applyDocumentMutationResult(
+            resp.result.document,
+            resp.result.assistant,
+            undefined,
+            documentOwner,
+          );
           showNotice({
             message: t(
               resp.result.secretary_processing_deferred
@@ -2283,6 +2592,7 @@ export function VoiceSecretaryComposerControl({
       applyDocumentMutationResult,
       captureNeedsSecretary,
       getActiveCaptureConfig,
+      getDraftSnapshot,
       getRecordingRecognitionLanguage,
       finalizeLiveTranscriptPreview,
       isCurrentGroup,
@@ -4220,58 +4530,132 @@ export function VoiceSecretaryComposerControl({
     voiceReplyBubbleRequestId,
   ]);
 
-  const persistCurrentDocument = useCallback(async (): Promise<AssistantVoiceDocument | null> => {
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid) return null;
-    const resp = await saveVoiceAssistantDocument(gid, {
-      documentPath: activeDocumentWritePath || viewedDocumentPath || captureTargetDocumentPath,
-      content: documentDraft,
-      status: activeDocument?.status || "active",
-      by: "user",
-    });
-    if (!isCurrentGroup(gid)) return null;
-    if (!resp.ok) {
-      showError(resp.error.message);
-      return null;
-    }
-    applyDocumentMutationResult(resp.result.document, resp.result.assistant);
-    return resp.result.document || null;
-  }, [
-    activeDocumentWritePath,
-    activeDocument?.status,
-    viewedDocumentPath,
-    applyDocumentMutationResult,
-    captureTargetDocumentPath,
-    documentDraft,
-    isCurrentGroup,
-    selectedGroupId,
-    showError,
-  ]);
-
-  const saveDocument = useCallback(async () => {
-    const gid = String(selectedGroupId || "").trim();
-    setActionBusy("save_doc");
-    try {
-      const document = await persistCurrentDocument();
-      if (!isCurrentGroup(gid)) return;
-      if (!document) return;
-      setDocumentEditing(false);
-      showNotice({
-        message: t("voiceSecretaryDocumentSaved", {
-          defaultValue: "Voice Secretary working document saved.",
-        }),
+  const persistCurrentDocument = useCallback(
+    async (
+      overwriteSha?: string,
+    ): Promise<{ document: AssistantVoiceDocument; applied: boolean } | null> => {
+      const gid = String(selectedGroupId || "").trim();
+      if (!gid) return null;
+      if (documentSaveConflict?.unavailable) return null;
+      const path = activeDocumentWritePath || viewedDocumentPath || captureTargetDocumentPath;
+      const writeBase = documentWriteBaseRef.current;
+      const owner = getDraftSnapshot();
+      if (!writeBase || writeBase.path !== path || owner.path !== path) {
+        showError(t("voiceSecretaryDocumentVersionUnavailable"));
+        return null;
+      }
+      const saved = {
+        path,
+        draft: owner.content,
+        base: documentBaseContentRef.current,
+        session: owner.session,
+        writeBase,
+      };
+      const resp = await saveVoiceAssistantDocument(gid, {
+        documentPath: path,
+        expectedContentSha256: overwriteSha || writeBase.contentSha256,
+        expectedTargetId: writeBase.targetId,
+        content: serializeDocumentText(saved.draft, documentLineEndingRef.current),
+        status: activeDocument?.status || "active",
+        by: "user",
       });
-    } catch {
-      if (!isCurrentGroup(gid)) return;
-      showError(
-        t("voiceSecretaryDocumentSaveFailed", {
-          defaultValue: "Failed to save Voice Secretary working document.",
-        }),
-      );
-    } finally {
-      if (isCurrentGroup(gid)) setActionBusy("");
-    }
-  }, [isCurrentGroup, persistCurrentDocument, selectedGroupId, showError, showNotice, t]);
+      if (!isCurrentGroup(gid) || !sameVoiceDocumentSession(getDraftSnapshot(), saved)) return null;
+      if (detachedDocumentRef.current && voiceDocumentMatches(detachedDocumentRef.current, path))
+        return null;
+      if (!resp.ok) {
+        if (
+          resp.error.code === "voice_document_conflict" ||
+          resp.error.code === "voice_document_target_conflict"
+        ) {
+          const current = recordFromUnknown(resp.error.details).current_sha256;
+          setDocumentSaveConflict({
+            path,
+            session: saved.session,
+            currentSha:
+              typeof current === "string" && /^[0-9a-f]{64}$/i.test(current)
+                ? current.toLowerCase()
+                : null,
+            targetChanged: resp.error.code === "voice_document_target_conflict",
+            unavailable: false,
+          });
+          setDocumentRemoteChanged(true);
+          return null;
+        }
+        showError(resp.error.message);
+        return null;
+      }
+      const document = resp.result.document;
+      const responseBase = voiceDocumentWriteBase(document);
+      if (
+        !document ||
+        !responseBase ||
+        responseBase.path !== path ||
+        responseBase.targetId !== writeBase.targetId
+      ) {
+        setDocumentRemoteChanged(true);
+        showError(t("voiceSecretaryDocumentVersionUnavailable"));
+        return null;
+      }
+      setDocumentSaveConflict(null);
+      const applied = applyDocumentMutationResult(document, resp.result.assistant, saved);
+      return { document, applied };
+    },
+    [
+      activeDocumentWritePath,
+      activeDocument?.status,
+      viewedDocumentPath,
+      applyDocumentMutationResult,
+      captureTargetDocumentPath,
+      documentSaveConflict,
+      getDraftSnapshot,
+      isCurrentGroup,
+      selectedGroupId,
+      showError,
+      t,
+    ],
+  );
+
+  const saveDocument = useCallback(
+    async (overwriteSha?: string) => {
+      const gid = String(selectedGroupId || "").trim();
+      setActionBusy("save_doc");
+      try {
+        const result = await persistCurrentDocument(overwriteSha);
+        if (!isCurrentGroup(gid)) return;
+        if (!result) return;
+        if (result.applied) setDocumentEditing(false);
+        showNotice({
+          message: t("voiceSecretaryDocumentSaved", {
+            defaultValue: "Voice Secretary working document saved.",
+          }),
+        });
+      } catch {
+        if (!isCurrentGroup(gid)) return;
+        showError(
+          t("voiceSecretaryDocumentSaveFailed", {
+            defaultValue: "Failed to save Voice Secretary working document.",
+          }),
+        );
+      } finally {
+        if (isCurrentGroup(gid)) setActionBusy("");
+      }
+    },
+    [isCurrentGroup, persistCurrentDocument, selectedGroupId, showError, showNotice, t],
+  );
+
+  const overwriteDocument = useCallback(() => {
+    const conflict = documentSaveConflict;
+    if (
+      !conflict ||
+      conflict.targetChanged ||
+      !conflict.currentSha ||
+      !sameVoiceDocumentSession(getDraftSnapshot(), conflict) ||
+      conflict.path !== documentWriteBaseRef.current?.path
+    )
+      return;
+    if (!window.confirm(t("voiceSecretaryOverwriteDocumentConfirm"))) return;
+    void saveDocument(conflict.currentSha);
+  }, [documentSaveConflict, getDraftSnapshot, saveDocument, t]);
 
   const startCreateDocument = useCallback(() => {
     if (documentHasUnsavedEdits) {
@@ -4301,6 +4685,7 @@ export function VoiceSecretaryComposerControl({
       newDocumentTitleDraft.trim() ||
       t("voiceSecretaryDefaultDocumentTitle", { defaultValue: "Untitled document" });
     setActionBusy("new_doc");
+    const documentOwner = getDraftSnapshot();
     try {
       const resp = await saveVoiceAssistantDocument(gid, {
         title,
@@ -4313,7 +4698,19 @@ export function VoiceSecretaryComposerControl({
         showError(resp.error.message);
         return;
       }
-      applyDocumentMutationResult(resp.result.document, resp.result.assistant);
+      if (
+        !sameVoiceDocumentSession(getDraftSnapshot(), documentOwner) ||
+        documentOwner.content !== documentDraftRef.current
+      ) {
+        void refreshAssistant({ quiet: true });
+        return;
+      }
+      applyDocumentMutationResult(
+        resp.result.document,
+        resp.result.assistant,
+        undefined,
+        documentOwner,
+      );
       const docPath = voiceDocumentPath(resp.result.document);
       if (docPath) {
         setViewedDocumentPath(docPath);
@@ -4341,9 +4738,11 @@ export function VoiceSecretaryComposerControl({
     }
   }, [
     applyDocumentMutationResult,
+    getDraftSnapshot,
     isCurrentGroup,
     loadDocumentDraft,
     newDocumentTitleDraft,
+    refreshAssistant,
     selectedGroupId,
     showError,
     showNotice,
@@ -4412,6 +4811,7 @@ export function VoiceSecretaryComposerControl({
           return;
         }
         setActionBusy("instruct_doc");
+        const documentOwner = getDraftSnapshot();
         const nowMs = Date.now();
         const requestId = `voice-ask-${nowMs.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
         try {
@@ -4435,7 +4835,12 @@ export function VoiceSecretaryComposerControl({
             showError(resp.error.message);
             return;
           }
-          applyDocumentMutationResult(resp.result.document, resp.result.assistant);
+          const appliedDocument = applyDocumentMutationResult(
+            resp.result.document,
+            resp.result.assistant,
+            undefined,
+            documentOwner,
+          );
           const effectiveRequestId = String(resp.result.request_id || requestId).trim();
           if (effectiveRequestId) {
             localVoiceReplyRequestIdsRef.current.add(effectiveRequestId);
@@ -4454,7 +4859,12 @@ export function VoiceSecretaryComposerControl({
             );
           }
           setDocumentInstruction("");
-          setDocumentEditing(false);
+          if (
+            (appliedDocument || sameVoiceDocumentSession(getDraftSnapshot(), documentOwner)) &&
+            viewedDocumentPathRef.current === docPath &&
+            documentDraftRef.current === documentBaseContentRef.current
+          )
+            setDocumentEditing(false);
           showNotice({
             message: t(
               resp.result.secretary_processing_deferred
@@ -4487,6 +4897,7 @@ export function VoiceSecretaryComposerControl({
       documentInstruction,
       documents,
       getActiveCaptureConfig,
+      getDraftSnapshot,
       getRecordingRecognitionLanguage,
       isCurrentGroup,
       recognitionBackend,
@@ -4518,11 +4929,14 @@ export function VoiceSecretaryComposerControl({
         );
         if (!confirmed) return;
       }
+      documentDraftSessionRef.current += 1;
+      setDocumentSaveConflict(null);
       setPanelView("document");
       setVoiceWorkspaceView("document");
       setMobileDocumentListOpen(false);
       viewedDocumentPathRef.current = nextPath;
       setViewedDocumentPath(nextPath);
+      const documentOwner = getDraftSnapshot();
       invalidateWorkspaceRefresh();
       const contentLoad = documentContentLoadTracker.current.begin();
       const draftBeforeLoad = documentDraftRef.current;
@@ -4535,7 +4949,7 @@ export function VoiceSecretaryComposerControl({
           const resp = gid ? await fetchVoiceAssistantDocumentContent(gid, nextPath) : null;
           if (
             !isCurrentGroup(gid) ||
-            viewedDocumentPathRef.current !== nextPath ||
+            !sameVoiceDocumentSession(getDraftSnapshot(), documentOwner) ||
             !documentContentLoadTracker.current.end(contentLoad)
           )
             return;
@@ -4551,6 +4965,7 @@ export function VoiceSecretaryComposerControl({
           }
         }
       }
+      if (!sameVoiceDocumentSession(getDraftSnapshot(), documentOwner)) return;
       if (documentDraftRef.current !== draftBeforeLoad) {
         setDocumentRemoteChanged(true);
         return;
@@ -4564,6 +4979,7 @@ export function VoiceSecretaryComposerControl({
       activeDocumentWritePath,
       viewedDocumentPath,
       documentHasUnsavedEdits,
+      getDraftSnapshot,
       invalidateWorkspaceRefresh,
       isCurrentGroup,
       loadDocumentDraft,
@@ -4571,6 +4987,65 @@ export function VoiceSecretaryComposerControl({
       t,
     ],
   );
+
+  const loadLatestDocument = useCallback(async () => {
+    const gid = String(selectedGroupId || "").trim();
+    const path = activeDocumentWritePath || viewedDocumentPath;
+    if (!gid || !path) return;
+    if (
+      documentDraftRef.current !== documentBaseContentRef.current &&
+      !window.confirm(t("voiceSecretaryLoadLatestConfirm"))
+    )
+      return;
+    const owner = getDraftSnapshot();
+    const load = documentContentLoadTracker.current.begin();
+    setDocumentContentLoadingPath(path);
+    try {
+      const resp = await fetchVoiceAssistantDocumentContent(gid, path);
+      if (
+        !isCurrentGroup(gid) ||
+        !sameVoiceDocumentSession(getDraftSnapshot(), owner) ||
+        owner.path !== path ||
+        !documentContentLoadTracker.current.end(load)
+      )
+        return;
+      if (
+        !resp.ok ||
+        !resp.result.document ||
+        voiceDocumentWriteBase(resp.result.document)?.path !== path
+      ) {
+        showError(t("voiceSecretaryDocumentVersionUnavailable"));
+        return;
+      }
+      if (documentDraftRef.current !== owner.content) {
+        setDocumentRemoteChanged(true);
+        return;
+      }
+      const document = resp.result.document;
+      invalidateWorkspaceRefresh();
+      setDocuments((prev) =>
+        prev.map((item) => (voiceDocumentMatches(item, path) ? document : item)),
+      );
+      loadDocumentDraft(document);
+      setDocumentEditing(false);
+    } catch {
+      if (isCurrentGroup(gid) && sameVoiceDocumentSession(getDraftSnapshot(), owner))
+        showError(t("voiceSecretaryDocumentVersionUnavailable"));
+    } finally {
+      if (isCurrentGroup(gid) && documentContentLoadTracker.current.end(load))
+        setDocumentContentLoadingPath("");
+    }
+  }, [
+    activeDocumentWritePath,
+    viewedDocumentPath,
+    selectedGroupId,
+    isCurrentGroup,
+    getDraftSnapshot,
+    invalidateWorkspaceRefresh,
+    loadDocumentDraft,
+    showError,
+    t,
+  ]);
 
   const setCaptureTargetDocument = useVoiceCaptureTargetDocumentSelection({
     selectedGroupId,
@@ -4595,6 +5070,8 @@ export function VoiceSecretaryComposerControl({
     archivedDocumentPathsRef,
     captureTargetDocumentPathRef,
     isCurrentGroup,
+    getDraftSnapshot,
+    preserveUnavailableDraft,
     loadDocumentDraft,
     clearReferences: clearVoiceDocumentReferences,
     refreshAssistant,
@@ -5697,6 +6174,22 @@ export function VoiceSecretaryComposerControl({
                             documentEditing={documentEditing}
                             documentHasUnsavedEdits={documentHasUnsavedEdits}
                             documentLoading={documentContentLoading}
+                            documentError={
+                              documentContentUnavailable
+                                ? t("voiceSecretaryDocumentVersionUnavailable")
+                                : ""
+                            }
+                            documentConflict={
+                              documentSaveConflict
+                                ? documentSaveConflict.unavailable
+                                  ? "unavailable"
+                                  : documentSaveConflict.targetChanged
+                                    ? "target"
+                                    : documentSaveConflict.currentSha
+                                      ? "content"
+                                      : "missing"
+                                : null
+                            }
                             documentRemoteChanged={documentRemoteChanged}
                             isDark={isDark}
                             recording={
@@ -5719,7 +6212,8 @@ export function VoiceSecretaryComposerControl({
                             }}
                             onDownloadDocument={downloadCurrentDocument}
                             onEditDocumentChange={updateDocumentDraft}
-                            onLoadLatestDocument={() => loadDocumentDraft(activeDocument)}
+                            onLoadLatestDocument={() => void loadLatestDocument()}
+                            onOverwriteDocument={overwriteDocument}
                             onQuoteDocument={() => {
                               if (!activeDocument) return;
                               const ref = buildVoiceDocumentMessageRef(

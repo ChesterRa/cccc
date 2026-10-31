@@ -4,6 +4,7 @@ import { archiveVoiceAssistantDocument } from "../../../services/api";
 import { deleteVoiceAssistantDocument } from "../../../services/api/voiceDocumentDelete";
 import type { AssistantVoiceDocument } from "../../../types";
 import { findVoiceDocument, voiceDocumentPath } from "./voiceComposerUtils";
+import { sameVoiceDocumentSession, type VoiceDocumentDraftSnapshot } from "./documentDraftSession";
 import {
   archiveVoiceDocumentWithReferenceCleanup,
   type ClearVoiceDocumentReferences,
@@ -29,6 +30,8 @@ export function useVoiceDocumentArchive({
   archivedDocumentPathsRef,
   captureTargetDocumentPathRef,
   isCurrentGroup,
+  getDraftSnapshot,
+  preserveUnavailableDraft,
   loadDocumentDraft,
   clearReferences,
   refreshAssistant,
@@ -48,6 +51,8 @@ export function useVoiceDocumentArchive({
   archivedDocumentPathsRef: { current: Set<string> };
   captureTargetDocumentPathRef: { current: string };
   isCurrentGroup: (groupId: string) => boolean;
+  getDraftSnapshot: () => VoiceDocumentDraftSnapshot;
+  preserveUnavailableDraft: (document: AssistantVoiceDocument, path: string) => void;
   loadDocumentDraft: (document: AssistantVoiceDocument | null) => void;
   clearReferences: ClearVoiceDocumentReferences;
   refreshAssistant: RefreshAssistant;
@@ -69,6 +74,12 @@ export function useVoiceDocumentArchive({
       if (!groupId || !documentPath) return;
       const archivedDocument = targetDocument || findVoiceDocument(documents, documentPath);
       const title = String(archivedDocument?.title || documentPath).trim();
+      const isActiveTarget = documentPath === (activeDocumentWritePath || viewedDocumentPath);
+      const initialDraft = getDraftSnapshot();
+      const warning =
+        isActiveTarget && initialDraft.dirty
+          ? `\n\n${t("voiceSecretaryArchiveDiscardEdits", { defaultValue: "Unsaved edits in this panel will also be discarded." })}`
+          : "";
       if (
         !window.confirm(
           t(
@@ -79,7 +90,7 @@ export function useVoiceDocumentArchive({
                 ? 'Delete document "{{title}}"? Its file will be deleted and cannot be recovered.'
                 : 'Archive document "{{title}}"?',
             },
-          ),
+          ) + warning,
         )
       )
         return;
@@ -90,7 +101,6 @@ export function useVoiceDocumentArchive({
         title,
         status: "archived",
       };
-      const isActiveTarget = documentPath === (activeDocumentWritePath || viewedDocumentPath);
       setActionBusy("archive_doc");
       try {
         const response = await archiveVoiceDocumentWithReferenceCleanup({
@@ -110,9 +120,16 @@ export function useVoiceDocumentArchive({
           current.filter((document) => voiceDocumentPath(document) !== documentPath),
         );
         if (isActiveTarget) {
-          setViewedDocumentPath("");
-          loadDocumentDraft(null);
-          setDocumentEditing(false);
+          const current = getDraftSnapshot();
+          if (sameVoiceDocumentSession(current, initialDraft) && current.path === documentPath) {
+            if (current.content !== initialDraft.content) {
+              preserveUnavailableDraft(fallbackDocument, documentPath);
+            } else {
+              setViewedDocumentPath("");
+              loadDocumentDraft(null);
+              setDocumentEditing(false);
+            }
+          }
         }
         if (captureTargetDocumentPathRef.current === documentPath) {
           captureTargetDocumentPathRef.current = "";
@@ -145,8 +162,10 @@ export function useVoiceDocumentArchive({
       captureTargetDocumentPathRef,
       clearReferences,
       documents,
+      getDraftSnapshot,
       isCurrentGroup,
       loadDocumentDraft,
+      preserveUnavailableDraft,
       refreshAssistant,
       selectedGroupId,
       setActionBusy,

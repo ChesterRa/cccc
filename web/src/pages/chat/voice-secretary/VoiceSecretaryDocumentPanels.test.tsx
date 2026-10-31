@@ -205,6 +205,71 @@ describe("Voice Secretary document panels", () => {
     expect(onSelectDocument).toHaveBeenCalledWith(documents[1]);
   });
 
+  it("shows the load failure instead of an empty document and offers a retry", async () => {
+    const retry = vi.fn();
+    await act(async () =>
+      root.render(
+        workspacePanel({
+          documentDraft: "",
+          documentError: "Cannot load the document",
+          onLoadLatestDocument: retry,
+        }),
+      ),
+    );
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Cannot load the document");
+    expect(host.querySelector("[data-voice-document-empty]")).toBeNull();
+    const retryButton = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === "Load latest",
+    );
+    expect(retryButton).toBeTruthy();
+    await act(async () => retryButton!.click());
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("does not offer Load latest for an unavailable document", async () => {
+    await act(async () =>
+      root.render(
+        workspacePanel({
+          documentConflict: "unavailable",
+          documentRemoteChanged: true,
+          documentEditing: true,
+          documentHasUnsavedEdits: true,
+        }),
+      ),
+    );
+    expect(
+      Array.from(host.querySelectorAll("button")).some(
+        (button) => button.textContent === "Load latest",
+      ),
+    ).toBe(false);
+    expect(
+      Array.from(host.querySelectorAll("button")).find(
+        (button) => button.textContent === "Save edits",
+      )?.disabled,
+    ).toBe(true);
+  });
+
+  it("only offers overwrite for a content conflict", async () => {
+    const overwrite = vi.fn();
+    await act(async () =>
+      root.render(workspacePanel({ documentConflict: "content", onOverwriteDocument: overwrite })),
+    );
+    const button = Array.from(host.querySelectorAll("button")).find(
+      (item) => item.textContent === "voiceSecretaryOverwriteWithDraft",
+    );
+    expect(button).toBeTruthy();
+    await act(async () => button!.click());
+    expect(overwrite).toHaveBeenCalledOnce();
+    await act(async () =>
+      root.render(workspacePanel({ documentConflict: "target", onOverwriteDocument: overwrite })),
+    );
+    expect(
+      Array.from(host.querySelectorAll("button")).some(
+        (item) => item.textContent === "voiceSecretaryOverwriteWithDraft",
+      ),
+    ).toBe(false);
+  });
+
   it("keeps status and the repo path in one plain meta line, with secondary actions in a menu", async () => {
     await act(async () => {
       root.render(workspacePanel());
@@ -248,6 +313,9 @@ function workspacePanel(
 ) {
   return (
     <VoiceSecretaryWorkspacePanel
+      documentError=""
+      documentConflict={null}
+      onOverwriteDocument={() => {}}
       activeDocumentPath="docs/voice/primary.md"
       activeDocumentWritePath="docs/voice/primary.md"
       actionBusy=""

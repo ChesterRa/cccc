@@ -2934,6 +2934,32 @@ rewrite an existing repository file: it MAY read the file into the document
 index or reject the request. An empty file MAY be created only when the target
 does not already exist.
 
+The document returned by a save, or by `assistant_voice_document_list` with a
+specific `document_path`, contains `content_target_id`. It is an opaque
+identifier for the resolved storage path, computed at response time; it is not
+an authorization credential. It may change when a Group's active scope or its
+local directory changes, even if the `scope_key` and file contents remain
+identical. The path-specific list response reads the returned content and
+digest from that target together. If the file is missing, it omits content,
+content digest and target id rather than projecting a stale indexed body.
+Broad document lists and assistant state do not supply a target id suitable for
+conditional saving; clients read the selected document first.
+
+If either `expected_content_sha256` or `expected_target_id` is supplied, both
+and `content` are required. They MUST be the 64-character hex values returned
+with the same loaded document content. While holding the Group mutation permit,
+the daemon compares the target to the resolved path and the digest to the
+current file bytes before replacement. A changed target MUST leave the file
+unchanged and return `voice_document_target_conflict`. For an unchanged target,
+a content mismatch or missing file MUST leave the file unchanged and return
+`voice_document_conflict` with `document_path` and `current_sha256` (null when
+missing). A caller that explicitly chooses to replace the observed version MAY
+retry with that returned digest and the same target id; another change causes
+another conflict. Calls without either field retain the legacy unconditional
+behavior and do not obtain this protection. This serializes participating writes
+within the same daemon and Group, not writes from independent processes or other
+Groups that do not share that permit.
+
 Args:
 ```ts
 {
@@ -2943,6 +2969,8 @@ Args:
   workspace_path?: string
   title?: string
   content?: string
+  expected_content_sha256?: string
+  expected_target_id?: string
   status?: "active" | "archived"
   create_new?: boolean
 }

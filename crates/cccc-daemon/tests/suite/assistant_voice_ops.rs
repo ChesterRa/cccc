@@ -1332,3 +1332,444 @@ fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     )
 }
 // Included by the crate-level integration test harness.
+
+#[test]
+fn voice_document_conditional_save_rejects_stale_disk_content() {
+    use sha2::{Digest, Sha256};
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let path = "docs/voice-secretary/t063-conflict.md";
+    let original = "    原文\n\n";
+    let first = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":original
+        }),
+    );
+    let doc = &first.result["document"];
+    let file = std::path::PathBuf::from(doc["absolute_path"].as_str().expect("path"));
+    let base = doc["content_sha256"].as_str().expect("base sha").to_owned();
+    let target = doc["content_target_id"]
+        .as_str()
+        .expect("target id")
+        .to_owned();
+    assert_eq!(base, format!("{:x}", Sha256::digest(original.as_bytes())));
+    let remote = "远端修改\n";
+    std::fs::write(&file, remote).expect("simulate another writer");
+    let remote_sha = format!("{:x}", Sha256::digest(remote.as_bytes()));
+    let stale = call(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":"local draft",
+            "expected_content_sha256":base,"expected_target_id":target
+        }),
+    );
+    assert!(!stale.ok, "a stale draft must not replace the new file");
+    let error = stale.error.expect("conflict");
+    assert_eq!(error.code, "voice_document_conflict");
+    assert_eq!(error.details["current_sha256"], remote_sha);
+    assert_eq!(std::fs::read_to_string(&file).expect("current"), remote);
+    let newer = "再次修改\n";
+    std::fs::write(&file, newer).expect("simulate a second change");
+    let second_sha = format!("{:x}", Sha256::digest(newer.as_bytes()));
+    let repeated = call(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":"local draft",
+            "expected_content_sha256":remote_sha,"expected_target_id":target
+        }),
+    );
+    assert!(!repeated.ok);
+    let repeated_error = repeated.error.expect("second conflict");
+    assert_eq!(repeated_error.code, "voice_document_conflict");
+    assert_eq!(repeated_error.details["current_sha256"], second_sha);
+    assert_eq!(std::fs::read_to_string(&file).expect("newer"), newer);
+    let accepted = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":"local draft",
+            "expected_content_sha256":second_sha,"expected_target_id":target
+        }),
+    );
+    assert_eq!(accepted.result["document"]["content"], "local draft");
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("saved"),
+        "local draft"
+    );
+}
+
+#[test]
+fn voice_document_conditional_save_rejects_missing_and_invalid_baselines() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let path = "docs/voice-secretary/t063-missing.md";
+    let first = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":"original"
+        }),
+    );
+    let file = std::path::PathBuf::from(
+        first.result["document"]["absolute_path"]
+            .as_str()
+            .expect("document absolute path"),
+    );
+    let base = first.result["document"]["content_sha256"]
+        .as_str()
+        .expect("document content SHA")
+        .to_owned();
+    let target = first.result["document"]["content_target_id"]
+        .as_str()
+        .expect("target id")
+        .to_owned();
+    for expected in ["", "bad", "x".repeat(64).as_str()] {
+        let rejected = call(
+            &home,
+            "assistant_voice_document_save",
+            json!({
+                "group_id":group_id,"document_path":path,"content":"overwritten",
+                "expected_content_sha256":expected,"expected_target_id":target
+            }),
+        );
+        assert!(!rejected.ok);
+        assert_eq!(
+            rejected.error.expect("rejected request error").code,
+            "invalid_args"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("read document"),
+            "original"
+        );
+    }
+    for args in [
+        json!({"expected_content_sha256":base}),
+        json!({"expected_target_id":target}),
+    ] {
+        let mut request = json!({"group_id":group_id,"document_path":path,"content":"overwritten"});
+        request
+            .as_object_mut()
+            .expect("request arguments object")
+            .extend(
+                args.as_object()
+                    .expect("additional arguments object")
+                    .clone(),
+            );
+        let rejected = call(&home, "assistant_voice_document_save", request);
+        assert_eq!(
+            rejected.error.expect("rejected request error").code,
+            "invalid_args"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("read document"),
+            "original"
+        );
+    }
+    std::fs::remove_file(&file).expect("remove document");
+    let rejected = call(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":"replacement",
+            "expected_content_sha256":base,"expected_target_id":target
+        }),
+    );
+    assert!(!rejected.ok);
+    let error = rejected.error.expect("rejected request error");
+    assert_eq!(error.code, "voice_document_conflict");
+    assert!(error.details["current_sha256"].is_null());
+    assert!(!file.exists());
+    let listed = ok(
+        &home,
+        "assistant_voice_document_list",
+        json!({"group_id":group_id,"document_path":path}),
+    );
+    let missing = &listed.result["documents"][0];
+    assert!(missing.get("content").is_none());
+    assert!(missing.get("content_sha256").is_none());
+    assert!(missing.get("content_target_id").is_none());
+    // Older callers remain able to create/update without the optional pair.
+    let legacy = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":""
+        }),
+    );
+    assert_eq!(legacy.result["document"]["content"], "");
+    assert_eq!(std::fs::read_to_string(&file).expect("read document"), "");
+}
+
+#[test]
+fn voice_document_conditional_save_reads_only_the_requested_indexed_document() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let a = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":"docs/voice-secretary/a.md","content":"A"
+        }),
+    );
+    let b = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":"docs/voice-secretary/b.md","content":"B"
+        }),
+    );
+    let b_file = std::path::PathBuf::from(
+        b.result["document"]["absolute_path"]
+            .as_str()
+            .expect("document absolute path"),
+    );
+    std::fs::write(b_file, [0xff, 0xfe]).expect("write invalid UTF-8");
+    let one = ok(
+        &home,
+        "assistant_voice_document_list",
+        json!({
+            "group_id":group_id,"document_path":"docs/voice-secretary/a.md"
+        }),
+    );
+    assert_eq!(one.result["documents"][0]["content"], "A");
+    assert_eq!(
+        one.result["documents"][0]["content_target_id"],
+        a.result["document"]["content_target_id"]
+    );
+    let all = call(
+        &home,
+        "assistant_voice_document_list",
+        json!({"group_id":group_id}),
+    );
+    assert!(
+        !all.ok,
+        "control: broad reconciliation still detects the unreadable body"
+    );
+}
+
+#[test]
+fn voice_document_conditional_save_serializes_simultaneous_drafts() {
+    use std::sync::{Arc, Barrier};
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let path = "docs/voice-secretary/t063-parallel.md";
+    let first = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":"original"
+        }),
+    );
+    let file = std::path::PathBuf::from(
+        first.result["document"]["absolute_path"]
+            .as_str()
+            .expect("document absolute path"),
+    );
+    let base = first.result["document"]["content_sha256"]
+        .as_str()
+        .expect("document content SHA")
+        .to_owned();
+    let target = first.result["document"]["content_target_id"]
+        .as_str()
+        .expect("target id")
+        .to_owned();
+    let start = Arc::new(Barrier::new(3));
+    let threads: Vec<_> = ["draft one", "draft two"]
+        .into_iter()
+        .map(|text| {
+            let home = home.clone();
+            let group_id = group_id.clone();
+            let base = base.clone();
+            let target = target.clone();
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                (
+                    text,
+                    call(
+                        &home,
+                        "assistant_voice_document_save",
+                        json!({
+                            "group_id":group_id,"document_path":path,"content":text,
+                            "expected_content_sha256":base,"expected_target_id":target
+                        }),
+                    ),
+                )
+            })
+        })
+        .collect();
+    start.wait();
+    let results: Vec<_> = threads
+        .into_iter()
+        .map(|thread| thread.join().expect("join concurrent save"))
+        .collect();
+    assert_eq!(
+        results.iter().filter(|(_, response)| response.ok).count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|(_, response)| !response.ok
+                && response
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| e.code == "voice_document_conflict"))
+            .count(),
+        1
+    );
+    let winner = results
+        .iter()
+        .find(|(_, response)| response.ok)
+        .expect("successful save")
+        .0;
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read document"),
+        winner
+    );
+}
+
+#[test]
+fn voice_document_conditional_save_rejects_scope_switch_even_when_bytes_match() {
+    let (temp, home, store, group_id) = enabled_voice_group();
+    let path = "docs/voice-secretary/t063-scope.md";
+    let original = "same content\n";
+    let first = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":original
+        }),
+    );
+    let file_a = std::path::PathBuf::from(
+        first.result["document"]["absolute_path"]
+            .as_str()
+            .expect("document absolute path"),
+    );
+    let base = first.result["document"]["content_sha256"]
+        .as_str()
+        .expect("document content SHA")
+        .to_owned();
+    let target = first.result["document"]["content_target_id"]
+        .as_str()
+        .expect("target id")
+        .to_owned();
+    let scope_a = store.load(&group_id).expect("load group").active_scope_key;
+    let scope_b_dir = temp.path().join("another-workspace");
+    std::fs::create_dir_all(scope_b_dir.join("docs/voice-secretary"))
+        .expect("create second scope directory");
+    let file_b = scope_b_dir.join(path);
+    std::fs::write(&file_b, original).expect("write second scope document");
+    let second = ok(
+        &home,
+        "attach",
+        json!({
+            "group_id":group_id,"path":scope_b_dir,"by":"user"
+        }),
+    );
+    assert_ne!(second.result["scope_key"], scope_a);
+    let stale = call(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":"draft for A",
+            "expected_content_sha256":base,"expected_target_id":target
+        }),
+    );
+    assert!(
+        !stale.ok,
+        "a draft from another scope must not be written here"
+    );
+    assert_eq!(
+        stale.error.expect("stale request error").code,
+        "voice_document_target_conflict"
+    );
+    assert_eq!(
+        std::fs::read_to_string(file_a).expect("read original document"),
+        original
+    );
+    assert_eq!(
+        std::fs::read_to_string(file_b).expect("read other document"),
+        original
+    );
+}
+
+#[test]
+fn voice_document_conditional_save_rejects_new_location_with_same_scope_key() {
+    let (temp, home, store, group_id) = enabled_voice_group();
+    let path = "docs/voice-secretary/t063-same-scope.md";
+    let original = "same content\n";
+    let first = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":original
+        }),
+    );
+    let file_a = std::path::PathBuf::from(
+        first.result["document"]["absolute_path"]
+            .as_str()
+            .expect("document absolute path"),
+    );
+    let base = first.result["document"]["content_sha256"]
+        .as_str()
+        .expect("document content SHA")
+        .to_owned();
+    let target_a = first.result["document"]["content_target_id"]
+        .as_str()
+        .expect("document target ID")
+        .to_owned();
+    let mut scope = store.load(&group_id).expect("load group").scopes[0].clone();
+    let scope_key = scope.scope_key.clone();
+    let scope_b = temp.path().join("same-key-other-workspace");
+    std::fs::create_dir_all(scope_b.join("docs/voice-secretary"))
+        .expect("create second scope directory");
+    let file_b = scope_b.join(path);
+    std::fs::write(&file_b, original).expect("write second scope document");
+    scope.url = scope_b.to_string_lossy().into_owned();
+    cccc_core::group_scope::attach(&store, &group_id, scope).expect("attach second scope");
+    assert_eq!(
+        store.load(&group_id).expect("load group").active_scope_key,
+        scope_key
+    );
+    let listed = ok(
+        &home,
+        "assistant_voice_document_list",
+        json!({"group_id":group_id,"document_path":path}),
+    );
+    let target_b = listed.result["documents"][0]["content_target_id"]
+        .as_str()
+        .expect("document target ID");
+    assert_ne!(target_a, target_b);
+    let index = ok(
+        &home,
+        "assistant_state",
+        json!({"group_id":group_id,"assistant_id":"voice_secretary"}),
+    );
+    assert!(
+        index.result["documents"][0]
+            .get("content_target_id")
+            .is_none()
+    );
+    let stale = call(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,"document_path":path,"content":"draft for A",
+            "expected_content_sha256":base,"expected_target_id":target_a
+        }),
+    );
+    assert!(!stale.ok);
+    assert_eq!(
+        stale.error.expect("stale request error").code,
+        "voice_document_target_conflict"
+    );
+    assert_eq!(
+        std::fs::read_to_string(file_a).expect("read original document"),
+        original
+    );
+    assert_eq!(
+        std::fs::read_to_string(file_b).expect("read other document"),
+        original
+    );
+}
