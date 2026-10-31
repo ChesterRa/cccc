@@ -75,3 +75,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* On a short phone the one-time offer must leave room to read the request. */
+@media (max-width: 767px) and (max-height: 680px) {
+  :root[data-ui-style="lcd"] [data-notification-prompt] > div {
+    padding-block: 0.375rem;
+    column-gap: 0.5rem;
+  }
+
+  :root[data-ui-style="lcd"] [data-notification-copy] {
+    font-size: 0.8125rem;
+    line-height: 1.35;
+  }
+
+  :root[data-ui-style="lcd"] [data-notification-copy] > svg {
+    display: none;
+  }
+}

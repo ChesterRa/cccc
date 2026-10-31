@@ -965,6 +965,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const effectiveHighlightEventId = replyJumpHighlightId || highlightEventId;
   const showHistoryStatus = isLoadingHistory || (!hasMoreHistory && !isLoadingHistory);
   const nonVirtualTopMargin = getNonVirtualMessageListTopMargin({ topInset });
+  const scrollLatestLabel = t("scrollToBottom");
+  const unreadDisplayCount = chatUnreadCount > 99 ? "99+" : String(chatUnreadCount);
+  const unreadLabel =
+    chatUnreadCount > 0
+      ? t("scrollToBottomUnread", { count: chatUnreadCount, displayCount: unreadDisplayCount })
+      : "";
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -980,7 +986,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           scrollPaddingTop: topInset || undefined,
         }}
         onKeyDownCapture={cancelForcedFollowOnKey}
-        onFocusCapture={cancelPendingReplyFollow}
+        onFocusCapture={cancelForcedFollowForUserScroll}
         onWheel={cancelForcedFollowForUserScroll}
         onPointerDown={(event) => {
           if (event.target === event.currentTarget) cancelForcedFollowForUserScroll();
@@ -1070,24 +1076,26 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         )}
       </div>
 
-      {/* Scroll Button — positioned outside scrollable container for correct viewport anchoring */}
+      {/* This action occupies its own row, so it cannot cover message text or controls. */}
       {!readOnly && showScrollButton && (
         <button
-          className="glass-panel absolute bottom-6 right-5 z-30 rounded-full p-3 shadow-xl transition-all duration-200 hover:shadow-2xl hover:scale-105 active:scale-95 animate-scale-in text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+          type="button"
+          data-scroll-latest
           onClick={() => {
             cancelPendingReplyFollow();
             anchorRestoration.cancel();
             scrollToBottom({ force: true });
             onScrollButtonClick();
           }}
-          aria-label={t("scrollToBottom", { defaultValue: "Scroll to bottom" })}
+          aria-label={unreadLabel ? `${scrollLatestLabel} · ${unreadLabel}` : scrollLatestLabel}
         >
-          <ArrowDownIcon className="w-5 h-5" aria-hidden="true" />
-          {chatUnreadCount > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-indigo-500 px-1 text-[10px] font-bold text-white shadow-sm">
-              {chatUnreadCount > 99 ? "99+" : chatUnreadCount}
+          <ArrowDownIcon className="h-4 w-4" aria-hidden="true" />
+          <span>{scrollLatestLabel}</span>
+          {unreadLabel ? (
+            <span data-scroll-latest-count title={unreadLabel} aria-hidden="true">
+              {unreadDisplayCount}
             </span>
-          )}
+          ) : null}
         </button>
       )}
     </div>

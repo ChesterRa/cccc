@@ -182,3 +182,38 @@ it("lists the hidden members in +N and opens the chosen one", async () => {
   expect(mocks.open).toHaveBeenCalledWith("gamma");
   expect(document.body.querySelector(".lcd-members-popover")).toBeNull();
 });
+
+it("keeps Add outside the scrolling member strip on phones, and preserves the desktop placement", async () => {
+  const renderDock = async (isSmallScreen: boolean, readOnly = false) => {
+    await act(async () => {
+      root.render(
+        <RuntimeDock
+          groupId="g1"
+          runtimeActors={[actor("alpha"), actor("beta"), actor("gamma")]}
+          liveWorkCards={[]}
+          isDark={false}
+          isSmallScreen={isSmallScreen}
+          readOnly={readOnly}
+          actorStatusProvisional={false}
+          onAddAgent={mocks.add}
+          onOpenRuntimeActor={mocks.open}
+        />,
+      );
+    });
+  };
+  await renderDock(true);
+  let strip = host.querySelector<HTMLElement>("[data-runtime-dock-strip]")!;
+  let add = host.querySelector<HTMLButtonElement>("[data-lcd-dock-add]")!;
+  expect(strip.contains(add)).toBe(false);
+  expect(strip.querySelectorAll("[data-lcd-dock-button]")).toHaveLength(3);
+  await act(async () => add.click());
+  expect(mocks.add).toHaveBeenCalledOnce();
+
+  await renderDock(false);
+  strip = host.querySelector<HTMLElement>("[data-runtime-dock-strip]")!;
+  add = host.querySelector<HTMLButtonElement>("[data-lcd-dock-add]")!;
+  expect(strip.contains(add)).toBe(true);
+
+  await renderDock(true, true);
+  expect(host.querySelector("[data-lcd-dock-add]")).toBeNull();
+});

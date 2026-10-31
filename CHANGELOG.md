@@ -17,6 +17,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - OpenCode actors show the official OpenCode mark, unchanged from OpenCode's repository; its MIT license notice ships with the Web assets.
 - License notices for the Bootstrap Icons, LobeHub Icons, Pi, Cline and Pixelarticons artwork used in the Web interface now ship with the Web assets, next to the existing OpenCode notice. The unused Claude PNG logo is removed; Claude actors keep the same icon.
 - Short times such as "5m ago" and "Oct 23" in the Agents tab and agent state, the context panel, the task editor, message search, Inbox, the Web Model panel and headless traces now follow the interface language, for example 5分钟前 in Chinese and 5分前 in Japanese. English keeps its familiar short forms.
+- The chat's floating ↓ button is replaced by a **Back to latest** row below the messages, so it no longer covers message text or controls. When the Group has unread chat messages, the row shows their number, up to 99+; the count is the Group's own and can include messages outside the current filter. Focusing an item in the message list cancels a pending forced jump to the bottom, so the browser can bring it into view; following new messages while you stay at the bottom works as before.
+- On phones, the button for adding an actor stays in place beside the members instead of scrolling away with them.
 
 ### Fixed
 

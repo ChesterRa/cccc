@@ -61,3 +61,52 @@
     transition: none;
   }
 }
+/* Back-to-latest is a row below the log, never an overlay over message content. */
+[data-scroll-latest] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2rem;
+  border-top: 1px solid var(--color-border-primary);
+  background: var(--glass-panel-bg);
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+[data-scroll-latest]:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+[data-scroll-latest-count] {
+  min-width: 1.25rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: #6366f1;
+  color: white;
+  font-variant-numeric: tabular-nums;
+}
+
+/* New messages use the same neutral filled mark as unread Mail. The waiting
+   colour is reserved for requests that need the user's answer. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-scroll-latest-count] {
+  border-radius: 0;
+  background: var(--lcd-ink);
+  color: var(--lcd-bg);
+}
+
+@media (hover: hover) {
+  [data-scroll-latest]:hover {
+    background: var(--glass-tab-bg-hover);
+    color: var(--color-text-primary);
+  }
+}
+
+@media (pointer: coarse) {
+  [data-scroll-latest] {
+    min-height: 44px;
+  }
+}

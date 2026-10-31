@@ -427,6 +427,36 @@ export function RuntimeDock({
     );
   }
 
+  const addButton =
+    !readOnly && onAddAgent ? (
+      <button
+        type="button"
+        onClick={onAddAgent}
+        className={classNames(
+          "group/add-agent relative flex h-[50px] w-[50px] flex-shrink-0 items-center justify-center rounded-full shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35 active:scale-[0.97]",
+          "bg-transparent hover:scale-[1.02]",
+          isSmallScreen && "mb-1",
+        )}
+        aria-label={t("addAgent", { defaultValue: "Add an agent" })}
+        title={t("addAgent", { defaultValue: "Add an agent" })}
+        data-lcd-dock-add
+      >
+        <span
+          aria-hidden="true"
+          className={classNames(
+            "relative z-[1] flex items-center justify-center rounded-full border shadow-[0_18px_34px_-22px_rgba(15,23,42,0.4)] transition-[transform,box-shadow,border-color,background-color,color] duration-200",
+            // Classic matches the ring's outer size; LCD tiles have no ring.
+            lcd && isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]",
+            isDark
+              ? "border-white/10 bg-slate-900 text-slate-100 group-hover/add-agent:border-white/16 group-hover/add-agent:bg-slate-950"
+              : "border-black/10 bg-white text-[rgb(35,36,37)] group-hover/add-agent:border-black/14 group-hover/add-agent:bg-white/96",
+          )}
+        >
+          <PlusIcon size={18} strokeWidth={2.1} />
+        </span>
+      </button>
+    ) : null;
+
   return (
     <div className="pointer-events-none relative z-30 px-3 md:px-4 md:pt-2.5">
       <div className="mx-auto flex w-full max-w-[1400px] justify-center">
@@ -445,55 +475,38 @@ export function RuntimeDock({
           />
           <div
             className={classNames(
-              "flex items-end opacity-[0.72] transition-opacity delay-[3000ms] duration-200 ease-out group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0",
-              isSmallScreen
-                ? "max-w-[calc(100vw-2.5rem)] gap-2 overflow-x-auto px-2 py-1 scrollbar-hide"
-                : "gap-2",
+              "flex min-w-0 max-w-full items-end gap-2",
+              // Classic fades when idle; LCD tile outlines need full contrast.
+              lcd
+                ? "opacity-100"
+                : "opacity-[0.72] transition-opacity delay-[3000ms] duration-200 ease-out group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0",
             )}
-            data-runtime-dock-strip
           >
-            <div className="relative flex items-end gap-2">
-              {items.map((item) => (
-                <RuntimeDockActorButton
-                  key={item.actorId}
-                  groupId={groupId}
-                  item={item}
-                  isDark={isDark}
-                  isSmallScreen={isSmallScreen}
-                  isInspectorOpen={activeRuntimeActorId === item.actorId}
-                  actorStatusProvisional={actorStatusProvisional}
-                  onOpenInspector={onOpenRuntimeActor}
-                />
-              ))}
+            <div
+              className={classNames(
+                "flex min-w-0 items-end gap-2",
+                isSmallScreen ? "overflow-x-auto px-2 py-1 scrollbar-hide" : "",
+              )}
+              data-runtime-dock-strip
+            >
+              <div className="relative flex items-end gap-2">
+                {items.map((item) => (
+                  <RuntimeDockActorButton
+                    key={item.actorId}
+                    groupId={groupId}
+                    item={item}
+                    isDark={isDark}
+                    isSmallScreen={isSmallScreen}
+                    isInspectorOpen={activeRuntimeActorId === item.actorId}
+                    actorStatusProvisional={actorStatusProvisional}
+                    onOpenInspector={onOpenRuntimeActor}
+                  />
+                ))}
+              </div>
+              {!isSmallScreen ? addButton : null}
             </div>
-
-            {!readOnly && onAddAgent ? (
-              <button
-                type="button"
-                onClick={onAddAgent}
-                className={classNames(
-                  "group/add-agent relative flex h-[50px] w-[50px] flex-shrink-0 items-center justify-center rounded-full shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35 active:scale-[0.97]",
-                  "bg-transparent hover:scale-[1.02]",
-                )}
-                aria-label={t("addAgent", { defaultValue: "Add an agent" })}
-                title={t("addAgent", { defaultValue: "Add an agent" })}
-                data-lcd-dock-add
-              >
-                <span
-                  aria-hidden="true"
-                  className={classNames(
-                    "relative z-[1] flex items-center justify-center rounded-full border shadow-[0_18px_34px_-22px_rgba(15,23,42,0.4)] transition-[transform,box-shadow,border-color,background-color,color] duration-200",
-                    // Classic matches the ring's outer size; LCD tiles have no ring.
-                    lcd && isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]",
-                    isDark
-                      ? "border-white/10 bg-slate-900 text-slate-100 group-hover/add-agent:border-white/16 group-hover/add-agent:bg-slate-950"
-                      : "border-black/10 bg-white text-[rgb(35,36,37)] group-hover/add-agent:border-black/14 group-hover/add-agent:bg-white/96",
-                  )}
-                >
-                  <PlusIcon size={18} strokeWidth={2.1} />
-                </span>
-              </button>
-            ) : null}
+            {/* On phones only the members scroll; Add stays reachable. */}
+            {isSmallScreen ? addButton : null}
           </div>
         </div>
       </div>

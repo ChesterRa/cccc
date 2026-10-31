@@ -1007,12 +1007,6 @@
   transition: none;
 }
 
-/* The classic dock fades until hovered; the tiles' lines must stay at full contrast. */
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-runtime-dock-strip] {
-  opacity: 1;
-  transition: none;
-}
-
 /* Tile lines, shared by header tiles and the phone dock: thin when idle, solid
    when busy, double when it needs attention; stopped is dimmed, as in the classic
    dock. Rings sit outside the tile so the logo keeps its size. */

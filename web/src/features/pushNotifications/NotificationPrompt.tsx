@@ -32,10 +32,15 @@ export function NotificationPrompt({
     };
   }, []);
   return (
-    <div ref={rootRef} className="flex-shrink-0 px-2 pb-1.5 sm:px-2.5" data-lcd-scope>
+    <div
+      ref={rootRef}
+      className="flex-shrink-0 px-2 pb-1.5 sm:px-2.5"
+      data-lcd-scope
+      data-notification-prompt
+    >
       {/* The buttons move below the text when both do not fit on one line. */}
       <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-end gap-x-3 gap-y-1.5 rounded-lg border border-[var(--color-border-primary)] bg-[var(--color-bg-elevated)] px-3 py-2 text-sm leading-5 text-[var(--color-text-primary)] shadow-sm">
-        <p className="flex min-w-0 flex-[1_1_16rem] items-start gap-2.5">
+        <p className="flex min-w-0 flex-[1_1_16rem] items-start gap-2.5" data-notification-copy>
           <BellIcon size={18} className="mt-px shrink-0" aria-hidden="true" />
           <span className="min-w-0">
             <Trans
