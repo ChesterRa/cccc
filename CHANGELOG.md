@@ -51,6 +51,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Relay keeps the source message and form reachable on short screens, and long recipient IDs can wrap within the dialog. When there is room on a narrow screen, the selected recipient is visible alongside the destination when Relay opens; the source remains reachable by scrolling back.
 - Reselecting the current destination no longer clears its loaded members. When a selection includes individual members and the destination changes, Relay clears the selection and asks for a new choice before sending; group selectors remain selected when no individual members were selected.
 - Relay now describes an empty selection as the destination group's default recipients. Reset still uses that default, which may be the foreman or a broadcast, according to the destination group's settings. An initial Relay still explicitly selects `@all`.
+- On screens narrower than 640px, a presentation's **Quote** key and its snapshot key now sit in the row of actions above the card instead of floating over its lower corner, where they could hide part of an image or web page. In a tight row Quote shows only its icon, and the viewer's icon keys keep a 44px touch size at larger text sizes, so the action keys can stay on one line.
+- The presentation viewer's "Quoting…" text is now translated into Chinese and Japanese.
 
 ## [0.4.46]
 

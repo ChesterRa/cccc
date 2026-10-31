@@ -309,8 +309,10 @@ function PresentationViewer({
         ? t("presentationCompareSnapshotAction", { defaultValue: "Compare with snapshot" })
         : t("presentationOpenQuotedSnapshotAction", { defaultValue: "Open quoted snapshot" })
       : t("presentationHideSnapshotAction", { defaultValue: "Hide snapshot" });
-  const iconButtonClassName = `${buttonVariants({ variant: "ghost", size: "iconRail" })} max-sm:h-11 max-sm:w-11`;
-  const destructiveIconButtonClassName = `${buttonVariants({ variant: "destructive", size: "iconRail" })} max-sm:h-11 max-sm:w-11 max-sm:!border-transparent max-sm:!bg-transparent max-sm:!shadow-none`;
+  // Phone keys are a fixed 44px touch target, like the header's fixed keys, so a larger text
+  // size does not push the details row onto a second line.
+  const iconButtonClassName = `${buttonVariants({ variant: "ghost", size: "iconRail" })} max-sm:h-[44px] max-sm:w-[44px]`;
+  const destructiveIconButtonClassName = `${buttonVariants({ variant: "destructive", size: "iconRail" })} max-sm:h-[44px] max-sm:w-[44px] max-sm:!border-transparent max-sm:!bg-transparent max-sm:!shadow-none`;
   const copiedIconButtonClassName = `${iconButtonClassName} text-[var(--color-accent-success)]`;
   const refreshActionLabel = t("presentationRefreshAction", { defaultValue: "Refresh" });
   const copyActionLabel = copiedReference
@@ -647,6 +649,94 @@ function PresentationViewer({
     setSnapshotMobileTab("live");
   };
 
+  // The chat keys float over the card's lower corner, except in the window on phones, where
+  // they would cover what the card shows: there they join the details row, and the snapshot
+  // key keeps only its icon and pressed state.
+  const canQuote = !readOnly && !!card && !!onQuoteInChat;
+  const renderSnapshotKey = (inDetails: boolean) =>
+    currentSnapshotUrl ? (
+      <button
+        type="button"
+        data-lcd-key
+        data-presentation-action
+        aria-pressed={snapshotViewMode !== "hidden"}
+        onClick={handleToggleSnapshotView}
+        className={classNames(
+          "inline-flex items-center border transition-colors",
+          inDetails
+            ? "h-[44px] w-[44px] justify-center rounded-lg"
+            : "pointer-events-auto h-10 gap-2 rounded-full px-3 text-sm font-medium shadow-lg backdrop-blur-xl",
+          snapshotViewMode !== "hidden"
+            ? isDark
+              ? "border-white/12 bg-white/[0.08] text-white hover:bg-white/[0.12]"
+              : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] hover:bg-[rgb(240,240,240)]"
+            : isDark
+              ? "border-white/10 bg-slate-900/78 text-slate-200 hover:bg-slate-900"
+              : "border-black/10 bg-white/88 text-gray-700 hover:bg-white",
+        )}
+        aria-label={snapshotToggleLabel}
+        title={snapshotToggleLabel}
+      >
+        <ImageIcon aria-hidden="true" className="h-4 w-4" strokeWidth={1.5} />
+        {inDetails ? null : <span>{snapshotToggleLabel}</span>}
+      </button>
+    ) : null;
+  // In the details row the Quote label gives way to its icon where the row is too narrow for it
+  // beside the snapshot key and the three 44px keys, even at 125% text. While quoting, the row
+  // key keeps its label, which a longer one could rewrap under the reader's finger, and shows a
+  // spinner in place of its icon, with the pending text as its name.
+  const quoteIconOnly = currentSnapshotUrl
+    ? {
+        key: "@max-[318px]/details:w-[44px] @max-[318px]/details:justify-center @max-[318px]/details:px-0",
+        label: "@max-[318px]/details:hidden",
+      }
+    : {
+        key: "@max-[270px]/details:w-[44px] @max-[270px]/details:justify-center @max-[270px]/details:px-0",
+        label: "@max-[270px]/details:hidden",
+      };
+  const renderQuoteKey = (inDetails: boolean) => {
+    const pendingLabel = t("presentationQuotePendingAction", { defaultValue: "Quoting..." });
+    const name =
+      inDetails && quotePending
+        ? pendingLabel
+        : t("presentationQuoteInChatAction", { defaultValue: "Quote in chat" });
+    return (
+      <button
+        type="button"
+        data-lcd-key
+        data-presentation-action
+        onClick={() => {
+          void handleQuoteInChat();
+        }}
+        disabled={quotePending}
+        className={classNames(
+          "inline-flex items-center gap-2 border text-sm font-medium transition-colors",
+          inDetails
+            ? `h-[44px] rounded-lg px-3 ${quoteIconOnly.key}`
+            : "pointer-events-auto h-10 rounded-full px-3.5 shadow-lg backdrop-blur-xl",
+          "border-[var(--color-border-primary)] bg-[var(--glass-panel-bg)] text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]",
+          quotePending ? "opacity-70" : "",
+        )}
+        aria-label={name}
+        title={name}
+      >
+        {inDetails && quotePending ? (
+          <span
+            aria-hidden="true"
+            className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none"
+          />
+        ) : (
+          <MessageSquareTextIcon aria-hidden="true" className="h-4 w-4" strokeWidth={1.5} />
+        )}
+        <span className={inDetails ? quoteIconOnly.label : undefined}>
+          {quotePending && !inDetails
+            ? pendingLabel
+            : t("presentationQuoteAction", { defaultValue: "Quote" })}
+        </span>
+      </button>
+    );
+  };
+
   const snapshotPanel = currentSnapshotUrl ? (
     <div
       className={classNames(
@@ -854,7 +944,7 @@ function PresentationViewer({
         <div
           data-presentation-details
           className={classNames(
-            "flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs",
+            "@container/details flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs",
             isDark ? "border-white/10 text-slate-400" : "border-black/10 text-gray-600",
           )}
         >
@@ -911,6 +1001,12 @@ function PresentationViewer({
                   />
                 ) : null}
                 <div className="ml-auto flex items-center gap-1.5 max-sm:gap-1">
+                  {canQuote ? (
+                    <div className="flex items-center gap-1 sm:hidden">
+                      {renderQuoteKey(true)}
+                      {renderSnapshotKey(true)}
+                    </div>
+                  ) : null}
                   {copyReferenceValue ? (
                     <button
                       type="button"
@@ -1016,7 +1112,7 @@ function PresentationViewer({
               "h-full min-h-0",
               useOuterEvidenceScroll ? "overflow-auto" : "overflow-hidden",
               !useOuterEvidenceScroll && card ? "flex flex-col" : "",
-              useOuterEvidenceScroll && !readOnly && card && onQuoteInChat ? "pb-20" : "",
+              useOuterEvidenceScroll && canQuote ? (isModal ? "sm:pb-20" : "pb-20") : "",
               showSnapshotCompare && snapshotMobileTab !== "live" ? "hidden lg:block" : "",
             )}
           >
@@ -1127,55 +1223,15 @@ function PresentationViewer({
             </div>
           </div>
         ) : null}
-        {!readOnly && card && onQuoteInChat ? (
-          <div className="pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-5 z-10 flex items-center gap-2">
-            {currentSnapshotUrl ? (
-              <button
-                type="button"
-                data-lcd-key
-                data-presentation-action
-                aria-pressed={snapshotViewMode !== "hidden"}
-                onClick={handleToggleSnapshotView}
-                className={classNames(
-                  "pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border px-3 text-sm font-medium shadow-lg backdrop-blur-xl transition-colors",
-                  snapshotViewMode !== "hidden"
-                    ? isDark
-                      ? "border-white/12 bg-white/[0.08] text-white hover:bg-white/[0.12]"
-                      : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] hover:bg-[rgb(240,240,240)]"
-                    : isDark
-                      ? "border-white/10 bg-slate-900/78 text-slate-200 hover:bg-slate-900"
-                      : "border-black/10 bg-white/88 text-gray-700 hover:bg-white",
-                )}
-                aria-label={snapshotToggleLabel}
-                title={snapshotToggleLabel}
-              >
-                <ImageIcon aria-hidden="true" className="h-4 w-4" strokeWidth={1.5} />
-                <span>{snapshotToggleLabel}</span>
-              </button>
-            ) : null}
-            <button
-              type="button"
-              data-lcd-key
-              data-presentation-action
-              onClick={() => {
-                void handleQuoteInChat();
-              }}
-              disabled={quotePending}
-              className={classNames(
-                "pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border px-3.5 text-sm font-medium shadow-lg backdrop-blur-xl transition-colors",
-                "border-[var(--color-border-primary)] bg-[var(--glass-panel-bg)] text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]",
-                quotePending ? "opacity-70" : "",
-              )}
-              aria-label={t("presentationQuoteInChatAction", { defaultValue: "Quote in chat" })}
-              title={t("presentationQuoteInChatAction", { defaultValue: "Quote in chat" })}
-            >
-              <MessageSquareTextIcon aria-hidden="true" className="h-4 w-4" strokeWidth={1.5} />
-              <span>
-                {quotePending
-                  ? t("presentationQuotePendingAction", { defaultValue: "Quoting..." })
-                  : t("presentationQuoteAction", { defaultValue: "Quote" })}
-              </span>
-            </button>
+        {canQuote ? (
+          <div
+            className={classNames(
+              "pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-5 z-10 flex items-center gap-2",
+              isModal ? "max-sm:hidden" : "",
+            )}
+          >
+            {renderSnapshotKey(false)}
+            {renderQuoteKey(false)}
           </div>
         ) : null}
       </div>

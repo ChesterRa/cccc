@@ -671,6 +671,7 @@
   "presentationReplyInChatAction": "チャットで返信",
   "presentationQuoteAction": "引用",
   "presentationQuoteInChatAction": "チャットに引用",
+  "presentationQuotePendingAction": "引用中…",
   "presentationQuotedViewLabel": "引用中のビュー",
   "presentationRemoveQuotedView": "引用ビューを削除",
   "presentationCompareSnapshotAction": "スナップショットと比較",

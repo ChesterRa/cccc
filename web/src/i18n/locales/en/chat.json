@@ -671,6 +671,7 @@
   "presentationReplyInChatAction": "Reply in chat",
   "presentationQuoteAction": "Quote",
   "presentationQuoteInChatAction": "Quote in chat",
+  "presentationQuotePendingAction": "Quoting…",
   "presentationQuotedViewLabel": "Quoted view",
   "presentationRemoveQuotedView": "Remove quoted view",
   "presentationCompareSnapshotAction": "Compare with snapshot",

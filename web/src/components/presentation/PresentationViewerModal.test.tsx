@@ -1,10 +1,15 @@
 // @vitest-environment happy-dom
 import type { Window as HappyWindow } from "happy-dom";
-import { act } from "react";
+import { act, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PresentationViewerModal, PresentationViewerSplitPanel } from "./PresentationViewerModal";
 import type { GroupPresentation } from "../../types";
+
+type ViewerExtras = Pick<
+  ComponentProps<typeof PresentationViewerSplitPanel>,
+  "onQuoteInChat" | "focusRef"
+>;
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en" } }),
@@ -25,6 +30,7 @@ describe("Presentation refresh", () => {
     slotId = "slot-1",
     revision = "one",
     cardType: "image" | "pdf" | "web_preview" = "image",
+    extra: ViewerExtras = {},
   ) {
     const presentation: GroupPresentation = {
       v: 1,
@@ -49,7 +55,7 @@ describe("Presentation refresh", () => {
         },
       })),
     };
-    const props = { isDark: false, groupId, slotId, presentation, onClose: vi.fn() };
+    const props = { isDark: false, groupId, slotId, presentation, onClose: vi.fn(), ...extra };
     await act(async () =>
       root.render(
         split ? (
@@ -148,6 +154,43 @@ describe("Presentation refresh", () => {
     const close = host.ownerDocument.querySelectorAll('[aria-label="presentationCloseViewer"]');
     expect(close).toHaveLength(1);
   });
+
+  it.each([false, true])(
+    "moves the chat keys off the card into the window's details row on phones (split=%s)",
+    async (split) => {
+      const onQuoteInChat = vi.fn();
+      await render(split, "g", "slot-1", "one", "image", {
+        onQuoteInChat,
+        focusRef: {
+          kind: "presentation_ref",
+          slot_id: "slot-1",
+          card_type: "image",
+          snapshot: { path: "state/blobs/snapshot.png" },
+        },
+      });
+      const keys = (name: string) => [
+        ...host.ownerDocument.querySelectorAll<HTMLButtonElement>(`[aria-label="${name}"]`),
+      ];
+      const inDetails = (key: Element) => !!key.closest("[data-presentation-details]");
+      const quote = "presentationQuoteInChatAction";
+      // The floating keys stay on wider screens and in the side panel.
+      const floating = keys(quote).find((key) => !inDetails(key))!;
+      expect(floating.parentElement!.classList.contains("max-sm:hidden")).toBe(!split);
+      expect(keys(quote).filter(inDetails)).toHaveLength(split ? 0 : 1);
+      if (split) return;
+
+      const row = keys(quote).find(inDetails)!.parentElement!;
+      expect(row.classList.contains("sm:hidden")).toBe(true);
+      const snapshotKey = keys("presentationCompareSnapshotAction").find(inDetails)!;
+      expect(snapshotKey.parentElement).toBe(row);
+      expect(snapshotKey.textContent).toBe("");
+      await act(async () => snapshotKey.click());
+      const hide = keys("presentationHideSnapshotAction").filter(inDetails);
+      expect(hide.map((key) => key.getAttribute("aria-pressed"))).toEqual(["true"]);
+      await act(async () => keys(quote).find(inDetails)!.click());
+      expect(onQuoteInChat).toHaveBeenCalledWith(expect.objectContaining({ slotId: "slot-1" }));
+    },
+  );
 
   it("lets a slow refresh finish instead of restarting it on every polling tick", async () => {
     await render();

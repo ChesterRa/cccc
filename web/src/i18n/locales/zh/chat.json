@@ -671,6 +671,7 @@
   "presentationReplyInChatAction": "在聊天中回复",
   "presentationQuoteAction": "引用",
   "presentationQuoteInChatAction": "引用到聊天",
+  "presentationQuotePendingAction": "正在引用…",
   "presentationQuotedViewLabel": "已引用视图",
   "presentationRemoveQuotedView": "移除已引用视图",
   "presentationCompareSnapshotAction": "对比快照",
