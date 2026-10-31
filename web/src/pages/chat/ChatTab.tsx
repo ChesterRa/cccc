@@ -1130,7 +1130,9 @@ export function ChatTab({
                             !reading.hidden
                               ? isSmallScreen
                                 ? "pb-1"
-                                : "pb-[calc(4rem_-_10px)]"
+                                : lcd
+                                  ? "pb-[calc(4rem_-_10px)]"
+                                  : undefined
                               : undefined
                           }
                           scrollRef={scrollRef}
@@ -1195,7 +1197,7 @@ export function ChatTab({
                       <div
                         className={classNames(
                           "pointer-events-none z-20",
-                          isSmallScreen ? "shrink-0" : "absolute inset-x-0 bottom-2",
+                          isSmallScreen || !lcd ? "shrink-0" : "absolute inset-x-0 bottom-2",
                           (hideDockForKeyboard || reading.hidden) && "hidden",
                         )}
                         data-runtime-dock-keyboard-hidden={hideDockForKeyboard || undefined}

@@ -1,23 +1,10 @@
 import { useTranslation } from "react-i18next";
 
 import { useSseErrorDetailText } from "../../hooks/useSseErrorDetailText";
-import type { GroupStatus, GroupStatusKey } from "../../utils/groupStatus";
+import type { GroupStatus } from "../../utils/groupStatus";
 import { GROUP_STATUS_DOT_BASE_CLASS, GROUP_STATUS_LABEL_KEYS } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
 import { useLcdStyle } from "../../utils/uiStyle";
-
-/**
- * LCD preview: the same shapes as member states. Offline shares the stopped shape,
- * as it shares the dot. Paused is drawn in CSS as two bars, which no font
- * renders legibly at this size.
- */
-const LCD_GROUP_SYMBOLS: Record<GroupStatusKey, string> = {
-  run: "\u25CF",
-  idle: "\u25CB",
-  paused: "",
-  offline: "\u25A1",
-  stop: "\u25A1",
-};
 
 interface GroupStatusIndicatorProps {
   status: GroupStatus;
@@ -51,12 +38,11 @@ export function GroupStatusIndicator({
       : "bg-rose-500"
     : status.dotClass;
 
-  const lcdSymbol = interrupted
-    ? connectionStatus === "connecting"
-      ? "\u2026"
-      : "\u00D7"
-    : LCD_GROUP_SYMBOLS[status.key];
-  const lcdShape = !interrupted && status.key === "paused" ? "paused" : undefined;
+  const lcdSymbol = interrupted ? (connectionStatus === "connecting" ? "\u2026" : "\u00D7") : "";
+  // LCD preview: the screen has no green, so each state has its own shape, drawn in
+  // CSS from this key rather than taken from a font (fonts differ; some draw U+25B6
+  // as emoji). Offline is a dash: nothing else uses it, and no one reads it as a checkbox.
+  const lcdShape = interrupted ? undefined : status.key;
 
   if (variant === "dot" && lcd) {
     return (

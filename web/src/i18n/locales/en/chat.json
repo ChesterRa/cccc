@@ -584,6 +584,7 @@
   "closeSearchModal": "Close search modal",
   "to": "To",
   "senderPerspective": "Sender perspective",
+  "agentStateTooltipLabel": "View agent state",
   "presentationTitle": "Presentation",
   "presentationOpenDockAction": "Open presentation",
   "presentationMobileOpenHighlighted": "Open Presentation, slot {{index}}: {{title}}",

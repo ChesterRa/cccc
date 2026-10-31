@@ -11,8 +11,10 @@ const WEB_ROOT = resolve(TEST_DIR, "../..");
 const PUBLIC_ROOT = resolve(WEB_ROOT, "public");
 
 describe("runtimeLogos", () => {
-  it("covers every built-in supported runtime except custom", () => {
-    const expected = SUPPORTED_RUNTIMES.filter((runtime) => runtime !== "custom").sort();
+  it("covers every built-in runtime with a file except the inline Claude logo", () => {
+    const expected = SUPPORTED_RUNTIMES.filter(
+      (runtime) => runtime !== "custom" && runtime !== "claude",
+    ).sort();
     const actual = Object.keys(RUNTIME_LOGO_FILE_BY_RUNTIME).sort();
     expect(actual).toEqual(expected);
   });
@@ -26,7 +28,8 @@ describe("runtimeLogos", () => {
     }
   });
 
-  it("returns null for custom or unknown runtimes", () => {
+  it("returns null for the inline Claude logo and custom or unknown runtimes", () => {
+    expect(getRuntimeLogoSrc("claude")).toBeNull();
     expect(getRuntimeLogoSrc("custom")).toBeNull();
     expect(getRuntimeLogoSrc("unknown-runtime")).toBeNull();
     expect(getRuntimeLogoSrc("")).toBeNull();

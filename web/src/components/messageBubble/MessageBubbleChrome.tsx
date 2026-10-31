@@ -26,6 +26,7 @@ export function MessageFooter({
   canReply,
   eventId,
   event,
+  showActions = true,
 }: {
   readOnly?: boolean;
   obligationSummary: { replied: number; cancelled: number; total: number } | null;
@@ -47,6 +48,8 @@ export function MessageFooter({
   canReply: boolean;
   eventId?: string;
   event: LedgerEvent;
+  /** False when the row shows the actions elsewhere (the LCD head line). */
+  showActions?: boolean;
 }) {
   const { t } = useTranslation(["chat", "common"]);
 
@@ -121,6 +124,7 @@ export function MessageFooter({
     obligationSummary ||
     visibleReadStatusEntries.length > 0,
   );
+  if (!showActions && !hasStatus) return null;
 
   return (
     <div
@@ -131,19 +135,21 @@ export function MessageFooter({
         "text-[var(--color-text-tertiary)]",
       )}
     >
-      <MessageActions
-        readOnly={readOnly}
-        copiedMessageText={copiedMessageText}
-        copyableMessageText={copyableMessageText}
-        onCopyMessageText={onCopyMessageText}
-        onViewContext={onViewContext}
-        onCopyLink={onCopyLink}
-        onRelay={onRelay}
-        onReply={onReply}
-        canReply={canReply}
-        eventId={eventId}
-        event={event}
-      />
+      {showActions ? (
+        <MessageActions
+          readOnly={readOnly}
+          copiedMessageText={copiedMessageText}
+          copyableMessageText={copyableMessageText}
+          onCopyMessageText={onCopyMessageText}
+          onViewContext={onViewContext}
+          onCopyLink={onCopyLink}
+          onRelay={onRelay}
+          onReply={onReply}
+          canReply={canReply}
+          eventId={eventId}
+          event={event}
+        />
+      ) : null}
       <div
         className={classNames(
           "flex min-w-0 flex-wrap items-center gap-1.5",

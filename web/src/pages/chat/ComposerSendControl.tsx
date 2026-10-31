@@ -44,6 +44,8 @@ export function ComposerSendControl({
     >
       <Button
         variant="ghost"
+        data-composer-send-primary
+        data-busy={busy ? "" : undefined}
         className={`h-[44px] min-h-[44px] min-w-[44px] rounded-l-xl rounded-r-none text-xs shadow-none @min-[600px]/composer:h-9 @min-[600px]/composer:min-h-9 @min-[600px]/composer:min-w-11 @min-[600px]/composer:px-3 ${
           mode === "send"
             ? "px-3"
@@ -57,15 +59,20 @@ export function ComposerSendControl({
         title={title}
       >
         {busy ? (
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          <span
+            data-composer-send-spinner
+            className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+          />
         ) : (
           <Icon
+            data-composer-send-icon
             size={14}
             strokeWidth={1.25}
             className={mode === "send" ? undefined : "hidden @min-[600px]/composer:block"}
           />
         )}
         <span
+          data-composer-send-label
           className={
             mode === "send"
               ? "hidden max-w-28 truncate @min-[600px]/composer:inline"

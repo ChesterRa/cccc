@@ -584,6 +584,7 @@
   "closeSearchModal": "検索モーダルを閉じる",
   "to": "宛先",
   "senderPerspective": "送信者の見解",
+  "agentStateTooltipLabel": "エージェント状態を表示",
   "presentationTitle": "Presentation",
   "presentationOpenDockAction": "Presentation を開く",
   "presentationMobileOpenHighlighted": "Presentation を開く、ハイライトスロット {{index}}：{{title}}",

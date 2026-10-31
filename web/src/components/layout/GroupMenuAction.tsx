@@ -26,6 +26,7 @@ export function GroupMenuAction({
       variant="ghost"
       size="sm"
       role="menuitem"
+      data-tone={tone}
       disabled={disabled}
       className={classNames(
         "w-full justify-start gap-2.5 text-left text-sm",

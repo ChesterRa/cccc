@@ -4,6 +4,8 @@
 @import "./styles/chatMessage.css";
 @import "./styles/chatComposer.css";
 @import "./styles/lcd.css";
+@import "./styles/lcdIcons.css";
+@import "./styles/lcdComposer.css";
 @import "tailwindcss";
 
 @config "../tailwind.config.ts";

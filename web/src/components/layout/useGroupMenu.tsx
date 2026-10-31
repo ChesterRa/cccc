@@ -26,6 +26,9 @@ export type GroupMenuActionItem = {
 // Local sortable rows and remote rows share the same actions and focus behavior.
 export function useGroupMenu(label: string, actions: GroupMenuActionItem[]) {
   const [open, setOpen] = useState(false);
+  // The menu renders in a portal, so it takes the LCD scope of the control that opened it.
+  const [lcdScope, setLcdScope] = useState(false);
+  const openFrom = (trigger: Element) => setLcdScope(trigger.closest("[data-lcd-scope]") !== null);
   const { refs, floatingStyles, context } = useFloating({
     open,
     onOpenChange: setOpen,
@@ -79,6 +82,8 @@ export function useGroupMenu(label: string, actions: GroupMenuActionItem[]) {
               },
             })}
             className="z-max min-w-[180px] max-w-[calc(100vw-24px)] rounded-xl p-1.5 shadow-2xl glass-panel"
+            data-group-menu
+            data-lcd-scope={lcdScope || undefined}
           >
             {actions.map((action, index) => (
               <Fragment key={action.label}>
@@ -113,6 +118,7 @@ export function useGroupMenu(label: string, actions: GroupMenuActionItem[]) {
     available: actions.length > 0,
     menu,
     toggle(button: HTMLButtonElement) {
+      openFrom(button);
       refs.setReference(button);
       refs.setPositionReference(button);
       setOpen((current) => !current);
@@ -126,6 +132,7 @@ export function useGroupMenu(label: string, actions: GroupMenuActionItem[]) {
         event.currentTarget.querySelector<HTMLButtonElement>(":scope > button") ??
         event.currentTarget;
       trigger.focus();
+      openFrom(trigger);
       refs.setReference(trigger);
       refs.setPositionReference({
         getBoundingClientRect: () => new DOMRect(event.clientX, event.clientY, 0, 0),
@@ -139,6 +146,7 @@ export function useGroupMenu(label: string, actions: GroupMenuActionItem[]) {
       )
         return false;
       event.preventDefault();
+      openFrom(event.currentTarget);
       refs.setReference(event.currentTarget);
       refs.setPositionReference(event.currentTarget);
       setOpen(true);

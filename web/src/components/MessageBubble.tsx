@@ -32,6 +32,7 @@ import {
   isDelegationSourceOutbound,
 } from "./messageBubbleDelegation";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
+import { MessageActions } from "./messageBubble/MessageActions";
 import { MessageFooter, MessageMetadataHeader } from "./messageBubble/MessageBubbleChrome";
 import { withAuthToken } from "../services/api/base";
 import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
@@ -176,7 +177,7 @@ function MessageBubbleBody({
       />
 
       {insight ? (
-        <div className={supportingSectionClass}>
+        <div className={supportingSectionClass} data-message-insight>
           <div className="mb-1.5 text-xs font-semibold uppercase text-[var(--color-text-tertiary)]">
             {t("senderPerspective")}
           </div>
@@ -702,7 +703,7 @@ export const MessageBubble = memo(
       </>
     );
 
-    const messageFooter = (
+    const renderMessageFooter = (showActions = true) => (
       <MessageFooter
         readOnly={readOnly}
         obligationSummary={obligationSummary}
@@ -724,8 +725,10 @@ export const MessageBubble = memo(
         canReply={canReply}
         eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
         event={ev}
+        showActions={showActions}
       />
     );
+    const messageFooter = renderMessageFooter();
 
     if (lcd) {
       const showAgentState = canShowAgentState && !collapseHeader;
@@ -738,14 +741,8 @@ export const MessageBubble = memo(
           data-lcd-continued={collapseHeader || undefined}
           data-lcd-accent={isUserMessage ? undefined : getActorAccentIndex(String(ev.by || ""))}
         >
-          <time
-            className="lcd-row-time"
-            dateTime={String(ev.ts || "")}
-            title={fullMessageTimestamp}
-          >
-            {messageTimestamp}
-          </time>
-          <div className="lcd-row-author">
+          {/* One head line, so names never truncate and the text keeps the full width. */}
+          <div className="lcd-row-head">
             {collapseHeader ? (
               <span className="sr-only">{lcdAuthorName}</span>
             ) : (
@@ -778,16 +775,36 @@ export const MessageBubble = memo(
               </span>
             )}
             {remoteBadgeLabel ? <span className="lcd-tag">{remoteBadgeLabel}</span> : null}
-          </div>
-          {agentStateTooltip}
-          <div className="lcd-row-body">
-            <div className="lcd-row-route">
+            <span className="lcd-row-route">
               {routingMetadata}
               {/* The reply card below already shows the request and its state. */}
               {replyRequested && !replyView ? (
                 <span className="lcd-tag">{t("needReply")}</span>
               ) : null}
-            </div>
+            </span>
+            <time
+              className="lcd-row-time"
+              dateTime={String(ev.ts || "")}
+              title={fullMessageTimestamp}
+            >
+              {messageTimestamp}
+            </time>
+            <MessageActions
+              readOnly={readOnly}
+              copiedMessageText={copiedMessageText}
+              copyableMessageText={copyableMessageText}
+              onCopyMessageText={() => void handleCopyMessageText()}
+              onViewContext={onViewContext}
+              onCopyLink={onCopyLink}
+              onRelay={onRelay}
+              onReply={onReply}
+              canReply={canReply}
+              eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
+              event={ev}
+            />
+          </div>
+          {agentStateTooltip}
+          <div className="lcd-row-body">
             <div
               className={classNames(
                 "lcd-row-content",
@@ -797,7 +814,7 @@ export const MessageBubble = memo(
             >
               {bubbleContent}
             </div>
-            {messageFooter}
+            {renderMessageFooter(false)}
           </div>
         </div>
       );

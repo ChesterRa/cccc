@@ -6112,6 +6112,7 @@ export function VoiceSecretaryComposerControl({
               {composerCaptureMode === "prompt" ? (
                 <button
                   type="button"
+                  data-voice-optimize
                   className={classNames(
                     "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
                     promptOptimizePending
@@ -6154,6 +6155,7 @@ export function VoiceSecretaryComposerControl({
                     aria-label={`${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`}
                   >
                     {configuredRecognitionLanguageShortLabel}
+                    <ChevronDownIcon size={12} data-voice-language-chevron aria-hidden="true" />
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" sideOffset={6} className="w-52 rounded-2xl p-1.5">
@@ -6218,6 +6220,7 @@ export function VoiceSecretaryComposerControl({
 
               <button
                 type="button"
+                data-voice-expand
                 className={classNames(
                   "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
                   open

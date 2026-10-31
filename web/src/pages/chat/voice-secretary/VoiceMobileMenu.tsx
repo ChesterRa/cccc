@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Ellipsis, Maximize, Sparkles } from "lucide-react";
+import { Maximize, Sparkles } from "lucide-react";
+import { VoiceMoreIcon } from "../../../components/Icons";
 import { Button } from "../../../components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover";
 import type { VoiceSecretaryCaptureMode } from "./voiceSecretaryTypes";
@@ -73,7 +74,7 @@ export function VoiceMobileMenu(props: Props) {
             disabled={props.disabled}
             aria-label={label}
           >
-            <Ellipsis size={18} aria-hidden="true" />
+            <VoiceMoreIcon size={18} aria-hidden="true" />
           </Button>
         </PopoverTrigger>
         <PopoverContent

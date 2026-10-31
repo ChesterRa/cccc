@@ -1,5 +1,5 @@
 import { groupSidebarRowClass } from "./groupSidebarModel";
-import { Archive, ArchiveRestore, Link2 } from "lucide-react";
+import { ConnectLinkIcon, GroupArchiveIcon, GroupArchiveRestoreIcon } from "../Icons";
 import { GroupConnectionBadge } from "../../features/connect/GroupConnectionBadge";
 import type { GroupConnectionCount } from "../../features/connect/protocol";
 import { GroupMeta } from "../../types";
@@ -51,13 +51,23 @@ export function GroupSidebarItem({
   const menu = useGroupMenu(menuAriaLabel || menuActionLabel || "", [
     ...(runActions ?? []),
     ...(onOpenConnections && connectionsLabel
-      ? [{ label: connectionsLabel, icon: <Link2 size={15} />, onClick: onOpenConnections }]
+      ? [
+          {
+            label: connectionsLabel,
+            icon: <ConnectLinkIcon size={15} />,
+            onClick: onOpenConnections,
+          },
+        ]
       : []),
     ...(onMenuAction && menuActionLabel
       ? [
           {
             label: menuActionLabel,
-            icon: isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />,
+            icon: isArchived ? (
+              <GroupArchiveRestoreIcon size={15} />
+            ) : (
+              <GroupArchiveIcon size={15} />
+            ),
             onClick: onMenuAction,
           },
         ]

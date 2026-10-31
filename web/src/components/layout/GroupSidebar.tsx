@@ -1,7 +1,6 @@
 import { useUIStore } from "../../stores/useUIStore";
 import { groupConnectionCount } from "../../features/connect/protocol";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
 import { instanceName } from "../../features/connect/instanceName";
 import { useTranslation } from "react-i18next";
 import { GroupMeta } from "../../types";
@@ -15,6 +14,7 @@ import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  GroupDeleteIcon,
   PlusIcon,
 } from "../Icons";
 import { GroupSidebarSectionHeader } from "./GroupSidebarSectionHeader";
@@ -211,7 +211,7 @@ export function GroupSidebar({
         {
           label: t("deleteGroup"),
           disabled: controlsBusy,
-          icon: <Trash2 size={15} />,
+          icon: <GroupDeleteIcon size={15} />,
           tone: "danger" as const,
           section: "danger",
           onClick: () => onDeleteGroup(gid),
@@ -327,7 +327,7 @@ export function GroupSidebar({
         <div className="flex h-14 min-h-[44px] shrink-0 items-center md:h-11 md:min-h-0 [@media(pointer:coarse)]:min-h-[44px] border-b border-[var(--glass-border-subtle)] px-3">
           <div
             className={classNames(
-              "flex w-full items-center gap-1.5",
+              "@container/brand flex w-full items-center gap-1.5",
               isCollapsed ? "justify-center" : "justify-between",
             )}
           >
@@ -347,8 +347,10 @@ export function GroupSidebar({
                   className={classNames("object-contain", isCollapsed ? "w-6 h-6" : "h-7 w-7")}
                 />
               </div>
+              {/* A larger text size leaves the fixed-width row too narrow for the name;
+                  the logo then stands alone rather than cutting the name short. */}
               {!isCollapsed && (
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 @max-[13rem]/brand:hidden">
                   <div
                     className="truncate text-[15px] font-semibold tracking-[-0.035em] text-[var(--color-text-primary)]"
                     data-brand-name

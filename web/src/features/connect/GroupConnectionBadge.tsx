@@ -1,4 +1,4 @@
-import { Link2 } from "lucide-react";
+import { ConnectLinkIcon } from "../../components/Icons";
 import { useTranslation } from "react-i18next";
 import type { GroupConnectionCount } from "./protocol";
 
@@ -34,7 +34,7 @@ export function GroupConnectionBadge({
         onClick();
       }}
     >
-      <Link2 size={13} />
+      <ConnectLinkIcon size={13} />
       <span>{current ? connection.count : "?"}</span>
     </button>
   );

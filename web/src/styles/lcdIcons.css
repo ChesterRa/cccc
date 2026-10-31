@@ -1,0 +1,16 @@
+/* Keep the SVG itself untouched: its existing size and responsive visibility
+   still apply in both styles. Only switch the two sets of paths inside it. */
+svg[data-lcd-icon] > [data-lcd-glyph] {
+  display: none;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  svg[data-lcd-icon]
+  > :is(path, line, polyline, polygon, circle, ellipse, rect, g):not([data-lcd-glyph]) {
+  display: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] svg[data-lcd-icon] > [data-lcd-glyph] {
+  display: inline;
+}

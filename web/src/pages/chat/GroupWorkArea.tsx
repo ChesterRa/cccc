@@ -1,12 +1,13 @@
 import { cloneElement, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, ChevronRight, MessageSquare, LayoutGrid } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { Actor } from "../../types";
 import { useUIStore } from "../../stores";
 import { getChatSession } from "../../stores/useUIStore";
 import { RuntimeInspectorModal } from "../../components/modals/RuntimeInspectorModal";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
+import { WorkGridIcon, WorkMessagesIcon } from "../../components/Icons";
 import { terminalPageLayout } from "./groupWorkLayout";
 import { useRetainedRuntimeActors, type RuntimeActorRenderer } from "./useRetainedRuntimeActors";
 export type { RuntimeActorView, RuntimeActorRenderer } from "./useRetainedRuntimeActors";
@@ -255,7 +256,7 @@ export function GroupWorkArea({
                 })}
                 onClick={() => setView(groupId, tiled ? "messages" : "terminals")}
               >
-                {tiled ? <LayoutGrid size={17} /> : <MessageSquare size={17} />}
+                {tiled ? <WorkGridIcon size={17} /> : <WorkMessagesIcon size={17} />}
                 {unread}
               </button>
               {!isSmallScreen ? pager : null}

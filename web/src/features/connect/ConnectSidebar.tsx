@@ -2,7 +2,8 @@ import { useId, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { GroupConnectionBadge } from "./GroupConnectionBadge";
 import { useTranslation } from "react-i18next";
-import { Monitor, LockKeyhole, ChevronRight, ChevronDown } from "lucide-react";
+import { ChevronRight, ChevronDown } from "lucide-react";
+import { ConnectLockIcon, ConnectMonitorIcon } from "../../components/Icons";
 import { instanceListing } from "./useConnectWorkbench";
 import type { ConnectWorkbench } from "./useConnectWorkbench";
 import { GroupItemMenuTrigger } from "../../components/layout/GroupItemMenuTrigger";
@@ -91,11 +92,11 @@ export function ConnectSidebar({
                   aria-current={active && !listing ? "page" : undefined}
                   className={`flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-[var(--glass-panel-bg)] ${collapsed ? "justify-center" : ""} ${active ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-secondary)]"}`}
                 >
-                  <Monitor size={16} className="shrink-0" />
+                  <ConnectMonitorIcon size={16} className="shrink-0" />
                   {!collapsed ? (
                     <>
                       <span className="min-w-0 flex-1 truncate">{label}</span>
-                      {!listing ? <LockKeyhole size={13} className="shrink-0" /> : null}
+                      {!listing ? <ConnectLockIcon size={13} className="shrink-0" /> : null}
                     </>
                   ) : null}
                 </button>

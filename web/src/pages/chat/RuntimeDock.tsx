@@ -207,8 +207,8 @@ function RuntimeDockActorButtonView({
                   runtime={item.runtime}
                   title={item.actorLabel}
                   isDark={isDark}
-                  sizeClassName="h-[22px] w-[22px]"
-                  textClassName="text-[11px]"
+                  sizeClassName="h-[28px] w-[28px]"
+                  textClassName="text-[13px]"
                   className="lcd-tile"
                 />
                 {mailCount > 0 ? (

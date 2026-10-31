@@ -584,6 +584,7 @@
   "closeSearchModal": "关闭搜索窗口",
   "to": "收件人",
   "senderPerspective": "发送者观点",
+  "agentStateTooltipLabel": "查看智能体状态",
   "presentationTitle": "展示区",
   "presentationOpenDockAction": "打开展示区",
   "presentationMobileOpenHighlighted": "打开展示区，高亮槽位 {{index}}：{{title}}",

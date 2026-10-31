@@ -57,6 +57,7 @@ export function NotificationPrompt({
             type="button"
             className={buttonVariants({ variant: "ghost", size: "sm" })}
             onClick={onDismiss}
+            data-lcd-key
           >
             {t("notificationPrompt.dismiss")}
           </button>
