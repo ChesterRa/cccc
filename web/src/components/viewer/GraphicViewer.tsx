@@ -122,6 +122,7 @@ function GraphicViewport(graphic: Graphic) {
         <div className="flex items-center gap-1">
           <button
             type="button"
+            data-lcd-key
             className={button}
             disabled={!ready}
             onClick={reset}
@@ -133,6 +134,7 @@ function GraphicViewport(graphic: Graphic) {
           </button>
           <button
             type="button"
+            data-lcd-key
             className={button}
             disabled={!ready}
             onClick={() => zoom(1)}
@@ -145,6 +147,7 @@ function GraphicViewport(graphic: Graphic) {
         <div className="flex items-center gap-1">
           <button
             type="button"
+            data-lcd-key
             className={button}
             disabled={!ready}
             onClick={() => zoom(scale / 1.25)}
@@ -158,6 +161,7 @@ function GraphicViewport(graphic: Graphic) {
           </span>
           <button
             type="button"
+            data-lcd-key
             className={button}
             disabled={!ready}
             onClick={() => zoom(scale * 1.25)}

@@ -17,8 +17,10 @@ import {
   EditIcon,
   ExpandIcon,
   ImageIcon,
+  MessageSquareIcon,
   MessageSquareTextIcon,
   RefreshIcon,
+  ReplyIcon,
   SplitViewIcon,
   TrashIcon,
   WindowViewIcon,
@@ -346,39 +348,52 @@ function PresentationViewer({
     }
   };
 
+  const jumpToChatLabel = t("presentationJumpToChatAction", { defaultValue: "Jump to chat" });
+  const replyInChatLabel = t("presentationReplyInChatAction", { defaultValue: "Reply in chat" });
+  // On phones the two chat actions are icon keys, so the title keeps its room beside them.
   const modalHeaderActions = (
     <>
       {sourceEventId && onOpenMessageContext ? (
         <button
           type="button"
+          data-lcd-key
+          data-presentation-action
           onClick={() => onOpenMessageContext(sourceEventId)}
           className={classNames(
-            "inline-flex min-h-[40px] items-center justify-center rounded-lg border px-3 text-sm font-medium transition-colors",
+            "inline-flex min-h-[40px] items-center justify-center rounded-lg border px-3 text-sm font-medium transition-colors max-sm:min-w-[40px] max-sm:px-0",
             isDark
               ? "border-white/12 bg-white/[0.06] text-white hover:bg-white/[0.1]"
               : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] hover:bg-white",
           )}
+          title={jumpToChatLabel}
         >
-          {t("presentationJumpToChatAction", { defaultValue: "Jump to chat" })}
+          <MessageSquareIcon aria-hidden="true" size={16} className="sm:hidden" />
+          <span className="max-sm:sr-only">{jumpToChatLabel}</span>
         </button>
       ) : null}
       {sourceEvent && onReplyToMessage ? (
         <button
           type="button"
+          data-lcd-key
+          data-presentation-action
           onClick={() => onReplyToMessage(sourceEvent)}
           className={classNames(
-            "inline-flex min-h-[40px] items-center justify-center rounded-lg border px-3 text-sm font-medium transition-colors",
+            "inline-flex min-h-[40px] items-center justify-center rounded-lg border px-3 text-sm font-medium transition-colors max-sm:min-w-[40px] max-sm:px-0",
             isDark
               ? "border-white/12 bg-white/[0.06] text-white hover:bg-white/[0.1]"
               : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] hover:bg-white",
           )}
+          title={replyInChatLabel}
         >
-          {t("presentationReplyInChatAction", { defaultValue: "Reply in chat" })}
+          <ReplyIcon aria-hidden="true" size={16} className="sm:hidden" />
+          <span className="max-sm:sr-only">{replyInChatLabel}</span>
         </button>
       ) : null}
       {canRefresh ? (
         <button
           type="button"
+          data-lcd-key
+          data-presentation-action
           onClick={() => setRefreshTick((value) => value + 1)}
           className={classNames(
             "inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border transition-colors",
@@ -395,6 +410,8 @@ function PresentationViewer({
       {card ? (
         <button
           type="button"
+          data-lcd-key
+          data-presentation-action
           onClick={() => setIsExpanded((value) => !value)}
           className={classNames(
             "hidden sm:inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border transition-colors",
@@ -411,6 +428,8 @@ function PresentationViewer({
       {supportsSplit && onOpenSplit ? (
         <button
           type="button"
+          data-lcd-key
+          data-presentation-action
           onClick={onOpenSplit}
           className={classNames(
             "inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border transition-colors",
@@ -636,6 +655,7 @@ function PresentationViewer({
       )}
     >
       <div
+        data-presentation-snapshot-head
         className={classNames(
           "flex items-start justify-between gap-3 border-b px-4 py-3",
           isDark ? "border-white/10" : "border-black/10",
@@ -643,6 +663,7 @@ function PresentationViewer({
       >
         <div className="min-w-0">
           <div
+            data-presentation-snapshot-title
             className={classNames(
               "text-xs font-semibold uppercase tracking-[0.16em]",
               isDark ? "text-white/85" : "text-[rgb(35,36,37)]/85",
@@ -657,6 +678,7 @@ function PresentationViewer({
           ) : null}
           {quoteContextChanged ? (
             <div
+              data-status-tone="warning"
               className={classNames(
                 "mt-1 text-xs",
                 isDark ? "text-amber-300/90" : "text-amber-700",
@@ -830,6 +852,7 @@ function PresentationViewer({
     <div className="flex min-h-0 flex-1 flex-col">
       {variant === "modal" ? (
         <div
+          data-presentation-details
           className={classNames(
             "flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs",
             isDark ? "border-white/10 text-slate-400" : "border-black/10 text-gray-600",
@@ -838,6 +861,8 @@ function PresentationViewer({
           {card ? (
             <>
               <span
+                data-presentation-tag
+                data-status-tone="neutral"
                 className={classNames(
                   "rounded-full px-2 py-1 font-medium max-sm:hidden",
                   isDark
@@ -849,6 +874,8 @@ function PresentationViewer({
               </span>
               {isWorkspaceLinked ? (
                 <span
+                  data-presentation-tag
+                  data-status-tone="ok"
                   className={classNames(
                     "rounded-full px-2 py-1 font-medium",
                     isDark
@@ -865,6 +892,7 @@ function PresentationViewer({
               {linkedAsset.stale ? (
                 <span
                   role="status"
+                  data-status-tone="warning"
                   className="min-w-0 flex-1 truncate text-amber-700 dark:text-amber-300"
                   title={`${t("presentationRefreshFailed")} (${linkedAsset.error})`}
                 >
@@ -937,9 +965,10 @@ function PresentationViewer({
         )}
       >
         {showSnapshotCompare ? (
-          <div className="mb-3 flex items-center gap-2 lg:hidden">
+          <div data-presentation-snapshot-tabs className="mb-3 flex items-center gap-2 lg:hidden">
             <button
               type="button"
+              aria-pressed={snapshotMobileTab === "live"}
               onClick={() => setSnapshotMobileTab("live")}
               className={classNames(
                 "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
@@ -956,6 +985,7 @@ function PresentationViewer({
             </button>
             <button
               type="button"
+              aria-pressed={snapshotMobileTab === "snapshot"}
               onClick={() => setSnapshotMobileTab("snapshot")}
               className={classNames(
                 "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
@@ -1004,7 +1034,10 @@ function PresentationViewer({
           ) : null}
         </div>
         {showSnapshotOverlay && snapshotPanel ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20 p-4 backdrop-blur-[2px]">
+          <div
+            data-presentation-scrim
+            className="absolute inset-0 z-20 flex items-center justify-center bg-black/20 p-4 backdrop-blur-[2px]"
+          >
             <button
               type="button"
               className="absolute inset-0"
@@ -1018,6 +1051,7 @@ function PresentationViewer({
           <div className="absolute inset-0 z-30 flex items-center justify-center p-4 sm:p-6">
             <button
               type="button"
+              data-presentation-scrim
               className="absolute inset-0 bg-black/60 backdrop-blur-sm"
               onClick={() => setSnapshotLightboxOpen(false)}
               aria-label={t("presentationCloseSnapshotAction", { defaultValue: "Close snapshot" })}
@@ -1025,6 +1059,7 @@ function PresentationViewer({
             <div
               ref={snapshotModalRef}
               role="dialog"
+              data-presentation-snapshot-dialog
               aria-modal="true"
               aria-label={t("presentationSnapshotFromQuoteLabel")}
               className={classNames(
@@ -1033,6 +1068,7 @@ function PresentationViewer({
               )}
             >
               <div
+                data-presentation-snapshot-head
                 className={classNames(
                   "flex items-start justify-between gap-3 border-b px-4 py-3",
                   isDark ? "border-white/10" : "border-black/10",
@@ -1058,6 +1094,7 @@ function PresentationViewer({
                   ) : null}
                   {quoteContextChanged ? (
                     <div
+                      data-status-tone="warning"
                       className={classNames(
                         "mt-1 text-xs",
                         isDark ? "text-amber-300/90" : "text-amber-700",
@@ -1095,6 +1132,9 @@ function PresentationViewer({
             {currentSnapshotUrl ? (
               <button
                 type="button"
+                data-lcd-key
+                data-presentation-action
+                aria-pressed={snapshotViewMode !== "hidden"}
                 onClick={handleToggleSnapshotView}
                 className={classNames(
                   "pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border px-3 text-sm font-medium shadow-lg backdrop-blur-xl transition-colors",
@@ -1115,6 +1155,8 @@ function PresentationViewer({
             ) : null}
             <button
               type="button"
+              data-lcd-key
+              data-presentation-action
               onClick={() => {
                 void handleQuoteInChat();
               }}
@@ -1228,6 +1270,7 @@ function PresentationViewer({
               {!readOnly && onClearSlot && slot && (
                 <SidePanelButton
                   title={clearActionLabel}
+                  data-status-tone="error"
                   onClick={() => void handleClearSlot()}
                   disabled={!!clearingSlotId}
                   className={
@@ -1250,6 +1293,7 @@ function PresentationViewer({
       isOpen={isOpen}
       isDark={isDark}
       onClose={onClose}
+      lcdScope
       titleId="presentation-viewer-title"
       title={
         <PresentationViewerTitle

@@ -156,7 +156,7 @@ describe("mobile presentation surface", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("takes the LCD scope for Files only, so presentations keep their own look", async () => {
+  it("takes the LCD scope for both Files and presentations", async () => {
     await act(async () => {
       root.render(
         <MobilePresentationSurface
@@ -181,7 +181,7 @@ describe("mobile presentation surface", () => {
       );
     });
     const slides = document.querySelector('[data-mobile-surface="presentation"]');
-    expect(slides?.hasAttribute("data-lcd-scope")).toBe(false);
+    expect(slides?.hasAttribute("data-lcd-scope")).toBe(true);
   });
 
   it("lets a media player's own controls take Tab and wraps focus that leaves it", async () => {

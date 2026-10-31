@@ -111,6 +111,11 @@ export function PresentationRail({
                 type="button"
                 title={card?.title || t("presentationSlotEmptyTitle")}
                 aria-label={attention ? `${label} · ${t("presentationUpdatedNotice")}` : label}
+                data-presentation-slot
+                data-presentation-highlight={
+                  slot.slot_id === normalized.highlight_slot_id || undefined
+                }
+                data-presentation-attention={attention || undefined}
                 disabled={!card && (readOnly || !onPinSlot)}
                 onClick={() => (card ? onOpenSlot(slot.slot_id) : onPinSlot?.(slot.slot_id))}
                 className={classNames(
@@ -185,6 +190,7 @@ export function PresentationRail({
                 )}
                 {attention && (
                   <span
+                    data-status-dot="active"
                     className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-cyan-500"
                     aria-hidden="true"
                   />

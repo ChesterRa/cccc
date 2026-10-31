@@ -13,6 +13,7 @@
 @import "./styles/lcdTerminal.css";
 @import "./styles/lcdVoiceSecretary.css";
 @import "./styles/lcdVoiceDocuments.css";
+@import "./styles/lcdPresentation.css";
 @import "tailwindcss";
 
 @config "../tailwind.config.ts";

@@ -16,7 +16,11 @@ export function PresentationViewerTitle({
           className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] sm:hidden"
           data-presentation-title-meta
         >
-          <span className="rounded-md bg-[var(--glass-tab-bg)] px-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">
+          <span
+            data-presentation-tag
+            data-status-tone="neutral"
+            className="rounded-md bg-[var(--glass-tab-bg)] px-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]"
+          >
             {typeLabel}
           </span>
           {publishedAt ? <span className="truncate">{publishedAt}</span> : null}

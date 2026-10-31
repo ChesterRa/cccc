@@ -29,7 +29,10 @@ export function PresentationSlotNavigation({
       data-presentation-slot-navigation
       className="shrink-0 border-b border-[var(--glass-border-subtle)] px-2 py-1.5 max-sm:px-3 max-sm:py-2.5"
     >
-      <div className="grid grid-cols-4 gap-1 rounded-lg bg-[var(--glass-tab-bg)] p-1 max-sm:gap-1.5 max-sm:rounded-xl">
+      <div
+        data-presentation-slot-switch
+        className="grid grid-cols-4 gap-1 rounded-lg bg-[var(--glass-tab-bg)] p-1 max-sm:gap-1.5 max-sm:rounded-xl"
+      >
         {ensurePresentation(presentation).slots.map((slot, index) => {
           const label = slot.card
             ? t("presentationOpenSlot", { index: index + 1, title: slot.card.title })
@@ -44,6 +47,7 @@ export function PresentationSlotNavigation({
               title={label}
               aria-label={label}
               aria-pressed={slot.slot_id === activeSlotId}
+              data-presentation-slot-empty={!slot.card || undefined}
               disabled={!slot.card && (readOnly || !onPinSlot)}
               onClick={() => (slot.card ? onSelectSlot(slot.slot_id) : onPinSlot?.(slot.slot_id))}
               className={classNames(

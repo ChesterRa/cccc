@@ -65,6 +65,7 @@ export function PresentationTrigger({
       <BookmarkIcon size={18} strokeWidth={1.25} className="shrink-0" aria-hidden="true" />
       {hasAttention ? (
         <span
+          data-status-dot="active"
           className={classNames(
             "absolute right-1 top-1 h-2 w-2 rounded-full",
             isDark ? "bg-cyan-200" : "bg-cyan-500",

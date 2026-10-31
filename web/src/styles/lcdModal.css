@@ -89,8 +89,9 @@
    reverse, like the chat page's view switch: the settings scope, every segmented
    choice (settings pages, the appearance menu), the search kinds, the Voice
    panes on phones, the workspace's Files and Changes, a Group's connection mode, a Web
-   Model's page or browser view and its delivery choice, and the Voice Secretary's views
-   and document views.
+   Model's page or browser view and its delivery choice, the Voice Secretary's views and
+   document views, and a presentation's switch between its current view and a quoted
+   snapshot.
    Reversed keys switch at once: a colour transition would pass through text the colour
    of its ground. */
 :root[data-ui-style="lcd"]
@@ -105,6 +106,9 @@
     [data-browser-view-switch],
     [data-voice-panel-views],
     [data-voice-document-views],
+    [data-presentation-snapshot-tabs],
+    [data-presentation-preview-mode],
+    [data-presentation-slot-switch],
     [data-web-model-delivery]
   ) {
   gap: 0;
@@ -125,6 +129,9 @@
     [data-browser-view-switch] > button,
     [data-voice-panel-views] > button,
     [data-voice-document-views] > button,
+    [data-presentation-snapshot-tabs] > button,
+    [data-presentation-preview-mode] > button,
+    [data-presentation-slot-switch] > button,
     [data-web-model-delivery] > label > input + span
   ) {
   border: 1px solid var(--lcd-ink);
@@ -145,6 +152,9 @@
     [data-browser-view-switch] > button + button,
     [data-voice-panel-views] > button + button,
     [data-voice-document-views] > button + button,
+    [data-presentation-snapshot-tabs] > button + button,
+    [data-presentation-preview-mode] > button + button,
+    [data-presentation-slot-switch] > button + button,
     [data-web-model-delivery] > label + label
   ) {
   margin-left: -1px;
@@ -162,6 +172,9 @@
     [data-browser-view-switch] > button[aria-pressed="true"],
     [data-voice-panel-views] > button[aria-pressed="true"],
     [data-voice-document-views] > button[aria-pressed="true"],
+    [data-presentation-snapshot-tabs] > button[aria-pressed="true"],
+    [data-presentation-preview-mode] > button[aria-pressed="true"],
+    [data-presentation-slot-switch] > button[aria-pressed="true"],
     [data-web-model-delivery] > label > input:checked + span
   ) {
   background: var(--lcd-sel-bg);
@@ -223,6 +236,9 @@
     [data-browser-view-switch] > button[aria-pressed="false"],
     [data-voice-panel-views] > button[aria-pressed="false"],
     [data-voice-document-views] > button[aria-pressed="false"],
+    [data-presentation-snapshot-tabs] > button[aria-pressed="false"],
+    [data-presentation-preview-mode] > button[aria-pressed="false"],
+    [data-presentation-slot-switch] > button[aria-pressed="false"],
     [data-web-model-delivery] > label > input:not(:checked):where(:not(:disabled)) + span
   ):hover:not(:disabled) {
   background: var(--lcd-sel-soft);

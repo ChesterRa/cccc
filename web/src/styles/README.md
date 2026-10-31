@@ -41,9 +41,10 @@ the LCD rules in this folder read the hooks.
   in `lcdModal.css` (`data-settings-scope-switch`, `data-segmented-choice`,
   `data-search-kind`, `data-voice-pane-switch`, `data-workspace-mode-switch`,
   `data-connect-mode-switch`, `data-browser-view-switch`, `data-voice-panel-views`,
-  `data-voice-document-views`, and `data-web-model-delivery`, whose keys are the visible
-  spans of radio labels); do not write another rule set. The hook goes on the element
-  whose children are the keys.
+  `data-voice-document-views`, `data-presentation-snapshot-tabs`,
+  `data-presentation-preview-mode`, `data-presentation-slot-switch`, and
+  `data-web-model-delivery`, whose keys are the visible spans of radio labels); do not
+  write another rule set. The hook goes on the element whose children are the keys.
 - Menus: `data-group-menu` or `data-lcd-menu` on the menu surface, whether it is
   portalled with its own scope or sits inside a scoped surface. Its items (`menuitem*`
   and `option` elements, or plain buttons) are ink throughout and reversed under the

@@ -20,6 +20,7 @@ export function PresentationPreviewModeToggle({
       className="inline-flex items-center gap-0.5 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-0.5"
       role="group"
       aria-label={label}
+      data-presentation-preview-mode
     >
       {(["embedded", "interactive"] as const).map((mode) => (
         <button
