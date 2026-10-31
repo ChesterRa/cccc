@@ -53,7 +53,11 @@ export function CodexVoiceMessageSources({
   }, [active]);
   if (error)
     return (
-      <p role="status" className="px-5 py-2 text-xs text-amber-700 dark:text-amber-300">
+      <p
+        role="status"
+        data-status-tone="warning"
+        className="px-5 py-2 text-xs text-amber-700 dark:text-amber-300"
+      >
         {t("voicePreferences.sourceError")}
       </p>
     );

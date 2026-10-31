@@ -46,6 +46,9 @@ export function WorkspaceEntryMenu({ x, y, anchor, label, items, isDark, onClose
         sideOffset={4}
         collisionPadding={8}
         className="w-60 max-w-[calc(100vw-1rem)] rounded-xl py-1.5"
+        // Anchored to a point, not a trigger, so it takes the opening row's scope here.
+        data-lcd-scope={anchor.closest("[data-lcd-scope]") ? "" : undefined}
+        data-lcd-menu
         onCloseAutoFocus={(event) => event.preventDefault()}
         onEscapeKeyDown={(event) => {
           // Escape dismisses this layer without reaching the enclosing phone surface.

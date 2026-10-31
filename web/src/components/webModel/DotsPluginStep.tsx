@@ -111,7 +111,10 @@ export function DotsPluginStep({ isVisible, disabled, sharedSettings, onBusyChan
             {t("dotsActor.setup.noConnector")}
           </p>
         ) : (
-          <p className="text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+          <p
+            className="text-xs leading-relaxed text-amber-700 dark:text-amber-300"
+            data-status-tone="warning"
+          >
             {address.kind === "missing"
               ? t("webModelShared.publicUrlMissing")
               : t("webModelShared.publicUrlInvalid", { url: address.origin })}

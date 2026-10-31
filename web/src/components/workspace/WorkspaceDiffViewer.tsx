@@ -95,7 +95,11 @@ export function WorkspaceDiffViewer({ files }: { files: WorkspaceFilesController
             {t("workspaceGit.loading")}
           </p>
         ) : changes.patchError ? (
-          <p role="alert" className="break-words p-4 text-sm text-rose-600">
+          <p
+            role="alert"
+            className="break-words p-4 text-sm text-rose-600"
+            data-status-tone="error"
+          >
             {changes.patchError}
           </p>
         ) : changes.patch?.limited ? (

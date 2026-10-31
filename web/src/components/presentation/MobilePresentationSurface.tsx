@@ -38,6 +38,8 @@ export function MobilePresentationSurface({
       tabIndex={-1}
       data-mobile-surface={surface}
       data-mobile-presentation-surface={surface === "presentation" ? "true" : undefined}
+      // Presentations keep their own look until they are migrated; the Files surface is LCD.
+      data-lcd-scope={surface === "files" ? "" : undefined}
     >
       {children}
       <ModalFocusGuard />

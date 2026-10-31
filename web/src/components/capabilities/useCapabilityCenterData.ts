@@ -8,6 +8,7 @@ import type {
   CapabilityStateResult,
 } from "../../types";
 import {
+  capabilityCenterStateReadable,
   normalizeCapabilityCenterPagination,
   summarizeCapabilityCenter,
   type CapabilityCenterStateFilter,
@@ -53,6 +54,9 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // A failed state read is kept apart from list and action errors: reloading the list
+  // must not clear it, only a later state read that succeeds.
+  const [stateError, setStateError] = useState("");
   const requestSequence = useRef(0);
   const stateRequestSequence = useRef(0);
 
@@ -122,23 +126,29 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
     typeFilter,
   ]);
 
-  const loadState = useCallback(async () => {
+  const loadState = useCallback(async (): Promise<CapabilityStateResult | null> => {
     const sequence = ++stateRequestSequence.current;
     if (!groupId) {
       setState(null);
-      return;
+      setStateError("");
+      return null;
     }
     const response = await api.fetchGroupCapabilityState(groupId, "user", { noCache: true });
-    if (sequence !== stateRequestSequence.current) return;
-    if (response.ok) {
+    if (sequence !== stateRequestSequence.current) return null;
+    // A read the center cannot show keeps the last state on screen and reports the failure.
+    if (response.ok && capabilityCenterStateReadable(response.result)) {
       setState(response.result);
-    } else {
-      setError(response.error?.message || failedStateMessage);
+      setStateError("");
+      return response.result;
     }
+    setStateError((!response.ok && response.error?.message) || failedStateMessage);
+    return null;
   }, [failedStateMessage, groupId]);
 
+  // Resolves to the state it loaded, or null when that load failed or a newer one replaced it.
   const refresh = useCallback(async () => {
-    await Promise.all([loadOverview(), loadState()]);
+    const [, nextState] = await Promise.all([loadOverview(), loadState()]);
+    return nextState;
   }, [loadOverview, loadState]);
 
   useEffect(() => {
@@ -150,15 +160,15 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
   }, [isOpen, loadState]);
 
   return {
-    error,
+    error: error || stateError,
     hasMore,
     items,
     loading,
+    loadState,
     refresh,
     selectedId,
     setError,
     setSelectedId,
-    setState,
     sourceInstances,
     sources,
     state,

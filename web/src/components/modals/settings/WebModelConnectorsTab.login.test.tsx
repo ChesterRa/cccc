@@ -77,6 +77,19 @@ describe("shared Web Model login and connector", () => {
     Array.from(host.querySelectorAll("button")).find(
       (b) => !b.closest("[hidden]") && b.textContent === `webModelShared.${name}`,
     )!;
+  it.each([
+    ["verification", { active: true, verification_required: true, ready: true }, "attention"],
+    ["ready", { active: true, ready: true }, "active"],
+    ["openState", { active: true }, "active"],
+    ["loginRequired", { active: true, login_required: true }, "inactive"],
+    ["closed", { active: false }, "inactive"],
+  ])("keeps the %s label and status mark consistent", async (state, browser, dot) => {
+    mocks.browser.mockResolvedValue({ ok: true, result: { browser_session: browser } });
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    const label = host.querySelector(`[data-login-state="${state}"]`);
+    expect(label?.textContent).toContain(`webModelShared.${state}`);
+    expect(label?.querySelector("[data-status-dot]")?.getAttribute("data-status-dot")).toBe(dot);
+  });
   it("can set up shared login without any Actor and does not start a browser on mount", async () => {
     await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
     expect(mocks.browser).toHaveBeenCalledExactlyOnceWith("status", false, "chatgpt_web");

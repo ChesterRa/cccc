@@ -305,6 +305,8 @@ function ActivityRow({
           : "",
       )}
       title={narrative.title || narrative.primaryTitle}
+      data-trace-card={density === "expanded" ? "" : undefined}
+      data-status-tone={error ? "error" : undefined}
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <span
@@ -316,6 +318,7 @@ function ActivityRow({
                 : "border-rose-200 bg-white text-rose-700"
               : "",
           )}
+          data-status-tone={error ? "error" : undefined}
         >
           {narrative.kindLabel}
         </span>
@@ -342,6 +345,7 @@ function ActivityRow({
               isDark ? "text-slate-400" : "text-slate-600",
             )}
             title={trailingMeta}
+            data-status-tone="muted"
           >
             {trailingMeta}
           </div>
@@ -361,6 +365,7 @@ function ActivityRow({
                   "mr-1 uppercase tracking-[0.12em]",
                   isDark ? "text-slate-500" : "text-slate-500",
                 )}
+                data-status-tone="muted"
               >
                 {row.label}
               </span>
@@ -477,6 +482,8 @@ export function HeadlessLiveTrace({
             className,
           )}
           role="status"
+          data-headless-trace
+          data-status-tone="muted"
         >
           {emptyLabel}
         </div>
@@ -490,17 +497,25 @@ export function HeadlessLiveTrace({
             : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.94))]",
           className,
         )}
+        data-headless-trace
       >
         <div
           className={classNames(
             "w-full max-w-md rounded-[24px] border px-6 py-6 text-center shadow-sm",
             isDark ? "border-white/10 bg-white/[0.04]" : "border-black/8 bg-white/88",
           )}
+          data-trace-card
         >
-          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-tertiary)]">
+          <div
+            className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-tertiary)]"
+            data-status-tone="muted"
+          >
             <SparklesIcon size={18} />
           </div>
-          <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+          <div
+            className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]"
+            data-status-tone="muted"
+          >
             {labels.liveTrace}
           </div>
           <div className="mt-2 text-lg font-semibold text-[var(--color-text-primary)]">
@@ -511,6 +526,7 @@ export function HeadlessLiveTrace({
               "mx-auto mt-3 max-w-sm text-sm leading-6",
               isDark ? "text-slate-400" : "text-slate-500",
             )}
+            data-status-tone="muted"
           >
             {emptyLabel}
           </div>
@@ -536,6 +552,7 @@ export function HeadlessLiveTrace({
             : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(248,250,252,0.95))] shadow-[0_24px_70px_rgba(15,23,42,0.08)]"),
         className,
       )}
+      data-headless-trace
     >
       <div
         className={classNames(
@@ -546,10 +563,14 @@ export function HeadlessLiveTrace({
             ? "border-white/8 bg-[rgba(10,11,14,0.78)]"
             : "border-black/6 bg-[rgba(255,255,255,0.78)]",
         )}
+        data-trace-head
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+            <div
+              className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]"
+              data-status-tone="muted"
+            >
               <SparklesIcon size={14} />
               {latestSummary.eyebrow}
             </div>
@@ -559,8 +580,14 @@ export function HeadlessLiveTrace({
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {latestTimelineGroup?.live ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/12 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse motion-reduce:animate-none" />
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/12 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-300"
+                data-status-tone="ok"
+              >
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-current animate-pulse motion-reduce:animate-none"
+                  data-status-dot="active"
+                />
                 {labels.live}
               </span>
             ) : null}
@@ -571,6 +598,7 @@ export function HeadlessLiveTrace({
                   ? "border-white/10 bg-white/[0.04] text-slate-300"
                   : "border-black/8 bg-black/[0.03] text-slate-600",
               )}
+              data-status-tone="muted"
             >
               <ClockIcon size={12} />
               {latestTimelineGroup?.ts
@@ -599,6 +627,7 @@ export function HeadlessLiveTrace({
                 <div className="flex items-center gap-3 py-1">
                   <span
                     className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")}
+                    data-trace-rule
                   />
                   <span
                     className={classNames(
@@ -607,11 +636,13 @@ export function HeadlessLiveTrace({
                         ? "border-white/10 bg-white/[0.04] text-slate-400"
                         : "border-black/8 bg-black/[0.03] text-slate-500",
                     )}
+                    data-status-tone="muted"
                   >
                     {group.ts ? formatTime(group.ts, i18n?.language) : recentDisplayLabel}
                   </span>
                   <span
                     className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")}
+                    data-trace-rule
                   />
                 </div>
               ) : null}
@@ -644,6 +675,7 @@ export function HeadlessLiveTrace({
                               ? "bg-white/30"
                               : "bg-slate-400",
                       )}
+                      data-status-dot={group.entry.live ? "active" : "inactive"}
                     />
                   </div>
                   <div
@@ -660,6 +692,7 @@ export function HeadlessLiveTrace({
                             ? "border-white/10 bg-white/[0.03]"
                             : "border-slate-200/90 bg-slate-50/88"),
                     )}
+                    data-trace-card={density === "expanded" ? "" : undefined}
                   >
                     {getTracePhaseLabel(group.entry.streamPhase, labels) ? (
                       <div className="mb-2 flex items-center gap-2">
@@ -675,7 +708,10 @@ export function HeadlessLiveTrace({
                         </span>
                         {group.live ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-300">
-                            <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse motion-reduce:animate-none" />
+                            <span
+                              className="h-1.5 w-1.5 rounded-full bg-current animate-pulse motion-reduce:animate-none"
+                              data-status-dot="active"
+                            />
                             {labels.streaming}
                           </span>
                         ) : null}
@@ -731,6 +767,7 @@ export function HeadlessLiveTrace({
                             ? "bg-white/20"
                             : "bg-slate-400",
                       )}
+                      data-status-dot={group.live ? "active" : "inactive"}
                     />
                   </div>
                   <div className={getActivityBandClassName(density)}>

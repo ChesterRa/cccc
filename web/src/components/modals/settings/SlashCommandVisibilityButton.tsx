@@ -22,6 +22,8 @@ export function SlashCommandVisibilityButton(props: {
   return (
     <button
       type="button"
+      data-lcd-key
+      data-status-tone={hidden ? "neutral" : undefined}
       className={`inline-flex min-h-[32px] items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs ${hidden ? hiddenClass : visibleClass} ${busy ? "cursor-not-allowed opacity-60" : ""}`}
       disabled={busy}
       title={actionLabel}

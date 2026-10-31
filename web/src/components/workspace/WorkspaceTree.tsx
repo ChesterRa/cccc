@@ -42,6 +42,7 @@ function GitBadge({ status, isDark }: { status: WorkspaceGitStatus; isDark: bool
   return (
     <span
       aria-label={status}
+      data-git-status={status}
       className={classNames(
         "ml-1 w-3 shrink-0 text-center text-[11px] font-semibold tabular-nums",
         isDark ? badge.dark : badge.light,
@@ -173,6 +174,7 @@ function WorkspaceTreeRows({
               }}
               aria-expanded={entry.is_dir ? node.expanded : undefined}
               aria-selected={selected}
+              data-workspace-row
               title={
                 entry.ignored
                   ? entry.path + " · " + t("workspaceGitIgnored", { defaultValue: "Git ignored" })
@@ -233,6 +235,7 @@ function WorkspaceTreeRows({
               {!entry.git_status && entry.git_dirty_descendant ? (
                 <span
                   aria-hidden="true"
+                  data-status-dot="neutral"
                   className={classNames(
                     "ml-1 h-1.5 w-1.5 shrink-0 rounded-full",
                     isDark ? "bg-amber-300/70" : "bg-amber-500/70",

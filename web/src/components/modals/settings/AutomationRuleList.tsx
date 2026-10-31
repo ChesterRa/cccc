@@ -237,12 +237,18 @@ export function AutomationRuleList({
               {nextFireAt || "—"}
             </div>
             {completed ? (
-              <div className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
+              <div
+                data-status-tone="ok"
+                className="mt-1 text-xs text-emerald-700 dark:text-emerald-300"
+              >
                 {t("ruleList.completedAt")} {completedAt || lastFireAt || "—"}
               </div>
             ) : null}
             {hasError ? (
-              <div className="mt-1 text-xs break-words text-rose-600 dark:text-rose-300">
+              <div
+                data-status-tone="error"
+                className="mt-1 text-xs break-words text-rose-600 dark:text-rose-300"
+              >
                 {ruleStatus.last_error}
               </div>
             ) : null}

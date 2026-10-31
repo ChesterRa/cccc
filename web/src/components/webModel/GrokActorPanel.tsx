@@ -193,17 +193,29 @@ function Panel({
   const notices = (
     <>
       {readError && (
-        <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
+        <p
+          role="status"
+          className="text-xs text-amber-700 dark:text-amber-300"
+          data-status-tone="warning"
+        >
           {readError}
         </p>
       )}
       {error && (
-        <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">
+        <p
+          role="alert"
+          className="text-xs text-rose-600 dark:text-rose-400"
+          data-status-tone="error"
+        >
           {error}
         </p>
       )}
       {state?.error_code && phase === "failed" && (
-        <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">
+        <p
+          role="alert"
+          className="text-xs text-rose-600 dark:text-rose-400"
+          data-status-tone="error"
+        >
           {t("grokWebhook.deliveryError", { status: state.http_status || "—" })}
         </p>
       )}

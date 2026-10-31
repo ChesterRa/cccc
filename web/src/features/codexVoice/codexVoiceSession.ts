@@ -375,8 +375,12 @@ export class CodexVoiceBrowserSession {
   private async handleProviderMessage(data: unknown): Promise<void> {
     let text: string;
     if (typeof data === "string") text = data;
-    else if (data instanceof Blob) text = await data.text();
-    else if (data instanceof ArrayBuffer) text = new TextDecoder().decode(data);
+    else if (data instanceof Blob) {
+      // RTC channels default to ArrayBuffer; Grok's WebSocket exposes binary
+      // frames as Blob, while its JSON events use text frames. A transport that
+      // supplies JSON as Blob must preserve arrival order across this decode.
+      text = await data.text();
+    } else if (data instanceof ArrayBuffer) text = new TextDecoder().decode(data);
     else return;
     // Blob decoding can finish after orderly stop. A late event must not
     // overwrite the stopped/failed call's status or the next call's UI.

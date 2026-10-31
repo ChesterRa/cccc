@@ -82,6 +82,7 @@ function MermaidPreviewDialog({
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
+          data-lcd-scope
         >
           <div className="flex flex-shrink-0 items-center justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-3 py-2.5 sm:px-4">
             <div className="min-w-0">
@@ -111,7 +112,10 @@ function MermaidPreviewDialog({
                 aria-label={copied ? labels.copied : labels.copy}
               >
                 {copied ? (
-                  <CheckIcon className="h-3.5 w-3.5 text-green-600 dark:text-emerald-400" />
+                  <CheckIcon
+                    className="h-3.5 w-3.5 text-green-600 dark:text-emerald-400"
+                    data-status-tone="ok"
+                  />
                 ) : (
                   <CopyIcon className="h-3.5 w-3.5" />
                 )}

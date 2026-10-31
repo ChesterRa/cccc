@@ -26,8 +26,10 @@ export function SidebarResizeHandle({
       aria-valuemin={min}
       aria-valuemax={max}
       aria-valuenow={width}
+      data-resizing={resizing || undefined}
     >
       <div
+        data-resize-grip
         className={classNames(
           "h-14 w-[3px] rounded-full transition-all duration-300 ease-out-expo group-hover/resize-handle:h-20 group-hover/resize-handle:w-[5px]",
           resizing

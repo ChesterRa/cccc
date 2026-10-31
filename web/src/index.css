@@ -10,6 +10,7 @@
 @import "./styles/lcdContextModal.css";
 @import "./styles/lcdTaskEditor.css";
 @import "./styles/lcdSettings.css";
+@import "./styles/lcdTerminal.css";
 @import "tailwindcss";
 
 @config "../tailwind.config.ts";

@@ -62,9 +62,12 @@ export function ResizableSidePanel({
         aria-valuemax={layout.maxWidth}
         aria-valuenow={layout.width}
         data-side-panel-resize
+        data-resizing={layout.dragging || undefined}
+        data-lcd-scope={surface === "files" ? "" : undefined}
       >
         <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--color-border-primary)] group-hover/resize:bg-[var(--color-border-focus)] group-focus-visible/resize:bg-[var(--color-border-focus)]" />
         <div
+          data-resize-band
           className={classNames(
             "absolute inset-y-0 -left-1 w-4 rounded-full transition-colors",
             layout.dragging
@@ -82,6 +85,8 @@ export function ResizableSidePanel({
           "hidden min-h-0 min-w-0 flex-shrink-0 flex-col overflow-hidden border-l border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] md:flex",
         )}
         id="group-side-panel"
+        // Presentations keep their own look until they are migrated; the Files panel is LCD.
+        data-lcd-scope={surface === "files" ? "" : undefined}
         ref={panelRef}
         style={{ width: `${layout.width}px` }}
       >

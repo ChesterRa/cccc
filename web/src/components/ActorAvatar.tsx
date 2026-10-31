@@ -100,7 +100,7 @@ export const ActorAvatar = memo(function ActorAvatar({
       ) : usesInlineClaudeLogo ? (
         <ClaudeLogo className="h-3/5 w-3/5" />
       ) : logoSrc ? (
-        <span className="flex h-full w-full items-center justify-center bg-white">
+        <span className="flex h-full w-full items-center justify-center bg-white" data-runtime-logo>
           <img src={logoSrc} alt="" className={logoClassName} />
         </span>
       ) : (

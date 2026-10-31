@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import {
   Dialog,
@@ -53,7 +53,7 @@ export function VoiceFolderDialog({
       <DialogContent className="max-w-sm gap-3 p-5">
         <DialogTitle className="pr-8">{title}</DialogTitle>
         {error ? (
-          <p role="alert" className="text-sm text-rose-600">
+          <p role="alert" className="text-sm text-rose-600" data-status-tone="error">
             {error}
           </p>
         ) : null}
@@ -127,6 +127,20 @@ export function VoiceArchiveDialog({
 }) {
   const [selected, setSelected] = useState("");
   const viewed = documents.find((document) => document.document_id === selected);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLElement>(null);
+  const viewedId = viewed?.document_id;
+  // The preview follows the list, so reveal it without leaving focus on an offscreen row.
+  const revealPreview = useCallback(() => {
+    const scroll = scrollRef.current;
+    const preview = previewRef.current;
+    if (!scroll || !preview) return;
+    scroll.scrollTop += preview.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+    preview.focus({ preventScroll: true });
+  }, []);
+  useLayoutEffect(() => {
+    if (viewedId) revealPreview();
+  }, [viewedId, revealPreview]);
   return (
     <Dialog
       open
@@ -134,55 +148,67 @@ export function VoiceArchiveDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-w-3xl max-h-[85dvh] gap-3 overflow-auto p-5">
+      <DialogContent className="max-w-3xl max-h-[85dvh] gap-3 p-5">
         <DialogTitle className="pr-8">
           {t("voiceArchiveTitle", { defaultValue: "Archived documents" })}
         </DialogTitle>
-        {error ? (
-          <p role="alert" className="text-sm text-rose-600">
-            {error}
-          </p>
-        ) : null}
-        <DialogDescription>
-          {t("voiceArchiveHint", {
-            defaultValue: "Archived documents are kept here. Deleted documents are not included.",
-          })}
-        </DialogDescription>
-        {documents.length ? (
-          documents.map((document) => (
-            <div
-              key={document.document_id}
-              className="flex flex-wrap items-center gap-2 border-b border-[var(--glass-border-subtle)] py-2"
+        {/* Keep the title and close control visible while the description and contents scroll. */}
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+          {error ? (
+            <p role="alert" className="mb-3 text-sm text-rose-600" data-status-tone="error">
+              {error}
+            </p>
+          ) : null}
+          <DialogDescription className="mb-3">
+            {t("voiceArchiveHint", {
+              defaultValue: "Archived documents are kept here. Deleted documents are not included.",
+            })}
+          </DialogDescription>
+          {documents.length ? (
+            documents.map((document) => (
+              <div
+                key={document.document_id}
+                className="flex flex-wrap items-center gap-2 border-b border-[var(--glass-border-subtle)] py-2"
+              >
+                <Button
+                  variant="ghost"
+                  className="h-auto min-w-0 flex-1 justify-start whitespace-normal text-left"
+                  onClick={() => {
+                    if (document.document_id === selected) revealPreview();
+                    else setSelected(document.document_id);
+                  }}
+                >
+                  {document.title}
+                </Button>
+                <Button variant="outline" disabled={busy} onClick={() => onRestore(document)}>
+                  {t("voiceArchiveRestore", { defaultValue: "Restore" })}
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="text-rose-600 dark:text-rose-400"
+                  disabled={busy}
+                  onClick={() => onDelete(document)}
+                  data-status-tone="error"
+                >
+                  {t("voiceSecretaryDocumentDeleteAction", { defaultValue: "Delete" })}
+                </Button>
+              </div>
+            ))
+          ) : (
+            <p>{t("voiceArchiveEmpty", { defaultValue: "No archived documents" })}</p>
+          )}
+          {viewed ? (
+            <section
+              ref={previewRef}
+              tabIndex={-1}
+              aria-label={viewed.title}
+              className="mt-3 min-w-0 border-t pt-3"
             >
-              <Button
-                variant="ghost"
-                className="h-auto min-w-0 flex-1 justify-start whitespace-normal text-left"
-                onClick={() => setSelected(document.document_id)}
-              >
-                {document.title}
-              </Button>
-              <Button variant="outline" disabled={busy} onClick={() => onRestore(document)}>
-                {t("voiceArchiveRestore", { defaultValue: "Restore" })}
-              </Button>
-              <Button
-                variant="ghost"
-                className="text-rose-600 dark:text-rose-400"
-                disabled={busy}
-                onClick={() => onDelete(document)}
-              >
-                {t("voiceSecretaryDocumentDeleteAction", { defaultValue: "Delete" })}
-              </Button>
-            </div>
-          ))
-        ) : (
-          <p>{t("voiceArchiveEmpty", { defaultValue: "No archived documents" })}</p>
-        )}
-        {viewed ? (
-          <section aria-label={viewed.title} className="min-w-0 border-t pt-3">
-            <h3 className="mb-2 font-semibold break-words">{viewed.title}</h3>
-            <MarkdownDocumentSurface content={viewed.content || ""} isDark={isDark} />
-          </section>
-        ) : null}
+              <h3 className="mb-2 font-semibold break-words">{viewed.title}</h3>
+              <MarkdownDocumentSurface content={viewed.content || ""} isDark={isDark} />
+            </section>
+          ) : null}
+        </div>
       </DialogContent>
     </Dialog>
   );

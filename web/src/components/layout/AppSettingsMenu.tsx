@@ -21,7 +21,6 @@ export function AppSettingsMenu({
 }) {
   const { t } = useTranslation("layout");
   const [open, setOpen] = useState(false);
-  const [lcdScope, setLcdScope] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const openingDialog = useRef(false);
   const row =
@@ -53,8 +52,6 @@ export function AppSettingsMenu({
       open={open}
       onOpenChange={(value) => {
         openingDialog.current = false;
-        // The panel is portalled out of the header; it takes the header's style scope.
-        if (value) setLcdScope(Boolean(triggerRef.current?.closest("[data-lcd-scope]")));
         setOpen(value);
       }}
     >
@@ -75,13 +72,9 @@ export function AppSettingsMenu({
         align="end"
         sideOffset={8}
         collisionPadding={12}
-        className="w-[300px] max-w-[calc(100vw-24px)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-[14px] p-2"
-        // The panel's surface class sets overflow outside the utility layer; on a short
-        // screen the menu must still scroll to "All settings".
-        style={{ overflowY: "auto" }}
+        className="w-[300px] max-w-[calc(100vw-24px)] rounded-[14px] p-2"
         aria-label={t("settingsAndMore")}
         data-app-settings-menu
-        data-lcd-scope={lcdScope || undefined}
         onEscapeKeyDown={(event) => event.stopPropagation()}
         onCloseAutoFocus={(event) => {
           if (openingDialog.current) event.preventDefault();

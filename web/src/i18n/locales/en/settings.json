@@ -459,35 +459,26 @@
     "remove": {
       "busy": "Working",
       "failed": "Failed to remove capability.",
-      "label": {
-        "delete": "Delete",
-        "remove": "Remove",
-        "uninstall": "Uninstall",
-        "disable": "Disable"
-      },
+      "label": { "delete": "Delete", "remove": "Remove", "uninstall": "Uninstall" },
       "title": {
         "delete": "Delete this skill",
         "remove": "Remove this skill from the current group",
-        "uninstall": "Uninstall this MCP",
-        "disable": "Disable this built-in capability"
+        "uninstall": "Uninstall this MCP"
       },
       "confirm": {
         "delete": "Delete {{name}}?\n\nThis removes the registry record for {{id}} and related bindings.",
         "remove": "Remove {{name}}?\n\nThis clears current-group enablement and autoload references for {{id}}.",
-        "uninstall": "Uninstall {{name}}?\n\nThis clears current-group bindings and runtime installation references for {{id}}.",
-        "disable": "Disable {{name}}?\n\nThis only clears current-group enablement for {{id}}. The built-in capability itself is not deleted."
+        "uninstall": "Uninstall {{name}}?\n\nThis clears current-group bindings and runtime installation references for {{id}}."
       },
       "confirmTitle": {
         "delete": "Delete {{name}}?",
         "remove": "Remove {{name}}?",
-        "uninstall": "Uninstall {{name}}?",
-        "disable": "Disable {{name}} for this group?"
+        "uninstall": "Uninstall {{name}}?"
       },
       "confirmDescription": {
         "delete": "This removes the registry record for {{id}} and related bindings.",
         "remove": "This clears current-group enablement and autoload references for {{id}}.",
-        "uninstall": "This clears current-group bindings and runtime installation references for {{id}}.",
-        "disable": "This only turns off {{id}} for the current group. It can be enabled again later."
+        "uninstall": "This clears current-group bindings and runtime installation references for {{id}}."
       }
     },
     "block": {
@@ -510,7 +501,9 @@
       "disableTitle": "Disable in the current group only",
       "failed": "Failed to update enablement.",
       "confirmDisableTitle": "Disable {{name}} for this group?",
-      "confirmDisableDescription": "This turns off {{id}} only in the current group. It does not block future enablement."
+      "confirmDisableDescription": "This turns off {{id}} in the current group, including your own actor/session use of it here. Other actors keep their own actor/session use. It does not block future enablement.",
+      "partlyFailed": "Only part of it was turned off: {{message}}",
+      "stillEnabled": "{{name}} is still enabled. Its state may have changed in the meantime; try again."
     },
     "confirm": { "cancel": "Cancel", "confirm": "Confirm" },
     "showSystem": "System"

@@ -235,7 +235,11 @@ export function useWorkspaceActions(files: WorkspaceFilesController, readOnly: b
         </p>
       )}
       {(localError || files.mutations.error) && !action && (
-        <p role="alert" className="shrink-0 break-words px-3 py-2 text-xs text-rose-600">
+        <p
+          role="alert"
+          className="shrink-0 break-words px-3 py-2 text-xs text-rose-600"
+          data-status-tone="error"
+        >
           {localError || files.mutations.error}
         </p>
       )}

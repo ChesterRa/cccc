@@ -287,13 +287,21 @@ export function ReachMembershipSection({
       ) : null}
 
       {reachCheckExpired ? (
-        <p className="mt-3 text-xs leading-5 text-amber-700 dark:text-amber-300" role="status">
+        <p
+          data-status-tone="warning"
+          className="mt-3 text-xs leading-5 text-amber-700 dark:text-amber-300"
+          role="status"
+        >
           {t("webAccess.reach.checkExpired")}
         </p>
       ) : null}
 
       {visibleError ? (
-        <p className="mt-3 text-xs leading-5 text-red-600 dark:text-red-300" role="alert">
+        <p
+          data-status-tone="error"
+          className="mt-3 text-xs leading-5 text-red-600 dark:text-red-300"
+          role="alert"
+        >
           {visibleError}
         </p>
       ) : null}
@@ -339,7 +347,10 @@ export function ReachMembershipSection({
           </div>
 
           {unsafeHostname ? (
-            <p className="text-xs leading-5 text-amber-700 dark:text-amber-300">
+            <p
+              data-status-tone="warning"
+              className="text-xs leading-5 text-amber-700 dark:text-amber-300"
+            >
               {t("webAccess.reach.hostnameUnsafe")}
             </p>
           ) : null}
@@ -349,7 +360,10 @@ export function ReachMembershipSection({
               <summary className="cursor-pointer font-medium text-[var(--color-text-primary)]">
                 {t("webAccess.reach.adminAccessSummary")}
               </summary>
-              <p className="mt-2 max-w-3xl leading-5 text-amber-700 dark:text-amber-300">
+              <p
+                data-status-tone="warning"
+                className="mt-2 max-w-3xl leading-5 text-amber-700 dark:text-amber-300"
+              >
                 {t("webAccess.reach.adminAccessWarning")}
               </p>
               <button
@@ -364,7 +378,10 @@ export function ReachMembershipSection({
               </button>
             </details>
           ) : (
-            <p className="text-xs leading-5 text-amber-700 dark:text-amber-300">
+            <p
+              data-status-tone="warning"
+              className="text-xs leading-5 text-amber-700 dark:text-amber-300"
+            >
               {t("webAccess.reach.adminAccessMissing")}
             </p>
           )}

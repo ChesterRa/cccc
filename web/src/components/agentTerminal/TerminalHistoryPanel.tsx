@@ -113,6 +113,7 @@ export function TerminalHistoryPanel({
       onClose={onClose}
       titleId="terminal-history-title"
       closeAriaLabel={t("common:close")}
+      lcdScope
       panelClassName="h-full w-full sm:h-[85vh] sm:max-w-3xl"
       title={
         <div className="min-w-0">
@@ -145,6 +146,7 @@ export function TerminalHistoryPanel({
             type="button"
             disabled={loading}
             onClick={() => void loadOlder()}
+            data-lcd-key
             className="mb-3 rounded-lg border border-[var(--glass-border-subtle)] px-3 py-1.5 text-xs text-[var(--color-text-primary)] disabled:opacity-50"
           >
             {t("historyLoadOlder")}
@@ -177,10 +179,13 @@ export function TerminalHistoryPanel({
 
         {error ? (
           <div className="py-4 text-center text-sm text-[var(--color-text-tertiary)]">
-            <div className="mb-2">{error}</div>
+            <div className="mb-2" data-status-tone="error">
+              {error}
+            </div>
             <button
               type="button"
               onClick={() => void loadOlder()}
+              data-lcd-key
               className="rounded-lg border border-[var(--glass-border-subtle)] px-3 py-1.5 text-xs text-[var(--color-text-primary)]"
             >
               {t("historyRetry")}

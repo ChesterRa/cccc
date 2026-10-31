@@ -23,6 +23,7 @@ import {
 } from "../types";
 import { useActorDisplayState } from "../hooks/useActorDisplayState";
 import { classNames } from "../utils/classNames";
+import { useLcdStyle } from "../utils/uiStyle";
 import { formatFullTime, formatTime } from "../utils/time";
 import {
   useGroupStore,
@@ -89,7 +90,7 @@ function normalizeActorGroupRole(role: unknown): "foreman" | "peer" {
 
 function actorGroupRoleBadgeClass(role: "foreman" | "peer"): string {
   return classNames(
-    "rounded-md border px-1.5 py-0.5 text-xs font-medium",
+    "shrink-0 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-xs font-medium",
     role === "foreman"
       ? "border-amber-500/25 bg-amber-500/12 text-amber-700 dark:text-amber-300"
       : "border-slate-400/25 bg-slate-500/10 text-slate-600 dark:border-slate-400/20 dark:bg-slate-400/10 dark:text-slate-300",
@@ -161,6 +162,7 @@ export function AgentTab({
   onStatusChange,
 }: AgentTabProps) {
   const { t, i18n } = useTranslation("actors");
+  const lcd = useLcdStyle();
   // Derived state (must be defined before refs that use them)
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
@@ -463,6 +465,17 @@ export function AgentTab({
       return t(workingState);
     return t("running");
   })();
+  // The LCD shapes reuse the Group's run/idle/stop vocabulary. The accessible
+  // label remains the Actor's more specific status (including waiting/stuck).
+  const lcdStatusShape =
+    runtimeIndicator.tone === "working"
+      ? "run"
+      : runtimeIndicator.tone === "stop"
+        ? "stop"
+        : runtimeIndicator.tone === "error"
+          ? undefined
+          : "idle";
+  const lcdStatusText = runtimeIndicator.tone === "error" ? "×" : "";
   const handleNewSession = () => {
     if (!window.confirm(t("newSessionConfirm"))) return;
     onNewSession();
@@ -475,6 +488,7 @@ export function AgentTab({
         "border-amber-500/30 bg-amber-500/10 text-amber-700",
         "dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-100",
       )}
+      data-status-tone="warning"
     >
       <AlertIcon size={40} />
       <div className="mt-3 text-lg font-semibold text-[var(--color-text-primary)]">
@@ -794,27 +808,45 @@ export function AgentTab({
               Boolean(navigation) && "basis-full min-h-8 @min-[480px]/actor-view:basis-auto",
             )}
           >
-            <div className="relative h-5 w-5 shrink-0" title={compactIdentityTitle}>
+            <div
+              className={classNames("relative shrink-0", lcd ? "h-[28px] w-[28px]" : "h-5 w-5")}
+              title={compactIdentityTitle}
+            >
               <span aria-hidden="true">
                 <ActorAvatar
                   avatarUrl={actor.avatar_url || undefined}
                   runtime={actor.runtime}
                   title={actor.title || actor.id}
                   isDark={isDark}
-                  sizeClassName="h-5 w-5"
+                  sizeClassName={lcd ? "h-[28px] w-[28px]" : "h-5 w-5"}
                   textClassName="text-[10px]"
-                  className="!border-0 !shadow-none"
+                  className={lcd ? "lcd-tile" : "!border-0 !shadow-none"}
                 />
               </span>
+              {!lcd ? (
+                <span
+                  className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-[var(--color-bg-secondary)] ${statusTone.dotClass}`}
+                  role="img"
+                  aria-label={runtimeStatusText}
+                  title={[runtimeStatusText, !isEventActor && actor.effective_working_reason]
+                    .filter(Boolean)
+                    .join("\n")}
+                />
+              ) : null}
+            </div>
+            {lcd ? (
               <span
-                className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-[var(--color-bg-secondary)] ${statusTone.dotClass}`}
+                className="lcd-group-symbol"
+                data-lcd-shape={lcdStatusShape}
                 role="img"
                 aria-label={runtimeStatusText}
                 title={[runtimeStatusText, !isEventActor && actor.effective_working_reason]
                   .filter(Boolean)
                   .join("\n")}
-              />
-            </div>
+              >
+                {lcdStatusText}
+              </span>
+            ) : null}
             <span
               id={`runtime-inspector-${groupId}-${actor.id}`}
               className="min-w-0 flex-1 truncate font-semibold"
@@ -865,9 +897,11 @@ export function AgentTab({
       ) : null}
       {/* Agent Header */}
       <div
+        data-terminal-expanded-header
         className={classNames(
-          compact ? "hidden" : "border-b px-4 py-2 sm:px-5",
-          isWebModel && "max-sm:pr-16",
+          compact
+            ? "hidden"
+            : "border-b py-2 pl-4 pr-[calc(44px+1.25rem)] sm:pl-5 sm:pr-[calc(44px+1.5rem)]",
           isDark
             ? "border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))]"
             : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.88))]",
@@ -883,44 +917,51 @@ export function AgentTab({
                 isDark={isDark}
                 sizeClassName={isSmallScreen ? "h-8 w-8" : "h-9 w-9"}
                 textClassName="text-xs"
-                className={classNames(
-                  "shadow-[0_14px_28px_-20px_rgba(15,23,42,0.68)]",
-                  isDark ? "bg-slate-900" : "bg-white",
-                )}
+                className={
+                  lcd
+                    ? "lcd-tile"
+                    : classNames(
+                        "shadow-[0_14px_28px_-20px_rgba(15,23,42,0.68)]",
+                        isDark ? "bg-slate-900" : "bg-white",
+                      )
+                }
               />
-              <span
-                className={classNames(
-                  "absolute -bottom-0.5 -right-0.5 inline-flex h-2.5 w-2.5 rounded-full ring-2 transition-all",
-                  isDark ? "ring-slate-950" : "ring-white",
-                  statusTone.dotClass,
-                )}
-              >
-                {statusTone.pulse && (
-                  <span
-                    className={classNames(
-                      "absolute inset-[-3px] rounded-full motion-reduce:animate-none",
-                      statusTone.strongPulse
-                        ? "animate-ping bg-emerald-300/35"
-                        : "animate-pulse bg-current/20",
-                    )}
-                  />
-                )}
-                {statusTone.strongPulse && (
-                  <span className="absolute inset-[-7px] rounded-full border border-emerald-300/35 animate-ping motion-reduce:animate-none [animation-duration:1.6s]" />
-                )}
-              </span>
+              {!lcd ? (
+                <span
+                  className={classNames(
+                    "absolute -bottom-0.5 -right-0.5 inline-flex h-2.5 w-2.5 rounded-full ring-2 transition-all",
+                    isDark ? "ring-slate-950" : "ring-white",
+                    statusTone.dotClass,
+                  )}
+                >
+                  {statusTone.pulse && (
+                    <span
+                      className={classNames(
+                        "absolute inset-[-3px] rounded-full motion-reduce:animate-none",
+                        statusTone.strongPulse
+                          ? "animate-ping bg-emerald-300/35"
+                          : "animate-pulse bg-current/20",
+                      )}
+                    />
+                  )}
+                  {statusTone.strongPulse && (
+                    <span className="absolute inset-[-7px] rounded-full border border-emerald-300/35 animate-ping motion-reduce:animate-none [animation-duration:1.6s]" />
+                  )}
+                </span>
+              ) : null}
             </div>
 
             <div className="flex min-w-0 items-center gap-3">
-              <div className={classNames("min-w-0", !isWebModel && "shrink-0")}>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2 min-w-0">
                   <span
                     id={compact ? undefined : `runtime-inspector-${groupId}-${actor.id}`}
                     className="min-w-0 truncate font-semibold text-[var(--color-text-primary)]"
+                    title={actor.title || actor.id}
                   >
                     {actor.title || actor.id}
                   </span>
-                  <span className={actorGroupRoleBadgeClass(actorGroupRole)}>
+                  <span className={actorGroupRoleBadgeClass(actorGroupRole)} data-role-badge>
                     {actorGroupRole === "foreman"
                       ? t("groupRoleForeman", { defaultValue: "Foreman" })
                       : t("groupRolePeer", { defaultValue: "Peer" })}
@@ -932,7 +973,23 @@ export function AgentTab({
                     "text-[var(--color-text-tertiary)]",
                   )}
                 >
-                  {rtInfo?.label || t("custom")} • {runtimeStatusText}
+                  {lcd ? (
+                    <>
+                      {rtInfo?.label || t("custom")} •{" "}
+                      <span
+                        className="lcd-group-symbol"
+                        data-lcd-shape={lcdStatusShape}
+                        aria-hidden="true"
+                      >
+                        {lcdStatusText}
+                      </span>{" "}
+                      {runtimeStatusText}
+                    </>
+                  ) : (
+                    <>
+                      {rtInfo?.label || t("custom")} • {runtimeStatusText}
+                    </>
+                  )}
                 </div>
                 {/* Mobile-only: condensed single-line agent state */}
                 {(!isEventActor || agentState) && (
@@ -959,6 +1016,7 @@ export function AgentTab({
                       : "max-w-[min(660px,54vw)] border-black/8 bg-white/78",
                   )}
                   aria-label={t("agentState")}
+                  data-terminal-agent-state
                 >
                   <div className="min-w-0">
                     <div
@@ -970,6 +1028,9 @@ export function AgentTab({
                             ? "text-slate-500 italic"
                             : "text-gray-500 italic",
                       )}
+                      data-status-tone={
+                        stateHeadline === t("noAgentStateYet") ? "muted" : undefined
+                      }
                       style={statusClamp2Style}
                       title={
                         agentState?.updated_at
@@ -995,6 +1056,7 @@ export function AgentTab({
                             className={classNames(
                               "shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-600 dark:text-rose-300",
                             )}
+                            data-status-tone="error"
                           >
                             {t("blockersShort", { count: blockerCount })}
                           </span>
@@ -1199,6 +1261,7 @@ export function AgentTab({
                   <button
                     onClick={requestReconnect}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium min-h-[44px] transition-colors"
+                    data-lcd-primary
                   >
                     <RefreshIcon size={16} />
                     {t("reconnect")}
@@ -1211,7 +1274,10 @@ export function AgentTab({
             connectionStatus === "connected" &&
             terminalReady &&
             !terminalWritable ? (
-              <div className="absolute right-4 top-4 z-10 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-2 text-xs font-medium text-amber-700 shadow-sm backdrop-blur dark:text-amber-200">
+              <div
+                className="absolute right-4 top-4 z-10 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-2 text-xs font-medium text-amber-700 shadow-sm backdrop-blur dark:text-amber-200"
+                data-terminal-notice
+              >
                 {t("terminalReadOnlyNotice", { defaultValue: "Terminal is connected read-only." })}
                 <button type="button" className="ml-2 underline" onClick={requestTakeover}>
                   {t("takeControl")}
@@ -1249,6 +1315,7 @@ export function AgentTab({
                   disabled={isBusy}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50 min-h-[44px] transition-colors"
                   aria-label={t("launchAgentLabel")}
+                  data-lcd-primary
                 >
                   <PlayIcon size={16} />
                   {isBusy ? t("launching") : t("launchAgent")}
@@ -1273,7 +1340,7 @@ export function AgentTab({
       {/* Action Buttons - Scrollable on mobile with fade edges */}
       {canControl && !compact ? (
         <ScrollFade
-          className={classNames("border-t select-none", "glass-header")}
+          className={classNames("border-t select-none", "glass-header", "terminal-actions")}
           innerClassName="flex items-center gap-2 px-4 py-3 sm:px-5"
           fadeWidth={20}
         >
@@ -1282,6 +1349,7 @@ export function AgentTab({
               <button
                 onClick={onQuit}
                 disabled={isBusy}
+                data-lcd-key
                 className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                 aria-label={t(accessOnly ? "dotsPause" : "quitAgent")}
                 title={accessOnly ? t("dotsPauseHint") : undefined}
@@ -1293,6 +1361,7 @@ export function AgentTab({
                 <button
                   onClick={sendInterrupt}
                   disabled={connectionStatus !== "connected" || !terminalWritable}
+                  data-lcd-key
                   className={`${ghostActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                   title={t("sendInterruptTitle")}
                   aria-label={t("sendInterruptLabel")}
@@ -1304,6 +1373,7 @@ export function AgentTab({
                 <button
                   onClick={onRelaunch}
                   disabled={isBusy}
+                  data-lcd-key
                   className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                   aria-label={t("relaunchAgent")}
                 >
@@ -1315,6 +1385,7 @@ export function AgentTab({
                 <button
                   onClick={handleNewSession}
                   disabled={isBusy}
+                  data-lcd-key
                   className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                   aria-label={t("newSessionAgent")}
                 >
@@ -1325,6 +1396,7 @@ export function AgentTab({
               <button
                 onClick={onEdit}
                 disabled={isBusy}
+                data-lcd-key
                 className={`${ghostActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                 aria-label={t("editAgentConfig")}
               >
@@ -1339,6 +1411,7 @@ export function AgentTab({
                 disabled={isBusy}
                 className={`${primaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                 aria-label={t(accessOnly ? eventStartKey : "launchAgentLabel")}
+                data-lcd-primary
               >
                 <PlayIcon size={16} />
                 {isBusy ? t("common:loading") : t(accessOnly ? eventStartKey : "launch")}
@@ -1347,6 +1420,7 @@ export function AgentTab({
                 <button
                   onClick={handleNewSession}
                   disabled={isBusy}
+                  data-lcd-key
                   className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                   aria-label={t("newSessionAgent")}
                 >
@@ -1357,6 +1431,7 @@ export function AgentTab({
               <button
                 onClick={onEdit}
                 disabled={isBusy}
+                data-lcd-key
                 className={ghostActionButtonClass}
                 aria-label={t("editAgentConfig")}
               >
@@ -1370,6 +1445,7 @@ export function AgentTab({
             // live on the server either way; this reads them from there.
             <button
               onClick={() => setHistoryOpen(true)}
+              data-lcd-key
               className={`${ghostActionButtonClass} flex-shrink-0 whitespace-nowrap`}
               aria-label={t("openTerminalHistory")}
               title={t("openTerminalHistory")}
@@ -1380,6 +1456,8 @@ export function AgentTab({
           ) : null}
           <button
             onClick={onInbox}
+            data-lcd-key
+            data-status-tone="neutral"
             className={classNames(
               "ml-auto flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-sm min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap border",
               unreadCount > 0
@@ -1401,6 +1479,7 @@ export function AgentTab({
                   isDark ? "bg-white text-[rgb(20,20,22)]" : "bg-[rgb(35,36,37)] text-white",
                 )}
                 aria-hidden="true"
+                data-terminal-unread-count
               >
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
@@ -1411,7 +1490,7 @@ export function AgentTab({
             disabled={isBusy}
             className={classNames(
               "flex items-center gap-1.5 rounded-xl px-3 py-2.5 text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-              "text-rose-600 hover:bg-rose-500/10 dark:text-rose-400",
+              "destructive-key text-rose-600 hover:bg-rose-500/10 dark:text-rose-400",
             )}
             title={t("removeAgent")}
             aria-label={t("removeAgent")}

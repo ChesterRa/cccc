@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { Actor, GroupDoc } from "../types";
+import { setUiStylePrefs } from "../utils/uiStyle";
 
 const mocks = vi.hoisted(() => ({
   pause: vi.fn(),
@@ -129,6 +130,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  setUiStylePrefs({ style: "classic" });
   vi.useRealTimers();
 });
 async function render(
@@ -162,6 +164,31 @@ async function render(
     ),
   );
 }
+
+it("keeps distinct LCD status shapes and their accessible Actor labels", async () => {
+  const managed: Actor = {
+    id: "managed",
+    runtime: "pi",
+    enabled: true,
+    running: true,
+    runner_effective: "headless",
+    runtime_state_source: "managed_session",
+    effective_working_state: "working",
+  };
+  await act(async () => setUiStylePrefs({ style: "lcd" }));
+  await render(true, managed, "g_managed");
+  const status = () => host.querySelector('[data-terminal-title-bar] [role="img"]');
+  expect(status()?.getAttribute("aria-label")).toBe("working");
+  expect(status()?.getAttribute("data-lcd-shape")).toBe("run");
+
+  await render(true, { ...managed, effective_working_state: "error" }, "g_managed");
+  expect(status()?.getAttribute("aria-label")).toBe("common:error");
+  expect(status()?.textContent).toBe("×");
+
+  await render(true, { ...managed, running: false }, "g_managed");
+  expect(status()?.getAttribute("aria-label")).toBe("stopped");
+  expect(status()?.getAttribute("data-lcd-shape")).toBe("stop");
+});
 
 it.each([false, true])(
   "shows a GET-projected managed turn error without offering Start (compact=%s)",

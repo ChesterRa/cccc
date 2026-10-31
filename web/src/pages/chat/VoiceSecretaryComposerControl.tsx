@@ -6010,6 +6010,7 @@ export function VoiceSecretaryComposerControl({
                             key={option.key}
                             role="group"
                             aria-label={option.label}
+                            data-voice-menu-row
                             className={classNames(
                               "rounded-xl transition-colors",
                               active
@@ -6035,6 +6036,7 @@ export function VoiceSecretaryComposerControl({
                               }}
                             >
                               <span
+                                data-voice-menu-tile
                                 className={classNames(
                                   "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
                                   option.key === "document"
@@ -6070,6 +6072,7 @@ export function VoiceSecretaryComposerControl({
                                   {option.label}
                                 </span>
                                 <span
+                                  data-voice-menu-hint
                                   className={classNames(
                                     "block text-[11px]",
                                     isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500",
@@ -6158,7 +6161,12 @@ export function VoiceSecretaryComposerControl({
                     <ChevronDownIcon size={12} data-voice-language-chevron aria-hidden="true" />
                   </button>
                 </PopoverTrigger>
-                <PopoverContent align="start" sideOffset={6} className="w-52 rounded-2xl p-1.5">
+                <PopoverContent
+                  align="start"
+                  sideOffset={6}
+                  className="w-52 rounded-2xl p-1.5"
+                  data-voice-language-menu
+                >
                   <div
                     role="group"
                     aria-label={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
@@ -6169,6 +6177,7 @@ export function VoiceSecretaryComposerControl({
                         <button
                           key={optionValue}
                           type="button"
+                          data-voice-menu-row
                           className={classNames(
                             "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors",
                             active
@@ -6186,6 +6195,7 @@ export function VoiceSecretaryComposerControl({
                           }}
                         >
                           <span
+                            data-voice-menu-tile
                             className={classNames(
                               "flex h-6 w-8 shrink-0 items-center justify-center rounded-md text-[10px] font-bold tracking-[0.08em]",
                               isDark ? "bg-white/10 text-slate-200" : "bg-gray-100 text-gray-700",

@@ -508,7 +508,6 @@ export async function enableGroupCapability(
     actorId?: string;
     ttlSeconds?: number;
     reason?: string;
-    cleanup?: boolean;
   },
 ) {
   clearCapabilityStateRequests(groupId);
@@ -524,7 +523,6 @@ export async function enableGroupCapability(
           actor_id: opts?.actorId || "user",
           ttl_seconds: opts?.ttlSeconds || 3600,
           reason: opts?.reason || "",
-          cleanup: opts?.cleanup || false,
         }),
       },
     );

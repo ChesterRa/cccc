@@ -160,25 +160,28 @@ function FilesPanel({ files, isDark, readOnly, onClose, onAttachPath, onPinPath 
         )}
       </SidePanelHeader>
 
-      <div
-        className="flex shrink-0 gap-1 border-b border-[var(--glass-border-subtle)] px-2 pb-2"
-        role="group"
-        aria-label={t("workspaceGit.view")}
-      >
-        {(["files", "changes"] as const).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            aria-pressed={files.mode === mode}
-            className="rounded-md px-3 py-1 text-xs hover:bg-[var(--glass-tab-bg)] aria-pressed:bg-[var(--glass-tab-bg)] aria-pressed:font-semibold"
-            onClick={() => {
-              setMenu(null);
-              files.setMode(mode);
-            }}
-          >
-            {t(mode === "files" ? "workspaceFilesTitle" : "workspaceGit.changes")}
-          </button>
-        ))}
+      <div className="flex shrink-0 border-b border-[var(--glass-border-subtle)] px-2 pb-2">
+        <div
+          className="flex gap-1"
+          role="group"
+          aria-label={t("workspaceGit.view")}
+          data-workspace-mode-switch
+        >
+          {(["files", "changes"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={files.mode === mode}
+              className="rounded-md px-3 py-1 text-xs hover:bg-[var(--glass-tab-bg)] aria-pressed:bg-[var(--glass-tab-bg)] aria-pressed:font-semibold"
+              onClick={() => {
+                setMenu(null);
+                files.setMode(mode);
+              }}
+            >
+              {t(mode === "files" ? "workspaceFilesTitle" : "workspaceGit.changes")}
+            </button>
+          ))}
+        </div>
       </div>
       {files.mode === "changes" ? (
         <WorkspaceChangesPanel files={files} />
@@ -224,7 +227,7 @@ function FilesPanel({ files, isDark, readOnly, onClose, onAttachPath, onPinPath 
             </SidePanelButton>
           </form>
           {(pathError || files.pathError) && (
-            <p role="alert" className="px-3 py-2 text-xs text-rose-600">
+            <p role="alert" className="px-3 py-2 text-xs text-rose-600" data-status-tone="error">
               {pathError || files.pathError}
             </p>
           )}
@@ -236,6 +239,7 @@ function FilesPanel({ files, isDark, readOnly, onClose, onAttachPath, onPinPath 
                 "px-3 py-2 text-[12px]",
                 isDark ? "bg-rose-400/10 text-rose-200" : "bg-rose-500/8 text-rose-700",
               )}
+              data-status-tone="error"
             >
               {files.fileError}
             </div>

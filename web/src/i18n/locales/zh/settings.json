@@ -456,30 +456,26 @@
     "remove": {
       "busy": "处理中",
       "failed": "移除能力失败。",
-      "label": { "delete": "删除", "remove": "移除", "uninstall": "卸载", "disable": "停用" },
+      "label": { "delete": "删除", "remove": "移除", "uninstall": "卸载" },
       "title": {
         "delete": "删除这个 Skill",
         "remove": "移除这个 Skill 的当前组引用",
-        "uninstall": "卸载这个 MCP",
-        "disable": "停用这个内建能力"
+        "uninstall": "卸载这个 MCP"
       },
       "confirm": {
         "delete": "删除 {{name}}？\n\n这会移除 {{id}} 的 registry 记录以及相关绑定。",
         "remove": "移除 {{name}}？\n\n这会清理 {{id}} 在当前工作组的启用/自动加载引用。",
-        "uninstall": "卸载 {{name}}？\n\n这会清理 {{id}} 在当前工作组的绑定和 runtime 安装引用。",
-        "disable": "停用 {{name}}？\n\n这只会清理 {{id}} 在当前工作组的启用状态，不会删除内建能力。"
+        "uninstall": "卸载 {{name}}？\n\n这会清理 {{id}} 在当前工作组的绑定和 runtime 安装引用。"
       },
       "confirmTitle": {
         "delete": "删除 {{name}}？",
         "remove": "移除 {{name}}？",
-        "uninstall": "卸载 {{name}}？",
-        "disable": "为当前工作组停用 {{name}}？"
+        "uninstall": "卸载 {{name}}？"
       },
       "confirmDescription": {
         "delete": "这会移除 {{id}} 的 registry 记录以及相关绑定。",
         "remove": "这会清理 {{id}} 在当前工作组的启用/自动加载引用。",
-        "uninstall": "这会清理 {{id}} 在当前工作组的绑定和 runtime 安装引用。",
-        "disable": "这只会在当前工作组关闭 {{id}}，之后仍可再次启用。"
+        "uninstall": "这会清理 {{id}} 在当前工作组的绑定和 runtime 安装引用。"
       }
     },
     "block": {
@@ -502,7 +498,9 @@
       "disableTitle": "仅在当前工作组停用",
       "failed": "更新启用状态失败。",
       "confirmDisableTitle": "为当前工作组停用 {{name}}？",
-      "confirmDisableDescription": "这只会在当前工作组关闭 {{id}}，不会阻止之后再次启用。"
+      "confirmDisableDescription": "这会在当前工作组关闭 {{id}}，包括你自己在本组对它的 actor/session 适用；其他 actor 自己的 actor/session 适用保持不变。不会阻止之后再次启用。",
+      "partlyFailed": "只关闭了一部分：{{message}}",
+      "stillEnabled": "{{name}} 仍然启用。这期间它的状态可能有变化，请重试。"
     },
     "confirm": { "cancel": "取消", "confirm": "确认" },
     "showSystem": "系统项"

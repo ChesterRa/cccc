@@ -200,7 +200,10 @@ export function GroupEditModal({
             className="overflow-hidden border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(250,248,245,0.96))] shadow-[0_24px_60px_-40px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(24,26,31,0.9),rgba(13,14,18,0.98))]"
             padding="none"
           >
-            <div className="border-b border-[var(--glass-border-subtle)] px-5 py-4 sm:px-6 bg-[rgba(18,18,20,0.018)] dark:bg-white/[0.03]">
+            <div
+              className="border-b border-[var(--glass-border-subtle)] px-5 py-4 sm:px-6 bg-[rgba(18,18,20,0.018)] dark:bg-white/[0.03]"
+              data-panel-head
+            >
               <div className="text-sm font-semibold text-[var(--color-text-primary)]">
                 {t("groupEdit.projectRoot")}
               </div>

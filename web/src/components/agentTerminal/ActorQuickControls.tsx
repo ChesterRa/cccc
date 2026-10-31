@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Maximize2, MoreHorizontal, Play, RefreshCw, MousePointer2 } from "lucide-react";
+import { RefreshCw, MousePointer2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { ExpandIcon, PlayIcon, VoiceMoreIcon } from "../Icons";
 
 export function ActorQuickControls({
   actorTitle,
@@ -82,18 +83,20 @@ export function ActorQuickControls({
       {!readOnly && !running ? (
         <button
           className={button}
+          data-lcd-key
           disabled={busy}
           onClick={onLaunch}
           title={t(startLabel)}
           aria-label={t(startLabel)}
         >
-          <Play size={14} />
+          <PlayIcon size={14} strokeWidth={2} absoluteStrokeWidth={false} />
         </button>
       ) : null}
       {!readOnly && running && hasTerminal ? (
         connectionFailed ? (
           <button
             className={button}
+            data-lcd-key
             onClick={onReconnect}
             title={t("reconnect")}
             aria-label={t("reconnect")}
@@ -103,6 +106,7 @@ export function ActorQuickControls({
         ) : connected && !writable ? (
           <button
             className={`${button} @min-[480px]/actor-view:w-auto @min-[480px]/actor-view:px-1 text-xs`}
+            data-lcd-key
             onClick={onTakeover}
             title={t("takeControl")}
             aria-label={t("takeControl")}
@@ -113,6 +117,7 @@ export function ActorQuickControls({
         ) : (
           <button
             className={`${button} hidden @min-[480px]/actor-view:inline-flex`}
+            data-lcd-key
             disabled={!connected || !writable || busy}
             onClick={onInterrupt}
             title={t("sendInterruptTitle")}
@@ -134,13 +139,15 @@ export function ActorQuickControls({
             <button
               ref={triggerRef}
               className={`${button} relative`}
+              data-lcd-key
               title={t("actorControls", { actor: actorTitle })}
               aria-label={t("actorControls", { actor: actorTitle })}
             >
-              <MoreHorizontal size={15} />
+              <VoiceMoreIcon size={15} />
               {unreadCount > 0 ? (
                 <span
                   className="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-amber-500"
+                  data-terminal-unread
                   aria-label={t("unreadMessages", { count: unreadCount })}
                 />
               ) : null}
@@ -149,7 +156,8 @@ export function ActorQuickControls({
           <PopoverContent
             align="end"
             sideOffset={4}
-            className="w-48 max-h-[min(440px,70vh)] overflow-y-auto rounded-xl p-1.5"
+            className="w-48 max-h-[min(440px,70vh,var(--radix-popover-content-available-height))] rounded-xl p-1.5"
+            data-lcd-menu
             aria-label={t("actorControls", { actor: actorTitle })}
             onEscapeKeyDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
@@ -212,7 +220,7 @@ export function ActorQuickControls({
                   </button>
                 ) : null}
                 <button
-                  className={`${item} text-rose-600 dark:text-rose-400`}
+                  className={`${item} destructive-key text-rose-600 dark:text-rose-400`}
                   disabled={busy}
                   onClick={() => run(onRemove)}
                 >
@@ -225,11 +233,12 @@ export function ActorQuickControls({
       ) : null}
       <button
         className={button}
+        data-lcd-key
         onClick={onExpand}
         title={t("chat:workView.maximize", { actor: actorTitle })}
         aria-label={t("chat:workView.maximize", { actor: actorTitle })}
       >
-        <Maximize2 size={14} />
+        <ExpandIcon size={14} strokeWidth={2} absoluteStrokeWidth={false} />
       </button>
     </div>
   );

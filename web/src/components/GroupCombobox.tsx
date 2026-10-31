@@ -55,7 +55,6 @@ export function GroupCombobox({
   matchTriggerWidth = false,
 }: GroupComboboxProps) {
   const [open, setOpen] = useState(false);
-  const [lcdScope, setLcdScope] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [triggerWidth, setTriggerWidth] = useState<number | null>(null);
@@ -85,13 +84,7 @@ export function GroupCombobox({
   }, [matchTriggerWidth, open]);
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (nextOpen) setLcdScope(Boolean(triggerRef.current?.closest("[data-lcd-scope]")));
-        setOpen(nextOpen);
-      }}
-    >
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           ref={triggerRef}
@@ -112,7 +105,6 @@ export function GroupCombobox({
         </button>
       </PopoverTrigger>
       <PopoverContent
-        data-lcd-scope={lcdScope ? "" : undefined}
         align="start"
         onOpenAutoFocus={(event) => {
           // With no search input, put focus inside cmdk so its arrow-key and

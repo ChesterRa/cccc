@@ -43,6 +43,7 @@ export function ImagePreviewFailure({
       style={{ height }}
       title={title}
       download={downloadName}
+      data-image-frame
     >
       <div
         className={classNames(
@@ -56,6 +57,7 @@ export function ImagePreviewFailure({
               ? "border-white/12 bg-slate-950/70"
               : "border-[rgba(15,23,42,0.14)] bg-white/85",
         )}
+        data-image-canvas
       >
         <ImageIcon
           size={isGridLayout ? 20 : 24}
@@ -80,6 +82,7 @@ export function ImagePreviewFailure({
             isGridLayout ? "mt-0.5 truncate text-xs leading-4" : "mt-1 text-xs",
             isDark ? "text-white/72" : "text-[rgb(100,116,139)]",
           )}
+          data-status-tone="muted"
         >
           {openOriginalLabel}
         </div>

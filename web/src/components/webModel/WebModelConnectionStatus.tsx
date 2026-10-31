@@ -35,13 +35,20 @@ export function WebModelConnectionStatus({
           : undefined
       }
     >
-      <span className={failed ? "text-amber-700 dark:text-amber-300" : undefined}>
+      <span
+        className={failed ? "text-amber-700 dark:text-amber-300" : undefined}
+        data-status-tone={failed ? "warning" : undefined}
+      >
         {t(`webModelActor.states.${displayState}`, {
           defaultValue: t("webModelActor.states.loading"),
         })}
       </span>
       {failed && pairing?.error_code && (
-        <p role="alert" className="break-words text-amber-700 dark:text-amber-300">
+        <p
+          role="alert"
+          className="break-words text-amber-700 dark:text-amber-300"
+          data-status-tone="warning"
+        >
           {t(`webModelActor.errors.${pairing.error_code}`, {
             defaultValue: t("webModelActor.errors.pairing_failed"),
           })}

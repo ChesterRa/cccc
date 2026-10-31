@@ -49,6 +49,8 @@ export function MediaLightbox({
           aria-modal="true"
           aria-label={dialogLabel}
           onClick={(event) => event.stopPropagation()}
+          // Attachments open from chat messages, which take the LCD look when it is on.
+          data-lcd-scope
         >
           <div
             className={classNames(

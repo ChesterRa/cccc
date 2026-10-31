@@ -76,8 +76,7 @@ export function SelectMenu<Value extends string | number>({
         className={cn(
           // A long list stays a dropdown rather than a full-height column, but never overflows the viewport.
           // The list is an opaque panel: the shared glass blur behind it would only cost paint work.
-          // Override glass-modal's unlayered overflow:hidden so pointer and touch scrolling remain available.
-          "max-w-[calc(100vw-24px)] max-h-[min(18rem,var(--radix-popover-content-available-height))] !overflow-y-auto overscroll-contain rounded-lg !bg-[var(--color-bg-primary)] !backdrop-blur-none p-1",
+          "max-w-[calc(100vw-24px)] max-h-[min(18rem,var(--radix-popover-content-available-height))] overscroll-contain rounded-lg !bg-[var(--color-bg-primary)] !backdrop-blur-none p-1",
           contentClassName,
         )}
         onOpenAutoFocus={(event) => {

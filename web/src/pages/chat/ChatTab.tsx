@@ -1061,6 +1061,7 @@ export function ChatTab({
                             "w-full max-w-md",
                             isDark ? "text-slate-200" : "text-gray-800",
                           )}
+                          data-setup-checklist
                         >
                           {readOnly ? (
                             <div
@@ -1068,6 +1069,7 @@ export function ChatTab({
                                 "text-sm",
                                 isDark ? "text-slate-400" : "text-gray-600",
                               )}
+                              data-status-tone="muted"
                             >
                               {t("noMessagesYet")}
                             </div>
@@ -1232,6 +1234,7 @@ export function ChatTab({
                         "linear-gradient(var(--color-chat-bg), var(--color-chat-bg))",
                     }}
                     data-workspace-file-viewer="true"
+                    data-lcd-scope
                   >
                     <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                       <WorkspaceViewer

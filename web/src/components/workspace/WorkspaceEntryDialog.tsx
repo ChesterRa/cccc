@@ -34,14 +34,19 @@ export function WorkspaceEntryDialog({
         if (!next && !busy) onClose();
       }}
     >
-      <DialogContent className="gap-4 p-6" onEscapeKeyDown={(event) => event.stopPropagation()}>
+      <DialogContent
+        className="gap-4 p-6"
+        lcdScope
+        onEscapeKeyDown={(event) => event.stopPropagation()}
+      >
         <DialogTitle className="pr-6">
           {action &&
             t(
               `workspaceManage.${action.kind === "file" ? "newFile" : action.kind === "folder" ? "newFolder" : action.kind}`,
             )}
         </DialogTitle>
-        <DialogDescription className="break-all">
+        {/* A long path can scroll independently; keyboard users need to reach it too. */}
+        <DialogDescription tabIndex={0} className="min-h-0 overflow-y-auto break-all">
           {action?.kind === "delete"
             ? t("workspaceManage.deleteConfirm", { path: action.path })
             : t("workspaceManage.target", { path: action?.path || "/" })}
@@ -56,7 +61,9 @@ export function WorkspaceEntryDialog({
               )}
             </p>
             {hasDrafts && (
-              <p className="text-sm text-rose-600">{t("workspaceManage.deleteDrafts")}</p>
+              <p className="text-sm text-rose-600" data-status-tone="error">
+                {t("workspaceManage.deleteDrafts")}
+              </p>
             )}
           </>
         ) : (
@@ -74,7 +81,8 @@ export function WorkspaceEntryDialog({
                 value={value}
                 disabled={busy}
                 onChange={(event) => onValue(event.target.value)}
-                className="mt-2 w-full rounded-lg border border-[var(--glass-border-subtle)] bg-transparent px-3 py-2 outline-none focus:border-[var(--color-border-focus)]"
+                className="mt-2 w-full rounded-lg border border-[var(--glass-border-subtle)] px-3 py-2 outline-none focus:border-[var(--color-border-focus)]"
+                data-lcd-field
               />
             </label>
             {action?.kind === "move" && (
@@ -85,7 +93,12 @@ export function WorkspaceEntryDialog({
           </form>
         )}
         {error && (
-          <p role="alert" className="break-words text-sm text-rose-600">
+          <p
+            role="alert"
+            tabIndex={0}
+            className="min-h-0 overflow-y-auto break-words text-sm text-rose-600"
+            data-status-tone="error"
+          >
             {error}
           </p>
         )}

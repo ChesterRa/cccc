@@ -14,7 +14,7 @@ export function WorkspaceChangesPanel({ files }: { files: WorkspaceFilesControll
     );
   if (changes.error)
     return (
-      <p role="alert" className="break-words p-3 text-sm text-rose-600">
+      <p role="alert" className="break-words p-3 text-sm text-rose-600" data-status-tone="error">
         {changes.error}
       </p>
     );
@@ -57,7 +57,7 @@ export function WorkspaceChangesPanel({ files }: { files: WorkspaceFilesControll
         {t("workspaceGit.savedOnly")}
       </p>
       {status.limited && (
-        <p role="status" className="px-3 py-2 text-xs text-amber-600">
+        <p role="status" className="px-3 py-2 text-xs text-amber-600" data-status-tone="warning">
           {t("workspaceGit.limited")}
         </p>
       )}

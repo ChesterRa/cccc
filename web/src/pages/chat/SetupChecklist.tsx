@@ -36,7 +36,10 @@ export function SetupChecklist({
   if (!needsScope && !needsActors && !needsStart) {
     if (!isCompact) {
       return (
-        <div className={classNames("text-xs mt-4", isDark ? "text-slate-400" : "text-gray-500")}>
+        <div
+          className={classNames("text-xs mt-4", isDark ? "text-slate-400" : "text-gray-500")}
+          data-status-tone="muted"
+        >
           {t("teamReady")}
         </div>
       );
@@ -45,7 +48,7 @@ export function SetupChecklist({
   }
 
   return (
-    <div className="space-y-2" role="region" aria-label={t("setupChecklist")}>
+    <div className="space-y-2" role="region" aria-label={t("setupChecklist")} data-setup-checklist>
       {/* Attach Scope */}
       {needsScope && (
         <div
@@ -59,6 +62,7 @@ export function SetupChecklist({
                 ? "rounded-2xl border-slate-700/50 bg-slate-900/40 p-4 text-left"
                 : "rounded-2xl border-gray-200 bg-white/70 p-4 text-left",
           )}
+          data-setup-step
         >
           <div
             className={classNames(
@@ -87,6 +91,7 @@ export function SetupChecklist({
                   ? "border-slate-700 text-slate-300 hover:bg-slate-800"
                   : "border-gray-200 text-gray-700 hover:bg-gray-50",
               )}
+              data-lcd-key
               onClick={() => {
                 void copyWithFeedback(attachCmd, {
                   successMessage: t("common:copied"),
@@ -115,6 +120,7 @@ export function SetupChecklist({
                 ? "border-gray-200 bg-white"
                 : "border-gray-200 bg-white/70",
           )}
+          data-setup-step
         >
           <div className={isCompact ? "min-w-0" : ""}>
             <div
@@ -131,6 +137,7 @@ export function SetupChecklist({
                 isCompact ? "text-[11px] truncate" : "mt-1 text-[11px]",
                 isDark ? "text-slate-500" : "text-gray-500",
               )}
+              data-status-tone="muted"
             >
               {t("addForemanFirst")}
             </div>
@@ -144,6 +151,7 @@ export function SetupChecklist({
                 : "mt-3 w-full rounded-xl px-4 py-2 text-sm",
             )}
             onClick={onAddAgent}
+            data-lcd-primary
           >
             {t("addAgentButton")}
           </button>
@@ -165,6 +173,7 @@ export function SetupChecklist({
                 ? "border-gray-200 bg-white"
                 : "border-gray-200 bg-white/70",
           )}
+          data-setup-step
         >
           <div className={isCompact ? "min-w-0" : ""}>
             <div
@@ -181,6 +190,7 @@ export function SetupChecklist({
                 isCompact ? "text-[11px] truncate" : "mt-1 text-[11px]",
                 isDark ? "text-slate-500" : "text-gray-500",
               )}
+              data-status-tone="muted"
             >
               {t("launchAgents")}
             </div>
@@ -196,6 +206,7 @@ export function SetupChecklist({
             )}
             onClick={onStartGroup}
             disabled={busy === "group-start"}
+            data-lcd-primary
           >
             {busy === "group-start"
               ? t("starting")

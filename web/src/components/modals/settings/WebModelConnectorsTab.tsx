@@ -309,6 +309,13 @@ function ProviderSettings({
                   >
                     <span
                       aria-hidden
+                      data-status-dot={
+                        browserState === "verification"
+                          ? "attention"
+                          : browserState === "ready" || browserState === "openState"
+                            ? "active"
+                            : "inactive"
+                      }
                       className={classNames(
                         "size-2 shrink-0 rounded-full",
                         browserState === "ready"

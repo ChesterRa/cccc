@@ -67,6 +67,15 @@ const stepDot: Record<StepState, string> = {
   todo: "border border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]",
 };
 
+// The LCD look reads a step's state through the shared status hooks; the current step
+// waits on the user, like other things that wait on you.
+const stepTone: Record<StepState, "ok" | "warning" | "error" | undefined> = {
+  done: "ok",
+  current: "warning",
+  error: "error",
+  todo: undefined,
+};
+
 export function NativeActorDelivery({
   phase,
   provider,
@@ -130,6 +139,7 @@ export function NativeActorDelivery({
             >
               <span
                 className={`inline-flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${stepDot[stepState]}`}
+                data-status-tone={stepTone[stepState]}
                 aria-hidden="true"
               >
                 {stepState === "done" ? (

@@ -13,7 +13,10 @@ import { HoverTooltip } from "../HoverTooltip";
 function SourceStatusBadge({ enabled }: { enabled: boolean }) {
   const { t } = useTranslation("settings");
   return (
-    <span className="inline-flex h-6 w-fit items-center rounded border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2 text-[11px] font-medium text-[var(--color-text-secondary)]">
+    <span
+      className="inline-flex h-6 w-fit items-center rounded border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2 text-[11px] font-medium text-[var(--color-text-secondary)]"
+      data-status-tone={enabled ? "ok" : undefined}
+    >
       {enabled ? t("capabilityCenter.status.enabled") : t("capabilityCenter.status.disabled")}
     </span>
   );
@@ -105,6 +108,7 @@ export function SourcesView(props: {
                         disabled={props.busyKey === `source:${sourceId}`}
                         aria-label={toggleLabel}
                         onClick={() => props.onToggle(sourceId, !enabled)}
+                        data-lcd-key
                       >
                         <ToggleIcon size={14} aria-hidden="true" />
                       </button>
@@ -125,6 +129,7 @@ export function SourcesView(props: {
                               : t("capabilityCenter.sources.delete")
                           }
                           onClick={() => props.onDelete(source)}
+                          data-status-tone="error"
                         >
                           <Trash2 size={14} aria-hidden="true" />
                         </button>

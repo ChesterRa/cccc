@@ -68,6 +68,7 @@ describe("ActorQuickControls", () => {
     const onRemove = vi.fn();
     const { root, host, removeButton } = await render(true, onRemove);
     expect(removeButton.disabled).toBe(false);
+    expect(removeButton.closest("[data-lcd-menu]")).not.toBeNull();
     await act(async () => {
       removeButton.click();
     });

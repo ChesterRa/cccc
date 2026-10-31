@@ -75,46 +75,57 @@ function GroupConnectionsDialog({
     >
       <DialogContent
         className="h-[min(36rem,calc(100dvh-2rem))] gap-3 p-5"
+        lcdScope
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           if (document.activeElement === document.body && returnFocus.current?.isConnected)
             returnFocus.current.focus();
         }}
       >
-        <DialogTitle className="shrink-0 break-words pr-8 text-lg font-semibold">
-          {t("groupConnections.title")} ·{" "}
-          {groups.find((group) => group.group_id === current)?.title || current}
-        </DialogTitle>
-        <DialogDescription className="shrink-0 text-xs leading-relaxed">
-          {t("groupConnections.description")}
-        </DialogDescription>
-        {invitation && (
-          <SelectMenu
-            value={current}
-            options={groups.map((group) => ({
-              value: group.group_id,
-              label: group.title || group.group_id,
-            }))}
-            onChange={setChosen}
-            ariaLabel={t("groupConnections.localGroup")}
-            align="start"
-            className="w-full"
-            contentClassName="z-[1002] w-[var(--radix-popover-trigger-width)]"
-            triggerProps={{ "data-connect-group-select": "true" }}
-          />
-        )}
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <GroupConnectionsPanel
-            fill
-            key={current}
-            groupId={current}
-            groupTitle={groups.find((group) => group.group_id === current)?.title || current}
-            invitation={invitation}
-            onOpenAccount={() => {
-              onClose();
-              onOpenAccount();
-            }}
-          />
+        {/* Long names and short viewports must not squeeze the connection pane to zero. */}
+        <div
+          role="region"
+          aria-label={t("groupConnections.title")}
+          tabIndex={0}
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
+          <div className="flex h-full flex-col gap-3">
+            <DialogTitle className="shrink-0 break-words pr-8 text-lg font-semibold">
+              {t("groupConnections.title")} ·{" "}
+              {groups.find((group) => group.group_id === current)?.title || current}
+            </DialogTitle>
+            <DialogDescription className="shrink-0 text-xs leading-relaxed">
+              {t("groupConnections.description")}
+            </DialogDescription>
+            {invitation && (
+              <SelectMenu
+                value={current}
+                options={groups.map((group) => ({
+                  value: group.group_id,
+                  label: group.title || group.group_id,
+                }))}
+                onChange={setChosen}
+                ariaLabel={t("groupConnections.localGroup")}
+                align="start"
+                className="w-full"
+                contentClassName="z-[1002] w-[var(--radix-popover-trigger-width)]"
+                triggerProps={{ "data-connect-group-select": "true" }}
+              />
+            )}
+            <div className="min-h-64 flex-1">
+              <GroupConnectionsPanel
+                fill
+                key={current}
+                groupId={current}
+                groupTitle={groups.find((group) => group.group_id === current)?.title || current}
+                invitation={invitation}
+                onOpenAccount={() => {
+                  onClose();
+                  onOpenAccount();
+                }}
+              />
+            </div>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -136,9 +147,10 @@ export function GroupConnectionsPanel(props: {
     <div className={props.fill ? "flex h-full min-h-0 flex-col gap-3" : "space-y-4"}>
       {!props.invitation && (
         <div
-          className="grid shrink-0 grid-cols-2 gap-1 rounded-xl bg-[var(--glass-tab-bg)] p-1"
+          className="flex shrink-0 flex-wrap gap-1 rounded-xl bg-[var(--glass-tab-bg)] p-1"
           role="group"
           aria-label={t("groupConnections.title")}
+          data-connect-mode-switch
         >
           {(["account", "direct"] as const).map((option) => (
             <Button
@@ -149,7 +161,7 @@ export function GroupConnectionsPanel(props: {
               aria-label={t(option === "account" ? "direct.account" : "direct.title")}
               aria-describedby={`${modeId}-${option}`}
               className={classNames(
-                "h-auto min-h-11 min-w-0 justify-start gap-2 rounded-lg px-3 py-2.5 text-left text-sm whitespace-normal duration-200 motion-reduce:!transition-none",
+                "h-auto min-h-11 min-w-0 flex-[1_1_10rem] justify-start gap-2 rounded-lg px-3 py-2.5 text-left text-sm whitespace-normal duration-200 motion-reduce:!transition-none",
                 active === option
                   ? "bg-[var(--color-bg-primary)] font-semibold text-[var(--color-text-primary)] shadow-sm"
                   : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]",
@@ -161,7 +173,7 @@ export function GroupConnectionsPanel(props: {
               ) : (
                 <Cable aria-hidden="true" className="h-4 w-4 shrink-0" />
               )}
-              <span className="min-w-0 space-y-1">
+              <span className="min-w-0 space-y-1 [overflow-wrap:anywhere]">
                 <span className="block">
                   {t(option === "account" ? "direct.account" : "direct.title")}
                 </span>

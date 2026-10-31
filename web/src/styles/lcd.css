@@ -95,6 +95,8 @@
   --lcd-panel-2: #c8d2b8;
   --lcd-raised: #e2e9d5;
   --lcd-plate: #f1f5e6;
+  /* Text on the plate, which stays light in both themes. */
+  --lcd-plate-ink: #3e4737;
   --lcd-ink: #161a0d;
   --lcd-ink-strong: #0e120c;
   --lcd-dim: #3e4236;
@@ -310,7 +312,11 @@
   color: var(--lcd-link);
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-status-tone="ok"] {
+/* Neutral marks a state that is neither good nor bad news, such as "optional" or
+   "hidden"; it reads like ok, as the LCD gives success no colour of its own. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-status-tone="ok"], [data-status-tone="neutral"]) {
   border-color: var(--lcd-rule-strong);
   background-color: transparent;
   color: var(--lcd-ink);
@@ -353,11 +359,29 @@
   color: var(--lcd-ink);
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-status-dot="running"] {
+/* A status dot takes the colour of its meaning, square like every LCD corner and
+   without the classic halo. Attention keeps its pulse, as a spinner keeps turning. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-status-dot] {
+  box-shadow: none;
+}
+
+/* Neutral marks something worth a glance that is neither working nor waiting on
+   you, such as changes inside a folder; it is drawn like active. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-status-dot="active"], [data-status-dot="neutral"]) {
   background: var(--lcd-ink);
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-status-dot="stopped"] {
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-status-dot="attention"] {
+  background: var(--lcd-wait);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-status-dot="failed"] {
+  background: var(--lcd-danger);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-status-dot="inactive"] {
   background: var(--lcd-dim);
 }
 
@@ -594,7 +618,7 @@
   border-radius: 0;
   border: 1px solid var(--lcd-rule-strong);
   background: var(--lcd-plate);
-  color: var(--plate-ink, #3e4737);
+  color: var(--lcd-plate-ink);
   box-shadow: none;
   --tw-ring-shadow: 0 0 #0000;
 }
@@ -649,7 +673,7 @@
   font-family: "IBM Plex Mono", var(--lcd-font-body);
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] .markdown-body pre code {
+:root[data-ui-style="lcd"] [data-lcd-scope] .markdown-body :is(pre, pre code) {
   color: var(--lcd-ink);
 }
 
@@ -668,6 +692,17 @@
   border-color: var(--lcd-sel-bg);
   background-color: var(--lcd-sel-bg);
   color: var(--lcd-sel-fg);
+}
+
+/* "Copied" is confirmed by its words, not by the classic green. */
+:root[data-ui-style="lcd"] [data-lcd-scope] .copy-button.copied {
+  border-color: var(--lcd-rule-strong);
+  background-color: transparent;
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] .copy-button :is(.copied-icon, .copied-text) {
+  color: inherit;
 }
 
 /* The sender's insight supports the message, so it reads a step below it. */
@@ -870,6 +905,31 @@
   color: var(--lcd-sel-fg);
 }
 
+/* A primary key built by hand rather than with the shared Button (mark it with
+   data-lcd-primary): filled in ink like the Button's primary variant and the composer's
+   Send. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-lcd-primary] {
+  border: 1px solid var(--lcd-ink);
+  background: var(--lcd-ink);
+  color: var(--lcd-bg);
+  transition: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-lcd-primary]:hover:not(:disabled) {
+  border-color: var(--lcd-ink-strong);
+  background: var(--lcd-ink-strong);
+}
+
+/* A text field or select built by hand (mark it with data-lcd-field) is a control, framed
+   in the strong rule like a key; focus darkens the frame to ink. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-lcd-field] {
+  border-color: var(--lcd-rule-strong);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-lcd-field]:focus {
+  border-color: var(--lcd-ink);
+}
+
 /* Members: the runtime tile alone, in one line. The tile shows the state; the
    tooltip (hover or keyboard focus) and the accessible name carry the words. */
 :root[data-ui-style="lcd"] .lcd-members {
@@ -1025,32 +1085,87 @@
   translate: 0 -50%;
 }
 
-/* A Group menu opened from an LCD control (run state, sidebar rows): a framed list
-   like the members popover; the item under the pointer or focus is set in reverse. */
-:root[data-ui-style="lcd"] [data-lcd-scope][data-group-menu] {
+/* A menu opened from an LCD control (a Group's run state or sidebar row, a workspace
+   entry, an Actor's quick controls, the composer's mention and command lists): a framed
+   list like the members popover. A menu portalled out of its surface carries the scope
+   itself; one inside a scoped surface inherits it. Items are its menuitems, options or
+   buttons, in ink and one colour throughout; the item under the pointer, keyboard focus
+   or a list's selection is set in reverse. */
+:root[data-ui-style="lcd"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu]) {
   border: 1px solid var(--lcd-rule-strong);
   background: var(--lcd-panel);
   box-shadow: none;
   backdrop-filter: none;
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope][data-group-menu] [role="menuitem"] {
+:root[data-ui-style="lcd"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  :is([role^="menuitem"], [role="option"], button) {
+  border-color: var(--lcd-rule);
+  background: transparent;
+  box-shadow: none;
   color: var(--lcd-ink);
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope][data-group-menu] [role="menuitem"][data-tone="danger"] {
+:root[data-ui-style="lcd"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  :is([role^="menuitem"], [role="option"], button)
+  * {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  :is([role^="menuitem"], [role="option"], button):is([data-tone="danger"], .destructive-key) {
   color: var(--lcd-danger);
 }
 
 :root[data-ui-style="lcd"]
-  [data-lcd-scope][data-group-menu]
-  [role="menuitem"]:is(:hover, :focus-visible):not(:disabled) {
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  :is([role^="menuitem"], [role="option"], button):is(
+    :hover,
+    :focus-visible,
+    [aria-selected="true"]
+  ):not(:disabled) {
   background: var(--lcd-sel-bg);
   color: var(--lcd-sel-fg);
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope][data-group-menu] [role="menuitem"] > span {
+/* A secondary line (description, id) is dim; a kind tag is framed in the text colour.
+   Both follow an item set in reverse. A list's own selection bar is redundant there. The
+   dim colour already sets a hint apart, so classic fading would only cost contrast. */
+:root[data-ui-style="lcd"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  [data-lcd-hint] {
+  color: var(--lcd-dim);
+  opacity: 1;
+}
+
+:root[data-ui-style="lcd"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  :is([role^="menuitem"], [role="option"], button):is(
+    :hover,
+    :focus-visible,
+    [aria-selected="true"]
+  )
+  [data-lcd-hint] {
   color: inherit;
+}
+
+:root[data-ui-style="lcd"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  [data-lcd-tag] {
+  border: 1px solid currentColor;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-ui-style="lcd"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  [data-option-mark] {
+  display: none;
 }
 
 :root[data-ui-style="lcd"] .lcd-members-popover {
@@ -1459,4 +1574,271 @@
   > button[aria-pressed="true"] {
   background: var(--lcd-ink);
   color: var(--lcd-bg);
+}
+
+/* Workspace files read like a listing: rows in ink, the open one in reverse. A git
+   status is its letter; only a conflict takes the danger tone. File text is ink. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-workspace-row] {
+  background: transparent;
+  color: var(--lcd-ink);
+  transition: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-workspace-row]:hover:not([aria-selected="true"]) {
+  background: var(--lcd-sel-soft);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-workspace-row][aria-selected="true"] {
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-workspace-row] [data-git-status] {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-workspace-row]:not([aria-selected="true"])
+  [data-git-status="conflicted"] {
+  color: var(--lcd-danger);
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-workspace-row][aria-selected="true"]
+  [data-status-dot] {
+  background: var(--lcd-sel-fg);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-workspace-text] {
+  color: var(--lcd-ink);
+}
+
+/* On a phone the Files panel fills a full-screen surface whose own classic background
+   shows around it (safe areas, short content), so the surface takes the LCD ground. */
+:root[data-ui-style="lcd"] [data-lcd-scope][data-mobile-surface] {
+  background: var(--lcd-bg);
+  color: var(--lcd-ink);
+}
+
+/* The grab handle of a bottom sheet: a plain bar, no rounded pill. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-sheet-handle] {
+  border-radius: 0;
+  background: var(--lcd-rule-strong);
+}
+
+/* Images in messages: the frame and the canvas behind the picture (or its failure
+   placeholder) take the LCD tones; the picture itself keeps its colours, so it does not
+   fade under the pointer either (the frame shows the hover). Text inside the frame is
+   ink unless a hook says otherwise. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-image-frame] {
+  border-color: var(--lcd-rule-strong);
+  background: transparent;
+  box-shadow: none;
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-image-frame]:hover {
+  background: var(--lcd-sel-soft);
+}
+
+:root[data-ui-style="lcd"] :where([data-lcd-scope] [data-image-frame] *) {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-image-canvas] {
+  border-color: var(--lcd-rule-strong);
+  background-color: var(--lcd-panel);
+  box-shadow: none;
+  opacity: 1;
+}
+
+/* A head strip inside a framed panel: the rule below it separates, no tint. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-panel-head] {
+  background: transparent;
+}
+
+/* The avatar picker of an Actor dialog: the tile is the member tile; under the pointer or
+   focus the camera mark appears in a reversed square instead of a scrim, so it stays
+   legible on any picture, however light. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-avatar-scrim] {
+  border-radius: 0;
+  background: transparent;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-avatar-scrim] > svg {
+  box-sizing: content-box;
+  padding: 2px;
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+  filter: none;
+}
+
+/* An empty Group's setup steps: framed boxes in ink. Text inside takes the ink unless a
+   hook says otherwise (a muted hint, the Copy key, the primary key); :where keeps this
+   default below those hooks. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-setup-checklist] {
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] :where([data-lcd-scope] [data-setup-checklist] *) {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-setup-step] {
+  border-color: var(--lcd-rule-strong);
+  background: transparent;
+}
+
+/* A headless Actor's trace reads as one LCD sheet: the ground with the rule, panels for
+   its cards, ink text. Inside it, colour classes default to that sheet (:where keeps the
+   default below every hook); live and done markers, muted labels and tones are hooks.
+   The sticky head stays opaque so the trace scrolls under it. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-headless-trace] {
+  border-color: var(--lcd-rule-strong);
+  background: var(--lcd-bg);
+  box-shadow: none;
+  backdrop-filter: none;
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] :where([data-lcd-scope] [data-headless-trace] *) {
+  border-color: var(--lcd-rule);
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-headless-trace] [data-trace-head] {
+  border-color: var(--lcd-rule-strong);
+  background: var(--lcd-bg);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-headless-trace] [data-trace-card] {
+  background-color: var(--lcd-panel);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-headless-trace] [data-trace-rule] {
+  background: var(--lcd-rule);
+}
+
+/* The capability center page reads like Settings: its sections are a list in ink, the
+   open one in reverse, and a chosen filter or toggle is reversed too. The item shown in
+   the details is shaded in the table and ringed in ink as a card. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-capability-nav] button {
+  border-color: var(--lcd-rule-strong);
+  color: var(--lcd-ink);
+  transition: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-capability-nav] button[aria-current="page"],
+:root[data-ui-style="lcd"] [data-lcd-scope][data-capability-center] button[aria-pressed="true"] {
+  border-color: var(--lcd-sel-bg);
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-capability-nav] button[aria-current="page"] * {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope][data-capability-center] [aria-current="true"] {
+  --tw-ring-color: var(--lcd-ink);
+}
+
+/* The monospaced face runs wider than the classic one, so the search field keeps a row
+   of its own above the state filter instead of shrinking beside it. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-capability-filters] {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* An action tile's icon sits on the tile itself, and the tile's second line takes the
+   reversed colour with the rest of the tile under the pointer. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-control-icon] {
+  background: transparent;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope][data-capability-center]
+  :is([data-lcd-key], button[data-status-tone="error"]):hover:not(:disabled)
+  * {
+  color: inherit;
+}
+
+/* A Web Model Actor's panel reads in ink on the screen ground. Its bar and the browser's
+   address strip are ruled strips rather than tinted bars, and the delivery choice shows
+   keyboard focus with the dashed mark on the visible label (its radio is hidden). */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-web-model-panel] {
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-web-model-bar], [data-browser-bar]) {
+  border-color: var(--lcd-rule);
+  background: transparent;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-browser-bar] {
+  color: var(--lcd-dim);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-web-model-delivery] input:focus-visible + span {
+  outline: 1px dashed var(--lcd-ink);
+  outline-offset: 2px;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-ring-offset-shadow: 0 0 #0000;
+}
+
+/* The projected browser's page keeps its own colours. Around it, and in the placeholder
+   shown before it arrives, is the screen ground; an error laid over the page keeps a
+   solid ground so it stays legible. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-browser-canvas] {
+  background: transparent;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-browser-placeholder] {
+  border-color: var(--lcd-rule);
+  color: var(--lcd-dim);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-browser-error] {
+  background-color: var(--lcd-bg);
+  box-shadow: none;
+}
+
+/* The browser's own keys are filled in the classic look; here they are framed like any key. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-browser-bar] [data-lcd-key] {
+  background-color: transparent;
+}
+
+/* Resize handles carry no glow. The sidebar's grip is a rule that darkens under the pointer
+   and turns ink while dragging; the side panel's band (its line already follows the border
+   tokens) shows the soft selection only while dragging. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-resize-grip] {
+  border-radius: 0;
+  background-color: var(--lcd-rule);
+  box-shadow: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [role="separator"]:hover [data-resize-grip] {
+  background-color: var(--lcd-rule-strong);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-resize-band] {
+  border-radius: 0;
+  background-color: transparent;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [role="separator"][data-resizing] [data-resize-grip] {
+  background-color: var(--lcd-ink);
+}
+
+/* The side panel's handle carries the scope itself. */
+:root[data-ui-style="lcd"]
+  :is([data-lcd-scope], [data-lcd-scope] *)[role="separator"][data-resizing]
+  [data-resize-band] {
+  background-color: var(--lcd-sel-soft);
 }

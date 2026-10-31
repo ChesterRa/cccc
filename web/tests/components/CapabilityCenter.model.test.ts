@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  capabilityCenterDisableScopes,
   capabilityCenterDisplayName,
   capabilityCenterFilterItemsForSystemVisibility,
   capabilityCenterRemovalAction,
   capabilityCenterFrameClass,
   capabilityCenterRootClass,
   capabilityCenterSourceRemovalAction,
+  capabilityCenterStateReadable,
   capabilityCenterSourcesGridClass,
   capabilityCenterSectionTypeFilter,
   capabilityCenterPageRange,
   capabilityCenterPaginationMode,
+  capabilityCenterTurnOff,
   capabilityCenterType,
   filterCapabilityCenterRemovedItems,
   filterCapabilityCenterItems,
@@ -18,7 +21,11 @@ import {
   normalizeCapabilityCenterPagination,
   summarizeCapabilityCenter,
 } from "../../src/components/capabilities/capabilityCenterModel";
-import type { CapabilityOverviewItem, CapabilityStateResult } from "../../src/types";
+import type {
+  CapabilityOverviewItem,
+  CapabilityStateResult,
+  CapabilityUsageSummary,
+} from "../../src/types";
 
 function row(
   overrides: Partial<CapabilityOverviewItem> & { capability_id: string },
@@ -236,7 +243,7 @@ describe("CapabilityCenter model", () => {
         row({ capability_id: "pack:diagnostics", kind: "pack", source_id: "cccc_builtin" }),
         { enabled: true },
       ),
-    ).toBe("disable");
+    ).toBe("none");
     expect(
       capabilityCenterRemovalAction(
         row({
@@ -414,5 +421,88 @@ describe("CapabilityCenter model", () => {
         state,
       }).map((item) => item.capability_id),
     ).toEqual(["pack:diagnostics", "mcp:github/chrome-devtools-mcp", "pack:enabled-builtin"]);
+  });
+
+  it("turns off the Group binding and only the user's own bindings, as the usage reports them", () => {
+    const usage = (fields: Partial<CapabilityUsageSummary>): CapabilityUsageSummary => ({
+      capability_id: "pack:diagnostics",
+      used: true,
+      group_enabled: false,
+      actor_enabled: [],
+      session_enabled: [],
+      ...fields,
+    });
+    const user = { actor_id: "user" };
+    const peer = { actor_id: "codex-1" };
+
+    expect(capabilityCenterDisableScopes(null)).toBeNull();
+    // A usage without one of the three fields is not read as "none".
+    for (const field of ["group_enabled", "actor_enabled", "session_enabled"] as const) {
+      expect(capabilityCenterDisableScopes(usage({ [field]: undefined }))).toBeNull();
+    }
+    expect(capabilityCenterDisableScopes(usage({ group_enabled: true }))).toEqual(["group"]);
+    expect(capabilityCenterDisableScopes(usage({ session_enabled: [user] }))).toEqual(["session"]);
+    expect(capabilityCenterDisableScopes(usage({ actor_enabled: [user] }))).toEqual(["actor"]);
+    expect(
+      capabilityCenterDisableScopes(usage({ group_enabled: true, session_enabled: [peer, user] })),
+    ).toEqual(["group", "session"]);
+    // Bindings another Actor made for itself are left alone.
+    expect(
+      capabilityCenterDisableScopes(usage({ actor_enabled: [peer], session_enabled: [peer] })),
+    ).toEqual([]);
+  });
+
+  it("does not take a state without its enabled list as nothing enabled", () => {
+    expect(capabilityCenterStateReadable(null)).toBe(false);
+    expect(capabilityCenterStateReadable({} as CapabilityStateResult)).toBe(false);
+    expect(
+      capabilityCenterStateReadable({
+        enabled_capabilities: "pack:x",
+      } as unknown as CapabilityStateResult),
+    ).toBe(false);
+    expect(
+      capabilityCenterStateReadable({ enabled_capabilities: [] } as CapabilityStateResult),
+    ).toBe(true);
+  });
+
+  it("writes nothing without usage and confirms only the writes that succeeded", async () => {
+    const run = async (usage: CapabilityUsageSummary | null, failing?: string) => {
+      const written: string[] = [];
+      const outcome = await capabilityCenterTurnOff({
+        readUsage: async () => usage,
+        turnOff: async (scope) => {
+          written.push(scope);
+          return scope !== failing;
+        },
+      });
+      return { ...outcome, written };
+    };
+    const both: CapabilityUsageSummary = {
+      capability_id: "pack:diagnostics",
+      used: true,
+      group_enabled: true,
+      actor_enabled: [{ actor_id: "user" }],
+      session_enabled: [{ actor_id: "user" }],
+    };
+
+    expect(await run(null)).toEqual({ result: "unread", confirmed: false, written: [] });
+    expect(await run(both)).toEqual({
+      result: "done",
+      confirmed: true,
+      written: ["group", "actor", "session"],
+    });
+    expect(await run(both, "group")).toEqual({
+      result: "failed",
+      confirmed: false,
+      written: ["group"],
+    });
+    expect(await run(both, "actor")).toEqual({
+      result: "failed",
+      confirmed: true,
+      written: ["group", "actor"],
+    });
+    expect(
+      await run({ ...both, group_enabled: false, actor_enabled: [], session_enabled: [] }),
+    ).toEqual({ result: "done", confirmed: false, written: [] });
   });
 });

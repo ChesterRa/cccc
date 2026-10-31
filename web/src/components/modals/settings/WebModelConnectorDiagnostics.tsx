@@ -78,6 +78,7 @@ export function WebModelConnectorDiagnostics({
             >
               <span className="break-all font-mono text-xs">{call.tool_name || call.method}</span>
               <span
+                data-status-tone={call.ok ? "ok" : "error"}
                 className={
                   call.ok
                     ? "text-xs text-emerald-700 dark:text-emerald-300"

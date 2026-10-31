@@ -1,13 +1,17 @@
 import { cloneElement, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { Actor } from "../../types";
 import { useUIStore } from "../../stores";
 import { getChatSession } from "../../stores/useUIStore";
 import { RuntimeInspectorModal } from "../../components/modals/RuntimeInspectorModal";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
-import { WorkGridIcon, WorkMessagesIcon } from "../../components/Icons";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  WorkGridIcon,
+  WorkMessagesIcon,
+} from "../../components/Icons";
 import { terminalPageLayout } from "./groupWorkLayout";
 import { useRetainedRuntimeActors, type RuntimeActorRenderer } from "./useRetainedRuntimeActors";
 export type { RuntimeActorView, RuntimeActorRenderer } from "./useRetainedRuntimeActors";
@@ -169,11 +173,12 @@ export function GroupWorkArea({
         <button
           type="button"
           className={pageButtonClass}
+          data-lcd-key
           disabled={page === 0 || loading}
           onClick={() => setPage(groupId, page - 1)}
           aria-label={t("workView.previous")}
         >
-          <ChevronLeft size={20} />
+          <ChevronLeftIcon size={20} strokeWidth={2} absoluteStrokeWidth={false} />
         </button>
         <span
           aria-live="polite"
@@ -185,16 +190,19 @@ export function GroupWorkArea({
         <button
           type="button"
           className={pageButtonClass}
+          data-lcd-key
           disabled={page + 1 === pageCount || loading}
           onClick={() => setPage(groupId, page + 1)}
           aria-label={t("workView.next")}
         >
-          <ChevronRight size={20} />
+          <ChevronRightIcon size={20} strokeWidth={2} absoluteStrokeWidth={false} />
         </button>
         {otherAttention.length > 0 ? (
           <button
             type="button"
             className={`${buttonClass} text-amber-700 dark:text-amber-300`}
+            data-terminal-attention
+            data-lcd-key
             onClick={() => chooseActor(otherAttention[0].id)}
             aria-label={t("workView.otherAttention", { count: otherAttention.length })}
             title={t("workView.otherAttention", { count: otherAttention.length })}
@@ -287,6 +295,7 @@ export function GroupWorkArea({
             : undefined
         }
         data-group-terminal-view={tiled ? "visible" : "hidden"}
+        data-lcd-scope
       >
         {orderedEntries.map((entry) => {
           const { actorId } = entry;

@@ -156,6 +156,34 @@ describe("mobile presentation surface", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("takes the LCD scope for Files only, so presentations keep their own look", async () => {
+    await act(async () => {
+      root.render(
+        <MobilePresentationSurface
+          isOpen
+          isDark={false}
+          label="Files"
+          surface="files"
+          onClose={vi.fn()}
+        >
+          <button type="button">File</button>
+        </MobilePresentationSurface>,
+      );
+    });
+    const files = document.querySelector('[data-mobile-surface="files"]');
+    expect(files?.hasAttribute("data-lcd-scope")).toBe(true);
+
+    await act(async () => {
+      root.render(
+        <MobilePresentationSurface isOpen isDark={false} label="Presentation" onClose={vi.fn()}>
+          <button type="button">Slot</button>
+        </MobilePresentationSurface>,
+      );
+    });
+    const slides = document.querySelector('[data-mobile-surface="presentation"]');
+    expect(slides?.hasAttribute("data-lcd-scope")).toBe(false);
+  });
+
   it("lets a media player's own controls take Tab and wraps focus that leaves it", async () => {
     // The phone Files surface previews workspace video and audio in this portal.
     await act(async () => {

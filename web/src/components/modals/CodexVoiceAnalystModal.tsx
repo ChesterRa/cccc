@@ -8,7 +8,7 @@ import {
 import { CodexVoiceSplitLayout } from "../../features/codexVoice/CodexVoiceSplitLayout";
 import { useModalStore } from "../../stores";
 import { CodexVoiceMessageSources } from "../../features/codexVoice/CodexVoiceMessageSources";
-import { voicePhaseDotClass } from "../../features/codexVoice/codexVoicePhase";
+import { voicePhaseDotClass, voicePhaseDotState } from "../../features/codexVoice/codexVoicePhase";
 import {
   codexVoiceAnalystReadinessProblem,
   codexVoiceCallReadinessProblem,
@@ -132,6 +132,7 @@ export function CodexVoiceAnalystModal({
     <ModalFrame
       isOpen={isOpen}
       isDark={isDark}
+      lcdScope
       onClose={onClose}
       titleId="codex-voice-analyst-title"
       closeAriaLabel={t("codexVoiceMinimize")}
@@ -169,6 +170,11 @@ export function CodexVoiceAnalystModal({
             ) : null}
             <div className="flex min-w-0 items-center gap-1.5">
               <span
+                data-status-dot={
+                  callBlocked
+                    ? "attention"
+                    : voicePhaseDotState(controller.phase, controller.externalCall)
+                }
                 className={`h-2 w-2 flex-none rounded-full ${
                   callBlocked
                     ? "bg-amber-500"
@@ -177,6 +183,7 @@ export function CodexVoiceAnalystModal({
                 aria-hidden="true"
               />
               <span
+                data-status-tone={callBlocked ? "warning" : undefined}
                 className={`truncate ${callBlocked ? "text-amber-700 dark:text-amber-300" : ""}`}
               >
                 {phaseLabel}
@@ -194,6 +201,7 @@ export function CodexVoiceAnalystModal({
             type="button"
             variant="ghost"
             size="sm"
+            data-lcd-key
             className="max-sm:h-11 max-sm:w-11"
             onClick={openSettings}
             label={t("codexVoiceSettings")}
@@ -207,6 +215,7 @@ export function CodexVoiceAnalystModal({
                   type="button"
                   variant="ghost"
                   size="sm"
+                  data-lcd-key
                   className="max-sm:h-11 max-sm:w-11"
                   onClick={controller.toggleMicrophone}
                   disabled={controller.isStarting || controller.phase === "stopping"}
@@ -224,6 +233,7 @@ export function CodexVoiceAnalystModal({
                 type="button"
                 variant="secondary"
                 size="sm"
+                data-lcd-key
                 aria-label={
                   controller.externalCall ? t("codexVoiceStopExisting") : t("codexVoiceStop")
                 }
@@ -255,10 +265,11 @@ export function CodexVoiceAnalystModal({
         </>
       }
     >
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
         {controller.refreshError && !controller.owned ? (
           <div
             data-codex-voice-status-read
+            data-status-tone="warning"
             className="flex flex-none flex-wrap items-center justify-between gap-3 border-b border-amber-400/25 bg-amber-400/8 px-5 py-2.5 text-sm text-amber-700 dark:text-amber-300 sm:px-6"
             role="status"
           >
@@ -267,6 +278,7 @@ export function CodexVoiceAnalystModal({
               type="button"
               variant="ghost"
               size="sm"
+              data-lcd-key
               disabled={controller.checking}
               onClick={() => void controller.refresh()}
             >
@@ -276,6 +288,7 @@ export function CodexVoiceAnalystModal({
         ) : null}
         {controller.error ? (
           <div
+            data-status-tone="error"
             className="flex flex-none flex-wrap items-center justify-between gap-3 border-b border-rose-400/25 bg-rose-500/8 px-5 py-2.5 text-sm text-rose-500 sm:px-6"
             role="alert"
           >
@@ -286,7 +299,13 @@ export function CodexVoiceAnalystModal({
                   {t("codexVoiceOpenSettings")}
                 </Button>
               )}
-              <Button type="button" variant="ghost" size="sm" onClick={controller.clearError}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-lcd-key
+                onClick={controller.clearError}
+              >
                 {t("codexVoiceDismissError")}
               </Button>
             </div>
@@ -294,9 +313,18 @@ export function CodexVoiceAnalystModal({
         ) : null}
 
         {controller.playbackBlocked && controller.owned ? (
-          <div className="flex flex-none items-center justify-between gap-3 border-b border-amber-400/25 bg-amber-400/8 px-5 py-2.5 text-sm text-[var(--color-text-secondary)] sm:px-6">
+          <div
+            data-status-tone="warning"
+            className="flex flex-none items-center justify-between gap-3 border-b border-amber-400/25 bg-amber-400/8 px-5 py-2.5 text-sm text-[var(--color-text-secondary)] sm:px-6"
+          >
             <span>{t("codexVoicePlaybackBlocked")}</span>
-            <Button type="button" variant="ghost" size="sm" onClick={controller.resumeAudio}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-lcd-key
+              onClick={controller.resumeAudio}
+            >
               <VolumeIcon size={15} />
               {t("codexVoiceResumeAudio")}
             </Button>
@@ -306,19 +334,20 @@ export function CodexVoiceAnalystModal({
         {showReadiness ? (
           <div
             data-codex-voice-readiness
+            data-status-tone="warning"
             className="flex flex-none flex-wrap items-start gap-x-4 gap-y-2 border-b border-amber-400/25 bg-amber-400/8 px-4 py-2.5 text-sm sm:px-6"
           >
-            <dl className="min-w-0 flex-1 space-y-1 leading-6">
+            <dl className="min-w-0 flex-1 basis-full space-y-1 leading-6 sm:basis-0">
               {[
                 ["codexVoiceReadinessCall", callProblem],
                 ["codexVoiceAnalystTitle", analystProblem],
               ].map(([label, problem]) => (
-                <div key={label} className="flex min-w-0 gap-2">
-                  <dt className="flex-none font-semibold text-[var(--color-text-primary)]">
+                <div key={label} className="block min-w-0 sm:flex sm:gap-2">
+                  <dt className="mr-2 inline font-semibold text-[var(--color-text-primary)] sm:mr-0 sm:block sm:flex-none">
                     {t(label)}
                   </dt>
                   <dd
-                    className={`min-w-0 break-words ${
+                    className={`inline min-w-0 break-words sm:block ${
                       problem
                         ? "text-amber-700 dark:text-amber-300"
                         : "text-[var(--color-text-muted)]"
@@ -333,6 +362,7 @@ export function CodexVoiceAnalystModal({
               type="button"
               variant="ghost"
               size="sm"
+              data-lcd-key
               disabled={controller.checking}
               onClick={() => void controller.refresh()}
             >
@@ -353,13 +383,17 @@ export function CodexVoiceAnalystModal({
         {controller.notificationPaused && controller.isEngaged ? (
           <p
             role="status"
+            data-status-tone="warning"
             className="border-b border-amber-400/25 bg-amber-400/8 px-5 py-3 text-sm text-amber-700 dark:text-amber-300"
           >
             {t("voicePreferences.paused")}
           </p>
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col" data-codex-voice-console="true">
-          <div className="flex flex-none border-b border-[var(--glass-border-subtle)] lg:hidden">
+          <div
+            data-voice-pane-switch
+            className="flex flex-none border-b border-[var(--glass-border-subtle)] lg:hidden"
+          >
             {(["conversation", "analyst"] as const).map((pane) => {
               const label = t(
                 pane === "conversation" ? "codexVoiceConversation" : "codexVoiceAnalystTitle",
@@ -382,6 +416,7 @@ export function CodexVoiceAnalystModal({
                   {marked ? (
                     <span
                       data-codex-voice-analyst-dot
+                      data-status-dot="attention"
                       className="h-1.5 w-1.5 rounded-full bg-amber-500"
                       aria-hidden="true"
                     />

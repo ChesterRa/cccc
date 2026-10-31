@@ -508,7 +508,7 @@ export function IMBridgeTab({
               <div className="flex items-center gap-2">
                 <span
                   className={`w-2 h-2 rounded-full ${imStatus.running ? "bg-emerald-500" : "bg-gray-400"}`}
-                  data-settings-status-dot={imStatus.running ? "running" : "stopped"}
+                  data-status-dot={imStatus.running ? "active" : "inactive"}
                 />
                 <span className="text-sm text-[var(--color-text-primary)]">
                   {imStatus.running ? t("imBridge.running") : t("imBridge.stopped")}

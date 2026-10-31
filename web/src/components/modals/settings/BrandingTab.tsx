@@ -134,12 +134,20 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
       }
     >
       {hint ? (
-        <p role="status" className="text-sm text-[var(--color-accent-success)]">
+        <p
+          role="status"
+          data-status-tone="ok"
+          className="text-sm text-[var(--color-accent-success)]"
+        >
           {hint}
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="text-sm text-rose-600 dark:text-rose-400">
+        <p
+          role="alert"
+          data-status-tone="error"
+          className="text-sm text-rose-600 dark:text-rose-400"
+        >
           {error}
         </p>
       ) : null}

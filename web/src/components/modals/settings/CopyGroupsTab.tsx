@@ -247,6 +247,7 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
           {info ? (
             <span
               role="status"
+              data-status-tone="ok"
               className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300"
             >
               <CheckIcon size={13} />
@@ -261,6 +262,7 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
           {err ? (
             <div
               role="alert"
+              data-status-tone="error"
               className="w-full rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-rose-700 dark:text-rose-300"
             >
               {err}
@@ -442,6 +444,7 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
                   >
                     <CheckIcon
                       size={13}
+                      data-status-tone="ok"
                       className="mt-1 shrink-0 text-emerald-600 dark:text-emerald-300"
                     />
                     <span>{item}</span>

@@ -93,7 +93,7 @@ export function MobileMenuSheet({
         data-lcd-scope
       >
         <div className="flex justify-center pt-3 pb-1 md:hidden" onClick={onClose}>
-          <div className="w-12 h-1.5 rounded-full bg-black/15 dark:bg-white/20" />
+          <div className="w-12 h-1.5 rounded-full bg-black/15 dark:bg-white/20" data-sheet-handle />
         </div>
 
         <div className="px-6 pb-4 md:pt-5 flex items-center justify-between gap-3">

@@ -140,8 +140,12 @@ function buildEventEntry(event: HeadlessStreamEvent, order: number): HeadlessRaw
     tone = status === "completed" ? "success" : "info";
   } else if (eventType.startsWith("headless.turn.") || eventType.startsWith("headless.control.")) {
     const isFailed = eventType.endsWith(".failed");
-    const isQueued = eventType.endsWith(".queued") || eventType.endsWith(".requeued");
+    const isWaiting =
+      eventType.endsWith(".queued") ||
+      eventType.endsWith(".requeued") ||
+      eventType.endsWith(".stalled");
     const isStarted = eventType.endsWith(".started") || eventType.endsWith(".progress");
+    const isCompleted = eventType.endsWith(".completed");
     badge = eventType.startsWith("headless.control.") ? "CONTROL" : "TURN";
     title = normalizeText(data.status) || eventType.replace(/^headless\./, "").replace(/\./g, " ");
     const errorText = extractErrorText(data);
@@ -149,8 +153,18 @@ function buildEventEntry(event: HeadlessStreamEvent, order: number): HeadlessRaw
       detailLines.push(`kind: ${normalizeText(data.control_kind)}`);
     if (normalizeText(data.turn_id)) detailLines.push(`turn: ${normalizeText(data.turn_id)}`);
     if (errorText) detailLines.push(errorText);
-    tone = isFailed ? "error" : isQueued ? "warning" : isStarted ? "info" : "success";
-    live = !eventType.endsWith(".completed") && !eventType.endsWith(".failed");
+    // A cancelled turn is settled, and a queued or stalled control is waiting.
+    // Unknown future events must not be presented as running or successful.
+    tone = isFailed
+      ? "error"
+      : isWaiting
+        ? "warning"
+        : isStarted
+          ? "info"
+          : isCompleted
+            ? "success"
+            : "neutral";
+    live = isStarted;
   } else if (
     eventType === "headless.thread.started" ||
     eventType === "headless.thread.resumed" ||

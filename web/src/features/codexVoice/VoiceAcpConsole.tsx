@@ -9,7 +9,7 @@ import {
 import { AcpPermissionList } from "../../components/headless/AcpPermissionList";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
-import { ChevronDownIcon } from "../../components/Icons";
+import { ChevronDownIcon, SendIcon } from "../../components/Icons";
 import { LazyMarkdownRenderer } from "../../components/LazyMarkdownRenderer";
 
 const RESULT_TEXT_CLASS = "whitespace-pre-wrap break-words font-sans text-sm leading-6";
@@ -166,11 +166,12 @@ export function VoiceAcpConsole({
   }
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div ref={outputRef} className="min-h-0 flex-1 space-y-4 overflow-auto px-5 py-4">
+      <div ref={outputRef} className="min-h-24 flex-1 space-y-4 overflow-auto px-5 py-4">
         {showReadStatus && pollActive && staleGeneration === analyst.generation && (
           <p
             role="status"
             data-acp-snapshot-stale
+            data-status-tone="warning"
             className="text-xs text-amber-700 dark:text-amber-300"
           >
             {t("acpControls.snapshotStale")}
@@ -183,7 +184,11 @@ export function VoiceAcpConsole({
           </p>
         )}
         {current.last_error && !current.manual_task_id && (
-          <div role="alert" className="space-y-1 text-sm text-rose-600 dark:text-rose-400">
+          <div
+            role="alert"
+            data-status-tone="error"
+            className="space-y-1 text-sm text-rose-600 dark:text-rose-400"
+          >
             <p>{t("acpControls.turnFailed")}</p>
             <p className="whitespace-pre-wrap break-words">{current.last_error}</p>
             {(current.progress || current.last_result) && (
@@ -228,6 +233,7 @@ export function VoiceAcpConsole({
                   {!["queued", "working", "completed", "cancelled"].includes(task.status) && (
                     <p
                       role="alert"
+                      data-status-tone="error"
                       className="break-words text-xs text-rose-600 dark:text-rose-400"
                     >
                       {t(
@@ -282,10 +288,10 @@ export function VoiceAcpConsole({
                 : "acpControls.localHint",
           )}
         </p>
-        <div className="glass-input flex min-w-0 items-end gap-2 rounded-xl p-2 focus-within:!border-[var(--color-border-focus)] focus-within:!shadow-[var(--focus-ring)]">
+        <div className="glass-input flex min-w-0 flex-wrap items-end gap-2 rounded-xl p-2 focus-within:!border-[var(--color-border-focus)] focus-within:!shadow-[var(--focus-ring)]">
           <Textarea
             ref={inputRef}
-            className="min-h-16 max-h-36 min-w-0 flex-1 resize-none !border-0 !bg-transparent px-1 py-1 !shadow-none !outline-none !ring-0"
+            className="min-h-16 max-h-36 min-w-0 flex-[1_1_10rem] resize-none !border-0 !bg-transparent px-1 py-1 !shadow-none !outline-none !ring-0"
             value={text}
             onChange={(event) => {
               setText(event.target.value);
@@ -308,12 +314,22 @@ export function VoiceAcpConsole({
             placeholder={t("acpControls.investigationInput")}
             rows={2}
           />
-          <Button type="submit" className="shrink-0" disabled={busy || !text.trim()}>
-            {t("acpControls.submitInvestigation")}
+          <Button
+            type="submit"
+            className="ml-auto shrink-0 max-sm:min-w-11 max-sm:px-0"
+            aria-label={t("acpControls.submitInvestigation")}
+            disabled={busy || !text.trim()}
+          >
+            <SendIcon size={16} className="sm:hidden" aria-hidden="true" />
+            <span className="max-sm:hidden">{t("acpControls.submitInvestigation")}</span>
           </Button>
         </div>
         {error && (
-          <p role="alert" className="text-xs break-words text-rose-600 dark:text-rose-400">
+          <p
+            role="alert"
+            data-status-tone="error"
+            className="text-xs break-words text-rose-600 dark:text-rose-400"
+          >
             {error}
           </p>
         )}

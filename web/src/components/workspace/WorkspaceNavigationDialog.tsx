@@ -30,6 +30,7 @@ export function WorkspaceNavigationDialog() {
     >
       <DialogContent
         className="gap-4 p-6"
+        lcdScope
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           cancel.current?.focus();

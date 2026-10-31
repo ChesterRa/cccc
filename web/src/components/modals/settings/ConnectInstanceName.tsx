@@ -78,7 +78,7 @@ export function ConnectInstanceName({
         {t("account.connect.instanceNameHint")}
       </p>
       {error ? (
-        <p role="alert" className="text-xs text-red-500">
+        <p role="alert" data-status-tone="error" className="text-xs text-red-500">
           {error}
         </p>
       ) : null}

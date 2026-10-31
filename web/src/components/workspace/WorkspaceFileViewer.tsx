@@ -162,6 +162,7 @@ function FileViewer({
           title={t("workspaceDownload")}
           aria-label={t("workspaceDownload")}
           className={fileActionClass}
+          data-lcd-key
         >
           <Download className="h-3.5 w-3.5" />
         </a>
@@ -170,6 +171,7 @@ function FileViewer({
           onClick={onAttach}
           title={t("workspaceAttachContext", { defaultValue: "Attach as context" })}
           className={classNames(fileActionClass, isDark ? "hover:bg-white/8" : "hover:bg-black/5")}
+          data-lcd-key
         >
           <Paperclip className="h-3.5 w-3.5" />
         </button>
@@ -179,6 +181,7 @@ function FileViewer({
             disabled={!dirty || saving || loading}
             onClick={() => void onSave(draft)}
             title={t("workspaceSave", { defaultValue: "Save" })}
+            data-lcd-key
             className={classNames(
               fileActionClass,
               !dirty || saving || loading
@@ -196,6 +199,7 @@ function FileViewer({
           onClick={onClose}
           title={t("workspaceCloseFile", { defaultValue: "Close file" })}
           className={classNames(fileActionClass, isDark ? "hover:bg-white/8" : "hover:bg-black/5")}
+          data-lcd-key
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -207,6 +211,7 @@ function FileViewer({
             "flex items-center gap-2 px-3 py-2 text-xs",
             isDark ? "bg-rose-400/10 text-rose-200" : "bg-rose-500/8 text-rose-700",
           )}
+          data-status-tone="error"
         >
           <span className="min-w-0 flex-1">
             {conflict
@@ -292,9 +297,11 @@ function FileViewer({
             "min-h-0 flex-1 resize-none bg-transparent px-3 py-2 font-mono text-xs leading-relaxed outline-none",
             isDark ? "text-slate-200" : "text-slate-800",
           )}
+          data-workspace-text
         />
       ) : (
         <pre
+          data-workspace-text
           className={classNames(
             // Wraps rather than scrolling sideways: on a phone a horizontal drag per line is
             // unreadable, and the editable path (a textarea) already soft-wraps.
@@ -309,6 +316,7 @@ function FileViewer({
       <Dialog open={confirmReload} onOpenChange={setConfirmReload}>
         <DialogContent
           className="gap-4 p-6"
+          lcdScope
           onEscapeKeyDown={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
             // Keep the enclosing phone surface's document handlers out of this dialog.

@@ -98,3 +98,49 @@
     display: inline;
   }
 }
+
+/* Voice Secretary's mode and language menus read like the Group menu: rows in ink,
+   reversed under the pointer or focus, the current one marked by its check alone.
+   The mode tiles are told apart by their glyphs, so they take a frame, not a colour. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-menu-row] {
+  background: transparent;
+  color: var(--lcd-ink);
+  transition: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-menu-row] :is(span, svg) {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-menu-row] [data-voice-menu-hint] {
+  color: var(--lcd-dim);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-menu-row] [data-voice-menu-tile] {
+  border: 1px solid currentColor;
+  background: transparent;
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is(button[data-voice-menu-row], [data-voice-menu-row] > button):is(:hover, :focus-visible):not(
+    :disabled
+  ) {
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is(button[data-voice-menu-row], [data-voice-menu-row] > button):is(:hover, :focus-visible):not(
+    :disabled
+  )
+  [data-voice-menu-hint] {
+  color: inherit;
+}
+
+/* The pixel font runs wider than the classic one; the language list fits its longest name. */
+:root[data-ui-style="lcd"] [data-lcd-scope][data-voice-language-menu] {
+  width: max-content;
+  max-width: calc(100vw - 1rem);
+}

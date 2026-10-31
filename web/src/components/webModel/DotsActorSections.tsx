@@ -17,7 +17,10 @@ export function DotsSettingRow({
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--glass-border-subtle)] px-4 py-3">
       <div className="min-w-0 flex-1">
-        <div className={`font-medium ${danger ? "text-rose-700 dark:text-rose-300" : ""}`}>
+        <div
+          className={`font-medium ${danger ? "text-rose-700 dark:text-rose-300" : ""}`}
+          data-status-tone={danger ? "error" : undefined}
+        >
           {label}
         </div>
         {hint ? (
@@ -78,6 +81,7 @@ export function DotsSetupTips({ t, children }: { t: T; children?: ReactNode }) {
     <section
       className="flex flex-col rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3"
       aria-label={t("dotsActor.setup.tipsTitle")}
+      data-status-tone="neutral"
     >
       <h3 className="text-xs font-semibold text-amber-800 dark:text-amber-200">
         {t("dotsActor.setup.tipsTitle")}

@@ -45,6 +45,7 @@ export function ChatMentionMenu({
       )}
       style={isSmallScreen ? undefined : { left: `${left}px` }}
       role="listbox"
+      data-lcd-menu
     >
       {status ? (
         <div role="status" className="px-4 py-2 text-xs text-[var(--color-text-secondary)]">
@@ -87,6 +88,7 @@ export function ChatMentionMenu({
                   isDark ? "bg-white/70" : "bg-gray-700",
                 )}
                 aria-hidden="true"
+                data-option-mark
               />
             ) : null}
             <div className="flex items-center gap-2 min-w-0">
@@ -109,6 +111,7 @@ export function ChatMentionMenu({
                           ? "border-sky-300/20 bg-sky-400/10 text-sky-100"
                           : "border-sky-100 bg-sky-50 text-sky-900",
                       )}
+                      data-lcd-tag
                     >
                       {item.badgeKind === "remote"
                         ? t("remoteBadge", { defaultValue: "Remote" })
@@ -127,6 +130,7 @@ export function ChatMentionMenu({
                       "line-clamp-2 break-words text-xs leading-4",
                       isDark ? "text-slate-400" : "text-gray-500",
                     )}
+                    data-lcd-hint
                   >
                     {item.description}
                   </div>
@@ -137,6 +141,7 @@ export function ChatMentionMenu({
                       "truncate text-xs leading-4 opacity-55",
                       isDark ? "text-slate-500" : "text-gray-400",
                     )}
+                    data-lcd-hint
                   >
                     {item.meta}
                   </div>

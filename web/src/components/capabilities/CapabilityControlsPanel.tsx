@@ -153,8 +153,13 @@ function ControlButton({
       disabled={busy}
       title={meta}
       onClick={onClick}
+      data-status-tone={tone === "danger" ? "error" : tone === "warn" ? "warning" : undefined}
+      data-lcd-key={tone === "neutral" ? "" : undefined}
     >
-      <span className="flex h-8 w-8 items-center justify-center rounded-md bg-black/5 dark:bg-white/8">
+      <span
+        className="flex h-8 w-8 items-center justify-center rounded-md bg-black/5 dark:bg-white/8"
+        data-control-icon
+      >
         <Icon size={15} aria-hidden="true" />
       </span>
       <span className="min-w-0">

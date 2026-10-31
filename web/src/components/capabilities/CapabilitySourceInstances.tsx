@@ -48,6 +48,7 @@ export function CapabilitySourceInstances({
                 disabled={busyKey === `source-instance-delete:${key}`}
                 aria-label={t("capabilityCenter.sources.deleteInstance")}
                 onClick={() => onDelete(instance)}
+                data-status-tone="error"
               >
                 <Trash2 size={14} aria-hidden="true" />
               </button>

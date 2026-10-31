@@ -52,10 +52,15 @@ function useReturnFocus({ onOpenAutoFocus, onCloseAutoFocus }: AutoFocusHandlers
   } satisfies AutoFocusHandlers;
 }
 
+type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+  /** Takes the LCD style when it is on, like ModalFrame's lcdScope. */
+  lcdScope?: boolean;
+};
+
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => {
+  DialogContentProps
+>(({ className, children, lcdScope = false, ...props }, ref) => {
   const ariaDescribedBy = props["aria-describedby"];
   const returnFocus = useReturnFocus(props);
   return (
@@ -68,6 +73,7 @@ const DialogContent = React.forwardRef<
           "!fixed left-1/2 top-1/2 z-[1001] flex w-[min(calc(100vw-1rem),40rem)] max-h-[calc(100dvh-1rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border shadow-2xl glass-modal",
           className,
         )}
+        data-lcd-scope={lcdScope || undefined}
         {...props}
         {...returnFocus}
       >

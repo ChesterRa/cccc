@@ -63,8 +63,12 @@ export function ActorAvatarField({
             isDark={isDark}
             sizeClassName={sizeClassName}
             textClassName="text-sm"
+            className="lcd-tile"
           />
-          <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-black/0 text-white opacity-0 transition-all duration-150 group-hover:bg-black/45 group-hover:opacity-100 group-focus-visible:bg-black/45 group-focus-visible:opacity-100">
+          <span
+            className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-black/0 text-white opacity-0 transition-all duration-150 group-hover:bg-black/45 group-hover:opacity-100 group-focus-visible:bg-black/45 group-focus-visible:opacity-100"
+            data-avatar-scrim
+          >
             <CameraIcon
               aria-hidden="true"
               className="h-5 w-5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]"

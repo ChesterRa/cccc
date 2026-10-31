@@ -60,6 +60,8 @@ describe("TerminalHistoryPanel", () => {
       expect.objectContaining({ before: null, stripAnsi: true }),
     );
     expect(host.querySelector("pre")?.textContent).toBe("newest output");
+    expect(host.querySelector('[role="dialog"][data-lcd-scope]')).not.toBeNull();
+    expect(host.querySelector("button[data-lcd-key]")?.textContent).toBe("historyLoadOlder");
 
     await act(async () => root.unmount());
     host.remove();
@@ -151,6 +153,7 @@ describe("TerminalHistoryPanel", () => {
       (button) => button.textContent === "historyRetry",
     );
     expect(retry).toBeDefined();
+    expect(retry?.hasAttribute("data-lcd-key")).toBe(true);
 
     api.fetchTerminalHistory.mockResolvedValueOnce(page("recovered", 500));
     await act(async () => retry?.click());

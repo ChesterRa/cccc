@@ -52,6 +52,7 @@ export function CodexVoiceDock({
       onClick={() => void controller.disconnect()}
       disabled={controller.phase === "stopping"}
       className={classNames("flex-none text-rose-500", collapsed && "w-full")}
+      data-lcd-key
       label={stopLabel}
     >
       <StopIcon size={16} />
@@ -64,6 +65,7 @@ export function CodexVoiceDock({
       onClick={onStart}
       disabled={startDisabled}
       className={classNames("flex-none text-[var(--color-text-secondary)]", collapsed && "w-full")}
+      data-lcd-key
       label={t("layout:codexVoiceStart")}
     >
       <VoiceWaveformIcon size={16} />

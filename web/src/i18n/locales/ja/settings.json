@@ -459,35 +459,26 @@
     "remove": {
       "busy": "処理中",
       "failed": "Capability の削除に失敗しました。",
-      "label": {
-        "delete": "削除",
-        "remove": "除去",
-        "uninstall": "アンインストール",
-        "disable": "無効化"
-      },
+      "label": { "delete": "削除", "remove": "除去", "uninstall": "アンインストール" },
       "title": {
         "delete": "この Skill を削除",
         "remove": "この Skill を現在のグループから除去",
-        "uninstall": "この MCP をアンインストール",
-        "disable": "この組み込み capability を無効化"
+        "uninstall": "この MCP をアンインストール"
       },
       "confirm": {
         "delete": "{{name}} を削除しますか？\n\n{{id}} の registry レコードと関連 binding を削除します。",
         "remove": "{{name}} を除去しますか？\n\n{{id}} の現在のグループでの有効化と autoload 参照を消去します。",
-        "uninstall": "{{name}} をアンインストールしますか？\n\n{{id}} の現在のグループでの binding と runtime インストール参照を消去します。",
-        "disable": "{{name}} を無効化しますか？\n\n{{id}} の現在のグループでの有効化だけを消去します。組み込み capability 自体は削除されません。"
+        "uninstall": "{{name}} をアンインストールしますか？\n\n{{id}} の現在のグループでの binding と runtime インストール参照を消去します。"
       },
       "confirmTitle": {
         "delete": "{{name}} を削除しますか？",
         "remove": "{{name}} を除去しますか？",
-        "uninstall": "{{name}} をアンインストールしますか？",
-        "disable": "このグループで {{name}} を無効化しますか？"
+        "uninstall": "{{name}} をアンインストールしますか？"
       },
       "confirmDescription": {
         "delete": "{{id}} の registry レコードと関連 binding を削除します。",
         "remove": "{{id}} の現在のグループでの有効化と autoload 参照を消去します。",
-        "uninstall": "{{id}} の現在のグループでの binding と runtime インストール参照を消去します。",
-        "disable": "{{id}} を現在のグループでのみ無効化します。あとで再び有効化できます。"
+        "uninstall": "{{id}} の現在のグループでの binding と runtime インストール参照を消去します。"
       }
     },
     "block": {
@@ -510,7 +501,9 @@
       "disableTitle": "現在のグループだけで無効化",
       "failed": "有効化状態の更新に失敗しました。",
       "confirmDisableTitle": "このグループで {{name}} を無効化しますか？",
-      "confirmDisableDescription": "{{id}} を現在のグループでのみ無効化します。あとで再び有効化できます。"
+      "confirmDisableDescription": "{{id}} を現在のグループで無効化します。このグループでのあなた自身の actor/session 適用も削除し、ほかの actor の actor/session 適用はそのままです。あとで再び有効化できます。",
+      "partlyFailed": "一部だけ無効化されました：{{message}}",
+      "stillEnabled": "{{name}} はまだ有効です。処理中に状態が変わった可能性があります。再試行してください。"
     },
     "confirm": { "cancel": "キャンセル", "confirm": "確認" },
     "showSystem": "システム"

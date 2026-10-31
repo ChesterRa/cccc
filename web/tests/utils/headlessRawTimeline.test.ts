@@ -6,6 +6,49 @@ import {
 } from "../../src/utils/headlessRawTimeline";
 
 describe("buildHeadlessRawTraceEntries", () => {
+  it.each([
+    ["headless.turn.started", "info", true],
+    ["headless.turn.completed", "success", false],
+    ["headless.turn.failed", "error", false],
+    ["headless.turn.cancelled", "neutral", false],
+    ["headless.control.started", "info", true],
+    ["headless.control.queued", "warning", false],
+    ["headless.control.requeued", "warning", false],
+    ["headless.control.stalled", "warning", false],
+    ["headless.control.completed", "success", false],
+    ["headless.control.failed", "error", false],
+    ["headless.control.unknown_future_state", "neutral", false],
+  ] as const)(
+    "classifies %s without inventing a running or successful state",
+    (type, tone, live) => {
+      const entries = buildHeadlessRawTraceEntries([
+        { actor_id: "coder", type, ts: "2026-04-23T10:00:00Z", data: { turn_id: "turn-1" } },
+      ]);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({ kind: "event", tone, live });
+    },
+  );
+
+  it("settles a started turn as cancelled, not as running", () => {
+    const entries = buildHeadlessRawTraceEntries([
+      {
+        actor_id: "coder",
+        type: "headless.turn.started",
+        ts: "2026-04-23T10:00:00Z",
+        data: { turn_id: "turn-1" },
+      },
+      {
+        actor_id: "coder",
+        type: "headless.turn.cancelled",
+        ts: "2026-04-23T10:00:01Z",
+        data: { turn_id: "turn-1", status: "cancelled" },
+      },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ title: "cancelled", tone: "neutral", live: false });
+    expect(buildHeadlessRawTraceRenderGroups(entries)[0]).toMatchObject({ live: false });
+  });
+
   it("moves a streaming message forward when later deltas arrive", () => {
     const entries = buildHeadlessRawTraceEntries([
       {
