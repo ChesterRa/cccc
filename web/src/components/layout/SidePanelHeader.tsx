@@ -1,5 +1,6 @@
 import type { ComponentPropsWithRef, ReactNode } from "react";
 import { X } from "lucide-react";
+import { LcdIcon } from "../Icons";
 import { classNames } from "../../utils/classNames";
 
 export function SidePanelButton({
@@ -52,7 +53,7 @@ export function SidePanelHeader({
       {children}
       {onClose && (
         <SidePanelButton title={closeLabel} onClick={onClose}>
-          <X />
+          <LcdIcon icon={X} glyph="close" />
         </SidePanelButton>
       )}
     </div>

@@ -100,7 +100,7 @@ Reordering or archiving Groups does not move an existing selection.
 
 ### Group message and terminal views
 
-Use **Connect existing sessions** in the sidebar to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
+Use **Connect sessions**, beside the **Working Groups** heading in the sidebar, to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
 **Group connections** is available under the current Group’s settings and in each Group’s sidebar **⋮** menu, including remote Groups
@@ -113,9 +113,14 @@ option keeps the containing menu open and returns focus to its trigger. Arrow ke
 options; Escape closes only the inner choice menu. Narrow headers use the existing overflow
 sheet with the same choices and access rules; choice panels are portalled above its scroll area.
 Message identities, recipients, references, timestamps and actions follow the text-size preference.
+With **Style** set to **LCD**, **Message area width** sets how wide the conversation runs on
+screens 768px and wider: **Medium** keeps a centered reading column, **Wide** gives tables and
+code more room and **Full** uses the whole chat area. The choice is saved in this browser. It
+does not appear on narrower screens, where the conversation already has no width limit.
 Reading controls share the application theme; embedded PDFs, web pages, images and terminal
-ANSI content retain their own colors. Image and diagram viewers keep zoom buttons separate
-from native wheel scrolling and support dragging the enlarged content.
+ANSI content retain their own colors. Image and diagram viewers zoom with their buttons,
+Ctrl/⌘ + wheel or a pinch, while the plain wheel keeps scrolling; see
+[Inspect images and diagrams](#inspect-images-and-diagrams).
 
 In Group settings, refreshing data or saving a different section preserves edited fields and
 updates fields you have not changed. Delivery, Automation, Messaging and Transcript display
@@ -385,9 +390,13 @@ establish an exemption or add a Cloudflare Stream subscription.
 
 Workspace images, expanded message images, Mermaid diagrams, Presentation images and enlarged
 quoted snapshots share a static graphics viewer. Use **Fit**, **100%**, **+** or
-**−** to change scale; dragging pans enlarged content and the wheel keeps native
-scrolling.
-Touch screens support pinch zoom. Focus the viewport for `+`/`−`, `0` (fit),
+**−** to change scale. **Fit** never enlarges a raster image past actual size; rendered diagrams
+and workspace SVG previews can grow to fill the view. Ctrl/⌘ + wheel and a trackpad or touch pinch zoom at the
+pointer; the plain wheel keeps native scrolling and dragging pans enlarged content. A click
+on the content switches between fit and actual size; on touch screens, double-tap.
+Expanded message images and videos open over the whole window. A click on the blank area
+around an image, Escape or **Close** closes the view; releasing a drag does not.
+Focus the viewport for `+`/`−`, `0` (fit),
 `1` (actual size) and native arrow-key scrolling. Closing a modal restores focus
 to its opener. Regular message scrolling, PDF controls and interactive browser
 surfaces retain their own behavior. The workspace text editor is unchanged.

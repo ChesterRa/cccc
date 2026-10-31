@@ -136,7 +136,7 @@ describe("appearance choices inside their real hosts", () => {
   }
 
   for (const host of ["desktop", "sheet"] as const) {
-    it(`${host}: previews the LCD style and offers its body-font choice only while it is on`, async () => {
+    it(`${host}: previews the LCD style and offers its body-font and width choices only while it is on`, async () => {
       await renderHost(host, "light");
       const choice = (name: string) =>
         document.querySelector<HTMLElement>(
@@ -150,6 +150,7 @@ describe("appearance choices inside their real hosts", () => {
         "uiStyleLcd",
       ]);
       expect(choice("lcdBody")).toBeNull();
+      expect(choice("lcdWidth")).toBeNull();
       try {
         await click(radios("uiStyle")[1]!);
         expect(document.documentElement.dataset.uiStyle).toBe("lcd");
@@ -159,13 +160,28 @@ describe("appearance choices inside their real hosts", () => {
         ]);
         await click(radios("lcdBody")[1]!);
         expect(document.documentElement.dataset.lcdBody).toBe("pixel");
+        expect(radios("lcdWidth").map((radio) => radio.textContent)).toEqual([
+          "lcdWidthColumn",
+          "lcdWidthWide",
+          "lcdWidthFull",
+        ]);
+        // Hidden where the CSS cap does not apply (below 768px).
+        expect(choice("lcdWidth")!.parentElement!.className).toContain("max-md:hidden");
+        await click(radios("lcdWidth")[1]!);
+        expect(document.documentElement.dataset.lcdWidth).toBe("wide");
+        await click(radios("lcdWidth")[2]!);
+        expect(document.documentElement.dataset.lcdWidth).toBe("full");
         expect(outerOpen(host)).toBe(true);
         await click(radios("uiStyle")[0]!);
         expect(document.documentElement.dataset.uiStyle).toBeUndefined();
         expect(document.documentElement.dataset.lcdBody).toBeUndefined();
+        expect(document.documentElement.dataset.lcdWidth).toBeUndefined();
         expect(choice("lcdBody")).toBeNull();
+        expect(choice("lcdWidth")).toBeNull();
       } finally {
-        await act(async () => setUiStylePrefs({ style: "classic", lcdBody: "mono" }));
+        await act(async () =>
+          setUiStylePrefs({ style: "classic", lcdBody: "mono", lcdWidth: "column" }),
+        );
       }
     });
   }

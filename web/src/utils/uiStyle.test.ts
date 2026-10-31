@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   DEFAULT_UI_STYLE_PREFS,
   LCD_BODY_STORAGE_KEY,
+  LCD_WIDTH_STORAGE_KEY,
   UI_STYLE_STORAGE_KEY,
   normalizeUiStylePrefs,
 } from "./uiStyle";
@@ -19,6 +20,7 @@ beforeEach(() => {
   const root = document.documentElement;
   delete root.dataset.uiStyle;
   delete root.dataset.lcdBody;
+  delete root.dataset.lcdWidth;
 });
 
 afterEach(() => {
@@ -27,18 +29,23 @@ afterEach(() => {
 
 describe("interface style preference", () => {
   it("accepts only known values and falls back to the classic defaults", () => {
-    expect(normalizeUiStylePrefs({ style: "lcd", lcdBody: "pixel" })).toEqual({
+    expect(normalizeUiStylePrefs({ style: "lcd", lcdBody: "pixel", lcdWidth: "full" })).toEqual({
       style: "lcd",
       lcdBody: "pixel",
+      lcdWidth: "full",
     });
-    expect(normalizeUiStylePrefs({ style: "LCD", lcdBody: 1 })).toEqual(DEFAULT_UI_STYLE_PREFS);
+    expect(normalizeUiStylePrefs({ style: "lcd", lcdWidth: "wide" }).lcdWidth).toBe("wide");
+    expect(normalizeUiStylePrefs({ style: "LCD", lcdBody: 1, lcdWidth: "max" })).toEqual(
+      DEFAULT_UI_STYLE_PREFS,
+    );
   });
 
   it("restores the stored choice and ignores invalid stored values", async () => {
     window.localStorage.setItem(UI_STYLE_STORAGE_KEY, "lcd");
     window.localStorage.setItem(LCD_BODY_STORAGE_KEY, "serif");
+    window.localStorage.setItem(LCD_WIDTH_STORAGE_KEY, "full");
     const store = await loadStore();
-    expect(store.getUiStylePrefs()).toEqual({ style: "lcd", lcdBody: "mono" });
+    expect(store.getUiStylePrefs()).toEqual({ style: "lcd", lcdBody: "mono", lcdWidth: "full" });
   });
 
   it("starts classic when storage cannot be read", async () => {
@@ -62,14 +69,32 @@ describe("interface style preference", () => {
     expect(window.localStorage.getItem(LCD_BODY_STORAGE_KEY)).toBe("pixel");
     expect(listener).toHaveBeenCalledTimes(1);
 
+    expect(root.dataset.lcdWidth).toBe("column");
+
     store.setUiStylePrefs({ style: "lcd" });
     expect(listener).toHaveBeenCalledTimes(1);
+
+    store.setUiStylePrefs({ lcdWidth: "full" });
+    expect(root.dataset.lcdWidth).toBe("full");
+    expect(window.localStorage.getItem(LCD_WIDTH_STORAGE_KEY)).toBe("full");
+    expect(listener).toHaveBeenCalledTimes(2);
 
     store.setUiStylePrefs({ style: "classic" });
     expect(root.dataset.uiStyle).toBeUndefined();
     expect(root.dataset.lcdBody).toBeUndefined();
-    expect(listener).toHaveBeenCalledTimes(2);
+    expect(root.dataset.lcdWidth).toBeUndefined();
+    expect(store.getUiStylePrefs().lcdWidth).toBe("full");
+    expect(listener).toHaveBeenCalledTimes(3);
     unsubscribe();
+  });
+
+  it("stores only the changed choice, keeping what another tab stored for the rest", async () => {
+    const store = await loadStore();
+    store.setUiStylePrefs({ style: "lcd" });
+    window.localStorage.setItem(LCD_WIDTH_STORAGE_KEY, "full");
+    store.setUiStylePrefs({ lcdBody: "pixel" });
+    expect(window.localStorage.getItem(LCD_BODY_STORAGE_KEY)).toBe("pixel");
+    expect(window.localStorage.getItem(LCD_WIDTH_STORAGE_KEY)).toBe("full");
   });
 
   it("keeps a change for this page when storage cannot be written", async () => {

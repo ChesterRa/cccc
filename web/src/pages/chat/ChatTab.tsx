@@ -115,7 +115,7 @@ function ChatGptAppPermissionNotice({
     <div className="flex-shrink-0 px-2 pb-1.5 sm:px-2.5">
       <div
         className={classNames(
-          "mx-auto flex max-w-5xl items-start gap-2 rounded-md border px-3 py-2 text-xs leading-5 shadow-sm",
+          "chat-reading-width mx-auto flex max-w-5xl items-start gap-2 rounded-md border px-3 py-2 text-xs leading-5 shadow-sm",
           isDark
             ? "border-amber-400/25 bg-amber-500/10 text-amber-100"
             : "border-amber-200 bg-amber-50 text-amber-800",

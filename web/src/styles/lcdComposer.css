@@ -20,6 +20,9 @@
   border: 1px solid var(--lcd-rule-strong);
 }
 
+/* The composer keys follow the header keys: 1rem drawings in 2rem keys, scaling
+   with the text size. Touch keys are 44px, so there the drawing is 1.5rem, the
+   pixel set's own 24px at the default size. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-composer-attach] > svg,
 :root[data-ui-style="lcd"]
   [data-lcd-scope]
@@ -27,8 +30,36 @@
   > button:first-child
   > svg,
 :root[data-ui-style="lcd"] [data-lcd-scope] :is([data-voice-optimize], [data-voice-expand]) > svg {
-  width: 24px;
-  height: 24px;
+  width: 1rem;
+  height: 1rem;
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-composer-attach] > svg,
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    [data-voice-assistant-row-control]
+    > button:first-child
+    > svg,
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    :is([data-voice-optimize], [data-voice-expand])
+    > svg {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+}
+
+/* Their words follow the text size too, a step below the body at medium weight:
+   the pixel font has no true bold, and a synthetic one blurs. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-voice-assistant-row-control]
+  .voice-desktop-controls
+  > :is(button, span) {
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0;
 }
 
 :root[data-ui-style="lcd"]

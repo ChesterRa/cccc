@@ -809,7 +809,7 @@ export function AgentTab({
             )}
           >
             <div
-              className={classNames("relative shrink-0", lcd ? "h-[28px] w-[28px]" : "h-5 w-5")}
+              className={classNames("relative shrink-0", lcd ? "h-7 w-7" : "h-5 w-5")}
               title={compactIdentityTitle}
             >
               <span aria-hidden="true">
@@ -818,8 +818,8 @@ export function AgentTab({
                   runtime={actor.runtime}
                   title={actor.title || actor.id}
                   isDark={isDark}
-                  sizeClassName={lcd ? "h-[28px] w-[28px]" : "h-5 w-5"}
-                  textClassName="text-[10px]"
+                  sizeClassName={lcd ? "h-7 w-7" : "h-5 w-5"}
+                  textClassName={lcd ? "text-[0.625rem]" : "text-[10px]"}
                   className={lcd ? "lcd-tile" : "!border-0 !shadow-none"}
                 />
               </span>

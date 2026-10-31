@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import { ComposerRecipientsRow } from "./ComposerRecipientsRow";
@@ -96,3 +96,92 @@ it.each([true, false])(
     }
   },
 );
+
+it("keeps a newly selected recipient visible when the clear button reduces the row", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  function Harness() {
+    const [tokens, setTokens] = useState<string[]>([]);
+    return (
+      <ComposerRecipientsRow
+        isDark={false}
+        isSmallScreen={false}
+        selectedGroupId="g"
+        busy=""
+        actors={[{ id: "agent", title: "Agent", runtime: "codex" }]}
+        toTokens={tokens}
+        onToggleRecipient={(id) =>
+          setTokens((previous) =>
+            previous.includes(id) ? previous.filter((item) => item !== id) : [...previous, id],
+          )
+        }
+        onClearRecipients={() => setTokens([])}
+      />
+    );
+  }
+  try {
+    await act(async () => root.render(<Harness />));
+    const scrollPort = host.querySelector<HTMLElement>(".overflow-x-auto")!;
+    const selected = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "Agent",
+    )!;
+    const inside = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "@foreman",
+    )!;
+    Object.defineProperty(scrollPort, "scrollWidth", { configurable: true, value: 240 });
+    Object.defineProperty(scrollPort, "clientWidth", {
+      configurable: true,
+      get: () => (host.querySelector('[aria-label="clearRecipients"]') ? 100 : 136),
+    });
+    vi.spyOn(scrollPort, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(0, 0, scrollPort.clientWidth, 32),
+    );
+    vi.spyOn(selected, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(96 - scrollPort.scrollLeft, 0, 40, 32),
+    );
+    vi.spyOn(inside, "getBoundingClientRect").mockReturnValue(new DOMRect(10, 0, 40, 32));
+    await act(async () => selected.click());
+    expect(selected.getAttribute("aria-pressed")).toBe("true");
+    expect(scrollPort.scrollLeft).toBeGreaterThan(0);
+    expect(selected.getBoundingClientRect().right).toBeLessThanOrEqual(
+      scrollPort.getBoundingClientRect().right,
+    );
+    const afterReveal = scrollPort.scrollLeft;
+    await act(async () => inside.click());
+    expect(inside.getAttribute("aria-pressed")).toBe("true");
+    expect(scrollPort.scrollLeft).toBe(afterReveal);
+
+    // A name wider than the port cannot fit completely. Do not scroll its
+    // already-visible beginning away just to reveal its end.
+    const wide = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "@all",
+    )!;
+    vi.spyOn(wide, "getBoundingClientRect").mockReturnValue(new DOMRect(10, 0, 150, 32));
+    await act(async () => wide.click());
+    expect(wide.getAttribute("aria-pressed")).toBe("true");
+    expect(scrollPort.scrollLeft).toBe(afterReveal);
+
+    // When a name nearly fills the port, an oversized fade margin would hide
+    // its beginning after revealing the end.
+    const nearWidth = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "@peers",
+    )!;
+    const beforeNearWidth = scrollPort.scrollLeft;
+    vi.spyOn(nearWidth, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(40 - (scrollPort.scrollLeft - beforeNearWidth), 0, 90, 32),
+    );
+    await act(async () => nearWidth.click());
+    expect(nearWidth.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+      scrollPort.getBoundingClientRect().left,
+    );
+    expect(nearWidth.getBoundingClientRect().right).toBeLessThanOrEqual(
+      scrollPort.getBoundingClientRect().right,
+    );
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    vi.restoreAllMocks();
+  }
+});

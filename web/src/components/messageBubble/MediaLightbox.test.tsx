@@ -43,6 +43,8 @@ it("wraps focus that leaves the player forward, but lets a backward pass go thro
   const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
   const guard = dialog.querySelector<HTMLElement>("[data-focus-guard]")!;
   const download = dialog.querySelector<HTMLAnchorElement>('a[download="clip.mp4"]')!;
+  const hint = document.getElementById(dialog.getAttribute("aria-describedby")!)!;
+  expect(hint.textContent).toBe("videoPreviewHint");
 
   // Tabbing past the player's last control.
   act(() => guard.focus());

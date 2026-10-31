@@ -180,7 +180,11 @@ it("discovers only when opened and creates a new Group with a separate selection
   const select = vi.fn();
   await mount(select);
   expect(mocks.fetch).not.toHaveBeenCalled();
-  await click(button("Connect existing sessions"));
+  const entry = button("Connect sessions");
+  // Beside the Group heading the visible name is short but still says what it connects;
+  // the tip gives the full name.
+  expect(entry.title).toBe("Connect existing sessions");
+  await click(entry);
   expect(host.querySelector('[role="dialog"]')).toBeNull();
   expect(document.querySelector('[role="dialog"]')?.getAttribute("aria-labelledby")).toBe(
     "local-sessions-title",
@@ -870,6 +874,24 @@ it("offers the terminal /setup path, the enable commands and a collapsed trouble
     "https://chesterra.github.io/cccc/guide/local-sessions",
   );
 });
+
+it.each([
+  ["en", "Connect sessions", "Connect existing sessions"],
+  ["zh", "接入会话", "接入已有会话"],
+  ["ja", "セッション接続", "既存セッションを接続"],
+])(
+  "names the expanded entry briefly, with its full name for tips, in %s",
+  async (language, short, full) => {
+    await i18n.changeLanguage(language);
+    await mount();
+    const entry = host.querySelector("button")!;
+    expect(entry.textContent).toBe(short);
+    // The accessible name is the visible one, so voice control can say what it sees.
+    expect(entry.hasAttribute("aria-label")).toBe(false);
+    expect(entry.title).toBe(full);
+    await i18n.changeLanguage("en");
+  },
+);
 
 it.each([
   [

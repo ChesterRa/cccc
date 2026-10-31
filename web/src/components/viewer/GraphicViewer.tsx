@@ -1,19 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Maximize, Minus, Plus } from "lucide-react";
+import { LcdIcon } from "../Icons";
 import { buttonVariants } from "../ui/button-variants";
 
 // Only static graphics belong here. PDF and interactive browser surfaces own their input.
 type Graphic =
-  | { src: string; alt: string; resourceKey?: string }
-  | { svg: string; width: number; height: number; alt: string };
+  | { src: string; alt: string; resourceKey?: string; isSvg?: boolean; onBlankClick?: () => void }
+  | { svg: string; width: number; height: number; alt: string; onBlankClick?: () => void };
 type View = { width: number; height: number };
 type Point = { x: number; y: number };
 
-function fitGraphic(content: View, viewport: View): number {
+function fitGraphic(content: View, viewport: View, vector: boolean): number {
   if (!content.width || !content.height || !viewport.width || !viewport.height) return 1;
   return Math.min(
-    1,
+    vector ? 8 : 1,
     Math.max(1, viewport.width - 32) / content.width,
     Math.max(1, viewport.height - 32) / content.height,
   );
@@ -35,7 +36,7 @@ function GraphicViewport(graphic: Graphic) {
   const [manualScale, setManualScale] = useState<number | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const failed = "src" in graphic && failedSrc === graphic.src;
-  const fitted = fitGraphic(content, bounds);
+  const fitted = fitGraphic(content, bounds, "svg" in graphic || !!graphic.isSvg);
   const scale = manualScale ?? fitted;
   const hasDimensions =
     content.width > 0 && content.height > 0 && bounds.width > 0 && bounds.height > 0;
@@ -49,6 +50,16 @@ function GraphicViewport(graphic: Graphic) {
     top = (stageHeight - height) / 2;
   const anchor = useRef<{ content: Point; screen: Point } | null>(null);
   const pointers = useRef(new Map<number, Point>());
+  const gesture = useRef<{
+    pointerId: number;
+    pointerType: string;
+    start: Point;
+    image: boolean;
+    moved: boolean;
+  } | null>(null);
+  const lastTap = useRef<{ at: number; point: Point } | null>(null);
+  const pendingWheelScale = useRef<number | null>(null);
+  const pinch = useRef<{ distance: number; scale: number; content: Point } | null>(null);
   const geometry = useRef({ scale, fitted, left, top });
   geometry.current = { scale, fitted, left, top };
 
@@ -66,17 +77,19 @@ function GraphicViewport(graphic: Graphic) {
     return () => observer.disconnect();
   }, []);
 
-  const zoom = (next: number, screen?: Point, previousScreen = screen) => {
+  const zoom = (next: number, screen?: Point, previousScreen = screen, restoreCurrent = false) => {
     const node = viewport.current;
     if (!node || !ready) return;
     const current = geometry.current;
     const at = screen || { x: node.clientWidth / 2, y: node.clientHeight / 2 };
     const from = previousScreen || at;
     const bounded = Math.max(Math.min(current.fitted, 0.1), Math.min(8, next));
-    if (bounded === current.scale) {
+    if (Math.abs(bounded - current.scale) < 1e-12) {
       anchor.current = null;
       node.scrollLeft += from.x - at.x;
       node.scrollTop += from.y - at.y;
+      // A later event may cancel an earlier state update that has not rendered yet.
+      if (restoreCurrent) setManualScale(manualScale);
       return;
     }
     anchor.current = {
@@ -94,9 +107,48 @@ function GraphicViewport(graphic: Graphic) {
     viewport.current?.scrollTo(0, 0);
   };
 
+  // Trackpad pinches arrive as ctrl+wheel on desktop browsers. React's delegated
+  // wheel listener can be passive, so register this one on the viewport itself.
+  const wheelZoom = useRef(zoom);
+  wheelZoom.current = zoom;
+  const wheelReady = useRef(ready);
+  wheelReady.current = ready;
+  useEffect(() => {
+    const node = viewport.current;
+    if (!node) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || !wheelReady.current) return;
+      event.preventDefault();
+      const rect = node.getBoundingClientRect();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? node.clientHeight : 1;
+      const delta = Math.max(-500, Math.min(500, event.deltaY * unit));
+      const current = geometry.current;
+      // Several wheel events can arrive before React commits the previous one.
+      // Accumulate the requested scale while anchoring against the rendered image.
+      const previous = pendingWheelScale.current;
+      const next = Math.max(
+        Math.min(current.fitted, 0.1),
+        Math.min(8, (previous ?? current.scale) * Math.exp(-delta * 0.002)),
+      );
+      pendingWheelScale.current = next;
+      lastTap.current = null;
+      const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      wheelZoom.current(next, point, point, previous !== null);
+    };
+    node.addEventListener("wheel", onWheel, { passive: false });
+    return () => node.removeEventListener("wheel", onWheel);
+  }, []);
+
+  const toggleAt = (point: Point) => {
+    const current = geometry.current;
+    if (Math.abs(current.scale - current.fitted) < 0.001) zoom(1, point);
+    else reset();
+  };
+
   useLayoutEffect(() => {
     const node = viewport.current;
     if (!node) return;
+    pendingWheelScale.current = null;
     if (anchor.current) {
       const { content: point, screen } = anchor.current;
       node.scrollLeft = left + point.x * scale - screen.x;
@@ -118,6 +170,7 @@ function GraphicViewport(graphic: Graphic) {
         className="flex shrink-0 flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-[var(--glass-border-subtle)] p-1 text-[var(--color-text-secondary)]"
         role="group"
         aria-label={t("graphicViewer.controls")}
+        data-graphic-controls
       >
         <div className="flex items-center gap-1">
           <button
@@ -129,7 +182,7 @@ function GraphicViewport(graphic: Graphic) {
             title={t("graphicViewer.fit")}
             aria-label={t("graphicViewer.fit")}
           >
-            <Maximize size={14} />
+            <LcdIcon icon={Maximize} glyph="maximize" size={14} data-graphic-fit-icon />
             <span>{t("graphicViewer.fit")}</span>
           </button>
           <button
@@ -154,9 +207,13 @@ function GraphicViewport(graphic: Graphic) {
             title={t("graphicViewer.out")}
             aria-label={t("graphicViewer.out")}
           >
-            <Minus size={15} />
+            <LcdIcon icon={Minus} glyph="minus" size={15} />
           </button>
-          <span className="min-w-12 text-center text-xs tabular-nums" aria-live="off">
+          <span
+            className="min-w-12 text-center text-xs tabular-nums"
+            aria-live="off"
+            data-graphic-percent
+          >
             {ready ? `${Math.round(scale * 100)}%` : "—"}
           </span>
           <button
@@ -168,11 +225,11 @@ function GraphicViewport(graphic: Graphic) {
             title={t("graphicViewer.in")}
             aria-label={t("graphicViewer.in")}
           >
-            <Plus size={15} />
+            <LcdIcon icon={Plus} glyph="plus" size={15} />
           </button>
         </div>
       </div>
-      <div className="relative min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1" data-graphic-canvas>
         <div
           ref={viewport}
           className="relative h-full min-h-0 min-w-0 cursor-grab overflow-auto overscroll-contain bg-[var(--color-bg-primary)] outline-offset-[-2px] active:cursor-grabbing"
@@ -199,7 +256,7 @@ function GraphicViewport(graphic: Graphic) {
           onPointerDown={(event) => {
             if (
               event.button !== 0 ||
-              !ready ||
+              (!ready && !graphic.onBlankClick) ||
               (event.target instanceof Element && event.target.closest("a"))
             )
               return;
@@ -214,31 +271,76 @@ function GraphicViewport(graphic: Graphic) {
             event.stopPropagation();
             event.currentTarget.focus({ preventScroll: true });
             event.currentTarget.setPointerCapture(event.pointerId);
+            if (pointers.current.size === 0) {
+              gesture.current = {
+                pointerId: event.pointerId,
+                pointerType: event.pointerType,
+                start: { x: event.clientX, y: event.clientY },
+                image:
+                  event.target instanceof Element && !!event.target.closest("[data-graphic-image]"),
+                moved: false,
+              };
+            } else {
+              // A pinch is never a click, including after one finger lifts.
+              gesture.current = null;
+              lastTap.current = null;
+            }
             pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (pointers.current.size === 2 && ready) {
+              const [first, second] = [...pointers.current.values()];
+              const rect = event.currentTarget.getBoundingClientRect();
+              const middle = {
+                x: (first.x + second.x) / 2 - rect.left,
+                y: (first.y + second.y) / 2 - rect.top,
+              };
+              const current = geometry.current;
+              pinch.current = {
+                distance: Math.hypot(first.x - second.x, first.y - second.y),
+                scale: current.scale,
+                content: {
+                  x: (event.currentTarget.scrollLeft + middle.x - current.left) / current.scale,
+                  y: (event.currentTarget.scrollTop + middle.y - current.top) / current.scale,
+                },
+              };
+            }
           }}
           onPointerMove={(event) => {
             const previous = pointers.current.get(event.pointerId);
             if (!previous) return;
+            const active = gesture.current;
+            if (
+              active?.pointerId === event.pointerId &&
+              Math.hypot(event.clientX - active.start.x, event.clientY - active.start.y) > 8
+            ) {
+              active.moved = true;
+              lastTap.current = null;
+            }
             const node = event.currentTarget;
-            const before = [...pointers.current.values()];
             pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
             const after = [...pointers.current.values()];
-            if (after.length === 2) {
-              const distance = (points: Point[]) =>
-                Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
-              const middle = (points: Point[]) => {
-                const rect = node.getBoundingClientRect();
-                return {
-                  x: (points[0].x + points[1].x) / 2 - rect.left,
-                  y: (points[0].y + points[1].y) / 2 - rect.top,
-                };
+            if (!ready) return;
+            if (after.length === 2 && pinch.current?.distance) {
+              const initial = pinch.current;
+              const rect = node.getBoundingClientRect();
+              const middle = {
+                x: (after[0].x + after[1].x) / 2 - rect.left,
+                y: (after[0].y + after[1].y) / 2 - rect.top,
               };
-              if (distance(before) > 0)
-                zoom(
-                  (geometry.current.scale * distance(after)) / distance(before),
-                  middle(after),
-                  middle(before),
-                );
+              const distance = Math.hypot(after[0].x - after[1].x, after[0].y - after[1].y);
+              const current = geometry.current;
+              const next = Math.max(
+                Math.min(current.fitted, 0.1),
+                Math.min(8, (initial.scale * distance) / initial.distance),
+              );
+              if (Math.abs(next - current.scale) < 1e-12) {
+                anchor.current = null;
+                node.scrollLeft = current.left + initial.content.x * current.scale - middle.x;
+                node.scrollTop = current.top + initial.content.y * current.scale - middle.y;
+                setManualScale(manualScale);
+              } else {
+                anchor.current = { content: initial.content, screen: middle };
+                setManualScale(next);
+              }
             } else if (after.length === 1) {
               node.scrollLeft -= event.clientX - previous.x;
               node.scrollTop -= event.clientY - previous.y;
@@ -246,12 +348,47 @@ function GraphicViewport(graphic: Graphic) {
           }}
           onPointerUp={(event) => {
             pointers.current.delete(event.pointerId);
+            if (pointers.current.size < 2) pinch.current = null;
+            const active = gesture.current;
+            if (!active || active.pointerId !== event.pointerId) return;
+            gesture.current = null;
+            if (active.moved || pointers.current.size) return;
+            if (!active.image) {
+              lastTap.current = null;
+              graphic.onBlankClick?.();
+              return;
+            }
+            if (!ready) return;
+            const rect = event.currentTarget.getBoundingClientRect();
+            const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+            if (active.pointerType === "touch") {
+              const previous = lastTap.current;
+              const now = Date.now();
+              if (
+                previous &&
+                now - previous.at <= 350 &&
+                Math.hypot(point.x - previous.point.x, point.y - previous.point.y) <= 32
+              ) {
+                lastTap.current = null;
+                toggleAt(point);
+              } else {
+                lastTap.current = { at: now, point };
+              }
+            } else {
+              lastTap.current = null;
+              toggleAt(point);
+            }
           }}
           onPointerCancel={(event) => {
             pointers.current.delete(event.pointerId);
+            pinch.current = null;
+            gesture.current = null;
+            lastTap.current = null;
           }}
           onLostPointerCapture={(event) => {
             pointers.current.delete(event.pointerId);
+            if (pointers.current.size < 2) pinch.current = null;
+            if (gesture.current?.pointerId === event.pointerId) gesture.current = null;
           }}
         >
           <div
@@ -267,6 +404,7 @@ function GraphicViewport(graphic: Graphic) {
           >
             <div
               className="select-none [&_svg]:!m-0 [&_svg]:!h-full [&_svg]:!w-full [&_svg]:!max-w-none"
+              data-graphic-image
               style={{
                 position: "absolute",
                 left,

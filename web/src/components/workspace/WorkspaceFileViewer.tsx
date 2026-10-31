@@ -2,6 +2,7 @@ import { buttonVariants } from "../ui/button-variants";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Code, Download, Eye, ExternalLink, Paperclip, RotateCcw, Save, X } from "lucide-react";
+import { LcdIcon } from "../Icons";
 import { classNames } from "../../utils/classNames";
 import type { WorkspaceFile } from "../../types";
 import { baseName } from "./workspaceTreeModel";
@@ -102,7 +103,7 @@ function FileViewer({
     [svgSource, dirty, draft, contentUrl],
   );
 
-  const fileActionClass = `${buttonVariants({ variant: "ghost", size: "iconSm" })} max-sm:h-11 max-sm:w-11`;
+  const fileActionClass = `${buttonVariants({ variant: "ghost", size: "iconSm" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -131,7 +132,11 @@ function FileViewer({
           aria-label={t("workspaceReload", { defaultValue: "Reload file" })}
           className={fileActionClass}
         >
-          <RotateCcw className={classNames("h-3.5 w-3.5", loading && "animate-spin")} />
+          <LcdIcon
+            icon={RotateCcw}
+            glyph="reload"
+            className={classNames("h-3.5 w-3.5", loading && "animate-spin")}
+          />
         </button>
         {hasSourcePreview && (
           <button
@@ -141,7 +146,11 @@ function FileViewer({
             aria-label={t(showSource ? "workspacePreview" : "workspaceViewSource")}
             className={fileActionClass}
           >
-            {showSource ? <Eye className="h-3.5 w-3.5" /> : <Code className="h-3.5 w-3.5" />}
+            {showSource ? (
+              <LcdIcon icon={Eye} glyph="eye" className="h-3.5 w-3.5" />
+            ) : (
+              <LcdIcon icon={Code} glyph="code" className="h-3.5 w-3.5" />
+            )}
           </button>
         )}
         {kind === "pdf" && (
@@ -153,7 +162,7 @@ function FileViewer({
             aria-label={t("workspaceOpenSeparate")}
             className={fileActionClass}
           >
-            <ExternalLink className="h-3.5 w-3.5" />
+            <LcdIcon icon={ExternalLink} glyph="external-link" className="h-3.5 w-3.5" />
           </a>
         )}
         <a
@@ -164,7 +173,7 @@ function FileViewer({
           className={fileActionClass}
           data-lcd-key
         >
-          <Download className="h-3.5 w-3.5" />
+          <LcdIcon icon={Download} glyph="download" className="h-3.5 w-3.5" />
         </a>
         <button
           type="button"
@@ -173,7 +182,7 @@ function FileViewer({
           className={classNames(fileActionClass, isDark ? "hover:bg-white/8" : "hover:bg-black/5")}
           data-lcd-key
         >
-          <Paperclip className="h-3.5 w-3.5" />
+          <LcdIcon icon={Paperclip} glyph="attachment" className="h-3.5 w-3.5" />
         </button>
         {editable ? (
           <button
@@ -191,7 +200,7 @@ function FileViewer({
                   : "text-emerald-600 hover:bg-black/5",
             )}
           >
-            <Save className="h-3.5 w-3.5" />
+            <LcdIcon icon={Save} glyph="save" className="h-3.5 w-3.5" />
           </button>
         ) : null}
         <button
@@ -201,7 +210,7 @@ function FileViewer({
           className={classNames(fileActionClass, isDark ? "hover:bg-white/8" : "hover:bg-black/5")}
           data-lcd-key
         >
-          <X className="h-3.5 w-3.5" />
+          <LcdIcon icon={X} glyph="close" className="h-3.5 w-3.5" />
         </button>
       </div>
 
@@ -228,7 +237,7 @@ function FileViewer({
               disabled={saving || loading}
               className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 underline-offset-2 hover:underline"
             >
-              <RotateCcw className="h-3 w-3" />
+              <LcdIcon icon={RotateCcw} glyph="reload" className="h-3 w-3" />
               {t("workspaceReload", { defaultValue: "Reload file" })}
             </button>
           ) : null}
@@ -237,7 +246,7 @@ function FileViewer({
 
       {preview ? (
         kind === "image" ? (
-          <GraphicViewer src={imageUrl} alt={baseName(file.path)} />
+          <GraphicViewer src={imageUrl} alt={baseName(file.path)} isSvg={svgSource} />
         ) : kind === "video" || kind === "audio" ? (
           <WorkspaceMediaPreview
             key={contentUrl}

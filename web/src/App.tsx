@@ -4,6 +4,7 @@ const AppModals = lazy(() =>
   import("./components/AppModals").then((m) => ({ default: m.AppModals })),
 );
 import { AppBackground } from "./components/app/AppBackground";
+import { WebUpdateNotice } from "./components/app/WebUpdateNotice";
 import { AppFeedback } from "./components/app/AppFeedback";
 import { DaemonVersionNotice } from "./components/app/DaemonVersionNotice";
 import { useCodexVoiceShell } from "./features/codexVoice/useCodexVoiceShell";
@@ -355,6 +356,8 @@ export default function App({
     ccccHome,
     daemonVersionMismatch,
     dismissDaemonVersionMismatch,
+    webUpdateAvailable,
+    dismissWebUpdate,
     fetchDirSuggestions,
     refreshWebAccessSession,
   } = useAppChrome({
@@ -367,6 +370,7 @@ export default function App({
     groupEditOpen,
     addActorOpen,
     editingActor,
+    sseStatus,
   });
   const connect = useConnectWorkbench(!connectEmbedded && !webReadOnly, refreshWebAccessSession);
   const remoteSelected = Boolean(connect.selected);
@@ -417,17 +421,31 @@ export default function App({
 
   return (
     <div
-      className={`relative min-h-0 w-full overflow-hidden bg-[var(--color-body-bg)] text-[var(--color-text-primary)] ${daemonVersionMismatch ? "grid grid-rows-[auto_minmax(0,1fr)]" : ""}`}
+      className={`relative min-h-0 w-full overflow-hidden bg-[var(--color-body-bg)] text-[var(--color-text-primary)] ${daemonVersionMismatch || webUpdateAvailable ? "grid grid-rows-[auto_minmax(0,1fr)]" : ""}`}
       style={APP_VIEWPORT_BOX}
       {...{ [VISUAL_VIEWPORT_BOX_ATTRIBUTE]: "" }}
     >
       <AppBackground isDark={isDark} />
 
-      {daemonVersionMismatch ? (
-        <DaemonVersionNotice
-          difference={daemonVersionMismatch}
-          onDismiss={dismissDaemonVersionMismatch}
-        />
+      {daemonVersionMismatch || webUpdateAvailable ? (
+        <div
+          className="relative z-10 min-h-0 overflow-y-auto overscroll-contain"
+          style={{
+            maxHeight: "max(4.5rem, min(14rem, calc(var(--app-viewport-height, 100dvh) - 200px)))",
+          }}
+        >
+          {daemonVersionMismatch ? (
+            <DaemonVersionNotice
+              difference={daemonVersionMismatch}
+              onDismiss={dismissDaemonVersionMismatch}
+            />
+          ) : webUpdateAvailable ? (
+            <WebUpdateNotice
+              onDismiss={dismissWebUpdate}
+              onReload={() => window.location.reload()}
+            />
+          ) : null}
+        </div>
       ) : null}
 
       <PendingReplyProvider

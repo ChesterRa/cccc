@@ -1,0 +1,88 @@
+[data-media-header] {
+  padding: max(0.75rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px))
+    0.75rem max(1rem, env(safe-area-inset-left, 0px));
+}
+
+[data-media-lightbox] [data-graphic-image] {
+  outline: 1px solid var(--glass-border-subtle);
+}
+
+/* Keep the close hint available to assistive technology without spending a
+   large share of a short screen on it. */
+@media (max-height: 480px) {
+  [data-media-lightbox] [data-media-hint] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+/* In a short landscape viewport, keep the image controls on the title line.
+   Other GraphicViewer callers and the native video controls keep their layout. */
+@media (max-height: 480px) and (min-width: 560px) {
+  [data-media-lightbox]:has([data-graphic-viewer]) {
+    display: grid;
+    grid-template-areas: "title controls actions" "canvas canvas canvas";
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr);
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  [data-media-lightbox]:has([data-graphic-viewer]) > [data-media-header],
+  [data-media-lightbox]:has([data-graphic-viewer]) > [data-media-content],
+  [data-media-lightbox] [data-graphic-viewer] {
+    display: contents;
+  }
+
+  [data-media-lightbox] [data-media-title] {
+    grid-area: title;
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    padding: 0.25rem 0.5rem 0.25rem max(1rem, env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--glass-border-subtle);
+  }
+
+  [data-media-lightbox] [data-graphic-controls] {
+    grid-area: controls;
+  }
+
+  [data-media-lightbox] [data-media-actions] {
+    grid-area: actions;
+    padding: 0.25rem max(1rem, env(safe-area-inset-right, 0px)) 0.25rem 0.5rem;
+    border-bottom: 1px solid var(--glass-border-subtle);
+  }
+
+  [data-media-lightbox] [data-graphic-canvas] {
+    grid-area: canvas;
+    min-width: 0;
+  }
+}
+
+/* At the narrow end of the landscape layout, keep the translated Fit label
+   and 44px targets while giving the file name room to remain recognizable. */
+@media (max-height: 480px) and (min-width: 560px) and (max-width: 639px) {
+  [data-media-lightbox] [data-graphic-controls] {
+    column-gap: 0.25rem;
+  }
+
+  [data-media-lightbox] [data-graphic-fit-icon] {
+    display: none;
+  }
+
+  [data-media-lightbox] [data-graphic-percent] {
+    min-width: 4ch;
+  }
+
+  [data-media-lightbox] [data-media-actions] {
+    gap: 0.25rem;
+    padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
+    padding-left: 0.25rem;
+  }
+}

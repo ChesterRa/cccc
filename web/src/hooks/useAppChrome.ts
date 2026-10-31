@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../services/api";
+import { clearPingReadRequest } from "../services/api/base";
 import { useGroupStore, useObservabilityStore, useUIStore } from "../stores";
 import type { DirSuggestion } from "../types";
 import { daemonVersionDifference, type DaemonVersionDifference } from "../utils/daemonVersion";
 import { MOBILE_VIEWPORT_MEDIA_QUERY } from "../utils/responsiveLayout";
+import { loadedWebEntry, webEntryDifference } from "../utils/runtimeBuildInfo";
 
 const DISMISSED_VERSION_KEY = "cccc.daemonVersionMismatch.dismissed";
 
@@ -25,6 +27,7 @@ type UseAppChromeOptions = {
   groupEditOpen: boolean;
   addActorOpen: boolean;
   editingActor: unknown;
+  sseStatus?: "connected" | "connecting" | "disconnected";
 };
 
 type UseAppChromeResult = {
@@ -33,9 +36,13 @@ type UseAppChromeResult = {
   ccccHome: string;
   daemonVersionMismatch: DaemonVersionDifference | null;
   dismissDaemonVersionMismatch: () => void;
+  webUpdateAvailable: boolean;
+  dismissWebUpdate: () => void;
   fetchDirSuggestions: () => Promise<void>;
   refreshWebAccessSession: () => Promise<boolean | null>;
 };
+
+type WebUpdate = { entry: string; assetsId: string };
 
 export function useAppChrome({
   parseUrlDeepLink,
@@ -47,12 +54,17 @@ export function useAppChrome({
   groupEditOpen,
   addActorOpen,
   editingActor,
+  sseStatus,
 }: UseAppChromeOptions): UseAppChromeResult {
   const [ccccHome, setCcccHome] = useState("");
   const [webModeKnown, setWebModeKnown] = useState(false);
   const [versionDifference, setVersionDifference] = useState<DaemonVersionDifference | null>(null);
   const [dismissedVersionDifference, setDismissedVersionDifference] =
     useState(readDismissedVersion);
+  const [webUpdate, setWebUpdate] = useState<WebUpdate | null>(null);
+  const [dismissedWebUpdate, setDismissedWebUpdate] = useState<WebUpdate | null>(null);
+  const initialAssetsId = useRef<string | null>(null);
+  const recheckWebMode = useRef<() => void>(() => {});
   const canAccessGlobalSettings = useUIStore((state) => state.canAccessGlobalSettings);
   const setCanAccessGlobalSettings = useUIStore((state) => state.setCanAccessGlobalSettings);
 
@@ -101,6 +113,21 @@ export function useAppChrome({
       const reading = ++latest;
       const response = await api.fetchPing().catch(() => null);
       if (stopped || reading !== latest) return;
+      const servedEntry = response?.ok ? response.result?.web?.entry_script : null;
+      const assetsId = response?.ok ? response.result?.web?.assets_id : null;
+      if (typeof servedEntry === "string" && typeof assetsId === "string" && assetsId.trim()) {
+        const changed = webEntryDifference(servedEntry, loadedWebEntry());
+        if (changed === true) {
+          setWebUpdate({ entry: servedEntry, assetsId });
+        } else if (changed === false) {
+          // A matching entry lets us establish a baseline for later asset-only
+          // updates, but cannot prove what was loaded before this first ping.
+          if (!initialAssetsId.current) initialAssetsId.current = assetsId;
+          setWebUpdate(
+            assetsId === initialAssetsId.current ? null : { entry: servedEntry, assetsId },
+          );
+        }
+      }
       const difference = response?.ok ? daemonVersionDifference(response.result) : null;
       setVersionDifference((previous) =>
         previous?.webVersion === difference?.webVersion &&
@@ -121,23 +148,37 @@ export function useAppChrome({
         }, 5000);
       }
     };
-    const refreshOnFocus = () => {
-      if (document.visibilityState === "hidden") return;
+    const recheck = () => {
       if (retry !== undefined) clearTimeout(retry);
       retry = undefined;
+      // Focus or a reconnected stream can follow a Web restart immediately;
+      // the bootstrap ping's short cache may still contain the old entry.
+      clearPingReadRequest(false);
       void readWebMode();
+    };
+    recheckWebMode.current = recheck;
+    const refreshOnFocus = () => {
+      if (document.visibilityState === "hidden") return;
+      recheck();
     };
     void readWebMode();
     window.addEventListener("focus", refreshOnFocus);
     document.addEventListener("visibilitychange", refreshOnFocus);
     return () => {
       stopped = true;
+      recheckWebMode.current = () => {};
       if (retry !== undefined) clearTimeout(retry);
       window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", refreshOnFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A Web restart can reconnect the stream while the page remains in front,
+  // so there may be no focus or visibility event to trigger the check.
+  useEffect(() => {
+    if (sseStatus === "connected") recheckWebMode.current();
+  }, [sseStatus]);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -208,6 +249,10 @@ export function useAppChrome({
     }
     setDismissedVersionDifference(versionDifferenceKey);
   }, [versionDifferenceKey]);
+  const webUpdateDismissed =
+    !!webUpdate &&
+    webUpdate.entry === dismissedWebUpdate?.entry &&
+    webUpdate.assetsId === dismissedWebUpdate.assetsId;
   return {
     canManageGroups: canAccessGlobalSettings === true,
     webModeKnown,
@@ -217,6 +262,8 @@ export function useAppChrome({
         ? versionDifference
         : null,
     dismissDaemonVersionMismatch,
+    webUpdateAvailable: Boolean(webUpdate && !webUpdateDismissed),
+    dismissWebUpdate: () => setDismissedWebUpdate(webUpdate),
     fetchDirSuggestions,
     refreshWebAccessSession,
   };

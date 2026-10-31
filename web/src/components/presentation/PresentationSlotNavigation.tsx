@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react";
+import { LcdIcon } from "../Icons";
 import type { GroupPresentation } from "../../types";
 import { ensurePresentation } from "../../utils/presentation";
 import { classNames } from "../../utils/classNames";
@@ -59,7 +60,9 @@ export function PresentationSlotNavigation({
                     : "border-dashed border-[var(--color-border-primary)] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]",
               )}
             >
-              {!slot.card && <Plus className="h-3 w-3" aria-hidden="true" />}
+              {!slot.card && (
+                <LcdIcon icon={Plus} glyph="plus" className="h-3 w-3" aria-hidden="true" />
+              )}
               {index + 1}
             </button>
           );

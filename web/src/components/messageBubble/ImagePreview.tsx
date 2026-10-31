@@ -59,6 +59,7 @@ export function ImagePreview({
   const [loadError, setLoadError] = useState(() => IMAGE_LOAD_ERROR_CACHE.has(href));
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [resolvedHref, setResolvedHref] = useState<string>(isSvg ? "" : href);
+  const [resolvedSvgType, setResolvedSvgType] = useState(false);
   const [isResolvingSvg, setIsResolvingSvg] = useState<boolean>(isSvg);
   const [displaySrc, setDisplaySrc] = useState<string>(isSvg ? "" : href);
   const { t } = useTranslation("chat");
@@ -77,6 +78,7 @@ export function ImagePreview({
     let objectUrl = "";
 
     setLoadError(false);
+    setResolvedSvgType(false);
     if (!isSvg || href.startsWith("blob:") || href.startsWith("data:")) {
       setResolvedHref(href);
       setIsResolvingSvg(false);
@@ -92,11 +94,13 @@ export function ImagePreview({
           throw new Error(`svg_fetch_failed:${resp.status}`);
         }
         const blob = await resp.blob();
+        // The source may have changed while the response body was loading.
+        if (cancelled) return;
         objectUrl = URL.createObjectURL(blob);
-        if (!cancelled) {
-          setResolvedHref(objectUrl);
-          setIsResolvingSvg(false);
-        }
+        // The name can end in .svg while the server identifies raster bytes.
+        setResolvedSvgType(blob.type.split(";", 1)[0].trim().toLowerCase() === "image/svg+xml");
+        setResolvedHref(objectUrl);
+        setIsResolvingSvg(false);
       } catch {
         if (!cancelled) {
           setLoadError(true);
@@ -253,8 +257,14 @@ export function ImagePreview({
         title={alt}
         downloadHref={downloadHref}
         downloadName={downloadName}
+        image
       >
-        <GraphicViewer src={displaySrc || resolvedHref || href} alt={alt} />
+        <GraphicViewer
+          src={displaySrc || resolvedHref || href}
+          alt={alt}
+          isSvg={resolvedSvgType && (displaySrc || resolvedHref || href) === resolvedHref}
+          onBlankClick={() => setIsLightboxOpen(false)}
+        />
       </MediaLightbox>
     </>
   );

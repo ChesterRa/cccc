@@ -221,6 +221,18 @@ export function GroupSidebar({
     [onDeleteGroup, readOnly, t, controlsBusy],
   );
 
+  const localSessionsEntry = (collapsed: boolean) =>
+    !readOnly && canAccessLocalSessions ? (
+      <LocalSessionsButton
+        collapsed={collapsed}
+        isDark={isDark}
+        onSelectGroup={(groupId) => {
+          onSelectGroup(groupId);
+          if (window.matchMedia("(max-width: 767px)").matches) onClose();
+        }}
+      />
+    ) : null;
+
   const renderGroupList = useCallback(
     (groups: GroupMeta[], section: "working" | "archived") => {
       const isArchivedSection = section === "archived";
@@ -437,6 +449,7 @@ export function GroupSidebar({
                 <PlusIcon size={18} />
               </IconButton>
             )}
+            {localSessionsEntry(true)}
           </div>
         )}
 
@@ -449,6 +462,7 @@ export function GroupSidebar({
                 : undefined
             }
             instanceOrigin={connect?.ownInstance?.public_origin}
+            action={localSessionsEntry(false)}
           />
         )}
         <div className={groupSidebarScrollClass(isCollapsed)}>
@@ -511,16 +525,6 @@ export function GroupSidebar({
               )}
             </div>
           )}
-          {!readOnly && canAccessLocalSessions ? (
-            <LocalSessionsButton
-              collapsed={isCollapsed}
-              isDark={isDark}
-              onSelectGroup={(groupId) => {
-                onSelectGroup(groupId);
-                if (window.matchMedia("(max-width: 767px)").matches) onClose();
-              }}
-            />
-          ) : null}
         </div>
 
         {connect ? (

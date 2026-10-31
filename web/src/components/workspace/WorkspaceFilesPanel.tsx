@@ -2,6 +2,7 @@ import { SidePanelButton, SidePanelHeader } from "../layout/SidePanelHeader";
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, MoreHorizontal, RefreshCw } from "lucide-react";
+import { LcdIcon } from "../Icons";
 import { classNames } from "../../utils/classNames";
 import { workspaceContentUrl } from "../../services/api/workspace";
 import { WorkspaceChangesPanel } from "./WorkspaceChangesPanel";
@@ -142,7 +143,7 @@ function FilesPanel({ files, isDark, readOnly, onClose, onAttachPath, onPinPath 
           onClick={files.refresh}
           disabled={!files.scopeAvailable}
         >
-          <RefreshCw />
+          <LcdIcon icon={RefreshCw} glyph="reload" />
         </SidePanelButton>
         {files.mode === "files" && (
           <SidePanelButton
@@ -155,7 +156,7 @@ function FilesPanel({ files, isDark, readOnly, onClose, onAttachPath, onPinPath 
               setMenu({ anchor, x: rect.left, y: rect.bottom });
             }}
           >
-            <MoreHorizontal />
+            <LcdIcon icon={MoreHorizontal} glyph="more-horizontal" />
           </SidePanelButton>
         )}
       </SidePanelHeader>
@@ -223,7 +224,7 @@ function FilesPanel({ files, isDark, readOnly, onClose, onAttachPath, onPinPath 
               disabled={!files.scopeAvailable || !pathInput.trim()}
               aria-busy={files.pathLoading || files.fileLoading}
             >
-              <ArrowRight />
+              <LcdIcon icon={ArrowRight} glyph="arrow-right" />
             </SidePanelButton>
           </form>
           {(pathError || files.pathError) && (

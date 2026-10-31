@@ -167,6 +167,23 @@
   opacity: 0.85;
 }
 
+/* Let the language and copy action take separate lines when a message is narrow.
+   Keep the copy label intact, including the longer confirmation text. */
+.code-block-wrapper:not(.mermaid-block-wrapper) > .code-block-header {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.code-block-wrapper:not(.mermaid-block-wrapper) > .code-block-header > .code-block-lang {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.code-block-wrapper:not(.mermaid-block-wrapper) > .code-block-header > .copy-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .copy-button {
   cursor: pointer;
   display: inline-flex;
@@ -242,6 +259,42 @@
 
 .mermaid-expand-button[hidden] {
   display: none;
+}
+
+/* On a phone, distribute Mermaid actions across the available header width.
+   The actions keep their DOM and keyboard order when the line wraps. */
+@media (max-width: 639px) {
+  .code-block-wrapper:not(.mermaid-block-wrapper) > .code-block-header {
+    padding-inline: 0.5rem;
+  }
+
+  .code-block-wrapper:not(.mermaid-block-wrapper) > .code-block-header > .copy-button {
+    padding-inline: 0.25rem;
+  }
+
+  .mermaid-block-wrapper .code-block-header {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding-inline: 0.25rem;
+  }
+
+  .mermaid-block-actions {
+    display: contents;
+  }
+
+  .mermaid-block-actions .mermaid-view-toggle {
+    flex: 0 0 auto;
+    padding-inline: 0.25rem;
+    white-space: nowrap;
+  }
+
+  .mermaid-block-actions .copy-button {
+    flex: 1 1 min(5rem, 40%);
+    min-width: 0;
+    max-width: fit-content;
+    margin-left: auto;
+    padding-inline: 0.25rem;
+  }
 }
 
 .dark .mermaid-view-toggle,

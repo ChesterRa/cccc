@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { MessagesSquare } from "lucide-react";
 import type { Actor, LocalSessionSource } from "../../types";
 import {
   createLocalConversation,
@@ -16,6 +15,8 @@ import { ModalFrame } from "../../components/modals/ModalFrame";
 import { Button } from "../../components/ui/button";
 import { SelectMenu } from "../../components/ui/select-menu";
 import { ActorAvatar } from "../../components/ActorAvatar";
+import { LocalSessionsIcon } from "../../components/Icons";
+import { IconButton } from "../../components/ui/icon-button";
 
 const MAX_SELECTED_SESSIONS = 16;
 
@@ -30,18 +31,32 @@ export function LocalSessionsButton({
 }) {
   const { t } = useTranslation("layout");
   const [open, setOpen] = useState(false);
+  // A fixed key beside the Group list heading, so it neither scrolls away with many
+  // Groups nor reads as one of them; collapsed, it sits under "new" as an icon.
   return (
     <>
-      <Button
-        variant="ghost"
-        className="mt-2 w-full justify-start gap-2"
-        onClick={() => setOpen(true)}
-        title={t("localSessions.connect")}
-        aria-label={t("localSessions.connect")}
-      >
-        <MessagesSquare size={18} className="shrink-0" />
-        {!collapsed && <span className="min-w-0 truncate">{t("localSessions.connect")}</span>}
-      </Button>
+      {collapsed ? (
+        <IconButton
+          type="button"
+          size="touch"
+          onClick={() => setOpen(true)}
+          label={t("localSessions.connect")}
+        >
+          <LocalSessionsIcon size={18} />
+        </IconButton>
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-[44px] min-h-[44px] shrink-0 gap-1 px-2 py-0 text-[0.8125rem] md:h-8 md:min-h-8"
+          onClick={() => setOpen(true)}
+          title={t("localSessions.connect")}
+        >
+          <LocalSessionsIcon size={14} aria-hidden="true" />
+          {t("localSessions.connectShort")}
+        </Button>
+      )}
       {open &&
         createPortal(
           <LocalSessionsDialog

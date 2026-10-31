@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CloseIcon } from "../../components/Icons";
@@ -32,6 +33,29 @@ export function ComposerRecipientsRow({
 }: ComposerRecipientsRowProps) {
   const { t } = useTranslation("chat");
   const popover = useRecipientPopover({ isSmallScreen });
+  const lastSelected = useRef<HTMLButtonElement | null>(null);
+  const fadeWidth = 20;
+  useLayoutEffect(() => {
+    const button = lastSelected.current;
+    lastSelected.current = null;
+    if (!button?.isConnected || button.getAttribute("aria-pressed") !== "true") return;
+    const scrollPort = button.closest<HTMLElement>(".composer-recipient-scroll");
+    if (!scrollPort || scrollPort.scrollWidth <= scrollPort.clientWidth) return;
+    const viewport = scrollPort.getBoundingClientRect();
+    const target = button.getBoundingClientRect();
+    // A newly shown clear button can shrink this viewport after the click.
+    // Move only this scroll port, and leave room for its faded edge.
+    if (target.left < viewport.left) {
+      const margin =
+        target.width > viewport.width
+          ? fadeWidth
+          : Math.min(fadeWidth, viewport.width - target.width);
+      scrollPort.scrollLeft -= viewport.left - target.left + margin;
+    } else if (target.width <= viewport.width && target.right > viewport.right) {
+      const margin = Math.min(fadeWidth, viewport.width - target.width);
+      scrollPort.scrollLeft += target.right - viewport.right + margin;
+    }
+  }, [toTokens]);
   const actorChipDisabled = !selectedGroupId || busy === "send" || !!selectedGroupActorsHydrating;
   const chipBaseClass =
     "touch-target-sm flex h-6 flex-shrink-0 items-center justify-center whitespace-nowrap rounded-lg border px-2 text-xs font-medium leading-none transition-all sm:px-2.5 sm:text-xs";
@@ -46,7 +70,11 @@ export function ComposerRecipientsRow({
       data-composer-recipient-row
       className="relative flex items-center gap-2 px-3 py-1"
     >
-      <ScrollFade className="min-w-0 flex-1" innerClassName="w-full max-w-full" fadeWidth={20}>
+      <ScrollFade
+        className="min-w-0 flex-1"
+        innerClassName="w-full max-w-full composer-recipient-scroll"
+        fadeWidth={fadeWidth}
+      >
         <div className="flex min-w-max items-center gap-1 transition-opacity">
           <div
             className={classNames(
@@ -64,7 +92,10 @@ export function ComposerRecipientsRow({
                     chipBaseClass,
                     active ? chipActiveClass : chipInactiveClass,
                   )}
-                  onClick={() => onToggleRecipient(token)}
+                  onClick={(event) => {
+                    lastSelected.current = active ? null : event.currentTarget;
+                    onToggleRecipient(token);
+                  }}
                   onMouseEnter={(event) => popover.show(target, event.currentTarget)}
                   onMouseLeave={popover.scheduleHide}
                   onFocus={(event) => popover.show(target, event.currentTarget)}
@@ -88,7 +119,10 @@ export function ComposerRecipientsRow({
                     chipBaseClass,
                     active ? chipActiveClass : chipInactiveClass,
                   )}
-                  onClick={() => onToggleRecipient(id)}
+                  onClick={(event) => {
+                    lastSelected.current = active ? null : event.currentTarget;
+                    onToggleRecipient(id);
+                  }}
                   onMouseEnter={(event) => popover.show(target, event.currentTarget)}
                   onMouseLeave={popover.scheduleHide}
                   onFocus={(event) => popover.show(target, event.currentTarget)}

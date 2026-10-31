@@ -732,12 +732,20 @@ export const MessageBubble = memo(
 
     if (lcd) {
       const showAgentState = canShowAgentState && !collapseHeader;
-      const lcdAuthorName = isUserMessage ? t("messageAuthorYou") : senderDisplayName;
+      // A read-only exhibit is watched by spectators, not by the Group's user, so the
+      // user's messages are neither "you" nor set on the reader's side; spectators see
+      // the role in their own language.
+      const fromReader = isUserMessage && !readOnly;
+      const lcdAuthorName = fromReader
+        ? t("messageAuthorYou")
+        : isUserMessage
+          ? t("senderUser")
+          : senderDisplayName;
       return (
         <div
           className={classNames("message-row lcd-row group", isOptimistic ? "opacity-95" : "")}
           data-lcd-row
-          data-lcd-user={isUserMessage || undefined}
+          data-lcd-user={fromReader || undefined}
           data-lcd-continued={collapseHeader || undefined}
           data-lcd-accent={isUserMessage ? undefined : getActorAccentIndex(String(ev.by || ""))}
         >
@@ -767,7 +775,7 @@ export const MessageBubble = memo(
                     title={senderDisplayName}
                     isDark={isDark}
                     sizeClassName="h-5 w-5"
-                    textClassName="text-[11px]"
+                    textClassName="text-[0.6875rem]"
                     className="lcd-tile"
                   />
                 )}

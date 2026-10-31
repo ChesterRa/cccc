@@ -7,6 +7,7 @@ import {
   setUiStylePrefs,
   useUiStylePrefs,
   type LcdBodyFont,
+  type LcdWidth,
   type UiStyle,
 } from "../../utils/uiStyle";
 import { SegmentedChoice, type SegmentedOption } from "../ui/segmented-choice";
@@ -25,16 +26,18 @@ function AppearanceChoice<Value extends string | number>({
   value,
   options,
   onChange,
+  className = "",
 }: {
-  name: "theme" | "uiStyle" | "lcdBody" | "textScale" | "language";
+  name: "theme" | "uiStyle" | "lcdBody" | "lcdWidth" | "textScale" | "language";
   label: string;
   value: Value;
   options: SegmentedOption<Value>[];
   onChange: (value: Value) => void;
+  className?: string;
 }) {
   const labelId = useId();
   return (
-    <div className="flex flex-col gap-1.5 px-2 pt-1 pb-2">
+    <div className={`flex flex-col gap-1.5 px-2 pt-1 pb-2 ${className}`}>
       <span id={labelId} className="text-[13px] text-[var(--color-text-secondary)]">
         {label}
       </span>
@@ -84,16 +87,31 @@ export function AppearancePreferences({
         ]}
       />
       {uiStyle.style === "lcd" ? (
-        <AppearanceChoice<LcdBodyFont>
-          name="lcdBody"
-          label={t("lcdBodyLabel")}
-          value={uiStyle.lcdBody}
-          onChange={(lcdBody) => setUiStylePrefs({ lcdBody })}
-          options={[
-            { value: "mono", label: t("lcdBodyMono") },
-            { value: "pixel", label: t("lcdBodyPixel") },
-          ]}
-        />
+        <>
+          <AppearanceChoice<LcdBodyFont>
+            name="lcdBody"
+            label={t("lcdBodyLabel")}
+            value={uiStyle.lcdBody}
+            onChange={(lcdBody) => setUiStylePrefs({ lcdBody })}
+            options={[
+              { value: "mono", label: t("lcdBodyMono") },
+              { value: "pixel", label: t("lcdBodyPixel") },
+            ]}
+          />
+          {/* Below 768px messages already use the full width, so the choice would change nothing. */}
+          <AppearanceChoice<LcdWidth>
+            name="lcdWidth"
+            label={t("lcdWidthLabel")}
+            value={uiStyle.lcdWidth}
+            onChange={(lcdWidth) => setUiStylePrefs({ lcdWidth })}
+            options={[
+              { value: "column", label: t("lcdWidthColumn") },
+              { value: "wide", label: t("lcdWidthWide") },
+              { value: "full", label: t("lcdWidthFull") },
+            ]}
+            className="max-md:hidden"
+          />
+        </>
       ) : null}
       <AppearanceChoice<TextScale>
         name="textScale"

@@ -553,7 +553,8 @@
   "videoPlaybackUnavailable": "このブラウザではこの動画を再生できません。ダウンロードしてご覧ください。",
   "imagePreviewUnavailable": "画像をプレビューできません",
   "downloadOriginalImage": "元の画像を開く",
-  "imagePreviewHint": "背景をクリックするか Escape キーで閉じます",
+  "imagePreviewHint": "余白か Esc で閉じます",
+  "videoPreviewHint": "閉じるボタンまたは Esc キーで戻ります",
   "showObligationStatusCounts": "返信ステータスを表示：返信済み {{replied}}/{{total}}",
   "showObligationStatusCancelled": "返信ステータスを表示：返信済み {{replied}}/{{total}}、取り消し済み {{cancelled}}",
   "replyCancelledCount": "取り消し済み {{cancelled}}",
@@ -796,7 +797,7 @@
     "out": "縮小",
     "in": "拡大",
     "region": "画像ビューアー：{{name}}",
-    "hint": "ドラッグで移動、ホイールでスクロール。+ / − で倍率変更、0 で全体表示、1 で原寸表示、矢印キーでスクロール。"
+    "hint": "クリック（タッチはダブルタップ）で全体表示と原寸を切替、ドラッグ・ホイール・矢印キーで移動。Ctrl/⌘ + ホイールまたは + / − で倍率変更、0 で全体表示、1 で原寸表示。"
   },
   "workspaceEmpty": "表示できるファイルがありません",
   "workspaceEmptyHint": "ワークスペースにファイルを追加してから、更新してください。",

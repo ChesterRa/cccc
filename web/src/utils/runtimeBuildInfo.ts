@@ -11,14 +11,17 @@ export function loadedWebEntry(): string {
   return src ? new URL(src, location.href).pathname : "";
 }
 
+/** A missing identity or a dev-server entry cannot establish a difference. */
+export function webEntryDifference(servedEntry: string, loadedEntry: string): boolean | null {
+  if (!servedEntry.includes("/assets/") || !loadedEntry.includes("/assets/")) return null;
+  return servedEntry !== loadedEntry;
+}
+
 export function buildMismatch(info?: RuntimeBuildInfo): boolean {
   if (!info) return false;
   const sourceDiffers =
     !!info.webSource && !!info.daemonSource && info.webSource !== info.daemonSource;
   // Dev-server entry paths intentionally differ from the packaged Web bundle.
-  const assetsDiffer =
-    info.servedEntry.includes("/assets/") &&
-    info.loadedEntry.includes("/assets/") &&
-    info.servedEntry !== info.loadedEntry;
+  const assetsDiffer = webEntryDifference(info.servedEntry, info.loadedEntry) === true;
   return sourceDiffers || assetsDiffer;
 }

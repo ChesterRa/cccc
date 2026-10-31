@@ -450,7 +450,7 @@ button[class*="bg-cyan"]:active:not(:disabled) {
    Scrollbar Styling
    ============================================ */
 
-/* Let the conversation, filters and composer use their available workspace. */
+/* Let the conversation, its filters and notices, and the composer use their available workspace. */
 .chat-reading-width {
   width: 100%;
 }

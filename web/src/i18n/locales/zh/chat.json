@@ -553,7 +553,8 @@
   "videoPlaybackUnavailable": "浏览器无法播放这个视频，可以下载后查看。",
   "imagePreviewUnavailable": "无法预览图片",
   "downloadOriginalImage": "打开原始图片",
-  "imagePreviewHint": "点击遮罩或按 ESC 可关闭",
+  "imagePreviewHint": "点空白处或按 Esc 关闭",
+  "videoPreviewHint": "点关闭键或按 Esc 返回",
   "showObligationStatusCounts": "查看回复状态：已回复 {{replied}}/{{total}}",
   "showObligationStatusCancelled": "查看回复状态：已回复 {{replied}}/{{total}}，已取消 {{cancelled}}",
   "replyCancelledCount": "已取消 {{cancelled}}",
@@ -796,7 +797,7 @@
     "out": "缩小",
     "in": "放大",
     "region": "图像查看：{{name}}",
-    "hint": "拖动平移，滚轮滚动。+ / − 缩放，0 适应窗口，1 原始大小，方向键滚动。"
+    "hint": "点击切换适应窗口和原始大小，触屏双击；拖动、滚轮或方向键平移。Ctrl/⌘ + 滚轮或 + / − 缩放，0 适应窗口，1 原始大小。"
   },
   "workspaceEmpty": "暂无可显示的文件",
   "workspaceEmptyHint": "添加文件到此工作区后，点击右上角刷新。",

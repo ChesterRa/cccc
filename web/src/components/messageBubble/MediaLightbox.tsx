@@ -1,4 +1,5 @@
 import { FloatingPortal } from "@floating-ui/react";
+import { useId } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useModalA11y } from "../../hooks/useModalA11y";
@@ -7,6 +8,7 @@ import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { ModalFocusGuard } from "../ModalFocusGuard";
 import { CloseIcon, DownloadIcon } from "../Icons";
 import { buttonVariants } from "../ui/button-variants";
+import "./mediaLightbox.css";
 
 /** The full-screen dialog an attachment preview opens into. */
 export function MediaLightbox({
@@ -16,6 +18,7 @@ export function MediaLightbox({
   title,
   downloadHref,
   downloadName,
+  image = false,
   children,
 }: {
   open: boolean;
@@ -24,41 +27,39 @@ export function MediaLightbox({
   title: string;
   downloadHref: string;
   downloadName: string;
+  image?: boolean;
   children: ReactNode;
 }) {
   const { t } = useTranslation("chat");
   const { modalRef } = useModalA11y(open, onClose);
+  const hintId = useId();
   if (!open) return null;
   return (
     <FloatingPortal>
-      <div className="fixed inset-0 z-[80] flex items-center justify-center sm:p-4 animate-fade-in">
-        <button
-          type="button"
-          className={classNames("absolute inset-0", "glass-overlay")}
-          onClick={onClose}
-          aria-label={t("common:close")}
-        />
-
+      <div className="fixed inset-0 z-[80] animate-fade-in">
         <div
           className={classNames(
-            "relative z-[81] flex h-[100dvh] sm:h-[90dvh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl",
-            "glass-modal",
+            "relative flex h-[100dvh] w-full flex-col overflow-hidden",
+            "bg-[var(--color-bg-primary)]",
           )}
           ref={modalRef}
           role="dialog"
           aria-modal="true"
           aria-label={dialogLabel}
+          aria-describedby={hintId}
           onClick={(event) => event.stopPropagation()}
           // Attachments open from chat messages, which take the LCD look when it is on.
           data-lcd-scope
+          data-media-lightbox
         >
           <div
             className={classNames(
-              "flex items-center justify-between gap-3 border-b px-4 py-3",
+              "flex items-center justify-between gap-3 border-b",
               "border-[var(--glass-border-subtle)]",
             )}
+            data-media-header
           >
-            <div className="min-w-0">
+            <div className="min-w-0" data-media-title>
               <p
                 className={classNames(
                   "truncate text-sm font-medium",
@@ -67,18 +68,23 @@ export function MediaLightbox({
               >
                 {title}
               </p>
-              <p className={classNames("text-xs", "text-[var(--color-text-tertiary)]")}>
-                {t("imagePreviewHint")}
+              <p
+                className={classNames("text-xs", "text-[var(--color-text-tertiary)]")}
+                data-media-hint
+                id={hintId}
+              >
+                {t(image ? "imagePreviewHint" : "videoPreviewHint")}
               </p>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2" data-media-actions>
               <AuthenticatedDownloadLink
                 href={downloadHref}
                 download={downloadName}
-                className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11`}
+                className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`}
                 title={t("download", { name: title })}
                 aria-label={t("download", { name: title })}
+                data-lcd-key
               >
                 <DownloadIcon size={18} aria-hidden="true" />
               </AuthenticatedDownloadLink>
@@ -86,15 +92,18 @@ export function MediaLightbox({
               <button
                 type="button"
                 onClick={onClose}
-                className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11`}
+                className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`}
                 aria-label={t("common:close")}
+                data-lcd-key
               >
                 <CloseIcon size={18} />
               </button>
             </div>
           </div>
 
-          <div className="min-h-0 flex-1">{children}</div>
+          <div className="min-h-0 flex-1" data-media-content>
+            {children}
+          </div>
           <ModalFocusGuard />
         </div>
       </div>

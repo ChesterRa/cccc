@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { PanelRightClose, PanelRightOpen, Plus, X } from "lucide-react";
+import { LcdIcon } from "../Icons";
 import type { GroupPresentation } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { ensurePresentation } from "../../utils/presentation";
@@ -177,7 +178,7 @@ export function PresentationRail({
                     {readOnly || !onPinSlot ? (
                       <span>{index + 1}</span>
                     ) : (
-                      <Plus className="h-4 w-4" />
+                      <LcdIcon icon={Plus} glyph="plus" className="h-4 w-4" />
                     )}
                     {!compact && (
                       <span>
@@ -208,7 +209,7 @@ export function PresentationRail({
       {compact && onClose && (
         <div className="flex shrink-0 justify-center border-t border-[var(--glass-border-subtle)] py-1">
           <SidePanelButton title={closeLabel} onClick={onClose}>
-            <X />
+            <LcdIcon icon={X} glyph="close" />
           </SidePanelButton>
         </div>
       )}

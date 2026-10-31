@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Maximize, Sparkles } from "lucide-react";
-import { VoiceMoreIcon } from "../../../components/Icons";
+import { LcdIcon, VoiceMoreIcon } from "../../../components/Icons";
 import { Button } from "../../../components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover";
 import type { VoiceSecretaryCaptureMode } from "./voiceSecretaryTypes";
@@ -148,7 +148,7 @@ export function VoiceMobileMenu(props: Props) {
               disabled={props.optimizeDisabled}
               onClick={() => choose(props.onOptimize)}
             >
-              <Sparkles size={16} className="shrink-0" />
+              <LcdIcon icon={Sparkles} glyph="sparkles" size={16} className="shrink-0" />
               {props.optimizeLabel}
             </Button>
           ) : null}
@@ -157,7 +157,7 @@ export function VoiceMobileMenu(props: Props) {
             className="voice-mobile-choice"
             onClick={() => choose(props.onWorkspace)}
           >
-            <Maximize size={16} className="shrink-0" />
+            <LcdIcon icon={Maximize} glyph="maximize" size={16} className="shrink-0" />
             {props.workspaceLabel}
           </Button>
         </PopoverContent>

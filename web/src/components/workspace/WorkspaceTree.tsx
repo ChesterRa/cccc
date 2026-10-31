@@ -10,6 +10,7 @@ import {
   Loader2,
   MoreHorizontal,
 } from "lucide-react";
+import { LcdIcon } from "../Icons";
 import { classNames } from "../../utils/classNames";
 import type { WorkspaceEntry, WorkspaceGitStatus } from "../../types";
 import type { TreeNode } from "./workspaceTreeModel";
@@ -207,9 +208,9 @@ function WorkspaceTreeRows({
                   node.loading ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : node.expanded ? (
-                    <ChevronDown className="h-3.5 w-3.5" />
+                    <LcdIcon icon={ChevronDown} glyph="chevron-down" className="h-3.5 w-3.5" />
                   ) : (
-                    <ChevronRight className="h-3.5 w-3.5" />
+                    <LcdIcon icon={ChevronRight} glyph="chevron-right" className="h-3.5 w-3.5" />
                   )
                 ) : null}
               </span>
@@ -221,7 +222,16 @@ function WorkspaceTreeRows({
                     : undefined
                 }
               >
-                <Icon aria-hidden="true" className="h-3.5 w-3.5" />
+                {entry.is_symlink ? (
+                  <Icon aria-hidden="true" className="h-3.5 w-3.5" />
+                ) : (
+                  <LcdIcon
+                    icon={Icon}
+                    glyph={entry.is_dir ? "folder" : "file"}
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5"
+                  />
+                )}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{entry.name}</span>
@@ -257,7 +267,12 @@ function WorkspaceTreeRows({
                   onContextMenu(entry, rect.left, rect.bottom, event.currentTarget);
                 }}
               >
-                <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+                <LcdIcon
+                  icon={MoreHorizontal}
+                  glyph="more-horizontal"
+                  aria-hidden="true"
+                  className="h-4 w-4"
+                />
               </button>
             </div>
             {node.error ? (

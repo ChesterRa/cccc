@@ -1,5 +1,19 @@
 // @vitest-environment happy-dom
-import { Archive, ArchiveRestore, LayoutGrid, MessageSquare, Search, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  Code,
+  LayoutGrid,
+  Maximize,
+  MessageSquare,
+  MessagesSquare,
+  Paperclip,
+  RotateCcw,
+  Search,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -7,6 +21,8 @@ import {
   GroupArchiveIcon,
   GroupArchiveRestoreIcon,
   GroupDeleteIcon,
+  LcdIcon,
+  LocalSessionsIcon,
   SearchIcon,
   WorkGridIcon,
   WorkMessagesIcon,
@@ -21,6 +37,23 @@ function svg(markup: string) {
 }
 
 describe("LCD icon adaptation", () => {
+  it.each([
+    [Code, "code"],
+    [Maximize, "maximize"],
+    [Paperclip, "attachment"],
+    [RotateCcw, "reload"],
+    [Sparkles, "sparkles"],
+    [X, "close"],
+  ] as const)("keeps direct Lucide attributes and paths for %s", (Icon, glyph) => {
+    const props = { size: 16, className: "h-4 w-4", "aria-hidden": true as const };
+    const before = svg(renderToStaticMarkup(<Icon {...props} />));
+    const after = svg(renderToStaticMarkup(<LcdIcon icon={Icon} glyph={glyph} {...props} />));
+    expect(after.querySelectorAll(":scope > [data-lcd-glyph]")).toHaveLength(1);
+    after.querySelector(":scope > [data-lcd-glyph]")?.remove();
+    after.removeAttribute("data-lcd-icon");
+    expect(after.outerHTML).toBe(before.outerHTML);
+  });
+
   it("keeps the original SVG attributes and a single root while adding a pixel glyph", () => {
     const props = { size: 13, strokeWidth: 1.25, className: "hidden @min-[480px]/header:block" };
     const original = svg(renderToStaticMarkup(<Search absoluteStrokeWidth {...props} />));
@@ -70,6 +103,16 @@ describe("LCD icon adaptation", () => {
     expect(adapted.getAttribute("width")).toBe("16");
     expect(adapted.getAttribute("stroke-width")).toBe("2");
     expect(adapted.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("keeps the existing local session icon in classic style", () => {
+    const props = { size: 18, className: "shrink-0" };
+    const original = svg(renderToStaticMarkup(<MessagesSquare {...props} />));
+    const adapted = svg(renderToStaticMarkup(<LocalSessionsIcon {...props} />));
+    expect(adapted.querySelectorAll(":scope > [data-lcd-glyph]")).toHaveLength(1);
+    adapted.querySelector(":scope > [data-lcd-glyph]")?.remove();
+    adapted.removeAttribute("data-lcd-icon");
+    expect(adapted.outerHTML).toBe(original.outerHTML);
   });
 
   it("preserves the compact view switch's original SVG attributes", () => {

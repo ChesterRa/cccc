@@ -33,11 +33,12 @@ afterEach(() => {
   setUiStylePrefs({ style: "classic" });
 });
 
-async function render() {
+async function render(shown: LedgerEvent = event, readOnly = false) {
   await act(async () =>
     root.render(
       <MessageBubble
-        event={event}
+        event={shown}
+        readOnly={readOnly}
         actorById={new Map()}
         actors={[]}
         displayNameMap={new Map()}
@@ -67,4 +68,18 @@ it("keeps the classic actions in the footer", async () => {
   await render();
   expect(host.querySelectorAll("[data-message-actions-inline]")).toHaveLength(1);
   expect(host.querySelector(".lcd-row-head")).toBeNull();
+});
+
+it("sets the user's own messages on the reader's side, except in a read-only exhibit", async () => {
+  setUiStylePrefs({ style: "lcd" });
+  const fromUser: LedgerEvent = { ...event, by: "user", data: { ...event.data, to: ["claude"] } };
+  await render(fromUser);
+  const row = host.querySelector("[data-lcd-row]");
+  expect(row?.hasAttribute("data-lcd-user")).toBe(true);
+  expect(host.querySelector(".lcd-row-name")?.textContent).toBe("messageAuthorYou");
+
+  // Spectators of an exhibit are not the Group's user.
+  await render(fromUser, true);
+  expect(host.querySelector("[data-lcd-row]")?.hasAttribute("data-lcd-user")).toBe(false);
+  expect(host.querySelector(".lcd-row-name")?.textContent).toBe("senderUser");
 });

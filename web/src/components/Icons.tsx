@@ -43,6 +43,7 @@ import {
   Mic,
   MicOff,
   MessageSquare,
+  MessagesSquare,
   MessageSquareQuote,
   MessageSquareText,
   Minimize2,
@@ -93,6 +94,15 @@ function renderIcon(Icon: LucideIcon, glyph: LcdGlyphName | undefined, props: Ic
       <LcdGlyph name={glyph} />
     </Icon>
   );
+}
+
+/** Adapt an existing Lucide call without changing its classic defaults. */
+export function LcdIcon({
+  icon: Icon,
+  glyph,
+  ...props
+}: IconProps & { icon: LucideIcon; glyph: LcdGlyphName }) {
+  return renderIcon(Icon, glyph, props);
 }
 
 function createIcon(Icon: LucideIcon, defaultStrokeWidth = 1.5, glyph?: LcdGlyphName) {
@@ -174,7 +184,7 @@ export const CameraIcon = createIcon(Camera, 1.9);
 export const ReplyIcon = createIcon(Reply, 1.5, "undo");
 export const PowerIcon = createIcon(Power);
 export const AlertIcon = createIcon(CircleAlert, 2);
-export const AccountIcon = createIcon(CircleUserRound, 1.8);
+export const AccountIcon = createIcon(CircleUserRound, 1.8, "user");
 export const InfoIcon = createIcon(Info, 2, "circle-info");
 export const ImageIcon = createIcon(Image);
 export const FileIcon = createIcon(File);
@@ -194,6 +204,10 @@ export const GripIcon = createIcon(GripVertical);
 // These call sites previously used lucide directly, without our stroke defaults.
 export function ConnectLinkIcon(props: IconProps) {
   return renderIcon(Link2, "link", props);
+}
+
+export function LocalSessionsIcon(props: IconProps) {
+  return renderIcon(MessagesSquare, "plug", props);
 }
 
 // Match lucide's defaults here: these controls already used it directly.

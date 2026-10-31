@@ -96,6 +96,207 @@ describe("static graphic navigation", () => {
     host.dispatchEvent(outside);
     expect(outside.defaultPrevented).toBe(false);
   });
+  it.each(["ctrlKey", "metaKey"] as const)(
+    "zooms at the pointer for %s+wheel without intercepting ordinary scrolling",
+    async (modifier) => {
+      await act(async () =>
+        root.render(<GraphicViewer svg={svg} width={12000} height={8000} alt="Map" />),
+      );
+      const modified = new WheelEvent("wheel", {
+        ctrlKey: true,
+        deltaY: -100,
+        clientX: 300,
+        clientY: 180,
+        bubbles: true,
+        cancelable: true,
+      });
+      // happy-dom's WheelEvent constructor does not populate modifier keys.
+      Object.defineProperty(modified, modifier, { value: true });
+      await act(async () => region().dispatchEvent(modified));
+      expect(modified.defaultPrevented).toBe(true);
+      expect(width()).toBeGreaterThan(468);
+      const plain = new WheelEvent("wheel", { deltaY: 100, bubbles: true, cancelable: true });
+      await act(async () => region().dispatchEvent(plain));
+      expect(plain.defaultPrevented).toBe(false);
+    },
+  );
+  it("accumulates modified wheel input delivered before a render", async () => {
+    await act(async () =>
+      root.render(<GraphicViewer svg={svg} width={12000} height={8000} alt="Map" />),
+    );
+    await act(async () => {
+      for (let index = 0; index < 4; index += 1) {
+        const wheel = new WheelEvent("wheel", {
+          deltaY: -100,
+          clientX: 250,
+          clientY: 200,
+          bubbles: true,
+          cancelable: true,
+        });
+        Object.defineProperty(wheel, "ctrlKey", { value: true });
+        region().dispatchEvent(wheel);
+      }
+    });
+    expect(width()).toBeCloseTo(468 * Math.exp(0.8));
+  });
+  it("keeps fit responsive when rapid opposing wheel input cancels out", async () => {
+    await act(async () =>
+      root.render(<GraphicViewer svg={svg} width={12000} height={8000} alt="Map" />),
+    );
+    await act(async () => {
+      for (const deltaY of [-100, 100]) {
+        const wheel = new WheelEvent("wheel", {
+          deltaY,
+          clientX: 250,
+          clientY: 200,
+          bubbles: true,
+          cancelable: true,
+        });
+        Object.defineProperty(wheel, "ctrlKey", { value: true });
+        region().dispatchEvent(wheel);
+      }
+    });
+    expect(width()).toBeCloseTo(468);
+    await act(async () => resize(400, 400));
+    expect(width()).toBeCloseTo(368);
+  });
+  it("toggles on a click, distinguishes a drag, and closes only an unmoved blank click", async () => {
+    const close = vi.fn();
+    await act(async () =>
+      root.render(
+        <GraphicViewer svg={svg} width={12000} height={8000} alt="Map" onBlankClick={close} />,
+      ),
+    );
+    region().setPointerCapture = vi.fn();
+    const image = region().querySelector<HTMLElement>("[data-graphic-image]")!;
+    const pointer = (target: Element, type: string, x: number, y: number) =>
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          pointerType: "mouse",
+          button: 0,
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    await act(async () => {
+      pointer(image, "pointerdown", 100, 100);
+      pointer(region(), "pointerup", 100, 100);
+    });
+    expect(width()).toBe(12000);
+    await act(async () => {
+      pointer(image, "pointerdown", 100, 100);
+      pointer(region(), "pointermove", 130, 100);
+      pointer(region(), "pointerup", 130, 100);
+      pointer(region(), "pointerdown", 40, 40);
+      pointer(region(), "pointermove", 70, 40);
+      pointer(region(), "pointerup", 70, 40);
+    });
+    expect(width()).toBe(12000);
+    expect(close).not.toHaveBeenCalled();
+    await act(async () => {
+      pointer(region(), "pointerdown", 40, 40);
+      pointer(region(), "pointerup", 40, 40);
+    });
+    expect(close).toHaveBeenCalledOnce();
+  });
+  it("requires two touch taps to toggle and leaves SVG links alone", async () => {
+    const linked = '<svg viewBox="0 0 12000 8000"><a href="#detail"><text>Detail</text></a></svg>';
+    await act(async () =>
+      root.render(<GraphicViewer svg={linked} width={12000} height={8000} alt="Map" />),
+    );
+    region().setPointerCapture = vi.fn();
+    const image = region().querySelector<HTMLElement>("[data-graphic-image]")!;
+    const pointer = (target: Element, type: string) =>
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 2,
+          pointerType: "touch",
+          button: 0,
+          clientX: 100,
+          clientY: 100,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    await act(async () => {
+      pointer(image, "pointerdown");
+      pointer(region(), "pointerup");
+    });
+    expect(width()).toBeCloseTo(468);
+    await act(async () => {
+      pointer(image, "pointerdown");
+      pointer(region(), "pointerup");
+    });
+    expect(width()).toBe(12000);
+    const linkDown = new PointerEvent("pointerdown", {
+      pointerId: 3,
+      pointerType: "mouse",
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => region().querySelector("a")!.dispatchEvent(linkDown));
+    expect(linkDown.defaultPrevented).toBe(false);
+    expect(width()).toBe(12000);
+  });
+  it("does not turn the end of a pinch into a tap or a blank-space close", async () => {
+    const close = vi.fn();
+    await act(async () =>
+      root.render(
+        <GraphicViewer svg={svg} width={12000} height={8000} alt="Map" onBlankClick={close} />,
+      ),
+    );
+    region().setPointerCapture = vi.fn();
+    const image = region().querySelector<HTMLElement>("[data-graphic-image]")!;
+    const pointer = (target: Element, type: string, id: number, x: number) =>
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: id,
+          pointerType: "touch",
+          button: 0,
+          clientX: x,
+          clientY: 100,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    await act(async () => {
+      pointer(image, "pointerdown", 1, 100);
+      pointer(image, "pointerdown", 2, 160);
+      pointer(region(), "pointermove", 2, 180);
+      pointer(region(), "pointermove", 2, 220);
+      pointer(region(), "pointerup", 1, 100);
+      pointer(region(), "pointerup", 2, 220);
+    });
+    expect(width()).toBeCloseTo(936);
+    expect(close).not.toHaveBeenCalled();
+  });
+  it("upscales known SVGs when fitting while leaving small raster images at their natural size", async () => {
+    await act(async () => root.render(<GraphicViewer src="/small.png" alt="Small" />));
+    const image = host.querySelector("img")!;
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, value: 120 },
+      naturalHeight: { configurable: true, value: 80 },
+    });
+    await act(async () => image.dispatchEvent(new Event("load")));
+    expect(width()).toBe(120);
+    await act(async () => root.render(<GraphicViewer src="/small.png" alt="Small" isSvg />));
+    expect(width()).toBeCloseTo(468);
+    await act(async () =>
+      root.render(
+        <GraphicViewer
+          svg='<svg viewBox="0 0 120 80"></svg>'
+          width={120}
+          height={80}
+          alt="Vector"
+        />,
+      ),
+    );
+    expect(width()).toBeCloseTo(468);
+  });
   it("fits within fractional content bounds despite rounded client dimensions", async () => {
     await act(async () =>
       root.render(<GraphicViewer svg={svg} width={12000} height={8000} alt="Map" />),

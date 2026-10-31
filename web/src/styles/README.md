@@ -56,6 +56,24 @@ the LCD rules in this folder read the hooks.
   `data-lcd-tag` a framed kind label; `data-option-mark` is a list's own selection bar,
   hidden here. A destructive item takes `data-tone="danger"` or `destructive-key`.
 
+## Control sizes
+
+One control mixed three scales: frames in `rem`, avatars, icons and labels in fixed
+pixels. At a larger text size the frames grew and the rest did not, so avatars looked a
+size smaller than the keys beside them and labels looked thin.
+
+- Size controls in `rem`, so the frame, drawing and words follow the text size together.
+  Rules and borders stay at 1px.
+- A standard key is 2rem square (2rem high with a label). Touch screens keep the global
+  44px minimum target from `index.css` at every text size; a key sized in `rem` may grow
+  past it, and the drawing grows with the text.
+- Icons in a standard key are 1rem; in a 44px touch key, 1.5rem. Pixelarticons are
+  sharpest at 24px, but a single size across the screen matters more than a crisp exception.
+- Words on a key are 0.75rem at weight 500. Do not set 600 or 700: the pixel font has
+  no true bold, and a synthetic one blurs.
+- A member avatar is a key: its tile fills the 2rem frame, and its state lines (busy,
+  needs attention, open) are drawn inside the tile.
+
 ## A surface built from many palette classes
 
 When a component paints most of its parts with palette classes (the headless trace, the

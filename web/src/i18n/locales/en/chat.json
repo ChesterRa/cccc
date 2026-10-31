@@ -553,7 +553,8 @@
   "videoPlaybackUnavailable": "This browser can't play this video. Download it to watch.",
   "imagePreviewUnavailable": "Image preview unavailable",
   "downloadOriginalImage": "Open the original image",
-  "imagePreviewHint": "Click the backdrop or press Escape to close",
+  "imagePreviewHint": "Click blank space or press Esc to close",
+  "videoPreviewHint": "Use Close or press Escape to return",
   "showObligationStatusCounts": "Show reply status: {{replied}} of {{total}} replied",
   "showObligationStatusCancelled": "Show reply status: {{replied}} of {{total}} replied, {{cancelled}} cancelled",
   "replyCancelledCount": "{{cancelled}} cancelled",
@@ -796,7 +797,7 @@
     "out": "Zoom out",
     "in": "Zoom in",
     "region": "Image viewer: {{name}}",
-    "hint": "Drag to pan, scroll to move. Use + / − to zoom, 0 to fit, 1 for actual size, and arrow keys to scroll."
+    "hint": "Click to switch fit and actual size; double-tap on touch. Drag, scroll or use arrow keys to move. Ctrl/⌘ + scroll or + / − zooms; 0 fits, 1 shows actual size."
   },
   "workspaceEmpty": "No files to display",
   "workspaceEmptyHint": "Add files to this workspace, then refresh.",
