@@ -141,7 +141,9 @@ fn show(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({
         "group": group_runtime::group(home, group),
         // A caller-scoped read projection, outside GroupDoc/Actor persistence.
-        "effective_scope": scope.map_or_else(|| json!({}), |scope| json!(scope)),
+        "effective_scope": scope
+            .map(actor_runtime::displayed_scope)
+            .map_or_else(|| json!({}), |scope| json!(scope)),
     }))
 }
 

@@ -73,8 +73,9 @@ pub(crate) fn effective_scope(group: &GroupDoc, actor: Option<&Actor>) -> Option
     } else {
         configured()
     }?;
-    // All consumers receive the same canonical, existing directory, including
-    // prompts and bootstrap. A vanished launch root is unavailable, not a new pin.
+    // All consumers resolve the same canonical, existing directory; prompts and
+    // projections show it in the spelling from `cccc_runtime::compatible_path`.
+    // A vanished launch root is unavailable, not a new pin.
     let path = scope
         .path
         .canonicalize()
@@ -87,6 +88,15 @@ pub(crate) fn caller_scope(group: &GroupDoc, by: &str) -> Result<Option<Effectiv
     cccc_core::permissions::require_group_member(group, by)
         .map_err(|error| OpError::new("permission_denied", error.to_string()))?;
     Ok(effective_scope(group, actors::find(group, by.trim())))
+}
+
+/// The effective scope as IPC projections show it. Comparisons keep the
+/// canonical path from [`effective_scope`].
+pub(crate) fn displayed_scope(scope: EffectiveScope) -> EffectiveScope {
+    EffectiveScope {
+        path: cccc_runtime::compatible_path(&scope.path).to_path_buf(),
+        ..scope
+    }
 }
 
 pub(crate) fn session_prompt(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> String {

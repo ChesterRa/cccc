@@ -19,6 +19,7 @@ pub use native_codex::{
 mod manager_windows_tests;
 mod output;
 mod output_reader;
+mod path_form;
 mod process_tree;
 mod pty_input;
 #[cfg(target_os = "linux")]
@@ -70,6 +71,7 @@ pub use manager::{
     submit_interruptible, submit_sequence_interruptible, wait_for_input_ready, write,
 };
 pub use output::HistoryPage;
+pub use path_form::compatible_path;
 pub use process_tree::{
     CommandError, OwnedProcessTree, ProcessStartUnconfirmed, force_terminate_owned,
     owned_process_recovery_pending,

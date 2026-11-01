@@ -68,6 +68,7 @@ pub(super) fn list(
                 object.insert(
                     "effective_scope".into(),
                     super::actor_runtime::effective_scope(group, Some(&actor))
+                        .map(super::actor_runtime::displayed_scope)
                         .map_or_else(|| json!({}), |scope| json!(scope)),
                 );
                 object.extend(super::working_state::runtime_actor_fields(

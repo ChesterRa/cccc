@@ -693,6 +693,9 @@ Result:
 host: the Git top-level when the path is inside a work tree, otherwise the path
 itself. Reads return it as recorded; workspace projections canonicalize it again
 and report a missing directory as unavailable instead of substituting another.
+On Windows a projection spells that directory without the `\\?\` prefix when the
+drive path names the same location; UNC paths, reserved names and over-long
+paths keep it. Compare a projected path only after canonicalizing it again.
 `scope_key` derives from the normalized `origin` remote when one exists and from
 `url` otherwise, so separate clones or worktrees of one remote share a key and a
 Group binds each key to one directory at a time.
@@ -1638,7 +1641,7 @@ Result:
   group: Record<string, unknown> // group.yaml content, redacted
   effective_scope: {
     scope_key: string
-    path: string // canonical existing local directory
+    path: string // canonical existing local directory; Windows spelling as in `attach`
     source: "runtime_launch" | "actor_default" | "group_active"
   } | Record<string, never> // {} when unavailable
 }

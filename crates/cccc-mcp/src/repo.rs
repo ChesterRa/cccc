@@ -24,7 +24,10 @@ pub(super) fn call_tool(
 
 pub fn call(root: &Path, action: &str, args: &Map<String, Value>) -> Result<Value, String> {
     match action {
-        "info" => Ok(json!({"root":root,"git":root.join(".git").exists()})),
+        "info" => Ok(json!({
+            "root": cccc_runtime::compatible_path(root),
+            "git": root.join(".git").exists(),
+        })),
         "list" | "list_dir" | "read" | "search" => crate::repo_inspect::call(root, action, args),
         "replace" | "multi_replace" | "write" | "mkdir" | "delete" | "move" => {
             edit(root, action, args)

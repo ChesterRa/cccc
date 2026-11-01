@@ -110,7 +110,10 @@ fn render_with_body(
             "effective_scope: {} ({}; CCCC tools)",
             scope.scope_key, scope.source
         ));
-        lines.push(format!("workspace: {}", scope.path.display()));
+        lines.push(format!(
+            "workspace: {}",
+            cccc_runtime::compatible_path(&scope.path).display()
+        ));
     } else {
         lines.push("effective_scope: unavailable (CCCC tools)".into());
     }
@@ -132,7 +135,8 @@ fn render_with_body(
             } else {
                 ""
             };
-            format!("  {label}: {}{active}", scope.url)
+            let path = cccc_runtime::compatible_path(std::path::Path::new(&scope.url));
+            format!("  {label}: {}{active}", path.display())
         })
         .collect::<Vec<_>>();
     if !scope_lines.is_empty() {
@@ -255,6 +259,28 @@ mod tests {
             );
             assert!(prompt.contains(&format!("workspace: {}", group.scopes[index].url)));
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shows_drive_paths_without_the_verbatim_prefix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = GroupStore::new(HomeLayout::from_path(temp.path().join("home")).expect("home"))
+            .expect("store");
+        let mut group = store.create("verbatim scope", "").expect("group");
+        group.scopes.push(crate::Scope {
+            scope_key: "scope_demo".into(),
+            url: r"\\?\C:\work\demo".into(),
+            label: "demo".into(),
+            git_remote: String::new(),
+        });
+        group.active_scope_key = "scope_demo".into();
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        let prompt = render(&group, &actor);
+        assert!(prompt.contains(r"workspace: C:\work\demo"), "{prompt}");
+        assert!(prompt.contains(r"  demo: C:\work\demo *"), "{prompt}");
+        assert!(!prompt.contains(r"\\?\"), "{prompt}");
     }
 
     #[test]

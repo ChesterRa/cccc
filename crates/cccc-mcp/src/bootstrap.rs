@@ -172,7 +172,7 @@ fn build_session(
         |scope| {
             json!({
                 "scope_key": scope.scope_key,
-                "path": scope.url,
+                "path": cccc_runtime::compatible_path(std::path::Path::new(&scope.url)),
             })
         },
     );
@@ -1062,6 +1062,26 @@ mod tests {
                 {"actor_id":"peer","runtime":"claude","role":"peer","enabled":false},
             ])
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn session_shows_the_drive_path_of_a_verbatim_group_scope() {
+        let temp = tempfile::tempdir().expect("fixture directory");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let mut group = cccc_core::GroupStore::new(home)
+            .expect("groups")
+            .create("Verbatim scope", "")
+            .expect("group");
+        group.scopes.push(cccc_core::Scope {
+            scope_key: "scope_demo".into(),
+            url: r"\\?\C:\work\demo".into(),
+            label: "demo".into(),
+            git_remote: String::new(),
+        });
+        group.active_scope_key = "scope_demo".into();
+        let session = build_session(&group, &[], "lead", json!({}));
+        assert_eq!(session["active_scope"]["path"], r"C:\work\demo");
     }
 
     fn fixture_context() -> Map<String, Value> {

@@ -722,6 +722,7 @@ version = "0.4.46"
 dependencies = [
  "cccc-pair-contracts",
  "cccc-windows-process",
+ "dunce",
  "filedescriptor",
  "futures-util",
  "nix 0.28.0",

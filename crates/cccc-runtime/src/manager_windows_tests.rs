@@ -54,3 +54,41 @@ fn npm_style_batch_actor_survives_utf8_message_delivery() {
     let _ = stop(group, actor);
     panic!("actor did not echo delivered UTF-8 text: {output:?}");
 }
+
+#[test]
+fn pty_actor_starts_in_the_drive_path_of_its_working_directory() {
+    // cmd.exe started in a \\?\ directory falls back to the Windows directory.
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = "g_windows_cwd";
+    let actor = "peer1";
+    let cmd = std::env::var("ComSpec").expect("ComSpec");
+    start(LaunchSpec {
+        group_id: group.into(),
+        actor_id: actor.into(),
+        runner: RunnerKind::Pty,
+        command: vec![cmd, "/d".into(), "/q".into(), "/k".into(), "cd".into()],
+        cwd: temp.path().into(),
+        env: BTreeMap::new(),
+        cols: 200,
+        rows: 24,
+    })
+    .expect("start cmd");
+    let root = temp
+        .path()
+        .canonicalize()
+        .expect("canonical working directory");
+    let expected = crate::compatible_path(&root).to_string_lossy().into_owned();
+    for _ in 0..100 {
+        let output = history(group, actor, None, 8192).expect("history").data;
+        // The fallback warning quotes the \\?\ path, which contains the expected text.
+        if output.contains(&expected) && !output.contains(r"\\?\") {
+            stop(group, actor).expect("cleanup");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let output = history(group, actor, None, 8192).expect("history").data;
+    let _ = stop(group, actor);
+    panic!("cmd did not start in {expected}: {output:?}");
+}

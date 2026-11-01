@@ -104,7 +104,7 @@ impl Session {
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         let mut command = CommandBuilder::new(program);
         command.args(args);
-        command.cwd(&cwd);
+        command.cwd(crate::compatible_path(&cwd));
         for (key, value) in spec.env {
             command.env(key, value);
         }
