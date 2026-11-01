@@ -97,3 +97,128 @@ describe("Codex Voice transcript identity", () => {
     ]);
   });
 });
+
+describe("Chet history record of a call", () => {
+  it("offers each finished turn once, whole, in the order the call first saw it", () => {
+    const transcripts = new RealtimeTranscriptAccumulator();
+    transcripts.bindCall("call-1", true);
+    receive(transcripts, { type: "input_transcript.added", item: { text: "帮我" } });
+    receive(transcripts, { type: "output_transcript.added", item: { text: "好" } });
+    const long = `帮我${"查".repeat(5000)}`;
+    receive(transcripts, { type: "turn.done", turn: { id: "u1", role: "user", transcript: long } });
+    expect(transcripts.takeFinished()).toEqual([
+      {
+        type: "transcript",
+        id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        turn_id: "u1",
+        seq: 1,
+        role: "user",
+        text: long,
+        final_update: true,
+        complete: true,
+      },
+    ]);
+    // What is shown stays clipped; what is kept is not.
+    const [shown] = transcripts.history();
+    expect(shown).toMatchObject({ id: "u1", callId: "call-1", save: "pending" });
+    expect(shown.text.length).toBeLessThanOrEqual(4000);
+    receive(transcripts, {
+      type: "turn.done",
+      turn: { id: "a1", role: "assistant", transcript: "好的" },
+    });
+    expect(transcripts.takeFinished()).toMatchObject([{ turn_id: "a1", seq: 2, text: "好的" }]);
+    expect(transcripts.takeFinished()).toEqual([]);
+  });
+
+  it("records a Grok call's turns from its own event names", () => {
+    const transcripts = new RealtimeTranscriptAccumulator();
+    transcripts.bindCall("call-g", true);
+    const grok = (event: unknown) => {
+      const update = realtimeTranscriptUpdate(event, "grok");
+      if (update) transcripts.apply(update);
+    };
+    grok({
+      type: "conversation.item.input_audio_transcription.updated",
+      item_id: "i1",
+      transcript: "明天",
+    });
+    grok({ type: "response.output_audio_transcript.delta", response_id: "r1", delta: "十点" });
+    expect(transcripts.takeFinished()).toEqual([]);
+    grok({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "i1",
+      transcript: "明天几点开会？",
+    });
+    grok({
+      type: "response.output_audio_transcript.done",
+      response_id: "r1",
+      transcript: "十点。",
+    });
+    expect(transcripts.takeFinished()).toMatchObject([
+      { turn_id: "i1", seq: 1, role: "user", text: "明天几点开会？", final_update: true },
+      { turn_id: "r1", seq: 2, role: "assistant", text: "十点。", final_update: true },
+    ]);
+  });
+
+  it("keeps the streamed words of a turn that finished without a final transcript", () => {
+    const transcripts = new RealtimeTranscriptAccumulator();
+    transcripts.bindCall("call-1", true);
+    receive(transcripts, { type: "output_transcript.added", item: { text: "Hi" } });
+    receive(transcripts, { type: "turn.created", turn: { id: "a1", role: "assistant" } });
+    receive(transcripts, { type: "output_transcript.added", item: { text: " there" } });
+    transcripts.completeTurn("a1", "assistant");
+    expect(transcripts.takeFinished()).toMatchObject([
+      { turn_id: "a1", text: "Hi there", final_update: true, complete: true },
+    ]);
+  });
+
+  it("clips a turn beyond the history limit without splitting a character, and says so", () => {
+    const transcripts = new RealtimeTranscriptAccumulator();
+    transcripts.bindCall("call-1", true);
+    receive(transcripts, {
+      type: "turn.done",
+      turn: { id: "u1", role: "user", transcript: "🙂".repeat(9000) },
+    });
+    const [frame] = transcripts.takeFinished();
+    expect(frame.text).toBe("🙂".repeat(8192));
+    expect(frame).toMatchObject({ final_update: true, complete: false });
+  });
+
+  it("offers what an orderly end cut off as unfinished, and keeps nothing from a persona call", () => {
+    const transcripts = new RealtimeTranscriptAccumulator();
+    transcripts.bindCall("call-1", true);
+    receive(transcripts, { type: "output_transcript.added", item: { text: "我正在" } });
+    expect(transcripts.takeFinished()).toEqual([]);
+    expect(transcripts.takeUnfinished()).toMatchObject([
+      { role: "assistant", text: "我正在", seq: 1, final_update: false, complete: false },
+    ]);
+    expect(transcripts.takeUnfinished()).toEqual([]);
+
+    const persona = new RealtimeTranscriptAccumulator();
+    persona.bindCall("call-2", false);
+    receive(persona, { type: "turn.done", turn: { id: "u1", role: "user", transcript: "你好" } });
+    receive(persona, { type: "output_transcript.added", item: { text: "嗨" } });
+    expect(persona.takeFinished()).toEqual([]);
+    expect(persona.takeUnfinished()).toEqual([]);
+    expect(persona.history().map((turn) => turn.save)).toEqual([undefined, undefined]);
+  });
+
+  it("shows history's answer for each turn, and an unanswered one as unconfirmed", () => {
+    const transcripts = new RealtimeTranscriptAccumulator();
+    transcripts.bindCall("call-1", true);
+    for (const id of ["u1", "u2", "u3"]) {
+      receive(transcripts, { type: "turn.done", turn: { id, role: "user", transcript: id } });
+    }
+    const [saved, unknown] = transcripts.takeFinished();
+    expect(transcripts.receipt(saved.id, "saved")).toBe(true);
+    expect(transcripts.receipt(saved.id, "not_saved")).toBe(false);
+    expect(transcripts.receipt(unknown.id, "some future answer")).toBe(true);
+    // The socket closed before the third was answered.
+    expect(transcripts.abandonOffered()).toBe(true);
+    expect(transcripts.history().map((turn) => turn.save)).toEqual([
+      "saved",
+      "unconfirmed",
+      "unconfirmed",
+    ]);
+  });
+});

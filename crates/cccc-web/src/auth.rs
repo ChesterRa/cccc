@@ -266,6 +266,7 @@ fn accepts_local_principal(method: &Method, path: &str) -> bool {
 
 fn requires_admin(method: &Method, path: &str) -> bool {
     path.starts_with("/api/v1/local_sessions")
+        || path.starts_with("/api/v1/chet/")
         || path.starts_with("/api/v1/process-recovery/")
         || path.starts_with("/api/v1/voice/asr/providers")
         || path.starts_with("/api/v1/voice/asr/models")

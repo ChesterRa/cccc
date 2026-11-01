@@ -18,6 +18,13 @@ vi.mock("./useCodexVoiceAnalystSettings", () => ({
   useCodexVoiceAnalystSettings: () => ({ hasChanges: false }),
 }));
 
+// The shell hosts Chet, whose polling would otherwise leave real requests open at teardown.
+vi.mock("../chet/useChetConversation", async () => {
+  const { chetConversationStub } = await import("../chet/chetTestSupport");
+  const chet = chetConversationStub();
+  return { useChetConversation: () => chet };
+});
+
 import { useCodexVoiceShell } from "./useCodexVoiceShell";
 import { useModalStore } from "../../stores";
 

@@ -166,7 +166,7 @@ impl CodexVoiceSessions {
                 ));
                 restart::VoiceGateError::ResetRecoveryPending
             })?;
-            replacement.start_monitor(home);
+            replacement.start_monitor(home, Arc::clone(&sessions.chet_history_write_failed));
             sessions.cancel_prepared_restart();
             Ok(replacement.info())
         })
@@ -261,6 +261,8 @@ impl Default for CodexVoiceSessions {
             state: Arc::new(Mutex::new(ManagedState::default())),
             restart_phase: Arc::new(AtomicU8::new(restart::OPEN)),
             cleanup_gate: Arc::new(Mutex::new(())),
+            chet_preparing: Arc::new(StdMutex::new(std::collections::HashSet::new())),
+            chet_history_write_failed: Arc::new(AtomicBool::new(false)),
             process_recovery: None,
         }
     }

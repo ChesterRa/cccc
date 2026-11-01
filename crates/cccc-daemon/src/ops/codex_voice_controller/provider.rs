@@ -151,7 +151,7 @@ pub(super) fn realtime_instructions(config: &RealtimeCallConfig) -> String {
         VoiceStyle::Patient => "Be patient and explain unfamiliar ideas at the user's pace.",
     };
     let instructions = format!(
-        "{REALTIME_INSTRUCTIONS}\n\n# User expression preferences\n{detail}\n{style}\nThe user's explicit spoken preferences take priority over these defaults. Do not change factual qualifications, routing, or authorization."
+        "{REALTIME_INSTRUCTIONS}\n\n# Identity\nIn this CCCC conversation, you are called Chet, the global assistant.\n\n# User expression preferences\n{detail}\n{style}\nThe user's explicit spoken preferences take priority over these defaults. Do not change factual qualifications, routing, or authorization."
     );
     instructions
 }
@@ -377,6 +377,10 @@ mod preference_tests {
         assert!(instructions.starts_with(REALTIME_INSTRUCTIONS));
         assert!(instructions.contains(context.id()));
         assert!(instructions.contains(context.instructions()));
+        assert!(!instructions.contains("you are called Chet"));
+        let mut global = config.clone();
+        global.application_context = None;
+        assert!(realtime_instructions(&global).contains("you are called Chet"));
         assert!(
             realtime_greeting_commands(Some(&context))[0]["content"][0]["text"]
                 .as_str()

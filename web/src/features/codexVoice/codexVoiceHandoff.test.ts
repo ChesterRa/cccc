@@ -67,9 +67,11 @@ describe("Voice task handoff context", () => {
       type: "turn.done",
       turn: { id: "long", role: "user", transcript: raw },
     });
-    expect(update?.truncated).toBe(true);
+    // The parser keeps the whole turn; only what is shown is clipped.
+    expect(update?.text).toBe(raw);
     const speech = new RealtimeTranscriptAccumulator();
     speech.apply(update!);
+    expect(speech.history()[0].text.length).toBeLessThanOrEqual(4000);
     const context = speech.handoffContext("codex:long");
     expect(context.truncated).toBe(true);
     const text = context.messages[0].text;

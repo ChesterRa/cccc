@@ -20,6 +20,7 @@ mod automation_manage;
 mod automation_rule_access;
 pub(crate) mod automation_runtime;
 mod capabilities;
+mod chet_history;
 mod codex_mcp;
 pub(crate) mod codex_voice_analyst;
 pub(crate) mod codex_voice_controller;
@@ -106,6 +107,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         automation_config::resolve_operation,
         assistants::resolve_operation,
         capabilities::resolve_operation,
+        chet_history::resolve_operation,
         messaging::resolve_operation,
         presentation::resolve_operation,
         profiles::resolve_operation,

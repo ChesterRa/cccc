@@ -60,7 +60,7 @@ pub(super) async fn fake_app_server() -> (
                             request["params"]["developerInstructions"]
                                 .as_str()
                                 .is_some_and(|text| {
-                                    text.contains("CCCC Realtime Voice")
+                                    text.contains("You are Chet, CCCC's global assistant")
                                         && text.contains("explicit group_id")
                                 })
                         );

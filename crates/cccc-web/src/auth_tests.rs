@@ -20,6 +20,20 @@ fn process_recovery_requires_an_administrator_for_reads_and_changes() {
 }
 
 #[test]
+fn chet_history_and_inputs_require_administrator_authority() {
+    for method in [Method::GET, Method::HEAD, Method::POST] {
+        for path in [
+            "/api/v1/chet/history",
+            "/api/v1/chet/status",
+            "/api/v1/chet/inputs",
+        ] {
+            assert!(requires_admin(&method, path));
+            assert!(!is_public(&method, path));
+        }
+    }
+}
+
+#[test]
 fn shared_voice_services_require_admin_but_task_controls_follow_the_group() {
     for method in [Method::GET, Method::PUT, Method::POST] {
         assert!(requires_admin(&method, "/api/v1/voice-secretary/settings"));

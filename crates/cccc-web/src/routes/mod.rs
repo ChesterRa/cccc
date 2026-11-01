@@ -6,6 +6,7 @@ mod actors;
 mod assistants;
 mod blob_download;
 mod capabilities;
+mod chet;
 mod codex_voice;
 mod connect;
 mod context;
@@ -122,6 +123,7 @@ pub fn router() -> Router<AppState> {
         .merge(remote_access::routes())
         .merge(settings::routes())
         .merge(capabilities::routes())
+        .merge(chet::routes())
         .merge(streams::routes())
         .merge(realtime::routes())
         .merge(terminal::routes())

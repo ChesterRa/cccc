@@ -280,7 +280,9 @@ async fn antigravity_permissions_and_fifo_use_one_shared_adapter_without_termina
     let requests = std::fs::read_to_string(temp.path().join("fixture_requests.jsonl"))
         .expect("fixture operation");
     assert_eq!(
-        requests.matches("CCCC Realtime Voice").count(),
+        requests
+            .matches("You are Chet, CCCC's global assistant")
+            .count(),
         1,
         "host instructions injected only once"
     );

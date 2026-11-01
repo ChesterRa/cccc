@@ -3,35 +3,71 @@ import {
   processRecoveryOwnersFromDetails,
   type ProcessRecoveryOwner,
 } from "../../services/api/processRecovery";
+import { newClientId } from "../../utils/clientId";
 
 const MAX_VISIBLE_TRANSCRIPT_CHARS = 4_000;
+/** The most UTF-8 bytes Chet history keeps for one turn. */
+const MAX_SAVED_TRANSCRIPT_BYTES = 32 * 1024;
 const MAX_HANDOFF_MESSAGES = 12;
 const MAX_HANDOFF_TEXT_BYTES = 8 * 1024;
 const MAX_HANDOFF_SNAPSHOTS = 64;
 
+/** A provider transcript event, unclipped; the accumulator bounds what it shows. */
 export type RealtimeTranscriptUpdate = {
   role: "user" | "assistant";
   text: string;
   final: boolean;
   turnId?: string;
   replace?: boolean;
-  truncated?: boolean;
 };
+/** What Chet history answered for a turn offered to it. */
+export type TranscriptSaveState = "pending" | "saved" | "not_saved" | "unconfirmed";
 export type VoiceConversationTurn = {
   id: string;
   role: "user" | "assistant";
   text: string;
   final: boolean;
+  /** The call generation, which history records as the turn's call. */
+  callId?: string;
+  /** Present once the turn was offered to Chet history. */
+  save?: TranscriptSaveState;
+};
+/** One turn offered to Chet history over the call's control socket. */
+export type TranscriptFrame = {
+  type: "transcript";
+  id: string;
+  turn_id: string;
+  /** Order in which this call first saw the turn, from 1. */
+  seq: number;
+  role: "user" | "assistant";
+  text: string;
+  /** The provider finished the turn; an orderly end can offer one that never did. */
+  final_update: boolean;
+  /** Finished and nothing clipped. */
+  complete: boolean;
+};
+type TurnRecord = VoiceConversationTurn & {
+  seq: number;
+  /** The turn's own text up to the history limit; `text` is the clipped display copy. */
+  raw: string;
+  rawBytes: number;
+  rawClipped: boolean;
+  offered: boolean;
 };
 export const MAX_CONVERSATION_TURNS = 40;
 
 export class RealtimeTranscriptAccumulator {
-  private turns: VoiceConversationTurn[] = [];
+  private turns: TurnRecord[] = [];
   private historyWasTruncated = false;
   private readonly handoffContexts = new Map<string, VoiceHandoffContext>();
   private readonly activeIds: Partial<Record<RealtimeTranscriptUpdate["role"], string>> = {};
   private readonly provisionalIds: Partial<Record<RealtimeTranscriptUpdate["role"], string>> = {};
   private nextId = 0;
+  private nextSeq = 0;
+  private callId = "";
+  /** Persona calls keep nothing in Chet history. */
+  private recording = false;
+  private readonly offeredTurns = new Map<string, TurnRecord>();
   private activeRole: RealtimeTranscriptUpdate["role"] | null = null;
   private readonly text: Record<RealtimeTranscriptUpdate["role"], string> = {
     user: "",
@@ -55,8 +91,79 @@ export class RealtimeTranscriptAccumulator {
     if (!entry.final) this.activeIds[turn.role] = turn.id;
   }
 
+  /** Binds turns to their call; only an assistant call records them in Chet history. */
+  bindCall(callId: string, record: boolean): void {
+    this.callId = callId;
+    this.recording = record;
+  }
+
   history(): VoiceConversationTurn[] {
-    return this.turns.filter((turn) => turn.text.trim()).map((turn) => ({ ...turn }));
+    return this.turns
+      .filter((turn) => turn.text.trim())
+      .map(({ id, role, text, final, save }) => ({
+        id,
+        role,
+        text,
+        final,
+        ...(this.callId ? { callId: this.callId } : {}),
+        ...(save ? { save } : {}),
+      }));
+  }
+
+  /** Finished turns not yet offered to history, each offered once. */
+  takeFinished(): TranscriptFrame[] {
+    return this.offer((turn) => turn.final, true);
+  }
+
+  /** At an orderly end: turns the provider never finished, offered as they stand. */
+  takeUnfinished(): TranscriptFrame[] {
+    return this.offer((turn) => !turn.final, false);
+  }
+
+  /** Applies history's answer for one frame; returns whether a turn changed. */
+  receipt(frameId: string, result: unknown): boolean {
+    const turn = this.offeredTurns.get(frameId);
+    if (!turn) return false;
+    this.offeredTurns.delete(frameId);
+    turn.save = result === "saved" || result === "not_saved" ? result : "unconfirmed";
+    return true;
+  }
+
+  /** The control socket closed: frames without an answer may or may not have been kept. */
+  abandonOffered(): boolean {
+    if (!this.offeredTurns.size) return false;
+    for (const turn of this.offeredTurns.values()) turn.save = "unconfirmed";
+    this.offeredTurns.clear();
+    return true;
+  }
+
+  private offer(select: (turn: TurnRecord) => boolean, finished: boolean): TranscriptFrame[] {
+    if (!this.recording) return [];
+    const frames: TranscriptFrame[] = [];
+    for (const turn of this.turns) {
+      if (turn.offered || !select(turn)) continue;
+      const text = turn.raw.trim();
+      if (!text) {
+        // A finished turn with no words has nothing to keep.
+        if (finished) turn.offered = true;
+        continue;
+      }
+      turn.offered = true;
+      turn.save = "pending";
+      const frame: TranscriptFrame = {
+        type: "transcript",
+        id: newClientId(),
+        turn_id: turn.id,
+        seq: turn.seq,
+        role: turn.role,
+        text,
+        final_update: finished,
+        complete: finished && !turn.rawClipped,
+      };
+      this.offeredTurns.set(frame.id, turn);
+      frames.push(frame);
+    }
+    return frames;
   }
 
   handoffContext(delegationId?: string): VoiceHandoffContext {
@@ -124,7 +231,7 @@ export class RealtimeTranscriptAccumulator {
     id: string,
     role: RealtimeTranscriptUpdate["role"],
     adoptProvisional = false,
-  ): VoiceConversationTurn {
+  ): TurnRecord {
     let turn = this.turns.find((candidate) => candidate.id === id);
     if (!turn && adoptProvisional) {
       // The first transcript delta can precede turn.created (or only turn.done
@@ -138,7 +245,17 @@ export class RealtimeTranscriptAccumulator {
       delete this.provisionalIds[role];
     }
     if (!turn) {
-      turn = { id, role, text: "", final: false };
+      turn = {
+        id,
+        role,
+        text: "",
+        final: false,
+        seq: ++this.nextSeq,
+        raw: "",
+        rawBytes: 0,
+        rawClipped: false,
+        offered: false,
+      };
       this.turns.push(turn);
       if (this.turns.length > MAX_CONVERSATION_TURNS) this.historyWasTruncated = true;
       this.turns = this.turns.slice(-MAX_CONVERSATION_TURNS);
@@ -151,9 +268,11 @@ export class RealtimeTranscriptAccumulator {
     const activeId = this.activeIds[role];
     const id = update.turnId || activeId || `local-${++this.nextId}`;
     const turn = this.ensureTurn(id, role, !!update.turnId);
+    const whole = update.final || update.replace;
+    if (whole) setRaw(turn, update.final ? update.text.trim() : update.text);
+    else appendRaw(turn, update.text);
     if (
-      update.truncated ||
-      update.text.length > MAX_VISIBLE_TRANSCRIPT_CHARS ||
+      (whole ? update.text.trim() : update.text).length > MAX_VISIBLE_TRANSCRIPT_CHARS ||
       (!update.final &&
         !update.replace &&
         turn.text.length + update.text.length > MAX_VISIBLE_TRANSCRIPT_CHARS)
@@ -234,32 +353,48 @@ export function realtimeTranscriptUpdate(
   }
   if (type === "input_transcript.added" || type === "output_transcript.added") {
     const item = asRecord(event.item);
-    const text = boundedDelta(item?.text);
+    const text = typeof item?.text === "string" ? item.text : "";
     if (!text) return null;
-    return {
-      role: type === "input_transcript.added" ? "user" : "assistant",
-      text,
-      final: false,
-      ...(typeof item?.text === "string" && item.text.length > MAX_VISIBLE_TRANSCRIPT_CHARS
-        ? { truncated: true }
-        : {}),
-    };
+    return { role: type === "input_transcript.added" ? "user" : "assistant", text, final: false };
   }
   if (type !== "turn.done") return null;
   const turn = asRecord(event.turn);
   const role = turn?.role === "user" ? "user" : turn?.role === "assistant" ? "assistant" : null;
-  const text = boundedText(turn?.transcript);
   return role && typeof turn?.transcript === "string"
     ? {
         role,
-        text,
+        text: turn.transcript.trim(),
         final: true,
         ...(typeof turn.id === "string" ? { turnId: turn.id } : {}),
-        ...(turn.transcript.trim().length > MAX_VISIBLE_TRANSCRIPT_CHARS
-          ? { truncated: true }
-          : {}),
       }
     : null;
+}
+
+function setRaw(turn: TurnRecord, text: string): void {
+  const kept = utf8Prefix(text, MAX_SAVED_TRANSCRIPT_BYTES);
+  turn.raw = kept.text;
+  turn.rawBytes = kept.bytes;
+  turn.rawClipped = kept.clipped;
+}
+
+function appendRaw(turn: TurnRecord, delta: string): void {
+  if (turn.rawClipped) return;
+  const kept = utf8Prefix(delta, MAX_SAVED_TRANSCRIPT_BYTES - turn.rawBytes);
+  turn.raw += kept.text;
+  turn.rawBytes += kept.bytes;
+  turn.rawClipped = kept.clipped;
+}
+
+/** The longest prefix within `maxBytes` of UTF-8 that does not split a code point. */
+function utf8Prefix(
+  text: string,
+  maxBytes: number,
+): { text: string; bytes: number; clipped: boolean } {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= maxBytes) return { text, bytes: bytes.length, clipped: false };
+  let end = Math.max(0, maxBytes);
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  return { text: new TextDecoder().decode(bytes.subarray(0, end)), bytes: end, clipped: true };
 }
 
 export function eventStreamCloseCode(lastServerErrorCode: string): string {

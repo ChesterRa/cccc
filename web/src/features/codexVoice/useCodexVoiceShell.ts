@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useGroupStore } from "../../stores";
+import type { ChetGroupContext } from "../../services/api/chet";
+import { useChetConversation } from "../chet/useChetConversation";
 import { useCodexVoiceSessionController } from "./useCodexVoiceSessionController";
 import { useCodexVoiceAnalystSettings } from "./useCodexVoiceAnalystSettings";
 
@@ -10,10 +13,32 @@ export function useCodexVoiceShell(enabled: boolean) {
     enabled && analystSettingsActive,
     controller,
   );
+  const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
+  const groupDoc = useGroupStore((state) => state.groupDoc);
+  const groups = useGroupStore((state) => state.groups);
+  // The open group, as a label Chet carries with a message; it grants nothing.
+  const currentContext = useMemo<ChetGroupContext | null>(() => {
+    const groupId = String(selectedGroupId || "").trim();
+    if (!groupId) return null;
+    const doc = groupDoc?.group_id === groupId ? groupDoc : null;
+    const title =
+      doc?.title?.trim() ||
+      groups.find((group) => group.group_id === groupId)?.title?.trim() ||
+      groupId;
+    return { group_id: groupId, group_title: title, scope_key: doc?.active_scope_key || null };
+  }, [groupDoc, groups, selectedGroupId]);
+  const chet = useChetConversation({
+    enabled,
+    open: detailsOpen,
+    currentContext,
+    // The first send can start the shared Analyst; read it so its status shows.
+    onRegistered: () => void controller.refresh(false),
+  });
   return {
     controller,
     analystSettings,
     setAnalystSettingsActive,
+    chet,
     detailsOpen,
     start: () => {
       if (!controller.isEngaged) void controller.start();

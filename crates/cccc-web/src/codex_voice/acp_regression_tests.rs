@@ -16,6 +16,7 @@ pub(super) fn isolated_child(name: &str) -> bool {
         .env("CCCC_TEST_VOICE_ACP_CHILD", "1")
         .env("CCCC_LAUNCHER_PATH", launcher)
         .env("HOME", temp.path().join("provider-home"))
+        .env("CCCC_HOME", temp.path().join("cccc-home"))
         .env("CODEX_HOME", temp.path().join("codex"))
         .env("GROK_HOME", temp.path().join("grok"))
         .env_remove("GROK_AUTH_PATH")
@@ -45,6 +46,30 @@ pub(super) async fn fixture() -> (
 }
 
 async fn fixture_with_source(
+    source: &str,
+) -> (
+    tempfile::TempDir,
+    HomeLayout,
+    CodexVoiceSessions,
+    CodexVoiceAnalystSettings,
+    BTreeMap<String, String>,
+) {
+    let (temp, home, sessions, settings, env) = cold_fixture_with_source(source);
+    let runtime = Arc::new(
+        persistence::launch_analyst(&home)
+            .await
+            .expect("warm Analyst"),
+    );
+    runtime.start_monitor(
+        home.clone(),
+        Arc::clone(&sessions.chet_history_write_failed),
+    );
+    persistence::persist_analyst(&home, &runtime, false).expect("empty receipt");
+    sessions.state.lock().await.analyst = Some(runtime);
+    (temp, home, sessions, settings, env)
+}
+
+fn cold_fixture_with_source(
     source: &str,
 ) -> (
     tempfile::TempDir,
@@ -91,16 +116,996 @@ async fn fixture_with_source(
     ]);
     cccc_core::codex_voice_settings::save(&home, &settings).expect("settings");
     cccc_core::codex_voice_settings::replace_private_environment(&home, &env).expect("env");
-    let runtime = Arc::new(
-        persistence::launch_analyst(&home)
-            .await
-            .expect("warm Analyst"),
-    );
-    runtime.start_monitor(home.clone());
-    persistence::persist_analyst(&home, &runtime, false).expect("empty receipt");
     let sessions = CodexVoiceSessions::default();
-    sessions.state.lock().await.analyst = Some(runtime);
     (temp, home, sessions, settings, env)
+}
+
+struct ChetHttpFixture {
+    _temp: tempfile::TempDir,
+    home: HomeLayout,
+    router: axum::Router,
+    state: crate::AppState,
+    token: String,
+    client: cccc_client::DaemonClient,
+    daemon: tokio::task::JoinHandle<anyhow::Result<()>>,
+}
+
+impl ChetHttpFixture {
+    async fn new() -> Self {
+        let source = include_str!(
+            "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/native_acp_fixture.py"
+        );
+        let (temp, home, _, _, _) = cold_fixture_with_source(source);
+        let daemon_home = home.clone();
+        let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        let client =
+            cccc_client::DaemonClient::new(home.clone()).with_timeout(Duration::from_secs(2));
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !client
+                .call(&chet_daemon_request("ping", json!({})))
+                .await
+                .is_ok_and(|r| r.ok)
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("fixture daemon ready");
+        let tokens = cccc_core::access_tokens::AccessTokenStore::new(home.clone()).expect("tokens");
+        let token = tokens
+            .create("admin", vec![], true, None)
+            .expect("admin")
+            .token;
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let (router, _, _, state, _) = crate::app_with_shutdown_and_recovery(
+            home.clone(),
+            shutdown,
+            crate::WebMode::Normal,
+            None,
+            crate::LiveBinding {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            "fixture".into(),
+            None,
+        );
+        Self {
+            _temp: temp,
+            home,
+            router,
+            state,
+            token,
+            client,
+            daemon,
+        }
+    }
+
+    async fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Value,
+    ) -> (axum::http::StatusCode, Value) {
+        use tower::ServiceExt;
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header(
+                axum::http::header::AUTHORIZATION,
+                format!("Bearer {}", self.token),
+            )
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(body.to_string()))
+            .expect("request");
+        let response = self
+            .router
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("response");
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("body");
+        (
+            status,
+            serde_json::from_slice(&bytes).expect("JSON response"),
+        )
+    }
+
+    async fn wait_for(&self, id: uuid::Uuid, kind: &str) -> Vec<Value> {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let (status, value) = self
+                    .request("GET", &format!("/api/v1/chet/inputs/{id}"), json!(null))
+                    .await;
+                assert_eq!(status, axum::http::StatusCode::OK);
+                let records = value["result"]["records"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                if records.iter().any(|record| record["kind"] == kind) {
+                    break records;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("expected history fact")
+    }
+
+    async fn stop(self) {
+        self.state
+            .codex_voice
+            .shutdown()
+            .await
+            .expect("stop fixture Analyst");
+        self.client
+            .call(&chet_daemon_request("shutdown", json!({})))
+            .await
+            .expect("daemon shutdown");
+        tokio::time::timeout(Duration::from_secs(10), self.daemon)
+            .await
+            .expect("daemon stops")
+            .expect("daemon task")
+            .expect("daemon result");
+    }
+}
+
+fn chet_daemon_request(op: &str, args: Value) -> cccc_contracts::DaemonRequest {
+    cccc_contracts::DaemonRequest {
+        v: 1,
+        op: op.into(),
+        args: args.as_object().expect("object").clone(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_http_submits_once_and_exposes_history_without_a_voice_call() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_http_submits_once_and_exposes_history_without_a_voice_call",
+    ) {
+        return;
+    }
+    let fixture = ChetHttpFixture::new().await;
+    let (status, empty) = fixture
+        .request("GET", "/api/v1/chet/history", json!(null))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(empty["result"]["records"], json!([]));
+    assert!(!fixture.home.root().join("state/chet").exists());
+
+    let id = uuid::Uuid::new_v4();
+    let body = json!({"id":id,"request":{"text":"HTTP fixture request","context":null}});
+    let (status, first) = fixture
+        .request("POST", "/api/v1/chet/inputs", body.clone())
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(first["result"]["registration"], "inserted");
+    let (status, duplicate) = fixture.request("POST", "/api/v1/chet/inputs", body).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(duplicate["result"]["registration"], "existing");
+    let records = fixture.wait_for(id, "result").await;
+    assert_eq!(records.iter().filter(|r| r["kind"] == "input").count(), 1);
+    assert_eq!(records.iter().filter(|r| r["kind"] == "receipt").count(), 1);
+    assert!(records.iter().any(|r| {
+        r["kind"] == "result"
+            && r["outcome"]["text"]
+                .as_str()
+                .is_some_and(|s| s.contains("HTTP fixture request"))
+    }));
+    let requests = cccc_core::codex_voice_settings::workdir(&fixture.home)
+        .expect("workdir")
+        .join("fixture_requests.jsonl");
+    let prompt_count = std::fs::read_to_string(requests)
+        .expect("fixture requests")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|request| request["method"] == "session/prompt")
+        .count();
+    assert_eq!(prompt_count, 1);
+    assert!(fixture.state.codex_voice.current().await.call.is_none());
+    fixture.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_http_reports_a_known_pre_admission_failure() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_http_reports_a_known_pre_admission_failure",
+    ) {
+        return;
+    }
+    let fixture = ChetHttpFixture::new().await;
+    std::fs::remove_file(fixture._temp.path().join("devin")).expect("remove fake Runtime");
+    let id = uuid::Uuid::new_v4();
+    let body = json!({"id":id,"request":{"text":"not submitted","context":null}});
+    let (status, first) = fixture
+        .request("POST", "/api/v1/chet/inputs", body.clone())
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(first["result"]["registration"], "inserted");
+    let records = fixture.wait_for(id, "not_started").await;
+    assert!(
+        records
+            .iter()
+            .any(|r| r["kind"] == "not_started" && r["reason"] == "assistant_unavailable")
+    );
+    assert!(
+        !records
+            .iter()
+            .any(|r| matches!(r["kind"].as_str(), Some("receipt" | "result")))
+    );
+    let (_, retry) = fixture.request("POST", "/api/v1/chet/inputs", body).await;
+    assert_eq!(retry["result"]["registration"], "existing");
+    fixture.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_text_reuses_an_existing_assistant_voice_owner() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_text_reuses_an_existing_assistant_voice_owner",
+    ) {
+        return;
+    }
+    let fixture = ChetHttpFixture::new().await;
+    let runtime = Arc::new(
+        persistence::launch_analyst(&fixture.home)
+            .await
+            .expect("fake Analyst"),
+    );
+    runtime.start_monitor(
+        fixture.home.clone(),
+        Arc::clone(&fixture.state.codex_voice.chet_history_write_failed),
+    );
+    persistence::persist_analyst(&fixture.home, &runtime, false).expect("persist fixture owner");
+    fixture.state.codex_voice.state.lock().await.analyst = Some(Arc::clone(&runtime));
+    let call =
+        local_assistant_call(&fixture.home, &fixture.state.codex_voice, &runtime, false).await;
+    let id = uuid::Uuid::new_v4();
+    let body = json!({"id":id,"request":{"text":"text while Voice is active","context":null}});
+    assert_eq!(
+        fixture.request("POST", "/api/v1/chet/inputs", body).await.0,
+        axum::http::StatusCode::OK
+    );
+    let records = fixture.wait_for(id, "result").await;
+    assert!(records.iter().any(|record| {
+        record["kind"] == "result"
+            && record["outcome"]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("text while Voice is active"))
+    }));
+    let state = fixture.state.codex_voice.state.lock().await;
+    assert!(
+        state
+            .active
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, &call))
+    );
+    assert!(
+        state
+            .analyst
+            .as_ref()
+            .is_some_and(|analyst| Arc::ptr_eq(analyst, &runtime))
+    );
+    drop(state);
+    fixture.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_cancel_records_runtime_outcome_and_unsent_queue_separately() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_cancel_records_runtime_outcome_and_unsent_queue_separately",
+    ) {
+        return;
+    }
+    let fixture = ChetHttpFixture::new().await;
+    let active = uuid::Uuid::new_v4();
+    let queued = uuid::Uuid::new_v4();
+    let first = json!({"id":active,"request":{"text":"HOLD active Chet task","context":null}});
+    assert_eq!(
+        fixture
+            .request("POST", "/api/v1/chet/inputs", first)
+            .await
+            .0,
+        axum::http::StatusCode::OK
+    );
+    fixture.wait_for(active, "receipt").await;
+    let second = json!({"id":queued,"request":{"text":"queued Chet task","context":null}});
+    assert_eq!(
+        fixture
+            .request("POST", "/api/v1/chet/inputs", second)
+            .await
+            .0,
+        axum::http::StatusCode::OK
+    );
+    let generation = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let (_, status) = fixture
+                .request("GET", "/api/v1/chet/status", json!(null))
+                .await;
+            if status["result"]["queued"]
+                .as_array()
+                .is_some_and(|ids| ids.contains(&json!(queued)))
+            {
+                break status["result"]["generation"]
+                    .as_str()
+                    .expect("generation")
+                    .to_owned();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("input queued");
+    let (status, accepted) = fixture
+        .request(
+            "POST",
+            &format!("/api/v1/codex_voice/analysts/{generation}/cancel"),
+            json!(null),
+        )
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(accepted["result"]["cancelled"], true);
+    let first_facts = fixture.wait_for(active, "result").await;
+    assert!(
+        first_facts
+            .iter()
+            .any(|record| record["kind"] == "result" && record["outcome"]["status"] == "cancelled")
+    );
+    let second_facts = fixture.wait_for(queued, "not_started").await;
+    assert!(
+        second_facts
+            .iter()
+            .any(|record| record["kind"] == "not_started" && record["reason"] == "cancelled")
+    );
+    assert!(
+        !second_facts
+            .iter()
+            .any(|record| matches!(record["kind"].as_str(), Some("receipt" | "result")))
+    );
+    let requests = cccc_core::codex_voice_settings::workdir(&fixture.home)
+        .expect("workdir")
+        .join("fixture_requests.jsonl");
+    let prompts = std::fs::read_to_string(requests).expect("fixture requests");
+    assert!(!prompts.contains("queued Chet task"));
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn chet_status_does_not_wait_for_an_analyst_launch() {
+    let sessions = CodexVoiceSessions::new();
+    let id = uuid::Uuid::new_v4();
+    let _preparing = sessions.track_chet_preparation(id);
+    let lock = sessions.state.lock().await;
+    let status = tokio::time::timeout(Duration::from_millis(100), sessions.chet_status())
+        .await
+        .expect("status must not wait behind the launching owner");
+    assert_eq!(status["owner_busy"], true);
+    assert_eq!(status["preparing"], json!([id]));
+    drop(lock);
+    assert_eq!(sessions.chet_status().await["owner_busy"], false);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_history_write_does_not_hold_up_voice_analyst_events() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_history_write_does_not_hold_up_voice_analyst_events",
+    ) {
+        return;
+    }
+    let (_temp, home, sessions, _, _) = fixture().await;
+    let socket_path = home.daemon_dir().join("chet-test.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).expect("fake daemon socket");
+    let address = json!({"v":1,"transport":"unix","path":socket_path,
+        "host":"","port":0,"pid":std::process::id(),"version":"test","ts":"test"});
+    std::fs::write(
+        home.daemon_dir().join("ccccd.addr.json"),
+        address.to_string(),
+    )
+    .expect("fake daemon address");
+    let (accepted, wait_accepted) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.expect("history writer connects");
+        let _ = accepted.send(());
+        std::future::pending::<()>().await;
+    });
+    let id = uuid::Uuid::new_v4();
+    let request = cccc_core::chet_history::TextRequest {
+        text: "nonblocking history fixture".into(),
+        context: None,
+    };
+    sessions
+        .submit_chet_input(&home, id, &request)
+        .await
+        .expect("submit");
+    tokio::time::timeout(Duration::from_secs(2), wait_accepted)
+        .await
+        .expect("history writer reached daemon")
+        .expect("accept event");
+    let analyst = sessions
+        .state
+        .lock()
+        .await
+        .analyst
+        .clone()
+        .expect("Analyst");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !analyst
+            .info()
+            .last_result
+            .contains("nonblocking history fixture")
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Voice projection must not wait for stalled history IPC");
+    let status = sessions.chet_status().await;
+    assert!(
+        status["working"]
+            .as_array()
+            .expect("working IDs")
+            .contains(&json!(id)),
+        "a completed turn remains visible while its history write is blocked: {status}"
+    );
+    server.abort();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let status = sessions.chet_status().await;
+            if status["history_write_failed"] == true
+                && !status["working"]
+                    .as_array()
+                    .expect("working IDs")
+                    .contains(&json!(id))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("failed write must be visible before the input leaves working");
+    sessions.shutdown().await.expect("stop fixture Analyst");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_voice_socket_records_observed_transcript_with_acknowledgement() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_voice_socket_records_observed_transcript_with_acknowledgement",
+    ) {
+        return;
+    }
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+
+    let fixture = ChetHttpFixture::new().await;
+    let runtime = Arc::new(
+        persistence::launch_analyst(&fixture.home)
+            .await
+            .expect("fake Analyst"),
+    );
+    runtime.start_monitor(
+        fixture.home.clone(),
+        Arc::clone(&fixture.state.codex_voice.chet_history_write_failed),
+    );
+    persistence::persist_analyst(&fixture.home, &runtime, false).expect("persist fixture owner");
+    fixture.state.codex_voice.state.lock().await.analyst = Some(Arc::clone(&runtime));
+    let session =
+        local_assistant_call(&fixture.home, &fixture.state.codex_voice, &runtime, false).await;
+    let generation = session.call.generation().to_owned();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Web listener");
+    let address = listener.local_addr().expect("address");
+    let web_router = fixture.router.clone();
+    let web = tokio::spawn(async move {
+        axum::serve(listener, web_router).await.expect("serve");
+    });
+    let mut request = format!("ws://{address}/api/v1/codex_voice/calls/{generation}/events")
+        .into_client_request()
+        .expect("socket request");
+    request.headers_mut().insert(
+        "Authorization",
+        format!("Bearer {}", fixture.token).parse().expect("header"),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("Voice socket");
+    let id = uuid::Uuid::new_v4();
+    let message = json!({"type":"transcript","id":id,"turn_id":"local-1","seq":1,
+        "role":"user","text":"an observed transcript","final_update":true,"complete":true});
+    for (value, expected) in [
+        (message.clone(), "saved"),
+        (message.clone(), "saved"),
+        (
+            json!({"type":"transcript","id":id,"turn_id":"local-1","seq":1,
+                 "role":"user","text":"different","final_update":true,"complete":true}),
+            "not_saved",
+        ),
+    ] {
+        socket
+            .send(Message::Text(value.to_string().into()))
+            .await
+            .expect("send transcript");
+        let receipt = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let Message::Text(text) = socket.next().await.expect("frame").expect("socket")
+                else {
+                    continue;
+                };
+                let value: Value = serde_json::from_str(&text).expect("JSON");
+                if value["type"] == "transcript_receipt" && value["id"] == id.to_string() {
+                    break value;
+                }
+            }
+        })
+        .await
+        .expect("receipt");
+        assert_eq!(receipt["result"], expected);
+    }
+    let (_, history) = fixture
+        .request("GET", "/api/v1/chet/history", json!(null))
+        .await;
+    let records = history["result"]["records"].as_array().expect("records");
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["kind"] == "transcript")
+            .count(),
+        1
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| record["transcript"]["call_id"] == generation
+                && record["transcript"]["text"] == "an observed transcript"
+                && record["transcript"]["complete"] == true)
+    );
+    let delegation = json!({"type":"provider_event","event":{"type":"delegation.created","item":{
+        "type":"delegation","target":"client","id":"voice-fixture-request",
+        "content":[{"type":"input_text","text":"inspect the spoken request"}]}}});
+    socket
+        .send(Message::Text(delegation.to_string().into()))
+        .await
+        .expect("send fake Voice delegation");
+    let mut last_facts = Vec::new();
+    let facts = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, history) = fixture
+                .request("GET", "/api/v1/chet/history", json!(null))
+                .await;
+            let records = history["result"]["records"]
+                .as_array()
+                .cloned()
+                .expect("records");
+            last_facts = records
+                .iter()
+                .map(|record| {
+                    json!({"kind":record["kind"],"id":record["id"],
+                "input_id":record["input_id"],"input_ids":record["input_ids"]})
+                })
+                .collect();
+            let observed = records
+                .iter()
+                .find(|record| record["kind"] == "voice_delegation");
+            if let Some(observed) = observed {
+                let id = &observed["id"];
+                let receipt = records
+                    .iter()
+                    .any(|record| record["kind"] == "receipt" && &record["input_id"] == id);
+                let result = records.iter().any(|record| {
+                    record["kind"] == "result"
+                        && record["input_ids"]
+                            .as_array()
+                            .is_some_and(|ids| ids.contains(id))
+                });
+                if receipt && result {
+                    break records;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    let facts = match facts {
+        Ok(facts) => facts,
+        Err(_) => {
+            let mut messages = Vec::new();
+            while let Ok(Some(Ok(Message::Text(text)))) =
+                tokio::time::timeout(Duration::from_millis(50), socket.next()).await
+            {
+                if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                    messages.push(json!({"type":value["type"],"code":value["code"]}));
+                }
+            }
+            let info = runtime.info();
+            panic!(
+                "Voice facts did not converge: {last_facts:?}; socket={messages:?}; phase={} warning={}",
+                info.phase, info.warning
+            );
+        }
+    };
+    assert!(
+        facts
+            .iter()
+            .any(|record| record["kind"] == "voice_delegation"
+                && record["delegation"]["call_id"] == generation
+                && record["delegation"]["text"] == "inspect the spoken request")
+    );
+    assert!(facts.iter().any(|record| {
+        record["kind"] == "result"
+            && record["outcome"]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("inspect the spoken request"))
+    }));
+    let hold = json!({"type":"provider_event","event":{"type":"delegation.created","item":{
+        "type":"delegation","target":"client","id":"voice-fixture-held",
+        "content":[{"type":"input_text","text":"HOLD voice status fixture"}]}}});
+    socket
+        .send(Message::Text(hold.to_string().into()))
+        .await
+        .expect("send held Voice task");
+    let (held_id, analyst_generation) = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, history) = fixture
+                .request("GET", "/api/v1/chet/history", json!(null))
+                .await;
+            let records = history["result"]["records"].as_array().expect("records");
+            let observed = records.iter().find(|record| {
+                record["kind"] == "voice_delegation"
+                    && record["delegation"]["delegation_id"] == "voice-fixture-held"
+            });
+            if let Some(observed) = observed {
+                let id = &observed["id"];
+                let has_receipt = records
+                    .iter()
+                    .any(|record| record["kind"] == "receipt" && &record["input_id"] == id);
+                let (_, status) = fixture
+                    .request("GET", "/api/v1/chet/status", json!(null))
+                    .await;
+                if has_receipt
+                    && status["result"]["working"]
+                        .as_array()
+                        .is_some_and(|ids| ids.contains(id))
+                {
+                    break (
+                        id.as_str().expect("voice id").to_owned(),
+                        status["result"]["generation"]
+                            .as_str()
+                            .expect("Analyst generation")
+                            .to_owned(),
+                    );
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("held Voice task is visible as working");
+    assert_eq!(
+        fixture
+            .request(
+                "POST",
+                &format!("/api/v1/codex_voice/analysts/{analyst_generation}/cancel"),
+                json!(null)
+            )
+            .await
+            .0,
+        axum::http::StatusCode::OK
+    );
+    let held_facts = fixture
+        .wait_for(uuid::Uuid::parse_str(&held_id).expect("voice id"), "result")
+        .await;
+    assert!(
+        held_facts
+            .iter()
+            .any(|record| record["kind"] == "result" && record["outcome"]["status"] == "cancelled")
+    );
+    socket.close(None).await.expect("close socket");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while fixture
+            .state
+            .codex_voice
+            .state
+            .lock()
+            .await
+            .active
+            .is_some()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("assistant call closed");
+
+    let context = cccc_contracts::codex_voice::VoiceApplicationContext::new_with_mode(
+        "persona-fixture".into(),
+        "local only".into(),
+        cccc_contracts::codex_voice::VoiceCallMode::Persona,
+    )
+    .expect("persona context");
+    let call = Arc::new(
+        CodexVoiceCall::start(&fixture.home, None, Some(context))
+            .await
+            .expect("persona lease"),
+    );
+    let persona_generation = call.generation().to_owned();
+    fixture.state.codex_voice.state.lock().await.active = Some(Arc::new(ActiveSession {
+        provider_connection: None,
+        verbosity: Default::default(),
+        notification_paused: tokio::sync::watch::channel(false).0,
+        call,
+        analyst: None,
+        client_session_id: "persona".into(),
+        offer_digest: [0; 32],
+        answer_sdp: String::new(),
+        voice: "cove".into(),
+        connection_state: AtomicU8::new(CONNECTION_UNATTACHED),
+    }));
+    let mut request =
+        format!("ws://{address}/api/v1/codex_voice/calls/{persona_generation}/events")
+            .into_client_request()
+            .expect("persona request");
+    request.headers_mut().insert(
+        "Authorization",
+        format!("Bearer {}", fixture.token).parse().expect("header"),
+    );
+    let (mut persona, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("persona socket");
+    let persona_id = uuid::Uuid::new_v4();
+    let persona_text = json!({"type":"transcript","id":persona_id,"turn_id":"persona-1","seq":1,
+        "role":"user","text":"persona stays separate","final_update":true,"complete":true});
+    persona
+        .send(Message::Text(persona_text.to_string().into()))
+        .await
+        .expect("persona transcript");
+    let receipt = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let Message::Text(text) = persona.next().await.expect("frame").expect("socket") else {
+                continue;
+            };
+            let value: Value = serde_json::from_str(&text).expect("JSON");
+            if value["type"] == "transcript_receipt" && value["id"] == persona_id.to_string() {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("persona receipt");
+    assert_eq!(receipt["result"], "not_saved");
+    let (_, history) = fixture
+        .request("GET", "/api/v1/chet/history", json!(null))
+        .await;
+    assert!(
+        !history["result"]["records"]
+            .as_array()
+            .expect("records")
+            .iter()
+            .any(|r| r["id"] == persona_id.to_string())
+    );
+    persona.close(None).await.expect("close persona");
+    web.abort();
+    fixture.stop().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn text_preparation_starts_without_realtime_and_voice_reuses_its_owner() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::text_preparation_starts_without_realtime_and_voice_reuses_its_owner",
+    ) {
+        return;
+    }
+    let source = include_str!(
+        "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/native_acp_fixture.py"
+    );
+    let (temp, home, sessions, _, _) = cold_fixture_with_source(source);
+    let state = Arc::clone(&sessions.state).lock_owned().await;
+    let (state, analyst) = sessions
+        .prepare_analyst_locked(&home, state)
+        .await
+        .expect("prepare text Analyst without Realtime credentials");
+    assert!(
+        state.active.is_none(),
+        "text preparation must not open a call"
+    );
+    assert!(
+        state
+            .analyst
+            .as_ref()
+            .is_some_and(|owner| Arc::ptr_eq(owner, &analyst)),
+        "the manager must retain the text Analyst"
+    );
+    drop(state);
+
+    // A missing local credential stops the synthetic call after owner selection;
+    // no provider is contacted. The owner chosen for Voice must be the one
+    // created for text, even when opening the recording/call fails afterwards.
+    let config = RealtimeCallConfig {
+        provider: cccc_contracts::codex_voice::VoiceProvider::Codex,
+        grok_executable: None,
+        auth_path: temp.path().join("missing-auth.json"),
+        base_url: "http://127.0.0.1:1".into(),
+        voice: "cove".into(),
+        preferences: Default::default(),
+        application_context: None,
+    };
+    let error = match sessions
+        .start_with_realtime(&home, "text-first", "offer", config)
+        .await
+    {
+        Ok(_) => panic!("the fixture deliberately has no Realtime credentials"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(
+            error.downcast_ref::<super::start_error::StartStage>(),
+            Some(super::start_error::StartStage::Realtime)
+        ),
+        "Voice must pass Analyst selection before the fixture fails: {error:#}"
+    );
+    let state = sessions.state.lock().await;
+    assert!(state.active.is_none());
+    assert!(
+        state
+            .analyst
+            .as_ref()
+            .is_some_and(|owner| Arc::ptr_eq(owner, &analyst)),
+        "a later Voice start must reuse the text Analyst"
+    );
+    drop(state);
+    sessions.shutdown().await.expect("stop fixture owner");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn text_input_reaches_the_cold_analyst_without_opening_voice() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::text_input_reaches_the_cold_analyst_without_opening_voice",
+    ) {
+        return;
+    }
+    let source = include_str!(
+        "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/native_acp_fixture.py"
+    );
+    let (_temp, home, sessions, _, _) = cold_fixture_with_source(source);
+    let id = uuid::Uuid::new_v4();
+    let request = cccc_core::chet_history::TextRequest {
+        text: "inspect the fixture".into(),
+        context: None,
+    };
+    sessions
+        .submit_chet_input(&home, id, &request)
+        .await
+        .expect("submit text to isolated Analyst");
+    let requests = cccc_core::codex_voice_settings::workdir(&home)
+        .expect("workdir")
+        .join("fixture_requests.jsonl");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let found = std::fs::read_to_string(&requests)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .any(|message| {
+                    message["method"] == "session/prompt"
+                        && message["params"]["prompt"][0]["text"]
+                            .as_str()
+                            .is_some_and(|text| text.contains("inspect the fixture"))
+                });
+            if found {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the fake Runtime received the input");
+    assert!(sessions.state.lock().await.active.is_none());
+    sessions.shutdown().await.expect("stop fixture owner");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_input_records_runtime_receipt_and_result_through_daemon() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_input_records_runtime_receipt_and_result_through_daemon",
+    ) {
+        return;
+    }
+    let source = include_str!(
+        "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/native_acp_fixture.py"
+    );
+    let (_temp, home, sessions, _, _) = cold_fixture_with_source(source);
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = cccc_client::DaemonClient::new(home.clone()).with_timeout(Duration::from_secs(2));
+    let request = |op: &str, args: Value| cccc_contracts::DaemonRequest {
+        v: 1,
+        op: op.into(),
+        args: args.as_object().expect("fixture object").clone(),
+    };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !client
+            .call(&request("ping", json!({})))
+            .await
+            .is_ok_and(|reply| reply.ok)
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("fixture daemon ready");
+    let id = uuid::Uuid::new_v4();
+    let input = cccc_core::chet_history::TextRequest {
+        text: "inspect the fixture".into(),
+        context: None,
+    };
+    let register = request(
+        "chet_history_register",
+        json!({"by":"user","id":id,"request":input}),
+    );
+    let registered = client.call(&register).await.expect("register");
+    assert_eq!(registered.result["registration"], "inserted");
+    sessions
+        .submit_chet_input(&home, id, &input)
+        .await
+        .expect("submit");
+    let records = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let reply = client
+                .call(&request("chet_history_find", json!({"by":"user","id":id})))
+                .await
+                .expect("history");
+            let records = reply.result["records"].as_array().expect("records").clone();
+            if records.iter().any(|record| record["kind"] == "result") {
+                break records;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("recorded result");
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["kind"] == "input")
+            .count(),
+        1
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["kind"] == "receipt")
+            .count(),
+        1
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["kind"] == "result")
+            .count(),
+        1
+    );
+    assert!(records.iter().any(|record| {
+        record["kind"] == "result"
+            && record["outcome"]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("inspect the fixture"))
+    }));
+    assert_eq!(
+        client.call(&register).await.expect("retry").result["registration"],
+        "existing"
+    );
+    assert!(sessions.state.lock().await.active.is_none());
+    sessions.shutdown().await.expect("stop Analyst");
+    client
+        .call(&request("shutdown", json!({})))
+        .await
+        .expect("stop fixture daemon");
+    tokio::time::timeout(Duration::from_secs(10), daemon)
+        .await
+        .expect("daemon stopped")
+        .expect("daemon task")
+        .expect("daemon");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -784,9 +1789,9 @@ async fn manual_investigations_keep_exact_call_scope_and_at_most_once_outcomes()
         runtime.manual_results_for_call(gen_a).is_empty(),
         "retired call cannot return late work"
     );
-    for (id, text) in [
-        ("rejected", "REJECT_BEFORE_RECEIPT"),
-        ("failure", "FAIL_AFTER_RECEIPT"),
+    for (id, text, expected_status) in [
+        ("rejected", "REJECT_BEFORE_RECEIPT", "unconfirmed"),
+        ("failure", "FAIL_AFTER_RECEIPT", "failed"),
     ] {
         input(
             &sessions,
@@ -798,13 +1803,21 @@ async fn manual_investigations_keep_exact_call_scope_and_at_most_once_outcomes()
         .await
         .expect("queue accepted");
         let task = settled(&runtime, id).await;
-        assert_eq!(task.status, "failed");
+        assert_eq!(task.status, expected_status);
         assert!(!task.error.is_empty());
         let outputs = runtime.manual_results_for_call(second.call.generation());
         let output = outputs
             .iter()
             .find(|(key, _)| key == &task.id)
             .expect("failure returned");
+        if expected_status == "unconfirmed" {
+            assert!(
+                output.1["content"][0]["text"]
+                    .as_str()
+                    .expect("text")
+                    .contains("do not assert whether the work occurred")
+            );
+        }
         assert!(
             !output.1["content"][0]["text"]
                 .as_str()
@@ -957,6 +1970,45 @@ async fn manual_result_traverses_the_actual_voice_socket_without_provider_delega
     sessions.state.lock().await.analyst = None;
     web.abort();
     let _ = web.await;
+}
+
+#[tokio::test]
+async fn unknown_manual_outcome_is_not_described_as_failure_to_voice() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::unknown_manual_outcome_is_not_described_as_failure_to_voice",
+    ) {
+        return;
+    }
+    use cccc_daemon::experimental_codex_voice::AnalystCompletionSource;
+    let (_temp, _home, sessions, _, _) = fixture().await;
+    let runtime = sessions
+        .state
+        .lock()
+        .await
+        .analyst
+        .clone()
+        .expect("Analyst");
+    let id = "manual-input:unknown";
+    runtime
+        .register_manual_task(id, "fixture question", Some("call-a"))
+        .await
+        .expect("task");
+    runtime.project_manual_event(&AnalystLifecycleEvent::Completed {
+        source: AnalystCompletionSource::HostUnconfirmed,
+        turn_id: "unknown-turn".into(),
+        delegation_id: id.into(),
+        delegation_ids: vec![id.into()],
+        status: "failed".into(),
+        error: "unconfirmed".into(),
+        result: String::new(),
+        speakable: false,
+    });
+    let output = runtime.manual_results_for_call("call-a");
+    let text = output[0].1["content"][0]["text"].as_str().expect("text");
+    let data: Value = serde_json::from_str(text.split_once('\n').expect("data").1).expect("JSON");
+    assert_eq!(data["status"], "unconfirmed");
+    assert!(text.contains("do not assert whether the work occurred"));
+    sessions.shutdown().await.expect("cleanup");
 }
 
 #[cfg(target_os = "linux")]

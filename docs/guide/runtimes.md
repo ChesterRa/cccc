@@ -121,7 +121,7 @@ Cline currently opens a fresh native terminal on each start. CCCC does not persi
 #### Admission evidence (2026-09-05)
 
 Kilo 7.5.14 was checked with the installed native CLI, isolated provider homes,
-and a loopback test model. The shared Actor/Analyst probe covers idle startup,
+and a loopback test model. The shared Actor/Chet probe covers idle startup,
 empty and populated session resume, consecutive results, native TUI cancellation,
 and a busy-state follow-up exceeding 16,000 characters. A second probe checks
 that a submitted native model/variant selection reaches ACP. These probes do not
@@ -130,7 +130,7 @@ Windows or macOS behavior; those remain platform validation boundaries.
 
 Kilo can publish temporary snapshot-initialization progress as text parts marked
 `metadata["kilocode.lifecycle"]="transient"`. CCCC leaves that progress in the
-native TUI and excludes it from Actor/Analyst answer text, including later
+native TUI and excludes it from Actor/Chet answer text, including later
 streaming updates to the same part. Ordinary answer text is preserved even
 when synthetic or containing the same words as a progress label.
 
@@ -142,14 +142,14 @@ Windows CI separately exercises npm installation layouts, literal arguments and
 environment, owned stdio launch, and native terminal launch with an offline fixture.
 That fixture does not substitute for full real-Kilo platform validation.
 
-Cline 3.0.61 is **not** admitted as a managed Analyst. Its ACP `session/new`
+Cline 3.0.61 is **not** admitted as a managed Runtime for Chet. Its ACP `session/new`
 returns an ID before the core/session history exists; immediately loading that
 empty ID reproducibly returns `Resource not found`. The
 [upstream ACP implementation](https://github.com/cline/cline/blob/dac3b35/apps/cli/src/acp/acpAgent.ts)
 starts its core lazily on a prompt. A shared native TUI/controller would need
 additional Hub/session lifecycle work, not simply the existing ACP adapter.
 CCCC keeps its current terminal Actor support instead of creating a synthetic
-startup prompt or a second Analyst-only session path.
+startup prompt or a second Chet-only session path.
 
 The Linux CI runs the real Codex/Claude empty-session probes and both Kilo probes
 against pinned CLI versions. To repeat the Kilo checks locally after building
@@ -173,7 +173,7 @@ The `kimi` runtime targets [Kimi Code](https://github.com/MoonshotAI/kimi-code)
 (`@moonshot-ai/kimi-code`), not the former Python `kimi-cli`. Install the current
 client and launch CCCC from a new terminal if its installer changed your `PATH`.
 Actor commands, Runtime Profiles, and private environment variables remain the
-normal configuration surface. Native TUI mode does not provide Voice Analyst
+normal configuration surface. Native TUI mode does not provide Chet
 or Secretary controls; choose official ACP for those workflows, as described below.
 
 Native Actor startup and `cccc setup --runtime kimi` use the same MCP setup implementation.
@@ -239,7 +239,7 @@ the actor-scoped CCCC MCP and listener arguments. Provider events are the
 working-state and completion authority, while Actor deliveries go immediately
 through the native TUI so Codex applies its own queue/steer policy. Stop/start
 resumes the same validated thread, while `actor new-session` deliberately
-creates a new one. Voice Analyst uses this same Codex host/remote-TUI substrate,
+creates a new one. Chet uses this same Codex host/remote-TUI substrate,
 with a global user MCP identity and its own warm lifecycle instead of Actor
 identity and Group lifecycle.
 
@@ -252,10 +252,10 @@ message.
 Direct Claude Code Actors require Claude Code 2.1.259 or newer. Before first use,
 accept Claude's bypass-mode disclaimer interactively with
 `claude --dangerously-skip-permissions` under the same Claude configuration.
-Use the Claude executable selected by the Actor or Analyst's Runtime Profile and
+Use the Claude executable selected by the Actor or Chet's Runtime Profile and
 the effective `CLAUDE_CONFIG_DIR` shown in the launch error. A confirmation under
 another profile's configuration does not satisfy this prerequisite. After accepting
-the disclaimer, exit the interactive session and start the Actor or Analyst again.
+the disclaimer, exit the interactive session and start the Actor or Chet again.
 If it has not been accepted, the managed launch returns Claude's actionable
 error before opening an Actor terminal; CCCC does not write workspace trust or
 disclaimer acceptance into the user's global configuration.
@@ -346,7 +346,7 @@ persistent provider approval is written. Kilo retains its separate ACP adapter.
 
 The Rust daemon also owns the lifetime of every process-backed actor. On Windows, the daemon host and each terminal actor use non-breakaway Job Objects with `KILL_ON_JOB_CLOSE`; Codex and actor-launched MCP descendants inherit containment when they are created, so an abrupt daemon or combined Web-process exit cannot leave them orphaned. On POSIX, each terminal actor is a separate session and normal stop/reap terminates its entire process group. Process cleanup never removes `group.yaml`, `ledger.jsonl`, or retained terminal history.
 
-Kilo uses ACP control with its ordered HTTP event stream for both Actors and Voice Analyst.
+Kilo uses ACP control with its ordered HTTP event stream for both Actors and Chet.
 CCCC owns a private `kilo acp` backend and attaches `kilo attach` to that exact
 session; it does not reuse an unrelated global Kilo daemon. Kilo receives
 session-scoped MCP injection, and no setup or bootstrap prompt is sent merely
@@ -456,15 +456,15 @@ cccc actor add droid-worker --runtime droid --runtime-mode acp
 
 Install the current official CLI and log in with its native command (`copilot login`, `devin auth login`, or `agent login`). CCCC does not copy credentials or change global MCP files. Each Actor gets a separate provider session and explicit CCCC MCP identity. Copilot uses process-local MCP configuration; Devin, Cursor, Kimi Code, Auggie, Kiro, Hermes and Droid accept session-injected MCP. The adapter disables Copilot and Auggie executable auto-updaters inside managed launches. Read-only installation detection does not certify login or successful tasks.
 
-The same ACP adapters are available in **Voice Analyst** and **Voice Secretary** settings. Only ACP Profiles for these Runtimes are eligible; a native TUI Profile is not a Voice Analyst adapter. Realtime Voice credentials remain independent. Analyst input is serialized and its queue, progress, pending decisions and cancel action remain visible.
+The same ACP adapters are available in **Chet** and **Voice Secretary** settings. Only ACP Profiles for these Runtimes are eligible; a native TUI Profile is not a Chet adapter. Realtime Voice credentials remain independent. Chet input is serialized and its queue, progress, pending decisions and cancel action remain visible.
 
-Never-attempted empty Actor / Analyst sessions may be recreated on restart; the adapter does not assume a returned session ID is already durable. Before the first prompt is sent, CCCC persists that it has been attempted. A failed resume of an attempted or uncertain session reports an error; it never silently creates another session or resends an uncertain task. Use **New session** / Analyst reset explicitly after reviewing the failure.
+Never-attempted empty Actor / Chet sessions may be recreated on restart; the adapter does not assume a returned session ID is already durable. Before the first prompt is sent, CCCC persists that it has been attempted. A failed resume of an attempted or uncertain session reports an error; it never silently creates another session or resends an uncertain task. Use **New session** / Chet reset explicitly after reviewing the failure.
 
 Default commands keep the Runtime's normal autonomy policy: `copilot --allow-all`, `devin --permission-mode dangerous`, and `cursor-agent --yolo --approve-mcps`. An explicit command without those flags retains interactive tool approval. Common model/permission options are accepted; transport, working directory, prompt, resume and CCCC MCP are host-owned, so shell wrappers and those conflicting flags are rejected. Explicit model choices are applied when sessions start/resume; do not assume the model last picked in a TUI is inherited. Cursor accepts an exact advertised name (such as `grok-4.7`) or complete ACP model ID. Devin accepts an exact model ID or advertised name from `devin models`; its terminal fuzzy aliases (such as `opus`) are not ACP configuration values. CCCC maps names using the server catalog and does not guess or silently select a default. With no explicit model, provider configuration/session defaults apply. No duplicated model-selection panel is introduced.
 
-**Cursor questions and plans are user decisions.** YOLO does not pick an answer or accept a plan. Select answers and submit them, skip questions, or accept/reject the displayed plan. Cancel retires pending decisions, so an old panel cannot affect a later task. The UI shows these decisions for both Actors and Voice Analyst.
+**Cursor questions and plans are user decisions.** YOLO does not pick an answer or accept a plan. Select answers and submit them, skip questions, or accept/reject the displayed plan. Cancel retires pending decisions, so an old panel cannot affect a later task. The UI shows these decisions for both Actors and Chet.
 
-The adapter targets current official ACP interfaces: [Copilot](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server), [Devin](https://docs.devin.ai/cli/acp/zed), [Cursor](https://cursor.com/docs/cli/acp). Offline fixtures validate host lifecycle, identity, uncertain delivery and user interactions. Isolated CCCC adapter tasks passed Actor MCP identity, Voice Analyst lifecycle/MCP, independent sessions, empty restart and populated resume on Devin 3000.11.3 and Cursor 2026.10.01-e373342. Copilot 1.0.91 completed two turns, but probe setup errors prevented successful MCP routing acceptance; this remains a validation gap, not evidence of a provider defect. Model-setting protocol checks do not submit tasks. Cursor native questions, additional live permission/cancellation cases, native Windows/macOS and real Realtime calls are not fully validated.
+The adapter targets current official ACP interfaces: [Copilot](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server), [Devin](https://docs.devin.ai/cli/acp/zed), [Cursor](https://cursor.com/docs/cli/acp). Offline fixtures validate host lifecycle, identity, uncertain delivery and user interactions. Earlier isolated CCCC adapter tasks passed Actor MCP identity, the assistant Runtime lifecycle/MCP, independent sessions, empty restart and populated resume on Devin 3000.11.3 and Cursor 2026.10.01-e373342; those tests did not cover Chet's new text and history interface. Copilot 1.0.91 completed two turns, but probe setup errors prevented successful MCP routing acceptance; this remains a validation gap, not evidence of a provider defect. Model-setting protocol checks do not submit tasks. Cursor native questions, additional live permission/cancellation cases, native Windows/macOS and real Realtime calls are not fully validated.
 
 ### Kimi Code and Auggie details
 
@@ -476,7 +476,7 @@ Auggie uses [official ACP](https://docs.augmentcode.com/cli/acp/agent). Workspac
 
 Kiro uses only the official **V3** ACP engine (`kiro-cli acp --agent-engine=v3 --auth-method cli`). The explicit authentication method keeps login with Kiro rather than delegating token requests to CCCC. Native `--model`, `--agent` and `--effort` intent is applied through the advertised session configuration after new/load. `--trust-all-tools` permits one-time host approval; it does not write permanent consent. Upgrade to a CLI that supports V3 and finish its normal login before selecting ACP. See [Kiro's ACP migration guide](https://kiro.dev/docs/cli/v3/acp-migration/).
 
-Hermes uses `hermes acp` with an ACP-capable installation. CCCC skips early configured-MCP discovery and injects its session MCP server. Hermes can still load user-configured MCP servers when constructing the agent; this is not strict MCP or filesystem isolation. Native `--tui` intent is removed and explicit `--yolo` permits one-time approval. Before restoring attempted work, CCCC verifies the exact session ID and workspace through `session/list`; an unknown or unverifiable session fails rather than using Hermes's fresh-session fallback. Confirmed cancellation retires the process so Hermes cannot append the interrupted input to the next task. Actor and Analyst keep their saved identity for exact-ID recovery. Secretary cancellation follows its existing task cleanup; subsequent accepted work starts a new resident conversation while source and task records remain. This requires the installed server's load/list capabilities, not merely a matching version string. See [Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/).
+Hermes uses `hermes acp` with an ACP-capable installation. CCCC skips early configured-MCP discovery and injects its session MCP server. Hermes can still load user-configured MCP servers when constructing the agent; this is not strict MCP or filesystem isolation. Native `--tui` intent is removed and explicit `--yolo` permits one-time approval. Before restoring attempted work, CCCC verifies the exact session ID and workspace through `session/list`; an unknown or unverifiable session fails rather than using Hermes's fresh-session fallback. Confirmed cancellation retires the process so Hermes cannot append the interrupted input to the next task. Actor and Chet keep their saved identity for exact-ID recovery. Secretary cancellation follows its existing task cleanup; subsequent accepted work starts a new resident conversation while source and task records remain. This requires the installed server's load/list capabilities, not merely a matching version string. See [Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/).
 
 Hermes native setup uses the official MCP add flow and checks that its saved CCCC entry is enabled, points to the current executable and retains actor-time identity placeholders. ACP errors identify the failed request, such as `session/new`, and include safe, bounded Hermes details when available. Entering the standalone TUI does not verify ACP agent creation or provider authentication; use the specific error to check Hermes's normal provider setup.
 
@@ -492,7 +492,7 @@ cccc setup --runtime pi
 cccc actor add pi-worker --runtime pi
 ```
 
-The same adapter is available to Voice Analyst and the resident global Secretary. There is no separate RPC mode switch or native-terminal attachment: use the existing structured workspace for output, cancellation and extension questions. A native Pi terminal can be launched as an ordinary `custom` Runtime, but that does not provide CCCC's Pi managed controls.
+The same adapter is available to Chet and the resident global Secretary. There is no separate RPC mode switch or native-terminal attachment: use the existing structured workspace for output, cancellation and extension questions. A native Pi terminal can be launched as an ordinary `custom` Runtime, but that does not provide CCCC's Pi managed controls.
 
 CCCC owns `--mode rpc`, the working directory, session ID, instructions and its session-local MCP registration. Model/provider/thinking options remain configurable. Startup and read-only inspection send no model prompt. A prompt response is admission only; completion comes from `agent_settled`, including aborted or failed outcomes. Provider retries/compaction must not turn `agent_end` into premature completion. Cancellation clears queued input before aborting the exact owned turn. Pi can acknowledge an abort while an unresolved preflight is still pending; cancellation before confirmed provider execution therefore invalidates and stops that process rather than reusing it. The attempted receipt remains and uncertain work is not replayed. Pi's uncorrelated steering command is not exposed as safe exact-turn steering.
 
@@ -513,15 +513,15 @@ cccc actor add helper --runtime antigravity --runtime-mode acp
 
 CCCC downloads official ACP **1.3.0** from Google, verifies its pinned platform checksum, and stores it under `CCCC_HOME/runtimes/antigravity-acp/`. It is not bundled or redistributed. Login is separate from native AGY: credentials and ACP history live in `CCCC_HOME/state/antigravity-acp/home/`. The command opens the official OAuth flow only when `--login` is explicitly requested; an ordinary Actor launch does not initiate login. CCCC injects the appropriate MCP Group/Actor identity into each session. Actors share login, not session IDs or routing.
 
-Supported command intent is `agy [--model MODEL] [--dangerously-skip-permissions]`. Wrappers, TUI subcommands, prompt tails and other flags fail explicitly. An explicit model is applied after both session creation and resume. The default Actor and Voice Analyst command is `agy --dangerously-skip-permissions`: CCCC sets official ACP's YOLO mode on both new and resumed sessions, and automatically selects **Allow once** if the provider still requests permission. The empty saved Voice command means use this default. Explicit custom commands and linked Profiles keep their configured policy; `agy` without the override selects interactive approval. No native terminal fallback is created.
+Supported command intent is `agy [--model MODEL] [--dangerously-skip-permissions]`. Wrappers, TUI subcommands, prompt tails and other flags fail explicitly. An explicit model is applied after both session creation and resume. The default Actor and Chet command is `agy --dangerously-skip-permissions`: CCCC sets official ACP's YOLO mode on both new and resumed sessions, and automatically selects **Allow once** if the provider still requests permission. The empty saved Voice command means use this default. Explicit custom commands and linked Profiles keep their configured policy; `agy` without the override selects interactive approval. No native terminal fallback is created.
 
-In interactive mode, an operation waiting for permission pauses the current task and later queued inputs. Open the Actor or Voice Analyst pane and choose **Allow once** or **Deny**; its structured view updates independently of native terminal readiness, including during a voice call.
+In interactive mode, an operation waiting for permission pauses the current task and later queued inputs. Open the Actor or Chet pane and choose **Allow once** or **Deny**; its structured view updates independently of native terminal readiness, including during a voice call.
 
-Official ACP cannot accept simultaneous prompts in one session. Actor messages use the existing durable delivery queue; Voice Analyst shows a bounded FIFO of at most 32 inputs. Host queue acceptance is distinct from provider admission. Cancelling Voice Analyst clears current and queued inputs even while waiting for its first provider receipt; confirmed cancellation keeps the warm session available. Each cancelled or failed queued input retains its own notification association. An unconfirmed Actor prompt is recorded as ambiguous and is not automatically replayed after restart; inspect the Actor before using explicit message retry. Prompt submission errors before confirmed admission are shown in the Actor execution record with a bounded, redacted diagnostic and numeric RPC code when provided; delivery stays ambiguous and is not retried automatically. User cancellation does not appear as a provider rejection. Admitted provider errors are shown as failures with their error details. Cancelling an Actor turn leaves later Group messages in the normal ledger queue. A completed provider turn does not prove task success: check the actual result/error text.
+Official ACP cannot accept simultaneous prompts in one session. Actor messages use the existing durable delivery queue; Chet shows a bounded FIFO of at most 32 inputs. Host queue acceptance is distinct from provider admission. Cancelling Chet clears current and queued inputs even while waiting for its first provider receipt; confirmed cancellation keeps the warm session available. Each cancelled or failed queued input retains its own notification association. An unconfirmed Actor prompt is recorded as ambiguous and is not automatically replayed after restart; inspect the Actor before using explicit message retry. Prompt submission errors before confirmed admission are shown in the Actor execution record with a bounded, redacted diagnostic and numeric RPC code when provided; delivery stays ambiguous and is not retried automatically. User cancellation does not appear as a provider rejection. Admitted provider errors are shown as failures with their error details. Cancelling an Actor turn leaves later Group messages in the normal ledger queue. A completed provider turn does not prove task success: check the actual result/error text.
 
 Stop/start resumes the validated ACP session; **New session** retires its receipt and starts fresh without erasing provider history. ACP and TUI receipts are separate, so switching modes does not destroy the other mode's history. For a linked Profile, New session selects the receipt using the Profile's current Runtime and mode. A failed resume is explicit; use New session rather than silently replacing the conversation.
 
-Voice Analyst accepts Antigravity only in ACP mode, using the same adapter, login, permission flow and visible queue. Native-TUI Antigravity Profiles are excluded from that selector. Realtime Voice credentials remain independent. Linux x86_64 integration is exercised locally; native Windows/macOS behavior still requires validation despite verified distribution hashes.
+Chet accepts Antigravity only in ACP mode, using the same adapter, login, permission flow and visible queue. Native-TUI Antigravity Profiles are excluded from that selector. Realtime Voice credentials remain independent. Linux x86_64 integration is exercised locally; native Windows/macOS behavior still requires validation despite verified distribution hashes.
 
 
 ## Grok Bot Web Model
@@ -766,7 +766,7 @@ Common checks:
 | Existing actor does not pick up setup changes | Restart the actor after setup or profile changes. |
 | ChatGPT Web Model cannot call CCCC | Confirm the public HTTPS MCP URL, ChatGPT connector setup, and bound conversation. |
 
-Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, OpenCode, Kilo, and Pi receive an Actor-scoped server inside their managed session. Grok shares one native user-level entry between its managed session and terminal, with identity inherited from the launching process. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the Actor process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Native Cursor TUI retains its prompt-assisted startup setup contract; the prompt checks the registered executable and arguments as well as tool availability, because a legacy MCP can expose the same bootstrap name. Indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, OpenCode, Kilo and Pi reports session ownership. Optional ACP setup reports session injection without modifying global MCP files; it does not certify provider login. For Grok it prepares and verifies the same native registration used during Actor and Voice Analyst startup.
+Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, OpenCode, Kilo, and Pi receive an Actor-scoped server inside their managed session. Grok shares one native user-level entry between its managed session and terminal, with identity inherited from the launching process. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the Actor process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Native Cursor TUI retains its prompt-assisted startup setup contract; the prompt checks the registered executable and arguments as well as tool availability, because a legacy MCP can expose the same bootstrap name. Indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, OpenCode, Kilo and Pi reports session ownership. Optional ACP setup reports session injection without modifying global MCP files; it does not certify provider login. For Grok it prepares and verifies the same native registration used during Actor and Chet startup.
 
 This preflight runs before the provider discovers its tools. It therefore repairs Python-to-Rust executable path changes without requiring a second restart. Sessions that were already running when an external MCP configuration changed still need to be restarted because provider tool catalogs are session-scoped.
 

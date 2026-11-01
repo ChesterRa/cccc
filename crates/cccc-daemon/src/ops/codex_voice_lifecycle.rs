@@ -58,6 +58,7 @@ pub enum AnalystLifecycleEvent {
         speakable: bool,
     },
     Completed {
+        source: AnalystCompletionSource,
         turn_id: String,
         delegation_id: String,
         delegation_ids: Vec<String>,
@@ -74,6 +75,14 @@ pub enum AnalystLifecycleEvent {
         delegation_id: String,
         position: usize,
     },
+}
+
+/// A host error after an admission attempt does not prove what the Runtime did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnalystCompletionSource {
+    Runtime,
+    HostNotStarted,
+    HostUnconfirmed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,6 +211,24 @@ impl AnalystLifecycle {
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<AnalystLifecycleEvent> {
         self.events.subscribe()
+    }
+
+    /// Snapshot work known to this lifecycle without waiting on a provider RPC.
+    /// None means the owner is busy, not that the queue is empty.
+    pub(crate) fn try_in_flight(&self) -> Option<(Vec<String>, Vec<String>)> {
+        let state = self.state.try_lock().ok()?;
+        let queued = state
+            .pending
+            .iter()
+            .chain(state.native_pending.iter())
+            .map(|item| item.delegation_id.clone())
+            .collect();
+        let working = state
+            .active
+            .as_ref()
+            .map(|active| active.delegation_ids.clone())
+            .unwrap_or_default();
+        Some((queued, working))
     }
 
     async fn invalidate(&self) {

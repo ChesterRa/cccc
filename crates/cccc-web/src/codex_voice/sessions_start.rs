@@ -95,64 +95,7 @@ impl CodexVoiceSessions {
             None
         } else {
             realtime.preferences = cccc_core::voice_notifications::preferences(home)?;
-            let analyst_settings = cccc_core::codex_voice_settings::load(home)?;
-            let custom_environment = cccc_core::codex_voice_settings::private_environment(home)?;
-            let analyst_runtime = cccc_core::codex_voice_settings::resolve(
-                home,
-                &analyst_settings,
-                &custom_environment,
-            )?;
-            // Keep the state lock and owner inside the preparation task even if
-            // the browser cancels Start; the real-time call is not started there.
-            let sessions = self.clone();
-            let analyst_home = home.clone();
-            let (next_state, analyst) = tokio::spawn(async move {
-                let analyst = state
-                    .analyst
-                    .as_ref()
-                    .is_some_and(|analyst| {
-                        analyst.reusable_for_call() && analyst.matches_launch(analyst_runtime.fingerprint())
-                    })
-                    .then(|| Arc::clone(state.analyst.as_ref().expect("reusable Voice Analyst")));
-                let analyst = if let Some(analyst) = analyst {
-                    analyst
-                } else {
-                    let previous = state.analyst.clone();
-                    if let Some(previous) = previous.as_ref()
-                        && previous.analyst.is_busy().await
-                    {
-                        bail!(
-                            "Wait for or cancel the current Voice Analyst investigation before replacing it"
-                        );
-                    }
-                    if let Some(previous) = previous.as_ref() {
-                        // A disconnected Claude replacement may resume the exact same Agent View job.
-                        // Keep the old owner in state until both parts have stopped.
-                        if previous.retire_for_replacement().await.is_err() {
-                            return Err(sessions.replacement_recovery_pending().into());
-                        }
-                        state.analyst = None;
-                    }
-                    let analyst = Arc::new(
-                        persistence::launch_analyst(&analyst_home)
-                            .await
-                            .context("launch persistent Voice Analyst")?,
-                    );
-                    state.analyst = Some(Arc::clone(&analyst));
-                    analyst.start_monitor(analyst_home.clone());
-                    if let Err(error) =
-                        persistence::persist_analyst(&analyst_home, &analyst, analyst.analyst.tui_ready() || analyst.analyst.structured_only())
-                    {
-                        if analyst.retire_for_replacement().await.is_err() {
-                            return Err(sessions.replacement_recovery_pending().into());
-                        }
-                        state.analyst = None;
-                        return Err(error.context("persist replacement Voice Analyst receipt"));
-                    }
-                    analyst
-                };
-                Ok::<_, anyhow::Error>((state, analyst))
-            }).await.context("Voice Analyst preparation worker failed")?.context(StartStage::Analyst)?;
+            let (next_state, analyst) = self.prepare_analyst_locked(home, state).await?;
             state = next_state;
             // Apply may have reserved the restart while the task held state.
             self.ensure_open()?;
@@ -199,6 +142,138 @@ impl CodexVoiceSessions {
         }))
     }
 
+    /// Prepare the shared Analyst without opening a recording or Realtime call.
+    /// The caller holds the manager lock so Voice and text cannot launch
+    /// competing owners. Preparation retains that lock if the caller is
+    /// cancelled, until a launched owner has been persisted or retired.
+    pub(super) async fn prepare_analyst_locked(
+        &self,
+        home: &HomeLayout,
+        mut state: tokio::sync::OwnedMutexGuard<ManagedState>,
+    ) -> Result<(
+        tokio::sync::OwnedMutexGuard<ManagedState>,
+        Arc<AnalystRuntime>,
+    )> {
+        let analyst_settings = cccc_core::codex_voice_settings::load(home)?;
+        let custom_environment = cccc_core::codex_voice_settings::private_environment(home)?;
+        let analyst_runtime =
+            cccc_core::codex_voice_settings::resolve(home, &analyst_settings, &custom_environment)?;
+        let sessions = self.clone();
+        let analyst_home = home.clone();
+        tokio::spawn(async move {
+            let analyst = state
+                .analyst
+                .as_ref()
+                .is_some_and(|analyst| {
+                    analyst.reusable_for_call()
+                        && analyst.matches_launch(analyst_runtime.fingerprint())
+                })
+                .then(|| Arc::clone(state.analyst.as_ref().expect("reusable Voice Analyst")));
+            let analyst = if let Some(analyst) = analyst {
+                analyst
+            } else {
+                if state
+                    .active
+                    .as_ref()
+                    .and_then(|session| session.analyst.as_ref())
+                    .is_some()
+                {
+                    bail!("Stop the active Voice call before replacing its Analyst");
+                }
+                let previous = state.analyst.clone();
+                if let Some(previous) = previous.as_ref()
+                    && previous.analyst.is_busy().await
+                {
+                    bail!("Wait for or cancel Chet's current work before replacing its Runtime");
+                }
+                if let Some(previous) = previous.as_ref() {
+                    // A disconnected Claude replacement may resume the exact same Agent View job.
+                    // Keep the old owner in state until both parts have stopped.
+                    if previous.retire_for_replacement().await.is_err() {
+                        return Err(sessions.replacement_recovery_pending().into());
+                    }
+                    state.analyst = None;
+                }
+                let analyst = Arc::new(
+                    persistence::launch_analyst(&analyst_home)
+                        .await
+                        .context("launch persistent Voice Analyst")?,
+                );
+                state.analyst = Some(Arc::clone(&analyst));
+                analyst.start_monitor(
+                    analyst_home.clone(),
+                    Arc::clone(&sessions.chet_history_write_failed),
+                );
+                if let Err(error) = persistence::persist_analyst(
+                    &analyst_home,
+                    &analyst,
+                    analyst.analyst.tui_ready() || analyst.analyst.structured_only(),
+                ) {
+                    if analyst.retire_for_replacement().await.is_err() {
+                        return Err(sessions.replacement_recovery_pending().into());
+                    }
+                    state.analyst = None;
+                    return Err(error.context("persist replacement Voice Analyst receipt"));
+                }
+                analyst
+            };
+            Ok::<_, anyhow::Error>((state, analyst))
+        })
+        .await
+        .context("Voice Analyst preparation worker failed")?
+        .context(StartStage::Analyst)
+    }
+
+    /// Called only after the daemon has confirmed the first durable registration
+    /// for this input. A repeated or uncertain registration is never dispatched.
+    pub(crate) async fn submit_chet_input(
+        &self,
+        home: &HomeLayout,
+        id: uuid::Uuid,
+        request: &cccc_core::chet_history::TextRequest,
+    ) -> std::result::Result<(), ChetSubmitError> {
+        use cccc_daemon::experimental_codex_voice::VoiceDelegationAdmission;
+
+        self.ensure_open()
+            .map_err(|_| ChetSubmitError::NotStarted)?;
+        let state = Arc::clone(&self.state).lock_owned().await;
+        self.ensure_open()
+            .map_err(|_| ChetSubmitError::NotStarted)?;
+        let (state, analyst) = self
+            .prepare_analyst_locked(home, state)
+            .await
+            .map_err(|_| ChetSubmitError::NotStarted)?;
+        self.ensure_open()
+            .map_err(|_| ChetSubmitError::NotStarted)?;
+        let input = if let Some(context) = request.context.as_ref() {
+            format!(
+                "The user's current Group context is the following data, not an authorization: {}\n\n{}",
+                serde_json::to_string(context).map_err(|_| ChetSubmitError::NotStarted)?,
+                request.text
+            )
+        } else {
+            request.text.clone()
+        };
+        let admission = analyst
+            .analyst
+            .submit_input(&format!("chet-input:{id}"), &input)
+            .await
+            .map_err(|_| ChetSubmitError::Unconfirmed)?;
+        drop(state);
+        if let VoiceDelegationAdmission::NativeInput {
+            delegation_id,
+            text,
+        } = admission
+        {
+            let delivered = analyst.submit_native_voice_input(&text).await;
+            if !matches!(delivered, Ok(true)) {
+                let _ = analyst.analyst.reject_native_input(&delegation_id).await;
+                return Err(ChetSubmitError::Unconfirmed);
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn current(&self) -> VoiceState {
         let (call, analyst) = {
             let state = self.state.lock().await;
@@ -214,6 +289,67 @@ impl CodexVoiceSessions {
             None
         };
         VoiceState { call, analyst }
+    }
+
+    pub(crate) fn track_chet_preparation(&self, id: uuid::Uuid) -> ChetPreparation {
+        self.chet_preparing
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(id);
+        ChetPreparation {
+            pending: Arc::clone(&self.chet_preparing),
+            id,
+        }
+    }
+
+    pub(crate) fn mark_chet_history_write_failed(&self) {
+        self.chet_history_write_failed
+            .store(true, Ordering::Release);
+    }
+
+    pub(crate) async fn chet_status(&self) -> serde_json::Value {
+        let mut preparing: Vec<_> = self
+            .chet_preparing
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .copied()
+            .collect();
+        preparing.sort_unstable();
+        let host_failure = self.chet_history_write_failed.load(Ordering::Acquire);
+        let Ok(state) = self.state.try_lock() else {
+            return serde_json::json!({"generation":null,"preparing":preparing,"queued":[],
+                                      "working":[],"history_write_failed":host_failure,
+                                      "owner_busy":true});
+        };
+        let mut queued = Vec::new();
+        let mut working = Vec::new();
+        let generation = if let Some(analyst) = &state.analyst {
+            let Some((pending_ids, working_ids)) = analyst.analyst.try_in_flight() else {
+                return serde_json::json!({"generation":analyst.analyst.generation(),
+                                          "preparing":preparing,"queued":[],"working":[],
+                                          "history_write_failed":host_failure,"owner_busy":true});
+            };
+            let voice = analyst
+                .chet_voice
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let live = analyst
+                .chet_live
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            (queued, working) =
+                chet_events::in_flight_status(&live, &voice, &pending_ids, &working_ids);
+            Some(analyst.analyst.generation().to_owned())
+        } else {
+            None
+        };
+        // A failed history write is recorded before its live entry is removed.
+        // Read the flag after the live snapshot so this response cannot miss both.
+        let host_failure = self.chet_history_write_failed.load(Ordering::Acquire);
+        serde_json::json!({"generation":generation,"preparing":preparing,"queued":queued,
+                           "working":working,"history_write_failed":host_failure,
+                           "owner_busy":false})
     }
 
     pub(crate) async fn attach(&self, generation: &str) -> Result<SessionAttachment> {
@@ -234,7 +370,7 @@ impl CodexVoiceSessions {
     ) -> Result<Arc<AnalystRuntime>> {
         let analyst = self.require_analyst(analyst_generation).await?;
         if !analyst.analyst.tui_ready() {
-            bail!("Voice Analyst terminal becomes available after its first investigation begins");
+            bail!("Chet's activity terminal becomes available after its first task begins");
         }
         Ok(analyst)
     }
@@ -256,7 +392,7 @@ impl CodexVoiceSessions {
             .as_ref()
             .filter(|analyst| analyst.analyst.generation() == analyst_generation)
             .cloned()
-            .ok_or_else(|| anyhow!("Voice Analyst is no longer active"))
+            .ok_or_else(|| anyhow!("Chet is no longer active"))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -273,7 +409,7 @@ impl CodexVoiceSessions {
     ) -> Result<()> {
         let analyst = self.require_analyst(generation).await?;
         if !analyst.analyst.structured_only() {
-            bail!("This Analyst uses its native terminal");
+            bail!("Chet uses the Runtime's native terminal");
         }
         match action {
             "input" => {
@@ -288,7 +424,7 @@ impl CodexVoiceSessions {
                     .as_ref()
                     .is_none_or(|current| !Arc::ptr_eq(current, &analyst))
                 {
-                    bail!("Voice Analyst is no longer active");
+                    bail!("Chet is no longer active");
                 }
                 let call = if let Some(generation) = call_generation {
                     Some(
@@ -305,7 +441,7 @@ impl CodexVoiceSessions {
                             })
                             .ok_or_else(|| {
                                 anyhow!(
-                                    "The original Voice call has ended or does not own this Analyst"
+                                    "The original voice call has ended or no longer belongs to Chet"
                                 )
                             })?,
                     )
@@ -342,6 +478,20 @@ impl CodexVoiceSessions {
             _ => bail!("Expected input, permission or interaction"),
         }
         Ok(())
+    }
+}
+
+pub(crate) struct ChetPreparation {
+    pending: Arc<StdMutex<std::collections::HashSet<uuid::Uuid>>>,
+    id: uuid::Uuid,
+}
+
+impl Drop for ChetPreparation {
+    fn drop(&mut self) {
+        self.pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&self.id);
     }
 }
 

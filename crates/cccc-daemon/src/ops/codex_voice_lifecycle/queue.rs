@@ -53,6 +53,7 @@ pub(super) fn start(lifecycle: &Arc<AnalystLifecycle>) {
                             input.origin,
                             if cancelled { "cancelled" } else { "failed" },
                             if cancelled { "" } else { &diagnostic },
+                            AnalystCompletionSource::HostUnconfirmed,
                         );
                     }
                 }
@@ -72,10 +73,12 @@ impl AnalystLifecycle {
         origin: AnalystTurnOrigin,
         status: &str,
         error: &str,
+        source: AnalystCompletionSource,
     ) {
         // Host outcomes have no provider receipt. One identity per broadcast
         // gives both Web consumers the same distinct persistence key.
         let _ = self.events.send(AnalystLifecycleEvent::Completed {
+            source,
             turn_id: format!("host-input-{}", uuid::Uuid::new_v4().simple()),
             delegation_id: id.to_owned(),
             delegation_ids: vec![id.to_owned()],

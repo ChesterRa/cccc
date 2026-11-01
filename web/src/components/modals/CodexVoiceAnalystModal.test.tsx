@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
 import { CodexVoiceAnalystModal } from "./CodexVoiceAnalystModal";
+import { chetConversationStub } from "../../features/chet/chetTestSupport";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("../../hooks/useModalA11y", () => ({
@@ -85,10 +86,11 @@ describe("CodexVoiceAnalystModal", () => {
   ] as const)("marks %s as moving only while a voice operation is active", (phase, moving) => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}
-        controller={controller({ phase })}
+        controller={controller({ phase, isEngaged: true })}
         onClose={vi.fn()}
       />,
     );
@@ -99,6 +101,7 @@ describe("CodexVoiceAnalystModal", () => {
     const markup = (overrides: Partial<CodexVoiceSessionController>) =>
       renderToStaticMarkup(
         <CodexVoiceAnalystModal
+          chet={chetConversationStub()}
           isOpen
           isDark={false}
           isSmallScreen={false}
@@ -120,6 +123,7 @@ describe("CodexVoiceAnalystModal", () => {
   ])("shows the selected $provider voice before starting a call", ({ provider, voice, name }) => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}
@@ -140,6 +144,7 @@ describe("CodexVoiceAnalystModal", () => {
   it("identifies the live provider and voice instead of the next-call preferences", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}
@@ -160,19 +165,20 @@ describe("CodexVoiceAnalystModal", () => {
         onClose={vi.fn()}
       />,
     );
-    const heading = html.match(/<h2[^>]*>(.*?)<\/h2>/)?.[1];
-    expect(heading).toContain("codexVoiceProviders.grok");
-    expect(html).toMatch(/<span[^>]*>Aurora<\/span>/);
+    expect(html.match(/<h2[^>]*>(.*?)<\/h2>/)?.[1]).toBe("Chet");
+    // The call line beside the composer names the live call, not the next one.
+    expect(html).toContain("codexVoiceProviders.grok · Aurora · codexVoicePhase.listening");
     expect(html).not.toContain("Cove");
     expect(html).not.toContain('aria-label="codexVoiceProviderLabel"');
     expect(html).not.toContain('aria-label="codexVoiceVoiceLabel"');
     expect(html).toContain('aria-label="codexVoiceMute"');
-    expect(html).toContain('aria-label="codexVoiceStop"');
+    expect(html).toContain("codexVoiceStop</button>");
   });
 
   it("shows ACP setup guidance for first use instead of a missing native runtime", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}
@@ -195,6 +201,7 @@ describe("CodexVoiceAnalystModal", () => {
   it("shows the setup instruction once after a blocked start", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen
@@ -226,6 +233,7 @@ describe("CodexVoiceAnalystModal", () => {
     });
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}
@@ -241,6 +249,7 @@ describe("CodexVoiceAnalystModal", () => {
   it("presents one global console without a Focus Group surface", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}
@@ -249,8 +258,8 @@ describe("CodexVoiceAnalystModal", () => {
       />,
     );
 
-    expect(html).toContain("codexVoiceConversation");
-    expect(html).toContain("codexVoiceAnalystTitle");
+    expect(html).toContain("chet.conversation");
+    expect(html).toContain("chet.activity");
     expect(html).toContain('aria-label="codexVoiceSettings"');
     expect(html).toContain("codexVoiceStart");
     expect(html).toContain("lucide-audio-lines");
@@ -259,9 +268,10 @@ describe("CodexVoiceAnalystModal", () => {
     expect(html).not.toContain("codexVoiceOpenTerminal");
   });
 
-  it("names call and Analyst readiness separately with one settings action", () => {
+  it("notes a voice-only problem beside the voice controls without a banner over text", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}
@@ -276,19 +286,44 @@ describe("CodexVoiceAnalystModal", () => {
         onClose={vi.fn()}
       />,
     );
-    expect(html).toContain("codexVoiceCallBlocked");
     expect(html).not.toContain("codexVoicePhase.idle");
     expect(html).toMatch(/aria-live="polite"[^>]*>codexVoiceCallBlocked</);
+    // Text needs no Realtime login, so the call's setup stays with the voice controls.
+    expect(html).not.toContain("data-codex-voice-readiness");
+    expect(html).toMatch(
+      /<button[^>]*title="codexVoiceCodexLoginRequired"[^>]*>.*?codexVoiceCallBlocked/,
+    );
+    expect(html).not.toContain("codexVoiceAnalystNotReady");
+  });
+
+  it("names call and Analyst readiness separately when the Analyst is not ready", () => {
+    const html = renderToStaticMarkup(
+      <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
+        isOpen
+        isDark={false}
+        isSmallScreen={false}
+        controller={controller({
+          readiness: {
+            supported_modes: ["assistant", "persona"],
+            analyst_runtime: "claude",
+            analyst_runtime_available: false,
+            realtime_credentials_available: false,
+          },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
     expect(html).toContain("data-codex-voice-readiness");
     expect(html).toContain("codexVoiceCodexLoginRequired");
-    expect(html).toContain("codexVoiceReadinessOk");
+    expect(html).toContain("codexVoiceAnalystRuntimeMissing");
     expect(html.match(/codexVoiceOpenSettings/g)).toHaveLength(1);
-    expect(html).not.toContain("codexVoiceAnalystNotReady");
   });
 
   it("keeps the embedded Analyst terminal collapsed and disconnected by default", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark
         isSmallScreen={false}
@@ -315,6 +350,7 @@ describe("CodexVoiceAnalystModal", () => {
   it("shows accumulated current-turn captions", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}
@@ -335,6 +371,7 @@ describe("CodexVoiceAnalystModal", () => {
   it("shows a concise terminal placeholder before the first investigation", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}
@@ -352,6 +389,7 @@ describe("CodexVoiceAnalystModal", () => {
   it("keeps a call failure visible until the user dismisses it", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}

@@ -99,7 +99,7 @@ export function CodexVoiceSettingsPanel({
                 ? "codexVoiceSettingsVoiceAudio"
                 : candidate === "notifications"
                   ? "voicePreferences.notifications"
-                  : "codexVoiceAnalystTitle",
+                  : "chet.runtime",
             )}
           </button>
         ))}

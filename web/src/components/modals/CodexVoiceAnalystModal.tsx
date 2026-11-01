@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import {
   CodexVoiceAnalystPane,
   CodexVoiceAnalystSummaryBar,
-  CodexVoiceConversationPane,
 } from "../../features/codexVoice/CodexVoiceConsolePanes";
 import { CodexVoiceSplitLayout } from "../../features/codexVoice/CodexVoiceSplitLayout";
 import { useModalStore } from "../../stores";
@@ -20,6 +19,9 @@ import {
   codexVoiceDisplayIdentity,
 } from "../../features/codexVoice/codexVoiceControllerText";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
+import { ChetConversationPane, ChetStopWorkButton } from "../../features/chet/ChetConversationPane";
+import type { ChetConversation } from "../../features/chet/useChetConversation";
+import type { ProcessRecoveryOwner } from "../../services/api/processRecovery";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import {
   ChevronDownIcon,
@@ -42,6 +44,7 @@ type Props = {
   isDark: boolean;
   isSmallScreen: boolean;
   controller: CodexVoiceSessionController;
+  chet: ChetConversation;
   onClose: () => void;
   onOpenSource?: (groupId: string, eventId: string) => void;
 };
@@ -56,17 +59,22 @@ function analystResultSignature(analyst: CodexVoiceSessionController["analyst"])
   return `${analyst.generation}\n${completed}\n${analyst.last_result}`;
 }
 
+/**
+ * Chet, the global assistant: typed and spoken requests in one conversation, with the
+ * shared Analyst beside it. Closing only hides the dialog; work and calls keep running.
+ */
 export function CodexVoiceAnalystModal({
   isOpen,
   isDark,
   isSmallScreen,
   controller,
+  chet,
   onClose,
   onOpenSource,
 }: Props) {
   const { t } = useTranslation("modals");
   const [analystExpanded, setAnalystExpanded] = useState(false);
-  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryOwners, setRecoveryOwners] = useState<ProcessRecoveryOwner[] | null>(null);
   const openSettings = useModalStore((state) => state.openCodexVoiceSettings);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const [mobilePane, setMobilePane] = useState<MobilePane>("conversation");
@@ -88,8 +96,11 @@ export function CodexVoiceAnalystModal({
   const callProblem = codexVoiceCallReadinessProblem(t, controller.readiness);
   const analystProblem = codexVoiceAnalystReadinessProblem(t, controller.readiness);
   const callBlocked = callStatus.blocked;
+  // A call that is not ready yet is noted beside the voice controls; the full readiness
+  // list is for an Analyst problem, which stops text as well.
   const showReadiness =
     callBlocked &&
+    Boolean(analystProblem) &&
     (!controller.error ||
       (callProblem !== controller.error && analystProblem !== controller.error));
   const openProblemSettings = () =>
@@ -120,6 +131,7 @@ export function CodexVoiceAnalystModal({
       : controller.phase === "failed" || controller.checking
         ? ""
         : phaseLabel;
+  const touchTarget = "max-sm:min-h-11 pointer-coarse:min-h-11";
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return undefined;
@@ -130,9 +142,118 @@ export function CodexVoiceAnalystModal({
     return () => query.removeEventListener("change", update);
   }, []);
 
-  const startVoice = () => {
-    void controller.start();
-  };
+  const callDot = (
+    <span
+      data-status-motion={
+        !callBlocked &&
+        voicePhaseHasLocalActivity(controller.phase, {
+          microphoneMuted: controller.microphoneMuted,
+          externalCall: controller.externalCall,
+          playbackBlocked: controller.playbackBlocked,
+        })
+          ? "working"
+          : undefined
+      }
+      data-status-dot={
+        callBlocked ? "attention" : voicePhaseDotState(controller.phase, controller.externalCall)
+      }
+      className={`h-2 w-2 flex-none rounded-full ${
+        callBlocked ? "bg-amber-500" : voicePhaseDotClass(controller.phase, controller.externalCall)
+      }`}
+      aria-hidden="true"
+    />
+  );
+
+  // Before a call: what the next call uses. During one: who is speaking and how it goes.
+  const voiceStatus = controller.isEngaged ? (
+    <div className="flex min-w-0 items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
+      {callDot}
+      <span
+        className="min-w-0 truncate"
+        title={[providerLabel, identity.voice, phaseLabel].filter(Boolean).join(" · ")}
+      >
+        {[providerLabel, identity.voice, phaseLabel].filter(Boolean).join(" · ")}
+      </span>
+    </div>
+  ) : (
+    <>
+      {/* Phones keep these choices in Settings, so the composer stays one row. */}
+      <VoiceProviderSelect
+        controller={controller}
+        className={`min-h-9 max-w-full text-xs max-sm:hidden ${touchTarget}`}
+      />
+      <SpeakingVoiceSelect
+        controller={controller}
+        className={`min-h-9 max-w-full rounded-lg border border-[var(--color-border-secondary)] bg-[var(--color-bg-primary)] px-2 text-xs text-[var(--color-text-primary)] max-sm:hidden ${touchTarget}`}
+      />
+      {callBlocked ? (
+        <button
+          type="button"
+          className="flex min-w-0 items-center gap-1.5 rounded text-left text-xs text-amber-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] dark:text-amber-300"
+          data-status-tone="warning"
+          title={callProblem || phaseLabel}
+          onClick={openProblemSettings}
+        >
+          {callDot}
+          <span className="truncate">{phaseLabel}</span>
+        </button>
+      ) : controller.checking ? (
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
+          {callDot}
+          <span className="truncate">{phaseLabel}</span>
+        </span>
+      ) : null}
+    </>
+  );
+
+  const voiceActions = controller.isEngaged ? (
+    <>
+      {controller.owned ? (
+        <IconButton
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-lcd-key
+          className="max-sm:h-11 max-sm:w-11"
+          onClick={controller.toggleMicrophone}
+          disabled={controller.isStarting || controller.phase === "stopping"}
+          label={controller.microphoneMuted ? t("codexVoiceUnmute") : t("codexVoiceMute")}
+          aria-pressed={controller.microphoneMuted}
+        >
+          {controller.microphoneMuted ? (
+            <MicrophoneOffIcon size={17} />
+          ) : (
+            <MicrophoneIcon size={17} />
+          )}
+        </IconButton>
+      ) : null}
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        data-lcd-key
+        onClick={() => void controller.disconnect()}
+        disabled={controller.phase === "stopping"}
+        className="text-rose-500 max-sm:min-h-11"
+      >
+        <StopIcon size={15} aria-hidden="true" />
+        {controller.externalCall ? t("codexVoiceStopExisting") : t("codexVoiceStop")}
+      </Button>
+    </>
+  ) : (
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      data-lcd-key
+      className="max-sm:min-h-11"
+      onClick={() => void controller.start()}
+      disabled={controller.checking || controller.isStarting}
+    >
+      <VoiceWaveformIcon size={15} aria-hidden="true" />
+      {controller.isStarting ? t("codexVoiceStarting") : t("codexVoiceStart")}
+    </Button>
+  );
 
   return (
     <ModalFrame
@@ -141,144 +262,34 @@ export function CodexVoiceAnalystModal({
       lcdScope
       onClose={onClose}
       titleId="codex-voice-analyst-title"
-      closeAriaLabel={t("codexVoiceMinimize")}
+      closeAriaLabel={t("chet.minimize")}
       closeIcon={<ChevronDownIcon size={18} aria-hidden="true" />}
       headerClassName="!gap-2 !px-3 !py-2 sm:!px-4 [&>div:first-child]:pr-0 [&>div:last-child]:gap-1"
       panelClassName="h-full w-full overflow-hidden sm:h-[min(820px,92vh)] sm:w-[min(1180px,97vw)]"
       modalRef={modalRef}
       title={
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-          <h2 className="min-w-0 max-w-full text-sm font-semibold text-[var(--color-text-primary)]">
-            {controller.isEngaged ? (
-              <span
-                className="block truncate"
-                title={[providerLabel, identity.voice].filter(Boolean).join(" · ")}
-              >
-                {providerLabel}
-              </span>
-            ) : (
-              <VoiceProviderSelect
-                controller={controller}
-                className="min-h-9 max-w-full text-sm font-semibold max-sm:min-h-11 pointer-coarse:min-h-11"
-              />
-            )}
-          </h2>
-          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--color-text-muted)]">
-            {!controller.isEngaged ? (
-              <SpeakingVoiceSelect
-                controller={controller}
-                className="min-h-9 max-w-full rounded-lg border border-[var(--color-border-secondary)] bg-[var(--color-bg-primary)] px-2 text-sm text-[var(--color-text-primary)] max-sm:min-h-11 pointer-coarse:min-h-11"
-              />
-            ) : identity.voice ? (
-              <span className="max-w-full truncate" title={identity.voice}>
-                {identity.voice}
-              </span>
-            ) : null}
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span
-                data-status-motion={
-                  !callBlocked &&
-                  voicePhaseHasLocalActivity(controller.phase, {
-                    microphoneMuted: controller.microphoneMuted,
-                    externalCall: controller.externalCall,
-                    playbackBlocked: controller.playbackBlocked,
-                  })
-                    ? "working"
-                    : undefined
-                }
-                data-status-dot={
-                  callBlocked
-                    ? "attention"
-                    : voicePhaseDotState(controller.phase, controller.externalCall)
-                }
-                className={`h-2 w-2 flex-none rounded-full ${
-                  callBlocked
-                    ? "bg-amber-500"
-                    : voicePhaseDotClass(controller.phase, controller.externalCall)
-                }`}
-                aria-hidden="true"
-              />
-              <span
-                data-status-tone={callBlocked ? "warning" : undefined}
-                className={`truncate ${callBlocked ? "text-amber-700 dark:text-amber-300" : ""}`}
-              >
-                {phaseLabel}
-              </span>
-            </div>
-          </div>
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+          <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">Chet</h2>
+          <span className="truncate text-xs text-[var(--color-text-muted)]">
+            {t("chet.subtitle")}
+          </span>
           <span className="sr-only" aria-live="polite" aria-atomic="true">
             {isOpen ? callAnnouncement : ""}
           </span>
         </div>
       }
       headerActions={
-        <>
-          <IconButton
-            type="button"
-            variant="ghost"
-            size="sm"
-            data-lcd-key
-            className="max-sm:h-11 max-sm:w-11"
-            onClick={openSettings}
-            label={t("codexVoiceSettings")}
-          >
-            <SettingsIcon size={17} />
-          </IconButton>
-          {controller.isEngaged ? (
-            <>
-              {controller.owned ? (
-                <IconButton
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  data-lcd-key
-                  className="max-sm:h-11 max-sm:w-11"
-                  onClick={controller.toggleMicrophone}
-                  disabled={controller.isStarting || controller.phase === "stopping"}
-                  label={controller.microphoneMuted ? t("codexVoiceUnmute") : t("codexVoiceMute")}
-                  aria-pressed={controller.microphoneMuted}
-                >
-                  {controller.microphoneMuted ? (
-                    <MicrophoneOffIcon size={17} />
-                  ) : (
-                    <MicrophoneIcon size={17} />
-                  )}
-                </IconButton>
-              ) : null}
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                data-lcd-key
-                aria-label={
-                  controller.externalCall ? t("codexVoiceStopExisting") : t("codexVoiceStop")
-                }
-                onClick={() => void controller.disconnect()}
-                disabled={controller.phase === "stopping"}
-                className="text-rose-500 max-sm:min-h-11 max-sm:min-w-11"
-              >
-                <StopIcon size={15} />
-                <span className="hidden sm:inline">
-                  {controller.externalCall ? t("codexVoiceStopExisting") : t("codexVoiceStop")}
-                </span>
-              </Button>
-            </>
-          ) : (
-            <Button
-              type="button"
-              size="sm"
-              className="max-sm:min-h-11 max-sm:min-w-11"
-              aria-label={t("codexVoiceStart")}
-              onClick={startVoice}
-              disabled={controller.checking || controller.isStarting}
-            >
-              <VoiceWaveformIcon size={15} />
-              <span className="hidden sm:inline">
-                {controller.isStarting ? t("codexVoiceStarting") : t("codexVoiceStart")}
-              </span>
-            </Button>
-          )}
-        </>
+        <IconButton
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-lcd-key
+          className="max-sm:h-11 max-sm:w-11"
+          onClick={openSettings}
+          label={t("codexVoiceSettings")}
+        >
+          <SettingsIcon size={17} />
+        </IconButton>
       }
     >
       <div className="relative flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
@@ -321,7 +332,7 @@ export function CodexVoiceAnalystModal({
                   variant="secondary"
                   size="sm"
                   data-lcd-key
-                  onClick={() => setRecoveryOpen(true)}
+                  onClick={() => setRecoveryOwners(controller.recoveryOwners)}
                 >
                   {t("codexVoiceReviewRecoveryRecords")}
                 </Button>
@@ -367,7 +378,7 @@ export function CodexVoiceAnalystModal({
             <dl className="min-w-0 flex-1 basis-full space-y-1 leading-6 sm:basis-0">
               {[
                 ["codexVoiceReadinessCall", callProblem],
-                ["codexVoiceAnalystTitle", analystProblem],
+                ["chet.runtime", analystProblem],
               ].map(([label, problem]) => (
                 <div key={label} className="block min-w-0 sm:flex sm:gap-2">
                   <dt className="mr-2 inline font-semibold text-[var(--color-text-primary)] sm:mr-0 sm:block sm:flex-none">
@@ -422,9 +433,7 @@ export function CodexVoiceAnalystModal({
             className="flex flex-none border-b border-[var(--glass-border-subtle)] lg:hidden"
           >
             {(["conversation", "analyst"] as const).map((pane) => {
-              const label = t(
-                pane === "conversation" ? "codexVoiceConversation" : "codexVoiceAnalystTitle",
-              );
+              const label = t(pane === "conversation" ? "chet.conversation" : "chet.activity");
               const marked = pane === "analyst" && analystNeedsLook && mobilePane !== "analyst";
               return (
                 <button
@@ -457,11 +466,16 @@ export function CodexVoiceAnalystModal({
             enabled={splitLayout && analystExpanded}
             active={isOpen}
             conversation={
-              <CodexVoiceConversationPane
+              <ChetConversationPane
                 controller={controller}
+                chet={chet}
+                isDark={isDark}
                 visible={splitLayout || mobilePane === "conversation"}
                 analystExpanded={analystExpanded}
                 onToggleAnalyst={() => setAnalystExpanded((expanded) => !expanded)}
+                onReviewRecovery={setRecoveryOwners}
+                voiceStatus={voiceStatus}
+                voiceActions={voiceActions}
                 analystBar={
                   analystExpanded ? null : (
                     <CodexVoiceAnalystSummaryBar
@@ -472,23 +486,29 @@ export function CodexVoiceAnalystModal({
                       errorText={analystErrorText}
                       hasNewResult={hasNewResult}
                       onExpand={() => setAnalystExpanded(true)}
+                      actions={
+                        controller.analystWorking ? (
+                          <ChetStopWorkButton controller={controller} />
+                        ) : null
+                      }
                     />
                   )
                 }
-              >
-                <CodexVoiceMessageSources
-                  active={isOpen}
-                  outputStatus={controller.owned ? controller.outputStatus : undefined}
-                  onOpenSource={
-                    onOpenSource
-                      ? (groupId, eventId) => {
-                          onClose();
-                          onOpenSource(groupId, eventId);
-                        }
-                      : undefined
-                  }
-                />
-              </CodexVoiceConversationPane>
+                sources={
+                  <CodexVoiceMessageSources
+                    active={isOpen}
+                    outputStatus={controller.owned ? controller.outputStatus : undefined}
+                    onOpenSource={
+                      onOpenSource
+                        ? (groupId, eventId) => {
+                            onClose();
+                            onOpenSource(groupId, eventId);
+                          }
+                        : undefined
+                    }
+                  />
+                }
+              />
             }
             analyst={
               <div className={splitLayout && !analystExpanded ? "hidden" : "contents"}>
@@ -506,10 +526,10 @@ export function CodexVoiceAnalystModal({
         </div>
       </div>
       <ProcessRecoveryDialog
-        isOpen={recoveryOpen}
-        owners={controller.recoveryOwners}
+        isOpen={recoveryOwners !== null}
+        owners={recoveryOwners || []}
         isDark={isDark}
-        onClose={() => setRecoveryOpen(false)}
+        onClose={() => setRecoveryOwners(null)}
       />
     </ModalFrame>
   );

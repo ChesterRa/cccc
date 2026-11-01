@@ -1,20 +1,93 @@
 use axum::extract::ws::{Message, WebSocket};
 use cccc_contracts::codex_voice::VoiceProvider;
+use cccc_core::chet_history::{Transcript, TranscriptRole};
 use cccc_daemon::experimental_codex_voice::{
-    AnalystLifecycleEvent, CodexVoiceCall, VoiceDelegationAdmission, parse_provider_delegation_for,
-    realtime_greeting_commands, realtime_notice_commands,
+    AnalystCompletionSource, AnalystLifecycleEvent, CodexVoiceCall, VoiceDelegationAdmission,
+    parse_provider_delegation_for, realtime_greeting_commands, realtime_notice_commands,
 };
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fmt::Display;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
+use uuid::Uuid;
 
 use crate::AppState;
 
 const MAX_BROWSER_EVENT_BYTES: usize = 128 * 1024;
 const RECORDING_LEASE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+type TranscriptWrite = (Uuid, Transcript);
+type TranscriptReceipt = (Uuid, &'static str);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrowserTranscript {
+    #[serde(rename = "type")]
+    kind: String,
+    id: Uuid,
+    turn_id: String,
+    seq: u64,
+    role: TranscriptRole,
+    text: String,
+    final_update: bool,
+    complete: bool,
+}
+
+fn transcript_writer(
+    state: &AppState,
+) -> (
+    mpsc::Sender<TranscriptWrite>,
+    mpsc::Receiver<TranscriptReceipt>,
+) {
+    let (sender, mut receiver) = mpsc::channel::<TranscriptWrite>(32);
+    let (receipts, received) = mpsc::channel(32);
+    let client =
+        cccc_client::DaemonClient::new(state.home.clone()).with_timeout(Duration::from_secs(5));
+    let sessions = Arc::clone(&state.codex_voice);
+    tokio::spawn(async move {
+        while let Some((id, transcript)) = receiver.recv().await {
+            let args = json!({"by":"user","id":id,"transcript":transcript});
+            let result = match client
+                .call(&cccc_contracts::DaemonRequest {
+                    v: 1,
+                    op: "chet_history_transcript".into(),
+                    args: args.as_object().expect("fixed object").clone(),
+                })
+                .await
+            {
+                Ok(response)
+                    if response.ok
+                        && response.result["registration"]
+                            .as_str()
+                            .is_some_and(|value| matches!(value, "inserted" | "existing")) =>
+                {
+                    "saved"
+                }
+                Ok(response)
+                    if !response.ok
+                        && response.error.as_ref().is_some_and(|error| {
+                            matches!(
+                                error.code.as_str(),
+                                "invalid_args" | "chet_history_id_conflict"
+                            )
+                        }) =>
+                {
+                    "not_saved"
+                }
+                _ => "unconfirmed",
+            };
+            if result != "saved" {
+                sessions.mark_chet_history_write_failed();
+            }
+            // If the socket closed, continue draining already accepted records;
+            // the browser correctly treats any missing receipt as unconfirmed.
+            let _ = receipts.send((id, result)).await;
+        }
+    });
+    (sender, received)
+}
 
 struct RecordingLeaseHeartbeat {
     failure: oneshot::Receiver<String>,
@@ -101,6 +174,7 @@ pub(super) async fn serve(
     let mut socket_heartbeat = tokio::time::interval(RECORDING_LEASE_HEARTBEAT_INTERVAL);
     let mut control_tick = tokio::time::interval(Duration::from_millis(500));
     let mut notification_status = session.notification_status();
+    let (transcripts, mut transcript_receipts) = transcript_writer(&state);
     control_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut output_failed = false;
     socket_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -145,6 +219,9 @@ pub(super) async fn serve(
     let mut close_code = None;
     'session: loop {
         tokio::select! {
+            Some((id, result)) = transcript_receipts.recv() => {
+                if !send_json(&mut socket, json!({"type":"transcript_receipt","id":id,"result":result})).await { break; }
+            }
             changed = notification_status.changed() => {
                 if changed.is_err() { end_reason = "notification_stream_closed"; break; }
                 let paused = *notification_status.borrow_and_update();
@@ -214,6 +291,31 @@ pub(super) async fn serve(
                     }
                 };
                 match value["type"].as_str().unwrap_or_default() {
+                    "transcript" => {
+                        let parsed = serde_json::from_value::<BrowserTranscript>(value.clone());
+                        let valid = parsed.ok().filter(|part| {
+                            part.kind == "transcript" && !part.id.is_nil() && !part.turn_id.trim().is_empty()
+                                && part.turn_id.len() <= 256 && part.seq > 0 && part.text.len() <= 32 * 1024
+                                && (!part.complete || part.final_update)
+                        });
+                        if let Some(part) = valid {
+                            let id = part.id;
+                            let record = Transcript {
+                                call_id: generation.clone(), turn_id: part.turn_id, seq: part.seq,
+                                role: part.role, text: part.text, final_update: part.final_update,
+                                complete: part.complete,
+                            };
+                            if analyst.is_none() || transcripts.try_send((id, record)).is_err() {
+                                if analyst.is_some() { state.codex_voice.mark_chet_history_write_failed(); }
+                                if !send_json(&mut socket, json!({"type":"transcript_receipt","id":id,"result":"not_saved"})).await { break; }
+                            }
+                        } else {
+                            if analyst.is_some() { state.codex_voice.mark_chet_history_write_failed(); }
+                            if let Some(id) = value["id"].as_str() {
+                                if !send_json(&mut socket, json!({"type":"transcript_receipt","id":id,"result":"not_saved"})).await { break; }
+                            } else if !send_error(&mut socket, "invalid_transcript", "Voice transcript could not be recorded.").await { break; }
+                        }
+                    }
                     "notification_output_submitted" if analyst.is_some() => {
                         if let Some(id) = value["result_id"].as_str().filter(|id| id.len() <= 256)
                             && let Err(error) = cccc_core::voice_notifications::output_submitted(&state.home, id, &generation)
@@ -280,6 +382,13 @@ pub(super) async fn serve(
                                 continue;
                             }
                         };
+                        // Record what the Voice provider asked the Analyst to do;
+                        // it is distinct from the user's spoken transcript. Queue
+                        // this before admission so lifecycle facts stay correlated.
+                        if !session.analyst().expect("assistant call")
+                            .record_voice_delegation(call.provider(), &generation, &provider) {
+                            state.codex_voice.mark_chet_history_write_failed();
+                        }
                         match call.route_provider_event(&generation, provider_event, &conversation).await {
                             Ok(Some(VoiceDelegationAdmission::NativeInput { delegation_id, text })) => {
                                 let delivery = session.analyst().expect("assistant call").submit_native_voice_input(&text).await;
@@ -303,14 +412,14 @@ pub(super) async fn serve(
                                     tracing::warn!(%error, %delegation_id, "Voice Analyst native input delivery failed");
                                     if !send_delegation_receipt(&mut socket, call.provider(), &provider.id, false).await { break; }
                                     for command in realtime_notice_commands(
-                                        "I couldn't deliver that investigation to the Voice Analyst. Please check its terminal in CCCC.",
+                                        "I couldn't confirm that request was received. Please check my activity in CCCC.",
                                     ) {
                                         if !send_provider_command(&mut socket, command).await { break 'session; }
                                     }
                                     if !send_error(
                                         &mut socket,
                                         "analyst_delivery_failed",
-                                        "The Voice Analyst did not accept that investigation.",
+                                        "Chet could not confirm that the request was accepted.",
                                     ).await { break; }
                                 } else if !send_delegation_receipt(&mut socket, call.provider(), &provider.id, true).await { break; }
                             }
@@ -322,7 +431,7 @@ pub(super) async fn serve(
                             Err(error) => {
                                 if !send_delegation_receipt(&mut socket, call.provider(), &provider.id, false).await { break; }
                                 for command in realtime_notice_commands(
-                                    "I couldn't deliver that investigation to the Voice Analyst. Please check its terminal in CCCC.",
+                                    "I couldn't confirm that request was received. Please check my activity in CCCC.",
                                 ) {
                                     if !send_provider_command(&mut socket, command).await { break 'session; }
                                 }
@@ -330,7 +439,7 @@ pub(super) async fn serve(
                                 if !send_error(
                                     &mut socket,
                                     "analyst_delivery_failed",
-                                    "The Voice Analyst did not accept that investigation.",
+                                    "Chet could not confirm that the request was accepted.",
                                 ).await { break; }
                             }
                         }
@@ -341,11 +450,11 @@ pub(super) async fn serve(
                             if !send_json(&mut socket, json!({"type":"analyst_cancelling"})).await { break; }
                         }
                         Ok(false) => {
-                            if !send_error(&mut socket, "analyst_not_working", "The Voice Analyst has no active investigation.").await { break; }
+                            if !send_error(&mut socket, "analyst_not_working", "Chet has no active work.").await { break; }
                         }
                         Err(error) => {
                             tracing::warn!(%error, "Voice Analyst cancellation failed");
-                            if !send_error(&mut socket, "cancel_failed", "The Voice Analyst could not cancel the current investigation.").await { break; }
+                            if !send_error(&mut socket, "cancel_failed", "Chet could not cancel the current work.").await { break; }
                         }
                     },
                     "heartbeat" => {
@@ -388,19 +497,19 @@ pub(super) async fn serve(
                             Err(error) => {
                                 tracing::warn!(%error, "Voice Analyst progress projection failed");
                                 end_reason = "analyst_projection_failed";
-                                let _ = send_error(&mut socket, "analyst_projection_failed", "The Voice Analyst result could not be returned to Realtime Voice.").await;
+                                let _ = send_error(&mut socket, "analyst_projection_failed", "Chet's result could not be returned to the voice conversation.").await;
                                 break;
                             }
                         }
                     }
                 }
-                Ok(AnalystLifecycleEvent::Completed { turn_id, delegation_id, delegation_ids, status, result, speakable, .. }) => {
+                Ok(AnalystLifecycleEvent::Completed { source, turn_id, delegation_id, delegation_ids, status, result, speakable, .. }) => {
                     // Source-bearing turns take one durable path, including mixed user answers.
                     // The warm monitor also records them after a call stops; insertion is idempotent.
                     let has_sources = delegation_ids.iter().any(|id| id.starts_with("voice-result:"));
                     if has_sources {
                         let text = if status == "completed" { result.clone() } else {
-                            format!("The Analyst did not complete this update ({status}). Check the source messages; do not report the work as completed.")
+                            format!("The work on this update did not complete ({status}). Check the source messages; do not report it as completed.")
                         };
                         if let Err(error) = cccc_core::voice_notifications::processed(&state.home, &delegation_ids, analyst.expect("assistant lifecycle").generation(), &turn_id, &text) {
                             tracing::warn!(%error, "failed to persist source-bearing Voice result");
@@ -421,7 +530,7 @@ pub(super) async fn serve(
                                 Err(error) => {
                                     tracing::warn!(%error, "Voice Analyst final projection failed");
                                     end_reason = "analyst_projection_failed";
-                                    let _ = send_error(&mut socket, "analyst_projection_failed", "The Voice Analyst result could not be returned to Realtime Voice.").await;
+                                    let _ = send_error(&mut socket, "analyst_projection_failed", "Chet's result could not be returned to the voice conversation.").await;
                                     break;
                                 }
                             }
@@ -432,13 +541,15 @@ pub(super) async fn serve(
                         if status == "result_too_large" && !send_error(
                             &mut socket,
                             "analyst_result_too_large",
-                            "The Analyst result is too long for Voice. Read the full result in its terminal or ask for a shorter summary.",
+                            "Chet's result is too long for voice. Check the activity or ask for a shorter answer.",
                         ).await { break; }
                         if speakable {
-                            let notice = if status == "result_too_large" {
-                                "The Analyst finished, but the result is too long for Voice. Do not present earlier partial updates as the complete result. The full output is in the Analyst terminal; the user can ask for a shorter summary."
+                            let notice = if source == AnalystCompletionSource::HostUnconfirmed {
+                                "The outcome of the work could not be confirmed. Do not claim it succeeded or failed; please check Chet's activity in CCCC."
+                            } else if status == "result_too_large" {
+                                "The work finished, but the result is too long for voice. Do not present earlier partial updates as the complete result. The user can check the activity or ask for a shorter answer."
                             } else {
-                                "The investigation did not complete. Please check the Voice Analyst status in CCCC."
+                                "The work did not complete. Please check Chet's activity in CCCC."
                             };
                             for command in realtime_notice_commands(notice) {
                                 if !send_provider_command(&mut socket, command).await { break 'session; }
@@ -451,13 +562,13 @@ pub(super) async fn serve(
                     end_reason = "analyst_needs_attention";
                     let _ = send_error(
                         &mut socket, code,
-                        "The Voice Analyst encountered an incompatible approval or protocol request.",
+                        "Chet encountered an incompatible approval or protocol request.",
                     ).await;
                     break;
                 }
                 Ok(AnalystLifecycleEvent::Disconnected) => {
                     end_reason = "analyst_disconnected";
-                    let _ = send_error(&mut socket, "analyst_disconnected", "The Voice Analyst disconnected.").await;
+                    let _ = send_error(&mut socket, "analyst_disconnected", "Chet disconnected.").await;
                     break;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -469,7 +580,7 @@ pub(super) async fn serve(
                     let _ = send_error(
                         &mut socket,
                         "analyst_event_gap",
-                        "The Voice Analyst event stream lost state and must reconnect.",
+                        "Chet's activity stream lost state and must reconnect.",
                     ).await;
                     break;
                 }

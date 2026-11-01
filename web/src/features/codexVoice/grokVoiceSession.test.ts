@@ -228,3 +228,62 @@ it("releases a late accepted generation when Stop wins the startup request", asy
   expect(track.stop).toHaveBeenCalled();
   expect(fixture.phases.at(-1)).toBe("idle");
 });
+
+it("records an assistant call's turns in Chet history, flushing a cut-off one on Stop", async () => {
+  fixture.start.mockResolvedValue({
+    ok: true,
+    result: { ...result, call: { ...result.call, mode: "assistant" } },
+  });
+  await session.start();
+  const transcripts = () =>
+    fixture.sent.filter((message) => (message as { type?: string }).type === "transcript");
+  Socket.latest.emit({
+    type: "conversation.item.input_audio_transcription.completed",
+    item_id: "u1",
+    transcript: "明天几点开会？",
+  });
+  Socket.latest.emit({
+    type: "response.output_audio_transcript.delta",
+    response_id: "r1",
+    delta: "十点",
+  });
+  expect(transcripts()).toMatchObject([
+    {
+      turn_id: "u1",
+      seq: 1,
+      role: "user",
+      text: "明天几点开会？",
+      final_update: true,
+      complete: true,
+    },
+  ]);
+  await session.stop();
+  expect(transcripts().at(-1)).toMatchObject({
+    turn_id: "r1",
+    seq: 2,
+    role: "assistant",
+    text: "十点",
+    final_update: false,
+    complete: false,
+  });
+});
+
+it("keeps a persona call's speech out of Chet history", async () => {
+  fixture.start.mockResolvedValue({
+    ok: true,
+    result: { ...result, call: { ...result.call, mode: "persona" } },
+  });
+  await session.start();
+  Socket.latest.emit({
+    type: "conversation.item.input_audio_transcription.completed",
+    item_id: "u1",
+    transcript: "你好",
+  });
+  Socket.latest.emit({
+    type: "response.output_audio_transcript.delta",
+    response_id: "r1",
+    delta: "嗨",
+  });
+  await session.stop();
+  expect(fixture.sent).not.toContainEqual(expect.objectContaining({ type: "transcript" }));
+});

@@ -391,7 +391,7 @@ for line in sys.stdin:
             let Some(text) = command["content"][0]["text"].as_str() else {
                 continue;
             };
-            if !text.contains("submitted this investigation directly") {
+            if !text.contains("The user submitted this task during this call") {
                 continue;
             }
             let id = command["_cccc_report_id"]

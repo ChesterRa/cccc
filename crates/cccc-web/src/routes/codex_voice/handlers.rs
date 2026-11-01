@@ -204,7 +204,7 @@ pub(super) async fn reset_analyst(
             tracing::warn!(%error, %generation, "Voice Analyst reset failed");
             ApiError::conflict(
                 "codex_voice_analyst_reset_failed",
-                "The Voice Analyst could not start a new session. Stop or cancel current work first.",
+                "Chet could not start a new session. Stop or cancel current work first.",
                 json!({"generation":generation}),
             )
         })?;
@@ -226,7 +226,7 @@ pub(super) async fn cancel_analyst(
             tracing::warn!(%error, %generation, "Voice Analyst cancellation failed");
             ApiError::conflict(
                 "codex_voice_analyst_cancel_failed",
-                "The Voice Analyst could not cancel the current investigation.",
+                "Chet could not cancel the current work.",
                 json!({"generation":generation}),
             )
         })?;
@@ -292,7 +292,7 @@ pub(super) async fn upgrade_terminal(
             tracing::warn!(%error, %generation, "Voice Analyst terminal lookup failed");
             ApiError::conflict(
                 "codex_voice_terminal_unavailable",
-                "The Voice Analyst terminal is not available yet.",
+                "Chet's activity terminal is not available yet.",
                 json!({"generation":generation}),
             )
         })?;

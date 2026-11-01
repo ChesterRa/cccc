@@ -10,6 +10,44 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
+#[tokio::test]
+async fn in_flight_snapshot_includes_starting_native_and_active_inputs_without_waiting() {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut state = lifecycle.state.lock().await;
+    state.pending = Some(PendingStart {
+        delegation_id: "starting".into(),
+        origin: AnalystTurnOrigin::Voice,
+        cancelling: false,
+    });
+    state.native_pending.push_back(PendingStart {
+        delegation_id: "native".into(),
+        origin: AnalystTurnOrigin::Terminal,
+        cancelling: false,
+    });
+    state.active = Some(ActiveTurn {
+        turn_id: "turn".into(),
+        latest_delegation_id: "active".into(),
+        delegation_ids: vec!["active".into()],
+        origin: AnalystTurnOrigin::Terminal,
+        cancelling: false,
+        deltas: String::new(),
+        completed_text: String::new(),
+        result_overflowed: false,
+    });
+    assert!(
+        lifecycle.try_in_flight().is_none(),
+        "locked is unknown, not empty"
+    );
+    drop(state);
+    let (queued, working) = lifecycle.try_in_flight().expect("unlocked");
+    assert_eq!(queued, ["starting", "native"]);
+    assert_eq!(working, ["active"]);
+    session.stop(session.generation()).await.expect("stop");
+    server.await.expect("fake server");
+}
+
 pub(crate) async fn collect_normalized_events_for_test(
     events: Vec<AnalystEvent>,
     pending: Option<&str>,
@@ -636,6 +674,11 @@ async fn failed_interrupt_allows_a_real_retry() {
 fn result_origin_and_completion_status_are_consistent() {
     assert!(!AnalystTurnOrigin::ActorResult { speakable: false }.speakable());
     assert!(AnalystTurnOrigin::ActorResult { speakable: true }.speakable());
+    assert!(
+        AnalystTurnOrigin::Terminal
+            .merged(AnalystTurnOrigin::Voice)
+            .speakable()
+    );
     assert_eq!(
         normalized_completion_status("completed", "", AnalystTurnOrigin::Voice),
         "failed"

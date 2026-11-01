@@ -19,7 +19,7 @@ export function VoiceRuntimeProfileActions({
     acceptProfile: (profile: ActorProfile) => void;
     saveAsProfile: () => Promise<void>;
   };
-  name: "Voice Secretary" | "Voice Analyst";
+  name: "Voice Secretary" | "Chet";
   onEditingChange?: (editing: boolean) => void;
 }) {
   const { t } = useTranslation("settings");

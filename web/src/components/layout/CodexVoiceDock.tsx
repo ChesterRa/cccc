@@ -6,12 +6,13 @@ import {
   codexVoiceDisplayIdentity,
 } from "../../features/codexVoice/codexVoiceControllerText";
 import { classNames } from "../../utils/classNames";
-import { AlertIcon, HeadphonesIcon, StopIcon, VoiceWaveformIcon } from "../Icons";
+import { AlertIcon, StopIcon, VoiceWaveformIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import type { CodexVoiceDockProps } from "./codexVoiceDockTypes";
 
 export function CodexVoiceDock({
   controller,
+  chetWorking = false,
   collapsed = false,
   variant = "sidebar",
   onOpen,
@@ -29,26 +30,29 @@ export function CodexVoiceDock({
     controller.analyst?.phase === "needs_attention",
   );
   const phaseLabel = t(`modals:${callStatus.labelKey}`);
-  const statusLabel =
-    callStatus.blocked || controller.checking || controller.refreshError
+  const working = chetWorking || controller.analystWorking;
+  // A call names its own state; otherwise Chet's work, then what needs a look.
+  const statusLabel = controller.isEngaged
+    ? [providerLabel, identity.voice, phaseLabel].filter(Boolean).join(" · ")
+    : controller.refreshError
       ? phaseLabel
       : attention
         ? t("layout:codexVoiceAttention")
-        : controller.analyst && !controller.isEngaged && controller.readiness
-          ? controller.analystWorking
-            ? t("modals:codexVoiceAnalystPhase.working")
-            : t("layout:codexVoiceAnalystReady")
-          : phaseLabel;
+        : working
+          ? t("modals:chet.state.working")
+          : t("modals:chet.subtitle");
   const stopLabel = t(
     controller.externalCall ? "modals:codexVoiceStopExisting" : "modals:codexVoiceStop",
   );
   const startDisabled = controller.checking || controller.isStarting;
-  const identityTitle = [providerLabel, identity.voice, statusLabel].filter(Boolean).join(" · ");
-  const working = voicePhaseHasLocalActivity(controller.phase, {
-    microphoneMuted: controller.microphoneMuted,
-    externalCall: controller.externalCall,
-    playbackBlocked: controller.playbackBlocked,
-  });
+  const identityTitle = ["Chet", statusLabel].filter(Boolean).join(" · ");
+  const active =
+    working ||
+    voicePhaseHasLocalActivity(controller.phase, {
+      microphoneMuted: controller.microphoneMuted,
+      externalCall: controller.externalCall,
+      playbackBlocked: controller.playbackBlocked,
+    });
 
   const callControl = controller.isEngaged ? (
     <IconButton
@@ -83,13 +87,11 @@ export function CodexVoiceDock({
       <div className="relative z-10 flex min-h-12 items-center gap-2 border-b border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2 md:hidden">
         <ConsoleButton
           onOpen={onOpen}
-          attention={attention || callStatus.blocked}
-          active={controller.isEngaged}
-          working={working}
+          attention={attention || (controller.isEngaged && callStatus.blocked)}
+          active={controller.isEngaged || working}
+          working={active}
           status={statusLabel}
-          provider={providerLabel}
-          voice={identity.voice}
-          label={t("layout:codexVoiceOpenConsole")}
+          label={t("modals:chet.open")}
         />
         {callControl}
       </div>
@@ -108,15 +110,15 @@ export function CodexVoiceDock({
             controller.isEngaged && "text-[var(--color-accent-primary)]",
           )}
           onClick={onOpen}
-          label={t("layout:codexVoiceOpenConsole")}
+          label={t("modals:chet.open")}
           title={identityTitle}
         >
-          {attention ? <AlertIcon size={18} /> : <HeadphonesIcon size={18} />}
+          {attention ? <AlertIcon size={18} /> : <ChetMark />}
           <span className="absolute bottom-1.5 right-1.5">
             <VoiceStatusDot
-              active={controller.isEngaged}
-              attention={attention || callStatus.blocked}
-              working={working}
+              active={controller.isEngaged || working}
+              attention={attention || (controller.isEngaged && callStatus.blocked)}
+              working={active}
             />
           </span>
         </IconButton>
@@ -130,17 +132,24 @@ export function CodexVoiceDock({
       <div className="flex items-center gap-2">
         <ConsoleButton
           onOpen={onOpen}
-          attention={attention || callStatus.blocked}
-          active={controller.isEngaged}
-          working={working}
+          attention={attention || (controller.isEngaged && callStatus.blocked)}
+          active={controller.isEngaged || working}
+          working={active}
           status={statusLabel}
-          provider={providerLabel}
-          voice={identity.voice}
-          label={t("layout:codexVoiceOpenConsole")}
+          label={t("modals:chet.open")}
         />
         {callControl}
       </div>
     </div>
+  );
+}
+
+/** Chet's mark: its initial, as in the sidebar entry of the design. */
+function ChetMark() {
+  return (
+    <span aria-hidden="true" className="text-sm font-semibold leading-none">
+      C
+    </span>
   );
 }
 
@@ -150,8 +159,6 @@ function ConsoleButton({
   active,
   working,
   status,
-  provider,
-  voice,
   label,
 }: {
   onOpen: () => void;
@@ -159,8 +166,6 @@ function ConsoleButton({
   active: boolean;
   working: boolean;
   status: string;
-  provider: string;
-  voice: string;
   label: string;
 }) {
   return (
@@ -169,20 +174,20 @@ function ConsoleButton({
       onClick={onOpen}
       className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl px-2 py-2 text-left outline-none transition-colors hover:bg-[var(--glass-tab-bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent-primary)]"
       aria-label={label}
-      title={[provider, voice, status].filter(Boolean).join(" · ")}
+      title={["Chet", status].join(" · ")}
     >
       <span className="relative flex h-8 w-8 flex-none items-center justify-center rounded-xl bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
-        {attention ? <AlertIcon size={17} /> : <HeadphonesIcon size={17} />}
+        {attention ? <AlertIcon size={17} /> : <ChetMark />}
         <span className="absolute bottom-0.5 right-0.5">
           <VoiceStatusDot active={active} attention={attention} working={working} />
         </span>
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-semibold text-[var(--color-text-primary)]">
-          {provider}
+          Chet
         </span>
         <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">
-          {voice ? `${voice} · ${status}` : status}
+          {status}
         </span>
       </span>
     </button>

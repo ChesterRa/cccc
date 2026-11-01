@@ -287,8 +287,7 @@ export function useCodexVoiceAnalystSettings(
   const saveAsProfile = async () => {
     if (mode !== "custom" || editingDisabled || settingsLoadFailed) return;
     const name =
-      profileSaveRef.current?.profile.name ||
-      window.prompt(tActors("profileNamePrompt"), "Voice Analyst");
+      profileSaveRef.current?.profile.name || window.prompt(tActors("profileNamePrompt"), "Chet");
     if (!name?.trim()) return;
     setProfileSaving(true);
     setError("");

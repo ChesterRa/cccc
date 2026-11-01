@@ -237,6 +237,7 @@ impl AnalystLifecycle {
             normalized_completion_status(provider_status, &result, active.origin)
         };
         let _ = self.events.send(AnalystLifecycleEvent::Completed {
+            source: AnalystCompletionSource::Runtime,
             turn_id: active.turn_id,
             delegation_id: active.latest_delegation_id,
             delegation_ids: active.delegation_ids,

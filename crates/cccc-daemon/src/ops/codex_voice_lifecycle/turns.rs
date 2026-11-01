@@ -287,7 +287,13 @@ impl AnalystLifecycle {
                 .store(0, std::sync::atomic::Ordering::Release);
             let had_queued = !queued.is_empty();
             for input in queued {
-                self.complete_unadmitted_input(&input.delegation_id, input.origin, "cancelled", "");
+                self.complete_unadmitted_input(
+                    &input.delegation_id,
+                    input.origin,
+                    "cancelled",
+                    "",
+                    AnalystCompletionSource::HostNotStarted,
+                );
             }
             if let Some(active) = state.active.as_mut() {
                 if active.cancelling {

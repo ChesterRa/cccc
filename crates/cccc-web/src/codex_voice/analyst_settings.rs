@@ -14,7 +14,7 @@ impl CodexVoiceSessions {
         discard_current_work: bool,
     ) -> Result<AnalystSettingsOutcome> {
         let settings = cccc_core::codex_voice_settings::normalize(settings)
-            .context("validate Voice Analyst launch settings")?;
+            .context("validate Chet's Runtime settings")?;
         self.ensure_open()?;
         let sessions = self.clone();
         let home = home.clone();
@@ -31,7 +31,7 @@ impl CodexVoiceSessions {
                 .await
         })
         .await
-        .context("Voice Analyst settings worker failed")?
+        .context("Chet settings worker failed")?
     }
 
     async fn apply_analyst_settings_transaction(
@@ -72,7 +72,7 @@ impl CodexVoiceSessions {
         )?;
         let candidate_runtime =
             cccc_core::codex_voice_settings::resolve(home, &settings, &environment)
-                .context("resolve Voice Analyst runtime configuration")?;
+                .context("resolve Chet's Runtime configuration")?;
         let analyst_matches = state
             .analyst
             .as_ref()
@@ -175,25 +175,25 @@ impl CodexVoiceSessions {
                 .map(Arc::new)
                 .map_err(|restore_error| {
                     anyhow!(
-                        "Voice Analyst candidate failed: {candidate_error}; previous runtime could not be restored: {restore_error}"
+                        "Chet's new Runtime failed: {candidate_error}; the previous Runtime could not be restored: {restore_error}"
                     )
                 })?;
                 state.analyst = Some(Arc::clone(&restored));
-                restored.start_monitor(home.clone());
+                restored.start_monitor(home.clone(), Arc::clone(&self.chet_history_write_failed));
                 if let Err(error) = persistence::persist_analyst(home, &restored, materialized) {
                     if restored.retire_for_replacement().await.is_err() {
                         return Err(self.replacement_recovery_pending().into());
                     }
                     state.analyst = None;
-                    return Err(error.context("persist restored Voice Analyst receipt"));
+                    return Err(error.context("persist restored Chet session receipt"));
                 }
                 return Err(candidate_error.context(
-                    "Voice Analyst settings were rejected; previous settings and runtime were restored",
+                    "Chet settings were rejected; previous settings and Runtime were restored",
                 ));
             }
         };
         state.analyst = Some(Arc::clone(&replacement));
-        replacement.start_monitor(home.clone());
+        replacement.start_monitor(home.clone(), Arc::clone(&self.chet_history_write_failed));
         if let Err(error) =
             persistence::persist_analyst(home, &replacement, resume_thread_id.is_some())
         {
@@ -218,19 +218,19 @@ impl CodexVoiceSessions {
                     "analyst_configuration_rollback".into(),
                 )
                 .await
-                .context("restore previous Voice Analyst after receipt persistence failed")?,
+                .context("restore the previous Chet session after receipt persistence failed")?,
             );
             state.analyst = Some(Arc::clone(&restored));
-            restored.start_monitor(home.clone());
+            restored.start_monitor(home.clone(), Arc::clone(&self.chet_history_write_failed));
             if let Err(restore_error) = persistence::persist_analyst(home, &restored, materialized)
             {
                 if restored.retire_for_replacement().await.is_err() {
                     return Err(self.replacement_recovery_pending().into());
                 }
                 state.analyst = None;
-                return Err(restore_error.context("persist restored Voice Analyst receipt"));
+                return Err(restore_error.context("persist restored Chet session receipt"));
             }
-            return Err(error.context("persist replacement Voice Analyst receipt"));
+            return Err(error.context("persist replacement Chet session receipt"));
         }
         let info = replacement.info();
         state.analyst = Some(replacement);
@@ -279,12 +279,10 @@ fn validate_replacement(
     discard_current_work: bool,
 ) -> Result<()> {
     if call_active {
-        bail!("Stop the active Codex Voice call before applying Analyst settings");
+        bail!("Stop the active voice call before applying Chet settings");
     }
     if analyst_busy && !discard_current_work {
-        bail!(
-            "Wait for or cancel the current Voice Analyst investigation before applying settings"
-        );
+        bail!("Wait for or cancel Chet's current work before applying settings");
     }
     Ok(())
 }

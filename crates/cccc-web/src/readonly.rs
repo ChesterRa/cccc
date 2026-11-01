@@ -92,6 +92,7 @@ fn is_mutating_get(path: &str) -> bool {
 /// refused there, not only the changes.
 fn is_user_obligation_get(path: &str) -> bool {
     path.starts_with("/api/v1/process-recovery/")
+        || path.starts_with("/api/v1/chet/")
         || path == "/api/v1/reply-requests/summary"
         || path == "/api/v1/push/config"
         || path
@@ -183,6 +184,19 @@ mod tests {
                     &method,
                     &format!("/api/v1/process-recovery/{suffix}")
                 ));
+            }
+        }
+    }
+
+    #[test]
+    fn read_only_refuses_chet_history_and_inputs() {
+        for method in [Method::GET, Method::HEAD, Method::POST] {
+            for path in [
+                "/api/v1/chet/history",
+                "/api/v1/chet/status",
+                "/api/v1/chet/inputs",
+            ] {
+                assert!(!is_read_only_safe(&method, path), "{path}");
             }
         }
     }

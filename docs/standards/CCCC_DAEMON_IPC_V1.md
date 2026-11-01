@@ -473,6 +473,97 @@ the provider starts; an unreadable or unavailable daemon ledger is not empty.
 These checks observe the owner state at the time of review and do not create a
 cross-process transaction with unrelated later launches.
 
+#### `chet_history_*`
+
+The daemon owns the local, append-only history of the global assistant. These
+operations require `by: "user"` and reject Actor-bound and Group-scoped
+requests. They record or read evidence; none starts a Runtime. The local IPC
+transport is protected by its operating-system access boundary, not by this
+operation policy. Web restricts the corresponding endpoints to administrators
+and rejects exhibit access.
+
+- `chet_history_register`: `{ by, id, request: { text, context } }`. `id` is a
+  non-nil UUID; `context` is null or `{ group_id, group_title, scope_key }`.
+  A context is a label fixed with the input, not a permission or workspace
+  path. The same ID and complete request return `{ registration: "existing" }`;
+  a different request using that ID returns `chet_history_id_conflict`. Only a
+  confirmed `"inserted"` result can authorize the Web owner to submit input.
+- `chet_history_list`: `{ by, before?: string, after?: string, limit?: number }`.
+  `before` and `after` are mutually exclusive opaque cursors and `limit` is
+  1–100. A backward page returns `{ records, before, after }`, where `after`
+  is the history head from the same snapshot. A forward page returns
+  `{ records, after, has_more }`; the cursor advances only past returned facts.
+  A cursor outside the history or not on a record boundary returns `invalid_args`.
+  Reading unused history does not initialize it.
+  An interrupted append may leave an unfinished final record; readers return
+  only complete records, and the next writer may discard that unfinished
+  suffix after validating the preceding records. A complete record whose write
+  acknowledgement was lost is retained and must not cause a replay.
+- `chet_history_find`: `{ by, id }` returns `{ records }`, either null or the
+  facts associated with that input ID. It supports reconciliation after a lost
+  response without resubmitting the input.
+- `chet_history_voice_delegation` records the request produced by a Realtime
+  Voice provider. This is neither the user's verbatim transcript nor proof
+  that an Analyst received it.
+- `chet_history_receipt`, `chet_history_result`, and
+  `chet_history_not_started` append, respectively, a Runtime admission receipt,
+  an observed Runtime terminal result, or a host-confirmed failure before the
+  input was submitted. A pre-admission failure MUST NOT coexist with a receipt
+  or result for the same input. A receipt is not completion; a missing result
+  does not establish whether the Runtime acted. These operations require an
+  already recorded text input or Voice delegation and do not dispatch or replay it.
+- `chet_history_transcript` appends an observed voice transcript update with
+  its call, turn, in-call sequence, role, text, and explicit final/incomplete status.
+  An update is evidence supplied by the call owner; it is not a guarantee that
+  the provider emitted or the browser received every possible event.
+
+Write arguments and history records use these shapes (`id` and `input_id` are
+UUID strings; `created_at` is a UTC timestamp):
+
+```ts
+type VoiceDelegation = { call_id: string; delegation_id: string; text: string }
+type Transcript = {
+  call_id: string; turn_id: string; seq: number; role: "user" | "assistant";
+  text: string; final_update: boolean; complete: boolean
+}
+type Receipt = { generation: string; turn_id: string }
+type Outcome = { generation: string; turn_id: string; status: string; text: string; error: string }
+type ChetHistoryRecord =
+  | { kind: "input"; id: string; created_at: string; request: { text: string; context: GroupContext | null } }
+  | { kind: "voice_delegation"; id: string; created_at: string; delegation: VoiceDelegation }
+  | { kind: "receipt"; id: string; created_at: string; input_id: string; receipt: Receipt }
+  | { kind: "result"; id: string; created_at: string; input_ids: string[]; outcome: Outcome }
+  | { kind: "not_started"; id: string; created_at: string; input_id: string; reason: "assistant_unavailable" | "cancelled" }
+  | { kind: "transcript"; id: string; created_at: string; transcript: Transcript }
+type GroupContext = { group_id: string; group_title: string; scope_key: string | null }
+```
+
+`chet_history_voice_delegation` accepts `{ by, id, delegation }`;
+`chet_history_receipt` accepts `{ by, id, input_id, receipt }`;
+`chet_history_result` accepts `{ by, id, input_ids, outcome }`;
+`chet_history_not_started` accepts `{ by, id, input_id, reason }`; and
+`chet_history_transcript` accepts `{ by, id, transcript }`. Successful writes
+return `{ registration: "inserted" | "existing" }`. `Transcript.seq` is the
+call-local first-observation order, not a global event cursor. `complete: true`
+requires a final update and means no truncation or missing portion is known to
+the observer; it does not attest the provider's entire audio stream. Within a
+call, each turn and each sequence number may appear in only one transcript
+record. A second record for the same `(call_id, turn_id)` or `(call_id, seq)`
+returns `chet_history_id_conflict`; an identical retry with the original record
+ID remains idempotent.
+
+Each append has its own UUID and can be repeated with identical content. A
+conflicting reuse is rejected. A second different receipt for an input returns
+`chet_history_receipt_conflict`; a conflicting terminal result or not-started
+fact returns `chet_history_outcome_conflict`. A receipt, result or not-started
+fact referring to an unknown input returns `chet_history_unknown_input`.
+A history storage error may be
+`chet_history_unavailable`, `chet_history_unknown`, or `chet_history_corrupt`;
+unknown means the write outcome is not confirmed. Callers MUST NOT infer that
+an input was not admitted or automatically submit it again from such an error.
+History and drafts can contain private user content and MUST NOT be written to
+diagnostic logs.
+
 ### 8.2 Observability (Global)
 
 #### `observability_get`

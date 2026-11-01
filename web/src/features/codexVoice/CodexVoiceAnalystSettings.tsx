@@ -91,7 +91,7 @@ export function CodexVoiceAnalystSettingsFields({
               ) : null}
               <VoiceRuntimeProfileActions
                 form={form}
-                name="Voice Analyst"
+                name="Chet"
                 onEditingChange={onProfileEditingChange}
               />
             </>

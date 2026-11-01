@@ -516,3 +516,79 @@ describe("Codex Voice realtime event model", () => {
     expect(stopTrack).toHaveBeenCalledOnce();
   });
 });
+
+describe("Chet history record over the control socket", () => {
+  it("offers finished turns, applies answers, and flushes a cut-off turn on an orderly stop", async () => {
+    const onConversation = vi.fn();
+    const frames: Record<string, unknown>[] = [];
+    let socketOpen = true;
+    const session = new CodexVoiceBrowserSession({
+      audio: { pause: vi.fn() } as unknown as HTMLAudioElement,
+      preferences: { voice: "cove", inputDeviceId: "", outputDeviceId: "" },
+      callbacks: {
+        onPhase: vi.fn(),
+        onCall: vi.fn(),
+        onAnalyst: vi.fn(),
+        onUserTranscript: vi.fn(),
+        onAssistantTranscript: vi.fn(),
+        onConversation,
+        onAnalystProgress: vi.fn(),
+        onAnalystResult: vi.fn(),
+        onPlaybackBlocked: vi.fn(),
+        onError: vi.fn(),
+      },
+    });
+    const transport = session as unknown as {
+      eventSocket: { send(value: Record<string, unknown>): boolean; close(): void };
+      transcripts: RealtimeTranscriptAccumulator;
+      handleProviderMessage(value: string): Promise<void>;
+      handleServerMessage(value: Record<string, unknown>): void;
+    };
+    transport.eventSocket = {
+      send: (value) => {
+        if (!socketOpen) return false;
+        frames.push(value);
+        return true;
+      },
+      close: vi.fn(),
+    };
+    transport.transcripts.bindCall("call-1", true);
+    const emit = (event: unknown) => transport.handleProviderMessage(JSON.stringify(event));
+    const transcriptFrames = () => frames.filter((frame) => frame.type === "transcript");
+    const shown = () => onConversation.mock.calls.at(-1)![0] as { id: string; save?: string }[];
+
+    await emit({ type: "input_transcript.added", item: { text: "查一下" } });
+    expect(transcriptFrames()).toEqual([]);
+    await emit({ type: "turn.done", turn: { id: "u1", role: "user", transcript: "查一下天气。" } });
+    const [question] = transcriptFrames();
+    expect(question).toMatchObject({
+      turn_id: "u1",
+      seq: 1,
+      role: "user",
+      text: "查一下天气。",
+      final_update: true,
+      complete: true,
+    });
+    expect(shown()).toMatchObject([{ id: "u1", save: "pending" }]);
+    transport.handleServerMessage({ type: "transcript_receipt", id: question.id, result: "saved" });
+    expect(shown()).toMatchObject([{ id: "u1", save: "saved" }]);
+
+    // A frame the closed socket cannot take was never sent.
+    socketOpen = false;
+    await emit({ type: "turn.done", turn: { id: "u2", role: "user", transcript: "还有呢？" } });
+    expect(shown().at(-1)).toMatchObject({ id: "u2", save: "not_saved" });
+    socketOpen = true;
+
+    await emit({ type: "output_transcript.added", item: { text: "正在" } });
+    await session.stop();
+    expect(transcriptFrames().at(-1)).toMatchObject({
+      role: "assistant",
+      text: "正在",
+      seq: 3,
+      final_update: false,
+      complete: false,
+    });
+    // The socket closed before its answer.
+    expect(shown().at(-1)).toMatchObject({ role: "assistant", save: "unconfirmed" });
+  });
+});

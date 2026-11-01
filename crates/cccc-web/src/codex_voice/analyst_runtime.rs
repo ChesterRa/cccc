@@ -49,6 +49,9 @@ impl AnalystRuntime {
             launch_runtime,
             terminal_gate: Mutex::new(()),
             terminal_retired: AtomicBool::new(false),
+            chet_live: StdMutex::new(std::collections::HashMap::new()),
+            chet_voice: StdMutex::new(std::collections::HashMap::new()),
+            chet_writer: StdMutex::new(None),
             snapshot: StdMutex::new(AnalystSnapshot {
                 phase: phase.to_owned(),
                 last_result: String::new(),
@@ -82,6 +85,29 @@ impl AnalystRuntime {
 
     pub(crate) fn analyst(&self) -> Arc<CodexVoiceAnalyst> {
         Arc::clone(&self.analyst)
+    }
+
+    /// Observe the provider's request before passing it to the existing
+    /// admission path. Failing to record must not block the live Voice call.
+    pub(crate) fn record_voice_delegation(
+        &self,
+        provider: cccc_contracts::codex_voice::VoiceProvider,
+        call_id: &str,
+        delegation: &cccc_daemon::experimental_codex_voice::ProviderDelegation,
+    ) -> bool {
+        let command = chet_events::voice_command(provider, call_id, delegation);
+        if let chet_events::HistoryCommand::Voice { key, .. } = &command {
+            let id = chet_events::voice_input_id(self.analyst.generation(), key);
+            self.chet_voice
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .insert(key.clone(), id);
+        }
+        self.chet_writer
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .is_some_and(|sender| sender.try_send(command).is_ok())
     }
 
     pub(crate) fn info(&self) -> AnalystInfo {

@@ -46,6 +46,11 @@ impl CodexVoiceAnalyst {
     pub fn queued_inputs(&self) -> usize {
         self.lifecycle.queued_inputs()
     }
+
+    /// In-flight lifecycle IDs, or None if their owner is currently busy.
+    pub fn try_in_flight(&self) -> Option<(Vec<String>, Vec<String>)> {
+        self.lifecycle.try_in_flight()
+    }
     pub fn permissions(&self) -> Vec<serde_json::Value> {
         self.session.permissions()
     }

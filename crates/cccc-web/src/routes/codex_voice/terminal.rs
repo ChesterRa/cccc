@@ -43,7 +43,7 @@ pub(super) async fn serve(
             send_terminal_error(
                 &mut socket,
                 "codex_voice_terminal_unavailable",
-                "Voice Analyst terminal is unavailable.",
+                "Chet's activity terminal is unavailable.",
             )
             .await;
             return;
@@ -185,7 +185,7 @@ pub(super) async fn serve(
                         send_terminal_error(
                             &mut socket,
                             "codex_voice_terminal_unavailable",
-                            "Voice Analyst terminal output was interrupted.",
+                            "Chet's activity terminal output was interrupted.",
                         ).await;
                         break;
                     }

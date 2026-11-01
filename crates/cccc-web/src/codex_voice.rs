@@ -20,6 +20,7 @@ mod analyst_runtime;
 mod analyst_settings;
 mod analyst_tasks;
 mod analyst_terminal;
+mod chet_events;
 #[cfg(all(test, unix))]
 mod grok_tests;
 mod notifications;
@@ -114,6 +115,9 @@ pub(crate) struct AnalystRuntime {
     launch_runtime: ResolvedAgentRuntime,
     terminal_gate: Mutex<()>,
     terminal_retired: AtomicBool,
+    chet_live: StdMutex<std::collections::HashMap<uuid::Uuid, chet_events::LivePhase>>,
+    chet_voice: StdMutex<std::collections::HashMap<String, uuid::Uuid>>,
+    chet_writer: StdMutex<Option<tokio::sync::mpsc::Sender<chet_events::HistoryCommand>>>,
     snapshot: StdMutex<AnalystSnapshot>,
     monitor: StdMutex<Option<JoinHandle<()>>>,
 }
@@ -153,7 +157,15 @@ pub(crate) struct CodexVoiceSessions {
     state: Arc<Mutex<ManagedState>>,
     restart_phase: Arc<AtomicU8>,
     cleanup_gate: Arc<Mutex<()>>,
+    chet_preparing: Arc<StdMutex<std::collections::HashSet<uuid::Uuid>>>,
+    chet_history_write_failed: Arc<AtomicBool>,
     process_recovery: Option<crate::VoiceProcessRecovery>,
+}
+
+#[derive(Debug)]
+pub(crate) enum ChetSubmitError {
+    NotStarted,
+    Unconfirmed,
 }
 
 impl CodexVoiceSessions {

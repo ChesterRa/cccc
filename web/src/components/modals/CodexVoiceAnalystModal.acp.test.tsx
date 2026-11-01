@@ -6,6 +6,7 @@ import type { CodexVoiceAnalystInfo } from "../../services/api/codexVoice";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
 import { controlCodexVoiceAnalyst, fetchActiveCodexVoiceCall } from "../../services/api/codexVoice";
 import { CodexVoiceAnalystModal } from "./CodexVoiceAnalystModal";
+import { chetConversationStub } from "../../features/chet/chetTestSupport";
 
 const backend = vi.hoisted(() => ({ analyst: null as CodexVoiceAnalystInfo | null }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -130,6 +131,7 @@ describe("Voice ACP console in the complete modal", () => {
           isDark={false}
           isSmallScreen={!desktop}
           controller={controller}
+          chet={chetConversationStub()}
           onClose={vi.fn()}
         />,
       ),
@@ -167,12 +169,10 @@ describe("Voice ACP console in the complete modal", () => {
   it("marks the narrow Analyst tab without switching to it", async () => {
     controller.analyst = { ...controller.analyst!, permissions: backend.analyst!.permissions };
     await render(false);
-    const tab = button("codexVoiceAnalystTitle");
+    const tab = button("chet.activity");
     expect(tab.getAttribute("aria-pressed")).toBe("false");
     expect(tab.querySelector("[data-codex-voice-analyst-dot]")).not.toBeNull();
-    expect(tab.getAttribute("aria-label")).toBe(
-      "codexVoiceAnalystTitle · codexVoiceAnalystHasUpdates",
-    );
+    expect(tab.getAttribute("aria-label")).toBe("chet.activity · codexVoiceAnalystHasUpdates");
     await act(async () => tab.click());
     expect(tab.querySelector("[data-codex-voice-analyst-dot]")).toBeNull();
   });
@@ -227,7 +227,7 @@ describe("Voice ACP console in the complete modal", () => {
     controller.owned = false;
     await render(false);
     expect(fetchActiveCodexVoiceCall).not.toHaveBeenCalled();
-    await act(async () => button("codexVoiceAnalystTitle").click());
+    await act(async () => button("chet.activity").click());
     expect(fetchActiveCodexVoiceCall).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain("Run search_web?");
     await act(async () => button("acpControls.deny").click());
@@ -236,7 +236,7 @@ describe("Voice ACP console in the complete modal", () => {
       request_id: "0",
       allow: false,
     });
-    await act(async () => button("codexVoiceConversation").click());
+    await act(async () => button("chet.conversation").click());
     vi.mocked(fetchActiveCodexVoiceCall).mockClear();
     await act(async () => vi.advanceTimersByTimeAsync(2400));
     expect(fetchActiveCodexVoiceCall).not.toHaveBeenCalled();
@@ -306,7 +306,10 @@ describe("Voice ACP console in the complete modal", () => {
     expect(host.textContent).toContain("Synthetic provider failure");
   });
   async function fill(value: string) {
-    const field = host.querySelector("textarea")!;
+    // Chet's composer is also a textarea; this is the Analyst console's own input.
+    const field = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="acpControls.investigationInput"]',
+    )!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
         field,
@@ -397,16 +400,30 @@ describe("Voice ACP console in the complete modal", () => {
       expect(last.input_id).not.toBe(first.input_id);
   });
 
-  it("keeps standalone and foreign/persona call input local; Enter and IME do not submit", async () => {
+  it("offers its own input only during this page's assistant call; Enter and IME do not submit", async () => {
+    const field = () =>
+      host.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="acpControls.investigationInput"]',
+      );
+    // Without this page's call, typed requests go through Chet's composer.
     controller.owned = false;
+    await render();
+    expect(field()).toBeNull();
     ownCall("foreign");
     controller.owned = false;
     await render();
-    expect(host.textContent).toContain("acpControls.localHint");
-    const field = await fill("local investigation");
+    expect(field()).toBeNull();
+    ownCall("persona");
+    controller.call = { ...controller.call!, mode: "persona", analyst_generation: null };
+    await render();
+    expect(field()).toBeNull();
+
+    ownCall("call-a");
+    await render();
+    const input = await fill("call task");
     await act(async () => {
-      field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      field.dispatchEvent(
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      input.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "Enter",
           ctrlKey: true,
@@ -416,14 +433,16 @@ describe("Voice ACP console in the complete modal", () => {
       );
     });
     expect(controlCodexVoiceAnalyst).not.toHaveBeenCalled();
+    // Text typed during the call stays when it ends, and then stays here.
+    controller.call = null;
+    controller.owned = false;
+    await render();
+    expect(field()?.value).toBe("call task");
+    expect(host.textContent).toContain("acpControls.localHint");
     await act(async () => button("acpControls.submitInvestigation").click());
     expect(vi.mocked(controlCodexVoiceAnalyst).mock.calls.at(-1)![1]).toMatchObject({
       call_generation: null,
     });
-    ownCall("persona");
-    controller.call = { ...controller.call!, mode: "persona", analyst_generation: null };
-    await render();
-    expect(host.textContent).toContain("acpControls.localHint");
   });
 
   it("shows a failed investigation once with its partial result and original task", async () => {

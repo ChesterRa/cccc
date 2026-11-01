@@ -147,16 +147,16 @@ impl StartDiagnostic {
                 "Sign in with grok login on the CCCC host. Grok Voice uses that account, without an API key."
             }
             "grok_voice_auth_failed" => {
-                "Grok could not provide a usable native login. Update Grok Build or sign in again; the Analyst session is retained."
+                "Grok could not provide a usable native login. Update Grok Build or sign in again; any existing Chet session is retained."
             }
             "codex_voice_setup_failed" => {
                 "Codex Voice configuration could not be loaded. Check Voice settings."
             }
             "codex_voice_analyst_start_timeout" => {
-                "The Voice Analyst timed out while starting. Check its Runtime and try again."
+                "Chet timed out while starting. Check its Runtime and try again."
             }
             "codex_voice_analyst_start_failed" => {
-                "The Voice Analyst could not start. Check its Runtime Profile."
+                "Chet could not start. Check its Runtime settings."
             }
             "codex_voice_recording_busy" => {
                 "Another voice session still holds recording access. Stop it or wait briefly, then try again."
@@ -165,22 +165,22 @@ impl StartDiagnostic {
                 "CCCC could not acquire or keep recording access. Try starting voice again."
             }
             "codex_voice_realtime_auth_failed" => {
-                "Realtime Voice could not use the selected account login. Check its login; the Analyst session is retained."
+                "Realtime Voice could not use the selected account login. Check its login; any existing Chet session is retained."
             }
             "codex_voice_realtime_timeout" => {
-                "Connecting to Realtime Voice timed out. Try again; the Analyst session is retained."
+                "Connecting to Realtime Voice timed out. Try again; any existing Chet session is retained."
             }
             "codex_voice_realtime_connection_failed" => {
-                "CCCC could not communicate with Realtime Voice. Check the network or proxy; the Analyst session is retained."
+                "CCCC could not communicate with Realtime Voice. Check the network or proxy; any existing Chet session is retained."
             }
             "codex_voice_realtime_rate_limited" => {
-                "Realtime Voice returned a usage or rate limit. Check account limits or try later; the Analyst session is retained."
+                "Realtime Voice returned a usage or rate limit. Check account limits or try later; any existing Chet session is retained."
             }
             "codex_voice_realtime_rejected" => {
-                "Realtime Voice rejected this connection. Try again later; the Analyst session is retained."
+                "Realtime Voice rejected this connection. Try again later; any existing Chet session is retained."
             }
             _ => {
-                "Realtime Voice returned an unusable connection response. Try again; the Analyst session is retained."
+                "Realtime Voice returned an unusable connection response. Try again; any existing Chet session is retained."
             }
         };
         ApiError::unavailable(self.code, message).with_details(self.details())

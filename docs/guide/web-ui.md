@@ -438,44 +438,52 @@ navigation state. Use **Refresh** to load edits from disk; publishing a new card
 also updates the reader. They do not reload on the automatic image/Markdown
 refresh timer.
 
-### Voice conversation (Experimental)
+### Chet global assistant (Experimental)
 
-The **Voice** control below the Group list is a global assistant entry, not a Group roster item.
-It has two stable actions: the main control always opens the Voice console, and the adjacent
-microphone/square control starts or stops live audio. The same meanings are preserved in the
-collapsed sidebar and active-call mobile bar. Settings, mute, and the Analyst terminal are not
-separate Dock actions.
+The **Chet** control below the Group list opens the global assistant, which is not a Group roster
+item. You can write a message without starting a voice call. Chet uses its configured, signed-in
+Runtime; if a Group is selected when you send, it is included as context, not as a permission boundary.
+The adjacent microphone/square control starts or stops live audio. Minimizing Chet does not stop its
+work or an active call. Sending text does not start a call. If a native Runtime combines that text
+with work already underway for a voice conversation or a background notification, the combined
+answer may also be returned through voice.
 
-The Voice console is one operational workspace. Call state, audio settings, mute, and Stop are in its
-top audio-control area. The conversation keeps up to 40 recent spoken entries from this call,
-updating streaming fragments with the final transcript. The display stays in this browser's memory
-until the next call or page reload. Investigations include a bounded recent excerpt so the Analyst
+Text sent through Chet's main input, observed voice transcripts and voice delegations, and their
+available work receipts and results are retained on the machine running CCCC as Chet's history. Drafts that have not
+been sent stay in this browser and are shared by tabs using the same Web address; editing the draft
+concurrently in two tabs can overwrite a change. A receipt means work was accepted, not that it
+finished; if the outcome cannot be confirmed, Chet says so and does not automatically replay it.
+Voice transcripts record what this browser received and can be incomplete. There is no history-clear
+action in this version.
+
+During a call, investigations include a bounded recent excerpt so Chet
 can understand follow-ups and retain your limits; that excerpt becomes part of its retained conversation.
 Voice is instructed to prepare a self-contained task and clarify essential ambiguity before handing it off.
 Handoffs follow the user's current request language and preserve technical identifiers and explicit
 output-language requirements; an already-clear request can keep its original wording.
-The collapsible right pane embeds the selected Voice Analyst
-runtime's writable TUI; its work status is independent of the live audio status. On desktop, drag
+The collapsible **Activity** pane shows the selected Chet Runtime's writable terminal, or its
+structured output for runtimes without one. Work status is independent of live audio. On desktop, drag
 the divider to adjust the pane widths; focus it and use Left/Right or Home/End for keyboard control.
 Double-click the divider to restore the default ratio. This browser remembers the chosen ratio,
 while both panes retain a readable minimum width. Resizing does not reconnect the terminal. On narrow screens,
-**Conversation** and **Voice Analyst** switch between the two panes.
+**Conversation** and **Activity** switch between the two panes.
 Settings replace the console body inside the same panel; call controls stay available.
 **Back to conversation** or Escape returns to the console without disconnecting its terminal.
-Analyst drafts survive tab changes and panel minimization until explicitly saved or discarded.
+Chet settings drafts survive tab changes and panel minimization until explicitly saved or discarded.
 The minimize control keeps the call running; **Stop voice** ends live audio.
-Its settings tabs are **Call preferences**, **Message notifications**, and **Voice Analyst**.
+Its settings tabs are **Call preferences**, **Message notifications**, and **Runtime**.
 Microphone and supported speaker choices are shared with Voice Secretary in the global audio section.
 Call preferences contain the voice service and speaking voice, alongside response detail
 (concise / standard / detailed) and speaking style (natural / direct / patient). Expression defaults
-save automatically for the instance and apply to the next call, without restarting the Analyst.
+save automatically for the instance and apply to the next call, without restarting Chet.
 Detail applies to incoming Actor notifications as well as answers. Voice is instructed to identify
 each notification's Group and sender. Detailed asks it to retain substantive findings, numbers,
-conditions, qualifications and next steps in natural speech; raw tool traces remain in the Analyst terminal.
-Choose **Codex Voice** or **Grok Voice** in the console title or **Call preferences**. The service
+conditions, qualifications and next steps in natural speech; raw tool traces remain in Chet's terminal.
+Choose **Codex Voice** or **Grok Voice** beside the input on desktop, or in **Call preferences**.
+On a phone the choices are in settings. The service
 and its speaking voice are fixed during a call; end it before changing them. This browser remembers
 the selected service and each service's voice independently. Microphone and speaker choices stay
-shared with Voice Secretary. Switching service does not change the independent Analyst runtime or
+shared with Voice Secretary. Switching service does not change the independent Chet runtime or
 its retained conversation. Spoken instructions can override expression defaults.
 
 On the CCCC host, **Codex Voice** uses `codex login`; **Grok Voice** uses a first-party Grok Build
@@ -486,7 +494,7 @@ manager, including its credential lock, and gives the browser only a short-lived
 Grok uses `grok-voice-3.0`, direct browser WebSocket audio and server voice-activity detection. The
 browser resamples its microphone to 24 kHz PCM and plays output through the shared selected speaker.
 An interrupted response stops locally at once. An investigation tool acknowledges reception after
-CCCC accepts it; the actual result returns later through the same global Analyst.
+CCCC accepts it; the actual result returns later through the same global Chet.
 
 The host advertises each service's supported voices and default; Web has no second voice allowlist.
 Codex offers 25 voices, including Himari, Miko, Rindo and Rivage, with Cove as its default. Grok
@@ -508,7 +516,7 @@ and only the expected Actor's reply to the exact source request counts as its re
 at least 1.5 seconds of stable, fully visible, expanded display in a focused foreground page.
 Hidden, covered, folded, partially visible and virtual-list overscan rows do not count. This does
 not change Actor Mail unread state or reply obligations. A viewed explicit reply still updates
-the Analyst's context, but does not trigger a duplicate reading. A user's explicit request to
+Chet's context, but does not trigger a duplicate reading. A user's explicit request to
 read or explain a message still takes priority.
 
 The console's compact **Message sources** section opens the original chat without stopping voice.
@@ -518,14 +526,14 @@ expand the section to see whether it is waiting for the connection or a notifica
 Updates continue reaching Voice during conversation; Voice handles speaking and interruptions.
 An unfinished earlier turn cannot block later delivery. If the connection stops accepting updates,
 the call stops with an explanation; restarting voice can deliver known unsent notifications while
-the Analyst retains its context. Each source also shows the associated result's delivery state. Fully skipped output identifies
+Chet retains its context. Each source also shows the associated result's delivery state. Fully skipped output identifies
 whether it was already viewed, excluded by policy, or unavailable at the submission check. The
 recorded skip reason survives later preference changes. “Submitted” describes delivery to Voice,
 not completed playback or proof of hearing. The experimental provider can omit details or fail to
-resume a report after an interruption even after receiving its context; the Analyst and source links
+resume a report after an interruption even after receiving its context; Chet and source links
 remain available to inspect it. Delivery uncertainty can remain for earlier updates
 while new ones proceed. If notification consumption pauses, a call-wide notice explains that source
-messages are retained and starting a new call retries consumption; voice and Analyst state remain
+messages are retained and starting a new call retries consumption; voice and Chet state remain
 separate.
 If a result combines viewed and unviewed background messages, Voice can point
 to the remaining sources rather than inventing a separable summary. Attachments are identified
@@ -537,23 +545,24 @@ output can return on a later call only when it is positively known not to have b
 an uncertain handoff is retained and is not automatically replayed. Available results are returned
 in their recorded completion order, including catch-up on a later call. All new notification routes
 require trusted-local/admin access and are unavailable to scoped users and Exhibit viewers.
-Remote administrator tokens are rechecked during calls, notification handoff and Analyst terminal
+Remote administrator tokens are rechecked during calls, notification handoff and Chet's terminal
 input/output. Revoking or downgrading one closes even an idle terminal connection within the next
 authorization poll (one second) and stops new Voice work on that connection. An unfinished update from a replaced
-Analyst remains unconfirmed rather than being silently executed again by its replacement.
+Chet session remains unconfirmed rather than being silently executed again by its replacement.
 
-The two visible roles are one product flow:
+The text and voice interfaces use the same assistant:
 
 - **Realtime Voice** owns the low-latency spoken conversation, interruption, and clarification.
-- **Voice Analyst** is the backing managed agent session. It handles file inspection, tools, current CCCC facts,
-  and substantial analysis, then returns useful progress and the final result to the same spoken
-  conversation. Under local user authority it can list all Groups and query an explicitly named Group.
-  Codex, Claude Code, Grok Build, OpenCode, Kilo and Antigravity (official ACP) are the currently admitted Analyst runtimes.
+- **Chet** uses a managed Runtime session for file inspection, tools, current CCCC facts,
+  and substantial analysis. Voice delegations can return progress and results to the spoken
+  conversation. Under local user authority the Runtime has tools to list Groups and query an explicitly named Group;
+  this first slice does not yet provide the planned cross-Group summary and hand-off receipts.
+  See [Runtimes](runtimes.md) for supported modes and their validation limits.
 
-CCCC starts the Analyst in one stable neutral directory at
+CCCC starts Chet in one stable neutral directory at
 `CCCC_HOME/state/codex_voice/analyst-workdir/`. It is not a repository, Working Group, implicit MCP
 target, or authorization boundary. Voice therefore starts without a selected Group or attached
-repository and never changes identity when the sidebar selection changes. The Analyst's CCCC MCP
+repository and never changes identity when the sidebar selection changes. Chet's CCCC MCP
 session has global user authority and the full tool catalog, but it receives no default `group_id`;
 every Group, Actor, task, ledger, or repository operation must resolve and pass an explicit target.
 Repository modification remains work for the target Group's Foreman or peer rather than work rooted
@@ -567,11 +576,11 @@ The same byte limit applies to assistant and persona modes. CCCC rejects oversiz
 instead of truncating it. This is a local input size limit, not a provider token limit;
 token counts vary with the text and model, and provider limits still apply.
 CCCC holds this context unchanged for that call. In assistant mode, it includes the context
-in Realtime startup instructions and every Voice Analyst delegation, and uses a context-aware greeting.
+in Realtime startup instructions and every assistant delegation, and uses a context-aware greeting.
 Replaying the same client session and SDP with different context returns busy rather
 than silently reusing the old call. Omitting the field preserves the global Voice behavior.
 Context is not authentication, a selected CCCC Group, a tool permission, or an isolated
-Analyst session. The host application remains responsible for authorization, business
+Chet session. The host application remains responsible for authorization, business
 records and any session reset needed when changing subjects. Do not include credentials.
 
 For host-defined roleplay, set `application_context.mode` to `"persona"`:
@@ -592,20 +601,20 @@ For host-defined roleplay, set `application_context.mode` to `"persona"`:
 The default mode is `"assistant"`; explicitly specifying it behaves like omitting it.
 In persona mode CCCC supplies only the host's instructions, without its assistant role,
 routing instructions or saved expression preferences. It does not resolve, launch, attach
-or reset a Voice Analyst. Incoming delegation events are ignored; Actor/Group notifications
-are neither consumed nor spoken. An existing Analyst and its pending notifications remain
+or reset Chet's Runtime. Incoming delegation events are ignored; Actor/Group notifications
+are neither consumed nor spoken. An existing Chet session and its pending notifications remain
 available for later assistant calls. Authorization checks, the single-call microphone lease,
 heartbeats and disconnect cleanup still apply. The host decides the opening behavior in
 its instructions; CCCC sends only a neutral call-start cue.
 
 Check `GET /api/v1/codex_voice/calls/active` first: `readiness.supported_modes` advertises
 `["assistant", "persona"]`. For persona, check `realtime_credentials_available`; do not
-require `analyst_runtime_available` or configure/reset an Analyst. Credential presence is
+require `analyst_runtime_available` or configure/reset Chet. Credential presence is
 not a guarantee of provider availability. Old servers reject the nested `mode` field;
 never retry a rejected persona request by silently dropping it. Start and active responses
 include `call.mode`; persona has `call.analyst_generation: null` and the start response has
 `analyst: null`. The active endpoint's top-level `analyst` still describes the independently
-managed global Analyst, if one exists. A different mode with the same client session ID
+managed global Chet session, if one exists. A different mode with the same client session ID
 returns busy, just like a changed context or SDP. Stop the old call before changing modes.
 
 **Experimental provider boundary:** persona startup omits the quicksilver `delegation`
@@ -617,30 +626,31 @@ The host instructions do not override the provider's own system rules.
 
 CCCC reads the existing Codex credential only in the native process that creates the provider call;
 the browser receives the WebRTC answer and bounded session events, not the credential. Use the
-console header to mute the microphone, resume browser-blocked playback, or stop the call. The
-Analyst uses the same trusted-local YOLO boundary as the corresponding CCCC Actor runtime. Its
+console to mute the microphone, resume browser-blocked playback, or stop the call.
+Chet uses the configured Runtime under the same local user authority as CCCC. Its
 authentication and model provider are independent from the Realtime login: the default launch
 inherits the normal Codex configuration, while Custom or Runtime Profile settings can select Codex,
 Claude Code, Grok, OpenCode, Kilo, or official ACP for Antigravity, Copilot, Devin and Cursor,
 and configure that runtime's provider home, model provider, or API key without
 changing the Realtime credential path. The two sides exchange only
-delegations, progress, and results through the CCCC controller.
+delegations, progress, and results through the CCCC controller. The Runtime's actual permission
+behavior follows its selected command and mode.
 
-For a pure ACP Analyst, the structured console offers **manual investigations** instead
-of a terminal. Submit a task or follow-up; busy work uses the visible FIFO and does not
-steer the current task immediately. Cancel stops the current investigation and queued
-inputs, and remains available while the next investigation awaits provider admission.
-During a call owned by this page, submission binds
-the task to that exact assistant call and its settled result returns to Realtime.
-Outside a call, results stay in the Analyst pane. Ending the original call never moves
-queued or late results into the next one. The pane pairs task text with queued, working,
+For a pure ACP Runtime, **Activity** shows structured output instead of a terminal.
+Chet's main input remains available; busy ACP work uses a visible FIFO. Cancel stops the
+current task and queued inputs, including while provider admission is pending.
+While this page owns an assistant-mode call, Activity also offers a task input whose
+settled result is returned to that exact call. Ending the original call does not retarget
+its queued or late results to a replacement call. If the call ends with text still in
+that input, the draft stays visible. Tasks entered through this separate input appear in
+Activity, not in Chet's persistent conversation history. Activity pairs task text with queued, working,
 completed, failed or cancelled outcomes, retaining the eight most recent settled rows
-and any unsettled/awaiting-output work for the current Analyst generation. Enter adds
+and any unsettled/awaiting-output work for the current Runtime generation. Enter adds
 a newline; Ctrl/Command+Enter submits. Failed submissions preserve the draft and original
-call scope; editing starts a new explicit submission. Realtime context delivery is not
-proof that the result was spoken. Independent native-TUI tasks are not automatically
-shared with Voice; existing voice-delegated tasks retain their current result routing.
-The Analyst **Runtime Setup** uses the same Custom / Runtime Profile model as Actor editing. Custom
+call scope; editing starts a new explicit submission. Returning context to Realtime is
+not proof that the result was spoken. Independent native-terminal tasks do not
+automatically become voice requests.
+Chet's **Runtime** settings use the same Custom / Runtime Profile model as Actor editing. Custom
 mode accepts a command for any supported runtime (including Kilo's official Windows npm entrypoint), supported provider/model options, and
 write-only private environment values, and it can save that complete configuration as a reusable
 Runtime Profile without revealing secrets to Web. Runtime Profile mode resolves a compatible
@@ -689,7 +699,7 @@ values in the job record or Web API. Claude wrappers, renamed binaries, prompt
 tails, print mode, remote-control mode, and user-owned background/session
 arguments fail explicitly; there is no Hook, PTY-paste, or `claude -p` fallback.
 
-For runtimes with a native terminal, the controller and TUI are separate processes but one configured Analyst. Codex's
+For runtimes with a native terminal, the controller and TUI are separate processes in one configured Chet session. Codex's
 app-server and remote TUI receive the same executable, model, Profile, supported `-c` overrides, YOLO
 policy, and private environment. Claude's Agent View controller, transcript follower, and native TUI
 share one background session and one effective launch identity. Grok's leader, ACP client, and TUI share one resolved provider
@@ -698,14 +708,14 @@ processes that accept them. OpenCode V2 uses its HTTP/SSE controller; Kilo uses 
 one authenticated provider backend and exact session. CCCC injects the scoped MCP binding when it creates the
 managed session,
 so the model reached from either client has the same CCCC tools. Opening the embedded terminal
-therefore observes and controls the existing Analyst session instead of starting another model
+therefore observes and controls the existing Chet session instead of starting another model
 conversation.
 
 If Realtime Voice reports a provider error, its error code is shown separately
-from Analyst failures. Browser and server diagnostics retain only bounded
+from Chet failures. Browser and server diagnostics retain only bounded
 code/type/event/parameter identifiers and the call generation. Provider explanations
 can quote conversation content or credentials and are not logged. A stopped
-audio call does not discard the warm Analyst session. Provider diagnostics do
+audio call does not discard the warm Chet session. Provider diagnostics do
 not retry requests or change the existing disconnect policy.
 
 For startup or later connection failures, keep the CCCC and Runtime versions
@@ -720,12 +730,12 @@ failure. A still-running child PID does not prove that its session is usable.
 These reports omit raw errors, credentials and conversation content.
 
 Ordinary Codex, Claude Code, Grok, OpenCode, and Kilo Actors use the same runtime-specific managed adapter
-as Voice Analyst and always attach the Runtime's native writable TUI. Actor controllers
-are bound to a concrete Group and Actor MCP identity, while Voice Analyst uses the global user
+as Chet and always attach the Runtime's native writable TUI. Actor controllers
+are bound to a concrete Group and Actor MCP identity, while Chet uses the global user
 identity and its neutral workspace. These are separate roles over the same adapter, not divergent
 session paths. Actor messages enter the native TUI immediately, leaving queue-versus-steer
-behavior to the receiving Runtime. Realtime Voice decides whether a spoken request needs an Analyst,
-but it does not schedule the Analyst process. CCCC attempts each correlated delegation immediately:
+behavior to the receiving Runtime. Realtime Voice decides whether a spoken request needs Chet,
+but it does not schedule Chet's process. CCCC attempts each correlated delegation immediately:
 Codex can append an explicit in-flight correction through exact-turn steering, while the other
 admitted Runtimes receive the exact input through their verified native terminal and own whether it
 steers or queues. Busy state alone never drops or delays a delegation for these runtimes. Antigravity ACP has no native busy-input surface, so its additional inputs instead enter the visible bounded queue described above.
@@ -735,8 +745,8 @@ session instead of falling back to a second execution path.
 Custom non-secret settings live in `settings.yaml`; custom private values live in
 `CCCC_HOME/state/secrets/codex_voice_analyst.json`. Profile secrets remain owned by the Runtime
 Profile store, and Web receives key names only. Applying a valid setting while idle restarts the
-managed host and resumes the same materialized Analyst session. Runtime settings cannot change while
-Realtime Voice is connected. If the Analyst still has active or queued work after voice stops, Web
+managed host and resumes the same materialized Chet session. Runtime settings cannot change while
+Realtime Voice is connected. If Chet still has active or queued work after voice stops, Web
 shows that distinct state and asks once before stopping the old managed host, discarding the unfinished
 result, and applying the new settings. An effective Runtime Profile
 command/environment change replaces the warm host at the next voice start while retaining the same
@@ -749,7 +759,7 @@ work explicitly discarded before the switch cannot be recovered. Browser-local a
 to the next call.
 
 User requests and source-message updates enter the same Runtime admission path immediately; the
-Runtime owns steer/queue behavior. Analyst results are delivered to Realtime in order, including
+Runtime owns steer/queue behavior. Results intended for Realtime are delivered in order, including
 while someone is speaking. Realtime owns speech timing and yielding to interruptions; missing
 speech-turn events cannot block later result delivery. Adjacent fragments of the same result
 are combined without losing text and split to the provider limit before sending. Delivery waits
@@ -763,40 +773,40 @@ If checking still fails, the call stops with an explanation and positively unsen
 available for a later call. A successfully suppressed result stays suppressed if its check is retried.
 If Realtime does not confirm receipt within 30 seconds, the console shows a notice without
 disconnecting or replaying the update. Results exceeding the 32 KiB Voice limit are reported
-explicitly: use the Analyst terminal for the full output or ask for a shorter summary. Neither
-notice stops the Analyst. Provider receipts confirm receipt, not that every detail was spoken.
+explicitly: use Chet's terminal for the full output or ask for a shorter summary. Neither
+notice stops Chet. Provider receipts confirm receipt, not that every detail was spoken.
 
-Realtime Call and Voice Analyst have separate lifecycles. Stopping voice disconnects browser audio
-and releases the microphone lease, but keeps the Analyst warm. Ongoing Analyst or linked
-Actor work continues. Completed Analyst results are retained without waking audio. Actor replies
+Realtime Call and the Chet Runtime have separate lifecycles. Stopping voice disconnects browser audio
+and releases the microphone lease, but keeps Chet warm. Ongoing Chet or linked
+Actor work continues. Completed Chet results are retained without waking audio. Actor replies
 arriving while voice is off stay in the ledger and are consumed on the next explicit call; they do
 not start notification model work in the background. A later call reuses the warm
-Analyst. The console embeds the selected runtime's genuine TUI for that same Analyst session using the existing
-terminal transport; it stays available after the call stops and does not create an Actor or a second
-Analyst. Codex creates its resumable rollout lazily, so its terminal appears when the first real
+Chet session. If the selected Runtime supports a native TUI, Activity embeds it for that same
+session; otherwise Activity shows structured output. It stays available after the call stops and does
+not create an Actor or a second session. Codex creates its resumable rollout lazily, so its terminal appears when the first real
 investigation starts; Claude, Grok, OpenCode, and Kilo managed TUIs can attach as soon as their sessions are ready. CCCC does not
-create a token-consuming placeholder task. **New Analyst session** is the explicit reset action and is
+create a token-consuming placeholder task. **New session** is the explicit reset action and is
 available only after the call stops. Raw local paths, provider session IDs, loopback endpoints, and
 external terminal commands are deliberately not part of the product surface.
 
 The embedded native TUI remains writable while managed work is active. The receiving Runtime owns
 whether new terminal input steers the current turn or queues for the next one; CCCC registers exact
 Voice input before writing it and uses the Runtime's authoritative echo to associate the result with
-the correct delegation. OpenCode V2 Analyst results follow consumed inbox IDs, model output and terminal
+the correct delegation. OpenCode V2 Chet results follow consumed inbox IDs, model output and terminal
 execution events on the same ordered backend stream. Prompt admission alone is
 not completion. Exact-turn interruption is unavailable in V2's public API; use
 the native terminal to interrupt, or stop the owning session. A completed Voice
 turn with no result is reported as failed instead of silently returning an empty answer.
 
-The session manager keeps at most one voice call and one warm Voice Analyst per interactive
+The session manager keeps at most one voice call and one warm Chet Runtime per interactive
 Web host. The normal launcher permits one such Web process per `CCCC_HOME`, while the call also uses
 the existing daemon-owned global recording lease shared with Voice Secretary. Hiding the details
 panel, switching Groups, or leaving the tab in the background does not stop or retarget the call.
 Application-level heartbeats keep the otherwise idle event WebSocket alive through ordinary proxies.
-Explicit cross-Group CCCC queries do not retarget the neutral Analyst workspace. Use **Stop voice**
+Explicit cross-Group CCCC queries do not retarget the neutral Chet workspace. Use **Stop voice**
 to disconnect explicitly.
 Closing or reloading the owning page or losing its browser transport ends only the live call and
-releases the recording lease. Stopping Web also stops the warm Analyst process and embedded TUI while
+releases the recording lease. Stopping Web also stops the warm Chet process and embedded TUI while
 retaining only the exact materialized neutral-workspace thread receipt in global runtime state. The
 next call attempts to resume that thread; a legacy repository-bound receipt is deliberately replaced
 with a fresh neutral-workspace thread and a visible migration warning. A resume failure likewise
@@ -1215,12 +1225,12 @@ In **Settings > Web Access**, `127.0.0.1` means local-only and `0.0.0.0` means l
 `Save` stores the target binding. If Web was started by `cccc` or `cccc web`, use `Apply now` in **Settings > Web Access** to perform the short supervised restart. If Web is managed by Docker, systemd, or another external supervisor, restart that service instead.
 
 Before an address change restarts the supervised Web service, CCCC attempts to
-stop its active Voice work and Analyst. If their cleanup cannot be confirmed,
+stop its active Voice work and Chet. If their cleanup cannot be confirmed,
 the current Web remains available and the saved address has not yet taken
 effect. Check the Voice state and retry **Apply now** after cleanup. A Voice
 start can likewise be delayed while resources from a previous Web process are
 being recovered; retry after cleanup, and if the condition persists, review the
-process records as described below. If an Analyst reset fails after cleanup
+process records as described below. If Chet reset fails after cleanup
 began, refresh the Voice state before deciding whether to try again.
 
 On Unix, CCCC records the processes it starts so that it can clean them up

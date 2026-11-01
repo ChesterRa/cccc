@@ -133,7 +133,7 @@ pub(in crate::routes::codex_voice) async fn analyst_settings(
         tracing::warn!(%error, "Voice Analyst settings read failed");
         ApiError::unavailable(
             "codex_voice_settings_unavailable",
-            "Voice Analyst settings could not be read.",
+            "Chet settings could not be read.",
         )
     })?;
     let environment =
@@ -141,7 +141,7 @@ pub(in crate::routes::codex_voice) async fn analyst_settings(
             tracing::warn!(%error, "Voice Analyst private environment read failed");
             ApiError::unavailable(
                 "codex_voice_settings_unavailable",
-                "Voice Analyst private environment metadata could not be read.",
+                "Chet's private environment metadata could not be read.",
             )
         })?;
     Ok(success(json!({
@@ -178,13 +178,13 @@ pub(in crate::routes::codex_voice) async fn update_analyst_settings(
             if message.contains("Stop the active") {
                 ApiError::conflict(
                     "codex_voice_call_active",
-                    "Stop the active Codex Voice call before applying Analyst settings.",
+                    "Stop the active voice call before applying Chet settings.",
                     json!({}),
                 )
             } else if message.contains("Wait for or cancel") {
                 ApiError::conflict(
                     "codex_voice_settings_busy",
-                    "The Voice Analyst still has active or queued work.",
+                    "Chet still has active or queued work.",
                     json!({}),
                 )
             } else {

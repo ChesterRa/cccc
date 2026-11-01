@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
 import { useModalStore } from "../../stores";
 import { CodexVoiceAnalystModal } from "./CodexVoiceAnalystModal";
+import { chetConversationStub } from "../../features/chet/chetTestSupport";
 
 vi.mock("react-i18next", () => {
   const t = (key: string) => key;
@@ -130,6 +131,7 @@ describe("CodexVoiceAnalystModal settings navigation", () => {
           isDark={false}
           isSmallScreen={false}
           controller={controller()}
+          chet={chetConversationStub()}
           onClose={vi.fn()}
         />,
       ),
@@ -143,7 +145,7 @@ describe("CodexVoiceAnalystModal settings navigation", () => {
       await act(async () => button.click());
     };
     expect(terminal?.getAttribute("data-visible")).toBe("false");
-    await clickText("codexVoiceAnalystTitle");
+    await clickText("chet.activity");
     expect(terminal?.getAttribute("data-visible")).toBe("true");
     await act(async () => {
       desktop = true;
@@ -171,6 +173,7 @@ describe("CodexVoiceAnalystModal settings navigation", () => {
           isDark={false}
           isSmallScreen={false}
           controller={voice}
+          chet={chetConversationStub()}
           onClose={onClose}
         />,
       ),
@@ -217,6 +220,7 @@ describe("CodexVoiceAnalystModal settings navigation", () => {
             isDark={false}
             isSmallScreen={false}
             controller={voice}
+            chet={chetConversationStub()}
             onClose={vi.fn()}
           />,
         ),

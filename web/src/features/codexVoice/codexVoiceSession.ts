@@ -27,6 +27,7 @@ import {
   realtimeTranscriptUpdate,
   realtimeProviderError,
   shouldForwardProviderEvent,
+  type TranscriptFrame,
 } from "./codexVoiceProtocol";
 import { CodexVoiceProviderChannel } from "./codexVoiceProviderChannel";
 import { CodexVoicePeerMonitor } from "./codexVoicePeerMonitor";
@@ -184,6 +185,7 @@ export class CodexVoiceBrowserSession {
         return;
       }
       this.call = response.result.call;
+      this.transcripts.bindCall(this.call.generation, this.call.mode === "assistant");
       this.analyst = response.result.analyst;
       this.callbacks.onCall(this.call);
       this.callbacks.onAnalyst(this.analyst);
@@ -278,9 +280,13 @@ export class CodexVoiceBrowserSession {
       });
     }
     this.sendServerMessage({ type: "provider_receipt", ...this.providerChannel.receipt() });
+    // Turns cut off by the end still belong in history, marked as unfinished.
+    this.sendTranscripts(this.transcripts.takeUnfinished());
     this.sendServerMessage({ type: "stop" });
     this.eventSocket?.close();
     this.eventSocket = null;
+    if (this.transcripts.abandonOffered())
+      this.callbacks.onConversation?.(this.transcripts.history());
     this.providerChannel.close();
     this.peer?.close();
     this.peer = null;
@@ -318,6 +324,10 @@ export class CodexVoiceBrowserSession {
       }
       case "notification_status":
         this.callbacks.onNotificationPaused?.(message.paused === true);
+        break;
+      case "transcript_receipt":
+        if (typeof message.id === "string" && this.transcripts.receipt(message.id, message.result))
+          this.callbacks.onConversation?.(this.transcripts.history());
         break;
       case "provider_command":
         this.providerChannel.send(
@@ -443,6 +453,7 @@ export class CodexVoiceBrowserSession {
           this.callbacks.onPhase(transcript.final ? "listening" : "speaking");
       }
     }
+    this.sendTranscripts(this.transcripts.takeFinished());
     if (shouldForwardProviderEvent(event, provider)) {
       const value = asRecord(event);
       const id = provider === "grok" ? value?.call_id : asRecord(value?.item)?.id;
@@ -468,6 +479,15 @@ export class CodexVoiceBrowserSession {
 
   private sendServerMessage(message: unknown): boolean {
     return this.eventSocket?.send(message) || false;
+  }
+
+  /** Offers turns to Chet history; one the socket cannot take was never sent. */
+  private sendTranscripts(frames: TranscriptFrame[]): void {
+    if (!frames.length) return;
+    for (const frame of frames) {
+      if (!this.sendServerMessage(frame)) this.transcripts.receipt(frame.id, "not_saved");
+    }
+    this.callbacks.onConversation?.(this.transcripts.history());
   }
 
   private async fail(code: string, providerCode?: string): Promise<void> {

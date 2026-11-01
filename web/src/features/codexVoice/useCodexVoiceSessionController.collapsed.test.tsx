@@ -7,6 +7,7 @@ import type { CodexVoiceAnalystInfo } from "../../services/api/codexVoice";
 import { CodexVoiceAnalystModal } from "../../components/modals/CodexVoiceAnalystModal";
 vi.mock("./CodexVoiceMessageSources", () => ({ CodexVoiceMessageSources: () => null }));
 import { useCodexVoiceSessionController } from "./useCodexVoiceSessionController";
+import { chetConversationStub } from "../chet/chetTestSupport";
 
 const fixture = vi.hoisted(() => ({
   analyst: null as CodexVoiceAnalystInfo | null,
@@ -150,6 +151,7 @@ it("surfaces a new ACP approval while the owned-call Analyst is collapsed", asyn
         <audio ref={controller.audioRef} />
         <button onClick={() => void controller.start()}>start</button>
         <CodexVoiceAnalystModal
+          chet={chetConversationStub()}
           isOpen
           isDark={false}
           isSmallScreen={false}
@@ -198,7 +200,11 @@ it("surfaces a new ACP approval while the owned-call Analyst is collapsed", asyn
       "codexVoiceAnalystNeedsInput",
     );
     expect(
-      host.querySelector("[data-codex-voice-analyst-bar] button")?.getAttribute("aria-expanded"),
+      host
+        .querySelector(
+          '[data-codex-voice-analyst-bar] button[aria-controls="codex-voice-analyst-pane"]',
+        )
+        ?.getAttribute("aria-expanded"),
     ).toBe("false");
     expect(
       current.analyst?.permissions?.length,

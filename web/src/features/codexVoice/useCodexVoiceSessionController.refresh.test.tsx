@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { CodexVoiceAnalystModal } from "../../components/modals/CodexVoiceAnalystModal";
 import { useCodexVoiceSessionController } from "./useCodexVoiceSessionController";
+import { chetConversationStub } from "../chet/chetTestSupport";
 
 const fixture = vi.hoisted(() => ({
   active: vi.fn(),
@@ -142,6 +143,7 @@ function App() {
     <>
       <audio ref={current.audioRef} />
       <CodexVoiceAnalystModal
+        chet={chetConversationStub()}
         isOpen
         isDark={false}
         isSmallScreen={false}
@@ -369,7 +371,12 @@ it("keeps the ACP console's independent freshness hint during an owned call", as
 });
 
 it("does not let a slow status read replace the ACP queue accepted by a later control", async () => {
-  fixture.active.mockResolvedValue(snapshot("last result", true, "ready"));
+  const base = snapshot("last result", true, "ready");
+  const permission = { request_id: "0", title: "Run search_web?", kind: "search" };
+  fixture.active.mockResolvedValue({
+    ...base,
+    result: { ...base.result, analyst: { ...base.result.analyst, permissions: [permission] } },
+  });
   await mount();
   await act(async () =>
     [...host.querySelectorAll("button")]
@@ -396,18 +403,11 @@ it("does not let a slow status read replace the ACP queue accepted by a later co
     ],
   };
   fixture.control.mockResolvedValue({ ok: true, result: { accepted: true, analyst: updated } });
-  await act(async () => {
-    const field = host.querySelector("textarea")!;
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
-      field,
-      "accepted investigation",
-    );
-    field.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  // Answering the Runtime's permission request is a control like any other.
   await act(async () =>
-    host
-      .querySelector("form")!
-      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    [...host.querySelectorAll("button")]
+      .find((b) => b.textContent === "acpControls.allow")!
+      .click(),
   );
   expect(current.analyst?.queued_inputs).toBe(1);
   await act(async () => pending.resolve(snapshot("obsolete", true, "ready")));

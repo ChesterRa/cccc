@@ -46,7 +46,7 @@ it("switches shared settings tabs without recreating the Analyst form", () => {
   expect(tabs.map((tab) => tab.textContent)).toEqual([
     "codexVoiceSettingsVoiceAudio",
     "voicePreferences.notifications",
-    "codexVoiceAnalystTitle",
+    "chet.runtime",
   ]);
   for (const tab of tabs) {
     act(() => tab.click());

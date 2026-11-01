@@ -11,6 +11,7 @@ import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { ChevronDownIcon, SendIcon } from "../../components/Icons";
 import { LazyMarkdownRenderer } from "../../components/LazyMarkdownRenderer";
+import { newClientId } from "../../utils/clientId";
 
 const RESULT_TEXT_CLASS = "whitespace-pre-wrap break-words font-sans text-sm leading-6";
 
@@ -43,7 +44,7 @@ export function VoiceAcpConsole({
   const { t } = useTranslation("actors");
   const [current, setCurrent] = useState(analyst);
   const [text, setText] = useState("");
-  const [inputId, setInputId] = useState(() => crypto.randomUUID());
+  const [inputId, setInputId] = useState(() => newClientId());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [staleGeneration, setStaleGeneration] = useState<string | null>(null);
@@ -141,7 +142,7 @@ export function VoiceAcpConsole({
       }
       if (command.action === "input") {
         setText("");
-        setInputId(crypto.randomUUID());
+        setInputId(newClientId());
         submissionScope.current = null;
       }
     } catch {
@@ -272,68 +273,72 @@ export function VoiceAcpConsole({
           }
         />
       </div>
-      <form
-        className="flex-none space-y-2 border-t border-[var(--glass-border-subtle)] p-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
-      >
-        <p className="text-xs text-[var(--color-text-muted)]">
-          {t(
-            submissionScope.current && submissionScope.current.callGeneration !== callGeneration
-              ? "acpControls.retryScopeHint"
-              : callGeneration
-                ? "acpControls.currentCallHint"
-                : "acpControls.localHint",
-          )}
-        </p>
-        <div className="glass-input flex min-w-0 flex-wrap items-end gap-2 rounded-xl p-2 focus-within:!border-[var(--color-border-focus)] focus-within:!shadow-[var(--focus-ring)]">
-          <Textarea
-            ref={inputRef}
-            className="min-h-16 max-h-36 min-w-0 flex-[1_1_10rem] resize-none !border-0 !bg-transparent px-1 py-1 !shadow-none !outline-none !ring-0"
-            value={text}
-            onChange={(event) => {
-              setText(event.target.value);
-              setInputId(crypto.randomUUID());
-              submissionScope.current = null;
-              setError("");
-            }}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                (event.ctrlKey || event.metaKey) &&
-                !event.nativeEvent.isComposing
-              ) {
-                event.preventDefault();
-                submit();
-              }
-            }}
-            disabled={busy}
-            aria-label={t("acpControls.investigationInput")}
-            placeholder={t("acpControls.investigationInput")}
-            rows={2}
-          />
-          <Button
-            type="submit"
-            className="ml-auto shrink-0 max-sm:min-w-11 max-sm:px-0"
-            aria-label={t("acpControls.submitInvestigation")}
-            disabled={busy || !text.trim()}
-          >
-            <SendIcon size={16} className="sm:hidden" aria-hidden="true" />
-            <span className="max-sm:hidden">{t("acpControls.submitInvestigation")}</span>
-          </Button>
-        </div>
-        {error && (
-          <p
-            role="alert"
-            data-status-tone="error"
-            className="text-xs break-words text-rose-600 dark:text-rose-400"
-          >
-            {error}
+      {/* Chet's composer takes typed requests; this one hands a task to this page's call, and
+          stays while it holds text so nothing typed disappears when the call ends. */}
+      {callGeneration || text.trim() ? (
+        <form
+          className="flex-none space-y-2 border-t border-[var(--glass-border-subtle)] p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {t(
+              submissionScope.current && submissionScope.current.callGeneration !== callGeneration
+                ? "acpControls.retryScopeHint"
+                : callGeneration
+                  ? "acpControls.currentCallHint"
+                  : "acpControls.localHint",
+            )}
           </p>
-        )}
-      </form>
+          <div className="glass-input flex min-w-0 flex-wrap items-end gap-2 rounded-xl p-2 focus-within:!border-[var(--color-border-focus)] focus-within:!shadow-[var(--focus-ring)]">
+            <Textarea
+              ref={inputRef}
+              className="min-h-16 max-h-36 min-w-0 flex-[1_1_10rem] resize-none !border-0 !bg-transparent px-1 py-1 !shadow-none !outline-none !ring-0"
+              value={text}
+              onChange={(event) => {
+                setText(event.target.value);
+                setInputId(newClientId());
+                submissionScope.current = null;
+                setError("");
+              }}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Enter" &&
+                  (event.ctrlKey || event.metaKey) &&
+                  !event.nativeEvent.isComposing
+                ) {
+                  event.preventDefault();
+                  submit();
+                }
+              }}
+              disabled={busy}
+              aria-label={t("acpControls.investigationInput")}
+              placeholder={t("acpControls.investigationInput")}
+              rows={2}
+            />
+            <Button
+              type="submit"
+              className="ml-auto shrink-0 max-sm:min-w-11 max-sm:px-0"
+              aria-label={t("acpControls.submitInvestigation")}
+              disabled={busy || !text.trim()}
+            >
+              <SendIcon size={16} className="sm:hidden" aria-hidden="true" />
+              <span className="max-sm:hidden">{t("acpControls.submitInvestigation")}</span>
+            </Button>
+          </div>
+          {error && (
+            <p
+              role="alert"
+              data-status-tone="error"
+              className="text-xs break-words text-rose-600 dark:text-rose-400"
+            >
+              {error}
+            </p>
+          )}
+        </form>
+      ) : null}
     </div>
   );
 }
