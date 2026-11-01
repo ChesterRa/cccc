@@ -27,6 +27,9 @@ export interface VirtualMessageListProps {
   initialScrollAnchorId?: string;
   initialScrollAnchorOffsetPx?: number;
   initialScrollOffsetPx?: number;
+  /** Mark the initial anchor briefly once the view opens on it: it stands in for a message the
+   * reader did not see in this view. */
+  highlightInitialScrollAnchor?: boolean;
   highlightEventId?: string;
   className?: string;
   topInsetPx?: number;
@@ -35,7 +38,6 @@ export interface VirtualMessageListProps {
   onShowRecipients: (eventId: string) => void;
   onCopyLink?: (eventId: string) => void;
   onViewContext?: (eventId: string) => void;
-  onCopyContent?: (event: LedgerEvent) => void;
   onRelay?: (event: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;

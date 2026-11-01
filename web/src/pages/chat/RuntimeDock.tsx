@@ -656,6 +656,7 @@ export function RuntimeDock({
           "group/add-agent relative flex h-[50px] w-[50px] flex-shrink-0 items-center justify-center rounded-full shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35 active:scale-[0.97]",
           "bg-transparent hover:scale-[1.02]",
           isSmallScreen && "mb-1",
+          isSmallScreen && !lcd && "mr-2",
         )}
         aria-label={t("addAgent", { defaultValue: "Add an agent" })}
         title={t("addAgent", { defaultValue: "Add an agent" })}
@@ -705,7 +706,10 @@ export function RuntimeDock({
             <div
               className={classNames(
                 "flex min-w-0 items-end gap-2",
-                isSmallScreen ? "overflow-x-auto px-2 py-1 scrollbar-hide" : "",
+                // Classic keeps its 8px from the last member to Add, and Add's 8px inset.
+                isSmallScreen
+                  ? classNames("overflow-x-auto py-1 scrollbar-hide", lcd ? "px-2" : "pl-2")
+                  : "",
               )}
               data-runtime-dock-strip
             >

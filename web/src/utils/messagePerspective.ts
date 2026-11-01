@@ -4,18 +4,6 @@ export function getMessageInsight(data: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function appendSenderPerspective(
-  text: string,
-  insight: string,
-  label = "Sender perspective",
-): string {
-  const body = String(text || "").trim();
-  const perspective = String(insight || "").trim();
-  if (!perspective) return body;
-  const projection = `${String(label || "Sender perspective").trim()}:\n${perspective}`;
-  return body ? `${body}\n\n${projection}` : projection;
-}
-
 export function appendQuotedOriginalPerspective(
   text: string,
   insight: string,

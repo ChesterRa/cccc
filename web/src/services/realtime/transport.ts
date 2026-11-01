@@ -14,7 +14,31 @@ export class EventStreamTransport {
     { timer: ReturnType<typeof setTimeout>; at: number }
   >();
   private watchdog: ReturnType<typeof setTimeout> | null = null;
+  private lastFrameAt: number | null = null;
   constructor(readonly url: string) {}
+
+  reconnect() {
+    if (this.socket) this.fail(this.socket);
+  }
+
+  /** Run an already scheduled socket retry now, without changing channel backoff. */
+  retryPendingSocket(): boolean {
+    if (!this.retry) return false;
+    clearTimeout(this.retry);
+    this.retry = null;
+    // A newly added subscription must still see that the handshake is recovering.
+    this.retryAt = Date.now();
+    this.sync();
+    return true;
+  }
+
+  reconnectIfStale(maxIdleMs: number): boolean {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN || this.lastFrameAt === null) return false;
+    if (Date.now() - this.lastFrameAt <= maxIdleMs) return false;
+    this.fail(socket);
+    return true;
+  }
 
   add(source: EventStreamSource) {
     this.sources.get(source.channel)?.close();
@@ -45,6 +69,7 @@ export class EventStreamTransport {
     this.channelRetries.clear();
     const socket = this.socket;
     this.socket = null;
+    this.lastFrameAt = null;
     socket?.close();
     for (const source of this.sources.values()) source.readyState = 2;
     this.sources.clear();
@@ -97,6 +122,7 @@ export class EventStreamTransport {
     this.armWatchdog(socket);
     socket.onopen = () => {
       if (this.socket !== socket) return;
+      this.lastFrameAt = Date.now();
       this.armWatchdog(socket);
       this.retryAt = 0;
       // Subscriptions still in their own backoff now wait only on that.
@@ -105,6 +131,7 @@ export class EventStreamTransport {
     };
     socket.onmessage = (event) => {
       if (this.socket !== socket) return;
+      this.lastFrameAt = Date.now();
       this.armWatchdog(socket);
       try {
         const packet = JSON.parse(String(event.data));
@@ -152,6 +179,7 @@ export class EventStreamTransport {
   private fail(socket: WebSocket) {
     if (this.socket !== socket) return;
     this.socket = null;
+    this.lastFrameAt = null;
     if (this.watchdog) clearTimeout(this.watchdog);
     this.watchdog = null;
     socket.close();

@@ -166,7 +166,7 @@
   "savedRestartRequired": "Saved for the next start. Restart \"{{label}}\" when ready to apply the launch changes, including its working directory.",
   "createdButFailedAttach": "Created group but failed to attach: {{message}}",
   "destGroupDifferent": "Destination group must be different from the source group.",
-  "relayTextEmpty": "Relay message text is empty.",
+  "relayTextEmpty": "This message has no text to forward.",
   "failedToListDir": "Failed to list directory",
   "invalidTemplate": "Invalid template",
   "failedToLoadTemplate": "Failed to load template",

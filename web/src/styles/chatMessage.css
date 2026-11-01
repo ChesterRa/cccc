@@ -61,17 +61,18 @@
     transition: none;
   }
 }
-/* Float the latest action above the log without reducing its reading height. */
+/* Float the latest action above the log without reducing its reading height. Classic
+   keeps its floating glass button: its size, place, motion and count badge. */
 [data-scroll-latest] {
   position: absolute;
   z-index: 30;
-  right: 0.75rem;
-  bottom: 0.75rem;
+  right: 1.25rem;
+  bottom: 1.5rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2.75rem;
+  height: 2.75rem;
   padding: 0;
   border: 1px solid var(--glass-panel-border);
   border-radius: 999px;
@@ -79,6 +80,8 @@
   box-shadow: var(--glass-shadow), var(--glass-inner-glow);
   color: var(--color-text-secondary);
   cursor: pointer;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  animation: scale-in 0.2s ease-out;
 }
 
 [data-scroll-latest]:focus-visible {
@@ -88,52 +91,86 @@
 
 [data-scroll-latest-count] {
   position: absolute;
-  top: -0.25rem;
-  right: -0.25rem;
+  top: -0.375rem;
+  right: -0.375rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 1.125rem;
-  height: 1.125rem;
-  padding: 0 0.2rem;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.25rem;
   border-radius: 999px;
-  background: #6366f1;
+  background: var(--color-indigo-500);
+  box-shadow:
+    0 1px 3px 0 rgb(0 0 0 / 0.1),
+    0 1px 2px -1px rgb(0 0 0 / 0.1);
   color: white;
   font-size: 0.625rem;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-scroll-latest] {
+  right: 0.75rem;
+  bottom: 0.75rem;
+  width: 2.5rem;
+  height: 2.5rem;
   border-color: var(--lcd-ink);
   border-radius: 0;
   background: var(--lcd-panel);
   box-shadow: none;
   color: var(--lcd-ink);
+  transition: none;
+  animation: none;
+  transform: none;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-scroll-latest] svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 /* New messages use the same neutral filled mark as unread Mail. The waiting
    colour is reserved for requests that need the user's answer. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-scroll-latest-count] {
+  top: -0.25rem;
+  right: -0.25rem;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding: 0 0.2rem;
   border-radius: 0;
   background: var(--lcd-ink);
+  box-shadow: none;
   color: var(--lcd-bg);
+  font-weight: 400;
 }
 
 @media (hover: hover) {
   [data-scroll-latest]:hover {
-    background: var(--glass-tab-bg-hover);
     color: var(--color-text-primary);
+    transform: scale(1.05);
   }
 
   :root[data-ui-style="lcd"] [data-lcd-scope] [data-scroll-latest]:hover {
     background: var(--lcd-sel-soft);
     color: var(--lcd-ink);
+    transform: none;
   }
+}
+
+/* After hover, as a press shrinks the key even under the pointer. */
+[data-scroll-latest]:active {
+  transform: scale(0.95);
 }
 
 @media (pointer: coarse) {
   [data-scroll-latest] {
+    width: max(2.75rem, 44px);
+    height: max(2.75rem, 44px);
+  }
+
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-scroll-latest] {
     width: max(2.5rem, 44px);
     height: max(2.5rem, 44px);
   }

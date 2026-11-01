@@ -3,13 +3,14 @@ import { readRetryDetail } from "./useSseErrorDetailText";
 // Ledger and headless subscriptions on the shared realtime connection.
 import { useEffect, useRef } from "react";
 import { useGroupStore, useUIStore, useModalStore } from "../stores";
+import { getChatSession, groupMessagesVisible } from "../stores/useUIStore";
 import { mergeStreamingActivity } from "../stores/chatStreamingSessions";
 import { beginContextRequest, isLatestContextRequest } from "../stores/groupStoreCore";
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
 import type { HeadlessStreamEvent, GroupContext, LedgerEvent, StreamingActivity } from "../types";
 import { runReconnectCatchup, scheduleContextOverviewCatchup } from "./sseCatchup";
-import { getRecipientActorIdsForEvent } from "../utils/ledgerEventHandlers";
+import { getRecipientActorIdsForEvent, shouldIncrementUnread } from "../utils/ledgerEventHandlers";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
 import { hasManagedRuntimeOutput } from "../utils/headlessRuntimeSupport";
 import { createSseConnectionRegistry } from "./sseConnectionRegistry";
@@ -27,6 +28,12 @@ import { processLedgerEvent } from "./sse/ledgerEventProcessor";
 import { reconcileLedgerTail } from "./sse/reconcileLedgerTail";
 import { getGroupStreamsHiddenDisconnectDelayMs, shouldStartGroupStreams } from "./sse/visibility";
 import type { UseSSEOptions } from "./sse/types";
+
+// Covers overlapping HTTP and socket catch-up beyond the 800-row UI cache.
+const MAX_RECENT_PROCESSED_IDS = 10000;
+// Server heartbeats are sent every 15 seconds; allow 10 seconds for scheduling.
+const FOCUS_STALE_STREAM_MS = 25000;
+const FOCUS_RECOVERY_DEBOUNCE_MS = 500;
 
 export {
   computeGroupRuntimeFromActorActivityUpdate,
@@ -79,6 +86,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const sseRegistryRef = useRef(createSseConnectionRegistry<EventStreamSource>());
   const contextRefreshTimerRef = useRef<number | null>(null);
   const selectedGroupIdRef = useRef<string>("");
+  const groupVisitRef = useRef(0);
   const scopeRefreshEpoch = useRef(0);
   const headlessReconnectDelayRef = useRef<number>(1000);
   const headlessReconnectTimerRef = useRef<number | null>(null);
@@ -86,6 +94,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const hasConnectedOnceRef = useRef<boolean>(false);
   const needsVisibilityCatchupRef = useRef<boolean>(false);
   const ledgerCursorByGroupRef = useRef(new Map<string, string>());
+  const ledgerSyncsByGroupRef = useRef(new Map<string, number>());
+  const processedIdsRef = useRef(new Set<string>());
+  const lastLedgerReconcileAtRef = useRef<number | null>(null);
   const headlessThreadIdByActorRef = useRef(new Map<string, string>());
   const pendingHeadlessMessageFlushRef = useRef<number | null>(null);
   const pendingHeadlessActivityFlushRef = useRef<number | null>(null);
@@ -121,9 +132,13 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
   useEffect(() => {
     scopeRefreshEpoch.current += 1;
+    groupVisitRef.current += 1;
     selectedGroupIdRef.current = selectedGroupId;
+    processedIdsRef.current.clear();
+    lastLedgerReconcileAtRef.current = null;
     return () => {
       scopeRefreshEpoch.current += 1;
+      groupVisitRef.current += 1;
     };
   }, [selectedGroupId]);
 
@@ -162,26 +177,77 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   }
 
   async function reconcileGroupLedger(groupId: string) {
-    const startCursor = String(ledgerCursorByGroupRef.current.get(groupId) || "").trim();
-    const nextCursor = await reconcileLedgerTail(
-      groupId,
-      () => selectedGroupIdRef.current === groupId,
-      startCursor,
-    );
-    if (
-      nextCursor &&
+    const syncs = ledgerSyncsByGroupRef.current;
+    const visit = groupVisitRef.current;
+    const isCurrentVisit = () =>
+      groupVisitRef.current === visit &&
       selectedGroupIdRef.current === groupId &&
-      String(ledgerCursorByGroupRef.current.get(groupId) || "").trim() === startCursor
-    ) {
-      ledgerCursorByGroupRef.current.set(groupId, nextCursor);
+      useGroupStore.getState().selectedGroupId === groupId;
+    syncs.set(groupId, (syncs.get(groupId) || 0) + 1);
+    try {
+      const startCursor = String(ledgerCursorByGroupRef.current.get(groupId) || "").trim();
+      const nextCursor = await reconcileLedgerTail(
+        groupId,
+        isCurrentVisit,
+        startCursor,
+        (events, newForwardEvents) => {
+          lastLedgerReconcileAtRef.current = Date.now();
+          const ids = processedIdsRef.current;
+          const ui = useUIStore.getState();
+          const chatActive = activeTabRef.current === "chat" && groupMessagesVisible(groupId, ui);
+          const added = newForwardEvents.filter(
+            (event) =>
+              !ids.has(String(event.id || "").trim()) &&
+              shouldIncrementUnread(event, chatActive, chatAtBottomRef.current),
+          ).length;
+          for (const event of events) {
+            const id = String(event.id || "").trim();
+            if (!id) continue;
+            ids.delete(id);
+            ids.add(id);
+          }
+          while (ids.size > MAX_RECENT_PROCESSED_IDS) ids.delete(ids.values().next().value!);
+          if (added) {
+            const current = getChatSession(groupId, ui.chatSessions).chatUnreadCount;
+            ui.setChatUnreadCount(groupId, current + added);
+          }
+          // A backlog larger than the bounded dedupe set cannot safely be
+          // replayed on this subscription. Start a fresh EOF subscription and
+          // catch up once more from the durable boundary to cover the gap.
+          if (events.length > MAX_RECENT_PROCESSED_IDS && eventSourceRef.current) {
+            const boundary = String(events.at(-1)?.id || "").trim();
+            if (boundary) {
+              ledgerCursorByGroupRef.current.set(groupId, boundary);
+              connectStream(groupId);
+            }
+          }
+        },
+      );
+      if (
+        nextCursor &&
+        isCurrentVisit() &&
+        String(ledgerCursorByGroupRef.current.get(groupId) || "").trim() === startCursor
+      ) {
+        ledgerCursorByGroupRef.current.set(groupId, nextCursor);
+      }
+    } finally {
+      const remaining = (syncs.get(groupId) || 1) - 1;
+      if (remaining) syncs.set(groupId, remaining);
+      else syncs.delete(groupId);
     }
   }
 
   async function resyncAfterReconnect(groupId: string) {
+    const visit = groupVisitRef.current;
     await runReconnectCatchup(groupId, {
       invalidateContextRead: api.invalidateContextRead,
       reconcileLedgerTail: reconcileGroupLedger,
-      refreshActors,
+      refreshActors: (id, opts) =>
+        groupVisitRef.current === visit &&
+        selectedGroupIdRef.current === id &&
+        useGroupStore.getState().selectedGroupId === id
+          ? refreshActors(id, opts)
+          : Promise.resolve(),
       fetchContextOverview: fetchContext,
     });
   }
@@ -989,10 +1055,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     );
     const ledgerToken = sseRegistryRef.current.set("ledger", groupId, es);
 
-    const isReconnect = hasConnectedOnceRef.current || needsVisibilityCatchupRef.current;
-
     es.onopen = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
+      const isReconnect = hasConnectedOnceRef.current || needsVisibilityCatchupRef.current;
       setSSEStatus("connected");
       setSSEError(null);
       hasConnectedOnceRef.current = true;
@@ -1006,7 +1071,18 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       if (isReconnect) {
         void resyncAfterReconnect(groupId);
       } else {
-        void reconcileGroupLedger(groupId);
+        void reconcileGroupLedger(groupId).then(() => {
+          // A snapshot can win the race with a live Mail or queue event.
+          // Its duplicate will not increment badges, so refresh their source
+          // of truth after the snapshot has settled.
+          if (
+            sseRegistryRef.current.isCurrent(ledgerToken) &&
+            selectedGroupIdRef.current === groupId &&
+            useGroupStore.getState().selectedGroupId === groupId
+          ) {
+            void refreshActors(groupId, { includeUnread: true });
+          }
+        });
       }
     };
 
@@ -1029,8 +1105,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       try {
         const event = JSON.parse(String(msg.data || "{}")) as LedgerEvent;
         const eventId = String(event.id || "").trim();
-        if (eventId) ledgerCursorByGroupRef.current.set(groupId, eventId);
+        const ids = processedIdsRef.current;
+        const alreadyProcessed = !!eventId && ids.has(eventId);
+        if (eventId && !alreadyProcessed) ledgerCursorByGroupRef.current.set(groupId, eventId);
         processLedgerEvent(groupId, event, {
+          alreadyProcessed,
           actors: actorsRef.current,
           activeTab: activeTabRef.current,
           chatAtBottom: chatAtBottomRef.current,
@@ -1062,6 +1141,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           markPresentationSlotAttention,
           clearPresentationSlotAttention,
         });
+        if (eventId && !alreadyProcessed) {
+          ids.add(eventId);
+          if (ids.size > MAX_RECENT_PROCESSED_IDS) ids.delete(ids.values().next().value!);
+        }
       } catch {
         /* ignore parse errors */
       }
@@ -1110,8 +1193,86 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   }
 
   useEffect(() => {
+    let probe: { source: EventStreamSource; controller: AbortController } | null = null;
+    let lastProbe: { source: EventStreamSource; at: number } | null = null;
+    let lastRetry: { source: EventStreamSource; at: number } | null = null;
+
+    async function checkFocusedLedger() {
+      if (document.hidden) return;
+      const groupId = String(selectedGroupIdRef.current || "").trim();
+      const source = eventSourceRef.current;
+      if (
+        !groupId ||
+        !source ||
+        source.groupId !== groupId ||
+        useGroupStore.getState().selectedGroupId !== groupId
+      )
+        return;
+      if (source.readyState !== 1) {
+        const now = Date.now();
+        if (
+          source.readyState === 0 &&
+          !(
+            lastRetry?.source === source &&
+            now >= lastRetry.at &&
+            now - lastRetry.at < FOCUS_RECOVERY_DEBOUNCE_MS
+          ) &&
+          source.transport.retryPendingSocket()
+        ) {
+          lastRetry = { source, at: now };
+        }
+        return;
+      }
+      if (ledgerSyncsByGroupRef.current.has(groupId)) return;
+      if (source.transport.reconnectIfStale(FOCUS_STALE_STREAM_MS)) return;
+      if (probe?.source === source) return;
+      const now = Date.now();
+      const recent = (at: number | null) =>
+        at !== null && now >= at && now - at < FOCUS_RECOVERY_DEBOUNCE_MS;
+      if (
+        recent(lastLedgerReconcileAtRef.current) ||
+        (lastProbe?.source === source && recent(lastProbe.at))
+      )
+        return;
+      lastProbe = { source, at: now };
+      probe?.controller.abort();
+      const controller = new AbortController();
+      const current = { source, controller };
+      probe = current;
+      const startCursor = String(ledgerCursorByGroupRef.current.get(groupId) || "").trim();
+      const timeout = window.setTimeout(() => controller.abort(), 5000);
+      try {
+        const response = await api.fetchLedgerBoundary(groupId, controller.signal);
+        if (
+          !response.ok ||
+          controller.signal.aborted ||
+          document.hidden ||
+          selectedGroupIdRef.current !== groupId ||
+          useGroupStore.getState().selectedGroupId !== groupId ||
+          eventSourceRef.current !== source ||
+          source.readyState !== 1
+        )
+          return;
+        const boundary = String(response.result.events?.at(-1)?.id || "").trim();
+        const cursor = String(ledgerCursorByGroupRef.current.get(groupId) || "").trim();
+        if (boundary && boundary !== cursor && cursor === startCursor) {
+          // The all-event boundary can include activity omitted from replay;
+          // an empty catch-up advances the cursor after one extra reconnect.
+          source.transport.reconnect();
+        }
+      } finally {
+        window.clearTimeout(timeout);
+        if (probe === current) probe = null;
+      }
+    }
+
+    function handleFocus() {
+      void checkFocusedLedger();
+    }
+
     function handleVisibilityChange() {
       if (!shouldStartGroupStreams(document.hidden)) {
+        probe?.controller.abort();
         scheduleHiddenGroupStreamDisconnect();
         return;
       }
@@ -1125,10 +1286,14 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       if (!headlessEventSourceRef.current) {
         connectHeadlessStream(gid);
       }
+      void checkFocusedLedger();
     }
 
+    window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
+      probe?.controller.abort();
+      window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- uses refs and stable store actions; selected group changes are handled by App lifecycle.

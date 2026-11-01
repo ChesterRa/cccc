@@ -6,7 +6,7 @@ import type { Actor, GroupDoc, LedgerEvent } from "../../types";
 import { isFormalChatMessageEvent } from "../../utils/chatSend";
 import { hasRenderableChatMessageContent } from "../../utils/ledgerEventHandlers";
 import {
-  shouldRestoreDetachedScrollSnapshot,
+  shouldRestoreScrollSnapshot,
   shouldShowInConversation,
   toVisibleConversationEvent,
 } from "./chatTabBasics";
@@ -21,6 +21,7 @@ import {
   dropOrphanQueuedPlaceholders,
 } from "./chatStreamingProjection";
 import { resolveChatListHistoryState } from "./chatListHistoryState";
+import { resolveInitialChatScroll } from "./chatScrollFocus";
 import { matchesChatFilters } from "./chatMessageFilters";
 import { useChatSenderHistory } from "./useChatSenderHistory";
 import { usePendingPages } from "../../features/pendingReplies/usePendingPages";
@@ -139,8 +140,27 @@ export function useChatMessageView(input: {
       senderHistory.events.length > 0,
     [input.events, input.outboxEntries, senderHistory.events.length],
   );
-  const restoreSnapshot =
-    !inChatWindow && shouldRestoreDetachedScrollSnapshot(input.scrollSnapshot);
+  const initialScroll = useMemo(
+    () =>
+      resolveInitialChatScroll({
+        snapshot:
+          !inChatWindow && shouldRestoreScrollSnapshot(input.scrollSnapshot, viewKey)
+            ? input.scrollSnapshot!
+            : null,
+        viewKey,
+        conversation: unfilteredLiveChatMessages,
+        view: displayedMessages,
+        exactOnly: pending.active,
+      }),
+    [
+      displayedMessages,
+      inChatWindow,
+      input.scrollSnapshot,
+      pending.active,
+      unfilteredLiveChatMessages,
+      viewKey,
+    ],
+  );
   const historyState = resolveChatListHistoryState({
     selectedGroupId: input.selectedGroupId,
     chatFilter: input.chatFilter,
@@ -191,14 +211,10 @@ export function useChatMessageView(input: {
     unfilteredLiveChatMessages,
     chatMessages: displayedMessages,
     hasAnyChatMessages,
-    chatInitialScrollAnchorId: restoreSnapshot ? input.scrollSnapshot!.anchorId : undefined,
-    chatInitialScrollAnchorOffsetPx: restoreSnapshot
-      ? Number(input.scrollSnapshot!.offsetPx || 0)
-      : undefined,
-    chatInitialScrollOffsetPx:
-      restoreSnapshot && Number.isFinite(Number(input.scrollSnapshot!.scrollTop))
-        ? Math.max(0, Number(input.scrollSnapshot!.scrollTop))
-        : undefined,
+    chatInitialScrollAnchorId: initialScroll.anchorId,
+    chatInitialScrollAnchorOffsetPx: initialScroll.anchorOffsetPx,
+    chatInitialScrollOffsetPx: initialScroll.scrollOffsetPx,
+    chatInitialScrollHighlight: initialScroll.highlight === true,
     chatWindowProps:
       inChatWindow && input.chatWindow
         ? {

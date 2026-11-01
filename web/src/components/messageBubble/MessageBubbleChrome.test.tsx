@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { useUIStore } from "../../stores";
 import { MessageBubble } from "../MessageBubble";
 import { MessageActions } from "./MessageActions";
 
@@ -188,7 +189,7 @@ describe("message chrome", () => {
     }
   });
 
-  it("binds inline and menu actions to the exact message and closes the menu after reply", async () => {
+  it("keeps Reply and Forward on the bar, the rest in its menu, and all in the touch menu", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -198,11 +199,26 @@ describe("message chrome", () => {
       context = vi.fn(),
       relay = vi.fn(),
       reply = vi.fn();
+    const menuItems = () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'));
+    // A closing menu returns focus to its trigger on the next task; let that land
+    // before another menu opens, as it has by a person's next click.
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    const choose = async (trigger: HTMLButtonElement, label: string) => {
+      await act(async () => trigger.click());
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      await act(async () =>
+        menuItems()
+          .find((item) => item.textContent === label)!
+          .click(),
+      );
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+      await settle();
+    };
     try {
       await act(async () =>
         root.render(
           <MessageActions
-            copiedMessageText={false}
             copyableMessageText="text"
             onCopyMessageText={copy}
             onCopyLink={link}
@@ -215,29 +231,70 @@ describe("message chrome", () => {
           />,
         ),
       );
-      for (const button of host.querySelectorAll<HTMLButtonElement>(
-        "[data-message-actions-inline] button",
-      ))
-        await act(async () => button.click());
-      expect(copy).toHaveBeenCalledOnce();
-      expect(context).toHaveBeenCalledWith("event-1");
-      expect(link).toHaveBeenCalledWith("event-1");
-      expect(relay).toHaveBeenCalledWith(event);
+      const bar = Array.from(
+        host.querySelectorAll<HTMLButtonElement>("[data-message-actions-inline] button"),
+      );
+      expect(bar.map((button) => button.textContent || button.getAttribute("aria-label"))).toEqual([
+        "reply",
+        "relay",
+        "messageActions",
+      ]);
+      await act(async () => bar[0].click());
+      await act(async () => bar[1].click());
       expect(reply).toHaveBeenCalledOnce();
-      const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="messageActions"]')!;
-      await act(async () => trigger.click());
-      expect(trigger.getAttribute("aria-expanded")).toBe("true");
-      const menuReply = Array.from(
-        document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
-      ).find((button) => button.textContent === "reply")!;
-      await act(async () => menuReply.click());
+      expect(relay).toHaveBeenCalledWith(event);
+
+      const more = bar[2];
+      await act(async () => more.click());
+      expect(menuItems().map((item) => item.textContent)).toEqual([
+        "copyText",
+        "copyLink",
+        "viewMessageContext",
+      ]);
+      await act(async () => more.click());
+      await settle();
+      await choose(more, "copyText");
+      await choose(more, "copyLink");
+      await choose(more, "viewMessageContext");
+      expect(copy).toHaveBeenCalledOnce();
+      expect(link).toHaveBeenCalledWith("event-1");
+      expect(context).toHaveBeenCalledWith("event-1");
+
+      const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
+      await act(async () => touch.click());
+      expect(menuItems().map((item) => item.textContent)).toEqual([
+        "reply",
+        "relay",
+        "copyText",
+        "copyLink",
+        "viewMessageContext",
+      ]);
+      await act(async () => touch.click());
+      await settle();
+      await choose(touch, "reply");
       expect(reply).toHaveBeenCalledTimes(2);
-      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+      // Without a copy or a link there is nothing to put behind the bar's ⋯.
+      await act(async () =>
+        root.render(
+          <MessageActions
+            copyableMessageText=""
+            onCopyMessageText={copy}
+            onReply={reply}
+            canReply
+            event={{ kind: "chat.message", by: "user", data: {} }}
+          />,
+        ),
+      );
+      expect(
+        Array.from(host.querySelectorAll("[data-message-actions-inline] button")).map(
+          (button) => button.textContent,
+        ),
+      ).toEqual(["reply"]);
       await act(async () =>
         root.render(
           <MessageActions
             readOnly
-            copiedMessageText={false}
             copyableMessageText="text"
             onCopyMessageText={copy}
             onReply={reply}
@@ -251,6 +308,59 @@ describe("message chrome", () => {
     } finally {
       await act(async () => root.unmount());
       host.remove();
+    }
+  });
+
+  it("confirms a copied message with a notice, since its menu closes on use", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    try {
+      await act(async () =>
+        root.render(
+          <MessageBubble
+            event={{
+              id: "event-1",
+              kind: "chat.message",
+              by: "worker",
+              data: { text: "hello", quote_text: "earlier point", insight: "provisional view" },
+            }}
+            actorById={new Map()}
+            actors={[]}
+            displayNameMap={new Map()}
+            agentState={null}
+            taskById={new Map()}
+            isDark={false}
+            groupId="g"
+            groupLabelById={{}}
+            onReply={vi.fn()}
+            onShowRecipients={vi.fn()}
+          />,
+        ),
+      );
+      const more = host.querySelector<HTMLButtonElement>(
+        '[data-message-actions-inline] button[aria-label="messageActions"]',
+      )!;
+      await act(async () => more.click());
+      const copy = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+      ).find((item) => item.textContent === "copyText")!;
+      await act(async () => copy.click());
+      // The quote and the sender's insight travel with the text, as before the menu.
+      expect(writeText).toHaveBeenCalledWith(
+        "> earlier point\n\nhello\n\nsenderPerspective:\nprovisional view",
+      );
+      expect(useUIStore.getState().notice?.message).toBe("textCopied");
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+      useUIStore.getState().dismissNotice();
     }
   });
 

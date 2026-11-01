@@ -111,6 +111,7 @@ export async function reconcileLedgerTail(
   groupId: string,
   isCurrentGroup: () => boolean,
   afterEventId = "",
+  onReconciled?: (events: readonly LedgerEvent[], newForwardEvents: readonly LedgerEvent[]) => void,
 ): Promise<string> {
   const anchor = String(afterEventId || "").trim();
   const catchup = anchor
@@ -124,6 +125,21 @@ export async function reconcileLedgerTail(
     reconcileCanonicalOutboxEvent(event, groupId),
   );
   const reconciledEvents = reconciliations.map((item) => item.event);
+  if (onReconciled) {
+    // A cache read does not mean a message was counted. The caller compares
+    // forward events with the bounded set of events actually processed.
+    const existingIds = new Set<string>();
+    const newForwardEvents: LedgerEvent[] = [];
+    if (anchor && catchup.hasMoreHistory === null) {
+      for (const event of reconciledEvents) {
+        const id = String(event.id || "").trim();
+        if (!id || existingIds.has(id)) continue;
+        existingIds.add(id);
+        newForwardEvents.push(event);
+      }
+    }
+    onReconciled(reconciledEvents, newForwardEvents);
+  }
   const nextEvents =
     anchor && catchup.hasMoreHistory === null
       ? mergeForwardLedgerEvents(currentEvents, reconciledEvents, anchor)

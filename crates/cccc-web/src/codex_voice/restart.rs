@@ -98,7 +98,15 @@ impl CodexVoiceSessions {
     pub(crate) async fn recover_before_start(self: &Arc<Self>) -> Result<(), VoiceGateError> {
         match self.restart_phase.load(Ordering::Acquire) {
             OPEN => {}
-            RECOVERY_PENDING => self.cleanup_transition(OPEN).await?,
+            RECOVERY_PENDING => {
+                // A timed-out cleanup can still be running. A user retry need
+                // not wait through another deadline while that owner holds the
+                // gate; it can retry once the existing cleanup has finished.
+                if self.cleanup_gate.try_lock().is_err() {
+                    return Err(VoiceGateError::RecoveryPending);
+                }
+                self.cleanup_transition(OPEN).await?;
+            }
             _ => return Err(VoiceGateError::Restarting),
         }
         if let Some(recovery) = self.process_recovery.as_ref() {
@@ -159,12 +167,19 @@ impl CodexVoiceSessions {
         next: u8,
         timeout: Duration,
     ) -> Result<(), VoiceGateError> {
-        // A timed-out cleanup may still be running. Do not start another one
-        // or lose the old owner while its exact resources are being stopped.
-        let Ok(cleanup) = Arc::clone(&self.cleanup_gate).try_lock_owned() else {
-            self.mark_recovery_pending();
-            return Err(VoiceGateError::RecoveryPending);
-        };
+        // A Stop may already hold the gate while an admitted Start finishes.
+        // Wait for it within the same deadline as cleanup instead of reporting
+        // a failure before the previous owner has had a chance to finish.
+        // This outer guard also covers cancellation while waiting for the gate.
+        let _transition = PendingOnDrop(Arc::clone(self));
+        let deadline = tokio::time::Instant::now() + timeout;
+        let cleanup =
+            match tokio::time::timeout_at(deadline, Arc::clone(&self.cleanup_gate).lock_owned())
+                .await
+            {
+                Ok(cleanup) => cleanup,
+                Err(_) => return Err(VoiceGateError::RecoveryPending),
+            };
         let sessions = Arc::clone(self);
         let task = tokio::spawn(async move {
             let _cleanup = cleanup;
@@ -173,7 +188,7 @@ impl CodexVoiceSessions {
             let _transition = PendingOnDrop(Arc::clone(&sessions));
             sessions.cleanup_owned().await
         });
-        match tokio::time::timeout(timeout, task).await {
+        match tokio::time::timeout_at(deadline, task).await {
             Ok(Ok(Ok(()))) => self
                 .restart_phase
                 .compare_exchange(RECOVERY_PENDING, next, Ordering::AcqRel, Ordering::Acquire)
@@ -333,8 +348,11 @@ mod tests {
         let sessions = Arc::new(CodexVoiceSessions::default());
         let in_flight = sessions.cleanup_gate.lock().await;
 
+        sessions.reserve_cleanup(false).expect("reserve cleanup");
         assert_eq!(
-            sessions.prepare_web_restart().await,
+            sessions
+                .cleanup_reserved_with_timeout(PREPARED, Duration::from_millis(20))
+                .await,
             Err(VoiceGateError::RecoveryPending)
         );
         assert_eq!(
@@ -348,13 +366,59 @@ mod tests {
             sessions.recover_before_start().await,
             Err(VoiceGateError::RecoveryPending)
         );
-
         drop(in_flight);
         sessions
             .recover_before_start()
             .await
             .expect("explicit retry can reopen a clean manager");
         sessions.ensure_open().expect("Voice is available again");
+    }
+
+    #[tokio::test]
+    async fn restart_waits_for_an_inflight_stop_within_its_deadline() {
+        let sessions = Arc::new(CodexVoiceSessions::default());
+        let in_flight = sessions.cleanup_gate.lock().await;
+        sessions.reserve_cleanup(false).expect("reserve cleanup");
+        let waiter_sessions = Arc::clone(&sessions);
+        let waiter = tokio::spawn(async move {
+            waiter_sessions
+                .cleanup_reserved_with_timeout(PREPARED, Duration::from_secs(1))
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !waiter.is_finished(),
+            "restart must wait for the prior owner"
+        );
+        drop(in_flight);
+        assert_eq!(waiter.await.expect("worker"), Ok(()));
+        assert_eq!(sessions.restart_phase.load(Ordering::Acquire), PREPARED);
+    }
+
+    #[tokio::test]
+    async fn cancelling_restart_while_waiting_for_the_gate_leaves_recovery_pending() {
+        let sessions = Arc::new(CodexVoiceSessions::default());
+        let in_flight = sessions.cleanup_gate.lock().await;
+        let waiter_sessions = Arc::clone(&sessions);
+        let waiter = tokio::spawn(async move { waiter_sessions.prepare_web_restart().await });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while sessions.restart_phase.load(Ordering::Acquire) != CLOSING {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("restart reserves the owner");
+        waiter.abort();
+        let _ = waiter.await;
+        assert_eq!(
+            sessions.restart_phase.load(Ordering::Acquire),
+            RECOVERY_PENDING
+        );
+        drop(in_flight);
+        sessions
+            .recover_before_start()
+            .await
+            .expect("a later user request can retry cleanup");
     }
 
     #[tokio::test]
@@ -695,17 +759,27 @@ mod tests {
             sessions.cleanup_gate.try_lock().is_err(),
             "worker holds cleanup gate"
         );
-        assert_eq!(
-            sessions.prepare_web_restart().await,
-            Err(VoiceGateError::RecoveryPending)
-        );
+        let apply_sessions = Arc::clone(&sessions);
+        let apply = tokio::spawn(async move { apply_sessions.prepare_web_restart().await });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while sessions.restart_phase.load(Ordering::Acquire) != CLOSING {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("Apply reserves the owner");
+        assert!(!apply.is_finished(), "Apply must wait for the Stop worker");
         release.send(()).expect("release lock holder");
         holder.join().expect("lock holder exits");
-        let cleanup = tokio::time::timeout(Duration::from_secs(5), sessions.cleanup_gate.lock())
-            .await
-            .expect("Stop worker finishes");
-        drop(cleanup);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), apply)
+                .await
+                .expect("Apply finishes")
+                .expect("Apply worker"),
+            Ok(())
+        );
         assert!(sessions.state.lock().await.active.is_none());
+        sessions.cancel_prepared_restart();
         sessions
             .recover_before_start()
             .await

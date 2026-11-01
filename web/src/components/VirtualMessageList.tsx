@@ -1,4 +1,4 @@
-import { memo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { memo, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useState } from "react";
 import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { ScrollLatestIcon } from "./Icons";
@@ -35,6 +35,7 @@ import { MessageRows } from "./virtualMessageList/MessageRows";
 import { useVirtualScrollState } from "./virtualMessageList/useVirtualScrollState";
 import { useScrollAnchorRestoration as useAnchorRestoration } from "./virtualMessageList/useScrollAnchorRestoration";
 import { useInitialMessageScroll } from "./virtualMessageList/useInitialMessageScroll";
+import { getReadingFocus, useReadingEngagement } from "./virtualMessageList/useReadingEngagement";
 import { useMessageTailAutoFollow } from "./virtualMessageList/useMessageTailAutoFollow";
 import { usePendingReplyFollow } from "./virtualMessageList/usePendingReplyFollow";
 import { cacheMessageRowHeight } from "./virtualMessageList/rowHeightCache";
@@ -76,6 +77,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   initialScrollAnchorId,
   initialScrollAnchorOffsetPx,
   initialScrollOffsetPx,
+  highlightInitialScrollAnchor = false,
   highlightEventId,
   className,
   topInsetPx = 0,
@@ -84,7 +86,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onShowRecipients,
   onCopyLink,
   onViewContext,
-  onCopyContent,
   onRelay,
   onOpenSource,
   onOpenPresentationRef,
@@ -185,6 +186,76 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       `[data-message-row="true"][data-message-id="${CSS.escape(eventId)}"]`,
     );
   }, []);
+
+  // A view the reader only looks at writes no snapshot, so returning keeps the saved place;
+  // once they act here, snapshots carry this view and the message being read.
+  const { engagedRef, touchedIdRef } = useReadingEngagement(parentRef);
+  const optimisticIds = useMemo(
+    () =>
+      new Set(
+        displayMessages
+          .filter((message) => (message.data as { _optimistic?: unknown } | undefined)?._optimistic)
+          .map((message) => String(message.id || "")),
+      ),
+    [displayMessages],
+  );
+  const withReadingFocus = useCallback(
+    (snapshot: ChatScrollSnapshot): ChatScrollSnapshot => {
+      const el = parentRef.current;
+      const reading = el
+        ? getReadingFocus(el, topInset, touchedIdRef.current, (id) => !optimisticIds.has(id))
+        : null;
+      const owned = { ...snapshot, viewKey: ownerViewKey };
+      if (!reading) return owned;
+      const { focusId, focusOffsetPx, visible, touched } = reading;
+      if (snapshot.mode === "detached") return { ...owned, focusId, focusOffsetPx, visible };
+      // At the bottom only a message the reader touched travels: a list too short to scroll is
+      // always there, and without a touch the next view opens at its own bottom as well.
+      return touched ? { ...owned, focusId, focusOffsetPx, visible: [visible[0]] } : owned;
+    },
+    [optimisticIds, ownerViewKey, topInset, touchedIdRef],
+  );
+  // A list too short to scroll is at its own bottom, yet no scroll tells the page so, and the
+  // page should not be told: it would stop counting new messages this view filters out. Its key
+  // to the latest then has nothing to do until such a message is counted. Any scroll proves the
+  // list scrolls; a virtual list is long, though it may lack its height while it measures.
+  const [unscrollable, setUnscrollable] = useState(false);
+  useLayoutEffect(() => {
+    const el = parentRef.current;
+    setUnscrollable(!!el && !shouldVirtualize && el.scrollHeight - el.clientHeight < 8);
+  }, [displayMessages, shouldVirtualize]);
+  // A stand-in for a message the reader did not see here is marked once the view opens on it,
+  // as long as a reply jump's mark.
+  const [arrivalHighlightId, setArrivalHighlightId] = useState("");
+  const arrivalHighlightTimerRef = useRef<number | null>(null);
+  const markArrival = useCallback((anchorId: string) => {
+    setArrivalHighlightId(anchorId);
+    if (arrivalHighlightTimerRef.current != null) {
+      window.clearTimeout(arrivalHighlightTimerRef.current);
+    }
+    arrivalHighlightTimerRef.current = window.setTimeout(() => {
+      arrivalHighlightTimerRef.current = null;
+      setArrivalHighlightId("");
+    }, 2200);
+  }, []);
+  useEffect(
+    () => () => {
+      if (arrivalHighlightTimerRef.current != null) {
+        window.clearTimeout(arrivalHighlightTimerRef.current);
+      }
+    },
+    [],
+  );
+  const writeEngagedSnapshot = useCallback(
+    (snapshot: ChatScrollSnapshot) => {
+      if (engagedRef.current) onScrollSnapshot?.(snapshot);
+    },
+    [engagedRef, onScrollSnapshot],
+  );
+  const isEngaged = useCallback(() => engagedRef.current, [engagedRef]);
+  const markEngaged = useCallback(() => {
+    engagedRef.current = true;
+  }, [engagedRef]);
 
   const getAnchorSnapshot = useCallback(
     (scrollTop: number) => {
@@ -333,28 +404,36 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
   const captureCurrentScrollSnapshot = useCallback((): ChatScrollSnapshot | null => {
     const el = parentRef.current;
-    if (!el || displayMessages.length <= 0) return latestSnapshotRef.current;
+    const latest = latestSnapshotRef.current;
+    // Every saved place names its view, including the fallback to the last scroll's place.
+    if (!el || displayMessages.length <= 0) return latest && withReadingFocus(latest);
     if (checkIsAtBottom()) {
-      return {
+      return withReadingFocus({
         coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
         mode: "follow",
         anchorId: "",
         offsetPx: 0,
         scrollTop: el.scrollTop,
         updatedAt: Date.now(),
-      };
+      });
     }
     const anchor = getAnchorSnapshot(el.scrollTop);
-    if (!anchor) return latestSnapshotRef.current;
-    return {
+    if (!anchor) return latest && withReadingFocus(latest);
+    return withReadingFocus({
       coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
       mode: "detached",
       anchorId: anchor.anchorId,
       offsetPx: anchor.offsetPx,
       scrollTop: el.scrollTop,
       updatedAt: Date.now(),
-    };
-  }, [checkIsAtBottom, displayMessages.length, getAnchorSnapshot, latestSnapshotRef]);
+    });
+  }, [
+    checkIsAtBottom,
+    displayMessages.length,
+    getAnchorSnapshot,
+    latestSnapshotRef,
+    withReadingFocus,
+  ]);
 
   useLayoutEffect(() => {
     captureScrollSnapshotRef.current = captureCurrentScrollSnapshot;
@@ -535,6 +614,26 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     },
     [cancelScheduledScroll, scrollRafRef],
   );
+  // The opening place waits a frame on its own: a scroll the list fires itself while opening,
+  // such as the virtualizer applying its initial offset, cancels pending bottom scrolls only.
+  const initialScrollRafRef = useRef<number | null>(null);
+  const scheduleInitialScroll = useCallback((fn: () => void) => {
+    if (initialScrollRafRef.current != null) {
+      window.cancelAnimationFrame(initialScrollRafRef.current);
+    }
+    initialScrollRafRef.current = window.requestAnimationFrame(() => {
+      initialScrollRafRef.current = null;
+      fn();
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (initialScrollRafRef.current != null) {
+        window.cancelAnimationFrame(initialScrollRafRef.current);
+      }
+    },
+    [],
+  );
 
   const scrollToIndexStable = useCallback(
     (idx: number) => {
@@ -574,6 +673,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   });
 
   const handleScroll = useCallback(() => {
+    setUnscrollable(false);
     const currentEl = parentRef.current;
     if (currentEl && !isContainerResizingRef.current) {
       const curTop = currentEl.scrollTop;
@@ -665,7 +765,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           snapshotFlushTimerRef.current = window.setTimeout(() => {
             snapshotFlushTimerRef.current = null;
             if (latestSnapshotRef.current) {
-              onScrollSnapshot?.(latestSnapshotRef.current);
+              writeEngagedSnapshot(withReadingFocus(latestSnapshotRef.current));
             }
           }, 300);
         }
@@ -701,7 +801,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     lastScrollTopRef,
     latestSnapshotRef,
     onScrollChange,
-    onScrollSnapshot,
     scrollRafScheduledRef,
     scrollToBottom,
     shouldForceStickToBottom,
@@ -710,6 +809,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     showScrollButton,
     snapshotFlushTimerRef,
     topHistoryLoad,
+    withReadingFocus,
+    writeEngagedSnapshot,
   ]);
 
   // When switching views (group or window-mode), reset internal scroll bookkeeping.
@@ -723,7 +824,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       return;
     }
 
-    if (prevKey && latestSnapshotRef.current) {
+    if (prevKey && latestSnapshotRef.current && engagedRef.current) {
       const prevGroupId = prevKey.split(":")[0];
       if (prevGroupId) {
         onScrollSnapshot?.(latestSnapshotRef.current, prevGroupId);
@@ -738,6 +839,11 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const hasInitialJumpTarget = !!(initialScrollAnchorId || initialScrollTargetId);
     setAtBottom(!hasInitialJumpTarget);
     setFollowMode(hasInitialJumpTarget ? "detached" : "follow");
+    // A view opening on a saved place tells the page it is away from the latest messages: the
+    // view before may have left the page marked at the bottom, and a place restored from its
+    // saved offset can skip the restore callback. Reaching the bottom is left to scrolling, so a
+    // view whose target is still loading does not clear the unread count.
+    if (hasInitialJumpTarget) onScrollChange?.(false);
     didInitialScrollRef.current = false;
     initialScrollRequestRef.current = "";
     initialScrollReentryDeadlineRef.current = Date.now() + 1_500;
@@ -771,6 +877,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     cancelPendingBottomScroll,
     didInitialScrollRef,
     displayMessages,
+    engagedRef,
     getCurrentContentSize,
     initialScrollAnchorId,
     initialScrollTargetId,
@@ -779,6 +886,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     resetKey,
     lastScrollTopRef,
     latestSnapshotRef,
+    onScrollChange,
     onScrollSnapshot,
     previousContentSizeRef,
     prevResetKeyRef,
@@ -801,15 +909,18 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     anchorId: initialScrollAnchorId,
     anchorOffsetPx: initialScrollAnchorOffsetPx,
     shouldVirtualize,
-    scheduleScroll,
+    scheduleScroll: scheduleInitialScroll,
     scrollToIndex: scrollToIndexStable,
     scrollToMessageAnchor,
     beginAnchorRestoration: anchorRestoration.begin,
     setAtBottom,
     setFollowMode,
     scheduleForceStickToBottom: scheduleInitialFollow,
-    onScrollSnapshot,
+    onScrollSnapshot: writeEngagedSnapshot,
     onRestoreAwayFromBottom: notifyRestoredAwayFromBottom,
+    isEngaged,
+    highlightAnchor: highlightInitialScrollAnchor,
+    onHighlightAnchor: markArrival,
   });
 
   useSendScrollRequestLifecycle({
@@ -818,6 +929,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     viewKey: ownerViewKey,
     request: sendScrollRequest,
     onConsumed: onSendScrollRequestConsumed,
+    // Sending moves the reader to the latest message, which is acting in this view.
+    onApplied: markEngaged,
     setAtBottom,
     setFollowMode,
     requestTokenRef: bottomScrollRequestTokenRef,
@@ -948,7 +1061,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         snapshotFlushTimerRef.current = null;
       }
       const snapshot = captureScrollSnapshotRef.current() || latestSnapshotRef.current;
-      if (snapshot) {
+      if (snapshot && engagedRef.current) {
         const currentGroupId = resetKey.split(":")[0];
         if (currentGroupId) {
           onScrollSnapshotRef.current?.(snapshot, currentGroupId);
@@ -958,13 +1071,13 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         scrollRef.current = null;
       }
     };
-  }, [latestSnapshotRef, resetKey, scrollRef, snapshotFlushTimerRef]);
+  }, [engagedRef, latestSnapshotRef, resetKey, scrollRef, snapshotFlushTimerRef]);
 
   useLayoutEffect(() => {
     topHistoryLoad.applyPendingPrependCompensation({ isLoadingHistory });
   }, [displayMessages, isLoadingHistory, topHistoryLoad]);
 
-  const effectiveHighlightEventId = replyJumpHighlightId || highlightEventId;
+  const effectiveHighlightEventId = replyJumpHighlightId || arrivalHighlightId || highlightEventId;
   const showHistoryStatus = isLoadingHistory || (!hasMoreHistory && !isLoadingHistory);
   const nonVirtualTopMargin = getNonVirtualMessageListTopMargin({ topInset });
   const scrollLatestLabel = t("scrollToBottom");
@@ -1071,7 +1184,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               onShowRecipients={onShowRecipients}
               onViewContext={onViewContext}
               onCopyLink={onCopyLink}
-              onCopyContent={onCopyContent}
               onRelay={onRelay}
               onOpenSource={onOpenSource}
               onOpenPresentationRef={onOpenPresentationRef}
@@ -1084,7 +1196,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       </div>
 
       {/* Float over the log so returning to the latest message takes no reading height. */}
-      {!readOnly && showScrollButton && (
+      {!readOnly && showScrollButton && !(unscrollable && chatUnreadCount <= 0) && (
         <button
           type="button"
           data-scroll-latest
@@ -1095,6 +1207,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
             if (event.detail === 0 && document.activeElement === event.currentTarget) {
               parentRef.current?.focus({ preventScroll: true });
             }
+            markEngaged();
             cancelPendingReplyFollow();
             anchorRestoration.cancel();
             scrollToBottom({ force: true });
@@ -1103,7 +1216,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           aria-label={unreadLabel ? `${scrollLatestLabel} · ${unreadLabel}` : scrollLatestLabel}
           title={unreadLabel ? `${scrollLatestLabel} · ${unreadLabel}` : scrollLatestLabel}
         >
-          <ScrollLatestIcon className="h-4 w-4" aria-hidden="true" />
+          <ScrollLatestIcon className="h-5 w-5" aria-hidden="true" />
           {unreadLabel ? (
             <span data-scroll-latest-count title={unreadLabel} aria-hidden="true">
               {unreadDisplayCount}

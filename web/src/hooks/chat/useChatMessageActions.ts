@@ -10,7 +10,6 @@ import {
 import type { Actor, LedgerEvent } from "../../types";
 import { buildReplyComposerState } from "../../utils/chatReply";
 import { copyTextToClipboard } from "../../utils/copy";
-import { appendSenderPerspective, getMessageInsight } from "../../utils/messagePerspective";
 import { canOpenSourceMessageLocally } from "./chatTabBasics";
 
 export function useChatMessageActions(input: {
@@ -53,27 +52,9 @@ export function useChatMessageActions(input: {
       url.searchParams.set("group", input.selectedGroupId);
       url.searchParams.set("event", eid);
       url.searchParams.set("tab", "chat");
-      if (await copyTextToClipboard(url.toString())) input.showNotice({ message: "Link copied" });
-      else input.showError("Failed to copy link");
-    },
-    [input],
-  );
-
-  const copyMessageText = useCallback(
-    async (event: LedgerEvent) => {
-      if (event.kind !== "chat.message") return;
-      const text = String(event.data && "text" in event.data ? event.data.text || "" : "");
-      const copyText = appendSenderPerspective(
-        text,
-        getMessageInsight(event.data),
-        input.t("chat:senderPerspective", { defaultValue: "Sender perspective" }),
-      );
-      if (!copyText) return;
-      if (await copyTextToClipboard(copyText)) {
-        input.showNotice({
-          message: input.t("chat:contentCopied", { defaultValue: "Content copied" }),
-        });
-      } else input.showError(input.t("common:copyFailed", { defaultValue: "Copy failed" }));
+      if (await copyTextToClipboard(url.toString()))
+        input.showNotice({ message: input.t("chat:linkCopied") });
+      else input.showError(input.t("common:copyFailed", { defaultValue: "Copy failed" }));
     },
     [input],
   );
@@ -179,7 +160,6 @@ export function useChatMessageActions(input: {
 
   return {
     copyMessageLink,
-    copyMessageText,
     startReply,
     cancelReply: () => input.setReplyTarget(null),
     showRecipients: (eventId: string) => input.setRecipientsModal(eventId),

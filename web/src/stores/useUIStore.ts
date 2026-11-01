@@ -44,6 +44,12 @@ function normalizeChatSenderFilter(value: unknown): ChatSenderFilter {
 export type ChatFollowMode = "follow" | "detached";
 export const CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION = 1;
 
+/** A message on screen when a snapshot was taken, with its offset as for anchorId. */
+export interface ChatVisibleMessage {
+  id: string;
+  offsetPx: number;
+}
+
 export interface ChatScrollSnapshot {
   coordinateVersion: typeof CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION;
   mode: ChatFollowMode;
@@ -51,6 +57,14 @@ export interface ChatScrollSnapshot {
   offsetPx: number;
   scrollTop?: number;
   updatedAt: number;
+  /** The filtered view that took the snapshot; another view restores by focus instead. */
+  viewKey?: string;
+  /** The message being read (last touched, else mid-list) and its offset, as for anchorId. */
+  focusId?: string;
+  focusOffsetPx?: number;
+  /** The messages on screen, the one being read first. Another view keeps the first it shows.
+   * A follow snapshot carries only a message the reader touched. */
+  visible?: ChatVisibleMessage[];
 }
 
 export type GroupWorkView = "messages" | "terminals";
@@ -497,12 +511,10 @@ export const useUIStore = create<UIState>((set) => ({
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),
+  // Filters keep the snapshot: the next view restores the message being read from it.
   setChatFilter: (groupId, v) =>
     set((state) => {
-      const chatSessions = updateChatSession(state.chatSessions, groupId, {
-        chatFilter: v,
-        scrollSnapshot: null,
-      });
+      const chatSessions = updateChatSession(state.chatSessions, groupId, { chatFilter: v });
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),
@@ -510,7 +522,6 @@ export const useUIStore = create<UIState>((set) => ({
     set((state) => {
       const chatSessions = updateChatSession(state.chatSessions, groupId, {
         chatSenderFilter: normalizeChatSenderFilter(v),
-        scrollSnapshot: null,
       });
       saveChatSessions(chatSessions);
       return { chatSessions };

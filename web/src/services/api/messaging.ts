@@ -25,11 +25,11 @@ export async function fetchLedgerTail(groupId: string, lines = 120, init?: Ledge
   );
 }
 
-export async function fetchLedgerBoundary(groupId: string) {
+export async function fetchLedgerBoundary(groupId: string, signal?: AbortSignal) {
   const params = new URLSearchParams({ kind: "all", limit: "1" });
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/tail?${params.toString()}`,
-    { cache: "no-store" },
+    { cache: "no-store", signal },
   );
 }
 

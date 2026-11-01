@@ -1,5 +1,7 @@
-OpenCode logo source: https://github.com/anomalyco/opencode/blob/dev/packages/console/app/src/asset/brand/opencode-logo-light.svg
-Upstream license: https://github.com/anomalyco/opencode/blob/dev/LICENSE
+OpenCode logo
+web/public/logos/opencode.svg matches the following source byte for byte.
+Source: https://github.com/anomalyco/opencode/blob/37baed99c1ad05aa00fd53462b7d1441ce4a5edb/packages/console/app/src/asset/brand/opencode-logo-light.svg
+License: https://github.com/anomalyco/opencode/blob/37baed99c1ad05aa00fd53462b7d1441ce4a5edb/LICENSE
 
 MIT License
 

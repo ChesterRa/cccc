@@ -448,6 +448,7 @@ export function useChatTab({
     chatInitialScrollAnchorId,
     chatInitialScrollAnchorOffsetPx,
     chatInitialScrollOffsetPx,
+    chatInitialScrollHighlight,
     chatWindowProps,
     chatInitialScrollTargetId,
     chatHighlightEventId,
@@ -582,7 +583,6 @@ export function useChatTab({
 
   const {
     copyMessageLink,
-    copyMessageText,
     startReply,
     cancelReply,
     showRecipients,
@@ -978,6 +978,7 @@ export function useChatTab({
     chatInitialScrollAnchorId,
     chatInitialScrollAnchorOffsetPx,
     chatInitialScrollOffsetPx,
+    chatInitialScrollHighlight,
     chatHighlightEventId,
     inChatWindow,
     isLoadingHistory: effectiveIsLoadingHistory,
@@ -1045,7 +1046,6 @@ export function useChatTab({
     sendMessage,
     slashCommands,
     copyMessageLink,
-    copyMessageText,
     startReply,
     showRecipients,
     relayMessage,

@@ -166,7 +166,7 @@
   "savedRestartRequired": "已保存为下次启动配置。准备好后请重启 \"{{label}}\"，以应用工作目录等启动设置变更。",
   "createdButFailedAttach": "已创建工作组但关联失败：{{message}}",
   "destGroupDifferent": "目标工作组必须与源工作组不同。",
-  "relayTextEmpty": "转发消息内容为空。",
+  "relayTextEmpty": "这条消息没有可转发的文字。",
   "failedToListDir": "列出目录失败",
   "invalidTemplate": "无效模板",
   "failedToLoadTemplate": "加载模板失败",

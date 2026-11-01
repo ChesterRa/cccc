@@ -20,6 +20,8 @@ export function useSendScrollRequestLifecycle(args: {
   request?: ChatSendScrollRequest | null;
   activeRequestRef: MutableRefObject<ChatSendScrollRequest | null>;
   onConsumed?: (requestId: number) => void;
+  /** The request moved this view to its latest message. */
+  onApplied?: () => void;
   setAtBottom: (value: boolean) => void;
   setFollowMode: (value: ChatFollowMode) => void;
   requestTokenRef: ScrollRequestRef;
@@ -40,6 +42,7 @@ export function useSendScrollRequestLifecycle(args: {
     if (activeRequestRef.current?.requestId === request.requestId) return;
     activeRequestRef.current = request;
     args.onConsumed?.(request.requestId);
+    args.onApplied?.();
     args.setAtBottom(true);
     args.setFollowMode("follow");
     args.requestTokenRef.current += 1;

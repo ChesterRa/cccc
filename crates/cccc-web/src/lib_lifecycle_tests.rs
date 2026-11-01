@@ -308,3 +308,19 @@ async fn shutdown_closes_headless_sse_response() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn voice_shutdown_timeout_leaves_the_original_worker_running() {
+    let (release, released) = tokio::sync::oneshot::channel();
+    let (finished, observed) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let _ = released.await;
+        let _ = finished.send(());
+    });
+    await_codex_voice_shutdown(Some(task), std::time::Duration::from_millis(25)).await;
+    release.send(()).expect("worker still owns the receiver");
+    tokio::time::timeout(std::time::Duration::from_secs(1), observed)
+        .await
+        .expect("detached shutdown finishes")
+        .expect("worker was not cancelled");
+}

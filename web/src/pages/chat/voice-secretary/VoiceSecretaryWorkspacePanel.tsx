@@ -372,7 +372,12 @@ export function VoiceSecretaryWorkspacePanel({
         <div
           data-status-tone="warning"
           role="alert"
-          className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border p-2 text-sm"
+          className={classNames(
+            "mt-3 flex flex-wrap items-center gap-2 rounded-lg border p-2 text-sm",
+            isDark
+              ? "border-amber-300/25 bg-amber-400/10 text-amber-100"
+              : "border-amber-200 bg-amber-50 text-amber-900",
+          )}
         >
           <span className="min-w-0 flex-1">
             {t(

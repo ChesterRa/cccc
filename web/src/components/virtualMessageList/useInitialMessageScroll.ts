@@ -26,19 +26,27 @@ type InitialMessageScrollOptions = {
   scheduleForceStickToBottom: () => void;
   onScrollSnapshot?: (snapshot: ChatScrollSnapshot) => void;
   onRestoreAwayFromBottom?: () => void;
+  /** Whether the reader has acted in this view since it opened. */
+  isEngaged?: () => boolean;
+  /** Whether the anchor stands in for a message the reader did not see here. */
+  highlightAnchor?: boolean;
+  /** Told the anchor once the view opens on it, when it is to be marked. */
+  onHighlightAnchor?: (anchorId: string) => void;
 };
 
+// A place that arrives just after the view opened, such as the departing filter's own, still
+// applies until the reader acts here; once they have, nothing late moves the view. Without that
+// signal only a view that opened at the bottom takes one. It never sends a view to the bottom.
 export function shouldAcceptLateScrollRestoration(input: {
   previousRequestKey: string;
   nextRequestKey: string;
   reentryDeadline: number;
   now: number;
+  engaged?: boolean;
 }): boolean {
-  return (
-    input.previousRequestKey === "bottom" &&
-    input.nextRequestKey !== "bottom" &&
-    input.now <= input.reentryDeadline
-  );
+  const stillOpening =
+    input.engaged === undefined ? input.previousRequestKey === "bottom" : !input.engaged;
+  return stillOpening && input.nextRequestKey !== "bottom" && input.now <= input.reentryDeadline;
 }
 
 export function useInitialMessageScroll({
@@ -59,6 +67,9 @@ export function useInitialMessageScroll({
   scheduleForceStickToBottom,
   onScrollSnapshot,
   onRestoreAwayFromBottom,
+  isEngaged,
+  highlightAnchor = false,
+  onHighlightAnchor,
 }: InitialMessageScrollOptions) {
   useEffect(() => {
     if (messages.length <= 0) return;
@@ -75,6 +86,7 @@ export function useInitialMessageScroll({
           nextRequestKey: requestKey,
           reentryDeadline: reentryDeadlineRef.current,
           now: Date.now(),
+          engaged: isEngaged?.(),
         })
       )
         return;
@@ -82,6 +94,8 @@ export function useInitialMessageScroll({
     didInitialScrollRef.current = true;
     requestRef.current = requestKey;
     scheduleScroll(() => {
+      // A reader who acts before the view settles keeps the place they chose.
+      if (isEngaged?.()) return;
       const markRestoredAwayFromBottom = () => {
         setAtBottom(false);
         setFollowMode("detached");
@@ -110,6 +124,7 @@ export function useInitialMessageScroll({
           })
         ) {
           markRestoredAwayFromBottom();
+          if (highlightAnchor) onHighlightAnchor?.(String(anchorId));
           return;
         }
         onScrollSnapshot?.({
@@ -129,7 +144,10 @@ export function useInitialMessageScroll({
     anchorOffsetPx,
     beginAnchorRestoration,
     didInitialScrollRef,
+    highlightAnchor,
+    isEngaged,
     messages,
+    onHighlightAnchor,
     onRestoreAwayFromBottom,
     onScrollSnapshot,
     reentryDeadlineRef,

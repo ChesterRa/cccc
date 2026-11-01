@@ -133,12 +133,14 @@
     "statusReadPending": "Unread"
   },
   "relay": {
-    "title": "Relay Message",
-    "subtitle": "Send a copy to another group with a provenance link.",
+    "title": "Forward message",
+    "subtitle": "Send a copy to another group with a link back to the original.",
     "source": "Source",
     "emptyMessage": "(empty message)",
     "destinationGroup": "Destination group",
     "noOtherGroups": "No other groups available",
+    "searchDestinationGroup": "Search destination groups…",
+    "noMatchingGroups": "No matching groups",
     "recipients": "Recipients",
     "selectedTokens": "Selected: {{tokens}}",
     "selectedDefault": "Selected: (destination group's default recipients)",
@@ -146,7 +148,7 @@
     "noteLabel": "Note (optional)",
     "notePlaceholder": "Add context for the destination group…",
     "sending": "Sending…",
-    "relay": "Relay"
+    "relay": "Forward"
   },
   "context": {
     "addSubtask": "Add subtask",

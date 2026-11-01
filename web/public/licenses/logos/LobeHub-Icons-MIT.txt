@@ -3,6 +3,7 @@ The following CCCC files match the named icons in the published package byte for
   web/public/logos/antigravity.svg: icons/antigravity-color.svg
   web/public/logos/copilot.svg: icons/githubcopilot.svg
   web/public/logos/kiro.svg: icons/kiro-color.svg
+web/public/logos/grok-bot.svg, from icons/grokbot.svg, carries this notice in its own leading comment.
 Source: https://www.npmjs.com/package/@lobehub/icons-static-svg/v/1.101.0
 License: https://github.com/lobehub/lobe-icons/blob/master/LICENSE
 

@@ -126,7 +126,21 @@ afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  for (const restore of heightRestores.splice(0)) restore();
 });
+
+// This page lays nothing out, so every list looks too short to scroll unless given a height.
+const heightRestores: Array<() => void> = [];
+function logHeights(scrollHeight: number, clientHeight = 400) {
+  const scroll = vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(scrollHeight);
+  const client = vi
+    .spyOn(HTMLElement.prototype, "clientHeight", "get")
+    .mockReturnValue(clientHeight);
+  heightRestores.push(
+    () => scroll.mockRestore(),
+    () => client.mockRestore(),
+  );
+}
 
 it("cancels forced bottom follow when keyboard focus enters a message", async () => {
   await act(async () => root.render(<VirtualMessageList {...props()} />));
@@ -138,6 +152,7 @@ it("cancels forced bottom follow when keyboard focus enters a message", async ()
 });
 
 it("keeps the latest action outside the log and reports capped unread messages", async () => {
+  logHeights(1000);
   const input = props();
   await act(async () => root.render(<VirtualMessageList {...input} />));
   expect(host.querySelector("[data-scroll-latest]")?.getAttribute("aria-label")).toBe(
@@ -163,7 +178,84 @@ it("keeps the latest action outside the log and reports capped unread messages",
   expect(host.querySelector("[data-scroll-latest]")).toBeNull();
 });
 
+it("saves no place for a view that was only looked at, and saves its view once acted in", async () => {
+  const onScrollSnapshot = vi.fn();
+  await act(async () =>
+    root.render(
+      <VirtualMessageList
+        {...props()}
+        viewKey="g1:live:mail"
+        onScrollSnapshot={onScrollSnapshot}
+      />,
+    ),
+  );
+  await act(async () => root.render(<div />));
+  expect(onScrollSnapshot).not.toHaveBeenCalled();
+
+  await act(async () =>
+    root.render(
+      <VirtualMessageList
+        {...props()}
+        viewKey="g1:live:mail"
+        onScrollSnapshot={onScrollSnapshot}
+      />,
+    ),
+  );
+  host.querySelector('[role="log"]')!.dispatchEvent(new Event("wheel"));
+  await act(async () => root.render(<div />));
+  expect(onScrollSnapshot).toHaveBeenCalledOnce();
+  expect(onScrollSnapshot.mock.calls[0][0]).toMatchObject({ viewKey: "g1:live:mail" });
+  expect(onScrollSnapshot.mock.calls[0][1]).toBe("g1");
+});
+
+it("tells the page when a view opens away from the latest messages, and only then", async () => {
+  // The restore hook is mocked out here, as a scroll event can cancel it in a browser.
+  const onScrollChange = vi.fn();
+  await act(async () =>
+    root.render(
+      <VirtualMessageList
+        {...props()}
+        viewKey="g1:live:all"
+        initialScrollAnchorId="m1"
+        onScrollChange={onScrollChange}
+      />,
+    ),
+  );
+  expect(onScrollChange).toHaveBeenCalledExactlyOnceWith(false);
+
+  // A view without a place yet, such as one whose history is still loading, must not report
+  // the bottom: that would clear the unread count before its place arrives.
+  await act(async () =>
+    root.render(
+      <VirtualMessageList
+        {...props()}
+        viewKey={'g1:live:all:["reviewer"]'}
+        onScrollChange={onScrollChange}
+      />,
+    ),
+  );
+  expect(onScrollChange).toHaveBeenCalledOnce();
+});
+
+it("keeps the key to the latest out of a list too short to scroll until it has work", async () => {
+  logHeights(400);
+  const input = props();
+  await act(async () => root.render(<VirtualMessageList {...input} />));
+  expect(host.querySelector("[data-scroll-latest]")).toBeNull();
+
+  // A message this view filters out is counted, and the key shows the count.
+  await act(async () => root.render(<VirtualMessageList {...input} chatUnreadCount={2} />));
+  expect(host.querySelector("[data-scroll-latest-count]")?.textContent).toBe("2");
+
+  // Once the list scrolls, it has somewhere to go.
+  await act(async () => root.render(<VirtualMessageList {...input} />));
+  expect(host.querySelector("[data-scroll-latest]")).toBeNull();
+  await act(async () => host.querySelector('[role="log"]')!.dispatchEvent(new Event("scroll")));
+  expect(host.querySelector("[data-scroll-latest]")).not.toBeNull();
+});
+
 it("returns keyboard focus to the log before forcing the latest position", async () => {
+  logHeights(1000);
   const input = props();
   await act(async () => root.render(<VirtualMessageList {...input} />));
   const button = host.querySelector<HTMLButtonElement>("[data-scroll-latest]")!;

@@ -1,4 +1,4 @@
-import { memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useContext, useMemo, useState } from "react";
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { useTranslation } from "react-i18next";
 import { useCopyFeedback } from "../hooks/useCopyFeedback";
@@ -219,7 +219,6 @@ export interface MessageBubbleProps {
   onShowRecipients: () => void;
   onCopyLink?: (eventId: string) => void;
   onViewContext?: (eventId: string) => void;
-  onCopyContent?: (ev: LedgerEvent) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
@@ -247,7 +246,6 @@ export const MessageBubble = memo(
     onShowRecipients,
     onCopyLink,
     onViewContext,
-    onCopyContent: _onCopyContent,
     onRelay,
     onOpenSource,
     onOpenPresentationRef,
@@ -279,7 +277,6 @@ export const MessageBubble = memo(
     const replyView = !readOnly && pendingStore ? pendingReplyView(replyEvent) : null;
 
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
-    const [copiedMessageText, setCopiedMessageText] = useState(false);
     const floatingMiddleware = useMemo(() => [offset(8), flip(), shift({ padding: 8 })], []);
     const { refs, floatingStyles, context } = useFloating({
       open: isAgentStateOpen,
@@ -616,21 +613,12 @@ export const MessageBubble = memo(
       visibleReadStatusEntries.length - readPreviewEntries.length,
     );
 
-    useEffect(() => {
-      if (!copiedMessageText) return undefined;
-      const timer = window.setTimeout(() => {
-        setCopiedMessageText(false);
-      }, 1400);
-      return () => window.clearTimeout(timer);
-    }, [copiedMessageText]);
-
+    // The copy actions sit in a menu that closes on use, so the notice confirms it.
     const handleCopyMessageText = useCallback(async () => {
-      const ok = await copyWithFeedback(copyableMessageText, {
+      await copyWithFeedback(copyableMessageText, {
+        successMessage: t("textCopied"),
         errorMessage: t("common:copyFailed", { defaultValue: "Copy failed" }),
       });
-      if (ok) {
-        setCopiedMessageText(true);
-      }
     }, [copyWithFeedback, copyableMessageText, t]);
 
     const routingMetadata = (
@@ -714,7 +702,6 @@ export const MessageBubble = memo(
         displayNameMap={displayNameMap}
         isDark={isDark}
         isMail={isMail}
-        copiedMessageText={copiedMessageText}
         copyableMessageText={copyableMessageText}
         onCopyMessageText={() => void handleCopyMessageText()}
         onShowRecipients={onShowRecipients}
@@ -799,7 +786,6 @@ export const MessageBubble = memo(
             </time>
             <MessageActions
               readOnly={readOnly}
-              copiedMessageText={copiedMessageText}
               copyableMessageText={copyableMessageText}
               onCopyMessageText={() => void handleCopyMessageText()}
               onViewContext={onViewContext}

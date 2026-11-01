@@ -8,7 +8,7 @@ import { reconcileLedgerTail } from "./reconcileLedgerTail";
 const testState = vi.hoisted(() => ({
   chatByGroup: {} as Record<
     string,
-    Pick<GroupChatBucket, "events"> & Partial<Pick<GroupChatBucket, "senderHistory">>
+    Pick<GroupChatBucket, "events"> & Partial<Pick<GroupChatBucket, "senderHistory" | "chatWindow">>
   >,
   setEvents: vi.fn(),
   setHasMoreHistory: vi.fn(),
@@ -107,11 +107,45 @@ describe("reconcileLedgerTail", () => {
       result: { events: [event("tail-1"), event("tail-2")], has_more: true, count: 2 },
     });
 
-    const cursor = await reconcileLedgerTail("g-test", () => true, "expired");
+    const reconciled = vi.fn();
+    const cursor = await reconcileLedgerTail("g-test", () => true, "expired", reconciled);
 
     expect(cursor).toBe("latest-fact");
     expect(testState.setHasMoreHistory).toHaveBeenCalledWith(true, "g-test");
     expect(testState.chatByGroup["g-test"].events.map((item) => item.id)).toContain("tail-2");
+    expect(reconciled.mock.calls[0][1]).toEqual([]);
+  });
+
+  it("reports each genuinely new forward event before the cache is trimmed", async () => {
+    const incoming = Array.from({ length: 805 }, (_, index) => event(`new-${index}`));
+    fetchBoundary.mockResolvedValue({
+      ok: true,
+      result: { events: [incoming.at(-1)!], has_more: true, count: 1 },
+    });
+    searchMessages.mockResolvedValue({
+      ok: true,
+      result: { events: incoming, has_more: false, count: incoming.length },
+    });
+    const reconciled = vi.fn();
+    await reconcileLedgerTail("g-test", () => true, "anchor", reconciled);
+    expect(reconciled.mock.calls[0][1]).toHaveLength(805);
+    expect(testState.chatByGroup["g-test"].events).toHaveLength(800);
+    expect(testState.chatByGroup["g-test"].events.some((item) => item.id === "new-0")).toBe(false);
+  });
+
+  it("does not report a response after the selected group changed", async () => {
+    fetchBoundary.mockResolvedValue({
+      ok: true,
+      result: { events: [event("new")], has_more: false, count: 1 },
+    });
+    searchMessages.mockResolvedValue({
+      ok: true,
+      result: { events: [event("new")], has_more: false, count: 1 },
+    });
+    const reconciled = vi.fn();
+    await reconcileLedgerTail("g-test", () => false, "anchor", reconciled);
+    expect(reconciled).not.toHaveBeenCalled();
+    expect(testState.setEvents).not.toHaveBeenCalled();
   });
 
   it("refreshes receipts for sender-only rows as well as the raw reconnect tail", async () => {

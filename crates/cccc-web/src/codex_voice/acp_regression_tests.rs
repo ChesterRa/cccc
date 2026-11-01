@@ -1339,3 +1339,61 @@ async fn failed_settings_receipt_and_rollback_leave_no_untracked_analyst() {
     std::fs::remove_dir(&receipt).expect("restore receipt path");
     sessions.shutdown().await.expect("finish fixture cleanup");
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn web_shutdown_waits_for_the_active_call_and_analyst() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::web_shutdown_waits_for_the_active_call_and_analyst",
+    ) {
+        return;
+    }
+    let source = include_str!(
+        "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/native_acp_fixture.py"
+    );
+    let marker = "session_id = \"\"";
+    assert!(source.contains(marker));
+    let injection = r#"
+import signal, time
+Path(os.environ["HOME"]).mkdir(parents=True, exist_ok=True)
+def slow_stop(signum, frame):
+    Path(os.environ["HOME"]).joinpath("fixture-term").write_text("term")
+    time.sleep(6)
+signal.signal(signal.SIGTERM, slow_stop)
+"#;
+    let source = format!(
+        "{}\nimport time\nwhile True:\n    time.sleep(1)\n",
+        source.replacen(marker, &format!("{injection}\n{marker}"), 1)
+    );
+    let (temp, home, original_sessions, _, _) = fixture_with_source(&source).await;
+    let analyst = original_sessions
+        .state
+        .lock()
+        .await
+        .analyst
+        .clone()
+        .expect("fixture Analyst");
+    let (shutdown, _) = tokio::sync::broadcast::channel(1);
+    let (_router, _workers, _browsers, state, voice_shutdown) =
+        crate::app_with_shutdown_and_recovery(
+            home.clone(),
+            shutdown.clone(),
+            crate::WebMode::Normal,
+            None,
+            crate::LiveBinding {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            "voice-shutdown-fixture".into(),
+            None,
+        );
+    state.codex_voice.state.lock().await.analyst = Some(Arc::clone(&analyst));
+    let _active = local_assistant_call(&home, &state.codex_voice, &analyst, true).await;
+    shutdown.send(()).expect("shutdown listeners");
+    crate::await_codex_voice_shutdown(voice_shutdown, Duration::from_secs(4)).await;
+    assert!(temp.path().join("provider/fixture-term").exists());
+    let state = state.codex_voice.state.lock().await;
+    assert!(state.active.is_none(), "recording lease must be released");
+    assert!(state.analyst.is_none(), "Analyst shutdown must finish");
+    drop(state);
+    original_sessions.state.lock().await.analyst = None;
+}

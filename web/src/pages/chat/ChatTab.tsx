@@ -289,6 +289,7 @@ export function ChatTab({
     chatInitialScrollAnchorId,
     chatInitialScrollAnchorOffsetPx,
     chatInitialScrollOffsetPx,
+    chatInitialScrollHighlight,
     chatHighlightEventId,
     isLoadingHistory,
     hasMoreHistory,
@@ -343,7 +344,6 @@ export function ChatTab({
     // Actions
     sendMessage,
     copyMessageLink,
-    copyMessageText,
     startReply,
     showRecipients,
     relayMessage,
@@ -1109,18 +1109,22 @@ export function ChatTab({
                           initialScrollTargetId={
                             pendingActive ? undefined : chatInitialScrollTargetId
                           }
+                          // Waiting for you opens at its newest request unless it is given a
+                          // message to keep. A message given no height starts at the reading top.
                           initialScrollAnchorId={
-                            pendingActive ? chatMessages.at(-1)?.id : chatInitialScrollAnchorId
+                            pendingActive
+                              ? chatInitialScrollAnchorId || chatMessages.at(-1)?.id
+                              : chatInitialScrollAnchorId
                           }
                           initialScrollAnchorOffsetPx={
-                            pendingActive
-                              ? getMessageAnchorOffset(
-                                  0,
-                                  (overlayMobileChrome ? MOBILE_READING_CHROME_HEIGHT_PX : 0) + 8,
-                                )
-                              : chatInitialScrollAnchorOffsetPx
+                            chatInitialScrollAnchorOffsetPx ??
+                            getMessageAnchorOffset(
+                              0,
+                              (overlayMobileChrome ? MOBILE_READING_CHROME_HEIGHT_PX : 0) + 8,
+                            )
                           }
                           initialScrollOffsetPx={chatInitialScrollOffsetPx}
+                          highlightInitialScrollAnchor={chatInitialScrollHighlight}
                           highlightEventId={chatHighlightEventId}
                           className={
                             !chatWindowProps &&
@@ -1135,7 +1139,6 @@ export function ChatTab({
                           onReply={startReply}
                           onShowRecipients={showRecipients}
                           onCopyLink={copyMessageLink}
-                          onCopyContent={copyMessageText}
                           onViewContext={
                             hasChatFilter && !chatWindowProps ? viewMessageContext : undefined
                           }
@@ -1186,7 +1189,6 @@ export function ChatTab({
                           // A touch screen's keyboard leaves little height; the input needs it.
                           hideDockForKeyboard && "hidden",
                         )}
-                        data-lcd-members-band
                         data-lcd-scope
                       >
                         <div className="chat-reading-width">

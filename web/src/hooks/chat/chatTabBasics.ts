@@ -1,6 +1,9 @@
 import type { ChatMessageData, GroupMeta, LedgerEvent } from "../../types";
 import { isDelegationSourceOutboundEvent } from "../../components/messageBubbleDelegation";
-import { CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION } from "../../stores/useUIStore";
+import {
+  CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+  type ChatScrollSnapshot,
+} from "../../stores/useUIStore";
 
 export const CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
 
@@ -15,6 +18,25 @@ export function shouldRestoreDetachedScrollSnapshot(
   if (snapshot.coordinateVersion !== CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION) return false;
   const anchorId = typeof snapshot.anchorId === "string" ? snapshot.anchorId.trim() : "";
   if (!anchorId) return false;
+  const updatedAt = Number(snapshot.updatedAt);
+  if (!Number.isFinite(updatedAt) || updatedAt <= 0) return false;
+  return now - updatedAt <= CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS;
+}
+
+/**
+ * Whether a saved place applies to the view opening now: a detached place, or a place at the
+ * bottom of another view that carries a message the reader touched there. A list too short to
+ * scroll is always at the bottom, so a click is the only place it can hand on.
+ */
+export function shouldRestoreScrollSnapshot(
+  snapshot: ChatScrollSnapshot | null | undefined,
+  viewKey: string,
+  now = Date.now(),
+): boolean {
+  if (shouldRestoreDetachedScrollSnapshot(snapshot, now)) return true;
+  if (!snapshot || snapshot.mode !== "follow" || !snapshot.visible?.length) return false;
+  if (!snapshot.viewKey || snapshot.viewKey === viewKey) return false;
+  if (snapshot.coordinateVersion !== CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION) return false;
   const updatedAt = Number(snapshot.updatedAt);
   if (!Number.isFinite(updatedAt) || updatedAt <= 0) return false;
   return now - updatedAt <= CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS;

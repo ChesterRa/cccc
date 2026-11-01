@@ -133,12 +133,14 @@
     "statusReadPending": "未読"
   },
   "relay": {
-    "title": "リレーメッセージ",
-    "subtitle": "出典リンク付きで、別グループにコピーを送信します。",
+    "title": "メッセージを転送",
+    "subtitle": "元のメッセージへのリンクを付けて、別のグループにコピーを送信します。",
     "source": "ソース",
     "emptyMessage": "(空のメッセージ)",
     "destinationGroup": "宛先グループ",
     "noOtherGroups": "他に利用可能なグループはありません",
+    "searchDestinationGroup": "宛先グループを検索…",
+    "noMatchingGroups": "一致するグループはありません",
     "recipients": "受信者",
     "selectedTokens": "選択済み： {{tokens}}",
     "selectedDefault": "選択済み：（宛先グループの既定の受信者）",
@@ -146,7 +148,7 @@
     "noteLabel": "注記 (オプション)",
     "notePlaceholder": "宛先グループのコンテキストを追加します…",
     "sending": "送信中…",
-    "relay": "リレー"
+    "relay": "転送"
   },
   "context": {
     "addSubtask": "サブタスクを追加",

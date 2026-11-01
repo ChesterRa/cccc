@@ -166,7 +166,7 @@
   "savedRestartRequired": "次回の起動設定を保存しました。作業ディレクトリなどの起動設定を反映するには、準備ができてから「{{label}}」を再起動してください。",
   "createdButFailedAttach": "グループを作成しましたが、接続できませんでした： {{message}}",
   "destGroupDifferent": "宛先グループは送信元グループとは異なる必要があります。",
-  "relayTextEmpty": "リレーメッセージのテキストが空です。",
+  "relayTextEmpty": "このメッセージには転送できるテキストがありません。",
   "failedToListDir": "ディレクトリの一覧取得に失敗しました",
   "invalidTemplate": "無効なテンプレート",
   "failedToLoadTemplate": "テンプレートの読み込みに失敗しました",

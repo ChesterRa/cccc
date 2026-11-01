@@ -217,10 +217,8 @@ export function RelayMessageModal({
                       setDstActorsLoadingFor(gid);
                     }}
                     placeholder={t("relay.destinationGroup")}
-                    searchPlaceholder={t("relay.searchDestinationGroup", {
-                      defaultValue: "Search destination groups...",
-                    })}
-                    emptyText={t("relay.noMatchingGroups", { defaultValue: "No matching groups" })}
+                    searchPlaceholder={t("relay.searchDestinationGroup")}
+                    emptyText={t("relay.noMatchingGroups")}
                     ariaLabel={t("relay.destinationGroup")}
                     triggerClassName="glass-input min-h-[44px] w-full px-3 py-2.5 text-sm"
                     contentClassName="w-[var(--radix-popover-trigger-width)]"

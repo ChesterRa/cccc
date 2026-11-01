@@ -19,7 +19,6 @@ type MessageRowsProps = Pick<
   | "onShowRecipients"
   | "onViewContext"
   | "onCopyLink"
-  | "onCopyContent"
   | "onRelay"
   | "onOpenSource"
   | "onOpenPresentationRef"
@@ -63,7 +62,6 @@ export function MessageRows({
   onShowRecipients,
   onCopyLink,
   onViewContext,
-  onCopyContent,
   onRelay,
   onOpenSource,
   onOpenPresentationRef,
@@ -82,7 +80,6 @@ export function MessageRows({
     groupLabelById,
     onCopyLink,
     onViewContext,
-    onCopyContent,
     onRelay,
     onOpenSource,
     onOpenPresentationRef,

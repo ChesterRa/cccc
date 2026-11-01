@@ -150,6 +150,7 @@ export const ClockIcon = createIcon(Clock3);
 export const SettingsIcon = createIcon(Settings2, 1.5, "sliders-horizontal");
 export const EditIcon = createIcon(Pencil, 1.5, "pencil");
 export const MoreIcon = createIcon(EllipsisVertical, 1.5, "more-vertical");
+export const MoreHorizontalIcon = createIcon(Ellipsis, 1.5, "more-horizontal");
 export const MenuIcon = createIcon(Menu, 1.5, "menu");
 export const CloseIcon = createIcon(X, 1.5, "close");
 export const SearchIcon = createIcon(Search, 1.5, "search");

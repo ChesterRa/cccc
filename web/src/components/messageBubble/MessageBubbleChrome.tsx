@@ -15,7 +15,6 @@ export function MessageFooter({
   readPreviewOverflow,
   displayNameMap,
   isDark,
-  copiedMessageText,
   copyableMessageText,
   onCopyMessageText,
   onShowRecipients,
@@ -37,7 +36,6 @@ export function MessageFooter({
   displayNameMap: Map<string, string>;
   isDark: boolean;
   isMail: boolean;
-  copiedMessageText: boolean;
   copyableMessageText: string;
   onCopyMessageText: () => void;
   onShowRecipients: () => void;
@@ -138,7 +136,6 @@ export function MessageFooter({
       {showActions ? (
         <MessageActions
           readOnly={readOnly}
-          copiedMessageText={copiedMessageText}
           copyableMessageText={copyableMessageText}
           onCopyMessageText={onCopyMessageText}
           onViewContext={onViewContext}

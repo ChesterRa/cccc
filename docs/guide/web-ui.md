@@ -244,10 +244,26 @@ are confirmed through a batched cursor read before joining the filtered rows, so
 an older replay cannot appear as the newest message. Failed reads keep a retry
 action; changing the filter or Group discards the departed view's pending reads.
 
+Changing a filter keeps your place. If you were reading earlier messages, the message you were
+reading travels with you: the last one you clicked, tapped or reached with Tab while it remains on
+screen, or the one across the middle of the list once you move on. If the new view contains it, it
+stays at the same height, as far as the view can scroll. If not, the first other message that was on
+screen and that the new view contains stays at its height instead. If none was, the nearest loaded
+message from that part of the conversation takes its place, shown from its top and briefly
+outlined. Otherwise the view opens at its newest messages, and your place is kept for when you
+return. If you were following the latest messages, the new view follows them too, unless you clicked
+or tapped a message that it contains: that message then keeps its height. A list too short to
+scroll always counts as following, so clicking a message there is what carries it over. A view you
+only look at, without scrolling or interacting with its messages, leaves your place unchanged, so
+switching back returns exactly where you were. **Waiting for you** keeps a message from your screen
+only when it is one of its requests, and otherwise opens at its newest request. Messages that are
+not loaded, such as mail older than the loaded history, cannot be kept. A place is kept for up to
+30 minutes while the page stays open, not across a reload.
+
 Sending keeps the filters. If they hide the sent message, a confirmation offers
 **View message**, including cross-Group sends; the action returns to the originating
-Group even if you have switched Groups. **View context** on a filtered message opens its surrounding
-conversation; returning to the conversation restores the filters.
+Group even if you have switched Groups. **View context**, in a filtered message's **⋯** menu, opens
+its surrounding conversation; returning to the conversation restores the filters.
 
 Message search shows the current Group name and Actor display names. Enter or **Search** submits the keywords; changing a filter reruns the submitted query. Typing new keywords does not change existing highlights or pagination until you submit again. Initial guidance, loading, no matches and failed requests are separate states. **Open** returns to the message context; reply and copying the event ID remain available.
 
@@ -819,6 +835,10 @@ intend to restart the dedicated browser; its saved profile and delivery target a
 - Hidden tabs release their group event streams immediately. Returning to the tab reconnects and
   catches up from the last event cursor, so several open tabs do not exhaust the browser's
   per-origin connection pool.
+- A visible tab keeps its streams. When its window regains focus or the tab comes back into view,
+  the page checks whether the stream has gone quiet or fallen behind the server's latest event. If
+  so, it starts reconnecting, and a reconnect waiting out its delay starts immediately; a
+  successful catch-up can retrieve missed messages.
 - Hover-prefetched group data is reused when that group is selected; group bootstrap does not issue
   a second actors read for the same transition.
 - Production Web responses negotiate Brotli or gzip compression. Voice Secretary code and locale
@@ -1203,11 +1223,11 @@ being recovered; retry after cleanup and check the host diagnostics if the
 condition persists. If an Analyst reset fails after cleanup began, refresh the
 Voice state before deciding whether to try again.
 
-An incomplete Web process recovery record can require manual attention. The
-host diagnostics identify its filename under `CCCC_HOME/web-processes`. Before
-removing that record, confirm all related processes owned by the previous Web
-instance have exited; if you cannot establish this, seek help rather than
-removing it. Then retry starting Voice.
+On Unix, an incomplete Web process recovery record can require manual
+attention. The host diagnostics identify its filename under
+`CCCC_HOME/web-processes`. Before removing that record, confirm all related
+processes owned by the previous Web instance have exited; if you cannot
+establish this, seek help rather than removing it. Then retry starting Voice.
 
 For the default local app flow, prefer restarting from the owning `cccc` session itself: `Ctrl+C` to stop the whole app, then run `cccc` again. That keeps daemon and Web on the same fresh code/runtime.
 

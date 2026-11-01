@@ -253,6 +253,7 @@ describe("Group work view unread state", () => {
   it("counts replies while the message viewport is hidden even if it was at the bottom", () => {
     const { deps } = processorDeps();
     deps.incrementChatUnread = vi.fn();
+    useGroupStore.setState({ chatByGroup: {} });
     useUIStore.setState({ activeTab: "chat", chatSessions: {}, isSmallScreen: false });
     const event = {
       id: "reply-1",
@@ -268,6 +269,75 @@ describe("Group work view unread state", () => {
     processLedgerEvent("g1", { ...event, id: "reply-2" }, deps);
     expect(deps.incrementChatUnread).not.toHaveBeenCalled();
   });
+});
+
+describe("live events already present in another chat view", () => {
+  it.each([
+    ["sender history", "mail"],
+    ["context window", "send"],
+  ] as const)(
+    "appends and counts a new event from %s (%s) once, then refreshes actor badges",
+    (view, mode) => {
+      const event = {
+        id: `other-view-${view}`,
+        kind: "chat.message",
+        by: "actor-1",
+        data: { text: "Arrived before the live frame", message_mode: mode, to: ["recipient"] },
+      } as LedgerEvent;
+      const groupId = `group-${view}`;
+      useGroupStore.setState({ chatByGroup: {} });
+      useGroupStore.getState().setEvents([], groupId);
+      if (view === "sender history") {
+        useGroupStore
+          .getState()
+          .setSenderHistory(
+            {
+              key: "actor-1",
+              senders: ["actor-1"],
+              events: [event],
+              messageRevision: 0,
+              receiptRevision: 0,
+            },
+            groupId,
+          );
+      } else {
+        useGroupStore
+          .getState()
+          .setChatWindow(
+            {
+              groupId,
+              centerEventId: event.id!,
+              centerIndex: 0,
+              events: [event],
+              hasMoreBefore: false,
+              hasMoreAfter: false,
+            },
+            groupId,
+          );
+      }
+      const { deps, refreshActors } = processorDeps();
+      deps.appendEvent = useGroupStore.getState().appendEvent;
+      deps.actors = [{ id: "recipient" }] as LedgerEventProcessorDeps["actors"];
+      deps.incrementChatUnread = vi.fn();
+      deps.incrementActorUnread = vi.fn();
+      deps.incrementWebModelQueued = vi.fn();
+      deps.chatAtBottom = false;
+
+      processLedgerEvent(groupId, event, deps);
+      deps.alreadyProcessed = true;
+      processLedgerEvent(groupId, event, deps);
+
+      expect(useGroupStore.getState().chatByGroup[groupId].events.map((item) => item.id)).toEqual([
+        event.id,
+      ]);
+      expect(deps.incrementChatUnread).toHaveBeenCalledOnce();
+      expect(deps.incrementChatUnread).toHaveBeenCalledWith(groupId);
+      expect(refreshActors).toHaveBeenCalledOnce();
+      expect(refreshActors).toHaveBeenCalledWith(groupId, { includeUnread: true });
+      expect(deps.incrementActorUnread).not.toHaveBeenCalled();
+      expect(deps.incrementWebModelQueued).not.toHaveBeenCalled();
+    },
+  );
 });
 
 it("keeps Connect cancellation evidence for propagation while updating obligations", () => {

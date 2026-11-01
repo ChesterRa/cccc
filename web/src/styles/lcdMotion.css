@@ -478,3 +478,9 @@
 :root[data-ui-style="lcd"][data-lcd-motion="off"] [data-lcd-scope] [data-status-motion="working"] {
   animation: none;
 }
+
+/* Classic pulses that LCD leaves as they are, such as a recording dot or a live Voice
+   tile, have no still form of their own; with motion off they hold still too. */
+:root[data-ui-style="lcd"][data-lcd-motion="off"] [data-lcd-scope] .animate-pulse {
+  animation: none;
+}

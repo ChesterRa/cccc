@@ -51,6 +51,75 @@ function source(
   transport.add(value);
   return value;
 }
+it("reconnects the existing subscriptions on demand using their delivered cursor", async () => {
+  const ledger = source(1, "ledger", "A");
+  await Promise.resolve();
+  const first = Socket.instances[0];
+  first.open();
+  first.message({
+    type: "event",
+    channel: "ledger",
+    id: 1,
+    message: { event: "ledger", id: "cursor", data: {} },
+  });
+  const error = vi.fn();
+  ledger.onerror = error;
+  transport.reconnect();
+  expect(first.readyState).toBe(3);
+  expect(error).toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1000);
+  const next = Socket.instances[1];
+  next.open();
+  expect(next.sent.find((packet) => packet.channel === "ledger")?.cursor).toBe("cursor");
+});
+it("runs a pending socket retry now only once and keeps its delivered cursor", async () => {
+  const ledger = source(1, "ledger", "A");
+  await Promise.resolve();
+  const first = Socket.instances[0];
+  first.open();
+  first.message({
+    type: "event",
+    channel: "ledger",
+    id: 1,
+    message: { event: "ledger", id: "cursor", data: {} },
+  });
+  first.onclose?.();
+  expect(transport.retryPendingSocket()).toBe(true);
+  expect(transport.retryPendingSocket()).toBe(false);
+  expect(Socket.instances).toHaveLength(2);
+  const next = Socket.instances[1];
+  next.open();
+  expect(next.sent.find((packet) => packet.channel === "ledger")?.cursor).toBe("cursor");
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(Socket.instances).toHaveLength(2);
+  expect(ledger.cursor).toBe("cursor");
+});
+it("does not accelerate an individual channel's retry on a healthy socket", async () => {
+  source(1, "ledger", "A");
+  await Promise.resolve();
+  const socket = Socket.instances[0];
+  socket.open();
+  socket.message({ type: "ready", channel: "ledger", id: 1 });
+  socket.message({ type: "closed", channel: "ledger", id: 1 });
+  expect(transport.retryPendingSocket()).toBe(false);
+  expect(socket.sent.filter((packet) => packet.type === "subscribe")).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(socket.sent.filter((packet) => packet.type === "subscribe")).toHaveLength(2);
+});
+it("uses the last frame, including heartbeats, when deciding whether a focused socket is stale", async () => {
+  source(1, "ledger", "A");
+  await Promise.resolve();
+  const first = Socket.instances[0];
+  first.open();
+  await vi.advanceTimersByTimeAsync(20000);
+  first.message({ type: "heartbeat" });
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(transport.reconnectIfStale(25000)).toBe(false);
+  expect(first.readyState).toBe(1);
+  await vi.advanceTimersByTimeAsync(15001);
+  expect(transport.reconnectIfStale(25000)).toBe(true);
+  expect(first.readyState).toBe(3);
+});
 it("multiplexes channels and switches groups without reopening or accepting stale events", async () => {
   source(1, "global");
   const ledger = source(2, "ledger", "A");

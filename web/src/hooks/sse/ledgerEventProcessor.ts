@@ -35,6 +35,7 @@ type UiState = ReturnType<typeof useUIStore.getState>;
 type ModalState = ReturnType<typeof useModalStore.getState>;
 
 export type LedgerEventProcessorDeps = {
+  alreadyProcessed?: boolean;
   actors: Actor[];
   activeTab: string;
   chatAtBottom: boolean;
@@ -62,6 +63,17 @@ export function processLedgerEvent(
   event: LedgerEvent,
   deps: LedgerEventProcessorDeps,
 ): void {
+  const eventId = String(event.id || "").trim();
+  const bucket = useGroupStore.getState().chatByGroup[groupId];
+  const alreadyApplied = !!eventId && !!deps.alreadyProcessed;
+  // A sparse-view fetch can beat the live event without the reader reaching
+  // it. It does not suppress the chat count; its actor badges need a refresh
+  // because their last server snapshot may already include this event.
+  const seenElsewhere =
+    !!eventId &&
+    [bucket?.events, bucket?.senderHistory?.events, bucket?.chatWindow?.events].some((events) =>
+      events?.some((item) => item.id === eventId),
+    );
   if (isContextSyncEvent(event)) {
     deps.onContextSync();
     return;
@@ -130,7 +142,9 @@ export function processLedgerEvent(
   const nextEvent = reconciliation.event;
   initializeReadStatus(nextEvent, deps.actors);
   initializeObligationStatus(nextEvent, deps.actors);
-  deps.appendEvent(nextEvent, groupId);
+  // A read can beat the live event. appendEvent deduplicates the live list;
+  // processed events may have been trimmed and must not be appended again.
+  if (!deps.alreadyProcessed) deps.appendEvent(nextEvent, groupId);
 
   if (isChatMessageEvent(nextEvent)) {
     const data = nextEvent.data as ChatMessageData;
@@ -163,16 +177,26 @@ export function processLedgerEvent(
         }
       }
     }
-    if (data?.message_mode === "mail") {
+    if (!alreadyApplied && data?.message_mode === "mail") {
       const recipients = getRecipientActorIdsForEvent(nextEvent, deps.actors);
-      if (recipients.length > 0) deps.incrementActorUnread(recipients);
-    } else if (data?.message_mode === "send" || data?.message_mode === "request_reply") {
+      if (recipients.length > 0) {
+        if (seenElsewhere) void deps.refreshActors(groupId, { includeUnread: true });
+        else deps.incrementActorUnread(recipients);
+      }
+    } else if (
+      !alreadyApplied &&
+      (data?.message_mode === "send" || data?.message_mode === "request_reply")
+    ) {
       const recipients = getRecipientActorIdsForEvent(nextEvent, deps.actors);
-      if (recipients.length > 0) deps.incrementWebModelQueued(recipients);
+      if (recipients.length > 0) {
+        if (seenElsewhere) void deps.refreshActors(groupId, { includeUnread: true });
+        else deps.incrementWebModelQueued(recipients);
+      }
     }
   }
 
   if (
+    !alreadyApplied &&
     shouldIncrementUnread(
       nextEvent,
       deps.activeTab === "chat" && groupMessagesVisible(groupId, useUIStore.getState()),

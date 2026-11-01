@@ -751,6 +751,9 @@ Notes:
 5. External enable runs preflight first (required env, runtime binary availability, remote URL sanity) and returns
    `reason=preflight_failed:<code>` on deterministic blockers.
 6. `activation_pending` means relist/reconnect is still required; `runnable` means binding is live enough to try; `verified` is reserved for post-call proof, not plain enable.
+7. `cleanup` is accepted but currently ignored. Disabling removes the capability from the given scope's
+   enablement, but does not clean runtime caches, runtime bindings or installations, and this op returns
+   no removal counts. `capability_uninstall` removes a capability from a group and reports what it removed.
 
 Args:
 ```ts
@@ -759,7 +762,7 @@ Args:
   capability_id: string
   scope?: "group" | "actor" | "session"   // default: session
   enabled?: boolean                         // default: true
-  cleanup?: boolean                         // default: false; disable path can also clean runtime cache
+  cleanup?: boolean                         // currently ignored; see note 7
   reason?: string                           // optional short audit reason
   ttl_seconds?: number                      // session scope only
   by?: string
@@ -807,9 +810,6 @@ Result:
     required_env?: string[]
     action_hints?: string[]
   }>
-  removed_binding_count?: number
-  removed_installation?: boolean
-  cleanup_skipped_reason?: string
   skill?: {
     capability_id: string
     name: string
@@ -2902,11 +2902,13 @@ Result:
 #### `assistant_voice_document_list`
 
 List active Voice Secretary working documents for the group. Archived documents
-are excluded unless `include_archived=true`.
+are excluded unless `include_archived=true`. With `document_path`, the list holds
+at most that document, read from its current storage target and carrying
+`content_target_id` (see `assistant_voice_document_save`).
 
 Args:
 ```ts
-{ group_id: string; include_archived?: boolean }
+{ group_id: string; document_path?: string; include_archived?: boolean }
 ```
 
 Result:
@@ -3702,6 +3704,7 @@ Notes:
 - `calls/active` readiness MUST distinguish a missing Antigravity ACP distribution from a missing native Runtime executable. `analyst_runtime_setup_required=true` identifies a resolved Antigravity ACP configuration whose managed distribution is not installed; `analyst_runtime_available` remains false until installation. Web MUST give the explicit `cccc setup --runtime antigravity --runtime-mode acp --login` installation/separate-login instruction rather than native `agy`/PATH restart advice. This read-only discovery MUST NOT install, authenticate or launch an Analyst; installed status does not prove valid provider credentials.
 - The read-only Web catalog `GET /api/v1/runtimes` MAY add `mode_availability: {default: boolean, acp: boolean}` to the Antigravity, Auggie, Copilot, Devin, Cursor, Kimi Code, Kiro, Hermes and Droid entries. Existing `available` and the top-level `available` list retain native-executable semantics. `default` detects native `agy`; `acp` uses the same installed-distribution check as Voice readiness. For Auggie, Copilot, Devin, Cursor, Kimi Code, Kiro, Hermes and Droid both modes detect the native CLI executable; detection is not proof of login or provider task readiness. Detection MUST NOT install, authenticate, start sessions or write provider state. Web MUST distinguish loading/failed/unknown detection from a negative result and provide an explicit read-only recheck; Profile editing remains independent of host installation.
 - Voice Analyst Runtime settings MUST NOT change while a Realtime Voice call is active. After the call stops, active or queued Analyst work MUST block an ordinary settings update rather than being discarded implicitly. An interactive administrator MAY explicitly confirm discarding that work as part of the same settings transaction; CCCC MUST then stop the old managed session before applying the replacement and MUST report whether unfinished work was discarded. Candidate-launch failure MUST restore the prior settings and Runtime, but MUST NOT claim that explicitly discarded work was recovered.
+- Web Voice requests share one lifecycle gate with Web Access Apply. While Voice is stopping or a Web restart is being prepared, Voice start, Analyst settings and reset requests MUST fail with 409 `codex_voice_restarting` (`retryable: true`). While cleanup of earlier Voice resources is unconfirmed (the call, the Analyst, or process groups recorded by an earlier Web host), they MUST fail with 503 `codex_voice_recovery_pending`: `retryable: true` when starting Voice again retries that cleanup, and `retryable: false` when a reset or replacement had begun and its outcome is unconfirmed, so the client checks Voice status first. Apply MUST stop the active Voice call and Analyst before it requests a Web restart. If that cleanup is unconfirmed, Apply returns the same error, the current Web keeps serving and the saved binding does not take effect.
 - Claude transcript entries MUST use the provider `promptId` as the durable provider-turn identity and MUST NOT infer identity from the Agent View summary headline. A human prompt observed before control acceptance is an external turn. Because the authenticated `reply` response does not expose that `promptId`, CCCC MAY return a stable local turn receipt as soon as the control request is accepted, but Voice ownership, progress, and results become authoritative only when the next transcript user record exactly matches the one pending controlled prompt and supplies its provider identifier. A competing prompt plus successful control acceptance is ambiguous and MUST invalidate the managed session rather than replaying the delivery. A controlled request that never starts, or settles without exposing the matching transcript, MUST fail within bounded post-acceptance or post-settlement intervals; active provider work MUST NOT expire solely because its turn is long. `turn_duration`, the provider interruption marker, and an explicit failure record are terminal authority. The state file and selected transcript file identity MUST be revalidated while following the session. An active transcript MAY relocate inside the configured Claude project store only after the old path disappears, a unique same-session file is found, and its entire consumed byte prefix matches the observer’s retained SHA-256 digest. The reader MUST preserve its byte offset and partial record without replaying history. A missing or incomplete relocation destination MUST settle within a bounded 10-second grace period; sustained loss, consumed-history mismatch, ambiguous candidates, same-path replacement, truncation of the active file, or malformed tail records MUST invalidate the session. Relocation alone MUST NOT stop or recreate the provider session.
 - A managed-runtime native-terminal delivery MUST wait for the TUI's advertised input mode before writing any payload; a PTY handle alone does not prove input readiness. Readiness waiting MUST be bounded and cancellable and MUST NOT inject a probe prompt, fall through on timeout, or wait for provider work to finish. Actor deliveries remain unaccepted on readiness failure; Voice native-input deliveries report an explicit error without writing the payload.
 - A Claude receipt MAY name an empty session that has never created a transcript. Before respawning it, CCCC MUST inspect the existing durable job metadata: only positive empty-input evidence with no transcript path, consumed transcript bytes, output, or token usage permits transcript-free recovery. An absent/null or numeric zero output-token counter does not indicate usage; nonzero or malformed counters MUST retain strict transcript validation. Unknown or materialized history MUST retain strict transcript validation, including a transcript written before Agent View publishes its path. This exception MUST preserve the exact provider session ID and MUST NOT replay old input or create a replacement conversation silently.
