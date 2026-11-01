@@ -155,3 +155,9 @@ pub(crate) struct CodexVoiceSessions {
     cleanup_gate: Arc<Mutex<()>>,
     process_recovery: Option<crate::VoiceProcessRecovery>,
 }
+
+impl CodexVoiceSessions {
+    pub(crate) fn process_recovery(&self) -> Option<crate::VoiceProcessRecovery> {
+        self.process_recovery.clone()
+    }
+}

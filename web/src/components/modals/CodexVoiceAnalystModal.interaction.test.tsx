@@ -70,6 +70,7 @@ function controller(): CodexVoiceSessionController {
     playbackBlocked: false,
     outputStatus: { queued: 0, blocked: null },
     error: "",
+    recoveryOwners: [],
     refreshError: "",
     isStarting: false,
     isEngaged: true,

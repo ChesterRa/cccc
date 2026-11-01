@@ -14,11 +14,11 @@ async fn list(State(state): State<AppState>) -> ApiResult {
 }
 async fn install(State(state): State<AppState>, Path(model_id): Path<String>) -> ApiResult {
     Ok(success(
-        json!({"model":voice_asr::begin_install(state.home,model_id).map_err(voice_error)?}),
+        json!({"model":voice_asr::begin_install(state.home,model_id).await.map_err(voice_error)?}),
     ))
 }
 async fn remove(State(state): State<AppState>, Path(model_id): Path<String>) -> ApiResult {
     Ok(success(
-        json!({"model":voice_asr::remove_model(&state.home,&model_id).map_err(voice_error)?}),
+        json!({"model":voice_asr::remove_model(state.home,model_id).await.map_err(voice_error)?}),
     ))
 }

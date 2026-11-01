@@ -284,9 +284,11 @@ pub(super) fn revoke_session_grant(store: &SecretaryTaskStore) -> io::Result<()>
 pub(super) fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     configuration::require_user(request)?;
     let readiness = configuration::readiness(home);
+    let process_recovery_pending = cccc_runtime::owned_process_recovery_pending();
     let Some(owner) = lookup(home) else {
         return object(configuration::with_readiness(
-            json!({"phase":"unavailable","diagnostic":readiness.readiness_error}),
+            json!({"phase":"unavailable","diagnostic":readiness.readiness_error,
+                "process_recovery_pending":process_recovery_pending}),
             &readiness,
         ));
     };
@@ -300,7 +302,8 @@ pub(super) fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .and_then(|e| owner.store.load(&e.task_id).ok());
         return object(configuration::with_readiness(
             json!({"phase":if owner.closing.load(Ordering::Acquire) {"stopping"} else if starting.is_some() {"starting"} else {"not_started"},
-            "task":starting.as_ref().map(projection),"diagnostic":readiness.readiness_error}),
+            "task":starting.as_ref().map(projection),"diagnostic":readiness.readiness_error,
+            "process_recovery_pending":process_recovery_pending}),
             &readiness,
         ));
     };
@@ -334,7 +337,8 @@ pub(super) fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "group_title":task.as_ref().filter(|_|!manual_turn).and_then(|t| cccc_core::GroupStore::new(home.clone()).ok()?.load(&t.target.group_id).ok()).map(|g|g.title),
         "progress":execution.as_ref().filter(|_|!manual_turn).map(|e|e.progress.lock().unwrap_or_else(|e| e.into_inner()).snapshot()),
         "activity":execution.as_ref().filter(|_|task_busy).map(|e|e.activity.lock().unwrap_or_else(|e| e.into_inner()).clone()),
-        "diagnostic":readiness.readiness_error}),
+        "diagnostic":readiness.readiness_error,
+        "process_recovery_pending":process_recovery_pending}),
         &readiness,
     ))
 }

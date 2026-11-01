@@ -23,8 +23,10 @@ tokio-tungstenite.workspace = true
 filedescriptor = "=0.8.3"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.4", features = ["process"] }
+rustix = { version = "1.1.4", features = ["event", "fs", "process"] }
 nix.workspace = true
+sha2.workspace = true
+uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 cccc-windows-process = { path = "../cccc-windows-process" }

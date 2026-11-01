@@ -10,15 +10,19 @@ const PIDS: &str = "CCCC_UNIX_GROUP_TEST_PIDS";
 
 #[test]
 fn abrupt_daemon_exit_terminates_its_owned_process_groups() {
+    if !fixture_pidfds_available() {
+        eprintln!("skipping: cannot safely pin fixture processes");
+        return;
+    }
     let temp = tempfile::tempdir().expect("tempdir");
     let pid_path = temp.path().join("owned.pid");
-    let mut host = spawn_helper("host_helper", "host", temp.path(), &pid_path);
+    let mut host = KillOnDrop(spawn_helper("host_helper", "host", temp.path(), &pid_path));
     let owned = wait_for_pid(&pid_path);
-    let _cleanup = KillGroupOnDrop(owned);
+    let _cleanup = FixtureProcess::pin(owned, host.0.id()).expect("pin owned fixture");
     assert!(process_exists(owned));
 
-    kill_now(host.id());
-    host.wait().expect("reap killed host");
+    host.0.kill().expect("kill host");
+    host.0.wait().expect("reap killed host");
 
     assert!(
         exits_within(owned, Duration::from_secs(10)),
@@ -27,17 +31,23 @@ fn abrupt_daemon_exit_terminates_its_owned_process_groups() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn next_daemon_terminates_groups_its_killed_watchdog_left_behind() {
+    if !fixture_pidfds_available() {
+        eprintln!("skipping: cannot safely pin fixture processes");
+        return;
+    }
     let temp = tempfile::tempdir().expect("tempdir");
     let pid_path = temp.path().join("owned.pid");
-    let mut host = spawn_helper("host_helper", "host", temp.path(), &pid_path);
+    let mut host = KillOnDrop(spawn_helper("host_helper", "host", temp.path(), &pid_path));
     let owned = wait_for_pid(&pid_path);
-    let _cleanup = KillGroupOnDrop(owned);
-    let watchdog = watchdog_of(host.id());
+    let _cleanup = FixtureProcess::pin(owned, host.0.id()).expect("pin owned fixture");
+    let watchdog = watchdog_of(host.0.id());
+    let watchdog = FixtureProcess::pin(watchdog as i32, host.0.id()).expect("pin watchdog");
 
-    kill_now(watchdog);
-    kill_now(host.id());
-    host.wait().expect("reap killed host");
+    watchdog.kill().expect("kill pinned watchdog");
+    host.0.kill().expect("kill host");
+    host.0.wait().expect("reap killed host");
     assert!(
         !exits_within(owned, Duration::from_secs(3)),
         "the killed watchdog cannot have terminated the group"
@@ -59,6 +69,10 @@ fn next_daemon_terminates_groups_its_killed_watchdog_left_behind() {
 
 #[test]
 fn a_rejected_second_start_leaves_the_running_daemons_groups_alone() {
+    if !fixture_pidfds_available() {
+        eprintln!("skipping: cannot safely pin fixture processes");
+        return;
+    }
     let temp = tempfile::tempdir().expect("tempdir");
     let pid_path = temp.path().join("owned.pid");
     let mut owner = KillOnDrop(spawn_helper(
@@ -68,7 +82,7 @@ fn a_rejected_second_start_leaves_the_running_daemons_groups_alone() {
         &pid_path,
     ));
     let owned = wait_for_pid(&pid_path);
-    let _cleanup = KillGroupOnDrop(owned);
+    let _cleanup = FixtureProcess::pin(owned, owner.0.id()).expect("pin owned fixture");
 
     let refused = temp.path().join("refused");
     let mut second = spawn_helper("second_start_helper", "second", temp.path(), &refused);
@@ -97,7 +111,7 @@ fn owner_helper() {
     let _lock = crate::server::claim_home(&paths).expect("claim home");
     let (child, _tree) = cccc_runtime::OwnedProcessTree::spawn(
         Command::new("sleep")
-            .arg("300")
+            .arg("60")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null()),
@@ -128,7 +142,7 @@ fn host_helper() {
     protect_daemon_host(&helper_home()).expect("protect daemon host");
     let (child, _tree) = cccc_runtime::OwnedProcessTree::spawn(
         Command::new("sleep")
-            .arg("300")
+            .arg("60")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null()),
@@ -193,6 +207,7 @@ fn wait_for_pid(path: &Path) -> i32 {
 }
 
 /// The watchdog is the host's `sh` child; the owned group leader is `sleep`.
+#[cfg(target_os = "linux")]
 fn watchdog_of(host: u32) -> u32 {
     let output = Command::new("pgrep")
         .args(["-P", &host.to_string(), "-x", "sh"])
@@ -202,14 +217,6 @@ fn watchdog_of(host: u32) -> u32 {
         .trim()
         .parse()
         .expect("exactly one watchdog")
-}
-
-fn kill_now(pid: u32) {
-    nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(pid as i32),
-        nix::sys::signal::Signal::SIGKILL,
-    )
-    .expect("SIGKILL");
 }
 
 /// A terminated child of a still-running host stays a zombie until reaped, and a
@@ -245,14 +252,6 @@ impl Drop for KillOnDrop {
     }
 }
 
-/// Leaves nothing behind when an assertion fails; observation never signals.
-struct KillGroupOnDrop(i32);
-
-impl Drop for KillGroupOnDrop {
-    fn drop(&mut self) {
-        let _ = nix::sys::signal::killpg(
-            nix::unistd::Pid::from_raw(self.0),
-            nix::sys::signal::Signal::SIGKILL,
-        );
-    }
-}
+#[path = "../../test_support/fixture_process.rs"]
+mod fixture_process;
+use fixture_process::{FixtureProcess, fixture_pidfds_available};

@@ -9,6 +9,17 @@ fn direct_connection_management_never_becomes_a_public_peer_endpoint() {
 }
 
 #[test]
+fn process_recovery_requires_an_administrator_for_reads_and_changes() {
+    for method in [Method::GET, Method::HEAD, Method::POST] {
+        for suffix in ["daemon", "web", "web/retry", "web/accept"] {
+            let path = format!("/api/v1/process-recovery/{suffix}");
+            assert!(requires_admin(&method, &path));
+            assert!(!is_public(&method, &path));
+        }
+    }
+}
+
+#[test]
 fn shared_voice_services_require_admin_but_task_controls_follow_the_group() {
     for method in [Method::GET, Method::PUT, Method::POST] {
         assert!(requires_admin(&method, "/api/v1/voice-secretary/settings"));

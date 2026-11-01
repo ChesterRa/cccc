@@ -50,6 +50,7 @@ pub(crate) mod local_headless;
 pub(crate) mod local_sessions;
 mod maintenance;
 mod membership;
+mod owned_process_recovery;
 pub(crate) use membership::ReachRestore;
 pub(crate) use membership::validated_live_web_binding;
 mod membership_account;
@@ -119,6 +120,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         dots_events::resolve_operation,
         grok_webhook::resolve_operation,
         maintenance::resolve_operation,
+        owned_process_recovery::resolve_operation,
         im::resolve_operation,
         memory::resolve_operation,
         context::resolve_operation,

@@ -279,6 +279,43 @@ pub enum DaemonAction {
     Status,
     /// Run only the daemon in the foreground (no Web server or terminal panel).
     Run,
+    /// Review or resolve specific unconfirmed process-cleanup records.
+    ProcessRecovery {
+        /// Which process owner produced the evidence.
+        #[arg(long, global = true, value_enum, default_value = "daemon")]
+        owner: RecoveryOwner,
+        #[command(subcommand)]
+        action: RecoveryAction,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum RecoveryOwner {
+    Daemon,
+    Web,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RecoveryAction {
+    /// List redacted pending evidence and its current version.
+    List,
+    /// Retry cleanup for exactly one reviewed record.
+    Retry {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        version: String,
+    },
+    /// Continue despite one reviewed record; old work may still be running.
+    Accept {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        version: String,
+        /// Acknowledge that accepting does not stop or verify the old work.
+        #[arg(long, required = true)]
+        accept_risk: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

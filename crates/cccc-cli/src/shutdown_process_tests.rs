@@ -12,7 +12,7 @@ fn forced_launcher_exit_terminates_owned_tree_without_destructors() {
             Command::new("sh")
                 .args([
                     "-c",
-                    "sleep 60 & printf 'CCCC_FORCE_READY:%s\\n' \"$$\"; wait",
+                    "sleep 60 & printf 'CCCC_FORCE_READY:%s:%s\\n' \"$$\" \"$!\"; wait",
                 ])
                 .stdout(Stdio::inherit()),
         )
@@ -27,25 +27,36 @@ fn forced_launcher_exit_terminates_owned_tree_without_destructors() {
             .expect("read child readiness");
         force_exit();
     }
-    let mut launcher = Command::new(std::env::current_exe().expect("locate test executable"))
+    if !fixture_pidfds_available() {
+        eprintln!("skipping: cannot safely pin fixture processes");
+        return;
+    }
+    let mut launcher = FixtureLauncher(Command::new(std::env::current_exe().expect("locate test executable"))
         .args(["--exact", "shutdown::process_tests::forced_launcher_exit_terminates_owned_tree_without_destructors", "--nocapture"])
-        .env(CHILD, "1").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().expect("spawn child process");
-    let stdout = launcher.stdout.take().expect("take owned test resource");
+        .env(CHILD, "1").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().expect("spawn child process"));
+    let stdout = launcher.0.stdout.take().expect("take owned test resource");
     let (ready_tx, ready_rx) = mpsc::channel();
     let (eof_tx, eof_rx) = mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
             let line = line.expect("fixture value must be available");
-            if let Some(pid) = line.strip_prefix("CCCC_FORCE_READY:") {
-                let _ = ready_tx.send(pid.parse::<i32>().expect("fixture value must be available"));
+            if let Some(pids) = line.strip_prefix("CCCC_FORCE_READY:") {
+                let (leader, member) = pids.split_once(':').expect("fixture PIDs");
+                let _ = ready_tx.send((
+                    leader.parse::<i32>().expect("fixture leader PID"),
+                    member.parse::<i32>().expect("fixture member PID"),
+                ));
             }
         }
         let _ = eof_tx.send(());
     });
-    let pid = ready_rx
+    let (leader, member) = ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("actor ready");
+    let _leader = FixtureProcess::pin(leader, launcher.0.id()).expect("pin fixture leader");
+    let _member = FixtureProcess::pin(member, leader as u32).expect("pin fixture member");
     launcher
+        .0
         .stdin
         .take()
         .expect("take owned test resource")
@@ -53,30 +64,34 @@ fn forced_launcher_exit_terminates_owned_tree_without_destructors() {
         .expect("write process input");
     let deadline = Instant::now() + Duration::from_secs(5);
     let status = loop {
-        if let Some(status) = launcher.try_wait().expect("poll child process") {
+        if let Some(status) = launcher.0.try_wait().expect("poll child process") {
             break status;
         }
         if Instant::now() >= deadline {
-            let _ = launcher.kill();
-            let _ = nix::sys::signal::killpg(
-                nix::unistd::Pid::from_raw(pid),
-                nix::sys::signal::Signal::SIGKILL,
-            );
-            launcher.wait().expect("reap child process");
+            let _ = launcher.0.kill();
+            launcher.0.wait().expect("reap child process");
             panic!("forced launcher exit blocked");
         }
         std::thread::sleep(Duration::from_millis(10));
     };
     let closed = eof_rx.recv_timeout(Duration::from_secs(5));
-    if closed.is_err() {
-        let _ = nix::sys::signal::killpg(
-            nix::unistd::Pid::from_raw(pid),
-            nix::sys::signal::Signal::SIGKILL,
-        );
-    }
     assert_eq!(status.code(), Some(INTERRUPTED_EXIT_CODE));
     closed.expect("actor or descendant survived process::exit and still owns stdout");
 }
+
+/// Reap the direct fixture child on every exit, including assertion failure.
+struct FixtureLauncher(std::process::Child);
+
+impl Drop for FixtureLauncher {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[path = "../../test_support/fixture_process.rs"]
+mod fixture_process;
+use fixture_process::{FixtureProcess, fixture_pidfds_available};
 
 #[test]
 fn second_terminal_interrupt_restores_modes_before_process_exit() {

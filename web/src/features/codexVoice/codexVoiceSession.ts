@@ -21,6 +21,7 @@ import {
   boundedText,
   failure,
   failureCode,
+  failureRecoveryOwners,
   normalizedErrorCode,
   RealtimeTranscriptAccumulator,
   realtimeTranscriptUpdate,
@@ -174,7 +175,7 @@ export class CodexVoiceBrowserSession {
         signal: requestAbort.signal,
       });
       this.requestAbort = null;
-      if (!response.ok) throw failure(response.error.code);
+      if (!response.ok) throw failure(response.error.code, response.error.details);
       if (this.stopping) {
         // Abort can lose to a completed HTTP response. Release only this
         // generation; it must not occupy the lease or stop a newer call.
@@ -211,7 +212,10 @@ export class CodexVoiceBrowserSession {
       // A cancelled startup is finished. Rejecting it later would let its
       // controller failure handler interfere with a newly started call.
       if (this.stopping) return;
-      this.callbacks.onError(failureCode(error));
+      const recoveryOwners = failureRecoveryOwners(error);
+      if (recoveryOwners.length)
+        this.callbacks.onError(failureCode(error), undefined, recoveryOwners);
+      else this.callbacks.onError(failureCode(error));
       this.callbacks.onPhase("failed");
       await this.stop({ notifyPhase: false });
       throw error;

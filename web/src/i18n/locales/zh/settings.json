@@ -1857,7 +1857,9 @@
         "disconnected": "连接已断开",
         "unavailable": "不可用"
       },
-      "adminOnly": "共享秘书终端需要管理员权限。本组的任务和结果仍可在这里查看。"
+      "adminOnly": "共享秘书终端需要管理员权限。本组的任务和结果仍可在这里查看。",
+      "processRecoveryPending": "旧进程记录待确认；新的秘书任务和未完成文档的自动恢复可能暂时无法开始。",
+      "reviewProcessRecovery": "查看"
     },
     "readiness": {
       "notConfigured": "语音秘书尚未配置",

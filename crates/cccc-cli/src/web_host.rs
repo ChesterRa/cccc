@@ -280,7 +280,7 @@ pub(crate) async fn launch(
                     mode,
                     shutdown,
                     interface.as_ref().map(Interface::listening),
-                    std::sync::Arc::clone(&voice_recovery),
+                    voice_recovery.clone(),
                 );
                 tokio::pin!(serving);
                 if let Some(control) = &terminal_control {

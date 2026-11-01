@@ -562,6 +562,7 @@ dependencies = [
  "ratatui",
  "reqwest 0.12.28",
  "retach",
+ "rustix",
  "rustls 0.23.37",
  "semver",
  "serde_json",
@@ -653,6 +654,7 @@ dependencies = [
  "percent-encoding",
  "regex",
  "reqwest 0.12.28",
+ "rustix",
  "rustls 0.23.37",
  "same-file",
  "serde",
@@ -728,10 +730,12 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite 0.29.0",
+ "uuid",
  "win32job",
 ]
 

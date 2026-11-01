@@ -31,6 +31,7 @@ mod voice_ws;
 mod voice_ws_capture;
 mod voice_ws_lifecycle;
 mod voice_ws_revision;
+pub(crate) use voice_asr::spawn_startup_cleanup as spawn_voice_model_cleanup;
 #[derive(Debug, Default, Deserialize)]
 struct AssistantQuery {
     #[serde(default)]
@@ -247,7 +248,9 @@ async fn model_install(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let model_id = required(&body, "model_id")?;
-    let model = voice_asr::begin_install(state.home.clone(), model_id).map_err(voice_error)?;
+    let model = voice_asr::begin_install(state.home.clone(), model_id)
+        .await
+        .map_err(voice_error)?;
     Ok(success(
         json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"model":model}),
     ))
@@ -258,7 +261,9 @@ async fn model_remove(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let model_id = required(&body, "model_id")?;
-    let model = voice_asr::remove_model(&state.home, &model_id).map_err(voice_error)?;
+    let model = voice_asr::remove_model(state.home.clone(), model_id)
+        .await
+        .map_err(voice_error)?;
     Ok(success(
         json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"model":model}),
     ))

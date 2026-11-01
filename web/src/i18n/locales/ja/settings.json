@@ -1868,7 +1868,9 @@
         "disconnected": "切断",
         "unavailable": "利用不可"
       },
-      "adminOnly": "共有秘書のターミナルには管理者権限が必要です。このグループのタスクと結果は引き続き確認できます。"
+      "adminOnly": "共有秘書のターミナルには管理者権限が必要です。このグループのタスクと結果は引き続き確認できます。",
+      "processRecoveryPending": "以前のプロセス記録が確認待ちです。新しい秘書タスクや未完了の文書の自動復旧は、しばらく開始できない場合があります。",
+      "reviewProcessRecovery": "確認"
     },
     "readiness": {
       "notConfigured": "音声秘書が未設定です",

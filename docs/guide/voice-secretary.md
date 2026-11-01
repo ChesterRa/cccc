@@ -448,9 +448,30 @@ Open **Settings → This instance → Voice → Voice Secretary → Capture and 
 Install the final and live models under **Entire instance → Voice**. The sherpa-onnx runtime is linked into the
 Rust binary, so runtime install/remove actions are compatibility no-ops. Models
 are downloaded into `~/.cccc/cache/voice-models`, verified against the bundled
-manifest, unpacked in staging, and atomically activated. Existing model caches
-and `install-state.json` files are read in place. Operating-system file locks
-make interrupted installs recoverable after a process crash.
+manifest, unpacked in staging, and atomically activated: each install becomes a
+new version directory, and one atomic write of the model's `install-state.json`
+switches to it. Downloaded archives are deleted once unpacked, unless the model
+requires the archive file itself. If an update fails before the switch, the
+installed version's files are kept, and the error is shown with the model when
+CCCC can record it; if CCCC stops during an update, the files are kept too.
+Either way the model stays installed and usable as long as that version has
+every file the current model definition requires. If CCCC cannot confirm whether
+the switch happened, it leaves the install state as it is and keeps both
+versions until a later cleanup can confirm the current one.
+A replaced version is deleted at a later cleanup: when the next install starts,
+after an install completes, or when CCCC Web starts. A version that a
+recognition in progress still uses waits for a later cleanup. Removing a model
+deletes all of its versions at once, even one in use.
+
+Existing model caches and `install-state.json` files are read in place; their
+next install or update moves the model into a version directory. Versions of
+CCCC before this layout show such a model as not installed, so after a
+downgrade it must be installed again. If `install-state.json` exists but cannot
+be read or is damaged, including a link to a missing file, the model shows as
+failed instead of not installed, and installing
+does not overwrite it: restore read access to the file if it is intact, or
+reinstall, which replaces the model's files. Operating-system file locks make
+interrupted installs recoverable after a process crash.
 
 Live browser capture sends 16 kHz mono PCM16 as binary WebSocket frames; JSON is
 used only for start/stop control messages. Both WebSocket recordings and HTTP

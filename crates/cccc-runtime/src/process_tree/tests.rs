@@ -1,4 +1,98 @@
 use super::*;
+
+#[test]
+fn pty_spawn_failure_does_not_claim_the_child_never_started() {
+    let result = OwnedProcessTree::spawn_pty(|| {
+        Err(CommandError::Started(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "injected PTY failure",
+        )))
+    });
+    let error = match result {
+        Ok(_) => panic!("the fixture must fail"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::Other);
+    assert!(
+        error
+            .get_ref()
+            .is_some_and(|source| source.is::<ProcessStartUnconfirmed>())
+    );
+}
+
+#[test]
+fn pty_resource_failure_waits_only_after_a_successful_kill() {
+    use portable_pty::{Child, ChildKiller, ExitStatus};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[derive(Clone, Debug)]
+    struct FixtureChild {
+        waits: Arc<AtomicUsize>,
+        polls: Arc<AtomicUsize>,
+        kill_succeeds: bool,
+    }
+    impl ChildKiller for FixtureChild {
+        fn kill(&mut self) -> std::io::Result<()> {
+            if self.kill_succeeds {
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected signal failure",
+                ))
+            }
+        }
+
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(self.clone())
+        }
+    }
+    impl Child for FixtureChild {
+        fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+            self.polls.fetch_add(1, Ordering::Relaxed);
+            Ok(None)
+        }
+
+        fn wait(&mut self) -> std::io::Result<ExitStatus> {
+            self.waits.fetch_add(1, Ordering::Relaxed);
+            Err(std::io::Error::other("fixture is still running"))
+        }
+
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+
+    for kill_succeeds in [false, true] {
+        let waits = Arc::new(AtomicUsize::new(0));
+        let polls = Arc::new(AtomicUsize::new(0));
+        let child = FixtureChild {
+            waits: Arc::clone(&waits),
+            polls: Arc::clone(&polls),
+            kill_succeeds,
+        };
+        let error = match OwnedProcessTree::spawn_pty(|| Ok(Box::new(child))) {
+            Ok(_) => panic!("missing PTY resource must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .get_ref()
+                .is_some_and(|source| source.is::<ProcessStartUnconfirmed>())
+        );
+        assert_eq!(waits.load(Ordering::Relaxed), usize::from(kill_succeeds));
+        assert_eq!(polls.load(Ordering::Relaxed), usize::from(!kill_succeeds));
+    }
+}
+
 use std::io::{BufRead, BufReader, Read};
 use std::process::Stdio;
 use std::sync::mpsc;

@@ -131,11 +131,7 @@ pub(super) async fn start(State(state): State<AppState>, Json(body): Json<Value>
             "application_context must contain a valid id, mode and nonempty instructions up to 24576 UTF-8 bytes",
         )
     })?;
-    state
-        .codex_voice
-        .recover_before_start()
-        .await
-        .map_err(crate::codex_voice::restart::VoiceGateError::into_api_error)?;
+    super::super::process_recovery::ensure_voice_start_allowed(&state).await?;
     let started = std::time::Instant::now();
     let outcome = match provider {
         VoiceProvider::Codex => {

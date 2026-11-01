@@ -1868,7 +1868,9 @@
         "disconnected": "Disconnected",
         "unavailable": "Unavailable"
       },
-      "adminOnly": "The shared Secretary terminal requires administrator access. Group tasks and results remain available here."
+      "adminOnly": "The shared Secretary terminal requires administrator access. Group tasks and results remain available here.",
+      "processRecoveryPending": "Earlier process records await review; new Secretary tasks and automatic recovery of unfinished documents may not start for now.",
+      "reviewProcessRecovery": "Review"
     },
     "readiness": {
       "notConfigured": "Voice Secretary isn't set up",

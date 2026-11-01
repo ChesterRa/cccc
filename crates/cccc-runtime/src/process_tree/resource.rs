@@ -5,6 +5,12 @@ pub(super) struct Resource {
     pid: rustix::process::Pid,
     #[cfg(unix)]
     spawned_at: u64,
+    #[cfg(unix)]
+    record_id: uuid::Uuid,
+    #[cfg(unix)]
+    origin: Option<super::guard_record::Origin>,
+    #[cfg(unix)]
+    evidence: super::guard_record::GroupEvidence,
     #[cfg(windows)]
     job: Option<win32job::Job>,
 }
@@ -49,7 +55,27 @@ impl Resource {
         Ok(Self {
             pid,
             spawned_at: super::guard::now(),
+            record_id: uuid::Uuid::new_v4(),
+            origin: None,
+            evidence: super::guard_record::GroupEvidence::Unconfirmed,
         })
+    }
+
+    #[cfg(unix)]
+    pub(super) fn attach_intent(&mut self, intent: Option<&super::guard::PreparedIntent>) {
+        let Some(intent) = intent else { return };
+        self.record_id = intent.entry.id;
+        self.origin = intent.entry.origin.clone();
+        #[cfg(target_os = "linux")]
+        if intent.may_capture_identity
+            && let Ok(view) = super::linux_identity::ProcView::open()
+            && let Ok(captured) = view.capture_child(self.pid.as_raw_pid())
+            && self.origin.as_ref() == Some(&captured.origin)
+        {
+            self.evidence = super::guard_record::GroupEvidence::Captured(captured);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = intent.may_capture_identity;
     }
 
     /// Every Unix resource leads its own process group.
@@ -58,6 +84,9 @@ impl Resource {
         super::guard::OwnedGroup {
             pgid: self.pid.as_raw_pid(),
             spawned_at: self.spawned_at,
+            id: self.record_id,
+            origin: self.origin.clone(),
+            evidence: self.evidence.clone(),
         }
     }
 
@@ -111,6 +140,9 @@ impl Resource {
     #[cfg(unix)]
     fn signal(&self, signal: nix::sys::signal::Signal) -> io::Result<()> {
         use nix::{errno::Errno, sys::signal::killpg, unistd::Pid};
+        // A reaped child no longer reserves its numeric process group. Refuse
+        // to signal when a competing waiter or auto-reaper removed ownership.
+        let _ = self.exited()?;
         match killpg(Pid::from_raw(self.pid.as_raw_pid()), signal) {
             Ok(()) | Err(Errno::ESRCH) => Ok(()),
             // Darwin reports EPERM for an unreaped, exited group with no

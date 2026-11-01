@@ -179,6 +179,24 @@ describe("Voice startup cancellation", () => {
     }
   });
 
+  it("passes on the owners whose process records block the start", async () => {
+    mocks.start.mockResolvedValue({
+      ok: false,
+      error: {
+        code: "codex_voice_recovery_pending",
+        message: "Previous process recovery is not yet confirmed.",
+        details: { retryable: true, recovery_owners: ["web", "daemon", "other"] },
+      },
+    });
+    const f = fixture();
+    await expect(f.session.start()).rejects.toThrow("codex_voice_recovery_pending");
+    expect(f.callbacks.onError).toHaveBeenCalledExactlyOnceWith(
+      "codex_voice_recovery_pending",
+      undefined,
+      ["daemon", "web"],
+    );
+  });
+
   it("does not request the microphone after stopping during speaker setup", async () => {
     const speaker = deferred<void>();
     const f = fixture(vi.fn(() => speaker.promise));

@@ -33,6 +33,7 @@ import {
 import { Button } from "../ui/button";
 import { IconButton } from "../ui/icon-button";
 import { ModalFrame } from "./ModalFrame";
+import { ProcessRecoveryDialog } from "./ProcessRecoveryDialog";
 import { VoiceProviderSelect } from "../../features/codexVoice/VoiceProviderSelect";
 import { SpeakingVoiceSelect } from "../../features/codexVoice/SpeakingVoiceSelect";
 
@@ -65,6 +66,7 @@ export function CodexVoiceAnalystModal({
 }: Props) {
   const { t } = useTranslation("modals");
   const [analystExpanded, setAnalystExpanded] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const openSettings = useModalStore((state) => state.openCodexVoiceSettings);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const [mobilePane, setMobilePane] = useState<MobilePane>("conversation");
@@ -313,6 +315,17 @@ export function CodexVoiceAnalystModal({
                   {t("codexVoiceOpenSettings")}
                 </Button>
               )}
+              {controller.recoveryOwners.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-lcd-key
+                  onClick={() => setRecoveryOpen(true)}
+                >
+                  {t("codexVoiceReviewRecoveryRecords")}
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="ghost"
@@ -492,6 +505,12 @@ export function CodexVoiceAnalystModal({
           />
         </div>
       </div>
+      <ProcessRecoveryDialog
+        isOpen={recoveryOpen}
+        owners={controller.recoveryOwners}
+        isDark={isDark}
+        onClose={() => setRecoveryOpen(false)}
+      />
     </ModalFrame>
   );
 }

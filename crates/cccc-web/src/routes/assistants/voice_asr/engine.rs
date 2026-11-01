@@ -196,20 +196,20 @@ fn create_offline_recognizer(
     home: &HomeLayout,
     model_id: &str,
     language: &str,
-) -> Result<(Model, OfflineRecognizer), VoiceError> {
-    let model = offline_model(home, model_id)?;
-    let config = offline_recognizer_config(home, &model, language)?;
+) -> Result<(Model, Pinned<OfflineRecognizer>), VoiceError> {
+    let selected = offline_model(home, model_id)?;
+    let config = offline_recognizer_config(&selected.root, &selected.model, language)?;
     let recognizer = OfflineRecognizer::create(&config).ok_or_else(|| {
         VoiceError::new(
             "asr_runtime_not_ready",
             "failed to initialize sherpa-onnx offline recognizer",
         )
     })?;
-    Ok((model, recognizer))
+    Ok((selected.model, Pinned::new(recognizer, selected.pin)))
 }
 
 fn finish_transcription(
-    recognizer: OfflineRecognizer,
+    recognizer: Pinned<OfflineRecognizer>,
     stream: sherpa_onnx::OfflineStream,
     model: Model,
     sample_rate: i32,
@@ -335,6 +335,8 @@ pub struct StreamingSession {
     mock_text: Option<String>,
     mock_received_audio: bool,
     mock_partial_emitted: bool,
+    // Last, so the recognizer and stream are released before their model version may go.
+    _pin: Option<PayloadPin>,
 }
 
 pub fn diarize_pcm16_file(
@@ -383,8 +385,12 @@ fn diarize_samples(
     let Some(model) = catalog.get(requested).cloned() else {
         return Ok(None);
     };
-    let status = model_status(home, &model);
-    if status["status"] != "ready" {
+    let current = payload::current_version(home, &model.model_id)?;
+    let ready = status_from(home, &model, &current.snapshot)["status"] == "ready";
+    let (Some(root), Some(pin)) = (current.snapshot.root, current.pin) else {
+        return Ok(None);
+    };
+    if !ready {
         return Ok(None);
     }
     let item = model.diarization.as_ref().ok_or_else(|| {
@@ -405,7 +411,6 @@ fn diarize_samples(
             format!("diarization requires {} Hz PCM16", item.sample_rate),
         ));
     }
-    let root = model_dir(home, &model.model_id);
     let config = OfflineSpeakerDiarizationConfig {
         segmentation: OfflineSpeakerSegmentationModelConfig {
             pyannote: OfflineSpeakerSegmentationPyannoteModelConfig {
@@ -442,6 +447,7 @@ fn diarize_samples(
             "failed to initialize sherpa-onnx diarization",
         )
     })?;
+    let diarizer = Pinned::new(diarizer, pin);
     let result = diarizer.process(samples).ok_or_else(|| {
         VoiceError::new(
             "diarization_failed",
@@ -481,10 +487,11 @@ impl StreamingSession {
                 mock_text: Some(text),
                 mock_received_audio: false,
                 mock_partial_emitted: false,
+                _pin: None,
             });
         }
-        let model = streaming_model(home, model_id)?;
-        let config = online_recognizer_config(home, &model)?;
+        let selected = streaming_model(home, model_id)?;
+        let config = online_recognizer_config(&selected.root, &selected.model)?;
         let recognizer = OnlineRecognizer::create(&config).ok_or_else(|| {
             VoiceError::new(
                 "asr_runtime_not_ready",
@@ -495,11 +502,12 @@ impl StreamingSession {
         Ok(Self {
             recognizer: Some(recognizer),
             stream: Some(stream),
-            model_id: model.model_id,
+            model_id: selected.model.model_id,
             last_text: String::new(),
             mock_text: None,
             mock_received_audio: false,
             mock_partial_emitted: false,
+            _pin: Some(selected.pin),
         })
     }
 
@@ -626,7 +634,7 @@ fn streaming_result_decision(
 }
 
 fn offline_recognizer_config(
-    home: &HomeLayout,
+    root: &Path,
     model: &Model,
     language: &str,
 ) -> Result<OfflineRecognizerConfig, VoiceError> {
@@ -642,7 +650,6 @@ fn offline_recognizer_config(
             format!("unsupported offline ASR engine: {}", item.engine),
         ));
     }
-    let root = model_dir(home, &model.model_id);
     let mut config = OfflineRecognizerConfig::default();
     config.feat_config.sample_rate = item.sample_rate;
     config.model_config.num_threads = item.num_threads.max(1);
@@ -661,7 +668,7 @@ fn offline_recognizer_config(
 }
 
 fn online_recognizer_config(
-    home: &HomeLayout,
+    root: &Path,
     model: &Model,
 ) -> Result<OnlineRecognizerConfig, VoiceError> {
     let item = model.streaming.as_ref().ok_or_else(|| {
@@ -676,7 +683,6 @@ fn online_recognizer_config(
             format!("unsupported streaming ASR engine: {}", item.engine),
         ));
     }
-    let root = model_dir(home, &model.model_id);
     let mut config = OnlineRecognizerConfig::default();
     config.feat_config.sample_rate = item.sample_rate;
     config.model_config.num_threads = item.num_threads.max(1);
@@ -699,12 +705,20 @@ fn online_recognizer_config(
     Ok(config)
 }
 
-fn offline_model(home: &HomeLayout, requested: &str) -> Result<Model, VoiceError> {
+/// A ready model with the directory of the version it was found ready in, which stays pinned
+/// while the pin is held.
+struct SelectedModel {
+    model: Model,
+    root: PathBuf,
+    pin: PayloadPin,
+}
+
+fn offline_model(home: &HomeLayout, requested: &str) -> Result<SelectedModel, VoiceError> {
     select_model(home, requested, DEFAULT_OFFLINE_MODEL_ID, |model| {
         model.offline.is_some()
     })
 }
-fn streaming_model(home: &HomeLayout, requested: &str) -> Result<Model, VoiceError> {
+fn streaming_model(home: &HomeLayout, requested: &str) -> Result<SelectedModel, VoiceError> {
     select_model(home, requested, DEFAULT_STREAMING_MODEL_ID, |model| {
         model.streaming.is_some()
     })
@@ -714,7 +728,7 @@ fn select_model(
     requested: &str,
     fallback: &str,
     supports: impl Fn(&Model) -> bool,
-) -> Result<Model, VoiceError> {
+) -> Result<SelectedModel, VoiceError> {
     let catalog = catalog(home)?;
     let candidate = catalog
         .get(requested)
@@ -726,15 +740,18 @@ fn select_model(
             format!("voice ASR model not found: {requested}"),
         )
     })?;
-    let status = model_status(home, &model);
-    if status["status"] != "ready" {
-        return Err(VoiceError::new(
+    let current = payload::current_version(home, &model.model_id)?;
+    let status = status_from(home, &model, &current.snapshot);
+    match (current.snapshot.root, current.pin) {
+        (Some(root), Some(pin)) if status["status"] == "ready" => {
+            Ok(SelectedModel { model, root, pin })
+        }
+        _ => Err(VoiceError::new(
             "voice_model_not_installed",
             format!("voice model is not installed: {}", model.model_id),
         )
-        .detail("model", status));
+        .detail("model", status)),
     }
-    Ok(model)
 }
 
 pub(super) fn pcm16_samples(bytes: &[u8]) -> Vec<f32> {
@@ -776,9 +793,10 @@ fn normalize_language(value: &str) -> String {
     }
     .into()
 }
+use super::payload::{self, PayloadPin, Pinned};
 use super::{
     DEFAULT_DIARIZATION_MODEL_ID, DEFAULT_OFFLINE_MODEL_ID, DEFAULT_STREAMING_MODEL_ID,
-    MAX_AUDIO_BYTES, Model, VoiceError, catalog, model_dir, model_status,
+    MAX_AUDIO_BYTES, Model, VoiceError, catalog, status_from,
 };
 use cccc_core::HomeLayout;
 use serde_json::{Value, json};
@@ -789,7 +807,7 @@ use sherpa_onnx::{
     OnlineRecognizer, OnlineRecognizerConfig, OnlineStream, SpeakerEmbeddingExtractorConfig,
 };
 use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 mod streaming_result_tests {

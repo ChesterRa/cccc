@@ -14,7 +14,7 @@ const fixture = vi.hoisted(() => ({
     callbacks: {
       onPhase(value: string): void;
       onCall(value: unknown): void;
-      onError(code: string): void;
+      onError(code: string, providerCode?: string, recoveryOwners?: string[]): void;
       onAnalyst(value: unknown): void;
     };
     cancel: () => boolean;
@@ -175,6 +175,22 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 const mount = () => act(async () => root.render(<App />));
+
+it("offers the process record review only beside the error that named its owners", async () => {
+  await mount();
+  await act(async () => current.start());
+  const callbacks = fixture.sessions[0].callbacks;
+  await act(async () => callbacks.onError("codex_voice_recovery_pending", undefined, ["web"]));
+  expect(current.error).toBe("codexVoiceRecoveryRecordsPending");
+  expect(current.recoveryOwners).toEqual(["web"]);
+  expect(host.textContent).toContain("codexVoiceReviewRecoveryRecords");
+  await act(async () => callbacks.onError("provider_error"));
+  expect(current.recoveryOwners).toEqual([]);
+  expect(host.textContent).not.toContain("codexVoiceReviewRecoveryRecords");
+  await act(async () => callbacks.onError("codex_voice_recovery_pending", undefined, ["daemon"]));
+  await act(async () => current.clearError());
+  expect(current.recoveryOwners).toEqual([]);
+});
 
 it("uses the host voice catalog and default without starting a call", async () => {
   const response = snapshot();

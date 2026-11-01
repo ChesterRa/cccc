@@ -147,13 +147,16 @@ pub async fn call(state: &AppState, op: &str, args: Map<String, Value>) -> ApiRe
         },
         |error| (error.code, error.message, error.details),
     );
-    let status = if matches!(error.0.as_str(), "foreman_not_found" | "foreman_not_unique") {
+    let status = if error.0 == "process_recovery_unavailable" {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else if matches!(error.0.as_str(), "foreman_not_found" | "foreman_not_unique") {
         StatusCode::BAD_REQUEST
     } else if error.0.contains("not_found") {
         StatusCode::NOT_FOUND
     } else if error.0.contains("permission") {
         StatusCode::FORBIDDEN
-    } else if error.0.ends_with("_busy")
+    } else if error.0 == "process_recovery_changed"
+        || error.0.ends_with("_busy")
         || error.0.ends_with("_conflict")
         || error.0.ends_with("_lease_lost")
     {

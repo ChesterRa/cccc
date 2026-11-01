@@ -1,4 +1,8 @@
 import type { VoiceHandoffContext, VoiceProvider } from "../../services/api";
+import {
+  processRecoveryOwnersFromDetails,
+  type ProcessRecoveryOwner,
+} from "../../services/api/processRecovery";
 
 const MAX_VISIBLE_TRANSCRIPT_CHARS = 4_000;
 const MAX_HANDOFF_MESSAGES = 12;
@@ -304,20 +308,28 @@ export function boundedDelta(value: unknown): string {
 
 export class CodexVoiceFailure extends Error {
   readonly code: string;
+  /** Owners whose unconfirmed process records block a start; empty for other failures. */
+  readonly recoveryOwners: ProcessRecoveryOwner[];
 
-  constructor(code: string) {
+  constructor(code: string, details?: unknown) {
     super(code);
     this.name = "CodexVoiceFailure";
     this.code = normalizedErrorCode(code) || "unknown";
+    this.recoveryOwners =
+      this.code === "codex_voice_recovery_pending" ? processRecoveryOwnersFromDetails(details) : [];
   }
 }
 
-export function failure(code: string): CodexVoiceFailure {
-  return new CodexVoiceFailure(code);
+export function failure(code: string, details?: unknown): CodexVoiceFailure {
+  return new CodexVoiceFailure(code, details);
 }
 
 export function failureCode(error: unknown): string {
   return error instanceof CodexVoiceFailure ? error.code : "unknown";
+}
+
+export function failureRecoveryOwners(error: unknown): ProcessRecoveryOwner[] {
+  return error instanceof CodexVoiceFailure ? error.recoveryOwners : [];
 }
 
 export function normalizedErrorCode(value: unknown): string {

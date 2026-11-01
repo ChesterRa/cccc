@@ -36,6 +36,7 @@ mod nomcp_resources;
 mod nomcp_send;
 mod presentation;
 mod presentation_browser;
+mod process_recovery;
 mod realtime;
 mod remote_access;
 mod remote_access_projection;
@@ -105,6 +106,7 @@ pub fn router() -> Router<AppState> {
         .merge(messaging_cross_group::routes())
         .merge(presentation::routes())
         .merge(presentation_browser::routes())
+        .merge(process_recovery::routes())
         .merge(web_model_connectors::routes())
         .merge(web_model_dots::routes())
         .merge(grok_webhook::routes())
@@ -125,6 +127,7 @@ pub fn router() -> Router<AppState> {
         .merge(terminal::routes())
 }
 
+pub(crate) use assistants::spawn_voice_model_cleanup;
 pub(crate) use grok_webhook::spawn as spawn_grok_webhooks;
 pub(crate) use web_model_dots::spawn as spawn_dots_events;
 pub(crate) use web_model_supervisor::spawn as spawn_web_model_supervisor;

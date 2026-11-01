@@ -8,6 +8,7 @@ import jaSettings from "../../i18n/locales/ja/settings.json";
 import zhSettings from "../../i18n/locales/zh/settings.json";
 import { webApplyErrorText } from "../../components/modals/settings/webAccessReachabilityModel";
 import { codexVoiceErrorText, codexVoiceSettingsErrorText } from "./codexVoiceControllerText";
+import { failure, failureRecoveryOwners } from "./codexVoiceProtocol";
 
 async function translator(language: string, ns: "modals" | "settings") {
   const i18n = createInstance();
@@ -82,4 +83,21 @@ describe("Voice restart and cleanup errors", () => {
       expect(webApplyErrorText(t, null)).toBe(t("webAccess.applyFailed"));
     },
   );
+});
+
+describe("Voice start blocked by process records", () => {
+  it("keeps the known owners a recovery-pending start names, in a stable order", () => {
+    const named = failure("codex_voice_recovery_pending", {
+      retryable: true,
+      recovery_owners: ["web", "bogus", "daemon", "web"],
+    });
+    expect(named.recoveryOwners).toEqual(["daemon", "web"]);
+    // Other gates carry no owners, and nothing is invented for them.
+    expect(failure("codex_voice_recovery_pending", { retryable: true }).recoveryOwners).toEqual([]);
+    expect(failure("codex_voice_restarting", { recovery_owners: ["web"] }).recoveryOwners).toEqual(
+      [],
+    );
+    expect(failureRecoveryOwners(named)).toEqual(["daemon", "web"]);
+    expect(failureRecoveryOwners(new Error("other"))).toEqual([]);
+  });
 });

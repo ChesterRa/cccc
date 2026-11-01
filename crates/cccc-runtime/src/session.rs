@@ -1,7 +1,7 @@
 use crate::RuntimeError;
 use crate::output::HistoryPage;
 use crate::output_reader::OutputReader;
-use crate::process_tree::OwnedProcessTree;
+use crate::process_tree::{CommandError, OwnedProcessTree};
 use crate::pty_input::SharedPtyWriter;
 use crate::session_history::SessionHistory;
 use crate::terminal_attach::{
@@ -14,6 +14,19 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+pub(crate) fn native_pty_spawn_error(error: impl std::fmt::Display) -> CommandError {
+    let error = std::io::Error::other(error.to_string());
+    // This is specific to the locked portable-pty 0.8.1 Unix native backend:
+    // it registers a pre_exec hook, forcing std's fork/exec path, and does no
+    // fallible work after spawn. Its Err is therefore before target exec. An
+    // Ok is not proof of exec, and a panic is not an Err. Recheck this when
+    // portable-pty or the spawning implementation changes.
+    #[cfg(unix)]
+    return CommandError::NotStarted(error);
+    #[cfg(windows)]
+    CommandError::Started(error)
+}
 
 #[derive(Debug, Clone)]
 pub struct LaunchSpec {
@@ -102,7 +115,7 @@ impl Session {
         let (child, process_tree) = OwnedProcessTree::spawn_pty(|| {
             pair.slave
                 .spawn_command(command)
-                .map_err(|e| std::io::Error::other(e.to_string()))
+                .map_err(native_pty_spawn_error)
         })?;
         let pid = child.process_id();
         #[cfg(target_os = "linux")]

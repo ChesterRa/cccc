@@ -10,6 +10,7 @@ mod executable;
 mod history_access;
 mod manager;
 mod native_codex;
+pub mod process_recovery;
 pub use native_codex::{
     NativeCodexSessionInfo, NativeCodexSteerOutcome, native_codex_can_receive,
     native_codex_session_info, native_codex_try_steer,
@@ -70,7 +71,8 @@ pub use manager::{
 };
 pub use output::HistoryPage;
 pub use process_tree::{
-    CommandError, OwnedProcessTree, force_terminate_owned, owned_process_recovery_pending,
+    CommandError, OwnedProcessTree, ProcessStartUnconfirmed, force_terminate_owned,
+    owned_process_recovery_pending,
 };
 #[cfg(unix)]
 pub use process_tree::{prepare_web_process_guard, protect_owned_process_groups};

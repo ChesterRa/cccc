@@ -1219,15 +1219,45 @@ stop its active Voice work and Analyst. If their cleanup cannot be confirmed,
 the current Web remains available and the saved address has not yet taken
 effect. Check the Voice state and retry **Apply now** after cleanup. A Voice
 start can likewise be delayed while resources from a previous Web process are
-being recovered; retry after cleanup and check the host diagnostics if the
-condition persists. If an Analyst reset fails after cleanup began, refresh the
-Voice state before deciding whether to try again.
+being recovered; retry after cleanup, and if the condition persists, review the
+process records as described below. If an Analyst reset fails after cleanup
+began, refresh the Voice state before deciding whether to try again.
 
-On Unix, an incomplete Web process recovery record can require manual
-attention. The host diagnostics identify its filename under
-`CCCC_HOME/web-processes`. Before removing that record, confirm all related
-processes owned by the previous Web instance have exited; if you cannot
-establish this, seek help rather than removing it. Then retry starting Voice.
+On Unix, CCCC records the processes it starts so that it can clean them up
+after a crash. When it cannot confirm that processes from an earlier Web or
+daemon run have ended, Voice does not start, and the Secretary may hold back new
+tasks and the automatic recovery of unfinished documents. The Voice error then
+offers **Review earlier processes**, and the Secretary panel shows **Review**.
+The review lists each record and why CCCC is still waiting:
+
+- **Check again** retries cleanup for that record only.
+- **Accept** stops waiting for that record. It does not stop the old work: if
+  that work is still running, it may keep changing files or documents or
+  sending requests that cost money, and remote work may continue after local
+  cleanup.
+- **Accept all** appears for two or more records that can be accepted. It
+  accepts them one at a time and stops as soon as anything changes; it is not
+  one transaction.
+
+Some records need offline review. Stop CCCC safely, then run
+`cccc daemon process-recovery --owner daemon list` (or `--owner web`),
+followed by `retry --id <id> --version <version>` or
+`accept --id <id> --version <version> --accept-risk`. While CCCC Web is
+running, these commands refuse to change Web's records. Do not delete files
+under `CCCC_HOME` by hand.
+
+Use one `CCCC_HOME` on one host or container at a time. Before moving or
+copying it elsewhere, make sure the work started from it has ended. On that
+basis, CCCC releases records from an earlier boot without signalling anything
+when it can identify that boot; this does not prove that remote requests ended.
+
+On Linux, cleanup prefers the strongest process identity the system offers and
+keeps records it cannot confirm for review; some systems still need
+approximate matching, which can misjudge. On macOS, the crash watchdog still
+judges processes approximately, by process group number and start time to the
+second: a reused number, or the gap between that check and the signal, could
+stop another process by mistake. How often this happens is unknown; earlier
+versions behave the same way.
 
 For the default local app flow, prefer restarting from the owning `cccc` session itself: `Ctrl+C` to stop the whole app, then run `cccc` again. That keeps daemon and Web on the same fresh code/runtime.
 

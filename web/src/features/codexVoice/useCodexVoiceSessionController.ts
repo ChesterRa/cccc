@@ -10,6 +10,7 @@ import {
   type CodexVoiceReadiness,
   type VoiceProviderInfo,
 } from "../../services/api";
+import type { ProcessRecoveryOwner } from "../../services/api/processRecovery";
 import { CodexVoiceBrowserSession, type CodexVoicePhase } from "./codexVoiceSession";
 import {
   codexVoiceErrorText,
@@ -24,6 +25,7 @@ import type { VoiceConversationTurn } from "./codexVoiceProtocol";
 import type { CodexVoiceOutputStatus } from "./codexVoiceProviderChannel";
 
 const ENGAGED_PHASES: CodexVoicePhase[] = ["preparing", "connecting", "stopping"];
+const NO_RECOVERY_OWNERS: ProcessRecoveryOwner[] = [];
 
 export function useCodexVoiceSessionController(enabled = true) {
   const { t } = useTranslation("modals");
@@ -54,6 +56,11 @@ export function useCodexVoiceSessionController(enabled = true) {
   const [microphoneMuted, setMicrophoneMuted] = useState(false);
   const [playbackBlocked, setPlaybackBlocked] = useState(false);
   const [error, setError] = useState("");
+  // Owners belong to the message that named them; any other error hides the review entry.
+  const [recovery, setRecovery] = useState<{ text: string; owners: ProcessRecoveryOwner[] } | null>(
+    null,
+  );
+  const recoveryOwners = recovery && recovery.text === error ? recovery.owners : NO_RECOVERY_OWNERS;
   const [refreshError, setRefreshError] = useState("");
   const [outputStatus, setOutputStatus] = useState<CodexVoiceOutputStatus>({
     queued: 0,
@@ -233,8 +240,13 @@ export function useCodexVoiceSessionController(enabled = true) {
         onOutputStatus: (status) => {
           if (mountedRef.current) setOutputStatus(status);
         },
-        onError: (code, providerCode) => {
-          if (mountedRef.current) setError(codexVoiceErrorText(t, code, providerCode));
+        onError: (code, providerCode, owners = NO_RECOVERY_OWNERS) => {
+          if (!mountedRef.current) return;
+          const text = owners.length
+            ? t("codexVoiceRecoveryRecordsPending")
+            : codexVoiceErrorText(t, code, providerCode);
+          setError(text);
+          setRecovery(owners.length ? { text, owners } : null);
         },
       },
     });
@@ -346,6 +358,7 @@ export function useCodexVoiceSessionController(enabled = true) {
       playbackBlocked,
       outputStatus,
       error,
+      recoveryOwners,
       refreshError,
       preferences,
       audioDeviceSnapshot: sessionRef.current?.audioPreferences() || null,
@@ -378,6 +391,7 @@ export function useCodexVoiceSessionController(enabled = true) {
       clearError,
       disconnect,
       error,
+      recoveryOwners,
       refreshError,
       microphoneMuted,
       owned,

@@ -50,7 +50,12 @@ fn handshake_and_permission_shapes_are_minimal() {
             .expect("clientCapabilities object")
             .is_empty()
     );
-    let session = session_new_request("/tmp/work").expect("absolute cwd");
+    let cwd = if cfg!(windows) {
+        r"C:\work"
+    } else {
+        "/tmp/work"
+    };
+    let session = session_new_request(cwd).expect("absolute cwd");
     assert_eq!(session["params"]["mcpServers"], json!([]));
     assert_eq!(
         permission_outcome(&json!([{ "optionId": "reject-once" }]), false)["outcome"]["outcome"],
@@ -79,8 +84,11 @@ fn handshake_and_permission_shapes_are_minimal() {
 }
 
 #[test]
-fn session_new_accepts_unix_and_windows_absolute_paths() {
+fn session_new_checks_absolute_paths_for_the_host() {
+    #[cfg(unix)]
     assert!(session_new_request("/tmp/work").is_ok());
+    #[cfg(windows)]
+    assert!(session_new_request("/tmp/work").is_err());
     assert!(session_new_request(r"C:\\work").is_ok());
     assert!(session_new_request(r"\\\\server\\share\\work").is_ok());
     assert!(session_new_request("relative/work").is_err());

@@ -1,4 +1,5 @@
 import type { CodexVoiceAnalystInfo, CodexVoiceCallInfo } from "../../services/api";
+import type { ProcessRecoveryOwner } from "../../services/api/processRecovery";
 import type { CodexVoiceOutputStatus } from "./codexVoiceProviderChannel";
 import type { VoiceConversationTurn } from "./codexVoiceProtocol";
 
@@ -25,5 +26,6 @@ export type CodexVoiceSessionCallbacks = {
   onOutputStatus?(status: CodexVoiceOutputStatus): void;
   onConversation?(turns: VoiceConversationTurn[]): void;
   onNotificationPaused?(paused: boolean): void;
-  onError(code: string, providerCode?: string): void;
+  /** `recoveryOwners` names whose process records to review when a start is blocked. */
+  onError(code: string, providerCode?: string, recoveryOwners?: ProcessRecoveryOwner[]): void;
 };

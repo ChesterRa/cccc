@@ -21,6 +21,7 @@ const CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) enum VoiceGateError {
     Restarting,
     RecoveryPending,
+    ProcessRecoveryPending,
     ResetRecoveryPending,
     ReplacementRecoveryPending,
 }
@@ -30,6 +31,9 @@ impl fmt::Display for VoiceGateError {
         match self {
             Self::Restarting => f.write_str("Voice is stopping or restarting"),
             Self::RecoveryPending => f.write_str("Voice cleanup is not yet confirmed"),
+            Self::ProcessRecoveryPending => {
+                f.write_str("Web-owned process recovery is not yet confirmed")
+            }
             Self::ResetRecoveryPending => f.write_str("Voice reset cleanup is not yet confirmed"),
             Self::ReplacementRecoveryPending => {
                 f.write_str("Voice replacement cleanup is not yet confirmed")
@@ -54,6 +58,11 @@ impl VoiceGateError {
                 "Previous Voice resources have not been confirmed cleaned up. Try again or check the logs.",
             )
             .with_details(details),
+            Self::ProcessRecoveryPending => ApiError::unavailable(
+                "codex_voice_recovery_pending",
+                "Web-owned process recovery could not be confirmed.",
+            )
+            .with_details(json!({"retryable":true,"recovery_owners":["web"]})),
             Self::ResetRecoveryPending => ApiError::unavailable(
                 "codex_voice_recovery_pending",
                 "Voice reset cleanup is not yet confirmed. Check Voice status before trying again.",
@@ -110,10 +119,10 @@ impl CodexVoiceSessions {
             _ => return Err(VoiceGateError::Restarting),
         }
         if let Some(recovery) = self.process_recovery.as_ref() {
-            let recovery = Arc::clone(recovery);
-            match tokio::task::spawn_blocking(move || recovery()).await {
+            let reconcile = Arc::clone(&recovery.reconcile);
+            match tokio::task::spawn_blocking(move || reconcile()).await {
                 Ok(Ok(())) => {}
-                _ => return Err(VoiceGateError::RecoveryPending),
+                _ => return Err(VoiceGateError::ProcessRecoveryPending),
             }
         }
         Ok(())
@@ -303,18 +312,25 @@ mod tests {
     async fn a_host_recovery_failure_can_be_retried_without_restarting_web() {
         let attempts = Arc::new(AtomicUsize::new(0));
         let fixture = Arc::clone(&attempts);
-        let sessions = Arc::new(CodexVoiceSessions::with_process_recovery(Some(Arc::new(
-            move || {
-                if fixture.fetch_add(1, Ordering::SeqCst) == 0 {
-                    Err(std::io::Error::other("fixture recovery pending"))
-                } else {
-                    Ok(())
-                }
+        let sessions = Arc::new(CodexVoiceSessions::with_process_recovery(Some(
+            crate::VoiceProcessRecovery {
+                reconcile: Arc::new(move || {
+                    if fixture.fetch_add(1, Ordering::SeqCst) == 0 {
+                        Err(std::io::Error::other("fixture recovery pending"))
+                    } else {
+                        Ok(())
+                    }
+                }),
+                review: Arc::new(|_| {
+                    Err(cccc_runtime::process_recovery::RecoveryError::Unavailable)
+                }),
+                review_daemon_offline: Arc::new(|_| Ok(None)),
+                check_daemon_guard: true,
             },
-        ))));
+        )));
         assert_eq!(
             sessions.recover_before_start().await,
-            Err(VoiceGateError::RecoveryPending)
+            Err(VoiceGateError::ProcessRecoveryPending)
         );
         sessions
             .recover_before_start()
@@ -510,6 +526,7 @@ mod tests {
         for (error, status, retryable) in [
             (VoiceGateError::Restarting, 409, true),
             (VoiceGateError::RecoveryPending, 503, true),
+            (VoiceGateError::ProcessRecoveryPending, 503, true),
             (VoiceGateError::ResetRecoveryPending, 503, false),
             (VoiceGateError::ReplacementRecoveryPending, 503, false),
         ] {
@@ -520,6 +537,11 @@ mod tests {
                 .expect("error body");
             let body: serde_json::Value = serde_json::from_slice(&body).expect("error JSON");
             assert_eq!(body["error"]["details"]["retryable"], retryable);
+            if error == VoiceGateError::ProcessRecoveryPending {
+                assert_eq!(body["error"]["details"]["recovery_owners"], json!(["web"]));
+            } else {
+                assert!(body["error"]["details"].get("recovery_owners").is_none());
+            }
         }
     }
 

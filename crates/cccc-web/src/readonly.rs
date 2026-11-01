@@ -91,7 +91,8 @@ fn is_mutating_get(path: &str) -> bool {
 /// exhibit's viewers are spectators, not the Group's user, so these reads are
 /// refused there, not only the changes.
 fn is_user_obligation_get(path: &str) -> bool {
-    path == "/api/v1/reply-requests/summary"
+    path.starts_with("/api/v1/process-recovery/")
+        || path == "/api/v1/reply-requests/summary"
         || path == "/api/v1/push/config"
         || path
             .strip_prefix("/api/v1/groups/")
@@ -172,5 +173,17 @@ mod tests {
             &Method::GET,
             "/api/v1/groups/g_1/ledger/tail"
         ));
+    }
+
+    #[test]
+    fn read_only_refuses_private_recovery_records_even_for_reads() {
+        for method in [Method::GET, Method::HEAD, Method::POST] {
+            for suffix in ["daemon", "web", "web/retry", "web/accept"] {
+                assert!(!is_read_only_safe(
+                    &method,
+                    &format!("/api/v1/process-recovery/{suffix}")
+                ));
+            }
+        }
     }
 }

@@ -60,7 +60,34 @@ pub type ListeningCallback = Arc<dyn Fn(SocketAddr) + Send + Sync>;
 
 /// Recovery provided only by a Web host holding the corresponding instance
 /// lock. A standalone library app has no authority to reconcile another host.
-pub type VoiceProcessRecovery = Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>;
+#[derive(Clone)]
+pub struct VoiceProcessRecovery {
+    pub reconcile: Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>,
+    pub review: Arc<VoiceProcessReview>,
+    /// None means the daemon holds its lock and must be asked through IPC.
+    pub review_daemon_offline: Arc<DaemonProcessReview>,
+    /// Unix hosts use the daemon's process ledger; Windows uses Job ownership.
+    pub check_daemon_guard: bool,
+}
+
+pub type VoiceProcessReview = dyn Fn(
+        VoiceRecoveryRequest,
+    ) -> Result<serde_json::Value, cccc_runtime::process_recovery::RecoveryError>
+    + Send
+    + Sync;
+
+pub type DaemonProcessReview = dyn Fn(
+        VoiceRecoveryRequest,
+    ) -> Result<Option<serde_json::Value>, cccc_runtime::process_recovery::RecoveryError>
+    + Send
+    + Sync;
+
+#[derive(Clone)]
+pub enum VoiceRecoveryRequest {
+    List,
+    Retry { id: String, version: String },
+    Accept { id: String, version: String },
+}
 
 #[derive(Clone)]
 pub(crate) struct LiveBinding {
@@ -608,6 +635,10 @@ where
     }
     routes::spawn_web_model_supervisor(app_state.clone());
     routes::spawn_grok_webhooks(app_state.clone());
+    // An exhibit never installs voice models; the full Web clears what installs left behind.
+    if !web_mode.is_read_only() {
+        routes::spawn_voice_model_cleanup(app_state.home.clone());
+    }
     routes::spawn_dots_events(app_state);
     // Also notify shutdown subscribers if the server fails before its graceful
     // shutdown future fires.

@@ -425,6 +425,54 @@ Result:
 { message: string } // "shutting down"
 ```
 
+#### `owned_process_recovery_list` / `owned_process_recovery_retry` / `owned_process_recovery_accept`
+
+Review of the daemon owner's unresolved local process evidence. These operations
+require explicit `by: "user"`; they reject Actor-bound or Group-scoped requests.
+This is an operation policy, not transport authentication: local IPC remains
+unauthenticated and relies on its operating-system access boundary. They are not
+exposed as Actor MCP tools. Web exposes the review only to administrators and
+refuses it in exhibit mode.
+
+- `owned_process_recovery_list`: `{ by: "user" }`. It is read-only.
+- `owned_process_recovery_retry`: `{ by: "user", id: string, version: string }`.
+  Rechecks only that record and may attempt cleanup under the recorded policy.
+- `owned_process_recovery_accept`: `{ by: "user", id: string, version: string }`.
+  Accepts the remaining risk for that reviewed record without signalling it.
+
+List returns `{ owner: "daemon", records: RecoveryRecord[], diagnostics:
+RecoveryDiagnostic[] }`. A record contains `id`, an opaque `version`, `kind`
+(`launch_intent`, `process_group`, or `opaque_evidence`), nullable
+`created_at_unix_seconds`, `origin` (`same_origin`, `other_namespace`,
+`previous_boot`, or `unknown`), a nonsecret `reason`, `retryable`, and
+`acceptance_supported`. Current reasons include `launch_incomplete`,
+`legacy_identity`, `identity_unconfirmed`, `foreign_namespace`, `origin_unknown`,
+`cleanup_unconfirmed`, and `evidence_invalid`. An opaque artifact can contain
+multiple old records; no contents are returned. Diagnostic entries contain
+`reason`, a `hint`, and MAY include a relative path. Clients MUST handle unknown
+codes without assuming that the evidence is absent.
+
+Retry returns `{ owner, result: "cleared" | "still_pending", record,
+diagnostics }`, where `record` is null when no longer present. Accept returns
+`{ owner, accepted: true }`. A stale or missing record/version returns
+`process_recovery_changed`; an unreadable or unavailable owner returns
+`process_recovery_unavailable`. A retry can outlive a disconnected client;
+clients MUST list again after an uncertain response rather than replay it.
+An accepted record is an explicit risk acknowledgement, not proof that the old
+local process or any remote work ended. It does not clear independent Voice
+leases, resets or other cleanup gates. When interrupted source files cannot yet
+be safely absorbed, records stay visible with `acceptance_supported: false`.
+
+Web has a separate owner and ledger. The private Web review endpoint uses the
+same record shape and version rule, but is serviced by the Web host holding its
+own instance lock, not by the daemon operation above. For the daemon owner,
+the Web host MAY review offline only while holding the daemon's exclusive owner
+lock; if the lock is held it uses IPC. A failed IPC mutation is never replayed
+through the offline path. Starting Web Voice checks both owner ledgers before
+the provider starts; an unreadable or unavailable daemon ledger is not empty.
+These checks observe the owner state at the time of review and do not create a
+cross-process transaction with unrelated later launches.
+
 ### 8.2 Observability (Global)
 
 #### `observability_get`
@@ -2218,7 +2266,8 @@ business receipt is preserved; further information uses the ordinary retry path.
 
 User-only read of the shared Secretary session. Args: `{ by?: "user" }`.
 Result: `{ configured, ready, readiness_code, readiness_error, phase, generation?, runtime?,
-native_terminal?, manual_turn?, task?, group_title?, progress?, activity?, diagnostic? }`. Phases: `not_started`, `starting`, `working`,
+native_terminal?, manual_turn?, task?, group_title?, progress?, activity?, diagnostic?,
+process_recovery_pending: boolean }`. Phases: `not_started`, `starting`, `working`,
 `ready`, `stopping`, `disconnected`, `unavailable`. `task` is the current or most
 recent task snapshot; `phase="ready"` means the process remains available, not that
 the last result has been applied. The separate `ready` boolean reports host admission
@@ -2227,6 +2276,8 @@ readiness as defined above. A configured healthy owner may report `ready=true` w
 configuration prevents new admission. Closing owners report `phase="stopping"`. This global observation can include another Group,
 so the Web endpoint `/api/v1/voice-secretary/runtime` is administrator-only.
 Reads never start a provider, open its terminal, or replay work.
+`process_recovery_pending` reports only the daemon's owned-process guard; it
+does not summarize independent Voice, lease, task or reset cleanup gates.
 Native turn lifecycle is observed for the whole resident lifetime, including when
 the panel is closed. A manual terminal turn reports `working`, `manual_turn=true`
 and no borrowed last-task/Group target. Queued tasks wait for its confirmed end.
@@ -2491,9 +2542,33 @@ Result:
 Download and verify a daemon-managed local Voice Secretary ASR model into
 CCCC-owned cache storage. Built-in releases include a default model manifest;
 tests and local development may add a local overlay at
-`CCCC_HOME/config/voice-models.json`. Each artifact entry must include a fixed
-URL and `sha256`. Reinstalling/updating a model downloads into staging storage
-and replaces the active model only after all artifacts verify successfully.
+`CCCC_HOME/config/voice-models.json`. An overlay path that exists but cannot be
+read, including a dangling link, fails the catalog instead of falling back to
+the built-in manifest. Each artifact entry must include a fixed URL and
+`sha256`. Each install downloads and verifies every artifact into
+staging storage, unpacks archives there and deletes each one unless the model
+definition requires that file, renames the result to a
+new version directory, and then switches to it with one atomic write of the
+model's install state. Until that write the installed version stays current: an
+update that fails before it keeps that version's files and records the failure
+in `last_update_error` if that state write succeeds (otherwise it is only
+logged), and an interrupted one keeps them too. Either way the
+model reports `ready` while that version has every file the current model
+definition requires. When the switching write fails, the state is read back: a
+state naming the new version counts as switched and one naming the installed
+version as not switched; any other result, including a state that cannot be
+read, leaves the state unchanged and keeps both versions. `install_dir` names the current version's
+directory. A version that is no longer current is deleted at a later cleanup
+(when the next install starts, after an install switches, or when the Web host
+starts) once no recognition that opened it is still running. Removing a model
+deletes all of its versions at once, including one still in use. An install
+state that exists but cannot be read or parsed, including a dangling link, or
+whose `payload_dir` is not a valid version directory name,
+reports `status: "failed"` with error code `voice_model_state_unreadable`, and an
+install fails with the same code instead of replacing it. A model ID starts with
+a lowercase letter or digit, so a model directory cannot be `.`, `..` or one of
+the cache's own entries, and does not end with `.`, which Windows drops from a
+directory name.
 
 Args:
 ```ts
@@ -2516,6 +2591,7 @@ Result:
     installed_at?: string
     updated_at?: string
     error?: Record<string, unknown>
+    last_update_error?: Record<string, unknown>
     update_available?: boolean
     installed_manifest_sha256?: string
   }

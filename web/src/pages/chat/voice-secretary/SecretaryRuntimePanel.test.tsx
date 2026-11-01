@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   reset: vi.fn(),
   terminal: vi.fn(),
+  review: vi.fn(),
   t: (key: string) => key,
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: mocks.t }) }));
@@ -15,6 +16,12 @@ vi.mock("../../../services/api", () => ({
   cancelSecretaryTask: mocks.cancel,
   resetSecretaryRuntime: mocks.reset,
   getSecretaryTerminalWebSocketUrl: () => "ws://fixture/term",
+}));
+vi.mock("../../../components/modals/ProcessRecoveryDialog", () => ({
+  ProcessRecoveryDialog: (props: { isOpen: boolean; owners: string[] }) => {
+    mocks.review(props);
+    return props.isOpen ? <div data-review={props.owners.join(",")} /> : null;
+  },
 }));
 vi.mock("../../../features/voice/NativeSessionTerminal", () => ({
   NativeSessionTerminal: (props: { generation: string; readOnly: boolean }) => {
@@ -167,4 +174,17 @@ it("does not expose the shared terminal or poll after admin access is revoked", 
   expect(mocks.fetch).toHaveBeenCalledTimes(count);
   expect(host.querySelector("[data-terminal]")).toBeNull();
   expect(host.textContent).toContain("voiceSettings.resident.adminOnly");
+});
+it("offers the daemon's process records for review only while they are pending", async () => {
+  await render();
+  expect(host.textContent).not.toContain("voiceSettings.resident.processRecoveryPending");
+  mocks.fetch.mockResolvedValue(response({ ...ready, process_recovery_pending: true }));
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(host.textContent).toContain("voiceSettings.resident.processRecoveryPending");
+  expect(host.querySelector("[data-review]")).toBeNull();
+  await act(async () => button("voiceSettings.resident.reviewProcessRecovery").click());
+  expect(host.querySelector('[data-review="daemon"]')).not.toBeNull();
+  // Reviewing starts no runtime work of its own.
+  expect(mocks.reset).not.toHaveBeenCalled();
+  expect(mocks.cancel).not.toHaveBeenCalled();
 });

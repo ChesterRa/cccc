@@ -292,6 +292,8 @@ export type SecretaryRuntimeState = SecretaryReadiness & {
   progress?: string | null;
   activity?: string | null;
   diagnostic?: string | null;
+  /** The daemon's process records await review; new tasks and document recovery may wait. */
+  process_recovery_pending?: boolean;
 };
 export const fetchSecretaryRuntime = () =>
   apiJson<SecretaryRuntimeState>("/api/v1/voice-secretary/runtime");
