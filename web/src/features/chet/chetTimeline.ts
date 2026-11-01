@@ -75,6 +75,11 @@ export type ChetLiveView = {
   status: ChetStatus | null;
   /** Requests whose registration returned after the current status was requested. */
   assumedLive: ReadonlySet<string>;
+  /**
+   * Requests the last status from a free owner reported live. A busy or failed read keeps
+   * the previous answer, so an entry placed by it does not move with each check.
+   */
+  settledLive: ReadonlySet<string>;
 };
 
 const TERMINAL: Record<string, ChetRequestState> = {
@@ -101,7 +106,7 @@ export function liveState(
 }
 
 /** Requests status reports as live. */
-function liveIds(status: ChetStatus | null): string[] {
+export function liveIds(status: ChetStatus | null): string[] {
   return status ? [...status.preparing, ...status.queued, ...status.working] : [];
 }
 
@@ -129,6 +134,11 @@ export function missingRequestIds(
  * earlier page, and status can report work none of whose records are loaded. Such a request
  * appears where its first loaded fact is, or after everything when only status names it; its
  * text comes from `fetched` once read separately, and until then it is a placeholder.
+ *
+ * A voice delegation is the voice model's wording, saved when the model hands work off, which
+ * is often before the transcript of what the user said. So it is shown where its latest loaded
+ * fact is (its result, refusal or receipt, else the delegation itself), and after everything
+ * while it is settled live work. This ties it to no particular transcript.
  */
 export function buildChetTimeline(
   records: readonly ChetRecord[],
@@ -136,21 +146,31 @@ export function buildChetTimeline(
   local: readonly ChetLocalRequest[] = [],
   fetched: ReadonlyMap<string, RequestRecord> = new Map(),
 ): ChetTimelineItem[] {
-  const receipts = new Set<string>();
-  const results = new Map<string, Extract<ChetRecord, { kind: "result" }>>();
-  const notStarted = new Map<string, string>();
-  for (const record of records) {
-    if (record.kind === "receipt") receipts.add(record.input_id);
-    else if (record.kind === "result") {
-      for (const id of record.input_ids) if (!results.has(id)) results.set(id, record);
+  const sources = new Map<string, { record: RequestRecord; index: number }>();
+  const receipts = new Map<string, number>();
+  const results = new Map<
+    string,
+    { record: Extract<ChetRecord, { kind: "result" }>; index: number }
+  >();
+  const notStarted = new Map<string, { reason: string; index: number }>();
+  records.forEach((record, index) => {
+    if (record.kind === "input" || record.kind === "voice_delegation") {
+      if (!sources.has(record.id)) sources.set(record.id, { record, index });
+    } else if (record.kind === "receipt") {
+      if (!receipts.has(record.input_id)) receipts.set(record.input_id, index);
+    } else if (record.kind === "result") {
+      for (const id of record.input_ids) if (!results.has(id)) results.set(id, { record, index });
     } else if (record.kind === "not_started") {
-      if (!notStarted.has(record.input_id)) notStarted.set(record.input_id, record.reason);
+      if (!notStarted.has(record.input_id)) {
+        notStarted.set(record.input_id, { reason: record.reason, index });
+      }
     }
-  }
+  });
+  const sourceOf = (id: string) => sources.get(id)?.record || fetched.get(id) || null;
 
   const requestItem = (id: string, source: RequestRecord | null): ChetRequestItem => {
-    const result = results.get(id);
-    const reason = notStarted.get(id);
+    const result = results.get(id)?.record;
+    const reason = notStarted.get(id)?.reason;
     const live = result || reason !== undefined ? null : liveState(id, view);
     return {
       kind: "request",
@@ -172,34 +192,40 @@ export function buildChetTimeline(
     };
   };
 
-  const loaded = new Set(
-    records
-      .filter((record) => record.kind === "input" || record.kind === "voice_delegation")
-      .map((record) => record.id),
-  );
   const items: ChetTimelineItem[] = [];
+  const settledLast: ChetRequestItem[] = [];
   const shown = new Set<string>();
-  for (const record of records) {
+  /** Shows a request at the record at `index` if that is its place. */
+  const place = (id: string, index: number) => {
+    if (shown.has(id)) return;
+    const source = sourceOf(id);
+    if (source?.kind === "voice_delegation") {
+      const latest =
+        results.get(id)?.index ??
+        notStarted.get(id)?.index ??
+        receipts.get(id) ??
+        sources.get(id)?.index;
+      if (latest !== index) return;
+      shown.add(id);
+      const settled = !results.has(id) && !notStarted.has(id) && view.settledLive.has(id);
+      (settled ? settledLast : items).push(requestItem(id, source));
+    } else if (!sources.has(id) || sources.get(id)?.index === index) {
+      shown.add(id);
+      items.push(requestItem(id, source));
+    }
+  };
+  records.forEach((record, index) => {
     if (record.kind === "input" || record.kind === "voice_delegation") {
-      if (shown.has(record.id)) continue;
-      shown.add(record.id);
-      items.push(requestItem(record.id, record));
-    } else if (
-      record.kind === "result" ||
-      record.kind === "not_started" ||
-      record.kind === "receipt"
-    ) {
-      const ids = record.kind === "result" ? record.input_ids : [record.input_id];
-      for (const id of ids) {
-        if (loaded.has(id) || shown.has(id)) continue;
-        shown.add(id);
-        items.push(requestItem(id, fetched.get(id) || null));
-      }
+      place(record.id, index);
+    } else if (record.kind === "result") {
+      for (const id of record.input_ids) place(id, index);
+    } else if (record.kind === "not_started" || record.kind === "receipt") {
+      place(record.input_id, index);
     } else if (record.kind === "transcript") {
       // The host keeps one record per turn.
       const { transcript } = record;
       const key = `${transcript.call_id}\n${transcript.turn_id}`;
-      if (shown.has(key)) continue;
+      if (shown.has(key)) return;
       shown.add(key);
       items.push({
         kind: "transcript",
@@ -213,7 +239,8 @@ export function buildChetTimeline(
         seq: transcript.seq,
       });
     }
-  }
+  });
+  items.push(...settledLast);
 
   for (const request of local) {
     if (shown.has(request.id)) continue;
@@ -245,7 +272,7 @@ export function buildChetTimeline(
   for (const id of liveIds(view.status)) {
     if (shown.has(id)) continue;
     shown.add(id);
-    items.push(requestItem(id, fetched.get(id) || null));
+    items.push(requestItem(id, sourceOf(id)));
   }
 
   // One turn can answer several requests, and each gets its own result record. Show the

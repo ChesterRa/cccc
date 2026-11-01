@@ -127,7 +127,7 @@ impl RealtimeCallConfig {
 }
 
 pub(super) fn realtime_instructions(config: &RealtimeCallConfig) -> String {
-    use cccc_contracts::voice_notifications::VoiceStyle;
+    use cccc_contracts::voice_notifications::{VoiceStyle, VoiceVerbosity};
     if let Some(context) = &config.application_context
         && context.mode() == cccc_contracts::codex_voice::VoiceCallMode::Persona
     {
@@ -150,8 +150,16 @@ pub(super) fn realtime_instructions(config: &RealtimeCallConfig) -> String {
         VoiceStyle::Direct => "Be direct and matter-of-fact; avoid unnecessary filler.",
         VoiceStyle::Patient => "Be patient and explain unfamiliar ideas at the user's pace.",
     };
+    let results = match config.preferences.verbosity {
+        VoiceVerbosity::Detailed => {
+            "When speaking about completed investigations, honor the requested detail without unnecessary repetition."
+        }
+        VoiceVerbosity::Concise | VoiceVerbosity::Standard => {
+            "When speaking about completed investigations, prefer a brief spoken account to reading a long formatted answer verbatim, unless the user asks for more."
+        }
+    };
     let instructions = format!(
-        "{REALTIME_INSTRUCTIONS}\n\n# Identity\nIn this CCCC conversation, you are called Chet, the global assistant.\n\n# User expression preferences\n{detail}\n{style}\nThe user's explicit spoken preferences take priority over these defaults. Do not change factual qualifications, routing, or authorization."
+        "{REALTIME_INSTRUCTIONS}\n\n# Identity\nIn this CCCC conversation, you are called Chet, the global assistant.\n\n# User expression preferences\n{detail}\n{style}\n{results}\nKeep what the result establishes distinct from additional context or inference; do not present unsupported details as findings. The user's explicit spoken preferences take priority over these defaults. Do not change factual qualifications, routing, or authorization."
     );
     instructions
 }
@@ -426,6 +434,7 @@ mod preference_tests {
             .expect("embedded instructions");
         assert!(!text.contains("Always identify the Group"));
         assert!(!text.contains("Give a detailed account"));
+        assert!(!text.contains("When speaking about completed investigations"));
         assert!(text.ends_with("日本語で結論を短く話す。"));
         assert_eq!(embedded["delegation"]["type"], "client");
         assert_eq!(embedded["delegation"]["ack_filler"], true);
@@ -494,6 +503,14 @@ mod preference_tests {
                 assert!(text.starts_with(REALTIME_INSTRUCTIONS));
                 assert!(text.contains(detail) && text.contains(tone));
                 assert!(text.contains("explicit spoken preferences take priority"));
+                assert!(text.contains("do not present unsupported details as findings"));
+                if verbosity == VoiceVerbosity::Detailed {
+                    assert!(text.contains("honor the requested detail"));
+                    assert!(!text.contains("prefer a brief spoken account"));
+                } else {
+                    assert!(text.contains("prefer a brief spoken account"));
+                    assert!(text.contains("unless the user asks for more"));
+                }
                 assert!(!text.contains("unused-auth-fixture"));
             }
         }

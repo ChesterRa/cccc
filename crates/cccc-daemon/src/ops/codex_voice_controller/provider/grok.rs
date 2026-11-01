@@ -143,12 +143,26 @@ mod tests {
     }
     #[test]
     fn grok_preserves_expression_and_context_but_has_its_own_tool_protocol() {
-        let config = config();
+        use cccc_contracts::voice_notifications::VoiceVerbosity;
+
+        let mut config = config();
         let value = session(&config);
         assert_eq!(value["voice"], "eve");
         assert_eq!(value["tools"][0]["name"], "cccc_investigate");
         assert!(value.get("delegation").is_none());
         assert_eq!(value["audio"]["input"]["format"]["rate"], 24000);
+        assert!(
+            value["instructions"]
+                .as_str()
+                .expect("instructions")
+                .contains("prefer a brief spoken account")
+        );
+
+        config.preferences.verbosity = VoiceVerbosity::Detailed;
+        let value = session(&config);
+        let text = value["instructions"].as_str().expect("instructions");
+        assert!(text.contains("honor the requested detail"));
+        assert!(!text.contains("prefer a brief spoken account"));
     }
 
     #[test]

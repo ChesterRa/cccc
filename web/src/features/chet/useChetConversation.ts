@@ -32,6 +32,7 @@ import {
   buildChetTimeline,
   hasLiveWork,
   hasOpenRequests,
+  liveIds,
   missingRequestIds,
   type ChetLiveView,
   type ChetLocalRequest,
@@ -120,6 +121,8 @@ export function useChetConversation({
   const [appliedStatusSeq, setAppliedStatusSeq] = useState(0);
   /** The last usable status reported live work, which a closed page keeps following. */
   const [liveReported, setLiveReported] = useState(false);
+  /** Work the last status from a free owner reported live; see `ChetLiveView.settledLive`. */
+  const [settledLive, setSettledLive] = useState<ReadonlySet<string>>(() => new Set());
   const [registeredAt, setRegisteredAt] = useState<ReadonlyMap<string, number>>(() => new Map());
   const [fetched, setFetched] = useState<ReadonlyMap<string, RequestRecord>>(() => new Map());
   /** Facts about an earlier page's sends that history holds beyond the loaded pages. */
@@ -222,6 +225,7 @@ export function useChetConversation({
     setStatus(next);
     setAppliedStatusSeq(seq);
     if (!next) return;
+    if (!next.owner_busy) setSettledLive(new Set(liveIds(next)));
     // A busy owner reports only preparation; keep the last answer for the rest.
     setLiveReported(
       (previous) =>
@@ -319,9 +323,9 @@ export function useChetConversation({
     const assumedLive = new Set(
       [...registeredAt].filter(([, at]) => at >= appliedStatusSeq).map(([id]) => id),
     );
-    const view: ChetLiveView = { status, assumedLive };
+    const view: ChetLiveView = { status, assumedLive, settledLive };
     return buildChetTimeline(shownRecords, view, local, fetched);
-  }, [appliedStatusSeq, fetched, local, registeredAt, shownRecords, status]);
+  }, [appliedStatusSeq, fetched, local, registeredAt, settledLive, shownRecords, status]);
 
   // A page can start after a request it holds facts about; read such requests by ID once.
   useEffect(() => {

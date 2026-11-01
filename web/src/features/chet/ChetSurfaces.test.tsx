@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { ChetGroupContext } from "../../services/api/chet";
 import { ChetComposer } from "./ChetComposer";
 import type { VoiceConversationTurn } from "../codexVoice/codexVoiceProtocol";
-import type { ChetRequestItem } from "./chetTimeline";
+import type { ChetRequestItem, ChetTimelineItem, ChetTranscriptItem } from "./chetTimeline";
 import { ChetTimeline, type ChetRequestActions } from "./ChetTimeline";
 
 vi.mock("react-i18next", () => ({
@@ -108,9 +108,10 @@ function request(overrides: Partial<ChetRequestItem>): ChetRequestItem {
 }
 
 function timeline(
-  items: ChetRequestItem[],
+  items: ChetTimelineItem[],
   extra: Partial<ChetRequestActions> = {},
   liveTurns: VoiceConversationTurn[] = [],
+  liveCallId: string | null = null,
 ) {
   const actions: ChetRequestActions = {
     problems: new Map(),
@@ -128,6 +129,7 @@ function timeline(
       <ChetTimeline
         items={items}
         liveTurns={liveTurns}
+        liveCallId={liveCallId}
         loaded
         hasOlder={false}
         loadingOlder={false}
@@ -230,4 +232,95 @@ it("shows the answer and a failure's error", () => {
   ]);
   expect(host.textContent).toContain("Runtime said no");
   expect(host.textContent).toContain("chet.state.failed");
+});
+
+function turn(id: string, role: "user" | "assistant", text: string): ChetTranscriptItem {
+  return {
+    kind: "transcript",
+    id,
+    createdAt: "2026-11-01T10:05:00Z",
+    callId: "c",
+    role,
+    text,
+    final: true,
+    complete: true,
+    seq: 0,
+  };
+}
+
+it("keeps Chet's wording of an answered voice request one click behind the answer", () => {
+  const outcome = {
+    generation: "g",
+    turn_id: "t",
+    status: "completed",
+    text: "Rain, 14-19",
+    error: "",
+  };
+  timeline([request({ source: "voice", text: "check tomorrow's weather", outcome })]);
+  expect(host.textContent).toContain("Rain, 14-19");
+  expect(host.textContent).not.toContain("check tomorrow's weather");
+  const toggle = buttonByText("chet.voiceDelegation")!;
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  act(() => toggle.click());
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(host.textContent).toContain("check tomorrow's weather");
+});
+
+it("folds each run of Chet's voice turns to its last turn, and keeps it open as it grows", () => {
+  const items = [
+    turn("u1", "user", "what's the weather"),
+    turn("a1", "assistant", "let me check"),
+    turn("a2", "assistant", "light rain tomorrow"),
+    turn("u2", "user", "thanks"),
+    turn("a3", "assistant", "you're welcome"),
+  ];
+  timeline(items);
+  expect(host.querySelectorAll("[data-chet-voice-run]")).toHaveLength(2);
+  expect(host.textContent).toContain("what's the weather");
+  expect(host.textContent).toContain("thanks");
+  expect(host.textContent).toContain('chet.voiceSegments:{"count":2}');
+  expect(host.textContent).toContain("light rain tomorrow");
+  expect(host.textContent).not.toContain("let me check");
+  const run = host.querySelector("[data-chet-voice-run] button")!;
+  act(() => (run as HTMLButtonElement).click());
+  expect(host.textContent).toContain("let me check");
+  timeline([...items.slice(0, 3), turn("a4", "assistant", "and windy"), ...items.slice(3)]);
+  expect(host.textContent).toContain("let me check");
+  expect(host.textContent).toContain('chet.voiceSegments:{"count":3}');
+  expect(host.textContent).toContain("and windy");
+});
+
+it("keeps the call's latest run of Chet's turns open while the call lasts, unless the reader closes it", () => {
+  const items = [
+    { ...turn("u1", "user", "question"), seq: 1 },
+    { ...turn("a1", "assistant", "an earlier reply"), seq: 2 },
+    { ...turn("u2", "user", "and then"), seq: 3 },
+    { ...turn("a2", "assistant", "still being played"), seq: 4 },
+  ];
+  const states = () =>
+    [...host.querySelectorAll("[data-chet-voice-run] > button")].map((button) =>
+      button.getAttribute("aria-expanded"),
+    );
+  timeline(items, {}, [], "c");
+  expect(states()).toEqual(["false", "true"]);
+  timeline(items, {}, [], null);
+  expect(states()).toEqual(["false", "false"]);
+  // An earlier turn saved after a later one does not take the default from it.
+  timeline([items[0], items[3], items[2], items[1]], {}, [], "c");
+  expect(states()).toEqual(["true", "false"]);
+  timeline(items, {}, [], "c");
+  act(() => (host.querySelectorAll("[data-chet-voice-run] > button")[1] as HTMLElement).click());
+  timeline(items, {}, [], "c");
+  expect(states()).toEqual(["false", "false"]);
+});
+
+it("says a folded run's transcript is incomplete or unfinished without opening it", () => {
+  const cut = { ...turn("a1", "assistant", "the rain will"), complete: false };
+  timeline([turn("u1", "user", "weather?"), cut, turn("a2", "assistant", "bring an umbrella")]);
+  expect(host.textContent).toContain("chet.transcriptIncomplete");
+  timeline([turn("u1", "user", "weather?"), { ...cut, final: false }]);
+  expect(host.textContent).toContain("chet.transcriptUnfinished");
+  timeline([turn("u1", "user", "weather?"), turn("a2", "assistant", "bring an umbrella")]);
+  expect(host.textContent).not.toContain("chet.transcriptIncomplete");
+  expect(host.textContent).not.toContain("chet.transcriptUnfinished");
 });

@@ -42,8 +42,50 @@ function status(overrides: Partial<ChetStatus> = {}): ChetStatus {
 }
 
 function view(overrides: Partial<ChetLiveView> = {}): ChetLiveView {
-  return { status: status(), assumedLive: new Set(), ...overrides };
+  return { status: status(), assumedLive: new Set(), settledLive: new Set(), ...overrides };
 }
+
+function delegation(id: string, minute = 3): ChetRecord {
+  return {
+    kind: "voice_delegation",
+    id,
+    created_at: at(minute),
+    delegation: { call_id: "c", delegation_id: `d-${id}`, text: `task ${id}` },
+  };
+}
+
+function receipt(id: string, inputId: string): ChetRecord {
+  return {
+    kind: "receipt",
+    id,
+    created_at: at(4),
+    input_id: inputId,
+    receipt: { generation: "g1", turn_id: "t" },
+  };
+}
+
+function spoken(id: string, seq: number, role: "user" | "assistant"): ChetRecord {
+  return {
+    kind: "transcript",
+    id,
+    created_at: at(5),
+    transcript: {
+      call_id: "c",
+      turn_id: id,
+      seq,
+      role,
+      text: id,
+      final_update: true,
+      complete: true,
+    },
+  };
+}
+
+/** Each item as `request:<id>` or `<role>:<turn>`, in timeline order. */
+const order = (records: ChetRecord[], live = view(), fetched = new Map()) =>
+  buildChetTimeline(records, live, [], fetched).map((item) =>
+    item.kind === "request" ? `request:${item.id}` : `${item.role}:${item.text}`,
+  );
 
 const requests = (records: ChetRecord[], live = view()) =>
   buildChetTimeline(records, live).filter(
@@ -197,6 +239,76 @@ describe("buildChetTimeline", () => {
       },
     ]);
     expect(item).toMatchObject({ source: "voice", text: "look up the release", context: null });
+  });
+
+  it("shows a voice delegation where its latest fact is, not before what the user said", () => {
+    // The delegation is saved as the voice model hands work off, before the user's words.
+    const records = [
+      delegation("v"),
+      receipt("rc", "v"),
+      spoken("question", 1, "user"),
+      spoken("ack", 2, "assistant"),
+      result("rv", ["v"]),
+      spoken("summary", 3, "assistant"),
+    ];
+    expect(order(records)).toEqual([
+      "user:question",
+      "assistant:ack",
+      "request:v",
+      "assistant:summary",
+    ]);
+    // Without a result, the receipt is the latest fact; nothing reorders it past later turns.
+    expect(order(records.slice(0, 4))).toEqual(["request:v", "user:question", "assistant:ack"]);
+    const refused: ChetRecord = {
+      kind: "not_started",
+      id: "n",
+      created_at: at(6),
+      input_id: "v",
+      reason: "assistant_unavailable",
+    };
+    expect(order([delegation("v"), spoken("question", 1, "user"), refused])).toEqual([
+      "user:question",
+      "request:v",
+    ]);
+  });
+
+  it("keeps settled live voice work last, through a busy owner, and states only what is known", () => {
+    const records = [delegation("v"), receipt("rc", "v"), spoken("question", 1, "user")];
+    const settledLive = new Set(["v"]);
+    expect(order(records, view({ status: status({ working: ["v"] }), settledLive }))).toEqual([
+      "user:question",
+      "request:v",
+    ]);
+    const busy = view({ status: status({ owner_busy: true }), settledLive });
+    expect(order(records, busy)).toEqual(["user:question", "request:v"]);
+    expect(requests(records, busy)[0].state).toBe("checking");
+    // A free owner that no longer reports it settles it back at its receipt.
+    expect(order(records)).toEqual(["request:v", "user:question"]);
+    expect(requests(records)[0].state).toBe("received_unconfirmed");
+  });
+
+  it("leaves text requests where they were and shows a mixed turn's answer once", () => {
+    const records = [
+      input("a"),
+      delegation("v"),
+      spoken("question", 1, "user"),
+      result("ra", ["a"], "completed", "shared"),
+      result("rv", ["v"], "completed", "shared"),
+    ];
+    expect(order(records)).toEqual(["request:a", "user:question", "request:v"]);
+    const [text, voice] = requests(records);
+    expect(text).toMatchObject({ source: "text", outcomeShownLater: true });
+    expect(voice).toMatchObject({ source: "voice", outcomeShownLater: false });
+  });
+
+  it("places an earlier page's voice delegation by its latest fact once its source is known", () => {
+    const records = [receipt("rc", "old"), spoken("question", 1, "user"), result("rv", ["old"])];
+    // Until the source is read, it could be a typed request: shown at its first fact.
+    expect(order(records)).toEqual(["request:old", "user:question"]);
+    const fetched = new Map([
+      ["old", delegation("old") as Extract<ChetRecord, { kind: "voice_delegation" }>],
+    ]);
+    expect(order(records, view(), fetched)).toEqual(["user:question", "request:old"]);
   });
 
   it("shows each turn once, in the order the call first saw it", () => {

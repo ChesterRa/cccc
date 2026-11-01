@@ -456,6 +456,14 @@ finished; if the outcome cannot be confirmed, Chet says so and does not automati
 Voice transcripts record what this browser received and can be incomplete. There is no history-clear
 action in this version.
 
+Written results can include an expandable **Voice request**: this is Chet's task wording, not a
+verbatim quotation of your speech. Adjacent saved Chet voice transcripts from the same call are
+grouped in an expandable row. The most recent loaded group for an active call starts open unless
+you change it; other groups show a preview. A folded group is marked if any transcript is unfinished
+or incomplete. While available, live transcripts and warnings that a transcript was not saved or
+its saving is unconfirmed appear outside these grouped rows. Voice transcripts and written results
+arrive independently, so their display order does not establish a one-to-one relationship.
+
 During a call, investigations include a bounded recent excerpt so Chet
 can understand follow-ups and retain your limits; that excerpt becomes part of its retained conversation.
 Voice is instructed to prepare a self-contained task and clarify essential ambiguity before handing it off.
@@ -479,6 +487,10 @@ save automatically for the instance and apply to the next call, without restarti
 Detail applies to incoming Actor notifications as well as answers. Voice is instructed to identify
 each notification's Group and sender. Detailed asks it to retain substantive findings, numbers,
 conditions, qualifications and next steps in natural speech; raw tool traces remain in Chet's terminal.
+For completed investigations, concise and standard ask Voice to prefer a brief spoken account over
+reading a long formatted result aloud; detailed keeps the requested detail. Your spoken request can
+override these defaults. These are instructions to the voice provider, so its output may still differ
+from the saved result.
 Choose **Codex Voice** or **Grok Voice** beside the input on desktop, or in **Call preferences**.
 On a phone the choices are in settings. The service
 and its speaking voice are fixed during a call; end it before changing them. This browser remembers

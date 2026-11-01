@@ -107,6 +107,7 @@ export function ChetConversationPane({
       <ChetTimeline
         items={chet.items}
         liveTurns={unsavedLiveTurns(chet.items, controller.conversation)}
+        liveCallId={controller.call?.generation ?? null}
         loaded={chet.loaded}
         hasOlder={chet.hasOlder}
         loadingOlder={chet.loadingOlder}
