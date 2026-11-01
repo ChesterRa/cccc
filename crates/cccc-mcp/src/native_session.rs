@@ -443,6 +443,13 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn codex_metadata_protocol_uses_only_the_top_level_thread_id() {
+        if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+            module_path!(),
+            "::",
+            "codex_metadata_protocol_uses_only_the_top_level_thread_id"
+        )) {
+            return;
+        }
         use cccc_contracts::{Actor, DaemonRequest, local_session::LocalSessionRuntime};
         use cccc_core::local_sessions::{self as native, NativeHost, NativeSession};
 
@@ -682,6 +689,13 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[tokio::test]
     async fn claude_stdio_uses_the_direct_parent_unless_an_explicit_host_is_supplied() {
+        if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+            module_path!(),
+            "::",
+            "claude_stdio_uses_the_direct_parent_unless_an_explicit_host_is_supplied"
+        )) {
+            return;
+        }
         use cccc_core::local_sessions::NativeHost;
 
         let temp = tempfile::tempdir().expect("tempdir");
@@ -899,6 +913,13 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn native_members_can_discover_and_reply_without_a_receive_channel() {
+        if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+            module_path!(),
+            "::",
+            "native_members_can_discover_and_reply_without_a_receive_channel"
+        )) {
+            return;
+        }
         use cccc_contracts::{
             Actor, ActorRuntime, DaemonRequest, Event, GroupState,
             local_session::LocalSessionRuntime,

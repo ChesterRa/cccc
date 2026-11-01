@@ -943,6 +943,13 @@ mod tests {
 
     #[tokio::test]
     async fn capability_use_enables_hidden_pack_and_calls_inferred_builtin() {
+        if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+            module_path!(),
+            "::",
+            "capability_use_enables_hidden_pack_and_calls_inferred_builtin"
+        )) {
+            return;
+        }
         let temp = tempfile::tempdir().expect("tempdir");
         let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
         let group = cccc_core::GroupStore::new(home.clone())
@@ -1031,6 +1038,13 @@ mod tests {
 
     #[tokio::test]
     async fn user_control_plane_routes_an_explicit_cross_group_target() {
+        if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+            module_path!(),
+            "::",
+            "user_control_plane_routes_an_explicit_cross_group_target"
+        )) {
+            return;
+        }
         let temp = tempfile::tempdir().expect("tempdir");
         let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = cccc_core::GroupStore::new(home.clone()).expect("groups");

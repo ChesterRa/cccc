@@ -704,6 +704,16 @@ mod tests {
     #[tokio::test]
     async fn unified_patch_uses_the_finite_command_path() {
         let temp = tempfile::tempdir().expect("tempdir");
+        // git apply follows Git's line-ending settings, and Git for Windows sets
+        // core.autocrlf system-wide by default; pin it to compare exact bytes.
+        for args in [&["init", "-q"][..], &["config", "core.autocrlf", "false"]] {
+            let status = std::process::Command::new("git")
+                .args(args)
+                .current_dir(temp.path())
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git {args:?}");
+        }
         std::fs::write(temp.path().join("file.txt"), "before\n").expect("fixture");
         let args = json!({"patch":"diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-before\n+after\n"}).as_object().cloned().expect("args");
         let result = super::apply_patch(temp.path(), &args)

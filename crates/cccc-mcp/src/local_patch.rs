@@ -167,7 +167,14 @@ fn resolve(root: &Path, raw: &str, create: bool) -> Result<PathBuf, String> {
     if ancestor != path && !checked.is_dir() {
         return Err("patch parent is not a directory".into());
     }
-    Ok(checked.join(path.strip_prefix(ancestor).map_err(|e| e.to_string())?))
+    let suffix = path.strip_prefix(ancestor).map_err(|e| e.to_string())?;
+    if suffix.as_os_str().is_empty() {
+        // Joining an empty suffix adds a separator, hiding an existing file
+        // from `exists()`.
+        Ok(checked)
+    } else {
+        Ok(checked.join(suffix))
+    }
 }
 
 fn check_current(change: &Change) -> Result<(), String> {

@@ -115,6 +115,13 @@ impl Fixture {
 
 #[tokio::test]
 async fn conversation_creation_send_and_leave_keep_their_distinct_effects() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "conversation_creation_send_and_leave_keep_their_distinct_effects"
+    )) {
+        return;
+    }
     let mut fixture = Fixture::new().await;
     let created = fixture
         .call(
@@ -161,6 +168,13 @@ async fn conversation_creation_send_and_leave_keep_their_distinct_effects() {
 
 #[tokio::test]
 async fn session_actions_reject_unused_parameters_before_any_group_changes() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "session_actions_reject_unused_parameters_before_any_group_changes"
+    )) {
+        return;
+    }
     let mut fixture = Fixture::new().await;
     let mut responses = Vec::new();
     for (action, field, value) in [
@@ -218,6 +232,13 @@ async fn session_actions_reject_unused_parameters_before_any_group_changes() {
 
 #[tokio::test]
 async fn unset_optional_fields_and_default_mode_do_not_change_action_semantics() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "unset_optional_fields_and_default_mode_do_not_change_action_semantics"
+    )) {
+        return;
+    }
     let mut fixture = Fixture::new().await;
     let listed = fixture
         .call(
@@ -248,6 +269,13 @@ async fn unset_optional_fields_and_default_mode_do_not_change_action_semantics()
 
 #[tokio::test]
 async fn native_membership_errors_identify_paused_access_and_the_original_group() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "native_membership_errors_identify_paused_access_and_the_original_group"
+    )) {
+        return;
+    }
     let mut fixture = Fixture::new().await;
     let groups = GroupStore::new(fixture.home.clone()).expect("groups");
     let mut paused = groups.create("Paused access", "").expect("Group");
@@ -302,6 +330,13 @@ async fn native_membership_errors_identify_paused_access_and_the_original_group(
 
 #[tokio::test]
 async fn missing_membership_explains_a_duplicate_live_conversation_owner() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "missing_membership_explains_a_duplicate_live_conversation_owner"
+    )) {
+        return;
+    }
     let mut fixture = Fixture::new().await;
     let mut previous = native::read(&fixture.home, &fixture.source_id).expect("registration");
     previous.host = NativeHost::parent(std::process::id()).expect("live fixture parent");

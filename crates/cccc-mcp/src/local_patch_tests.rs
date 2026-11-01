@@ -92,6 +92,28 @@ fn move_edit_add_nested_file_and_delete_work_together() {
 }
 
 #[test]
+fn existing_destination_resolves_to_an_existing_file() {
+    let temp = tempfile::tempdir().expect("fixture");
+    std::fs::write(temp.path().join("occupied.txt"), "original\n").expect("fixture");
+    let resolved = resolve(temp.path(), "occupied.txt", true).expect("resolve destination");
+    assert!(resolved.is_file(), "the existing file must remain visible");
+}
+
+#[test]
+fn a_later_existing_add_does_not_partially_apply_the_patch() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let existing = temp.path().join("occupied.txt");
+    std::fs::write(&existing, "original\n").expect("fixture");
+    let patch = "*** Begin Patch\n*** Add File: earlier.txt\n+created\n*** Add File: occupied.txt\n+replacement\n*** End Patch";
+    assert!(apply(temp.path(), patch).is_err());
+    assert!(!temp.path().join("earlier.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(existing).expect("file"),
+        "original\n"
+    );
+}
+
+#[test]
 fn rejected_later_hunk_and_destination_conflicts_do_not_partially_apply() {
     let temp = tempfile::tempdir().expect("fixture operation");
     std::fs::write(temp.path().join("a"), "original\n").expect("fixture operation");

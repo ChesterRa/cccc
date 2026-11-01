@@ -364,6 +364,13 @@ async fn node_available() -> bool {
 
 #[tokio::test]
 async fn nested_management_preserves_target_and_authenticated_caller() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "nested_management_preserves_target_and_authenticated_caller"
+    )) {
+        return;
+    }
     use cccc_contracts::{Actor, ActorRuntime, DaemonRequest};
     use cccc_core::GroupStore;
     use serde_json::json;
@@ -540,6 +547,13 @@ async fn deferred_nested_calls_reject_replaced_binding_and_actor_generation() {
 
 #[tokio::test]
 async fn dots_nested_owner_keeps_task_identity_and_rejects_late_work() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "dots_nested_owner_keeps_task_identity_and_rejects_late_work"
+    )) {
+        return;
+    }
     use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, GroupState};
     use cccc_core::{GroupStore, web_model_connectors as bindings};
     use serde_json::json;

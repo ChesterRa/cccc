@@ -41,6 +41,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- Web Model: a Codex-style `cccc_apply_patch` with an **Add File** or **Move to** target already
+  present when the patch is prepared now rejects the conflict before writing any section.
+  Previously, it could overwrite the target on Windows or apply earlier sections before failing
+  on Linux.
 - Voice lifecycle and Web Access: applying a saved Web binding now stops the active Voice call and Chet Runtime before restarting Web. If cleanup cannot be confirmed, the current Web remains available and the new binding is not yet active; retry **Apply now** or start Voice again to retry cleanup.
   - Voice Stop, Chet session reset, and Runtime settings replacement keep track of resources that still need cleanup, including when a request is interrupted. A new Voice start or Web Apply requires the earlier cleanup to be confirmed, or reports that Voice is busy or recovery is pending. The Web interface explains these states in English, Chinese and Japanese.
   - On Unix, the Web host uses separate process recovery records for Voice when reusing an independently running daemon. If a previous Web process left resources whose cleanup cannot be confirmed, Web stays available while Voice waits for recovery. See the [Web UI guide](https://chesterra.github.io/cccc/guide/web-ui) for retry and diagnostics.

@@ -2,6 +2,57 @@ use std::collections::BTreeSet;
 
 use serde_json::json;
 
+/// An embedded daemon installs a process-wide ownership guard. Run each
+/// fixture in a child so its temporary home cannot poison unrelated tests.
+pub(crate) fn isolate_embedded_daemon_test(qualified_name: &str) -> bool {
+    const MARKER: &str = "CCCC_TEST_MCP_EMBEDDED_DAEMON_CHILD";
+    let name = qualified_name
+        .split_once("::")
+        .map(|(_, name)| name)
+        .expect("qualified test name");
+    if std::env::var(MARKER).as_deref() == Ok(name) {
+        return false;
+    }
+    let temp = tempfile::tempdir().expect("isolated fixture environment");
+    let provider_home = temp.path().join("provider-home");
+    std::fs::create_dir_all(&provider_home).expect("provider home");
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .env(MARKER, name)
+        .env("HOME", &provider_home)
+        .env("CCCC_HOME", temp.path().join("cccc-home"))
+        .env("CODEX_HOME", temp.path().join("codex"))
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("claude"))
+        .env("GROK_HOME", temp.path().join("grok"))
+        .env("XDG_CONFIG_HOME", temp.path().join("config"))
+        .env("XDG_DATA_HOME", temp.path().join("data"))
+        .env_remove("GROK_AUTH_PATH")
+        .env_remove("CCCC_CODEX_AUTH_PATH")
+        .env_remove("CCCC_LAUNCHER_PATH")
+        .output()
+        .expect("run isolated daemon fixture");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success()
+            && stdout
+                .lines()
+                .any(|line| line.starts_with("test result: ok. 1 passed;")),
+        "isolated test {name} failed or did not run:\n{stdout}\n{stderr}"
+    );
+    true
+}
+
+#[test]
+fn isolated_daemon_fixture_rejects_a_missing_test() {
+    let error = std::panic::catch_unwind(|| {
+        isolate_embedded_daemon_test("cccc_mcp::a_test_that_does_not_exist")
+    })
+    .expect_err("an empty child run must not pass");
+    let message = error.downcast_ref::<String>().expect("failure message");
+    assert!(message.contains("failed or did not run"));
+}
+
 #[tokio::test]
 async fn secretary_stdio_exposes_only_its_task_tool_and_rejects_target_overrides() {
     const ENV: &str = "CCCC_SECRETARY_MCP_FIXTURE";
@@ -204,6 +255,13 @@ async fn protocol_and_tool_execution_errors_use_distinct_envelopes() {
 
 #[tokio::test]
 async fn daemon_error_details_survive_the_native_mcp_boundary() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "daemon_error_details_survive_the_native_mcp_boundary"
+    )) {
+        return;
+    }
     let temp = tempfile::tempdir().expect("tempdir");
     let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = cccc_core::GroupStore::new(home.clone()).expect("store");
@@ -291,6 +349,13 @@ async fn daemon_error_details_survive_the_native_mcp_boundary() {
 
 #[tokio::test]
 async fn daemon_error_details_survive_nested_code_mode_calls() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "daemon_error_details_survive_nested_code_mode_calls"
+    )) {
+        return;
+    }
     let temp = tempfile::tempdir().expect("tempdir");
     let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = cccc_core::GroupStore::new(home.clone()).expect("store");

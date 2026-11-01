@@ -23,13 +23,24 @@ pub(super) fn isolated_child(name: &str) -> bool {
         .env_remove("CCCC_CODEX_AUTH_PATH")
         .output()
         .expect("fixture child");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success(),
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        output.status.success()
+            && stdout
+                .lines()
+                .any(|line| line.starts_with("test result: ok. 1 passed;")),
+        "isolated test {name} failed or did not run:\n{stdout}\n{stderr}"
     );
     true
+}
+
+#[test]
+fn isolated_child_rejects_a_missing_test() {
+    let error = std::panic::catch_unwind(|| isolated_child("a_test_that_does_not_exist"))
+        .expect_err("an empty child run must not pass");
+    let message = error.downcast_ref::<String>().expect("failure message");
+    assert!(message.contains("failed or did not run"));
 }
 
 pub(super) async fn fixture() -> (
