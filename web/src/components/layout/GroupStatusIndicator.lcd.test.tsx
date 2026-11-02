@@ -4,7 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
 import { getGroupStatus, type GroupStatus } from "../../utils/groupStatus";
-import { setUiStylePrefs } from "../../utils/uiStyle";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
@@ -14,7 +13,6 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  setUiStylePrefs({ style: "lcd" });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -23,7 +21,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
-  setUiStylePrefs({ style: "classic" });
 });
 
 async function render(status: GroupStatus, connectionStatus?: "connecting" | "disconnected") {
@@ -72,18 +69,4 @@ it("also shows the reconnecting dots in the badge without changing its accessibl
   const badge = host.querySelector<HTMLElement>('[role="status"]')!;
   expect(badge.getAttribute("aria-label")).toContain("reconnecting");
   expect(badge.querySelectorAll(".lcd-reconnect-dots i")).toHaveLength(3);
-});
-
-it("keeps the Classic reconnecting dot", async () => {
-  act(() => setUiStylePrefs({ style: "classic" }));
-  await act(async () =>
-    root.render(
-      <GroupStatusIndicator
-        status={getGroupStatus(true, "active")}
-        connectionStatus="connecting"
-      />,
-    ),
-  );
-  expect(host.querySelector(".lcd-reconnect-dots")).toBeNull();
-  expect(host.querySelector('[role="img"]')?.className).toContain("animate-pulse");
 });

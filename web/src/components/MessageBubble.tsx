@@ -7,7 +7,6 @@ import {
   Actor,
   AgentState,
   Task,
-  getActorAccentColor,
   getActorAccentIndex,
   ChatMessageData,
   MessageAttachment,
@@ -17,7 +16,6 @@ import {
 } from "../types";
 import { formatFullTime, formatMessageTimestamp } from "../utils/time";
 import { classNames } from "../utils/classNames";
-import { useLcdStyle } from "../utils/uiStyle";
 import { getReplyEventId } from "../utils/chatReply";
 import { projectCrossGroupRecipients, projectMessageMode } from "../utils/crossGroupRecipients";
 import { connectGroupLabel, isCrossInstanceInboundMessage } from "../utils/crossInstanceMessages";
@@ -33,7 +31,7 @@ import {
 } from "./messageBubbleDelegation";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
 import { MessageActions } from "./messageBubble/MessageActions";
-import { MessageFooter, MessageMetadataHeader } from "./messageBubble/MessageBubbleChrome";
+import { MessageFooter } from "./messageBubble/MessageBubbleChrome";
 import { withAuthToken } from "../services/api/base";
 import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
 import {
@@ -43,14 +41,9 @@ import {
   getSenderDisplayName,
 } from "./messageBubble/model";
 import { ActorAvatar } from "./ActorAvatar";
-import {
-  formatEventLine,
-  getMessageBubbleMotionClass,
-  mayContainMarkdown,
-} from "./messageBubble/helpers";
+import { formatEventLine, mayContainMarkdown } from "./messageBubble/helpers";
 import { AgentStateTooltip } from "./messageBubble/AgentStateTooltip";
 import { MessageContent } from "./messageBubble/MessageContent";
-import { MessageBubbleSurface } from "./messageBubble/MessageBubbleSurface";
 import { buildMessageCopyText } from "./messageBubble/messageCopyText";
 import { MessageRoutingMetadata } from "./messageBubble/MessageRoutingMetadata";
 import { MessageReplyQuote } from "./messageBubble/MessageReplyQuote";
@@ -66,9 +59,6 @@ import {
 } from "../features/pendingReplies/model";
 import { LivePendingStatusContext } from "../features/pendingReplies/liveStatusContext";
 
-const ANIMATED_MESSAGE_BUBBLE_KEYS = new Set<string>();
-const NEW_MESSAGE_ANIMATION_WINDOW_MS = 12000;
-
 function buildSenderAvatarUrl(groupId: string, senderAvatarPath?: string): string {
   const gid = String(groupId || "").trim();
   const relPath = String(senderAvatarPath || "").trim();
@@ -78,25 +68,6 @@ function buildSenderAvatarUrl(groupId: string, senderAvatarPath?: string): strin
   return withAuthToken(
     `/api/v1/groups/${encodeURIComponent(gid)}/blobs/${encodeURIComponent(blobName)}`,
   );
-}
-
-function shouldAnimateIncomingBubble(messageKey: string, eventTs?: string): boolean {
-  const stableKey = String(messageKey || "").trim();
-  if (!stableKey || ANIMATED_MESSAGE_BUBBLE_KEYS.has(stableKey)) return false;
-
-  const parsedTs = Date.parse(String(eventTs || "").trim());
-  if (!Number.isFinite(parsedTs)) {
-    ANIMATED_MESSAGE_BUBBLE_KEYS.add(stableKey);
-    return false;
-  }
-
-  if (Math.abs(Date.now() - parsedTs) > NEW_MESSAGE_ANIMATION_WINDOW_MS) {
-    ANIMATED_MESSAGE_BUBBLE_KEYS.add(stableKey);
-    return false;
-  }
-
-  ANIMATED_MESSAGE_BUBBLE_KEYS.add(stableKey);
-  return true;
 }
 
 function MessageBubbleBody({
@@ -255,9 +226,7 @@ export const MessageBubble = memo(
     onOpenReplyTarget,
   }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
-    const lcd = useLcdStyle();
     const isOptimistic = !!(ev.data as Record<string, unknown> | undefined)?._optimistic;
-    const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
     const isStreaming = !!ev._streaming;
     const canReply = !!getReplyEventId(ev);
     const messageText = useMemo(() => formatEventLine(ev), [ev]);
@@ -443,11 +412,6 @@ export const MessageBubble = memo(
       () => !isStreaming && mayContainMarkdown(bubbleBodyText),
       [bubbleBodyText, isStreaming],
     );
-    const streamPhase = String(
-      (msgData as { stream_phase?: unknown } | undefined)?.stream_phase || "",
-    )
-      .trim()
-      .toLowerCase();
     const stableMessageAttachmentKey = useMemo(() => {
       const clientId =
         typeof msgData?.client_id === "string" ? String(msgData.client_id || "").trim() : "";
@@ -455,20 +419,6 @@ export const MessageBubble = memo(
       const eventId = typeof ev.id === "string" ? String(ev.id || "").trim() : "";
       return eventId || `row:${String(ev.ts || "")}:${String(ev.by || "")}`;
     }, [ev.id, ev.ts, ev.by, msgData]);
-    const shouldAnimateBubbleOnEnter = useMemo(() => {
-      return shouldAnimateIncomingBubble(stableMessageAttachmentKey, String(ev.ts || ""));
-    }, [ev.ts, stableMessageAttachmentKey]);
-    const bubbleMotionClass = useMemo(
-      () =>
-        getMessageBubbleMotionClass({
-          isStreaming,
-          isOptimistic,
-          isNewlyArrived: shouldAnimateBubbleOnEnter,
-          isUserMessage,
-          streamPhase,
-        }),
-      [isOptimistic, isStreaming, isUserMessage, shouldAnimateBubbleOnEnter, streamPhase],
-    );
     const copyableMessageText = useMemo(
       () =>
         buildMessageCopyText({
@@ -708,7 +658,7 @@ export const MessageBubble = memo(
       </>
     );
 
-    const renderMessageFooter = (showActions = true) => (
+    const messageFooter = (
       <MessageFooter
         readOnly={readOnly}
         obligationSummary={obligationSummary}
@@ -718,239 +668,97 @@ export const MessageBubble = memo(
         readPreviewOverflow={readPreviewOverflow}
         displayNameMap={displayNameMap}
         isDark={isDark}
-        isMail={isMail}
-        copyableMessageText={copyableMessageText}
-        onCopyMessageText={() => void handleCopyMessageText()}
         onShowRecipients={onShowRecipients}
-        onViewContext={onViewContext}
-        onCopyLink={onCopyLink}
-        onRelay={onRelay}
-        onReply={onReply}
-        canReply={canReply}
-        eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
         event={ev}
-        showActions={showActions}
       />
     );
-    const messageFooter = renderMessageFooter();
 
-    if (lcd) {
-      const showAgentState = canShowAgentState && !collapseHeader;
-      // A read-only exhibit is watched by spectators, not by the Group's user, so the
-      // user's messages are neither "you" nor set on the reader's side; spectators see
-      // the role in their own language.
-      const fromReader = isUserMessage && !readOnly;
-      const lcdAuthorName = fromReader
-        ? t("messageAuthorYou")
-        : isUserMessage
-          ? t("senderUser")
-          : senderDisplayName;
-      return (
-        <div
-          className={classNames(
-            "message-row lcd-row group",
-            isOptimistic ? "opacity-95" : "",
-            isHighlighted ? "lcd-row-highlighted" : "",
-          )}
-          data-lcd-row
-          data-lcd-user={fromReader || undefined}
-          data-lcd-continued={collapseHeader || undefined}
-          data-lcd-accent={isUserMessage ? undefined : getActorAccentIndex(String(ev.by || ""))}
-        >
-          {/* One head line, so names never truncate and the text keeps the full width. */}
-          <div className="lcd-row-head">
-            {collapseHeader ? (
-              <span className="sr-only">{lcdAuthorName}</span>
-            ) : (
-              <span
-                className="lcd-row-who"
-                ref={showAgentState ? setAgentStateReference : undefined}
-                onMouseEnter={showAgentState ? () => setIsAgentStateOpen(true) : undefined}
-                onMouseLeave={showAgentState ? () => setIsAgentStateOpen(false) : undefined}
-                onFocus={showAgentState ? () => setIsAgentStateOpen(true) : undefined}
-                onBlur={showAgentState ? () => setIsAgentStateOpen(false) : undefined}
-                tabIndex={showAgentState ? 0 : undefined}
-                aria-label={
-                  showAgentState
-                    ? t("agentStateTooltipLabel", { defaultValue: "View agent state" })
-                    : undefined
-                }
-              >
-                {isUserMessage ? null : (
-                  <ActorAvatar
-                    avatarUrl={senderAvatarUrl || undefined}
-                    runtime={senderRuntime || undefined}
-                    title={senderDisplayName}
-                    isDark={isDark}
-                    sizeClassName="h-5 w-5"
-                    textClassName="text-[0.6875rem]"
-                    className="lcd-tile"
-                  />
-                )}
-                <span className="lcd-row-name">{lcdAuthorName}</span>
-              </span>
-            )}
-            {remoteBadgeLabel ? <span className="lcd-tag">{remoteBadgeLabel}</span> : null}
-            <span className="lcd-row-route">
-              {routingMetadata}
-              {/* The reply card below already shows the request and its state. */}
-              {replyMarked && !replyView ? <span className="lcd-tag">{t("needReply")}</span> : null}
-            </span>
-            <time
-              className="lcd-row-time"
-              dateTime={String(ev.ts || "")}
-              title={fullMessageTimestamp}
-            >
-              {messageTimestamp}
-            </time>
-            <MessageActions
-              readOnly={readOnly}
-              copyableMessageText={copyableMessageText}
-              onCopyMessageText={() => void handleCopyMessageText()}
-              onViewContext={onViewContext}
-              onCopyLink={onCopyLink}
-              onRelay={onRelay}
-              onReply={onReply}
-              canReply={canReply}
-              eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
-              event={ev}
-            />
-          </div>
-          {agentStateTooltip}
-          <div className="lcd-row-body">
-            <div className={classNames("lcd-row-content", isStreaming ? "lcd-row-streaming" : "")}>
-              {bubbleContent}
-            </div>
-            {renderMessageFooter(false)}
-          </div>
-        </div>
-      );
-    }
-
+    const showAgentState = canShowAgentState && !collapseHeader;
+    // A read-only exhibit is watched by spectators, not by the Group's user, so the
+    // user's messages are neither "you" nor set on the reader's side; spectators see
+    // the role in their own language.
+    const fromReader = isUserMessage && !readOnly;
+    const lcdAuthorName = fromReader
+      ? t("messageAuthorYou")
+      : isUserMessage
+        ? t("senderUser")
+        : senderDisplayName;
     return (
       <div
         className={classNames(
-          "message-row relative flex w-full min-w-0 gap-2 sm:gap-3 group",
-          // Scale the opposite gutter with the message column, leaving room beyond the desktop avatar.
-          isUserMessage
-            ? "flex-col items-end pl-[clamp(1.5rem,8%,2rem)] sm:items-start sm:flex-row-reverse sm:pl-[clamp(6rem,12%,12rem)]"
-            : "flex-col items-start pr-[clamp(1.5rem,8%,2rem)] sm:flex-row sm:pr-[clamp(6rem,12%,12rem)]",
+          "message-row lcd-row group",
           isOptimistic ? "opacity-95" : "",
+          isHighlighted ? "lcd-row-highlighted" : "",
         )}
+        data-lcd-row
+        data-lcd-user={fromReader || undefined}
+        data-lcd-continued={collapseHeader || undefined}
+        data-lcd-accent={isUserMessage ? undefined : getActorAccentIndex(String(ev.by || ""))}
       >
-        {/* Desktop Avatar (Hidden on mobile) */}
-        <div className="relative hidden sm:block">
-          <div
-            className={classNames(
-              "mt-1 h-8 w-8 flex-shrink-0",
-              collapseHeader ? "opacity-0 pointer-events-none" : "",
-              canShowAgentState && !collapseHeader ? "cursor-help" : "",
-            )}
-            ref={canShowAgentState && !collapseHeader ? setAgentStateReference : undefined}
-            onMouseEnter={
-              canShowAgentState && !collapseHeader ? () => setIsAgentStateOpen(true) : undefined
-            }
-            onMouseLeave={
-              canShowAgentState && !collapseHeader ? () => setIsAgentStateOpen(false) : undefined
-            }
-            onFocus={
-              canShowAgentState && !collapseHeader ? () => setIsAgentStateOpen(true) : undefined
-            }
-            onBlur={
-              canShowAgentState && !collapseHeader ? () => setIsAgentStateOpen(false) : undefined
-            }
-            tabIndex={canShowAgentState && !collapseHeader ? 0 : undefined}
-            aria-label={
-              canShowAgentState && !collapseHeader
-                ? t("agentStateTooltipLabel", { defaultValue: "View agent state" })
-                : undefined
-            }
+        {/* One head line, so names never truncate and the text keeps the full width. */}
+        <div className="lcd-row-head">
+          {collapseHeader ? (
+            <span className="sr-only">{lcdAuthorName}</span>
+          ) : (
+            <span
+              className="lcd-row-who"
+              ref={showAgentState ? setAgentStateReference : undefined}
+              onMouseEnter={showAgentState ? () => setIsAgentStateOpen(true) : undefined}
+              onMouseLeave={showAgentState ? () => setIsAgentStateOpen(false) : undefined}
+              onFocus={showAgentState ? () => setIsAgentStateOpen(true) : undefined}
+              onBlur={showAgentState ? () => setIsAgentStateOpen(false) : undefined}
+              tabIndex={showAgentState ? 0 : undefined}
+              aria-label={
+                showAgentState
+                  ? t("agentStateTooltipLabel", { defaultValue: "View agent state" })
+                  : undefined
+              }
+            >
+              {isUserMessage ? null : (
+                <ActorAvatar
+                  avatarUrl={senderAvatarUrl || undefined}
+                  runtime={senderRuntime || undefined}
+                  title={senderDisplayName}
+                  isDark={isDark}
+                  sizeClassName="h-5 w-5"
+                  textClassName="text-[0.6875rem]"
+                  className="lcd-tile"
+                />
+              )}
+              <span className="lcd-row-name">{lcdAuthorName}</span>
+            </span>
+          )}
+          {remoteBadgeLabel ? <span className="lcd-tag">{remoteBadgeLabel}</span> : null}
+          <span className="lcd-row-route">
+            {routingMetadata}
+            {/* The reply card below already shows the request and its state. */}
+            {replyMarked && !replyView ? <span className="lcd-tag">{t("needReply")}</span> : null}
+          </span>
+          <time
+            className="lcd-row-time"
+            dateTime={String(ev.ts || "")}
+            title={fullMessageTimestamp}
           >
-            <ActorAvatar
-              avatarUrl={senderAvatarUrl || undefined}
-              runtime={senderRuntime || undefined}
-              title={senderDisplayName}
-              isUser={isUserMessage}
-              isDark={isDark}
-              accentRingClassName={senderAccent?.ring}
-            />
-          </div>
+            {messageTimestamp}
+          </time>
+          <MessageActions
+            readOnly={readOnly}
+            copyableMessageText={copyableMessageText}
+            onCopyMessageText={() => void handleCopyMessageText()}
+            onViewContext={onViewContext}
+            onCopyLink={onCopyLink}
+            onRelay={onRelay}
+            onReply={onReply}
+            canReply={canReply}
+            eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
+            event={ev}
+          />
         </div>
         {agentStateTooltip}
-
-        {/* Message Content */}
-        <div
-          className={classNames(
-            "flex min-w-0 max-w-full flex-col w-full md:w-auto",
-            isUserMessage ? "items-end" : "items-start",
-          )}
-        >
-          {!collapseHeader ? (
-            <>
-              <MessageMetadataHeader
-                mobile={true}
-                isUserMessage={isUserMessage}
-                isDark={isDark}
-                senderAccentTextClass={senderAccent?.text}
-                senderDisplayName={senderDisplayName}
-                messageTimestamp={messageTimestamp}
-                fullMessageTimestamp={fullMessageTimestamp}
-                senderAvatarUrl={senderAvatarUrl || undefined}
-                senderRuntime={senderRuntime || undefined}
-                avatarRingClassName={senderAccent?.ring}
-                remoteBadgeLabel={remoteBadgeLabel || undefined}
-              >
-                {routingMetadata}
-              </MessageMetadataHeader>
-
-              <MessageMetadataHeader
-                isUserMessage={isUserMessage}
-                isDark={isDark}
-                senderAccentTextClass={senderAccent?.text}
-                senderDisplayName={senderDisplayName}
-                messageTimestamp={messageTimestamp}
-                fullMessageTimestamp={fullMessageTimestamp}
-                remoteBadgeLabel={remoteBadgeLabel || undefined}
-              >
-                {routingMetadata}
-              </MessageMetadataHeader>
-            </>
-          ) : (
-            <div className="mb-1 flex min-w-0 flex-wrap items-center gap-x-2 text-xs">
-              {routingMetadata}
-            </div>
-          )}
-
-          {/* Bubble wrapper (allows badge to overflow) */}
-          <div
-            className={classNames(
-              "relative max-w-full min-w-0 md:w-auto",
-              isUserMessage ? "w-auto self-end" : "w-full",
-            )}
-            style={replyMarked ? { minWidth: "min(8.5rem, 85vw)" } : undefined}
-          >
-            {replyMarked && (
-              <span
-                className={classNames(
-                  "absolute -top-2 z-10 text-xs font-semibold px-2 py-0.5 rounded-full border shadow-sm",
-                  isUserMessage ? "left-3" : "right-3",
-                  "bg-violet-50 text-violet-700 dark:bg-violet-950/60 dark:text-violet-200 border-violet-200 dark:border-violet-800",
-                )}
-              >
-                {t("needReply")}
-              </span>
-            )}
-            <MessageBubbleSurface
-              isUserMessage={isUserMessage}
-              isStreaming={isStreaming}
-              motionClass={bubbleMotionClass}
-              replyRequested={replyMarked}
-              isHighlighted={Boolean(isHighlighted)}
-            >
-              {bubbleContent}
-            </MessageBubbleSurface>
+        <div className="lcd-row-body">
+          <div className={classNames("lcd-row-content", isStreaming ? "lcd-row-streaming" : "")}>
+            {bubbleContent}
           </div>
-
           {messageFooter}
         </div>
       </div>

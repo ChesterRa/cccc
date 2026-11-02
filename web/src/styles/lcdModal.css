@@ -1,8 +1,8 @@
 /* ---------- LCD dialogs ----------
-   Every dialog that takes the LCD scope (ModalFrame's or BodyPortal's lcdScope)
-   shares this frame. Keys are sized by pointer, not width: a touch screen keeps
-   the 44px targets of the global coarse-pointer rule, in px so text scaling cannot
-   shrink them, and a fine pointer gets the compact 2rem keys of the chat header. */
+   Every dialog shares this frame. Keys are sized by pointer, not width: a touch
+   screen keeps the 44px targets of the global coarse-pointer rule, in px so text
+   scaling cannot shrink them, and a fine pointer gets the compact 2rem keys of the
+   chat header. */
 
 /* The header gives its height back to the content. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-modal-header] {

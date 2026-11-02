@@ -1,9 +1,6 @@
-import { getGroupPresenceDotClass } from "./statusIndicators";
 import type { GroupDoc, GroupMeta, GroupRuntimeStatus } from "../types";
 
 export type GroupStatusKey = "run" | "paused" | "idle" | "offline" | "stop";
-
-export const GROUP_STATUS_DOT_BASE_CLASS = "size-[8px] shrink-0 rounded-full";
 
 /** Layout-namespace label of each status, shared by every surface that names it. */
 export const GROUP_STATUS_LABEL_KEYS: Record<GroupStatusKey, string> = {
@@ -14,7 +11,7 @@ export const GROUP_STATUS_LABEL_KEYS: Record<GroupStatusKey, string> = {
   stop: "statusStopped",
 };
 
-export type GroupStatus = { key: GroupStatusKey; dotClass: string };
+export type GroupStatus = { key: GroupStatusKey };
 
 type GroupStatusSource =
   | Pick<GroupMeta, "running" | "state" | "runtime_status">
@@ -28,12 +25,11 @@ type GroupStatusSource =
  * a Group whose Actors have not started or have exited.
  */
 export function getGroupStatus(running: boolean, state?: string): GroupStatus {
-  if (state === "paused") return { key: "paused", dotClass: getGroupPresenceDotClass("paused") };
-  if (state === "stopped") return { key: "stop", dotClass: getGroupPresenceDotClass("stop") };
-  // Nothing runs in either case, so Offline shares the stopped dot and differs in its word.
-  if (!running) return { key: "offline", dotClass: getGroupPresenceDotClass("stop") };
-  if (state === "idle") return { key: "idle", dotClass: getGroupPresenceDotClass("idle") };
-  return { key: "run", dotClass: getGroupPresenceDotClass("run") };
+  if (state === "paused") return { key: "paused" };
+  if (state === "stopped") return { key: "stop" };
+  if (!running) return { key: "offline" };
+  if (state === "idle") return { key: "idle" };
+  return { key: "run" };
 }
 
 export function getGroupRuntimeStatus(source?: GroupStatusSource | null): GroupRuntimeStatus {

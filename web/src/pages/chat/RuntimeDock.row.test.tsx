@@ -4,7 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { Actor } from "../../types";
 import { useTerminalSignalsStore } from "../../stores";
-import { setUiStylePrefs } from "../../utils/uiStyle";
 import { RuntimeDock } from "./RuntimeDock";
 import type { LiveWorkCard } from "./liveWorkCards";
 
@@ -116,7 +115,6 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await act(async () => root.unmount());
-  act(() => setUiStylePrefs({ style: "classic" }));
   host.remove();
   vi.unstubAllGlobals();
   if (offsetTop) Object.defineProperty(HTMLElement.prototype, "offsetTop", offsetTop);
@@ -125,7 +123,6 @@ afterEach(async () => {
 it("flashes attention only on a live transition, never on mount or group switch", async () => {
   vi.useFakeTimers();
   try {
-    act(() => setUiStylePrefs({ style: "lcd" }));
     const idle = actor("alpha");
     const attention = { ...idle, effective_working_state: "stuck" };
     await render([attention]);
@@ -147,7 +144,6 @@ it("flashes attention only on a live transition, never on mount or group switch"
 });
 
 it("treats initial status hydration as a baseline rather than a new attention event", async () => {
-  act(() => setUiStylePrefs({ style: "lcd" }));
   const idle = actor("alpha");
   await render([idle], "g1", [], true);
   await render([{ ...idle, effective_working_state: "error" }], "g1", [], false);
@@ -157,7 +153,6 @@ it("treats initial status hydration as a baseline rather than a new attention ev
 it("flashes +N for a newly attentive hidden member, not one already attentive at mount", async () => {
   vi.useFakeTimers();
   try {
-    act(() => setUiStylePrefs({ style: "lcd" }));
     const alpha = actor("alpha");
     const idle = actor("beta");
     const attention = { ...idle, effective_working_state: "error" };
@@ -181,7 +176,6 @@ it("flashes +N for a newly attentive hidden member, not one already attentive at
 it("moves only a visible working member and briefly marks a working-to-idle transition", async () => {
   vi.useFakeTimers();
   try {
-    act(() => setUiStylePrefs({ style: "lcd" }));
     const idle = actor("alpha");
     const working = { ...idle, effective_working_state: "working" };
     await render([working, actor("beta", { effective_working_state: "working" })]);
@@ -200,7 +194,6 @@ it("moves only a visible working member and briefly marks a working-to-idle tran
 });
 
 it("stills a hidden dock and resumes working rings when it returns", async () => {
-  act(() => setUiStylePrefs({ style: "lcd" }));
   const working = actor("alpha", { effective_working_state: "working" });
   await render([working]);
   expect(chips()[0].querySelector(".lcd-member-ring")?.getAttribute("data-ring")).toBe("moving");
@@ -213,7 +206,6 @@ it("stills a hidden dock and resumes working rings when it returns", async () =>
 it("does not animate queued work or celebrate the queue becoming empty", async () => {
   vi.useFakeTimers();
   try {
-    act(() => setUiStylePrefs({ style: "lcd" }));
     const unmanaged = actor("alpha", { runtime_state_source: "terminal" });
     const pending: LiveWorkCard = {
       actorId: "alpha",
@@ -254,7 +246,6 @@ it("does not animate queued work or celebrate the queue becoming empty", async (
 it("does not celebrate a quiet terminal signal expiring as completed work", async () => {
   vi.useFakeTimers();
   try {
-    act(() => setUiStylePrefs({ style: "lcd" }));
     const unmanaged = actor("alpha", { runtime_state_source: "terminal" });
     await render([unmanaged]);
     await act(async () => {
@@ -273,7 +264,6 @@ it("does not celebrate a quiet terminal signal expiring as completed work", asyn
 });
 
 it("keeps a running ring's phase across renders and realigns it when it reappears", async () => {
-  act(() => setUiStylePrefs({ style: "lcd" }));
   const originalTimeline = Object.getOwnPropertyDescriptor(document, "timeline");
   let timelineTime = 500;
   const motionListeners = new Set<EventListenerOrEventListenerObject>();
@@ -385,7 +375,6 @@ it("lists the hidden members in +N and opens the chosen one", async () => {
   await relayout(1);
   await act(async () => more()!.click());
   const list = document.body.querySelector<HTMLElement>(".lcd-members-popover");
-  expect(list?.hasAttribute("data-lcd-scope")).toBe(true);
   const listed = [...list!.querySelectorAll<HTMLButtonElement>("button")];
   expect(listed.map((button) => button.getAttribute("aria-label"))).toEqual([
     "Open terminal for beta",

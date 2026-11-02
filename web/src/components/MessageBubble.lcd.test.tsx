@@ -6,7 +6,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { MessageBubble } from "./MessageBubble";
 import type { LedgerEvent } from "../types";
-import { setUiStylePrefs } from "../utils/uiStyle";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
@@ -32,7 +31,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
-  setUiStylePrefs({ style: "classic" });
 });
 
 async function render(shown: LedgerEvent = event, readOnly = false, isHighlighted = false) {
@@ -59,7 +57,6 @@ async function render(shown: LedgerEvent = event, readOnly = false, isHighlighte
 }
 
 it("shows the message actions once, on the LCD head line", async () => {
-  setUiStylePrefs({ style: "lcd" });
   await render();
   const actions = host.querySelectorAll("[data-message-actions-inline]");
   expect(actions).toHaveLength(1);
@@ -71,7 +68,6 @@ const lcdCss = () =>
   readFileSync(fileURLToPath(new NodeURL("../styles/lcd.css", import.meta.url)), "utf8");
 
 it("outlines a jump target on the message box its row draws", async () => {
-  setUiStylePrefs({ style: "lcd" });
   await render(event, false, true);
   // Only the row draws the message box (its ::before, below the space above the
   // message), so the outline rule and the class must both be on the row.
@@ -95,14 +91,7 @@ it("separates messages with a line, without a ground or a hover tone", () => {
   expect(css).not.toMatch(/\.lcd-row:hover::before/);
 });
 
-it("keeps the classic actions in the footer", async () => {
-  await render();
-  expect(host.querySelectorAll("[data-message-actions-inline]")).toHaveLength(1);
-  expect(host.querySelector(".lcd-row-head")).toBeNull();
-});
-
 it("sets the user's own messages on the reader's side, except in a read-only exhibit", async () => {
-  setUiStylePrefs({ style: "lcd" });
   const fromUser: LedgerEvent = { ...event, by: "user", data: { ...event.data, to: ["claude"] } };
   await render(fromUser);
   const row = host.querySelector("[data-lcd-row]");

@@ -19,29 +19,26 @@ afterEach(async () => {
   host.remove();
 });
 
-async function render(scoped: boolean) {
+async function render() {
   await act(async () => {
     root.render(
-      <div data-lcd-scope={scoped || undefined}>
-        <InfoPopover isDark={false} title="Access" content="Who can sign in">
-          {(getReferenceProps, setReference) => (
-            <button type="button" ref={setReference as never} {...getReferenceProps()}>
-              Help
-            </button>
-          )}
-        </InfoPopover>
-      </div>,
+      <InfoPopover isDark={false} title="Access" content="Who can sign in">
+        {(getReferenceProps, setReference) => (
+          <button type="button" ref={setReference as never} {...getReferenceProps()}>
+            Help
+          </button>
+        )}
+      </InfoPopover>,
     );
   });
 }
 
-it.each([true, false])("inherits its trigger's LCD scope: %s", async (scoped) => {
-  await render(scoped);
+it("opens with its title and closes from its trigger", async () => {
+  await render();
   const trigger = host.querySelector<HTMLButtonElement>("button")!;
   await act(async () => trigger.click());
   const popup = document.querySelector<HTMLElement>("[data-settings-info-popover]")!;
   expect(popup.textContent).toContain("Who can sign in");
-  expect(popup.hasAttribute("data-lcd-scope")).toBe(scoped);
   expect(document.getElementById(popup.getAttribute("aria-labelledby")!)?.textContent).toBe(
     "Access",
   );

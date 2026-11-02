@@ -68,11 +68,11 @@ it("keeps orientation and warnings visible while the summary opens on demand", (
   expect(host.textContent).not.toContain("Blocked");
   expect(host.textContent).not.toContain("Waiting user");
   expect(host.textContent).toContain("Summary needs refresh");
-  expect(host.textContent).toContain("Updated");
   expect(button("Working summary").getAttribute("aria-expanded")).toBe("false");
   expect(host.textContent).not.toContain("Full working summary");
 
   act(() => button("Working summary").click());
+  expect(host.textContent).toContain("Updated");
   expect(button("Working summary").getAttribute("aria-expanded")).toBe("true");
   expect(host.textContent).toContain("Full working summary");
   expect(host.textContent).toContain("Preserve runtime history");

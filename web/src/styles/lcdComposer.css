@@ -1,8 +1,4 @@
-/* LCD composer actions use visible, grouped boundaries. Classic is unchanged. */
-[data-voice-language-chevron] {
-  display: none;
-}
-
+/* Composer actions use visible, grouped boundaries. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-language-chevron] {
   display: block;
   margin-left: 0.25rem;
@@ -172,7 +168,7 @@
 }
 
 /* The pixel font runs wider than the classic one; the language list fits its longest name. */
-:root[data-ui-style="lcd"] [data-lcd-scope][data-voice-language-menu] {
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-voice-language-menu] {
   width: max-content;
   max-width: calc(100vw - 1rem);
 }

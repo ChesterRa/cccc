@@ -22,9 +22,8 @@ function getMotionState() {
 function TypingText({ words, focused }: { words: string[]; focused: boolean }) {
   const motion = useSyncExternalStore(subscribeMotionState, getMotionState, () => "reduced");
   const stylePrefs = useUiStylePrefs();
-  // The LCD look's own motion switch stills the hint as the system setting does.
-  const still =
-    motion === "reduced" || (stylePrefs.style === "lcd" && stylePrefs.lcdMotion === "off");
+  // The Motion choice stills the hint as the system setting does.
+  const still = motion === "reduced" || stylePrefs.lcdMotion === "off";
   const [frame, setFrame] = useState({ index: 0, count: 0, deleting: false });
   const characters = Array.from(words[frame.index]);
   const playing = !focused && motion === "running" && !still;

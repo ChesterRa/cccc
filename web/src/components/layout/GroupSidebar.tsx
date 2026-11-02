@@ -328,7 +328,6 @@ export function GroupSidebar({
     <>
       <aside
         ref={sidebarRef}
-        data-lcd-scope
         className={classNames(
           "h-full min-h-0 flex flex-col glass-sidebar",
           "fixed inset-y-0 left-0 z-50 md:relative md:inset-auto md:z-40",
@@ -522,7 +521,7 @@ export function GroupSidebar({
                 {t("noGroupsDescription")}
               </div>
               {!readOnly && onCreateGroup && (
-                <Button type="button" onClick={onCreateGroup}>
+                <Button type="button" className="w-full whitespace-normal" onClick={onCreateGroup}>
                   {t("createFirstGroup")}
                 </Button>
               )}

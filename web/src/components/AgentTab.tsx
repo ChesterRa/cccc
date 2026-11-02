@@ -23,7 +23,6 @@ import {
 } from "../types";
 import { useActorDisplayState } from "../hooks/useActorDisplayState";
 import { classNames } from "../utils/classNames";
-import { useLcdStyle } from "../utils/uiStyle";
 import { formatFullTime, formatTime } from "../utils/time";
 import {
   useGroupStore,
@@ -162,7 +161,6 @@ export function AgentTab({
   onStatusChange,
 }: AgentTabProps) {
   const { t, i18n } = useTranslation("actors");
-  const lcd = useLcdStyle();
   // Derived state (must be defined before refs that use them)
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
@@ -415,33 +413,6 @@ export function AgentTab({
             : "waiting"
         : workingState,
   });
-  const statusTone = (() => {
-    switch (runtimeIndicator.tone) {
-      case "stop":
-        return {
-          dotClass: runtimeIndicator.dotClass,
-          pulse: runtimeIndicator.pulse,
-          strongPulse: runtimeIndicator.strongPulse,
-          badgeClass: "bg-slate-500/10 text-slate-500 dark:text-slate-300",
-        };
-      case "working":
-        return {
-          dotClass: runtimeIndicator.dotClass,
-          pulse: runtimeIndicator.pulse,
-          strongPulse: runtimeIndicator.strongPulse,
-          badgeClass: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
-        };
-      case "run":
-      default:
-        return {
-          dotClass: runtimeIndicator.dotClass,
-          pulse: runtimeIndicator.pulse,
-          strongPulse: runtimeIndicator.strongPulse,
-          badgeClass: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
-        };
-    }
-  })();
-
   const runtimeStatusText = (() => {
     if (isNativeSession) return t(nativeStatusKey);
     if (isEventActor)
@@ -808,45 +779,30 @@ export function AgentTab({
               Boolean(navigation) && "basis-full min-h-8 @min-[480px]/actor-view:basis-auto",
             )}
           >
-            <div
-              className={classNames("relative shrink-0", lcd ? "h-7 w-7" : "h-5 w-5")}
-              title={compactIdentityTitle}
-            >
+            <div className="relative h-7 w-7 shrink-0" title={compactIdentityTitle}>
               <span aria-hidden="true">
                 <ActorAvatar
                   avatarUrl={actor.avatar_url || undefined}
                   runtime={actor.runtime}
                   title={actor.title || actor.id}
                   isDark={isDark}
-                  sizeClassName={lcd ? "h-7 w-7" : "h-5 w-5"}
-                  textClassName={lcd ? "text-[0.625rem]" : "text-[10px]"}
-                  className={lcd ? "lcd-tile" : "!border-0 !shadow-none"}
+                  sizeClassName="h-7 w-7"
+                  textClassName="text-[0.625rem]"
+                  className="lcd-tile"
                 />
               </span>
-              {!lcd ? (
-                <span
-                  className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-[var(--color-bg-secondary)] ${statusTone.dotClass}`}
-                  role="img"
-                  aria-label={runtimeStatusText}
-                  title={[runtimeStatusText, !isEventActor && actor.effective_working_reason]
-                    .filter(Boolean)
-                    .join("\n")}
-                />
-              ) : null}
             </div>
-            {lcd ? (
-              <span
-                className="lcd-group-symbol"
-                data-lcd-shape={lcdStatusShape}
-                role="img"
-                aria-label={runtimeStatusText}
-                title={[runtimeStatusText, !isEventActor && actor.effective_working_reason]
-                  .filter(Boolean)
-                  .join("\n")}
-              >
-                {lcdStatusText}
-              </span>
-            ) : null}
+            <span
+              className="lcd-group-symbol"
+              data-lcd-shape={lcdStatusShape}
+              role="img"
+              aria-label={runtimeStatusText}
+              title={[runtimeStatusText, !isEventActor && actor.effective_working_reason]
+                .filter(Boolean)
+                .join("\n")}
+            >
+              {lcdStatusText}
+            </span>
             <span
               id={`runtime-inspector-${groupId}-${actor.id}`}
               className="min-w-0 flex-1 truncate font-semibold"
@@ -917,38 +873,8 @@ export function AgentTab({
                 isDark={isDark}
                 sizeClassName={isSmallScreen ? "h-8 w-8" : "h-9 w-9"}
                 textClassName="text-xs"
-                className={
-                  lcd
-                    ? "lcd-tile"
-                    : classNames(
-                        "shadow-[0_14px_28px_-20px_rgba(15,23,42,0.68)]",
-                        isDark ? "bg-slate-900" : "bg-white",
-                      )
-                }
+                className="lcd-tile"
               />
-              {!lcd ? (
-                <span
-                  className={classNames(
-                    "absolute -bottom-0.5 -right-0.5 inline-flex h-2.5 w-2.5 rounded-full ring-2 transition-all",
-                    isDark ? "ring-slate-950" : "ring-white",
-                    statusTone.dotClass,
-                  )}
-                >
-                  {statusTone.pulse && (
-                    <span
-                      className={classNames(
-                        "absolute inset-[-3px] rounded-full motion-reduce:animate-none",
-                        statusTone.strongPulse
-                          ? "animate-ping bg-emerald-300/35"
-                          : "animate-pulse bg-current/20",
-                      )}
-                    />
-                  )}
-                  {statusTone.strongPulse && (
-                    <span className="absolute inset-[-7px] rounded-full border border-emerald-300/35 animate-ping motion-reduce:animate-none [animation-duration:1.6s]" />
-                  )}
-                </span>
-              ) : null}
             </div>
 
             <div className="flex min-w-0 items-center gap-3">
@@ -973,23 +899,15 @@ export function AgentTab({
                     "text-[var(--color-text-tertiary)]",
                   )}
                 >
-                  {lcd ? (
-                    <>
-                      {rtInfo?.label || t("custom")} •{" "}
-                      <span
-                        className="lcd-group-symbol"
-                        data-lcd-shape={lcdStatusShape}
-                        aria-hidden="true"
-                      >
-                        {lcdStatusText}
-                      </span>{" "}
-                      {runtimeStatusText}
-                    </>
-                  ) : (
-                    <>
-                      {rtInfo?.label || t("custom")} • {runtimeStatusText}
-                    </>
-                  )}
+                  {rtInfo?.label || t("custom")} •{" "}
+                  <span
+                    className="lcd-group-symbol"
+                    data-lcd-shape={lcdStatusShape}
+                    aria-hidden="true"
+                  >
+                    {lcdStatusText}
+                  </span>{" "}
+                  {runtimeStatusText}
                 </div>
                 {/* Mobile-only: condensed single-line agent state */}
                 {(!isEventActor || agentState) && (

@@ -14,7 +14,6 @@ import {
 import type { Task, TaskChecklistItem, TaskWaitingOn } from "../../../types";
 import { formatFullTime, formatTime } from "../../../utils/time";
 import { classNames } from "../../../utils/classNames";
-import { useLcdStyle } from "../../../utils/uiStyle";
 import {
   type TaskAttemptVerdict,
   type TaskTypeDefinition,
@@ -115,7 +114,6 @@ export function TaskEditorPanel({
   onAddSubtask,
 }: TaskEditorPanelProps) {
   const { i18n } = useTranslation("modals");
-  const lcd = useLcdStyle();
   if (taskEditorMode === "none" || !taskDraft) {
     return null;
   }
@@ -161,7 +159,7 @@ export function TaskEditorPanel({
     { value: "done", label: tr("context.done", "Done") },
     { value: "archived", label: tr("context.archived", "Archived") },
   ];
-  const lcdStatusChoices =
+  const availableStatusChoices =
     taskDraft.status && !statusChoices.some((item) => item.value === taskDraft.status)
       ? [...statusChoices, { value: taskDraft.status, label: taskDraft.status }]
       : statusChoices;
@@ -293,40 +291,26 @@ export function TaskEditorPanel({
         )}
 
         <div className="grid gap-3 sm:grid-cols-2">
-          {lcd ? (
-            <div className="min-w-0 sm:col-span-2">
-              <span className={labelClass}>{tr("context.status", "Status")}</span>
-              <div
-                role="group"
-                aria-label={tr("context.status", "Status")}
-                data-task-editor-status=""
-              >
-                {lcdStatusChoices.map((item) => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    aria-pressed={taskDraft.status === item.value}
-                    disabled={locked}
-                    onClick={() => update({ status: item.value })}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
+          <div className="min-w-0 sm:col-span-2">
+            <span className={labelClass}>{tr("context.status", "Status")}</span>
+            <div
+              role="group"
+              aria-label={tr("context.status", "Status")}
+              data-task-editor-status=""
+            >
+              {availableStatusChoices.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  aria-pressed={taskDraft.status === item.value}
+                  disabled={locked}
+                  onClick={() => update({ status: item.value })}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
-          ) : (
-            field(
-              tr("context.status", "Status"),
-              <SelectCombobox
-                items={statusChoices}
-                value={taskDraft.status}
-                onChange={(value) => update({ status: value })}
-                ariaLabel={tr("context.status", "Status")}
-                className={ui.inputClass}
-                disabled={locked}
-              />,
-            )
-          )}
+          </div>
           {field(
             tr("context.assignee", "Assignee"),
             <SelectCombobox
@@ -371,12 +355,10 @@ export function TaskEditorPanel({
               disabled={locked}
             />,
           )}
-          {lcd ? handoffField : null}
-          {lcd ? (
-            <div data-task-editor-blocked="" className="min-w-0 sm:col-span-2">
-              {blockedField}
-            </div>
-          ) : null}
+          {handoffField}
+          <div data-task-editor-blocked="" className="min-w-0 sm:col-span-2">
+            {blockedField}
+          </div>
         </div>
 
         {field(
@@ -456,9 +438,7 @@ export function TaskEditorPanel({
                   searchable
                 />,
               )}
-              {!lcd ? handoffField : null}
             </div>
-            {!lcd ? blockedField : null}
             <TaskTypeSection
               tr={tr}
               ui={ui}
@@ -469,11 +449,10 @@ export function TaskEditorPanel({
               locked={locked}
               onTaskTypeChange={onTaskTypeChange}
             />
-            {lcd ? taskTimes : null}
+            {taskTimes}
           </div>
         </details>
 
-        {!lcd ? taskTimes : null}
         {/* Why Delete is not offered: read when looked for, not kept on screen. */}
         {!isCreate && selectedTask && selectedTaskDeleteHint ? (
           <p className={classNames("text-xs", ui.mutedTextClass)}>{selectedTaskDeleteHint}</p>

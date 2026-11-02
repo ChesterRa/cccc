@@ -1021,14 +1021,9 @@ export function ProjectedBrowserSurfacePanel({
     "relative flex flex-col overflow-hidden outline-none",
     chromeMode === "embedded"
       ? "rounded-none"
-      : classNames(
-          "rounded-3xl border",
-          isDark
-            ? "border-white/10 bg-slate-950/80"
-            : "border-black/10 bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fb_100%)]",
-        ),
+      : "border border-[var(--lcd-rule)] bg-[var(--lcd-bg)]",
     isExpanded
-      ? "h-full w-full shadow-2xl sm:h-[min(92dvh,980px)] sm:w-[min(96vw,1600px)]"
+      ? "h-full w-full sm:h-[min(92dvh,980px)] sm:w-[min(96vw,1600px)]"
       : viewportClassName || "flex-1 min-h-0",
   );
 

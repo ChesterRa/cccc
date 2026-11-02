@@ -273,7 +273,6 @@ function LocalSessionsDialog({
   };
   return (
     <ModalFrame
-      lcdScope
       isDark={isDark}
       onClose={onClose}
       titleId="local-sessions-title"

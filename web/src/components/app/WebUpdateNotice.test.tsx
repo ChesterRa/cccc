@@ -21,7 +21,6 @@ it("only reloads after an explicit confirmation and lets the user defer", async 
     await act(async () => root.render(<WebUpdateNotice onDismiss={dismiss} onReload={reload} />));
     const buttons = host.querySelectorAll("button");
     expect(host.querySelector('[role="status"]')?.textContent).toBe("webUpdateAvailable");
-    expect(host.querySelector("[data-lcd-scope]")).not.toBeNull();
     expect(reload).not.toHaveBeenCalled();
     await act(async () => buttons[0].click());
     expect(confirm).toHaveBeenCalledWith("webUpdateReloadConfirm");

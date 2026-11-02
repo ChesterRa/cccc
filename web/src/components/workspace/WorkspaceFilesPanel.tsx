@@ -260,7 +260,6 @@ function FilesPanel({ files, isDark, readOnly, onClose, onAttachPath, onPinPath 
               dropTarget={actions.dropTarget}
               rows={files.rows}
               selectedPath={files.selectedPath}
-              isDark={isDark}
               onToggleDirectory={files.toggleDirectory}
               onOpenFile={openFile}
               onRetryDirectory={files.retryDirectory}

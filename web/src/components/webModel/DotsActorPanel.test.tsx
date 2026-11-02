@@ -732,7 +732,7 @@ it.each([
   },
 );
 
-it("shows the current stage and spins only while sending notifications", async () => {
+it("shows the current stage and its working mark only while sending notifications", async () => {
   const cases = [
     ["pending", "notify", false],
     ["delivering", "notify", true],
@@ -749,13 +749,16 @@ it("shows the current stage and spins only while sending notifications", async (
     else await act(async () => vi.advanceTimersByTimeAsync(2_000));
     const current = host.querySelector('li[aria-current="step"]')!;
     expect(current.getAttribute("data-step")).toBe(stage);
-    expect(Boolean(current.querySelector(".animate-spin"))).toBe(spinning);
-    if (spinning)
-      expect(current.querySelector(".animate-spin")?.getAttribute("class")).toContain(
-        "motion-reduce:animate-none",
-      );
-    else if (phase !== "interrupted" && phase !== "failed")
+    if (spinning) {
+      // The working mark appears after a short delay, keeping brief sends still.
+      await act(async () => vi.advanceTimersByTimeAsync(250));
+      expect(current.querySelector(".lcd-spinner[data-shown]")).not.toBeNull();
+    } else if (phase !== "interrupted" && phase !== "failed") {
+      expect(current.querySelector(".lcd-spinner")).toBeNull();
       expect(current.querySelector("svg")?.getAttribute("class")).toContain("clock");
+    } else {
+      expect(current.querySelector(".lcd-spinner")).toBeNull();
+    }
     if (phase === "delivering") expect(current.textContent).toContain("nativeActor.steps.sending");
     if (phase === "failed") {
       expect(current.textContent).toContain("nativeActor.failed");

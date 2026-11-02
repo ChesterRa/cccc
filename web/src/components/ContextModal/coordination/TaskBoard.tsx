@@ -4,7 +4,6 @@ import type { SensorDescriptor, SensorOptions } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import type { TaskColumnPages } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
-import { useLcdStyle } from "../../../utils/uiStyle";
 import { PlusIcon } from "../../Icons";
 import type {
   BoardColumns,
@@ -104,7 +103,6 @@ export function TaskBoard({
   onLoadMore,
   onRetryLoad,
 }: TaskBoardProps) {
-  const lcd = useLcdStyle();
   // The column jump keys scroll within this element.
   const boardRef = useRef<HTMLDivElement>(null);
   const hasActiveFilters = Boolean(
@@ -119,7 +117,7 @@ export function TaskBoard({
   const showBoard = !showEmpty && (hasRenderedTasks || (!taskLoading && !taskLoadError));
   const emptyBoard =
     showEmpty && !hasActiveFilters && !hasArchivedTasks && Number(tasksSummary.total || 0) === 0;
-  useTaskKeysPlacement(boardRef, lcd && showBoard);
+  useTaskKeysPlacement(boardRef, showBoard);
 
   const grid = showBoard ? (
     <TaskBoardGrid
@@ -148,22 +146,6 @@ export function TaskBoard({
   return (
     <section data-taskboard className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-3">
       <div className="flex flex-col gap-3">
-        {/* The tab already names the board; LCD keeps New task on the toolbar row. */}
-        {lcd ? null : (
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-lg font-semibold text-[var(--color-text-primary)]">
-              {tr("context.tasks", "Tasks")}
-            </div>
-            <button
-              type="button"
-              onClick={() => onOpenCreate("planned")}
-              className={ui.buttonPrimaryClass}
-            >
-              {tr("context.newTask", "New task")}
-            </button>
-          </div>
-        )}
-
         <TaskBoardToolbar
           tr={tr}
           ui={ui}
@@ -186,21 +168,19 @@ export function TaskBoard({
           onClearFilters={onClearFilters}
           onArchivedExpandedChange={onArchivedExpandedChange}
           actions={
-            lcd ? (
-              <button
-                type="button"
-                onClick={() => onOpenCreate("planned")}
-                className={ui.buttonPrimaryClass}
-                aria-label={tr("context.newTask", "New task")}
-                data-taskboard-new
-              >
-                <PlusIcon size={16} aria-hidden="true" />
-                <span data-taskboard-new-label>{tr("context.newTask", "New task")}</span>
-              </button>
-            ) : undefined
+            <button
+              type="button"
+              onClick={() => onOpenCreate("planned")}
+              className={ui.buttonPrimaryClass}
+              aria-label={tr("context.newTask", "New task")}
+              data-taskboard-new
+            >
+              <PlusIcon size={16} aria-hidden="true" />
+              <span data-taskboard-new-label>{tr("context.newTask", "New task")}</span>
+            </button>
           }
           jump={
-            lcd && showBoard ? (
+            showBoard ? (
               <TaskColumnJump
                 boardRef={boardRef}
                 columnPages={columnPages}
@@ -241,30 +221,16 @@ export function TaskBoard({
             ) : emptyBoard ? (
               tr("context.noTasksYet", "No tasks yet")
             ) : (
-              <>
-                {tr("context.noMatchingTasks", "No tasks match the current filters")}
-                {/* LCD keeps Clear on the toolbar, in view above this notice. */}
-                {hasActiveFilters && !lcd ? (
-                  <button
-                    type="button"
-                    onClick={onClearFilters}
-                    className={classNames(ui.buttonSecondaryClass, "mt-3 block")}
-                  >
-                    {tr("context.clearFilters", "Clear filters")}
-                  </button>
-                ) : null}
-              </>
+              <>{tr("context.noMatchingTasks", "No tasks match the current filters")}</>
             )}
           </div>
         ) : null}
 
-        {grid && lcd ? (
+        {grid ? (
           <div ref={boardRef} data-taskboard-columns>
             {grid}
           </div>
-        ) : (
-          grid
-        )}
+        ) : null}
       </div>
     </section>
   );

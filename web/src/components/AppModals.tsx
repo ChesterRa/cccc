@@ -2,6 +2,7 @@ import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
 // AppModals renders all modal components in one place.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { LcdSpinner } from "./LcdSpinner";
 import { SearchModal } from "./SearchModal";
 import { MobileMenuSheet } from "./layout/MobileMenuSheet";
 import { CreateGroupModal } from "./modals/CreateGroupModal";
@@ -87,14 +88,13 @@ function sortPresentationSlotIds(slotIds: string[]): string[] {
   });
 }
 
-function LazyModalFallback({ isDark: _ }: { isDark?: boolean }) {
+function LazyModalFallback() {
+  const { t } = useTranslation("common");
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
-      <div className="rounded-2xl px-5 py-4 text-sm shadow-xl glass-modal min-w-[120px] flex items-center justify-center font-medium text-[var(--color-text-secondary)]">
-        <span className="flex items-center gap-2">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-text-muted)] border-t-transparent" />
-          <span>Loading...</span>
-        </span>
+    <div className="fixed inset-0 z-[90] flex items-center justify-center glass-overlay">
+      <div className="flex min-w-[120px] items-center justify-center gap-2 px-5 py-4 text-sm font-medium text-[var(--color-text-secondary)] glass-modal">
+        <LcdSpinner className="h-4 w-4" />
+        <span>{t("loading")}</span>
       </div>
     </div>
   );
@@ -1304,7 +1304,7 @@ export function AppModals({
       />
 
       {presentationViewerSlotIds.length > 0 ? (
-        <Suspense fallback={<LazyModalFallback isDark={isDark} />}>
+        <Suspense fallback={<LazyModalFallback />}>
           {presentationViewerSlotIds.map((slotId) => {
             const slot = findPresentationSlot(groupPresentation, slotId);
             const version = String(slot?.card?.published_at || "empty").trim() || "empty";
@@ -1379,7 +1379,7 @@ export function AppModals({
       ) : null}
 
       {modals.context ? (
-        <Suspense fallback={<LazyModalFallback isDark={isDark} />}>
+        <Suspense fallback={<LazyModalFallback />}>
           <ContextModal
             isOpen={modals.context}
             onClose={() => closeModal("context")}
@@ -1396,7 +1396,7 @@ export function AppModals({
       ) : null}
 
       {modals.settings ? (
-        <Suspense fallback={<LazyModalFallback isDark={isDark} />}>
+        <Suspense fallback={<LazyModalFallback />}>
           <SettingsModal
             codexVoice={codexVoice}
             isOpen={modals.settings}

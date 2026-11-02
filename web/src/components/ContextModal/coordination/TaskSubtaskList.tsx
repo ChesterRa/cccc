@@ -1,13 +1,7 @@
 import { PlusIcon } from "../../Icons";
 import type { Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
-import {
-  statusTone,
-  taskStatus,
-  taskStatusLabel,
-  taskTitle,
-  type ContextTranslator,
-} from "../model";
+import { taskStatus, taskStatusLabel, taskTitle, type ContextTranslator } from "../model";
 import type { ContextModalUi } from "../ui";
 
 export function TaskSubtaskList({
@@ -80,10 +74,7 @@ export function TaskSubtaskList({
                     </span>
                     <span
                       data-task-subtask-status=""
-                      className={classNames(
-                        "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                        statusTone(status),
-                      )}
+                      className="shrink-0 px-2 py-0.5 text-[11px] font-medium"
                     >
                       {taskStatusLabel(status, tr)}
                     </span>

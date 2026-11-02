@@ -21,7 +21,6 @@ import type {
   ReplyState,
 } from "../../features/pendingReplies/types";
 import { MAX_REPLY_SCALARS } from "../../features/pendingReplies/types";
-import { useLcdStyle } from "../../utils/uiStyle";
 
 /** A controlled draft survives a virtualized message row being unmounted. */
 export function PendingReplyCard({
@@ -62,7 +61,6 @@ export function PendingReplyCard({
   const groupName = useId();
   const textId = useId();
   const onEditingChange = useContext(PendingReplyEditingContext);
-  const lcd = useLcdStyle();
   const editing = useRef(false);
   const options = question?.options ?? [];
   const other = options.length === 0 || draft.selection?.kind === "other";
@@ -93,7 +91,7 @@ export function PendingReplyCard({
     const max = Number.parseFloat(style.maxHeight);
     node.style.height = `${Number.isFinite(max) ? Math.min(natural, max) : natural}px`;
   }, []);
-  useLayoutEffect(fitEditor, [fitEditor, draft.text, other, lcd, state]);
+  useLayoutEffect(fitEditor, [fitEditor, draft.text, other, state]);
   // A narrower box wraps the same text onto more lines (a turned phone, a side panel),
   // so it fits again when its width changes, and once the layout and fonts settle after
   // it appears; its own height changes are ignored.
@@ -125,7 +123,7 @@ export function PendingReplyCard({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [fitEditor, other, lcd, state]);
+  }, [fitEditor, other, state]);
   if (readOnly) return null;
 
   if (state !== "pending") {
@@ -138,8 +136,8 @@ export function PendingReplyCard({
         <p>
           {state === "answered" && answeredOption
             ? t("pendingReply.answeredChoice", {
-                // LCD keeps the options listed above, so the letter is enough.
-                choice: lcd ? answeredOption.id : `${answeredOption.id}. ${answeredOption.label}`,
+                // The options stay listed above, so the letter is enough.
+                choice: answeredOption.id,
               })
             : t(`pendingReply.${state}`)}
         </p>
@@ -185,9 +183,9 @@ export function PendingReplyCard({
     <Button type="button" disabled={sending} onClick={onRetry}>
       {t("pendingReply.retrySame")}
     </Button>
-  ) : lcd ? (
-    // LCD preview: beside a narrow answer box the key keeps only its send mark
-    // (lcd.css); the words stay its name and tooltip.
+  ) : (
+    // Beside a narrow answer box the key keeps only its send mark (lcd.css); the words
+    // stay its name and tooltip.
     <Button
       type="submit"
       disabled={!answer || sending || checking}
@@ -205,10 +203,6 @@ export function PendingReplyCard({
         )}
       </span>
       <span data-ask-send-label>{sendLabel}</span>
-    </Button>
-  ) : (
-    <Button type="submit" disabled={!answer || sending || checking}>
-      {sendLabel}
     </Button>
   );
 
@@ -234,14 +228,10 @@ export function PendingReplyCard({
   );
 
   // Each radio is disabled on its own, so the fieldset never disables the action
-  // that the LCD preview places in its last row.
+  // placed in its last row.
   const choices = options.length > 0 && (
     <fieldset className="min-w-0 space-y-2">
-      <legend
-        className={lcd ? "sr-only" : "mb-2 text-sm font-semibold text-[var(--color-text-primary)]"}
-      >
-        {t("pendingReply.choose")}
-      </legend>
+      <legend className="sr-only">{t("pendingReply.choose")}</legend>
       {options.map((option, index) => {
         const selected = draft.selection?.kind === "option" && draft.selection.id === option.id;
         const recommended = question?.recommended?.option_id === option.id;
@@ -291,8 +281,8 @@ export function PendingReplyCard({
           </label>
         );
       })}
-      {lcd && !other ? (
-        // LCD preview: the action shares the last row and wraps below it when the row is short.
+      {!other ? (
+        // The action shares the last row and wraps below it when the row is short.
         <div className="lcd-ask-other">
           {otherChoice}
           <div className="lcd-ask-action">{action}</div>
@@ -307,7 +297,7 @@ export function PendingReplyCard({
     <Textarea
       ref={editorRef}
       id={textId}
-      rows={lcd ? 2 : 3}
+      rows={2}
       className="max-h-[min(12rem,40dvh)] resize-none"
       value={draft.text}
       disabled={locked}
@@ -328,40 +318,21 @@ export function PendingReplyCard({
       data-pending-reply-quiet={quiet || undefined}
       onSubmit={submit}
     >
-      {lcd && !quiet ? (
-        // LCD preview: a small title set into the frame, in the product's existing words.
+      {!quiet ? (
+        // A small title set into the frame, in the product's existing words.
         // The button says when the answer is being sent; the title does not repeat it.
         <p className="lcd-ask-title">{t("filterWaitingForYou")}</p>
       ) : null}
-      {lcd ? (
-        // LCD preview: the action sits beside "Other" (above) or beside the answer box.
-        <>
-          {choices}
-          {other && (
-            <div className="lcd-ask-answer">
-              <label htmlFor={textId} className="sr-only">
-                {t("pendingReply.answer")}
-              </label>
-              {editor}
-              {action}
-            </div>
-          )}
-        </>
-      ) : (
-        <>
-          {choices}
-          {other && (
-            <div className={options.length ? "mt-3" : ""}>
-              <label
-                htmlFor={textId}
-                className="mb-1 block text-sm font-medium text-[var(--color-text-primary)]"
-              >
-                {t("pendingReply.answer")}
-              </label>
-              {editor}
-            </div>
-          )}
-        </>
+      {/* The action sits beside "Other" (above) or beside the answer box. */}
+      {choices}
+      {other && (
+        <div className="lcd-ask-answer">
+          <label htmlFor={textId} className="sr-only">
+            {t("pendingReply.answer")}
+          </label>
+          {editor}
+          {action}
+        </div>
       )}
       {error && (
         <p className="mt-2 whitespace-pre-wrap text-sm text-[var(--destructive)]" role="alert">
@@ -378,7 +349,6 @@ export function PendingReplyCard({
           {t("pendingReply.tooLong", { count: textLength, limit: MAX_REPLY_SCALARS })}
         </p>
       )}
-      {lcd ? null : <div className="mt-3 flex justify-end">{action}</div>}
     </form>
   );
 }

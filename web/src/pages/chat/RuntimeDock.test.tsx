@@ -61,7 +61,7 @@ async function render(
   });
 }
 const badge = () => host.querySelector<HTMLElement>('span[title*="unread mail"]');
-const activity = () => host.querySelector(".runtime-dock-ring__activity");
+const activity = () => host.querySelector('.lcd-member-ring[data-ring="moving"]');
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -106,12 +106,9 @@ it("uses refreshed unread counts instead of stale loaded read markers", async ()
   expect(badge()).toBeNull();
 });
 
-it("keeps the ring size stable as work starts, idles, needs attention, and stops", async () => {
+it("moves the ring only while work is in progress", async () => {
   for (const state of ["working", "idle", "stuck", "stopped", "working"] as const) {
     await render({ effective_working_state: state, running: state !== "stopped" });
-    const ring = host.querySelector(".runtime-dock-ring");
-    expect(ring?.getAttribute("width")).toBe("44");
-    expect(ring?.getAttribute("height")).toBe("44");
     expect(Boolean(activity())).toBe(state === "working");
   }
 });
@@ -120,6 +117,8 @@ it("shows no persistent time labels or elapsed-time timers, including for idle A
   for (const state of ["working", "idle", "stopped"] as const) {
     await render({ effective_working_state: state, running: state !== "stopped" });
     expect(host.textContent).not.toMatch(/\d+[mh]/);
+    // A finished turn's brief light is the only timer, and it ends on its own.
+    await act(async () => vi.advanceTimersByTime(300));
     expect(vi.getTimerCount()).toBe(0);
   }
 });

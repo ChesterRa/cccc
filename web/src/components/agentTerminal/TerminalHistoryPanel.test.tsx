@@ -60,7 +60,7 @@ describe("TerminalHistoryPanel", () => {
       expect.objectContaining({ before: null, stripAnsi: true }),
     );
     expect(host.querySelector("pre")?.textContent).toBe("newest output");
-    expect(host.querySelector('[role="dialog"][data-lcd-scope]')).not.toBeNull();
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
     expect(host.querySelector("button[data-lcd-key]")?.textContent).toBe("historyLoadOlder");
 
     await act(async () => root.unmount());

@@ -4,8 +4,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { Task } from "../../../types";
-import { setUiStylePrefs } from "../../../utils/uiStyle";
-import { createContextModalUi } from "../ui";
 import { TaskCard } from "./TaskCard";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ i18n: { language: "en" } }) }));
@@ -19,7 +17,6 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  setUiStylePrefs({ style: "lcd" });
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -28,7 +25,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
-  setUiStylePrefs({ style: "classic" });
 });
 
 function render(task: Task, searchQuery = "", handlers: Partial<Record<string, () => void>> = {}) {
@@ -38,7 +34,6 @@ function render(task: Task, searchQuery = "", handlers: Partial<Record<string, (
         <TaskCard
           task={task}
           tr={tr}
-          ui={createContextModalUi(false)}
           syncBusy={false}
           searchQuery={searchQuery}
           selected={false}
@@ -125,13 +120,4 @@ it("writes attention as notes, with waiting on the user as the one tag", () => {
   expect(
     [...row.querySelectorAll("[data-task-note]")].map((el) => el.getAttribute("data-task-note")),
   ).toEqual(["assignee", "blocked", "waiting-user", "handoff", "priority", "parent"]);
-});
-
-it("keeps the classic drag handle free of the LCD hook", () => {
-  setUiStylePrefs({ style: "classic" });
-  render({ id: "T5", title: "Classic card", status: "planned" });
-  const handle = host.querySelector('button[title="Drag task"]');
-  expect(handle).not.toBeNull();
-  expect(handle?.hasAttribute("data-task-drag")).toBe(false);
-  expect(host.querySelector("[data-task-row]")).toBeNull();
 });

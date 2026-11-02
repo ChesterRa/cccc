@@ -2,7 +2,6 @@
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { setUiStylePrefs } from "../../../utils/uiStyle";
 import { createContextModalUi } from "../ui";
 import { TaskBoardToolbar } from "./TaskBoardToolbar";
 
@@ -13,7 +12,6 @@ let root: Root;
 let props: ComponentProps<typeof TaskBoardToolbar>;
 
 beforeEach(() => {
-  setUiStylePrefs({ style: "lcd" });
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -41,7 +39,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
-  setUiStylePrefs({ style: "classic" });
 });
 
 function render(extra: Partial<ComponentProps<typeof TaskBoardToolbar>> = {}) {
@@ -117,7 +114,7 @@ it("pads the scroller by the pinned layer's measured height until it goes", () =
     const phone = host.querySelector<HTMLElement>("[data-context-scroll]")!;
     expect(pinned(phone)).toBe("53px");
 
-    act(() => setUiStylePrefs({ style: "classic" }));
+    act(() => root.render(null));
     expect(pinned(phone)).toBe("");
   } finally {
     rect.mockRestore();

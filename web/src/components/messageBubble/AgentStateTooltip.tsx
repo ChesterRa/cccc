@@ -44,7 +44,6 @@ export function AgentStateTooltip({
       )}
       role="status"
       // The tooltip opens from a chat message, which takes the LCD look when it is on.
-      data-lcd-scope
     >
       <div className="flex items-center gap-2">
         <div className="text-xs font-semibold text-[var(--color-text-primary)]">

@@ -103,7 +103,7 @@ describe("header settings menu", () => {
     const panel = await openMenu();
     expect(
       panel.querySelectorAll('[data-appearance-preferences] [role="radiogroup"]'),
-    ).toHaveLength(5);
+    ).toHaveLength(7);
     expect(buttonByText(panel, "account")).toBeUndefined();
     expect(buttonByText(panel, "allSettings").disabled).toBe(true);
     await act(async () => root.render(<AppHeader {...props} canAccessAccount={false} />));

@@ -49,7 +49,6 @@ export function MediaLightbox({
           aria-describedby={hintId}
           onClick={(event) => event.stopPropagation()}
           // Attachments open from chat messages, which take the LCD look when it is on.
-          data-lcd-scope
           data-media-lightbox
         >
           <div

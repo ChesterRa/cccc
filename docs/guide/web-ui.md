@@ -64,16 +64,15 @@ URLs are released when a file is replaced or removed.
 On wider screens, an empty, unfocused composer cycles through four localized typing hints for tasks,
 Skills (`/` and `/install`), Actors (`@`), and Groups (`#`). Focusing the composer
 pauses the hint; any draft text hides it, and a suggested reply takes precedence.
-Reduced-motion preferences show a static hint, and hidden tabs pause the animation. In the LCD
-look, **Motion** set to **Off** also shows a static hint.
+Reduced-motion preferences show a static hint, and hidden tabs pause the animation. **Motion**
+set to **Off** under Appearance also shows a static hint.
 Hints are decorative and never become draft content or screen-reader live announcements.
 
-Classic message bubbles retain their framed surfaces. In the LCD look, a thin line starts each
-message that shows its author, and a dotted line from the text column starts a message that
-continues under the same header; your own messages sit on your side without a line. Space
-inside a message is reduced so that it reads apart from the space between messages, and a
-Markdown rule inside a message is a short mark in the text column. Messages have no background, and pointing at
-one changes only its actions. Sender, recipient routing, Mail mode
+A thin line starts each message that shows its author, and a dotted line from the text column
+starts a message that continues under the same header; your own messages sit on your side without
+a line. Space inside a message is reduced so that it reads apart from the space between messages,
+and a Markdown rule inside a message is a short mark in the text column. Messages have no
+background, and pointing at one changes only its actions. Sender, recipient routing, Mail mode
 and time share a compact header; delivery failures and reply/read status stay visible.
 A reply shows up to two lines of the message it answers; clicking or tapping that
 quote, or pressing Enter on it, opens the original message. On hover-capable desktop
@@ -125,15 +124,15 @@ Message identities, recipients, references, timestamps and actions follow the te
 answer: the sidebar's counts, including the archived Groups' total and the one on the phone's sidebar
 button, and the **Waiting for you** filter inside each Group. Those requests then read as ordinary
 messages: one without a question is answered with the message's **Reply**, and one that asks a
-question still shows it so you can answer in place, without the LCD style's Waiting for you frame.
+question still shows it so you can answer in place, without the Waiting for you frame.
 An answer already being sent keeps its form until it is confirmed, so it can be retried. Browser
 notifications keep their own switch under Settings → Notifications. The indicators show by default;
 the choice is saved in this browser.
-With **Style** set to **LCD**, **Message area width** sets how wide the conversation runs on
+**Message area width** under Appearance sets how wide the conversation runs on
 screens 768px and wider: **Medium** keeps a centered reading column, **Wide** gives tables and
 code more room and **Full** uses the whole chat area. The choice is saved in this browser. It
 does not appear on narrower screens, where the conversation already has no width limit.
-In the LCD look, the members' status sits in one centered row above the composer on desktop.
+The members' status sits in one centered row above the composer on desktop.
 Activity and feedback move in whole steps: a busy member's ring of pixel dots, three blinks when
 the page sees a member start needing attention, a pixel spinner for waits longer than a quarter of
 a second, and a block cursor that can follow a headless agent's live text, though not after code
@@ -1248,7 +1247,7 @@ For end-to-end setup details, see: `Group Space + NotebookLM`.
 
 Switch between Light, Dark, or Automatic theme. Automatic uses light mode from 07:00 to 19:00 in the browser's local time zone and dark mode otherwise.
 
-Dark mode uses charcoal surfaces with lighter panels and visible borders. Input outlines and keyboard focus are stronger than ordinary section dividers. Text size also scales side-panel titles, file paths and settings labels; terminal text keeps its own sizing.
+Both themes use the same pixel-screen look: light mode sets dark ink on a pale screen, dark mode light ink on a dark screen. Surfaces are separated by thin rules rather than shadows, and keyboard focus shows a dashed outline. **Body font** under Appearance sets most text in monospace, the default, or in a pixel font. Text size also scales side-panel titles, file paths and settings labels; terminal text keeps its own sizing.
 
 ## Mobile Usage
 

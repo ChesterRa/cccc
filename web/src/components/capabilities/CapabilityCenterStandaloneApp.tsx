@@ -20,10 +20,7 @@ export function CapabilityCenterStandaloneApp() {
   return (
     <Suspense
       fallback={
-        <div
-          className="min-h-dvh bg-[var(--color-bg-primary)] text-[var(--color-text-muted)]"
-          data-lcd-scope
-        />
+        <div className="min-h-dvh bg-[var(--color-bg-primary)] text-[var(--color-text-muted)]" />
       }
     >
       <CapabilityCenterWorkspace isOpen groupId={groupId} isDark={isDark} surface="page" />

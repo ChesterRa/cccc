@@ -3,7 +3,6 @@ import { useId, useState } from "react";
 import { ChevronDownIcon } from "../../Icons";
 import type { CoordinationBrief } from "../../../types";
 import { classNames } from "../../../utils/classNames";
-import { useLcdStyle } from "../../../utils/uiStyle";
 import { noteTimestamp, type BriefDraft, type ContextTranslator } from "../model";
 import type { ContextModalUi } from "../ui";
 
@@ -42,7 +41,6 @@ export function WorkingSummaryPanel({
   onBriefDraftChange,
 }: WorkingSummaryPanelProps) {
   const { i18n } = useTranslation("modals");
-  const lcd = useLcdStyle();
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const summaryId = useId();
   const summaryOpen = summaryExpanded || editingBrief;
@@ -78,13 +76,7 @@ export function WorkingSummaryPanel({
             </div>
             <div className="flex items-center gap-2">
               {editingBrief ? (
-                <span
-                  data-goal-unsaved
-                  className={classNames(
-                    "rounded-full px-2 py-0.5 text-xs font-medium",
-                    "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-                  )}
-                >
+                <span data-goal-unsaved className="text-xs font-medium">
                   {tr("context.unsaved", "Unsaved")}
                 </span>
               ) : null}
@@ -109,11 +101,7 @@ export function WorkingSummaryPanel({
                       : tr("context.saveBrief", "Save summary")}
                   </button>
                 </>
-              ) : lcd ? null : (
-                <button type="button" onClick={editBrief} className={ui.buttonPrimaryClass}>
-                  {tr("context.editButton", "Edit")}
-                </button>
-              )}
+              ) : null}
             </div>
           </div>
 
@@ -237,10 +225,7 @@ export function WorkingSummaryPanel({
                       <span
                         key={`${constraint}-${index}`}
                         data-goal-constraint
-                        className={classNames(
-                          "rounded-full px-2 py-1 text-xs",
-                          "glass-panel text-[var(--color-text-secondary)]",
-                        )}
+                        className="text-xs text-[var(--color-text-secondary)]"
                       >
                         {constraint}
                       </span>
@@ -255,131 +240,47 @@ export function WorkingSummaryPanel({
     </section>
   );
 
-  if (lcd) {
-    // One strip: the objective and focus beside the summary and edit keys, clamped
-    // until the summary opens, which shows them whole with the rest of the brief.
-    return (
-      <section data-goal-strip data-expanded={summaryOpen || undefined}>
-        <div data-goal-head>
-          {hasOverview ? (
-            <div data-goal-text>
-              <p data-goal-objective>{brief?.objective || tr("context.brief", "Summary")}</p>
-              {brief?.current_focus ? <p data-goal-focus>{brief.current_focus}</p> : null}
-              {brief?.project_brief_stale ? (
-                <button type="button" onClick={editBrief} data-goal-stale>
-                  {tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          <div data-goal-keys>
-            <button
-              type="button"
-              aria-expanded={summaryOpen}
-              aria-controls={summaryId}
-              onClick={() => {
-                if (!editingBrief) setSummaryExpanded((expanded) => !expanded);
-              }}
-              data-goal-summary-key
-            >
-              {tr("context.projectBrief", "Working summary")}
-              <ChevronDownIcon
-                size={14}
-                aria-hidden="true"
-                className={summaryOpen ? "rotate-180" : ""}
-              />
-            </button>
-            {editingBrief ? null : (
-              <button type="button" onClick={editBrief} data-goal-edit-key>
-                {tr("context.editButton", "Edit")}
-              </button>
-            )}
-          </div>
-        </div>
-        {summarySection}
-      </section>
-    );
-  }
-
+  // One strip: the objective and focus beside the summary and edit keys, clamped
+  // until the summary opens, which shows them whole with the rest of the brief.
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <section data-goal-strip data-expanded={summaryOpen || undefined}>
+      <div data-goal-head>
         {hasOverview ? (
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0 flex-1">
-              <div
-                className={classNames("text-lg font-semibold", "text-[var(--color-text-primary)]")}
-              >
-                {brief?.objective || tr("context.brief", "Summary")}
-              </div>
-              {brief?.current_focus ? (
-                <div className={classNames("mt-1 text-sm", ui.subtleTextClass)}>
-                  {brief.current_focus}
-                </div>
-              ) : null}
-              {brief?.project_brief_stale ? (
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={editBrief}
-                    className={classNames(
-                      "rounded-full px-2 py-1 text-xs transition-colors",
-                      "bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25",
-                    )}
-                  >
-                    {tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}
-                  </button>
-                </div>
-              ) : null}
-            </div>
+          <div data-goal-text>
+            <p data-goal-objective>{brief?.objective || tr("context.brief", "Summary")}</p>
+            {brief?.current_focus ? <p data-goal-focus>{brief.current_focus}</p> : null}
+            {brief?.project_brief_stale ? (
+              <button type="button" onClick={editBrief} data-goal-stale>
+                {tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}
+              </button>
+            ) : null}
           </div>
         ) : null}
-
-        <div
-          className={classNames(
-            "flex flex-col gap-3",
-            hasOverview ? "border-t pt-4" : "",
-            "border-[var(--glass-border-subtle)]",
-          )}
-        >
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <button
-              type="button"
-              aria-expanded={summaryOpen}
-              aria-controls={summaryId}
-              onClick={() => {
-                if (!editingBrief) setSummaryExpanded((expanded) => !expanded);
-              }}
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-md text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-text-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
-            >
-              <ChevronDownIcon
-                size={14}
-                aria-hidden="true"
-                className={summaryOpen ? "rotate-180" : ""}
-              />
-              {tr("context.projectBrief", "Working summary")}
+        <div data-goal-keys>
+          <button
+            type="button"
+            aria-expanded={summaryOpen}
+            aria-controls={summaryId}
+            onClick={() => {
+              if (!editingBrief) setSummaryExpanded((expanded) => !expanded);
+            }}
+            data-goal-summary-key
+          >
+            {tr("context.projectBrief", "Working summary")}
+            <ChevronDownIcon
+              size={14}
+              aria-hidden="true"
+              className={summaryOpen ? "rotate-180" : ""}
+            />
+          </button>
+          {editingBrief ? null : (
+            <button type="button" onClick={editBrief} data-goal-edit-key>
+              {tr("context.editButton", "Edit")}
             </button>
-            {!summaryOpen && brief?.updated_at ? (
-              <span className={classNames("text-xs", ui.mutedTextClass)}>
-                {tr("context.updated", "Updated {{time}}", {
-                  time: noteTimestamp({ at: brief.updated_at }, i18n?.language),
-                })}
-              </span>
-            ) : null}
-            {!summaryOpen ? (
-              <button
-                type="button"
-                onClick={editBrief}
-                className={classNames("ml-auto", ui.buttonSecondaryClass)}
-              >
-                {tr("context.editButton", "Edit")}
-              </button>
-            ) : null}
-          </div>
-
-          {summarySection}
+          )}
         </div>
       </div>
+      {summarySection}
     </section>
   );
 }

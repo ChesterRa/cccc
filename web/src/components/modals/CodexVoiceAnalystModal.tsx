@@ -8,7 +8,6 @@ import { CodexVoiceSplitLayout } from "../../features/codexVoice/CodexVoiceSplit
 import { useModalStore } from "../../stores";
 import { CodexVoiceMessageSources } from "../../features/codexVoice/CodexVoiceMessageSources";
 import {
-  voicePhaseDotClass,
   voicePhaseDotState,
   voicePhaseHasLocalActivity,
 } from "../../features/codexVoice/codexVoicePhase";
@@ -149,6 +148,9 @@ export function CodexVoiceAnalystModal({
     return () => query.removeEventListener("change", update);
   }, []);
 
+  const dotState = callBlocked
+    ? "attention"
+    : voicePhaseDotState(controller.phase, controller.externalCall);
   const callDot = (
     <span
       data-status-motion={
@@ -161,12 +163,8 @@ export function CodexVoiceAnalystModal({
           ? "working"
           : undefined
       }
-      data-status-dot={
-        callBlocked ? "attention" : voicePhaseDotState(controller.phase, controller.externalCall)
-      }
-      className={`h-2 w-2 flex-none rounded-full ${
-        callBlocked ? "bg-amber-500" : voicePhaseDotClass(controller.phase, controller.externalCall)
-      }`}
+      data-status-dot={dotState}
+      className={`h-2 w-2 flex-none ${!callBlocked && dotState === "attention" ? "animate-pulse" : ""}`}
       aria-hidden="true"
     />
   );
@@ -266,7 +264,6 @@ export function CodexVoiceAnalystModal({
     <ModalFrame
       isOpen={isOpen}
       isDark={isDark}
-      lcdScope
       onClose={onClose}
       titleId="codex-voice-analyst-title"
       closeAriaLabel={t("chet.minimize")}

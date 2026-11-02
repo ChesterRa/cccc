@@ -2,34 +2,14 @@ import { GraphicViewer } from "../viewer/GraphicViewer";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { classNames } from "../../utils/classNames";
-import { useLcdStyle } from "../../utils/uiStyle";
 import { MESSAGE_IMAGE_PREVIEW_HEIGHT_PX } from "./imageLayout";
 import { ImagePreviewFailure } from "./ImagePreviewFailure";
 import { MediaLightbox } from "./MediaLightbox";
 
 const IMAGE_LOAD_ERROR_CACHE = new Set<string>();
-const LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE = {
-  filter: "contrast(1.12) brightness(0.985) saturate(1.01)",
-  boxShadow:
-    "0 10px 24px -18px rgba(15,23,42,0.24), 0 0 0 1px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.82)",
-} as const;
-const LIGHT_IMAGE_CANVAS_STYLE = {
-  backgroundColor: "rgb(236, 239, 243)",
-  backgroundImage:
-    "linear-gradient(45deg, rgba(15,23,42,0.06) 25%, transparent 25%, transparent 75%, rgba(15,23,42,0.06) 75%), linear-gradient(45deg, rgba(15,23,42,0.06) 25%, transparent 25%, transparent 75%, rgba(15,23,42,0.06) 75%)",
-  backgroundPosition: "0 0, 8px 8px",
-  backgroundSize: "16px 16px",
-} as const;
-const DARK_IMAGE_CANVAS_STYLE = {
-  backgroundColor: "rgb(22, 24, 29)",
-  backgroundImage:
-    "linear-gradient(45deg, rgba(255,255,255,0.035) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.035) 75%), linear-gradient(45deg, rgba(255,255,255,0.035) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.035) 75%)",
-  backgroundPosition: "0 0, 8px 8px",
-  backgroundSize: "16px 16px",
-} as const;
-// The LCD look draws the transparency grid in its own panel tones and shows the picture
-// as it is: no shadow and no contrast lift.
-const LCD_IMAGE_CANVAS_STYLE = {
+// The transparency grid is drawn in the panel tones, and the picture shows as it is:
+// no shadow and no contrast lift.
+const IMAGE_CANVAS_STYLE = {
   backgroundColor: "var(--lcd-panel)",
   backgroundImage:
     "linear-gradient(45deg, var(--lcd-panel-2) 25%, transparent 25%, transparent 75%, var(--lcd-panel-2) 75%), linear-gradient(45deg, var(--lcd-panel-2) 25%, transparent 25%, transparent 75%, var(--lcd-panel-2) 75%)",
@@ -65,13 +45,6 @@ export function ImagePreview({
   const { t } = useTranslation("chat");
   const isGridLayout = layout === "grid";
   const previewHeight = MESSAGE_IMAGE_PREVIEW_HEIGHT_PX[layout];
-  const lcd = useLcdStyle();
-  const rasterCanvasStyle = lcd
-    ? LCD_IMAGE_CANVAS_STYLE
-    : isDark
-      ? DARK_IMAGE_CANVAS_STYLE
-      : LIGHT_IMAGE_CANVAS_STYLE;
-  const lightEnhancement = lcd ? null : LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE;
 
   useEffect(() => {
     let cancelled = false;
@@ -233,11 +206,7 @@ export function ImagePreview({
                     ? "bg-slate-950/80"
                     : "bg-white shadow-[0_10px_24px_-18px_rgba(15,23,42,0.22),0_0_0_1px_rgba(15,23,42,0.08)]",
             )}
-            style={
-              isSvg
-                ? undefined
-                : { ...rasterCanvasStyle, ...(!isUserMessage && !isDark ? lightEnhancement : null) }
-            }
+            style={isSvg ? undefined : IMAGE_CANVAS_STYLE}
             loading={isSvg ? "lazy" : "eager"}
             decoding="async"
             onError={(event) => {

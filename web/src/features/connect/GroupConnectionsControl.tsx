@@ -75,7 +75,6 @@ function GroupConnectionsDialog({
     >
       <DialogContent
         className="h-[min(36rem,calc(100dvh-2rem))] gap-3 p-5"
-        lcdScope
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           if (document.activeElement === document.body && returnFocus.current?.isConnected)

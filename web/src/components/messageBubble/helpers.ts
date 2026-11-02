@@ -87,29 +87,3 @@ export function formatEventLine(ev: LedgerEvent): string {
   }
   return "";
 }
-
-export function getMessageBubbleMotionClass({
-  isStreaming,
-  isOptimistic,
-  isNewlyArrived,
-  isUserMessage,
-  streamPhase,
-}: {
-  isStreaming: boolean;
-  isOptimistic: boolean;
-  isNewlyArrived?: boolean;
-  isUserMessage?: boolean;
-  streamPhase?: string;
-}): string {
-  const phase = String(streamPhase || "")
-    .trim()
-    .toLowerCase();
-  if (!isStreaming && !isOptimistic) {
-    if (!isNewlyArrived) return "";
-    return isUserMessage
-      ? "cccc-message-bubble-enter cccc-message-bubble-enter-outgoing"
-      : "cccc-message-bubble-enter cccc-message-bubble-enter-incoming";
-  }
-  if (phase === "commentary") return "cccc-transient-bubble cccc-transient-bubble-commentary";
-  return "cccc-transient-bubble";
-}

@@ -720,7 +720,6 @@ export function CapabilityCenterWorkspace({
       role={surface === "overlay" ? "dialog" : undefined}
       aria-modal={surface === "overlay" ? true : undefined}
       aria-label={t("capabilityCenter.title")}
-      data-lcd-scope
       data-capability-center
     >
       <div className={frameClass}>
@@ -1001,7 +1000,7 @@ export function CapabilityCenterWorkspace({
             if (!open && !busyKey) setConfirmDialog(null);
           }}
         >
-          <DialogContent className="w-[min(calc(100vw-1.5rem),28rem)] p-5" lcdScope>
+          <DialogContent className="w-[min(calc(100vw-1.5rem),28rem)] p-5">
             <DialogHeader>
               <DialogTitle>{confirmDialog?.title || ""}</DialogTitle>
               <DialogDescription className="leading-6">

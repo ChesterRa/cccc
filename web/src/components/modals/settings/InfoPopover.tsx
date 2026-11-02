@@ -44,15 +44,11 @@ export function InfoPopover({
   children,
 }: InfoPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [lcdScope, setLcdScope] = useState(false);
   const titleId = useId();
   const referenceRef = useRef<HTMLElement | null>(null);
   const { refs, floatingStyles, context } = useFloating({
     open: isOpen,
-    onOpenChange: (next) => {
-      if (next) setLcdScope(Boolean(referenceRef.current?.closest("[data-lcd-scope]")));
-      setIsOpen(next);
-    },
+    onOpenChange: setIsOpen,
     placement,
     middleware: [
       offset(8),
@@ -105,7 +101,6 @@ export function InfoPopover({
               {...getFloatingProps()}
               tabIndex={0}
               aria-labelledby={titleId}
-              data-lcd-scope={lcdScope || undefined}
               data-settings-info-popover
               className={`z-max rounded-xl shadow-2xl px-3 py-3 text-xs leading-6 transition-opacity duration-150 glass-panel ${
                 isPositioned ? "opacity-100" : "opacity-0"

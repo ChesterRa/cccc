@@ -31,7 +31,7 @@ import { useLivePendingStatuses } from "../../features/pendingReplies/useLivePen
 import { NotificationPrompt } from "../../features/pushNotifications/NotificationPrompt";
 import { useNotificationPromptOffer } from "../../features/pushNotifications/useNotificationPromptOffer";
 import { classNames } from "../../utils/classNames";
-import { useLcdStyle } from "../../utils/uiStyle";
+import { buttonVariants } from "../../components/ui/button-variants";
 import { ChatComposer } from "./ChatComposer";
 import { ChatFilterTabs } from "./ChatFilterTabs";
 import { GroupWorkArea, type RuntimeActorRenderer } from "./GroupWorkArea";
@@ -100,23 +100,13 @@ function ChatLazyFallback({ className }: { className?: string }) {
   return <div className={classNames("min-h-0", className)} />;
 }
 
-function ChatGptAppPermissionNotice({
-  isDark,
-  onDismiss,
-}: {
-  isDark: boolean;
-  onDismiss: () => void;
-}) {
+function ChatGptAppPermissionNotice({ onDismiss }: { onDismiss: () => void }) {
   const { t } = useTranslation("chat");
+  // Framed like the notification offer above the composer, with the same key.
   return (
     <div className="flex-shrink-0 px-2 pb-1.5 sm:px-2.5">
       <div
-        className={classNames(
-          "chat-reading-width mx-auto flex max-w-5xl items-start gap-2 rounded-md border px-3 py-2 text-xs leading-5 shadow-sm",
-          isDark
-            ? "border-amber-400/25 bg-amber-500/10 text-amber-100"
-            : "border-amber-200 bg-amber-50 text-amber-800",
-        )}
+        className="chat-reading-width mx-auto flex max-w-5xl items-start gap-2.5 rounded-lg border border-[var(--color-border-primary)] bg-[var(--color-bg-elevated)] px-3 py-2 text-xs leading-5 text-[var(--color-text-primary)] shadow-sm"
         role="status"
         aria-live="polite"
       >
@@ -125,12 +115,8 @@ function ChatGptAppPermissionNotice({
         <button
           type="button"
           onClick={onDismiss}
-          className={classNames(
-            "inline-flex min-h-7 shrink-0 items-center justify-center rounded-md px-2.5 text-[11px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-current",
-            isDark ? "hover:bg-white/10" : "hover:bg-amber-100",
-          )}
-          aria-label={t("webModelDelivery.permissionHintDismiss")}
-          title={t("webModelDelivery.permissionHintDismiss")}
+          className={buttonVariants({ variant: "ghost", size: "sm" })}
+          data-lcd-key
         >
           {t("webModelDelivery.permissionHintDismiss")}
         </button>
@@ -235,7 +221,6 @@ export function ChatTab({
   setMentionActorScope,
   setMentionTargetGroupId,
 }: ChatTabProps) {
-  const lcd = useLcdStyle();
   const shortTouchViewport = useShortTouchViewport();
   const [composerInputFocused, setComposerInputFocused] = useState(false);
   const [inlineReplyEditor, setInlineReplyEditor] = useState<string | null>(null);
@@ -843,36 +828,20 @@ export function ChatTab({
                     inert={showWorkspaceFileViewer || undefined}
                     aria-hidden={showWorkspaceFileViewer || undefined}
                     data-chat-notices
-                    data-lcd-scope
                   >
                     {/* Jump-to window banner */}
                     {chatWindowProps && (
                       <div className="px-4 pt-4">
                         <div
-                          className={classNames(
-                            "flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 shadow-sm",
-                            isDark
-                              ? "border-slate-700/50 bg-slate-900/40"
-                              : "border-gray-200 bg-white/70",
-                          )}
+                          className="flex items-center justify-between gap-3 border border-[var(--color-border-primary)] bg-[var(--color-bg-elevated)] px-4 py-3"
                           role="status"
                           aria-label={t("viewingMessage")}
                         >
                           <div className="min-w-0">
-                            <div
-                              className={classNames(
-                                "text-sm font-semibold",
-                                isDark ? "text-slate-200" : "text-gray-800",
-                              )}
-                            >
+                            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
                               {t("viewingMessage")}
                             </div>
-                            <div
-                              className={classNames(
-                                "text-xs mt-0.5",
-                                isDark ? "text-slate-400" : "text-gray-600",
-                              )}
-                            >
+                            <div className="mt-0.5 text-xs text-[var(--color-text-secondary)]">
                               {isLoadingHistory
                                 ? t("loadingContext")
                                 : chatWindowProps.hasMoreBefore
@@ -884,12 +853,8 @@ export function ChatTab({
                           </div>
                           <button
                             type="button"
-                            className={classNames(
-                              "flex-shrink-0 text-xs font-semibold px-3 py-1.5 min-h-[36px] flex items-center rounded-full border transition-colors",
-                              isDark
-                                ? "border-slate-600 text-slate-200 hover:bg-slate-800/60"
-                                : "border-gray-200 text-gray-800 hover:bg-gray-100",
-                            )}
+                            className={buttonVariants({ variant: "ghost", size: "sm" })}
+                            data-lcd-key
                             onClick={(event) =>
                               returnToLatest(
                                 event.detail === 0 ||
@@ -1190,16 +1155,15 @@ export function ChatTab({
                   )}
 
                   {!chatWindowProps && runtimeActors.length > 0 ? (
-                    lcd && !isSmallScreen && workView === "messages" ? (
-                      // LCD preview: members in one centred row above the composer, in the
-                      // reading column, in the page flow so they never cover a message.
+                    !isSmallScreen && workView === "messages" ? (
+                      // Members in one centred row above the composer, in the reading
+                      // column, in the page flow so they never cover a message.
                       <div
                         className={classNames(
                           "shrink-0 px-2 sm:px-4",
                           // A touch screen's keyboard leaves little height; the input needs it.
                           hideDockForKeyboard && "hidden",
                         )}
-                        data-lcd-scope
                       >
                         <div className="chat-reading-width">
                           <RuntimeDock
@@ -1222,11 +1186,10 @@ export function ChatTab({
                       <div
                         className={classNames(
                           "pointer-events-none z-20",
-                          isSmallScreen || !lcd ? "shrink-0" : "absolute inset-x-0 bottom-2",
+                          isSmallScreen ? "shrink-0" : "absolute inset-x-0 bottom-2",
                           (hideDockForKeyboard || reading.hidden) && "hidden",
                         )}
                         data-runtime-dock-keyboard-hidden={hideDockForKeyboard || undefined}
-                        data-lcd-scope
                       >
                         {/* Hidden by display, its rings restart on return; this lets them
                             take the shared phase again instead of their old offsets. */}
@@ -1260,7 +1223,6 @@ export function ChatTab({
                         "linear-gradient(var(--color-chat-bg), var(--color-chat-bg))",
                     }}
                     data-workspace-file-viewer="true"
-                    data-lcd-scope
                   >
                     <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                       <WorkspaceViewer
@@ -1276,10 +1238,7 @@ export function ChatTab({
               {!readOnly && (
                 <>
                   {showAppPermissionNotice ? (
-                    <ChatGptAppPermissionNotice
-                      isDark={isDark}
-                      onDismiss={dismissAppPermissionNotice}
-                    />
+                    <ChatGptAppPermissionNotice onDismiss={dismissAppPermissionNotice} />
                   ) : null}
                   {notificationOffer.visible && !hideDockForKeyboard ? (
                     <NotificationPrompt

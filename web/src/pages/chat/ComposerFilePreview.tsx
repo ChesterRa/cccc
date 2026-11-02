@@ -121,7 +121,7 @@ export function ComposerFilePreview({
         <CloseIcon size={14} />
       </button>
       {showThumbnail && isPreviewOpen && (
-        <BodyPortal lcdScope>
+        <BodyPortal>
           <div
             className={classNames(
               "pointer-events-none fixed z-[9999] w-[224px] max-w-[calc(100vw-24px)] overflow-hidden rounded-xl border p-2 shadow-2xl",

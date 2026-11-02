@@ -1919,57 +1919,8 @@ export function getRuntimeColor(runtime?: string, isDark: boolean = true) {
   };
 }
 
-const ACTOR_ACCENTS = [
-  // Dark theme accents are intentionally soft (low-saturation ring + readable name color).
-  {
-    ring: "ring-sky-400/35",
-    text: "text-sky-300",
-    ringLight: "ring-sky-300",
-    textLight: "text-sky-700",
-  },
-  {
-    ring: "ring-indigo-400/35",
-    text: "text-indigo-300",
-    ringLight: "ring-indigo-300",
-    textLight: "text-indigo-700",
-  },
-  {
-    ring: "ring-violet-400/35",
-    text: "text-violet-300",
-    ringLight: "ring-violet-300",
-    textLight: "text-violet-700",
-  },
-  {
-    ring: "ring-fuchsia-400/35",
-    text: "text-fuchsia-300",
-    ringLight: "ring-fuchsia-300",
-    textLight: "text-fuchsia-700",
-  },
-  {
-    ring: "ring-cyan-400/35",
-    text: "text-cyan-300",
-    ringLight: "ring-cyan-300",
-    textLight: "text-cyan-700",
-  },
-  {
-    ring: "ring-teal-400/35",
-    text: "text-teal-300",
-    ringLight: "ring-teal-300",
-    textLight: "text-teal-700",
-  },
-  {
-    ring: "ring-emerald-400/35",
-    text: "text-emerald-300",
-    ringLight: "ring-emerald-300",
-    textLight: "text-emerald-700",
-  },
-  {
-    ring: "ring-amber-400/35",
-    text: "text-amber-300",
-    ringLight: "ring-amber-300",
-    textLight: "text-amber-700",
-  },
-];
+/** Number of accent slots; an actor keeps its slot, and the LCD accent it maps to. */
+const ACTOR_ACCENT_COUNT = 8;
 
 function _fnv1a32(input: string): number {
   // Deterministic, fast, and stable across JS engines.
@@ -1981,16 +1932,10 @@ function _fnv1a32(input: string): number {
   return hash >>> 0;
 }
 
-/** Stable per-actor slot in the accent palette (shared by the classic and LCD styles). */
+/** Stable per-actor slot in the accent palette. */
 export function getActorAccentIndex(actorId?: string): number {
   const id = String(actorId || "").trim();
-  return id ? _fnv1a32(id) % ACTOR_ACCENTS.length : 0;
-}
-
-export function getActorAccentColor(actorId?: string, isDark: boolean = true) {
-  const a = ACTOR_ACCENTS[getActorAccentIndex(actorId)] || ACTOR_ACCENTS[0];
-  if (isDark) return { ring: a.ring, text: a.text };
-  return { ring: a.ringLight, text: a.textLight };
+  return id ? _fnv1a32(id) % ACTOR_ACCENT_COUNT : 0;
 }
 
 export function supportsAcpMode(runtime?: string | null): boolean {

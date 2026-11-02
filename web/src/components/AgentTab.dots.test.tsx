@@ -3,7 +3,6 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { Actor, GroupDoc } from "../types";
-import { setUiStylePrefs } from "../utils/uiStyle";
 
 const mocks = vi.hoisted(() => ({
   pause: vi.fn(),
@@ -130,7 +129,6 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
-  setUiStylePrefs({ style: "classic" });
   vi.useRealTimers();
 });
 async function render(
@@ -175,7 +173,6 @@ it("keeps distinct LCD status shapes and their accessible Actor labels", async (
     runtime_state_source: "managed_session",
     effective_working_state: "working",
   };
-  await act(async () => setUiStylePrefs({ style: "lcd" }));
   await render(true, managed, "g_managed");
   const status = () => host.querySelector('[data-terminal-title-bar] [role="img"]');
   expect(status()?.getAttribute("aria-label")).toBe("working");
@@ -321,8 +318,7 @@ it("does not show a running indicator for an unpaired Dot with a valid subscript
     '[role="img"][aria-label="settings:dotsActor.phases.waiting_pairing"]',
   );
   expect(indicator).not.toBeNull();
-  expect(indicator?.className).toContain("bg-slate-400/65");
-  expect(indicator?.className).not.toContain("bg-emerald-500 ring-");
+  expect(indicator?.getAttribute("data-lcd-shape")).toBe("stop");
 });
 
 it("retains the working indicator for an accepted task after its event subscription expires", async () => {
@@ -340,8 +336,7 @@ it("retains the working indicator for an accepted task after its event subscript
     '[role="img"][aria-label="settings:dotsActor.phases.working"]',
   );
   expect(indicator).not.toBeNull();
-  expect(indicator?.className).toContain("bg-emerald-500 ring-");
-  expect(indicator?.className).not.toContain("bg-slate-400/65");
+  expect(indicator?.getAttribute("data-lcd-shape")).toBe("run");
 });
 
 it("shows an administrator-managed connection for a Group writer without fetching restricted Dots state or losing local Pause", async () => {
@@ -534,8 +529,8 @@ it.each([false, true])(
         expect(header.textContent).toContain(status);
         const indicator = header.querySelector('[role="img"]')!;
         expect(indicator.getAttribute("aria-label")).toBe(status);
-        expect(indicator.className).toContain(
-          status === "nativeSession.available" ? "bg-emerald-500" : "bg-slate-400/65",
+        expect(indicator.getAttribute("data-lcd-shape")).toBe(
+          status === "nativeSession.available" ? "idle" : "stop",
         );
       }
     }

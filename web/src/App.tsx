@@ -3,7 +3,6 @@ import { DropOverlay } from "./components/DropOverlay";
 const AppModals = lazy(() =>
   import("./components/AppModals").then((m) => ({ default: m.AppModals })),
 );
-import { AppBackground } from "./components/app/AppBackground";
 import { WebUpdateNotice } from "./components/app/WebUpdateNotice";
 import { AppFeedback } from "./components/app/AppFeedback";
 import { DaemonVersionNotice } from "./components/app/DaemonVersionNotice";
@@ -428,8 +427,6 @@ export default function App({
       style={APP_VIEWPORT_BOX}
       {...{ [VISUAL_VIEWPORT_BOX_ATTRIBUTE]: "" }}
     >
-      <AppBackground isDark={isDark} />
-
       {daemonVersionMismatch || webUpdateAvailable ? (
         <div
           className="relative z-10 min-h-0 overflow-y-auto overscroll-contain"
@@ -571,7 +568,6 @@ export default function App({
       </PendingReplyProvider>
 
       <AppFeedback
-        isDark={isDark}
         webReadOnly={webReadOnly}
         errorMsg={errorMsg}
         notice={notice}

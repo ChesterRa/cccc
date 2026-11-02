@@ -643,7 +643,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
       {renderHelpCard()}
 
       {expandedKind ? (
-        <BodyPortal lcdScope>
+        <BodyPortal>
           <div
             ref={expandedModalRef}
             key={expandedKind}

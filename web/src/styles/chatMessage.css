@@ -10,22 +10,10 @@
     .message-row:has(.message-actions-menu) {
       min-height: 44px;
     }
-    .message-row.items-start:has(.message-actions-menu) {
-      padding-right: max(clamp(1.5rem, 8%, 2rem), calc(44px - min(16px, 1rem)));
-    }
-    .message-row.items-end:has(.message-actions-menu) {
-      padding-left: max(clamp(1.5rem, 8%, 2rem), calc(44px - min(16px, 1rem)));
-    }
     .message-actions-menu {
       position: absolute;
       z-index: 1;
       bottom: 0;
-    }
-    .message-row.items-start .message-actions-menu {
-      right: calc(-1 * min(16px, 1rem));
-    }
-    .message-row.items-end .message-actions-menu {
-      left: calc(-1 * min(16px, 1rem));
     }
     .message-actions-menu > button {
       width: 44px;
@@ -34,9 +22,6 @@
     }
     .message-actions-label {
       display: none;
-    }
-    .message-footer-no-status:has(.message-actions-menu) {
-      margin-top: 0;
     }
   }
 }
@@ -61,8 +46,7 @@
     transition: none;
   }
 }
-/* Float the latest action above the log without reducing its reading height. Classic
-   keeps its floating glass button: its size, place, motion and count badge. */
+/* Float the latest action above the log without reducing its reading height. */
 [data-scroll-latest] {
   position: absolute;
   z-index: 30;

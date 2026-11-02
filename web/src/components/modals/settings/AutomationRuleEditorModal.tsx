@@ -869,5 +869,5 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
     </div>
   );
 
-  return <BodyPortal lcdScope>{content}</BodyPortal>;
+  return <BodyPortal>{content}</BodyPortal>;
 }

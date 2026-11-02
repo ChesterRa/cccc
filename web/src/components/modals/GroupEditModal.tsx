@@ -89,7 +89,6 @@ export function GroupEditModal({
 
   return (
     <ModalFrame
-      lcdScope
       isOpen={isOpen}
       isDark={isDark}
       onClose={onCancel}

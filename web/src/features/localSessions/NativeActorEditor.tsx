@@ -36,7 +36,6 @@ export function NativeActorEditor(props: EditActorConfigProps) {
   };
   return (
     <ModalFrame
-      lcdScope
       isOpen={props.isOpen}
       isDark={props.isDark}
       onClose={close}

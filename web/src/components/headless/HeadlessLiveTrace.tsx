@@ -10,7 +10,6 @@ import {
 import type { HeadlessPreviewSession, StreamingActivity } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { formatTime } from "../../utils/time";
-import { useLcdStyle } from "../../utils/uiStyle";
 import {
   formatStreamingActivityKind,
   getStructuredStreamingActivityLabel,
@@ -199,10 +198,7 @@ type LiveCursorState = "solid" | "waiting" | "quiet";
 type LiveMessageGroup = Extract<HeadlessPreviewRenderGroup, { kind: "message" }>;
 
 /** Only observed text changes count as a new chunk; initial history is a baseline. */
-function useLiveTraceCursor(
-  group: LiveMessageGroup | undefined,
-  enabled: boolean,
-): LiveCursorState {
+function useLiveTraceCursor(group: LiveMessageGroup | undefined): LiveCursorState {
   const [state, setState] = useState<LiveCursorState>("waiting");
   const previous = useRef<{ session: string; id: string; text: string } | null>(null);
   const session = group?.pendingEventId;
@@ -210,7 +206,7 @@ function useLiveTraceCursor(
   const text = group?.entry.text;
 
   useLayoutEffect(() => {
-    if (!enabled || !id || text === undefined) {
+    if (!id || text === undefined) {
       previous.current = null;
       setState("waiting");
       return;
@@ -228,7 +224,7 @@ function useLiveTraceCursor(
       window.clearTimeout(waitingTimer);
       window.clearTimeout(quietTimer);
     };
-  }, [enabled, id, session, text]);
+  }, [id, session, text]);
 
   return state;
 }
@@ -237,13 +233,11 @@ function TraceMessageBody({
   group,
   density,
   isDark,
-  lcd,
   cursor,
 }: {
   group: LiveMessageGroup;
   density: HeadlessLiveTraceDensity;
   isDark: boolean;
-  lcd: boolean;
   cursor?: LiveCursorState;
 }) {
   const cursorElement = cursor ? <span data-lcd-live-cursor={cursor} aria-hidden="true" /> : null;
@@ -279,12 +273,10 @@ function TraceMessageBody({
   );
   // Keep the Markdown subtree mounted when streaming ends. Removing the
   // wrapper at that moment would discard focus inside the rendered message.
-  return lcd ? (
+  return (
     <div data-lcd-live-markdown={cursor ? "" : undefined} data-lcd-live-cursor={cursor}>
       {markdown}
     </div>
-  ) : (
-    markdown
   );
 }
 
@@ -488,7 +480,6 @@ export function HeadlessLiveTrace({
   className,
 }: HeadlessLiveTraceProps) {
   const { t, i18n } = useTranslation("actors");
-  const lcd = useLcdStyle();
   const outputRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const labels = useMemo<HeadlessLiveTraceLabels>(
@@ -551,7 +542,7 @@ export function HeadlessLiveTrace({
         .find((group): group is LiveMessageGroup => group.kind === "message" && group.live) ??
       undefined)
     : undefined;
-  const liveCursor = useLiveTraceCursor(liveMessageGroup, lcd);
+  const liveCursor = useLiveTraceCursor(liveMessageGroup);
   const sessionCount =
     Array.isArray(previewSessions) && previewSessions.length > 0
       ? previewSessions.length
@@ -694,13 +685,7 @@ export function HeadlessLiveTrace({
                 className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/12 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-300"
                 data-status-tone="ok"
               >
-                <span
-                  className={classNames(
-                    "h-1.5 w-1.5 rounded-full bg-current",
-                    !lcd && "animate-pulse motion-reduce:animate-none",
-                  )}
-                  data-status-dot="active"
-                />
+                <span className="h-1.5 w-1.5 rounded-full bg-current" data-status-dot="active" />
                 {labels.live}
               </span>
             ) : null}
@@ -822,10 +807,7 @@ export function HeadlessLiveTrace({
                         {group.live ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-300">
                             <span
-                              className={classNames(
-                                "h-1.5 w-1.5 rounded-full bg-current",
-                                !lcd && "animate-pulse motion-reduce:animate-none",
-                              )}
+                              className="h-1.5 w-1.5 rounded-full bg-current"
                               data-status-dot="active"
                             />
                             {labels.streaming}
@@ -837,8 +819,7 @@ export function HeadlessLiveTrace({
                       group={group}
                       density={density}
                       isDark={isDark}
-                      lcd={lcd}
-                      cursor={lcd && group.id === liveMessageGroup?.id ? liveCursor : undefined}
+                      cursor={group.id === liveMessageGroup?.id ? liveCursor : undefined}
                     />
                   </div>
                 </div>

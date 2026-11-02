@@ -8,7 +8,6 @@ import { runtimeDetectionKey } from "../../utils/runtimeDetection";
 import { SelectCombobox } from "../SelectCombobox";
 import { Button } from "../ui/button";
 import { LcdSpinner } from "../LcdSpinner";
-import { useLcdStyle } from "../../utils/uiStyle";
 
 export function RuntimeSelector({
   value,
@@ -30,7 +29,6 @@ export function RuntimeSelector({
   allowedRuntimes?: readonly string[];
 }) {
   const { t } = useTranslation("actors");
-  const lcd = useLcdStyle();
   const runtimes = useGroupStore((s) => s.runtimes);
   const status = useGroupStore((s) => s.runtimeDetectionStatus);
   const refresh = useGroupStore((s) => s.refreshRuntimes);
@@ -106,16 +104,12 @@ export function RuntimeSelector({
           disabled={disabled || checking}
           onClick={() => void refresh()}
         >
-          {lcd && checking ? (
+          {checking ? (
             <LcdSpinner className="h-[13px] w-[13px]">
               <RefreshCw size={13} aria-hidden="true" />
             </LcdSpinner>
           ) : (
-            <RefreshCw
-              size={13}
-              aria-hidden="true"
-              className={checking ? "animate-spin motion-reduce:animate-none" : ""}
-            />
+            <RefreshCw size={13} aria-hidden="true" />
           )}
           {t("runtimeDetection.recheck")}
         </Button>

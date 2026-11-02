@@ -1,11 +1,11 @@
 /* ============================================
-   LCD pixel style preview (T029)
+   LCD pixel style, the Web UI's only look
 
-   Active only while <html data-ui-style="lcd">. The palette lives in --lcd-*
-   variables that classic styling never reads; product tokens, fonts and
-   corners change only inside elements marked [data-lcd-scope], so surfaces
-   outside the slice (dialogs, terminals, voice) keep the classic look.
-   Font licenses ship under /ui/licenses/fonts/.
+   index.html marks <html data-ui-style="lcd"> and <body data-lcd-scope>, so these
+   rules reach the whole page and everything portalled into the body. The palette
+   lives in --lcd-* variables, and the product tokens are mapped onto it below.
+   Components still carry the classes of the former classic look; comments here
+   call those "classic". Font licenses ship under /ui/licenses/fonts/.
    ============================================ */
 
 /* IBM Plex Mono 2.5.0 (@ibm/plex-mono), IBM's complete files as released: the reserved
@@ -54,7 +54,7 @@
   src: url("@/assets/fonts/lcd/DepartureMono-Regular.woff2") format("woff2");
 }
 
-/* The pixel body font (preview): the author's own release file, so it keeps its reserved
+/* The pixel body font: the author's own release file, so it keeps its reserved
    names (ZLabs-RoundPix-OFL.txt). */
 @font-face {
   font-family: "RoundPix 16";
@@ -145,13 +145,13 @@
   --lcd-overlay: rgba(0, 0, 0, 0.5);
 }
 
-/* The page behind the slice. */
+/* The page ground. */
 :root[data-ui-style="lcd"] body,
 :root[data-ui-style="lcd"] [data-group-shell] {
   background: var(--lcd-bg);
 }
 
-/* Product tokens, type and corners inside the slice. */
+/* Product tokens, type and corners. */
 :root[data-ui-style="lcd"] [data-lcd-scope] {
   --color-body-bg: var(--lcd-bg);
   --color-sidebar-bg: var(--lcd-bg);
@@ -188,7 +188,7 @@
   --glass-bubble-shadow: none;
   --glass-panel-bg: var(--lcd-bg);
   --glass-panel-border: var(--lcd-rule);
-  /* Classic uses the accent fill as a soft tint under ordinary text, so it stays soft
+  /* Components use the accent fill as a soft tint under ordinary text, so it stays soft
      here; a selected control that should read inverse sets --lcd-sel-bg/-fg itself. */
   --glass-accent-bg: var(--lcd-sel-soft);
   --glass-accent-bg-hover: var(--lcd-sel-soft);
@@ -453,7 +453,10 @@
   }
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope][data-settings-info-popover] [data-settings-info-title] {
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-settings-info-popover]
+  [data-settings-info-title] {
   color: var(--lcd-ink);
 }
 
@@ -1279,12 +1282,10 @@
   translate: 0 -50%;
 }
 
-/* A menu opened from an LCD control (a Group's run state or sidebar row, a workspace
-   entry, an Actor's quick controls, the composer's mention and command lists): a framed
-   list like the members popover. A menu portalled out of its surface carries the scope
-   itself; one inside a scoped surface inherits it. Items are its menuitems, options or
-   buttons, in ink and one colour throughout; the item under the pointer, keyboard focus
-   or a list's selection is set in reverse. */
+/* A menu (a Group's run state or sidebar row, a workspace entry, an Actor's quick
+   controls, the composer's mention and command lists) is a framed list like the members
+   popover. Items are its menuitems, options or buttons, in ink and one colour throughout;
+   the item under the pointer, keyboard focus or a list's selection is set in reverse. */
 :root[data-ui-style="lcd"]
   :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu]) {
   border: 1px solid var(--lcd-rule-strong);
@@ -1379,16 +1380,12 @@
 /* Inside the scope surfaces separate by 1px rules: no drop shadows (rings stay,
    some controls draw their border with one) and no entrance or exit motion.
    Spinners keep turning; they report work in progress. */
-:root[data-ui-style="lcd"] [data-lcd-scope][class*="shadow-"],
 :root[data-ui-style="lcd"] [data-lcd-scope] [class*="shadow-"] {
   --tw-shadow: 0 0 #0000;
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope][class*="animate-in"],
 :root[data-ui-style="lcd"] [data-lcd-scope] [class*="animate-in"],
-:root[data-ui-style="lcd"] [data-lcd-scope][class*="animate-scale"],
 :root[data-ui-style="lcd"] [data-lcd-scope] [class*="animate-scale"],
-:root[data-ui-style="lcd"] [data-lcd-scope][class*="animate-fade"],
 :root[data-ui-style="lcd"] [data-lcd-scope] [class*="animate-fade"] {
   animation: none;
 }
@@ -1841,7 +1838,7 @@
 
 /* On a phone the Files panel fills a full-screen surface whose own classic background
    shows around it (safe areas, short content), so the surface takes the LCD ground. */
-:root[data-ui-style="lcd"] [data-lcd-scope][data-mobile-surface] {
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-mobile-surface] {
   background: var(--lcd-bg);
   color: var(--lcd-ink);
 }
@@ -1959,7 +1956,7 @@
 }
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-capability-nav] button[aria-current="page"],
-:root[data-ui-style="lcd"] [data-lcd-scope][data-capability-center] button[aria-pressed="true"] {
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-capability-center] button[aria-pressed="true"] {
   border-color: var(--lcd-sel-bg);
   background: var(--lcd-sel-bg);
   color: var(--lcd-sel-fg);
@@ -1969,7 +1966,7 @@
   color: inherit;
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope][data-capability-center] [aria-current="true"] {
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-capability-center] [aria-current="true"] {
   --tw-ring-color: var(--lcd-ink);
 }
 
@@ -1987,7 +1984,8 @@
 }
 
 :root[data-ui-style="lcd"]
-  [data-lcd-scope][data-capability-center]
+  [data-lcd-scope]
+  [data-capability-center]
   :is([data-lcd-key], button[data-status-tone="error"]):hover:not(:disabled)
   * {
   color: inherit;
@@ -2060,7 +2058,7 @@
   background-color: var(--lcd-ink);
 }
 
-/* The side panel's handle carries the scope itself. */
+/* The side panel's handle while it is dragged. */
 :root[data-ui-style="lcd"]
   :is([data-lcd-scope], [data-lcd-scope] *)[role="separator"][data-resizing]
   [data-resize-band] {

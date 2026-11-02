@@ -1,23 +1,20 @@
 # LCD style hooks
 
-The LCD look is a preview style. Classic stays the default and must not change when a
-surface is adapted, so components keep their classic classes and gain `data-*` hooks;
-the LCD rules in this folder read the hooks.
+LCD is the Web UI's only look. Components still carry the classes of the former classic
+look (comments in this folder call them "classic") and gain `data-*` hooks; the LCD rules
+in this folder read the hooks. When you edit a component, you may drop classic palette
+classes that its hooks already override.
 
 ## Scope
 
-- Every LCD rule starts with `:root[data-ui-style="lcd"]`, except the two rules that hide
-  LCD-only elements in classic (`lcdIcons.css`, `lcdComposer.css`). Rules that restyle shared
-  components also require `[data-lcd-scope]`: a surface takes the look only inside an
-  element with `data-lcd-scope`.
-- Dialogs: `ModalFrame lcdScope`, or `DialogContent lcdScope` for the Radix dialog in
-  `ui/dialog.tsx`. Portalled layers built by hand: `BodyPortal lcdScope`.
-- Popovers (`ui/popover.tsx`) take the scope of the control that opened them, found
-  through Radix's `aria-controls`. A popover anchored to a point rather than a trigger
-  must pass `data-lcd-scope` itself (see `WorkspaceEntryMenu`).
-- Inside a scope, every colour should resolve to an `--lcd-*` token. A Tailwind palette
-  class (`text-rose-600`, `bg-black/5`) needs a hook below; do not add an LCD rule keyed
-  on the palette class.
+- `index.html` sets `data-ui-style="lcd"` on `<html>` and `data-lcd-scope` on `<body>`, so
+  the whole page and every layer portalled into the body are in scope from the first
+  paint. Rules start with `:root[data-ui-style="lcd"]`, and rules that restyle shared
+  components add `[data-lcd-scope]`; follow that form in new rules so their specificity
+  matches. The prefix no longer limits where a rule applies.
+- Every colour should resolve to an `--lcd-*` token. A Tailwind palette class
+  (`text-rose-600`, `bg-black/5`) needs a hook below; do not add an LCD rule keyed on the
+  palette class.
 
 ## Choose a hook by meaning, not by the classic colour
 
@@ -49,13 +46,13 @@ the LCD rules in this folder read the hooks.
   `data-presentation-preview-mode`, `data-presentation-slot-switch`, and
   `data-web-model-delivery`, whose keys are the visible spans of radio labels); do not
   write another rule set. The hook goes on the element whose children are the keys.
-- Menus: `data-group-menu` or `data-lcd-menu` on the menu surface, whether it is
-  portalled with its own scope or sits inside a scoped surface. Its items (`menuitem*`
-  and `option` elements, or plain buttons) are ink throughout and reversed under the
-  pointer, keyboard focus or a list's `aria-selected`; a current item keeps its check
-  mark rather than a fill. Inside an item, `data-lcd-hint` marks a dim secondary line and
-  `data-lcd-tag` a framed kind label; `data-option-mark` is a list's own selection bar,
-  hidden here. A destructive item takes `data-tone="danger"` or `destructive-key`.
+- Menus: `data-group-menu` or `data-lcd-menu` on the menu surface, portalled or not.
+  Its items (`menuitem*` and `option` elements, or plain buttons) are ink throughout and
+  reversed under the pointer, keyboard focus or a list's `aria-selected`; a current item
+  keeps its check mark rather than a fill. Inside an item, `data-lcd-hint` marks a dim
+  secondary line and `data-lcd-tag` a framed kind label; `data-option-mark` is a list's
+  own selection bar, hidden here. A destructive item takes `data-tone="danger"` or
+  `destructive-key`.
 
 ## Control sizes
 
@@ -88,9 +85,9 @@ rather than relying on the `index.css` reduce rule.
   `--lcd-ring-delay` so rings that start at different times move in step).
 - Work the page sees return to idle: `data-flourish` lights the ring for 250 ms.
 - Waiting on the person: `data-attention-flash` blinks the attention lines three times.
-- A wait of unknown length: `LcdSpinner` in LCD; the classic look keeps its spinner. The
-  caller changes its label and disabled state at once; the cells appear after 250 ms, and
-  a button passes its own icon as `children` to keep it until then.
+- A wait of unknown length: `LcdSpinner`. The caller changes its label and disabled state
+  at once; the cells appear after 250 ms, and a button passes its own icon as `children`
+  to keep it until then.
 - A status dot of 8px or less whose work runs now: `data-status-motion="working"`.
 - Live text: `data-lcd-live-cursor="solid|waiting|quiet"` (HeadlessLiveTrace).
 - Reconnecting: `.lcd-reconnect-dots`.
@@ -110,11 +107,11 @@ cards, live or done markers, muted labels, tones. See `data-headless-trace` and
 
 Terminal canvases (xterm and its ANSI colours), runtime logos (marked
 `data-runtime-logo`), presentation content, the projected browser's page, and document,
-PDF and media previews keep their own colours inside an LCD scope.
+PDF and media previews keep their own colours. A member tile that shows a runtime logo
+keeps the logo's white ground.
 
 ## Before handing over an adapted surface
 
-- Open it in LCD light and dark and confirm no colour inside the scope falls outside the
-  `--lcd-*` tokens, apart from the content listed above.
-- Compare classic before and after; it should be pixel-identical unless the change is a
-  shared fix meant for both looks, which then needs its own note.
+- Open it in light and dark, at desktop and phone widths, and confirm no colour falls
+  outside the `--lcd-*` tokens, apart from the content listed above. Include the states a
+  first look misses: errors, loading, hover, focus and disabled.

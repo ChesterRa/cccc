@@ -59,6 +59,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 it("keeps the phone Quote key's width while a snapshot uploads, with a spinner and the pending name", async () => {
@@ -99,11 +100,13 @@ it("keeps the phone Quote key's width while a snapshot uploads, with a spinner a
     )!;
   expect(rowKey().getAttribute("aria-label")).toBe("presentationQuoteInChatAction");
 
+  vi.useFakeTimers();
   await act(async () => rowKey().click());
   const pending = rowKey();
   expect(pending.disabled).toBe(true);
   expect(pending.getAttribute("aria-label")).toBe("presentationQuotePendingAction");
-  expect(pending.querySelector(".animate-spin")).not.toBeNull();
+  await act(async () => vi.advanceTimersByTime(250));
+  expect(pending.querySelector(".lcd-spinner[data-shown]")).not.toBeNull();
   // The visible label stays, so the row does not rewrap under the finger.
   expect(pending.textContent).toBe("presentationQuoteAction");
 
@@ -111,6 +114,6 @@ it("keeps the phone Quote key's width while a snapshot uploads, with a spinner a
     finishUpload({ ok: true, result: { snapshot: { path: "state/blobs/s.png" } } }),
   );
   expect(rowKey().disabled).toBe(false);
-  expect(rowKey().querySelector(".animate-spin")).toBeNull();
+  expect(rowKey().querySelector(".lcd-spinner")).toBeNull();
   expect(onQuoteInChat).toHaveBeenCalledWith(expect.objectContaining({ slotId: "slot-1" }));
 });

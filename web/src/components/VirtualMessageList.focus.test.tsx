@@ -2,7 +2,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { setUiStylePrefs } from "../utils/uiStyle";
 import type { VirtualMessageListProps } from "./virtualMessageList/types";
 import { VirtualMessageList } from "./VirtualMessageList";
 
@@ -299,20 +298,15 @@ it("returns keyboard focus to the log before forcing the latest position", async
   expect(document.activeElement).toBe(log);
 });
 
-it("uses the delayed pixel spinner for history in LCD and keeps the classic spinner", async () => {
+it("uses the delayed pixel spinner while history loads", async () => {
   vi.useFakeTimers();
   try {
-    act(() => setUiStylePrefs({ style: "lcd" }));
     await act(async () => root.render(<VirtualMessageList {...props()} isLoadingHistory />));
     expect(host.querySelector(".lcd-spinner")?.hasAttribute("data-shown")).toBe(false);
     expect(host.querySelector(".animate-spin")).toBeNull();
     await act(async () => vi.advanceTimersByTime(250));
     expect(host.querySelector(".lcd-spinner")?.hasAttribute("data-shown")).toBe(true);
-    act(() => setUiStylePrefs({ style: "classic" }));
-    expect(host.querySelector(".lcd-spinner")).toBeNull();
-    expect(host.querySelector(".animate-spin")).not.toBeNull();
   } finally {
-    act(() => setUiStylePrefs({ style: "classic" }));
     vi.useRealTimers();
   }
 });

@@ -16,7 +16,6 @@ export function DaemonVersionNotice({
   return (
     <aside
       ref={rootRef}
-      data-lcd-scope
       onFocusCapture={onFocusCapture}
       className="relative z-10 shrink-0 border-b border-[var(--color-border-primary)] bg-[var(--color-bg-elevated)] px-3 py-2 text-sm text-[var(--color-text-primary)]"
     >

@@ -1,50 +1,38 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * Interface style preview (T029). "classic" is the current look; "lcd" is the
- * LCD pixel style being evaluated, applied only inside elements marked
- * `data-lcd-scope`. Stored per browser; the body-font knob exists only while
- * the user compares fonts on real pages. The LCD conversation keeps a centred
- * reading column on desktop, standard or wide, unless the user picks the full width.
+ * Appearance choices of the LCD look, the Web UI's only style, stored per browser:
+ * the body font, the width of the conversation on desktop (a centred reading column,
+ * wide, or the full width) and motion. index.html marks the page as LCD before the
+ * first paint; these choices are applied as data attributes on the root element.
  */
-export type UiStyle = "classic" | "lcd";
 export type LcdBodyFont = "mono" | "pixel";
 export type LcdWidth = "column" | "wide" | "full";
 export type LcdMotion = "on" | "off";
-export type UiStylePrefs = {
-  style: UiStyle;
-  lcdBody: LcdBodyFont;
-  lcdWidth: LcdWidth;
-  lcdMotion: LcdMotion;
-};
+export type UiStylePrefs = { lcdBody: LcdBodyFont; lcdWidth: LcdWidth; lcdMotion: LcdMotion };
 
-export const UI_STYLE_STORAGE_KEY = "cccc-ui-style";
 export const LCD_BODY_STORAGE_KEY = "cccc-ui-lcd-body";
 export const LCD_WIDTH_STORAGE_KEY = "cccc-ui-lcd-width";
 export const LCD_MOTION_STORAGE_KEY = "cccc-ui-lcd-motion";
 
 const STORAGE_KEYS: Record<keyof UiStylePrefs, string> = {
-  style: UI_STYLE_STORAGE_KEY,
   lcdBody: LCD_BODY_STORAGE_KEY,
   lcdWidth: LCD_WIDTH_STORAGE_KEY,
   lcdMotion: LCD_MOTION_STORAGE_KEY,
 };
 
 export const DEFAULT_UI_STYLE_PREFS: UiStylePrefs = {
-  style: "classic",
   lcdBody: "mono",
   lcdWidth: "column",
   lcdMotion: "on",
 };
 
 export function normalizeUiStylePrefs(raw: {
-  style?: unknown;
   lcdBody?: unknown;
   lcdWidth?: unknown;
   lcdMotion?: unknown;
 }): UiStylePrefs {
   return {
-    style: raw.style === "lcd" ? "lcd" : "classic",
     lcdBody: raw.lcdBody === "pixel" ? "pixel" : "mono",
     lcdWidth: raw.lcdWidth === "wide" || raw.lcdWidth === "full" ? raw.lcdWidth : "column",
     lcdMotion: raw.lcdMotion === "off" ? "off" : "on",
@@ -70,7 +58,6 @@ function writeStorage(key: string, value: string) {
 export function readStoredUiStylePrefs(): UiStylePrefs {
   if (typeof window === "undefined") return DEFAULT_UI_STYLE_PREFS;
   return normalizeUiStylePrefs({
-    style: readStorage(UI_STYLE_STORAGE_KEY),
     lcdBody: readStorage(LCD_BODY_STORAGE_KEY),
     lcdWidth: readStorage(LCD_WIDTH_STORAGE_KEY),
     lcdMotion: readStorage(LCD_MOTION_STORAGE_KEY),
@@ -83,24 +70,16 @@ function reducedMotionQuery(): MediaQueryList | null {
 }
 
 /**
- * `data-lcd-motion` is the effective setting: off when the user turns LCD motion
- * off or the system asks for reduced motion, so each still form needs one rule.
+ * `data-lcd-motion` is the effective setting: off when the user turns motion off or
+ * the system asks for reduced motion, so each still form needs one rule.
  */
 export function applyUiStylePrefs(prefs: UiStylePrefs) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  if (prefs.style === "lcd") {
-    root.dataset.uiStyle = "lcd";
-    root.dataset.lcdBody = prefs.lcdBody;
-    root.dataset.lcdWidth = prefs.lcdWidth;
-    root.dataset.lcdMotion =
-      prefs.lcdMotion === "off" || reducedMotionQuery()?.matches ? "off" : "on";
-  } else {
-    delete root.dataset.uiStyle;
-    delete root.dataset.lcdBody;
-    delete root.dataset.lcdWidth;
-    delete root.dataset.lcdMotion;
-  }
+  root.dataset.lcdBody = prefs.lcdBody;
+  root.dataset.lcdWidth = prefs.lcdWidth;
+  root.dataset.lcdMotion =
+    prefs.lcdMotion === "off" || reducedMotionQuery()?.matches ? "off" : "on";
 }
 
 let current: UiStylePrefs = readStoredUiStylePrefs();
@@ -148,9 +127,4 @@ export function useSystemReducedMotion(): boolean {
     () => reducedMotionQuery()?.matches ?? false,
     () => false,
   );
-}
-
-/** True while the LCD preview is on; layout containers branch on this. */
-export function useLcdStyle(): boolean {
-  return useUiStylePrefs().style === "lcd";
 }

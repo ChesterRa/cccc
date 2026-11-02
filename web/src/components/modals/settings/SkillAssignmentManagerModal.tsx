@@ -146,11 +146,11 @@ export function SkillAssignmentManagerModal({
   const writeBusy = busyKey.startsWith("manage");
 
   return (
-    <BodyPortal lcdScope>
+    <BodyPortal>
       <div
         key={capabilityId}
         ref={modalRef}
-        className="fixed inset-0 z-[1000] flex items-end justify-center bg-black/35 px-3 py-4 sm:items-center"
+        className="fixed inset-0 z-[1000] flex items-end justify-center glass-overlay px-3 py-4 sm:items-center"
         role="dialog"
         aria-modal="true"
         aria-labelledby="skill-assignment-manager-title"

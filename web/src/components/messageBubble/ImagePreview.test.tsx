@@ -5,7 +5,6 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { setUiStylePrefs } from "../../utils/uiStyle";
 import { ImagePreview } from "./ImagePreview";
 import { ImagePreviewFailure } from "./ImagePreviewFailure";
 
@@ -54,7 +53,7 @@ describe("ImagePreview fixed layout", () => {
     expect(markup).toContain('download="missing-image.png"');
   });
 
-  it("draws the transparency grid in LCD tones and shows the picture without the light theme's lift", async () => {
+  it("draws the transparency grid in panel tones and shows the picture without a lift", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -74,11 +73,6 @@ describe("ImagePreview fixed layout", () => {
       );
     try {
       await render();
-      expect(host.querySelector("img")?.style.boxShadow).not.toBe("");
-      expect(host.querySelector("img")?.style.filter).toContain("contrast");
-
-      await act(async () => setUiStylePrefs({ style: "lcd" }));
-      await render();
       const image = host.querySelector("img");
       expect(image?.style.backgroundColor).toBe("var(--lcd-panel)");
       expect(image?.style.boxShadow).toBe("");
@@ -86,7 +80,6 @@ describe("ImagePreview fixed layout", () => {
     } finally {
       await act(async () => root.unmount());
       host.remove();
-      setUiStylePrefs({ style: "classic" });
     }
   });
 });

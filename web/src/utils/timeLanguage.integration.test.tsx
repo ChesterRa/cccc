@@ -41,7 +41,7 @@ it("updates timestamps in the summary, Inbox and headless trace when the UI lang
                 (fallback || key).replace("{{time}}", String(values?.time || ""))
               }
               ui={createContextModalUi(false)}
-              brief={{ objective: "A", updated_at: at }}
+              brief={{ objective: "A", project_brief: "Current summary", updated_at: at }}
               tasksSummary={{}}
               attentionCounts={{ blocked: 0, waitingUser: 0, pendingHandoffs: 0 }}
               unassignedCount={0}
@@ -90,6 +90,10 @@ it("updates timestamps in the summary, Inbox and headless trace when the UI lang
           </div>
         </I18nextProvider>,
       ),
+    );
+    // The summary's timestamp is inside the expandable working summary.
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>("[data-goal-summary-key]")!.click(),
     );
     const check = (expected: string) => {
       for (const area of ["summary", "inbox", "trace"]) {

@@ -105,7 +105,6 @@ it("uses the submitted query for highlighting, filters and pagination while a ne
   await submit();
   await query("beta");
   expect(host.querySelector("mark")!.textContent).toBe("alpha");
-  expect(host.querySelector("mark[data-search-match]")?.closest("[data-lcd-scope]")).not.toBeNull();
   await click("loadOlderResults");
   expect(String(vi.mocked(apiJson).mock.lastCall?.[0])).toContain("q=alpha");
   expect(String(vi.mocked(apiJson).mock.lastCall?.[0])).toContain("before=alpha");

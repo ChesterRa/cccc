@@ -1,28 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  getMessageBubbleMotionClass as getMotionClass,
-  mayContainMarkdown as mayRenderMarkdown,
-} from "../../src/components/messageBubble/helpers";
-
-describe("getMessageBubbleMotionClass", () => {
-  it("animates commentary bubbles with the transient commentary class", () => {
-    expect(
-      getMotionClass({ isStreaming: true, isOptimistic: false, streamPhase: "commentary" }),
-    ).toBe("cccc-transient-bubble cccc-transient-bubble-commentary");
-  });
-
-  it("animates optimistic bubbles with the base transient class", () => {
-    expect(getMotionClass({ isStreaming: false, isOptimistic: true, streamPhase: "" })).toBe(
-      "cccc-transient-bubble",
-    );
-  });
-
-  it("keeps stable final bubbles animation-free", () => {
-    expect(
-      getMotionClass({ isStreaming: false, isOptimistic: false, streamPhase: "final_answer" }),
-    ).toBe("");
-  });
-});
+import { mayContainMarkdown as mayRenderMarkdown } from "../../src/components/messageBubble/helpers";
 
 describe("mayContainMarkdown", () => {
   it("detects GitHub-style tables so completed chat bubbles render markdown tables", () => {

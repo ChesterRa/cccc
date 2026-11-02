@@ -1013,7 +1013,6 @@ export function ChatComposer({
   return (
     <footer
       ref={footerRef}
-      data-lcd-scope
       data-composer-compact={compact ? "true" : undefined}
       onPointerDownCapture={(event) => {
         if (

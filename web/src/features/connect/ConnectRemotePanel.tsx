@@ -224,7 +224,9 @@ export function ConnectRemotePanel({
         <div
           className={`flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm ${opened ? "absolute inset-x-0 top-1/2" : ""}`}
         >
-          <p role={error ? "alert" : "status"}>{error || t("connecting")}</p>
+          <p role={error ? "alert" : "status"} data-status-tone={error ? "error" : "muted"}>
+            {error || t("connecting")}
+          </p>
           {error ? (
             <Button variant="secondary" onClick={() => setAttempt((v) => v + 1)}>
               {t("connect.retry")}

@@ -57,22 +57,25 @@ it.each([false, true])(
       expect(badge).toBeTruthy();
       expect(host.querySelectorAll('[role="status"]')).toHaveLength(1);
       expect(host.querySelector("h1")?.parentElement?.querySelector("p")).toBeNull();
-      // The visible text says what the dot says: the run state while connected,
+      // The visible text says what the symbol says: the run state while connected,
       // the connection while the page is cut off and its run state may be stale.
-      expect(badge.textContent).toBe(
+      expect(badge.lastElementChild?.textContent).toBe(
         { connected: "statusIdle", connecting: "reconnecting", disconnected: "disconnected" }[
           status
         ],
       );
-      const dot = badge.firstElementChild!;
+      const symbol = badge.firstElementChild!;
       if (status === "connected") {
-        expect(dot.classList.contains("bg-rose-500")).toBe(false);
-        expect(dot.classList.contains("animate-pulse")).toBe(false);
+        expect(symbol.getAttribute("data-lcd-shape")).toBe("idle");
+        expect(symbol.textContent).toBe("");
         expect(badge.getAttribute("title")).toBe("statusIdle");
       } else {
-        expect(
-          dot.classList.contains(status === "connecting" ? "animate-pulse" : "bg-rose-500"),
-        ).toBe(true);
+        // Reconnecting shows filling dots; a lost connection shows a cross.
+        if (status === "connecting") {
+          expect(symbol.querySelector(".lcd-reconnect-dots")).not.toBeNull();
+        } else {
+          expect(symbol.textContent).toBe("\u00D7");
+        }
         expect(badge.getAttribute("aria-label")).toContain(
           `statusIdle · ${status === "connecting" ? "reconnecting" : "disconnected"}`,
         );

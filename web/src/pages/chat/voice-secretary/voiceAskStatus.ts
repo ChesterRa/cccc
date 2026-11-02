@@ -44,7 +44,7 @@ export function currentVoiceAskTask(
   return candidate || retained;
 }
 
-/** What an Ask status means; the classic badge colours and the LCD tone both follow it. An
+/** What an Ask status means. An
  *  unconfirmed outcome waits for the user to confirm a retry, like a request that needs input. */
 export function voiceAskStatusTone(status: string): "warning" | "error" | "info" | undefined {
   const key = String(status || "pending")

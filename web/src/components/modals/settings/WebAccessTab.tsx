@@ -2307,8 +2307,8 @@ export function WebAccessTab({
         </div>
       </section>
 
-      {createDialog ? <BodyPortal lcdScope>{createDialog}</BodyPortal> : null}
-      {restartRequiredDialog ? <BodyPortal lcdScope>{restartRequiredDialog}</BodyPortal> : null}
+      {createDialog ? <BodyPortal>{createDialog}</BodyPortal> : null}
+      {restartRequiredDialog ? <BodyPortal>{restartRequiredDialog}</BodyPortal> : null}
     </div>
   );
 }

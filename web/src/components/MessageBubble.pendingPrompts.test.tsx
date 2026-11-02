@@ -9,7 +9,6 @@ import {
 } from "../features/pendingReplies/store";
 import { useUIStore } from "../stores/useUIStore";
 import type { LedgerEvent } from "../types";
-import { setUiStylePrefs } from "../utils/uiStyle";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
@@ -68,35 +67,27 @@ afterEach(() => {
 });
 
 it("marks a request to the user only while the 'Waiting for you' indicators are shown", async () => {
+  // The reply card marks the request, in place of the header's tag.
   const shown = await render(toUser);
-  expect(shown).toContain("needReply");
-  expect(shown).toContain("ring-violet");
+  expect(shown).toContain("data-pending-reply");
 
   useUIStore.getState().setShowPendingPrompts(false);
   const off = await render(toUser);
   expect(off).toContain("Which path?");
   expect(off).not.toContain("needReply");
-  expect(off).not.toContain("ring-violet");
   expect(off).not.toContain("data-pending-reply");
 });
 
 it("leaves a request to the user unmarked while the reply store is still loading", async () => {
   useUIStore.getState().setShowPendingPrompts(false);
   expect(await render(toUser, false)).not.toContain("needReply");
-  try {
-    await act(async () => setUiStylePrefs({ style: "lcd" }));
-    expect(await render(toUser, false)).not.toContain("needReply");
-    useUIStore.getState().setShowPendingPrompts(true);
-    // Without a reply card, LCD names the request in its header instead.
-    expect(await render(toUser, false)).toContain("needReply");
-  } finally {
-    await act(async () => setUiStylePrefs({ style: "classic" }));
-  }
+  useUIStore.getState().setShowPendingPrompts(true);
+  // Without a reply card, the header names the request instead.
+  expect(await render(toUser, false)).toContain("needReply");
 });
 
 it("keeps the mark on a request between members while the indicators are off", async () => {
   useUIStore.getState().setShowPendingPrompts(false);
   const markup = await render(betweenMembers);
   expect(markup).toContain("needReply");
-  expect(markup).toContain("ring-violet");
 });

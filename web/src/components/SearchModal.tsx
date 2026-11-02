@@ -210,7 +210,6 @@ export function SearchModal({
       title={titleContent}
       closeAriaLabel={t("closeSearchModal")}
       surface="solid"
-      lcdScope
       panelClassName="w-full h-full sm:h-[min(70dvh,520px)] sm:max-w-3xl"
       modalRef={modalRef}
     >

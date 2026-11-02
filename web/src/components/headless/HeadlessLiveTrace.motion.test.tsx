@@ -3,7 +3,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { HeadlessPreviewSession } from "../../types";
-import { setUiStylePrefs } from "../../utils/uiStyle";
 import { HeadlessLiveTrace } from "./HeadlessLiveTrace";
 
 vi.mock("react-i18next", () => ({
@@ -65,7 +64,6 @@ async function render(sessions: HeadlessPreviewSession[]) {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  act(() => setUiStylePrefs({ style: "lcd" }));
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -73,7 +71,6 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(async () => root.unmount());
-  act(() => setUiStylePrefs({ style: "classic" }));
   host.remove();
   vi.useRealTimers();
 });
@@ -177,14 +174,4 @@ it("keeps focus in Markdown when the live cursor disappears", async () => {
   expect(host.querySelector(".markdown-body a")).toBe(link);
   expect(document.activeElement).toBe(link);
   expect(host.querySelector("[data-lcd-live-cursor]")).not.toBeNull();
-});
-
-it("keeps Classic free of the LCD cursor and retains its pulsing live dot", async () => {
-  act(() => setUiStylePrefs({ style: "classic" }));
-  await render([session("Live")]);
-  expect(host.querySelector("[data-lcd-live-cursor]")).toBeNull();
-  expect(host.querySelector("[data-status-dot=active]")?.className).toContain("animate-pulse");
-  await render([session("A **message**", { streamPhase: "final_answer" })]);
-  expect(host.querySelector("[data-lcd-live-markdown]")).toBeNull();
-  expect(host.querySelector(".markdown-body")?.textContent).toBe("A **message**");
 });

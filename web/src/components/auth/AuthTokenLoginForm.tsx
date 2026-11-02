@@ -51,7 +51,7 @@ export function AuthTokenLoginForm({
             />
           </div>
           <h1 className="gradient-text text-lg font-semibold">{branding.product_name}</h1>
-          <p className="text-sm text-[var(--color-text-tertiary)]">
+          <p className="text-center text-sm text-[var(--color-text-tertiary)]">
             {t(requireAdmin ? "connect.enterAdminToken" : "enterToken")}
           </p>
           {requireAdmin ? (
@@ -78,12 +78,16 @@ export function AuthTokenLoginForm({
           <button
             type="button"
             onClick={() => setShowToken((visible) => !visible)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded px-2 py-1 text-xs text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)]"
+            className="absolute right-1 top-1/2 min-h-11 min-w-11 -translate-y-1/2 cursor-pointer px-2 py-1 text-xs text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)]"
           >
             {showToken ? t("hideToken") : t("showToken")}
           </button>
         </div>
-        {error ? <p className="mt-2 text-sm text-red-400">{error}</p> : null}
+        {error ? (
+          <p role="alert" data-status-tone="error" className="mt-2 text-sm">
+            {error}
+          </p>
+        ) : null}
         <Button
           type="submit"
           disabled={submitting || !token.trim()}
@@ -105,7 +109,7 @@ export function AuthTokenLoginForm({
           <button
             type="button"
             onClick={() => setShowRecovery((visible) => !visible)}
-            className="text-xs text-[var(--color-text-secondary)] underline underline-offset-4 transition-colors hover:text-[var(--color-text-primary)]"
+            className="inline-flex min-h-11 items-center text-xs text-[var(--color-text-secondary)] underline underline-offset-4 transition-colors hover:text-[var(--color-text-primary)]"
           >
             {showRecovery ? t("hideRecovery") : t("forgotTokenCta")}
           </button>

@@ -1,8 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { classNames } from "../../../utils/classNames";
-import { useLcdStyle } from "../../../utils/uiStyle";
 import { SelectCombobox } from "../../SelectCombobox";
-import { Switch } from "../../ui/switch";
 import type { ContextTranslator, TaskFilterValue } from "../model";
 import type { ContextModalUi } from "../ui";
 
@@ -47,9 +45,9 @@ export function TaskBoardToolbar({
   hasArchivedTasks: boolean;
   archivedExpanded: boolean;
   matchingCount?: number | null;
-  /** LCD only: the board's own actions, kept on the toolbar's row. */
+  /** The board's own actions, kept on the toolbar's row. */
   actions?: ReactNode;
-  /** LCD only: column navigation, held in the same sticky layer as the filters. */
+  /** Column navigation, held in the same sticky layer as the filters. */
   jump?: ReactNode;
   onTaskQueryChange: (value: string) => void;
   onAssigneeFilterChange: (value: string) => void;
@@ -57,7 +55,6 @@ export function TaskBoardToolbar({
   onClearFilters: () => void;
   onArchivedExpandedChange: (value: boolean) => void;
 }) {
-  const lcd = useLcdStyle();
   const filters: Array<[TaskFilterValue, string, number]> = [
     ["all", tr("context.all", "All"), Number(tasksSummary.total || 0)],
     ["blocked", tr("context.blocked", "Blocked"), attentionCounts.blocked],
@@ -152,91 +149,53 @@ export function TaskBoardToolbar({
       observer.disconnect();
       scroll.style.removeProperty("--taskboard-pinned-height");
     };
-  }, [lcd, hasJumpLayer]);
+  }, [hasJumpLayer]);
 
-  if (lcd) {
-    // One sticky layer: search and the new-task key, then the filters, which a
-    // phone scrolls sideways. Clear comes first there so it stays in view. On a
-    // phone only the column jump and the status stay pinned, as their own layer.
-    return (
-      <div ref={stickyRef} data-taskboard-sticky className="flex flex-col gap-2">
-        <div data-taskboard-toolbar>
-          <div data-taskboard-search>{searchInput}</div>
-          <div data-taskboard-controls>
-            {filtered ? (
-              <button
-                type="button"
-                onClick={onClearFilters}
-                className={ui.buttonSecondaryClass}
-                data-taskboard-clear
-              >
-                {tr("context.clearFilters", "Clear filters")}
-              </button>
-            ) : null}
-            <div data-taskboard-assignee>{assigneeSelect}</div>
-            <div data-taskboard-filters>{filterButtons}</div>
-            {hasArchivedTasks ? (
-              <button
-                type="button"
-                aria-pressed={archivedExpanded}
-                onClick={() => onArchivedExpandedChange(!archivedExpanded)}
-                className={ui.chipBaseClass}
-                data-taskboard-archive
-              >
-                {tr("context.showArchived", "Show archived")}
-              </button>
-            ) : null}
-          </div>
-          {actions}
-        </div>
-        {jump || syncing || matching ? (
-          <div ref={jumpLayerRef} data-taskboard-jump-layer className="flex flex-col gap-2">
-            {jump}
-            {syncing || matching ? (
-              <div className="flex flex-wrap items-center gap-x-3">
-                {syncing}
-                {matching}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
+  // One sticky layer: search and the new-task key, then the filters, which a
+  // phone scrolls sideways. Clear comes first there so it stays in view. On a
+  // phone only the column jump and the status stay pinned, as their own layer.
   return (
-    <div className="flex flex-col gap-3">
-      <div className="grid flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2 lg:grid-cols-[minmax(0,1fr)_14rem_auto]">
-        {searchInput}
-        {assigneeSelect}
-        {filtered ? (
-          <button
-            type="button"
-            onClick={onClearFilters}
-            className={classNames(ui.buttonSecondaryClass, "col-span-2 lg:col-span-1")}
-          >
-            {tr("context.clearFilters", "Clear filters")}
-          </button>
-        ) : null}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        {filterButtons}
-        {hasArchivedTasks ? (
-          <div className="flex items-center gap-2 sm:ml-auto">
-            <span className="text-sm font-medium text-[var(--color-text-primary)]">
+    <div ref={stickyRef} data-taskboard-sticky className="flex flex-col gap-2">
+      <div data-taskboard-toolbar>
+        <div data-taskboard-search>{searchInput}</div>
+        <div data-taskboard-controls>
+          {filtered ? (
+            <button
+              type="button"
+              onClick={onClearFilters}
+              className={ui.buttonSecondaryClass}
+              data-taskboard-clear
+            >
+              {tr("context.clearFilters", "Clear filters")}
+            </button>
+          ) : null}
+          <div data-taskboard-assignee>{assigneeSelect}</div>
+          <div data-taskboard-filters>{filterButtons}</div>
+          {hasArchivedTasks ? (
+            <button
+              type="button"
+              aria-pressed={archivedExpanded}
+              onClick={() => onArchivedExpandedChange(!archivedExpanded)}
+              className={ui.chipBaseClass}
+              data-taskboard-archive
+            >
               {tr("context.showArchived", "Show archived")}
-            </span>
-            <Switch
-              checked={archivedExpanded}
-              aria-label={tr("context.showArchived", "Show archived")}
-              onChange={(event) => onArchivedExpandedChange(event.currentTarget.checked)}
-            />
-          </div>
-        ) : null}
-        {syncing}
+            </button>
+          ) : null}
+        </div>
+        {actions}
       </div>
-      {matching}
+      {jump || syncing || matching ? (
+        <div ref={jumpLayerRef} data-taskboard-jump-layer className="flex flex-col gap-2">
+          {jump}
+          {syncing || matching ? (
+            <div className="flex flex-wrap items-center gap-x-3">
+              {syncing}
+              {matching}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

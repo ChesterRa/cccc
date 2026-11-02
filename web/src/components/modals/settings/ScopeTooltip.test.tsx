@@ -19,10 +19,10 @@ afterEach(async () => {
   host.remove();
 });
 
-async function render(scoped: boolean) {
+async function render() {
   await act(async () => {
     root.render(
-      <div data-lcd-scope={scoped || undefined}>
+      <div>
         <button type="button" disabled>
           Instance
         </button>
@@ -32,17 +32,13 @@ async function render(scoped: boolean) {
   });
 }
 
-it.each([true, false])(
-  "opens independently of a disabled scope and inherits its style scope: %s",
-  async (scoped) => {
-    await render(scoped);
-    const trigger = host.querySelector<HTMLButtonElement>("[data-scope-help-trigger]")!;
-    expect(trigger.disabled).toBe(false);
-    await act(async () => trigger.click());
-    const popup = document.querySelector<HTMLElement>("[data-scope-help-popup]")!;
-    expect(popup.textContent).toContain("Admin access required");
-    expect(popup.hasAttribute("data-lcd-scope")).toBe(scoped);
-    await act(async () => trigger.click());
-    expect(document.querySelector("[data-scope-help-popup]")).toBeNull();
-  },
-);
+it("opens independently of a disabled scope", async () => {
+  await render();
+  const trigger = host.querySelector<HTMLButtonElement>("[data-scope-help-trigger]")!;
+  expect(trigger.disabled).toBe(false);
+  await act(async () => trigger.click());
+  const popup = document.querySelector<HTMLElement>("[data-scope-help-popup]")!;
+  expect(popup.textContent).toContain("Admin access required");
+  await act(async () => trigger.click());
+  expect(document.querySelector("[data-scope-help-popup]")).toBeNull();
+});

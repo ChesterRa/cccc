@@ -110,20 +110,19 @@ describe("composer typing placeholder", () => {
     expect(caret()).toBe("typing");
   });
 
-  it("keeps the first sentence still when the LCD look's motion is off", async () => {
+  it("keeps the first sentence still while Motion is off", async () => {
     try {
-      await act(async () => setUiStylePrefs({ style: "lcd", lcdMotion: "off" }));
+      await act(async () => setUiStylePrefs({ lcdMotion: "off" }));
       await render();
       expect(text()).toBe("ab");
       expect(host.querySelector("[data-composer-caret]")).toBeNull();
       await tick(500);
       expect(text()).toBe("ab");
-      await act(async () => setUiStylePrefs({ style: "classic" }));
-      // The switch belongs to the LCD look; classic follows only the system setting.
+      await act(async () => setUiStylePrefs({ lcdMotion: "on" }));
       await tick(60);
       expect(host.querySelector("[data-composer-caret]")).not.toBeNull();
     } finally {
-      await act(async () => setUiStylePrefs({ style: "classic", lcdMotion: "on" }));
+      await act(async () => setUiStylePrefs({ lcdMotion: "on" }));
     }
   });
 

@@ -38,8 +38,7 @@
   }
 }
 
-/* Inputs in the modal take the control outline; the classic hairline is too faint
-   on the LCD ground. */
+/* Inputs in the modal take the control outline. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-context-scroll] .glass-input {
   border-color: var(--lcd-rule-strong);
 }
@@ -330,7 +329,7 @@
   padding-inline: 1ch;
 }
 
-/* The trigger fills its slot; its classic width would run past it. */
+/* The trigger fills its slot without running past it. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-taskboard-assignee] button {
   width: 100%;
 }
@@ -739,7 +738,7 @@
   background: var(--lcd-bg);
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-ghost] span {
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-ghost-status] {
   flex-shrink: 0;
   border-color: var(--lcd-rule-strong);
   background: transparent;

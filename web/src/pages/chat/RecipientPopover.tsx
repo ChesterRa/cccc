@@ -66,7 +66,6 @@ export function RecipientPopover({
       className="fixed pointer-events-auto z-[1000]"
       style={style}
       role="dialog"
-      data-lcd-scope
       aria-label={t("recipientDetails", {
         name: target.label,
         defaultValue: "Recipient details for {{name}}",

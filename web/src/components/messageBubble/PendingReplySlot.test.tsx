@@ -162,7 +162,7 @@ it("retains an uncertain answer and retries the identical request before marking
     );
     await act(async () => finishRetry());
     expect(store.getState().entries[replyKey("g1", "r1")].closed).toBe("answered");
-    expect(host.textContent).toContain("A. Alpha");
+    expect(host.textContent).toContain("pendingReply.answeredChoice: A");
     expect(mocks.append).toHaveBeenCalledOnce();
     expect(mocks.update).toHaveBeenCalledOnce();
     expect(refresh).toHaveBeenCalledOnce();
@@ -274,10 +274,10 @@ it("shows a loaded recorded choice, but never labels a mismatched reply as an an
   try {
     mocks.groups.g1 = { events: [reply] };
     await render();
-    expect(host.textContent).toContain("B. Beta");
+    expect(host.textContent).toContain("pendingReply.answeredChoice: B");
     mocks.groups.g1 = { events: [{ ...reply, data: { ...reply.data, text: "Different answer" } }] };
     await render();
-    expect(host.textContent).not.toContain("B. Beta");
+    expect(host.textContent).not.toContain("pendingReply.answeredChoice: B");
   } finally {
     mocks.groups = {};
     await act(async () => root.unmount());

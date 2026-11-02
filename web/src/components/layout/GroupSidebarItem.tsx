@@ -133,7 +133,7 @@ export function GroupSidebarItem({
           onFocus={onWarm}
         >
           <div className="flex items-center gap-2 min-w-0">
-            <GroupStatusIndicator status={status} subtle />
+            <GroupStatusIndicator status={status} />
             <span
               className={classNames(
                 "text-sm truncate",

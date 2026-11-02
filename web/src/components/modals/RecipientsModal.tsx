@@ -98,7 +98,6 @@ export function RecipientsModal({
       titleId="recipients-title"
       title={titleContent}
       closeAriaLabel={t("common:close")}
-      lcdScope
       panelClassName="w-full max-w-md max-h-[80vh] sm:max-h-[calc(100dvh-8rem)]"
       modalRef={modalRef}
     >

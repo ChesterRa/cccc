@@ -72,7 +72,6 @@ describe("VoiceAskThread", () => {
           documentKey={() => ""}
           tasks={tasks}
           statusLabel={(status) => `status:${status}`}
-          statusClassName={() => ""}
           formatTime={() => ""}
           formatFullTime={() => ""}
           onOpenDocument={vi.fn()}

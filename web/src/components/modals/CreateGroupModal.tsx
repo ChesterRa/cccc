@@ -80,7 +80,6 @@ export function CreateGroupModal({
 
   return (
     <ModalFrame
-      lcdScope
       isOpen={isOpen}
       isDark={isDark}
       onClose={onCancelAndReset}

@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import { Code, Download, Eye, ExternalLink, Paperclip, RotateCcw, Save, X } from "lucide-react";
 import { LcdIcon } from "../Icons";
 import { LcdSpinner } from "../LcdSpinner";
-import { useLcdStyle } from "../../utils/uiStyle";
 import { classNames } from "../../utils/classNames";
 import type { WorkspaceFile } from "../../types";
 import { baseName } from "./workspaceTreeModel";
@@ -74,7 +73,6 @@ function FileViewer({
   navigation,
 }: Props) {
   const { t } = useTranslation("chat");
-  const lcd = useLcdStyle();
   const [showSource, setShowSource] = useState(false);
   const [confirmReload, setConfirmReload] = useState(false);
   const cancelReload = useRef<HTMLButtonElement>(null);
@@ -135,16 +133,12 @@ function FileViewer({
           aria-label={t("workspaceReload", { defaultValue: "Reload file" })}
           className={fileActionClass}
         >
-          {lcd && loading ? (
+          {loading ? (
             <LcdSpinner className="h-3.5 w-3.5">
               <LcdIcon icon={RotateCcw} glyph="reload" className="h-3.5 w-3.5" />
             </LcdSpinner>
           ) : (
-            <LcdIcon
-              icon={RotateCcw}
-              glyph="reload"
-              className={classNames("h-3.5 w-3.5", loading && "animate-spin")}
-            />
+            <LcdIcon icon={RotateCcw} glyph="reload" className="h-3.5 w-3.5" />
           )}
         </button>
         {hasSourcePreview && (
@@ -334,7 +328,6 @@ function FileViewer({
       <Dialog open={confirmReload} onOpenChange={setConfirmReload}>
         <DialogContent
           className="gap-4 p-6"
-          lcdScope
           onEscapeKeyDown={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
             // Keep the enclosing phone surface's document handlers out of this dialog.

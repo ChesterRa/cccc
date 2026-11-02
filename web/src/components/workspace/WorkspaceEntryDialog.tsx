@@ -34,11 +34,7 @@ export function WorkspaceEntryDialog({
         if (!next && !busy) onClose();
       }}
     >
-      <DialogContent
-        className="gap-4 p-6"
-        lcdScope
-        onEscapeKeyDown={(event) => event.stopPropagation()}
-      >
+      <DialogContent className="gap-4 p-6" onEscapeKeyDown={(event) => event.stopPropagation()}>
         <DialogTitle className="pr-6">
           {action &&
             t(

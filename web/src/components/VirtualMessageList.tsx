@@ -26,7 +26,7 @@ import {
   useTopHistoryLoadCoordinator,
 } from "./virtualMessageListPrependCompensation";
 import { classNames } from "../utils/classNames";
-import { subscribeUiStylePrefs, useLcdStyle } from "../utils/uiStyle";
+import { subscribeUiStylePrefs } from "../utils/uiStyle";
 import { getNonVirtualMessageListTopMargin } from "./virtualMessageListLayout";
 import { useVirtualMessageMetadata } from "./virtualMessageList/useVirtualMessageMetadata";
 import type { VirtualMessageListProps } from "./virtualMessageList/types";
@@ -112,7 +112,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   resetKey,
 }: VirtualMessageListInnerProps) {
   const { t } = useTranslation("chat");
-  const lcd = useLcdStyle();
   const parentRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const onScrollSnapshotRef = useRef(onScrollSnapshot);
@@ -1307,7 +1306,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     shouldAutoScrollNow,
   ]);
 
-  // An interface style change reflows every message at the same width, so the
+  // A change of body font or width reflows every message, so the
   // observer above would re-anchor on whichever message now sits at the top.
   // The store notifies before any re-render, font load, or observer callback,
   // while the saved anchor still names the message being read. A reader who
@@ -1455,11 +1454,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               >
                 {isLoadingHistory ? (
                   <div className="glass-panel flex items-center gap-2 rounded-full px-3 py-1.5 text-[var(--color-text-secondary)] shadow-md">
-                    {lcd ? (
-                      <LcdSpinner className="h-4 w-4" />
-                    ) : (
-                      <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
-                    )}
+                    <LcdSpinner className="h-4 w-4" />
                     <span className="text-xs">
                       {t("loadingHistory", { defaultValue: "Loading..." })}
                     </span>

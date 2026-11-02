@@ -2,7 +2,6 @@ import { useTranslation } from "react-i18next";
 
 import { MessageSquareTextIcon } from "../Icons";
 import { LcdSpinner } from "../LcdSpinner";
-import { useLcdStyle } from "../../utils/uiStyle";
 
 export function VirtualMessageListEmptyState({
   isLoadingHistory,
@@ -18,17 +17,12 @@ export function VirtualMessageListEmptyState({
   onLoadMore?: () => void;
 }) {
   const { t } = useTranslation("chat");
-  const lcd = useLcdStyle();
 
   if (isLoadingHistory) {
     return (
       <div className="flex h-full flex-col items-center justify-center pb-20 text-center">
         <div className="glass-panel flex items-center gap-2 rounded-full px-3 py-1.5 text-[var(--color-text-secondary)] shadow-md">
-          {lcd ? (
-            <LcdSpinner className="h-4 w-4" />
-          ) : (
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-          )}
+          <LcdSpinner className="h-4 w-4" />
           <span className="text-xs">{t("loadingHistory", { defaultValue: "Loading..." })}</span>
         </div>
       </div>

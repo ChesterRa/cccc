@@ -8,13 +8,11 @@ import {
   IDLE_PROMPT_TTL_MS,
   WORKING_OUTPUT_TTL_MS,
 } from "../utils/terminalWorkingState";
-import { getActorTabIndicatorState, type ActorTabIndicator } from "../components/tabBarIndicator";
 
 export type ActorDisplayState = {
   isRunning: boolean;
   assumeRunning: boolean;
   workingState: string;
-  indicator: ActorTabIndicator;
 };
 
 type UseActorDisplayStateInput = {
@@ -76,8 +74,7 @@ export function useActorDisplayState({
       actorStatusProvisional,
     });
     const workingState = getActorDisplayWorkingState(actor, terminalSignal, now);
-    const indicator = getActorTabIndicatorState({ isRunning, workingState, assumeRunning });
 
-    return { isRunning, assumeRunning, workingState, indicator };
+    return { isRunning, assumeRunning, workingState };
   }, [actor, actorStatusProvisional, now, terminalSignal]);
 }

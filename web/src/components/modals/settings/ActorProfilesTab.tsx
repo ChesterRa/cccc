@@ -958,7 +958,7 @@ export function ActorProfilesTab({
     // The request is a user action, not a response to form state changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorRequest]);
-  if (editorOnly) return editorModal ? <BodyPortal lcdScope>{editorModal}</BodyPortal> : null;
+  if (editorOnly) return editorModal ? <BodyPortal>{editorModal}</BodyPortal> : null;
 
   return (
     <div className="space-y-5">
@@ -1095,7 +1095,7 @@ export function ActorProfilesTab({
         </div>
       </section>
 
-      {editorModal ? <BodyPortal lcdScope>{editorModal}</BodyPortal> : null}
+      {editorModal ? <BodyPortal>{editorModal}</BodyPortal> : null}
     </div>
   );
 }

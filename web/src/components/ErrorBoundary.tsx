@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import i18n from "../i18n";
+import { buttonVariants } from "./ui/button-variants";
 
 interface Props {
   children: ReactNode;
@@ -39,59 +40,35 @@ export class ErrorBoundary extends Component<Props, State> {
         return this.props.fallback;
       }
 
+      // Theme tokens and the app's own keys, so the page reads in either theme.
       return (
         <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            height: "100%",
-            padding: "24px",
-            textAlign: "center",
-            color: "var(--text-secondary, #666)",
-          }}
+          className="flex h-full flex-col items-center justify-center p-6 text-center text-[var(--color-text-secondary)]"
+          role="alert"
         >
-          <div style={{ fontSize: "48px", marginBottom: "16px" }}>:(</div>
-          <h2
-            style={{
-              margin: "0 0 8px 0",
-              fontSize: "18px",
-              fontWeight: 600,
-              color: "var(--text-primary, #333)",
-            }}
-          >
+          <div className="mb-4 text-5xl" aria-hidden="true">
+            :(
+          </div>
+          <h2 className="mb-2 text-lg font-semibold text-[var(--color-text-primary)]">
             {i18n.t("layout:somethingWentWrong")}
           </h2>
-          <p style={{ margin: "0 0 24px 0", fontSize: "14px", maxWidth: "400px" }}>
+          <p className="mb-6 max-w-[400px] text-sm">
             {this.state.error?.message || i18n.t("layout:unexpectedError")}
           </p>
-          <div style={{ display: "flex", gap: "12px" }}>
+          <div className="flex gap-3">
             <button
+              type="button"
               onClick={this.handleReset}
-              style={{
-                padding: "8px 16px",
-                fontSize: "14px",
-                border: "1px solid var(--border-color, #ddd)",
-                borderRadius: "6px",
-                background: "var(--bg-secondary, #f5f5f5)",
-                color: "var(--text-primary, #333)",
-                cursor: "pointer",
-              }}
+              className={buttonVariants({ variant: "outline" })}
+              data-lcd-key
             >
               {i18n.t("layout:tryAgain")}
             </button>
             <button
+              type="button"
               onClick={this.handleRefresh}
-              style={{
-                padding: "8px 16px",
-                fontSize: "14px",
-                border: "none",
-                borderRadius: "6px",
-                background: "var(--accent-color, #007AFF)",
-                color: "#fff",
-                cursor: "pointer",
-              }}
+              className={buttonVariants()}
+              data-lcd-primary
             >
               {i18n.t("layout:refreshPage")}
             </button>

@@ -2,7 +2,6 @@ import { useDroppable } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import { TASK_PAGE_SIZE } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
-import { useLcdStyle } from "../../../utils/uiStyle";
 import type { BoardStatus, ContextTranslator, SubtaskProgress } from "../model";
 import type { ContextModalUi } from "../ui";
 import { TaskCard } from "./TaskCard";
@@ -44,7 +43,6 @@ export function TaskBoardColumn({
   onRestoreTask: (task: Task) => void;
   onLoadMore: (status: BoardStatus) => void;
 }) {
-  const lcd = useLcdStyle();
   const { setNodeRef, isOver } = useDroppable({
     id: `column:${columnKey}`,
     data: { type: "column", status: columnKey },
@@ -59,7 +57,7 @@ export function TaskBoardColumn({
       data-task-column={columnKey}
       data-drop-target={isOver || undefined}
       // The phone column jump moves focus here, so Tab continues in this column.
-      tabIndex={lcd ? -1 : undefined}
+      tabIndex={-1}
       data-rendered-task-count={items.length}
       data-total-task-count={totalCount}
       className={classNames(
@@ -88,7 +86,6 @@ export function TaskBoardColumn({
               task={task}
               subtasks={subtaskProgress.get(task.id)}
               tr={tr}
-              ui={ui}
               syncBusy={syncBusy}
               searchQuery={searchQuery}
               selected={selectedTaskId === task.id}

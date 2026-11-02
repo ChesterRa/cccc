@@ -53,7 +53,7 @@ it("offers Clear filters only when a filter is active and retains its existing a
   }
 });
 
-it("keeps a selected empty filter and exposes the archived switch to keyboard users", () => {
+it("keeps a selected empty filter and exposes the archive key to keyboard users", () => {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -80,14 +80,16 @@ it("keeps a selected empty filter and exposes the archived switch to keyboard us
   };
   try {
     act(() => root.render(<TaskBoardToolbar {...props} />));
-    const filters = [...host.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")];
+    const filters = [
+      ...host.querySelectorAll<HTMLButtonElement>("[data-taskboard-filters] button[aria-pressed]"),
+    ];
     expect(filters.map((button) => button.textContent)).toEqual([
       "All · 0",
       "Pending handoffs · 0",
     ]);
     expect(filters[1].getAttribute("aria-pressed")).toBe("true");
-    const toggle = host.querySelector<HTMLInputElement>('input[role="switch"]')!;
-    expect(toggle.checked).toBe(false);
+    const toggle = host.querySelector<HTMLButtonElement>("[data-taskboard-archive]")!;
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
     act(() => toggle.click());
     expect(onArchived).toHaveBeenCalledWith(true);
   } finally {

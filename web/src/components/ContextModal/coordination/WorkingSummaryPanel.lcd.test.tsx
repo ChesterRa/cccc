@@ -2,7 +2,6 @@
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { setUiStylePrefs } from "../../../utils/uiStyle";
 import { createContextModalUi } from "../ui";
 import { WorkingSummaryPanel } from "./WorkingSummaryPanel";
 
@@ -13,7 +12,6 @@ let root: Root;
 let props: ComponentProps<typeof WorkingSummaryPanel>;
 
 beforeEach(() => {
-  setUiStylePrefs({ style: "lcd" });
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -50,7 +48,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
-  setUiStylePrefs({ style: "classic" });
 });
 
 function render() {

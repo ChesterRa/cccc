@@ -5296,18 +5296,6 @@ export function VoiceSecretaryComposerControl({
     },
     [t],
   );
-  const askFeedbackStatusClassName = useCallback(
-    (status: string) => {
-      const tone = voiceAskStatusTone(status);
-      if (tone === "warning")
-        return isDark ? "bg-amber-400/14 text-amber-100" : "bg-amber-50 text-amber-800";
-      if (tone === "error")
-        return isDark ? "bg-rose-400/14 text-rose-100" : "bg-rose-50 text-rose-800";
-      if (tone === "info") return isDark ? "bg-sky-400/14 text-sky-100" : "bg-sky-50 text-sky-800";
-      return isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]";
-    },
-    [isDark],
-  );
   const voiceModeLabel = useCallback(
     (mode: VoiceSecretaryCaptureMode) => {
       return assistantRowModeOptions.find((option) => option.key === mode)?.label || mode;
@@ -5804,7 +5792,6 @@ export function VoiceSecretaryComposerControl({
               <section
                 ref={modalRef}
                 data-voice-mobile-sheet
-                data-lcd-scope
                 data-voice-sheet-mode={executionOpen ? "execution" : panelView}
                 role="dialog"
                 aria-modal="true"
@@ -6243,7 +6230,6 @@ export function VoiceSecretaryComposerControl({
                         documentKey={voiceDocumentKey}
                         tasks={askTasks}
                         statusLabel={askFeedbackStatusLabel}
-                        statusClassName={askFeedbackStatusClassName}
                         formatTime={formatVoiceActivityTimeMs}
                         formatFullTime={formatVoiceActivityFullTimeMs}
                         onOpenDocument={(document) => void selectDocument(document)}
@@ -6896,10 +6882,7 @@ export function VoiceSecretaryComposerControl({
               <div
                 data-voice-composer-activity="ask"
                 data-status-tone={voiceAskStatusTone(pendingAskFeedbackStatus) || "neutral"}
-                className={classNames(
-                  "inline-flex max-w-[min(34rem,calc(100vw-6rem))] items-center rounded-full pl-2.5 pr-1 text-left text-[11px]",
-                  askFeedbackStatusClassName(pendingAskFeedbackStatus),
-                )}
+                className="inline-flex max-w-[min(34rem,calc(100vw-6rem))] items-center pl-2.5 pr-1 text-left text-[11px]"
               >
                 <button
                   type="button"

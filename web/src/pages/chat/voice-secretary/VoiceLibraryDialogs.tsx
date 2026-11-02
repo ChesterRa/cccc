@@ -50,7 +50,7 @@ export function VoiceFolderDialog({
         if (!open && !busy) onClose();
       }}
     >
-      <DialogContent lcdScope className="max-w-sm gap-3 p-5">
+      <DialogContent className="max-w-sm gap-3 p-5">
         <DialogTitle className="pr-8">{title}</DialogTitle>
         {error ? (
           <p role="alert" className="text-sm text-rose-600" data-status-tone="error">
@@ -148,7 +148,7 @@ export function VoiceArchiveDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent lcdScope className="max-w-3xl max-h-[85dvh] gap-3 p-5">
+      <DialogContent className="max-w-3xl max-h-[85dvh] gap-3 p-5">
         <DialogTitle className="pr-8">
           {t("voiceArchiveTitle", { defaultValue: "Archived documents" })}
         </DialogTitle>

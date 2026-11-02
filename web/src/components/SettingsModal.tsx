@@ -670,7 +670,6 @@ export function SettingsModal({
       closeAriaLabel={t("closeAriaLabel")}
       panelClassName="w-full h-full sm:h-[min(90dvh,920px)] sm:max-w-[min(1280px,calc(100vw-2rem))] sm:max-h-[90dvh]"
       modalRef={modalRef}
-      lcdScope
     >
       <div className="min-h-0 flex-1 flex flex-col sm:flex-row overflow-hidden">
         <SettingsNavigation

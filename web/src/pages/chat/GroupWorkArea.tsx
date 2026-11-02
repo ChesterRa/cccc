@@ -279,7 +279,6 @@ export function GroupWorkArea({
         inert={tiled ? true : undefined}
         aria-hidden={tiled ? true : undefined}
         data-group-message-view
-        data-lcd-scope
       >
         {children}
       </div>
@@ -295,7 +294,6 @@ export function GroupWorkArea({
             : undefined
         }
         data-group-terminal-view={tiled ? "visible" : "hidden"}
-        data-lcd-scope
       >
         {orderedEntries.map((entry) => {
           const { actorId } = entry;

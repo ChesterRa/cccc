@@ -3,7 +3,6 @@
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { setUiStylePrefs } from "../../../utils/uiStyle";
 import { VoiceWorkspaceFrame } from "./VoiceWorkspaceFrame";
 
 const beam = vi.hoisted(() => ({
@@ -35,7 +34,6 @@ describe("VoiceWorkspaceFrame", () => {
 
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    setUiStylePrefs({ style: "lcd" });
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -45,7 +43,6 @@ describe("VoiceWorkspaceFrame", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
-    setUiStylePrefs({ style: "classic" });
   });
 
   it("shows the existing smoothed audio level in LCD segments and keeps the meter out of the accessibility tree", async () => {
@@ -67,7 +64,7 @@ describe("VoiceWorkspaceFrame", () => {
     expect(host.textContent).toContain("Recording status");
   });
 
-  it("stops the LCD meter during analysis and restores the classic beam on style change", async () => {
+  it("stops the recording meter during analysis and removes it when work ends", async () => {
     await act(async () => root.render(frame(true, false)));
     await act(async () => root.render(frame(false, true)));
     expect(host.querySelector('[data-voice-workspace-meter="recording"]')).toBeNull();
@@ -76,11 +73,11 @@ describe("VoiceWorkspaceFrame", () => {
     expect(beam.current?.active).toBe(true);
     expect(beam.current?.processing).toBe(true);
 
-    await act(async () => setUiStylePrefs({ style: "classic" }));
+    await act(async () => root.render(frame(false, false)));
     expect(host.querySelector("[data-voice-workspace-meter]")).toBeNull();
-    expect(beam.current?.active).toBe(true);
-    expect(beam.current?.strength).toBeUndefined();
-    expect(beam.current?.coreLight).toBeUndefined();
+    expect(beam.current?.active).toBe(false);
+    expect(beam.current?.strength).toBe(0);
+    expect(beam.current?.coreLight).toBe(0);
     expect(beam.current?.onLevel).toBeUndefined();
   });
 });

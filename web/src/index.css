@@ -1,6 +1,5 @@
 /* CSS imports must stay at the top for PostCSS. */
 @import "./styles/markdown.css";
-@import "./styles/chatTypography.css";
 @import "./styles/chatMessage.css";
 @import "./styles/chatComposer.css";
 @import "./styles/lcd.css";
@@ -656,119 +655,6 @@ select {
   }
 }
 
-@keyframes runtime-dock-ticker-entry-in {
-  from {
-    opacity: 0;
-    transform: perspective(600px) rotateX(12deg) translateY(12px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: perspective(600px) rotateX(0deg) translateY(0) scale(1);
-  }
-}
-
-.runtime-dock-ticker-entry {
-  animation: runtime-dock-ticker-entry-in 0.24s ease-out;
-}
-
-.runtime-dock-actor-label {
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    "Noto Sans",
-    "Noto Sans CJK SC",
-    "Hiragino Sans",
-    "Microsoft YaHei UI",
-    sans-serif;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .runtime-dock-ticker-entry {
-    animation: none !important;
-  }
-}
-
-@keyframes cccc-bubble-soft-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.988);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes cccc-message-bubble-enter {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@keyframes cccc-message-bubble-enter-incoming {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@keyframes cccc-message-bubble-enter-outgoing {
-  from {
-    opacity: 0;
-    transform: translateY(4px) scale(0.995);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.cccc-transient-bubble {
-  animation: cccc-bubble-soft-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: opacity, transform;
-}
-
-.cccc-transient-bubble-commentary {
-  animation-duration: 0.16s;
-}
-
-.cccc-message-bubble-enter {
-  animation: cccc-message-bubble-enter 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: opacity, transform;
-}
-
-.cccc-message-bubble-enter-incoming {
-  animation-name: cccc-message-bubble-enter-incoming;
-  animation-duration: 0.18s;
-  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.cccc-message-bubble-enter-outgoing {
-  animation-name: cccc-message-bubble-enter-outgoing;
-  animation-duration: 0.18s;
-  animation-timing-function: cubic-bezier(0.18, 0.9, 0.22, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cccc-transient-bubble,
-  .cccc-message-bubble-enter,
-  .cccc-message-bubble-enter-incoming,
-  .cccc-message-bubble-enter-outgoing {
-    animation: none !important;
-    filter: none !important;
-  }
-}
-
 /* ============================================
    Utility Classes
    ============================================ */
@@ -1069,11 +955,6 @@ select {
     transparent 100%
   );
   background-size: 200% 100%;
-}
-
-/* Static background blob: decorative only, no idle animation. */
-.liquid-blob {
-  border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
 }
 
 /* Glass group item — sidebar list item */

@@ -117,7 +117,7 @@ describe("Ask task and reply authority", () => {
 });
 
 describe("Ask status tone", () => {
-  it("gives the badge colours and the LCD tone one meaning per status", () => {
+  it("gives each status the corresponding tone", () => {
     expect(voiceAskStatusTone("needs_user")).toBe("warning");
     expect(voiceAskStatusTone("unconfirmed")).toBe("warning");
     expect(voiceAskStatusTone(" FAILED ")).toBe("error");

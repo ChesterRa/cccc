@@ -4,7 +4,6 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import type { Task } from "../../../types";
-import { createContextModalUi } from "../ui";
 import { TaskCard } from "./TaskCard";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ i18n: { language: "en" } }) }));
@@ -25,7 +24,6 @@ function cardText(task: Task): string {
           <TaskCard
             task={task}
             tr={tr}
-            ui={createContextModalUi(false)}
             syncBusy={false}
             selected={false}
             onSelectTask={vi.fn()}
@@ -63,7 +61,6 @@ it("uses separate operable controls for opening and moving a task", () => {
           <TaskCard
             task={task}
             tr={tr}
-            ui={createContextModalUi(false)}
             syncBusy={false}
             selected={false}
             onSelectTask={open}
@@ -109,13 +106,11 @@ it("uses the latest task revision even when all displayed fields are unchanged",
   const move = vi.fn();
   const restore = vi.fn();
   const tr = (_key: string, fallback: string) => fallback;
-  const ui = createContextModalUi(false);
   const renderTask = (rev: number) => (
     <DndContext>
       <TaskCard
         task={{ id: "T1", title: "Plan", status: "planned", rev }}
         tr={tr}
-        ui={ui}
         syncBusy={false}
         selected={false}
         onSelectTask={open}
@@ -152,7 +147,6 @@ it("restores an archived task instead of moving it to planned", () => {
           <TaskCard
             task={task}
             tr={(_key, fallback) => fallback}
-            ui={createContextModalUi(false)}
             syncBusy={false}
             selected={false}
             onSelectTask={vi.fn()}
@@ -181,7 +175,6 @@ it("shows attention only while a task is live, preserving it for a later reopen"
   const root = createRoot(host);
   const restore = vi.fn();
   const tr = (_key: string, fallback: string) => fallback;
-  const ui = createContextModalUi(false);
   const task: Task = {
     id: "T1",
     title: "Finish the review",
@@ -195,7 +188,6 @@ it("shows attention only while a task is live, preserving it for a later reopen"
       <TaskCard
         task={{ ...task, status }}
         tr={tr}
-        ui={ui}
         syncBusy={false}
         selected={false}
         onSelectTask={vi.fn()}
@@ -206,10 +198,12 @@ it("shows attention only while a task is live, preserving it for a later reopen"
   );
   const expectAttention = (visible: boolean) => {
     const card = host.querySelector<HTMLElement>('[data-task-id="T1"]')!;
-    expect(card.className.includes("border-rose-500/30")).toBe(visible);
+    expect(Boolean(card.querySelector('[data-task-note="blocked"]'))).toBe(visible);
     expect(card.textContent?.includes("Blocked: T2")).toBe(visible);
     expect(card.textContent?.includes("Waiting on user")).toBe(visible);
-    expect(card.textContent?.includes("Handoff → agent-1")).toBe(visible);
+    expect(
+      Boolean(card.querySelector('[data-task-note="handoff"][title="Handoff → agent-1"]')),
+    ).toBe(visible);
   };
   try {
     act(() => root.render(renderStatus("active")));
@@ -265,7 +259,7 @@ it("tells how long ago a task changed, and nothing for a time it cannot place", 
   }
 });
 
-it("quotes a search match the card does not otherwise show", () => {
+it("quotes the matching field and highlights a title match", () => {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -276,7 +270,6 @@ it("quotes a search match the card does not otherwise show", () => {
           <TaskCard
             task={task}
             tr={tr}
-            ui={createContextModalUi(false)}
             syncBusy={false}
             searchQuery={searchQuery}
             selected={false}
@@ -297,12 +290,13 @@ it("quotes a search match the card does not otherwise show", () => {
     expect(host.querySelector("mark")?.textContent).toBe("cache");
     expect(quote()).toBe("Notes: …script skips the cache.");
 
-    // A match in the title, or in a handoff the live card already shows, needs no quote.
+    // A title match is highlighted in the title, rather than quoted a second time.
     render(live, "deploys");
-    expect(host.querySelector("mark")).toBeNull();
+    expect(host.querySelector("[data-task-title] mark")?.textContent).toBe("deploys");
+    expect(host.querySelector("[data-task-excerpt]")).toBeNull();
     render({ ...live, handoff_to: "reviewer" }, "review");
-    expect(host.querySelector("mark")).toBeNull();
-    // A Done card hides its handoff, so there the quote says where the match is.
+    expect(quote()).toBe("Handoff → reviewer");
+    // A Done card hides its handoff note but still names the matching field.
     render({ ...live, status: "done", handoff_to: "reviewer" }, "review");
     expect(quote()).toBe("Handoff → reviewer");
   } finally {

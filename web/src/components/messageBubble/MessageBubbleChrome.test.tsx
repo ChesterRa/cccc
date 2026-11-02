@@ -62,7 +62,6 @@ describe("message chrome", () => {
     };
     host.innerHTML = renderToStaticMarkup(<MessageBubble {...props} event={message} />);
     expect(host.textContent?.match(/needReply/g)).toHaveLength(1);
-    expect(host.querySelector(".message-footer-no-status")).not.toBeNull();
 
     host.innerHTML = renderToStaticMarkup(
       <MessageBubble
@@ -107,14 +106,14 @@ describe("message chrome", () => {
     );
     const cancelled = host.querySelector('button[aria-label="showObligationStatusCancelled"]');
     expect(cancelled?.textContent).toBe("reply 0/1 · replyCancelledCount");
-    expect(cancelled?.className).not.toMatch(/emerald|amber/);
+    expect(cancelled?.getAttribute("data-status-tone")).toBe("muted");
 
     host.innerHTML = renderToStaticMarkup(
       <MessageBubble {...props} event={request({ replied: true, cancelled: false })} />,
     );
     const replied = host.querySelector('button[aria-label="showObligationStatusCounts"]');
     expect(replied?.textContent).toBe("reply 1/1");
-    expect(replied?.className).toContain("emerald");
+    expect(replied?.getAttribute("data-status-tone")).toBe("ok");
   });
 
   it("keeps Mail, recipients and failure evidence readable in a read-only grouped row", () => {
@@ -181,12 +180,6 @@ describe("message chrome", () => {
       />,
     );
     expect(host.textContent?.includes("→")).toBe(expected);
-    if (by === "user") {
-      const names = Array.from(host.querySelectorAll("span")).filter(
-        (n) => n.textContent === "user" && n.classList.contains("sr-only"),
-      );
-      expect(names.length).toBe(2);
-    }
   });
 
   it("keeps Reply and Forward on the bar, the rest in its menu, and all in the touch menu", async () => {

@@ -14,7 +14,6 @@ import { AppSettingsMenu } from "./AppSettingsMenu";
 import { PendingSummaryContext } from "../../features/pendingReplies/context";
 import { aggregatePendingIndicator } from "../../features/pendingReplies/indicator";
 import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndicator";
-import { useLcdStyle } from "../../utils/uiStyle";
 
 export interface AppHeaderProps {
   theme: Theme;
@@ -112,7 +111,6 @@ export function AppHeader({
         )
       : [],
   );
-  const lcd = useLcdStyle();
   const workShortcuts = (
     <div
       className="hidden min-w-0 flex-1 basis-0 items-center justify-end @min-[760px]/group-header:flex"
@@ -151,7 +149,6 @@ export function AppHeader({
   );
   return (
     <header
-      data-lcd-scope
       className={`@container/group-header absolute inset-x-0 top-0 z-20 flex h-[48px] shrink-0 items-center px-[12px] glass-header transition-transform duration-150 motion-reduce:transition-none md:relative md:inset-auto md:h-11 md:px-3 ${mobileReadingHidden ? "pointer-events-none -translate-y-full" : ""}`}
       inert={mobileReadingHidden || undefined}
       aria-hidden={mobileReadingHidden || undefined}
@@ -224,7 +221,7 @@ export function AppHeader({
                   data-group-run-control={selectedGroupId}
                   aria-label={statusControlLabel}
                   title={statusControlLabel}
-                  className={`inline-flex min-h-8 min-w-8 items-center justify-center rounded-full pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] md:pointer-coarse:min-h-10 md:pointer-coarse:min-w-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)] ${lcd ? "relative" : "@min-[480px]/group-work-header:relative"}`}
+                  className={`inline-flex min-h-8 min-w-8 items-center justify-center rounded-full pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] md:pointer-coarse:min-h-10 md:pointer-coarse:min-w-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)] relative`}
                   aria-haspopup="menu"
                   aria-expanded={runMenu.open}
                   onClick={(event) => runMenu.toggle(event.currentTarget)}
@@ -235,22 +232,18 @@ export function AppHeader({
                     } else runMenu.onKeyDown(event);
                   }}
                 >
+                  {/* The state symbol shows alone; the word stays in the tooltip. Its
+                      frame and ▾ stay at every width: a bare ▶ reads as a play key. */}
                   <GroupStatusIndicator
                     status={selectedStatus}
                     connectionStatus={sseStatus}
                     variant="badge"
-                    className={`min-h-8 min-w-8 justify-center pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] md:pointer-coarse:min-h-10 md:pointer-coarse:min-w-10 [&>span:last-child]:hidden cursor-pointer transition-colors hover:text-[var(--color-text-primary)] ${
-                      // LCD shows the state symbol alone; the word stays in the tooltip.
-                      // Its frame and ▾ stay at every width: a bare ▶ reads as a play key.
-                      lcd
-                        ? "pr-6"
-                        : "!border-transparent !bg-transparent @min-[480px]/group-work-header:!border-[var(--glass-border-subtle)] @min-[480px]/group-work-header:pr-6 @min-[480px]/group-work-header:[&>span:last-child]:inline @min-[480px]/group-work-header:!rounded-full"
-                    }`}
+                    className="min-h-8 min-w-8 justify-center pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] md:pointer-coarse:min-h-10 md:pointer-coarse:min-w-10 [&>span:last-child]:hidden cursor-pointer transition-colors hover:text-[var(--color-text-primary)] pr-6"
                   />
                   <ChevronDownIcon
                     size={13}
                     aria-hidden="true"
-                    className={`pointer-events-none absolute right-2 text-[var(--color-text-tertiary)] ${lcd ? "" : "hidden @min-[480px]/group-work-header:block"}`}
+                    className="pointer-events-none absolute right-2 text-[var(--color-text-tertiary)]"
                   />
                 </button>
               ) : (
@@ -270,9 +263,9 @@ export function AppHeader({
           className="flex shrink-0 items-center gap-1"
           data-group-work-controls-host
         />
-        {lcd && !isSmallScreen ? (
-          // LCD preview: the tools take the right half, as wide as the identity on
-          // the left, so the view switch between them stays centred.
+        {!isSmallScreen ? (
+          // The tools take the right half, as wide as the identity on the left, so the
+          // view switch between them stays centred.
           <div
             className="flex min-w-0 flex-1 basis-0 items-center justify-end gap-2"
             data-lcd-header-end

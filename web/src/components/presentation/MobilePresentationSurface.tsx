@@ -38,7 +38,6 @@ export function MobilePresentationSurface({
       tabIndex={-1}
       data-mobile-surface={surface}
       data-mobile-presentation-surface={surface === "presentation" ? "true" : undefined}
-      data-lcd-scope
     >
       {children}
       <ModalFocusGuard />

@@ -21,8 +21,6 @@ interface ModalFrameProps {
   floatingCloseClassName?: string;
   floatingCloseButtonClassName?: string;
   modalRef?: Ref<HTMLDivElement>;
-  /** Takes the LCD style when it is on. Modals not yet adapted to it leave this off. */
-  lcdScope?: boolean;
   children: ReactNode;
 }
 
@@ -45,7 +43,6 @@ export function ModalFrame({
   floatingCloseClassName = "",
   floatingCloseButtonClassName = "",
   modalRef,
-  lcdScope = false,
   children,
 }: ModalFrameProps) {
   const hasHeaderContent = Boolean(title) || Boolean(headerActions);
@@ -85,7 +82,7 @@ export function ModalFrame({
                 : "pointer-events-none invisible opacity-0"
             }`
       }
-      style={getModalOverlayStyle({ inline, isOpen })}
+      style={getModalOverlayStyle({ inline })}
       aria-hidden={isOpen ? undefined : true}
       inert={!isOpen ? true : undefined}
     >
@@ -106,7 +103,6 @@ export function ModalFrame({
               }`
         }
         ref={modalRef}
-        data-lcd-scope={lcdScope || undefined}
         role={inline ? undefined : "dialog"}
         aria-modal={!inline && isOpen ? "true" : undefined}
         aria-labelledby={titleId}

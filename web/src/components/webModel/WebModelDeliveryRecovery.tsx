@@ -134,7 +134,6 @@ function RecoveryDialog({
   const label = (key: string) => t(`webModelDelivery.recovery.${key}`);
   return (
     <ModalFrame
-      lcdScope
       isDark={isDark}
       surface="solid"
       onClose={onClose}

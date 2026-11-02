@@ -1367,7 +1367,6 @@ export function ContextModal({
         panelClassName="h-full w-full overflow-hidden rounded-none sm:h-[94vh] sm:max-w-[96vw]"
         headerClassName="!px-4 !pb-2 sm:!px-5"
         modalRef={modalRef}
-        lcdScope
       >
         <div
           ref={navigationRef}
@@ -1555,7 +1554,6 @@ export function ContextModal({
             <div
               ref={taskDrawerRef}
               className="fixed inset-0 z-[65] animate-fade-in"
-              data-lcd-scope
               role="dialog"
               aria-modal="true"
               aria-labelledby="context-task-drawer-title"
@@ -1626,7 +1624,6 @@ export function ContextModal({
         ? createPortal(
             <div
               className="fixed inset-0 z-[70] animate-fade-in"
-              data-lcd-scope
               role="dialog"
               aria-modal="true"
               aria-label={tr("context.agentsMd", "AGENTS.md")}

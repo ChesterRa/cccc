@@ -15,7 +15,7 @@ const CELLS: ReadonlyArray<readonly [number, number]> = [
 ];
 
 /**
- * LCD preview's working mark: a lit cell and its fading tail step round a 3x3 grid,
+ * The working mark: a lit cell and its fading tail step round a 3x3 grid,
  * one cell every 125 ms. A short wait shows nothing: the cells appear after `delayMs`.
  * Until then the caller's own icon (`children`) stays, or an empty box of the mark's
  * size, so nothing beside it moves. Callers put the state into their label and disabled

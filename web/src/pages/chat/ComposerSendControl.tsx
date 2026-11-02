@@ -5,7 +5,6 @@ import { Button } from "../../components/ui/button";
 import { LcdSpinner } from "../../components/LcdSpinner";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import type { ComposerMessageMode } from "../../stores/useComposerStore";
-import { useLcdStyle } from "../../utils/uiStyle";
 
 export function ComposerSendControl({
   mode,
@@ -33,7 +32,6 @@ export function ComposerSendControl({
   title: string;
 }) {
   const { t } = useTranslation("chat");
-  const lcd = useLcdStyle();
   const unavailableReasonId = useId();
   const active = options.find((option) => option.key === mode) || options[0];
   const Icon = mode === "mail" ? InboxIcon : mode === "request_reply" ? ReplyIcon : SendIcon;
@@ -75,18 +73,7 @@ export function ComposerSendControl({
         }
         title={busy ? t("sending") : title}
       >
-        {busy ? (
-          lcd ? (
-            <LcdSpinner className="h-4 w-4">{sendIcon}</LcdSpinner>
-          ) : (
-            <span
-              data-composer-send-spinner
-              className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
-            />
-          )
-        ) : (
-          sendIcon
-        )}
+        {busy ? <LcdSpinner className="h-4 w-4">{sendIcon}</LcdSpinner> : sendIcon}
         <span
           data-composer-send-label
           className={
@@ -118,7 +105,6 @@ export function ComposerSendControl({
           align="end"
           className="w-64 max-w-[calc(100vw-2rem)] p-1.5"
           aria-label={t("messageTypeOptions")}
-          data-lcd-scope
         >
           <div
             role="group"

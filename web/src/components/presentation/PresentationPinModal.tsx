@@ -341,7 +341,6 @@ export function PresentationPinModal({
     <ModalFrame
       isDark={isDark}
       onClose={busy ? () => void 0 : onClose}
-      lcdScope
       titleId="presentation-pin-title"
       title={
         <div className="flex min-w-0 flex-col gap-1">

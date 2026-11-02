@@ -113,7 +113,6 @@ export function TerminalHistoryPanel({
       onClose={onClose}
       titleId="terminal-history-title"
       closeAriaLabel={t("common:close")}
-      lcdScope
       panelClassName="h-full w-full sm:h-[85vh] sm:max-w-3xl"
       title={
         <div className="min-w-0">

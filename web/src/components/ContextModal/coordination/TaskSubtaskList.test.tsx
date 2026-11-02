@@ -108,7 +108,7 @@ it("indicates known remaining checklist items on done tasks without inferring cu
   };
   rendered(<TaskCardBadges task={task} tr={tr} />, (host) => {
     expect(host.textContent).toContain("Checklist 1/5 · 3 remaining");
-    expect(host.querySelector(".bg-amber-500\\/15")).not.toBeNull();
+    expect(host.querySelector('[data-task-note="checklist-remaining"]')).not.toBeNull();
   });
   for (const status of ["active", "archived"]) {
     rendered(<TaskCardBadges task={{ ...task, status }} tr={tr} />, (host) => {

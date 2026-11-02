@@ -132,7 +132,6 @@ function MessageActionMenu({
         align={align}
         side="top"
         className="min-w-36 p-1"
-        data-lcd-scope
         onCloseAutoFocus={(event) => {
           // Reply moves focus to the composer; keep it there.
           if (replySelected.current) {

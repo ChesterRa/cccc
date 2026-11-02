@@ -2,34 +2,28 @@ import { describe, expect, it } from "vite-plus/test";
 import type { CodexVoicePhase } from "./codexVoiceSession";
 import {
   type VoiceDotState,
-  voicePhaseDotClass,
   voicePhaseDotState,
   voicePhaseHasLocalActivity,
 } from "./codexVoicePhase";
 
-const ACTIVE = "bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.12)]";
-const ATTENTION = "animate-pulse bg-amber-400";
-
 describe("Voice phase dot", () => {
-  it.each<[CodexVoicePhase, VoiceDotState, string]>([
-    ["idle", "inactive", "bg-[var(--color-text-tertiary)]"],
-    ["preparing", "attention", ATTENTION],
-    ["connecting", "attention", ATTENTION],
-    ["stopping", "attention", ATTENTION],
-    ["listening", "active", ACTIVE],
-    ["responding", "active", ACTIVE],
-    ["speaking", "active", ACTIVE],
-    ["analysing", "active", ACTIVE],
-    ["failed", "failed", "bg-rose-500"],
-  ])("reports %s as %s and keeps its classic classes", (phase, state, classes) => {
+  it.each<[CodexVoicePhase, VoiceDotState]>([
+    ["idle", "inactive"],
+    ["preparing", "attention"],
+    ["connecting", "attention"],
+    ["stopping", "attention"],
+    ["listening", "active"],
+    ["responding", "active"],
+    ["speaking", "active"],
+    ["analysing", "active"],
+    ["failed", "failed"],
+  ])("reports %s as %s", (phase, state) => {
     expect(voicePhaseDotState(phase, false)).toBe(state);
-    expect(voicePhaseDotClass(phase, false)).toBe(classes);
   });
 
   it("reports a call this page does not own as active whatever the local phase", () => {
     expect(voicePhaseDotState("idle", true)).toBe("active");
     expect(voicePhaseDotState("failed", true)).toBe("active");
-    expect(voicePhaseDotClass("failed", true)).toBe(ACTIVE);
   });
 
   it("does not animate preparation, external calls or muted listening as local work", () => {

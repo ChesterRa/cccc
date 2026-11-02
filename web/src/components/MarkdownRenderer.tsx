@@ -82,7 +82,6 @@ function MermaidPreviewDialog({
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
-          data-lcd-scope
         >
           <div className="flex flex-shrink-0 items-center justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-3 py-2.5 sm:px-4">
             <div className="min-w-0">

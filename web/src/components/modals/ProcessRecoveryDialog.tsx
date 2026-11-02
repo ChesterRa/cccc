@@ -712,7 +712,7 @@ function ProcessRecoveryReview({ owners: requestedOwners, isDark, onClose }: Pro
   };
 
   return (
-    <BodyPortal lcdScope>
+    <BodyPortal>
       <ModalFrame
         isDark={isDark}
         onClose={close}

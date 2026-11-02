@@ -316,7 +316,6 @@ function RuntimePanel({
                   <HoverTooltip
                     key={option.mode}
                     label={<span className="block max-w-[220px] leading-4">{option.detail}</span>}
-                    lcdScope
                   >
                     {(getReferenceProps, setReference) => (
                       <label

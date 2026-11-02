@@ -95,6 +95,11 @@ describe("CodexVoiceAnalystModal", () => {
       />,
     );
     expect(html.includes('data-status-motion="working"')).toBe(moving);
+    const dot = html.match(/<span[^>]*data-status-dot="[^"]+"[^>]*>/)?.[0];
+    expect(dot).toBeDefined();
+    expect(dot?.includes("animate-pulse")).toBe(
+      ["preparing", "connecting", "stopping"].includes(phase),
+    );
   });
 
   it("does not animate muted, external or blocked voice activity", () => {
@@ -115,6 +120,15 @@ describe("CodexVoiceAnalystModal", () => {
     expect(markup({ phase: "speaking", playbackBlocked: true })).not.toContain(
       'data-status-motion="working"',
     );
+    const readiness = controller().readiness!;
+    const blocked = markup({
+      phase: "preparing",
+      isEngaged: false,
+      readiness: { ...readiness, analyst_runtime_available: false },
+    });
+    const dot = blocked.match(/<span[^>]*data-status-dot="attention"[^>]*>/)?.[0];
+    expect(dot).toBeDefined();
+    expect(dot).not.toContain("animate-pulse");
   });
 
   it.each([

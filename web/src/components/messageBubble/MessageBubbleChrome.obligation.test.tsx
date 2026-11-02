@@ -64,11 +64,7 @@ function renderSummary(outcomes: Record<string, Outcome>, readOnly = false) {
   return {
     text,
     name: button?.getAttribute("aria-label") ?? null,
-    tone: /emerald/.test(pill?.className ?? "")
-      ? "replied"
-      : /amber/.test(pill?.className ?? "")
-        ? "open"
-        : "closed",
+    tone: pill?.getAttribute("data-obligation-state"),
   };
 }
 

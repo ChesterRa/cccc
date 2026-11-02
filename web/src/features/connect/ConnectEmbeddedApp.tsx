@@ -100,7 +100,7 @@ export function ConnectEmbeddedApp() {
 
   if (!proof || expired || window.parent === window) {
     return (
-      <div className="flex h-dvh items-center justify-center p-6 text-center text-sm">
+      <div role="status" className="flex h-dvh items-center justify-center p-6 text-center text-sm">
         {t("connect.reopen")}
       </div>
     );

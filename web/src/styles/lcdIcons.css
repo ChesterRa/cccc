@@ -1,5 +1,5 @@
-/* Keep the SVG itself untouched: its existing size and responsive visibility
-   still apply in both styles. Only switch the two sets of paths inside it. */
+/* An icon carries its former Lucide paths beside the pixel glyph; only the glyph shows.
+   The SVG itself keeps its size and responsive visibility. */
 svg[data-lcd-icon] > [data-lcd-glyph] {
   display: none;
 }

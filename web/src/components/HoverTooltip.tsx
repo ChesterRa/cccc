@@ -18,20 +18,13 @@ interface HoverTooltipProps {
   label: ReactNode;
   /** Also show for keyboard focus, for controls whose name and state live only here. */
   openOnFocus?: boolean;
-  /** Render in the LCD preview's styling scope. */
-  lcdScope?: boolean;
   children: (
     getReferenceProps: (userProps?: HTMLAttributes<HTMLElement>) => Record<string, unknown>,
     setReference: (node: HTMLElement | null) => void,
   ) => ReactNode;
 }
 
-export function HoverTooltip({
-  label,
-  openOnFocus = false,
-  lcdScope = false,
-  children,
-}: HoverTooltipProps) {
+export function HoverTooltip({ label, openOnFocus = false, children }: HoverTooltipProps) {
   const [isOpen, setIsOpen] = useState(false);
   const { refs, floatingStyles, context } = useFloating({
     open: isOpen,
@@ -61,7 +54,6 @@ export function HoverTooltip({
             ref={setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
-            data-lcd-scope={lcdScope || undefined}
             className={`z-max max-w-[220px] rounded-md border border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-2 py-1 text-xs text-[var(--color-text-primary)] shadow-xl transition-opacity duration-150 ${
               isPositioned ? "opacity-100" : "opacity-0"
             }`}

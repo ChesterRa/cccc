@@ -217,5 +217,5 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
     </div>
   );
 
-  return <BodyPortal lcdScope>{content}</BodyPortal>;
+  return <BodyPortal>{content}</BodyPortal>;
 }

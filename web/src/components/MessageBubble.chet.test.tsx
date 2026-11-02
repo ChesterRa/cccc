@@ -4,7 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { MessageBubble } from "./MessageBubble";
 import { useGroupStore } from "../stores";
-import { setUiStylePrefs } from "../utils/uiStyle";
 import type { GroupDoc, LedgerEvent } from "../types";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -34,7 +33,6 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   useGroupStore.setState({ groupDoc: null });
-  setUiStylePrefs({ style: "classic" });
 });
 
 async function render(event: LedgerEvent) {
@@ -58,7 +56,6 @@ async function render(event: LedgerEvent) {
 }
 
 it("names Chet only on a message this Group's generation proves Chet wrote", async () => {
-  setUiStylePrefs({ style: "lcd" });
   await render(fromChet("generation-1"));
   expect(host.querySelector(".lcd-row-name")?.textContent).toBe("Chet");
 
@@ -69,7 +66,6 @@ it("names Chet only on a message this Group's generation proves Chet wrote", asy
 
 it("shows the stored identity until the Group is loaded", async () => {
   useGroupStore.setState({ groupDoc: null });
-  setUiStylePrefs({ style: "lcd" });
   await render(fromChet("generation-1"));
   expect(host.querySelector(".lcd-row-name")?.textContent).toBe("svc:chet");
 });

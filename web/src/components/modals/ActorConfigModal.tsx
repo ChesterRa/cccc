@@ -377,7 +377,6 @@ function CreateActorConfigModal({
 
   return (
     <ModalFrame
-      lcdScope
       isOpen={isOpen}
       isDark={isDark}
       onClose={handleCancel}
@@ -1445,7 +1444,6 @@ function EditActorConfigModal({
 
   return (
     <ModalFrame
-      lcdScope
       isOpen={isOpen && !suspended}
       isDark={isDark}
       onClose={closeEdit}

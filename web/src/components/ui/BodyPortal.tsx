@@ -5,18 +5,15 @@ import type { ReactNode } from "react";
 interface BodyPortalProps {
   children: ReactNode;
   className?: string;
-  /** Takes the LCD style when it is on, like ModalFrame's lcdScope. */
-  lcdScope?: boolean;
 }
 
-export function BodyPortal({ children, className = "", lcdScope = false }: BodyPortalProps) {
+export function BodyPortal({ children, className = "" }: BodyPortalProps) {
   const host = useMemo(() => {
     if (typeof document === "undefined") return null;
     const node = document.createElement("div");
     if (className) node.className = className;
-    if (lcdScope) node.setAttribute("data-lcd-scope", "");
     return node;
-  }, [className, lcdScope]);
+  }, [className]);
 
   useEffect(() => {
     if (!host) return undefined;

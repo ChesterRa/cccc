@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import type { Task } from "../../../types";
-import { classNames } from "../../../utils/classNames";
 import { evaluateTaskWorkflow, type TaskAttemptVerdict } from "../../../utils/taskWorkflow";
 import {
   checklistItemOpen,
@@ -11,13 +10,6 @@ import {
   type ContextTranslator,
   type SubtaskProgress,
 } from "../model";
-
-function latestAttemptTone(verdict: TaskAttemptVerdict): string {
-  if (verdict === "keep") return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
-  if (verdict === "discard") return "bg-amber-500/15 text-amber-600 dark:text-amber-400";
-  if (verdict === "crash") return "bg-rose-500/15 text-rose-600 dark:text-rose-400";
-  return "glass-panel text-[var(--color-text-secondary)]";
-}
 
 function latestAttemptLabel(verdict: TaskAttemptVerdict, tr: ContextTranslator): string {
   if (verdict === "keep") return tr("context.latestAttemptKeep", "Latest keep");
@@ -31,14 +23,11 @@ export function TaskCardBadges({
   task,
   tr,
   compact = false,
-  lcd = false,
   subtasks,
 }: {
   task: Task;
   tr: ContextTranslator;
   compact?: boolean;
-  /** Inline notes for the LCD row's meta line instead of a block of chips. */
-  lcd?: boolean;
   subtasks?: SubtaskProgress;
 }) {
   const live = taskIsLive(task);
@@ -62,148 +51,60 @@ export function TaskCardBadges({
   const missingCurrentBest =
     workflow.isOptimization && !workflow.needsContract && !workflow.hasCurrentBest;
 
-  if (lcd) {
-    // Brackets mark a note that is not a control. Waiting on the user is a
-    // filled tag instead, the one state that asks for the reader. Attention
-    // comes right after the assignee, ahead of the detail, so a scan reads it
-    // first.
-    const note = (kind: string, text: ReactNode, title?: string) => (
-      <span key={kind} data-task-note={kind} title={title}>
-        [{text}]
-      </span>
-    );
-    return (
-      <>
-        {task.assignee ? (
-          <span data-task-note="assignee">{task.assignee}</span>
-        ) : (
-          note("unassigned", tr("context.unassigned", "Unassigned"))
-        )}
-        {blocked
-          ? note("blocked", `${tr("context.blocked", "Blocked")}: ${task.blocked_by?.join(", ")}`)
-          : null}
-        {live && waiting === "user" ? (
-          <span data-task-note="waiting-user">{waitingLabel(waiting, tr)}</span>
-        ) : live && waiting && waiting !== "none" ? (
-          note("waiting", waitingLabel(waiting, tr))
-        ) : null}
-        {live && handoff
-          ? note("handoff", `→${handoff}`, `${tr("context.handoffTo", "Handoff →")} ${handoff}`)
-          : null}
-        {task.priority ? note("priority", priorityLabel(task.priority, tr)) : null}
-        {task.parent_id
-          ? note("parent", `${tr("context.parentTask", "Parent task")} ${task.parent_id}`)
-          : null}
-        {checklist.length > 0
-          ? note(
-              doneWithRemaining ? "checklist-remaining" : "checklist",
-              `${tr("context.checklist", "Checklist")} ${checklistDone}/${checklist.length}${
-                doneWithRemaining
-                  ? ` · ${tr("context.checklistRemaining", "{{count}} remaining", { count: checklistRemaining })}`
-                  : ""
-              }`,
-            )
-          : null}
-        {subtasks && subtasks.total > 0
-          ? note(
-              "subtasks",
-              tr("context.subtaskProgress", "Subtasks {{done}}/{{total}}", subtasks),
-              tr(
-                "context.subtasksHint",
-                "Counts direct subtasks; archived ones are excluded. Subtask status does not complete this task.",
-              ),
-            )
-          : null}
-        {workflow.isOptimization && workflow.latestAttemptVerdict
-          ? note("attempt", latestAttemptLabel(workflow.latestAttemptVerdict, tr))
-          : null}
-        {missingCurrentBest ? note("best", tr("context.noCurrentBestYet", "No best yet")) : null}
-      </>
-    );
-  }
-
+  // Brackets mark a note that is not a control. Waiting on the user is a
+  // filled tag instead, the one state that asks for the reader. Attention
+  // comes right after the assignee, ahead of the detail, so a scan reads it first.
+  const note = (kind: string, text: ReactNode, title?: string) => (
+    <span key={kind} data-task-note={kind} title={title}>
+      [{text}]
+    </span>
+  );
   return (
-    <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+    <>
       {task.assignee ? (
-        <span className="max-w-full truncate rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]">
-          {task.assignee}
-        </span>
+        <span data-task-note="assignee">{task.assignee}</span>
       ) : !compact ? (
-        <span className="rounded-full bg-[var(--glass-tab-bg)] px-2 py-0.5 text-[var(--color-text-muted)]">
-          {tr("context.unassigned", "Unassigned")}
-        </span>
+        note("unassigned", tr("context.unassigned", "Unassigned"))
       ) : null}
-      {!compact && task.priority ? (
-        <span className="rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]">
-          {priorityLabel(task.priority, tr)}
-        </span>
+      {blocked
+        ? note("blocked", `${tr("context.blocked", "Blocked")}: ${task.blocked_by?.join(", ")}`)
+        : null}
+      {!compact && live && waiting === "user" ? (
+        <span data-task-note="waiting-user">{waitingLabel(waiting, tr)}</span>
+      ) : !compact && live && waiting && waiting !== "none" ? (
+        note("waiting", waitingLabel(waiting, tr))
       ) : null}
-      {!compact && task.parent_id ? (
-        <span className="rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]">
-          {tr("context.parentTask", "Parent task")} {task.parent_id}
-        </span>
-      ) : null}
-      {!compact && checklist.length > 0 ? (
-        <span
-          className={classNames(
-            "rounded-full px-2 py-0.5",
-            doneWithRemaining
-              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-              : "glass-panel text-[var(--color-text-secondary)]",
-          )}
-        >
-          {tr("context.checklist", "Checklist")} {checklistDone}/{checklist.length}
-          {doneWithRemaining
-            ? ` · ${tr("context.checklistRemaining", "{{count}} remaining", { count: checklistRemaining })}`
-            : null}
-        </span>
-      ) : null}
-      {subtasks && subtasks.total > 0 ? (
-        <span
-          className="rounded-full px-2 py-0.5 glass-panel text-[var(--color-text-secondary)]"
-          title={tr(
-            "context.subtasksHint",
-            "Counts direct subtasks; archived ones are excluded. Subtask status does not complete this task.",
-          )}
-        >
-          {tr("context.subtaskProgress", "Subtasks {{done}}/{{total}}", subtasks)}
-        </span>
-      ) : null}
-      {blocked ? (
-        <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-rose-600 dark:text-rose-400">
-          {tr("context.blocked", "Blocked")}: {task.blocked_by?.join(", ")}
-        </span>
-      ) : null}
-      {!compact && live && waiting && waiting !== "none" ? (
-        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-600 dark:text-amber-400">
-          {waitingLabel(waiting, tr)}
-        </span>
-      ) : null}
-      {!compact && live && handoff ? (
-        <span
-          className={classNames(
-            "rounded-full border px-2 py-0.5",
-            "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white",
-          )}
-        >
-          {tr("context.handoffTo", "Handoff →")} {handoff}
-        </span>
-      ) : null}
-      {workflow.isOptimization && workflow.latestAttemptVerdict ? (
-        <span
-          className={classNames(
-            "rounded-full px-2 py-0.5",
-            latestAttemptTone(workflow.latestAttemptVerdict),
-          )}
-        >
-          {latestAttemptLabel(workflow.latestAttemptVerdict, tr)}
-        </span>
-      ) : null}
-      {missingCurrentBest ? (
-        <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-amber-700 dark:text-amber-300">
-          {tr("context.noCurrentBestYet", "No best yet")}
-        </span>
-      ) : null}
-    </div>
+      {!compact && live && handoff
+        ? note("handoff", `→${handoff}`, `${tr("context.handoffTo", "Handoff →")} ${handoff}`)
+        : null}
+      {!compact && task.priority ? note("priority", priorityLabel(task.priority, tr)) : null}
+      {!compact && task.parent_id
+        ? note("parent", `${tr("context.parentTask", "Parent task")} ${task.parent_id}`)
+        : null}
+      {!compact && checklist.length > 0
+        ? note(
+            doneWithRemaining ? "checklist-remaining" : "checklist",
+            `${tr("context.checklist", "Checklist")} ${checklistDone}/${checklist.length}${
+              doneWithRemaining
+                ? ` · ${tr("context.checklistRemaining", "{{count}} remaining", { count: checklistRemaining })}`
+                : ""
+            }`,
+          )
+        : null}
+      {subtasks && subtasks.total > 0
+        ? note(
+            "subtasks",
+            tr("context.subtaskProgress", "Subtasks {{done}}/{{total}}", subtasks),
+            tr(
+              "context.subtasksHint",
+              "Counts direct subtasks; archived ones are excluded. Subtask status does not complete this task.",
+            ),
+          )
+        : null}
+      {workflow.isOptimization && workflow.latestAttemptVerdict
+        ? note("attempt", latestAttemptLabel(workflow.latestAttemptVerdict, tr))
+        : null}
+      {missingCurrentBest ? note("best", tr("context.noCurrentBestYet", "No best yet")) : null}
+    </>
   );
 }

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { TextScale, Theme } from "../../types";
 import { AppSettingsMenu } from "./AppSettingsMenu";
 import { MobileMenuSheet } from "./MobileMenuSheet";
-import { setUiStylePrefs } from "../../utils/uiStyle";
+import { applyUiStylePrefs, getUiStylePrefs, setUiStylePrefs } from "../../utils/uiStyle";
 import { useUIStore } from "../../stores/useUIStore";
 
 const { changeLanguage } = vi.hoisted(() => ({ changeLanguage: vi.fn() }));
@@ -159,7 +159,7 @@ describe("appearance choices inside their real hosts", () => {
   }
 
   for (const host of ["desktop", "sheet"] as const) {
-    it(`${host}: previews the LCD style and offers its body-font and width choices only while it is on`, async () => {
+    it(`${host}: offers the body-font, width and motion choices, with no style switch`, async () => {
       await renderHost(host, "light");
       const choice = (name: string) =>
         document.querySelector<HTMLElement>(
@@ -168,15 +168,8 @@ describe("appearance choices inside their real hosts", () => {
       const radios = (name: string) => [
         ...(choice(name)?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []),
       ];
-      expect(radios("uiStyle").map((radio) => radio.textContent)).toEqual([
-        "uiStyleClassic",
-        "uiStyleLcd",
-      ]);
-      expect(choice("lcdBody")).toBeNull();
-      expect(choice("lcdWidth")).toBeNull();
+      expect(choice("uiStyle")).toBeNull();
       try {
-        await click(radios("uiStyle")[1]!);
-        expect(document.documentElement.dataset.uiStyle).toBe("lcd");
         expect(radios("lcdBody").map((radio) => radio.textContent)).toEqual([
           "lcdBodyMono",
           "lcdBodyPixel",
@@ -198,26 +191,13 @@ describe("appearance choices inside their real hosts", () => {
           "lcdMotionOn",
           "lcdMotionOff",
         ]);
-        expect(document.documentElement.dataset.lcdMotion).toBe("on");
         await click(radios("lcdMotion")[1]!);
         expect(document.documentElement.dataset.lcdMotion).toBe("off");
         expect(document.querySelector("[data-lcd-motion-system]")).toBeNull();
         expect(outerOpen(host)).toBe(true);
-        await click(radios("uiStyle")[0]!);
-        expect(document.documentElement.dataset.uiStyle).toBeUndefined();
-        expect(document.documentElement.dataset.lcdBody).toBeUndefined();
-        expect(document.documentElement.dataset.lcdWidth).toBeUndefined();
-        expect(choice("lcdBody")).toBeNull();
-        expect(choice("lcdWidth")).toBeNull();
-        expect(choice("lcdMotion")).toBeNull();
       } finally {
         await act(async () =>
-          setUiStylePrefs({
-            style: "classic",
-            lcdBody: "mono",
-            lcdWidth: "column",
-            lcdMotion: "on",
-          }),
+          setUiStylePrefs({ lcdBody: "mono", lcdWidth: "column", lcdMotion: "on" }),
         );
       }
     });
@@ -234,7 +214,7 @@ describe("appearance choices inside their real hosts", () => {
         }) as unknown as MediaQueryList,
     );
     try {
-      await act(async () => setUiStylePrefs({ style: "lcd" }));
+      await act(async () => applyUiStylePrefs(getUiStylePrefs()));
       await renderHost("sheet", "light");
       const hint = document.querySelector("[data-lcd-motion-system]");
       expect(hint?.textContent).toBe("lcdMotionSystemStill");
@@ -242,7 +222,7 @@ describe("appearance choices inside their real hosts", () => {
       expect(document.documentElement.dataset.lcdMotion).toBe("off");
     } finally {
       vi.restoreAllMocks();
-      await act(async () => setUiStylePrefs({ style: "classic" }));
+      await act(async () => applyUiStylePrefs(getUiStylePrefs()));
     }
   });
 });

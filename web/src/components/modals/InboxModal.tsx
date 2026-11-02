@@ -86,7 +86,6 @@ export function InboxModal({
       titleId="inbox-title"
       title={titleContent}
       closeAriaLabel={t("common:close")}
-      lcdScope
       headerClassName="inbox-modal-header"
       panelClassName="w-full h-full sm:h-auto sm:max-h-[calc(100dvh-8rem)] sm:max-w-2xl sm:mt-16"
       headerActions={headerActions}

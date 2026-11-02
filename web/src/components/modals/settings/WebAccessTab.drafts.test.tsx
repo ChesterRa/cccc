@@ -122,7 +122,7 @@ describe("Web Access connection drafts", () => {
     expect(lan.querySelector("[data-settings-choice-saved]")).not.toBeNull();
   });
 
-  it("keeps the access-token dialog in the settings style scope after it is portaled", async () => {
+  it("opens the access-token dialog in a portal", async () => {
     await render();
     await click("common:create");
     const dialog = document.querySelector<HTMLElement>(
@@ -130,10 +130,9 @@ describe("Web Access connection drafts", () => {
     );
     expect(dialog).not.toBeNull();
     expect(host.contains(dialog)).toBe(false);
-    expect(dialog?.closest("[data-lcd-scope]")).not.toBeNull();
   });
 
-  it("keeps the restart instructions in the settings style scope", async () => {
+  it("opens the restart instructions when a saved change needs a restart", async () => {
     vi.mocked(api.updateRemoteAccessConfig).mockResolvedValue({
       ok: true,
       result: {
@@ -148,7 +147,6 @@ describe("Web Access connection drafts", () => {
     );
     expect(dialog).not.toBeNull();
     expect(host.contains(dialog)).toBe(false);
-    expect(dialog?.closest("[data-lcd-scope]")).not.toBeNull();
   });
 
   it.each(["lan", "public"])(

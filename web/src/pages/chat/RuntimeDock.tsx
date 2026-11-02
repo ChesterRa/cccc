@@ -1,4 +1,3 @@
-import { RuntimeDockRing } from "./RuntimeDockRing";
 import {
   memo,
   useCallback,
@@ -27,13 +26,7 @@ import { RuntimeDockTicker } from "./RuntimeDockTicker";
 import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
-import { useLcdStyle, useUiStylePrefs, type LcdMotion } from "../../utils/uiStyle";
-
-type RuntimeRingPresentation = {
-  ringClassName: string;
-  queuedBadgeClassName: string;
-  avatarClassName?: string;
-};
+import { useUiStylePrefs, type LcdMotion } from "../../utils/uiStyle";
 
 function lcdRingDelay(): number {
   const value = getComputedStyle(document.documentElement)
@@ -73,7 +66,6 @@ function useLcdTileTransitions({
   liveWorkId,
   hidden,
   provisional,
-  lcd,
   onHiddenAttention,
 }: {
   groupId: string;
@@ -85,7 +77,6 @@ function useLcdTileTransitions({
   liveWorkId: string;
   hidden: boolean;
   provisional: boolean;
-  lcd: boolean;
   onHiddenAttention?: (actorId: string) => void;
 }) {
   const previous = useRef({
@@ -96,28 +87,16 @@ function useLcdTileTransitions({
     liveWorkPhase,
     liveWorkId,
     provisional,
-    lcd,
   });
   const [attentionFlash, setAttentionFlash] = useState(false);
   const [flourish, setFlourish] = useState(false);
 
   useLayoutEffect(() => {
     const before = previous.current;
-    previous.current = {
-      groupId,
-      actorId,
-      tone,
-      working,
-      liveWorkPhase,
-      liveWorkId,
-      provisional,
-      lcd,
-    };
-    // Hydration, a new group or entering LCD establishes a baseline rather than
-    // announcing an old state as a new transition.
+    previous.current = { groupId, actorId, tone, working, liveWorkPhase, liveWorkId, provisional };
+    // Hydration or a new group establishes a baseline rather than announcing an old
+    // state as a new transition.
     if (
-      !lcd ||
-      !before.lcd ||
       before.groupId !== groupId ||
       before.actorId !== actorId ||
       before.provisional ||
@@ -147,7 +126,6 @@ function useLcdTileTransitions({
     actorId,
     groupId,
     hidden,
-    lcd,
     liveWorkId,
     liveWorkPhase,
     managed,
@@ -202,44 +180,6 @@ function getLiveWorkBadgeLabel(
   return t("liveWorkPhaseWorking", { defaultValue: "Working" });
 }
 
-function getRuntimeRingPresentation(
-  tone: RuntimeRingTone,
-  isDark: boolean,
-): RuntimeRingPresentation {
-  switch (tone) {
-    case "active":
-      return {
-        ringClassName: isDark ? "text-[#C4B5FD]" : "text-[#A07CFE]",
-        queuedBadgeClassName: isDark
-          ? "bg-emerald-300/[0.18] text-emerald-50"
-          : "bg-emerald-500/[0.14] text-emerald-700",
-      };
-    case "attention":
-      return {
-        ringClassName: isDark ? "text-rose-400" : "text-rose-500",
-        queuedBadgeClassName: isDark
-          ? "bg-rose-300/[0.18] text-rose-50"
-          : "bg-rose-500/[0.14] text-rose-700",
-      };
-    case "idle":
-      return {
-        ringClassName: isDark ? "text-emerald-300/45" : "text-emerald-500/55",
-        queuedBadgeClassName: isDark
-          ? "bg-emerald-300/[0.12] text-emerald-50"
-          : "bg-emerald-500/[0.10] text-emerald-700",
-      };
-    case "stopped":
-    default:
-      return {
-        ringClassName: "text-slate-400/50",
-        queuedBadgeClassName: isDark
-          ? "bg-white/10 text-slate-100"
-          : "bg-black/[0.08] text-gray-800",
-        avatarClassName: "opacity-45 grayscale saturate-50",
-      };
-  }
-}
-
 function RuntimeDockActorButtonView({
   groupId,
   item,
@@ -274,11 +214,8 @@ function RuntimeDockActorButtonView({
   onHiddenAttention?: (actorId: string) => void;
 }) {
   const { t } = useTranslation(["chat", "actors", "common"]);
-  const activityGradientId = useId();
   const chipStatusId = useId();
-  const stylePrefs = useUiStylePrefs();
-  const lcd = stylePrefs.style === "lcd";
-  const motionPreference = stylePrefs.lcdMotion;
+  const motionPreference = useUiStylePrefs().lcdMotion;
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
     actor: item.actor,
@@ -290,7 +227,7 @@ function RuntimeDockActorButtonView({
   const working =
     ringTone === "active" &&
     (workingState === "working" || item.liveWorkCard?.phase === "streaming");
-  const moving = lcd && working && !hidden && motionVisible;
+  const moving = working && !hidden && motionVisible;
   const delay = useLcdRingDelay(moving, motionPreference);
   const { attentionFlash, flourish } = useLcdTileTransitions({
     groupId,
@@ -302,7 +239,6 @@ function RuntimeDockActorButtonView({
     liveWorkId: item.liveWorkCard?.pendingEventId || item.liveWorkCard?.streamId || "",
     hidden,
     provisional: actorStatusProvisional,
-    lcd,
     onHiddenAttention,
   });
   // Report the same resolved state that this tile displays. Terminal signals
@@ -311,7 +247,6 @@ function RuntimeDockActorButtonView({
     onToneChange?.(item.actorId, ringTone);
   }, [item.actorId, onToneChange, ringTone]);
   useLayoutEffect(() => () => onToneChange?.(item.actorId, null), [item.actorId, onToneChange]);
-  const ringPresentation = getRuntimeRingPresentation(ringTone, isDark);
   const useRuntimeStatus = hasManagedRuntimeOutput(item.actor) || workingState === "error";
   const statusLabel =
     item.liveWorkCard && !useRuntimeStatus
@@ -327,7 +262,6 @@ function RuntimeDockActorButtonView({
           defaultValue: `${queuedCount} queued for next turn`,
         })
       : "";
-  const ringFrameSize = isSmallScreen ? 40 : 44;
   const mailCount = item.unreadCount;
   const mailLabel =
     mailCount > 0
@@ -341,7 +275,7 @@ function RuntimeDockActorButtonView({
     onOpenInspector(item.actorId);
   };
   const lcdRing =
-    lcd && (ringTone === "active" || flourish) ? (
+    ringTone === "active" || flourish ? (
       <span
         className="lcd-member-ring"
         data-ring={moving ? "moving" : "still"}
@@ -359,8 +293,8 @@ function RuntimeDockActorButtonView({
     ) : null;
 
   if (variant === "chip") {
-    // LCD preview: the tile itself shows the state (dimmed when stopped, its line
-    // for busy, idle or needing attention); words live in the tooltip and names.
+    // The tile itself shows the state (dimmed when stopped, its line for busy, idle
+    // or needing attention); words live in the tooltip and names.
     const tooltip = [item.actorLabel, statusLabel, queuedLabel, mailLabel]
       .filter(Boolean)
       .join(" \u00B7 ");
@@ -375,7 +309,7 @@ function RuntimeDockActorButtonView({
         inert={hidden || undefined}
         aria-hidden={hidden || undefined}
       >
-        <HoverTooltip label={tooltip} openOnFocus lcdScope>
+        <HoverTooltip label={tooltip} openOnFocus>
           {(getReferenceProps, setReference) => (
             <button
               ref={setReference}
@@ -443,7 +377,7 @@ function RuntimeDockActorButtonView({
       sizeClassName={isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]"}
       className={classNames(
         "relative z-10 border-transparent shadow-[0_18px_34px_-22px_rgba(15,23,42,0.68)]",
-        lcd ? "lcd-tile" : ringPresentation.avatarClassName,
+        "lcd-tile",
         item.runner === "headless" ? (isDark ? "bg-slate-900" : "bg-slate-50") : undefined,
       )}
       accentRingClassName={isInspectorOpen ? (isDark ? "ring-white/10" : "ring-black/10") : null}
@@ -453,13 +387,8 @@ function RuntimeDockActorButtonView({
   return (
     <div className="relative flex items-end">
       <span
-        className={classNames(
-          "pointer-events-none absolute -top-[1.4rem] left-1/2 z-30 hidden max-w-[3.75rem] -translate-x-1/2 truncate text-center text-[9px] font-medium leading-[1.2] tracking-[0.01em] opacity-0 transition-opacity delay-[3000ms] duration-150 group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0 sm:block",
-          "runtime-dock-actor-label",
-          isDark
-            ? "text-white [text-shadow:0_1px_8px_rgba(2,6,23,0.85)]"
-            : "text-[rgb(35,36,37)] [text-shadow:0_1px_7px_rgba(255,255,255,0.9)]",
-        )}
+        // Shown at once on hover or focus, and held for 3 s after; no fade.
+        className="pointer-events-none absolute -top-[1.4rem] left-1/2 z-30 hidden max-w-[3.75rem] -translate-x-1/2 truncate text-center text-[9px] font-medium leading-[1.2] tracking-[0.01em] text-[var(--color-text-primary)] opacity-0 transition-opacity delay-[3000ms] duration-0 group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0 sm:block"
         aria-hidden="true"
       >
         {item.actorLabel}
@@ -493,30 +422,13 @@ function RuntimeDockActorButtonView({
         aria-describedby={`runtime-dock-status-${item.actorId}`}
         title={[item.actorLabel, statusLabel, mailLabel, queuedLabel].filter(Boolean).join("\n")}
       >
-        {lcd ? null : (
-          // LCD preview: the frame's line shows the state instead of the ring.
-          <RuntimeDockRing
-            size={ringFrameSize}
-            active={ringTone === "active"}
-            colorClassName={ringPresentation.ringClassName}
-            gradientId={activityGradientId}
-          />
-        )}
-
-        {lcd ? (
-          <span className="lcd-member-tile">
-            {dockAvatar}
-            {lcdRing}
-          </span>
-        ) : (
-          dockAvatar
-        )}
+        <span className="lcd-member-tile">
+          {dockAvatar}
+          {lcdRing}
+        </span>
         {queuedCount > 0 ? (
           <span
-            className={classNames(
-              "pointer-events-none absolute -right-0.5 -bottom-0.5 z-20 flex h-[17px] min-w-[17px] items-center justify-center rounded-full px-1 text-[9px] font-semibold leading-none shadow-[0_8px_18px_-10px_rgba(15,23,42,0.7)]",
-              ringPresentation.queuedBadgeClassName,
-            )}
+            className="pointer-events-none absolute -right-0.5 -bottom-0.5 z-20 flex h-[17px] min-w-[17px] items-center justify-center px-1 text-[9px] font-semibold leading-none"
             aria-hidden="true"
             title={queuedLabel}
             data-dock-badge="queue"
@@ -613,7 +525,6 @@ export function RuntimeDock({
   motionVisible = true,
 }: RuntimeDockProps) {
   const { t } = useTranslation("chat");
-  const lcd = useLcdStyle();
   const storeRuntimeEvents = useGroupStore(
     (state) => state.chatByGroup?.[String(groupId || "").trim()]?.rawHeadlessEventsByActorId,
   );
@@ -656,7 +567,6 @@ export function RuntimeDock({
           "group/add-agent relative flex h-[50px] w-[50px] flex-shrink-0 items-center justify-center rounded-full shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35 active:scale-[0.97]",
           "bg-transparent hover:scale-[1.02]",
           isSmallScreen && "mb-1",
-          isSmallScreen && !lcd && "mr-2",
         )}
         aria-label={t("addAgent", { defaultValue: "Add an agent" })}
         title={t("addAgent", { defaultValue: "Add an agent" })}
@@ -666,8 +576,8 @@ export function RuntimeDock({
           aria-hidden="true"
           className={classNames(
             "relative z-[1] flex items-center justify-center rounded-full border shadow-[0_18px_34px_-22px_rgba(15,23,42,0.4)] transition-[transform,box-shadow,border-color,background-color,color] duration-200",
-            // Classic matches the ring's outer size; LCD tiles have no ring.
-            lcd && isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]",
+            // Add takes the size of the members' tiles.
+            isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]",
             isDark
               ? "border-white/10 bg-slate-900 text-slate-100 group-hover/add-agent:border-white/16 group-hover/add-agent:bg-slate-950"
               : "border-black/10 bg-white text-[rgb(35,36,37)] group-hover/add-agent:border-black/14 group-hover/add-agent:bg-white/96",
@@ -691,25 +601,13 @@ export function RuntimeDock({
             key={groupId}
             groupId={groupId}
             entries={tickerEntries}
-            isDark={isDark}
             suppressed={Boolean(activeRuntimeActorId)}
           />
-          <div
-            className={classNames(
-              "flex min-w-0 max-w-full items-end gap-2",
-              // Classic fades when idle; LCD tile outlines need full contrast.
-              lcd
-                ? "opacity-100"
-                : "opacity-[0.72] transition-opacity delay-[3000ms] duration-200 ease-out group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0",
-            )}
-          >
+          <div className="flex min-w-0 max-w-full items-end gap-2">
             <div
               className={classNames(
                 "flex min-w-0 items-end gap-2",
-                // Classic keeps its 8px from the last member to Add, and Add's 8px inset.
-                isSmallScreen
-                  ? classNames("overflow-x-auto py-1 scrollbar-hide", lcd ? "px-2" : "pl-2")
-                  : "",
+                isSmallScreen ? "overflow-x-auto px-2 py-1 scrollbar-hide" : "",
               )}
               data-runtime-dock-strip
             >
@@ -740,7 +638,7 @@ export function RuntimeDock({
 }
 
 /**
- * LCD preview: members in one row. Chips that do not fit wrap onto a
+ * Desktop messages view: members in one row. Chips that do not fit wrap onto a
  * clipped second line; they become unreachable there and move into "+N",
  * which still says whether any of them has unread Mail or queued work.
  */
@@ -978,7 +876,6 @@ function RuntimeDockMemberRow({
             ref={popoverRef}
             align="end"
             className="lcd-members-popover"
-            data-lcd-scope
             onCloseAutoFocus={(event) => {
               if (preventCloseAutoFocusRef.current) {
                 event.preventDefault();
