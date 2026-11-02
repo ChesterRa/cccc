@@ -8,8 +8,8 @@ import type { GroupPresentation } from "../../types";
 
 type ViewerExtras = Pick<
   ComponentProps<typeof PresentationViewerSplitPanel>,
-  "onQuoteInChat" | "focusRef"
->;
+  "onQuoteInChat" | "focusRef" | "onSelectSlot"
+> & { isOpen?: boolean };
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en" } }),
@@ -55,18 +55,49 @@ describe("Presentation refresh", () => {
         },
       })),
     };
-    const props = { isDark: false, groupId, slotId, presentation, onClose: vi.fn(), ...extra };
+    const { isOpen = true, ...viewerExtras } = extra;
+    const props = {
+      isDark: false,
+      groupId,
+      slotId,
+      presentation,
+      onClose: vi.fn(),
+      ...viewerExtras,
+    };
     await act(async () =>
       root.render(
         split ? (
           <PresentationViewerSplitPanel {...props} />
         ) : (
-          <PresentationViewerModal isOpen {...props} />
+          <PresentationViewerModal isOpen={isOpen} {...props} />
         ),
       ),
     );
-    if (cardType === "image") await loadImage();
+    if (cardType === "image" && isOpen) await loadImage();
   }
+
+  // A screen 480px tall or less, which can turn taller and back.
+  const shortScreen = () => {
+    let short = true;
+    const listeners = new Set<() => void>();
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query) =>
+        ({
+          get matches() {
+            return query === "(max-height: 480px)" && short;
+          },
+          media: query,
+          addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+          removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+        }) as unknown as MediaQueryList,
+    );
+    return async (next: boolean) => {
+      short = next;
+      await act(async () => listeners.forEach((listener) => listener()));
+    };
+  };
+  const unfoldKey = () =>
+    host.querySelector<HTMLButtonElement>('[aria-label="presentationSlotsAndDetailsAction"]');
 
   let nextUrl = 0;
   beforeEach(() => {
@@ -143,9 +174,170 @@ describe("Presentation refresh", () => {
     },
   );
 
+  it("folds the slots, the details and the quote key behind one key on a short screen", async () => {
+    shortScreen();
+    await render(false, "g", "slot-1", "one", "image", {
+      onSelectSlot: vi.fn(),
+      onQuoteInChat: vi.fn(),
+    });
+    await act(async () => vi.advanceTimersByTime(50));
+    const toggle = unfoldKey()!;
+    const folded = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(document.activeElement).toBe(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(folded.hidden).toBe(true);
+    expect(host.querySelector("[data-presentation-slot-navigation]")).toBeNull();
+    expect(host.querySelector("[data-presentation-details]")).toBeNull();
+    expect(host.querySelector('[aria-label="presentationQuoteInChatAction"]')).toBeNull();
+
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(folded.hidden).toBe(false);
+    expect(folded.querySelector("[data-presentation-slot-navigation]")).not.toBeNull();
+    expect(
+      folded.querySelector(
+        '[data-presentation-details] [aria-label="presentationQuoteInChatAction"]',
+      ),
+    ).not.toBeNull();
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it("opens folded again after it was closed unfolded", async () => {
+    // A window stays mounted while closed, for each slot opened in the Group.
+    shortScreen();
+    const show = (isOpen: boolean) =>
+      render(false, "g", "slot-1", "one", "image", { onSelectSlot: vi.fn(), isOpen });
+    await show(true);
+    await act(async () => unfoldKey()!.click());
+    expect(unfoldKey()!.getAttribute("aria-expanded")).toBe("true");
+    await show(false);
+    await show(true);
+    expect(unfoldKey()!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("hands focus between the unfold key and the current slot as the screen turns", async () => {
+    const turn = shortScreen();
+    await render(true, "g", "slot-1", "one", "image", { onSelectSlot: vi.fn() });
+    expect(document.activeElement).toBe(unfoldKey());
+
+    await turn(false);
+    expect(unfoldKey()).toBeNull();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("presentationOpenSlot");
+
+    await turn(true);
+    expect(document.activeElement).toBe(unfoldKey());
+  });
+
+  it.each([false, true])(
+    "puts focus in the viewer on opening when the current slot cannot take it (split=%s)",
+    async (split) => {
+      // A read-only viewer opened from an old quote of a slot that has since been cleared.
+      const props = {
+        isDark: false,
+        readOnly: true,
+        groupId: "g",
+        slotId: "slot-1",
+        presentation: { v: 1, slots: [] } as GroupPresentation,
+        focusRef: {
+          kind: "presentation_ref",
+          slot_id: "slot-1",
+          card_type: "image",
+          snapshot: { path: "state/blobs/snapshot.png" },
+        } as const,
+        onSelectSlot: vi.fn(),
+        onClose: vi.fn(),
+      };
+      await act(async () =>
+        root.render(
+          split ? (
+            <PresentationViewerSplitPanel {...props} />
+          ) : (
+            <PresentationViewerModal isOpen {...props} />
+          ),
+        ),
+      );
+      await act(async () => vi.advanceTimersByTime(50));
+      const focused = document.activeElement as HTMLButtonElement | null;
+      expect(host.contains(focused)).toBe(true);
+      expect(focused?.disabled).toBeFalsy();
+    },
+  );
+
+  it.each([false, true])(
+    "keeps focus in the viewer when the current slot cannot take it and the screen grows (split=%s)",
+    async (split) => {
+      // A read-only viewer opened from an old quote of a slot that has since been cleared,
+      // with no message to jump to: no other key shares the unfold key's row.
+      const turn = shortScreen();
+      const focusRef = {
+        kind: "presentation_ref",
+        slot_id: "slot-1",
+        card_type: "image",
+        snapshot: { path: "state/blobs/snapshot.png" },
+      } as const;
+      const props = {
+        isDark: false,
+        readOnly: true,
+        groupId: "g",
+        slotId: "slot-1",
+        presentation: { v: 1, slots: [] } as GroupPresentation,
+        focusRef,
+        onSelectSlot: vi.fn(),
+        onClose: vi.fn(),
+      };
+      await act(async () =>
+        root.render(
+          split ? (
+            <PresentationViewerSplitPanel {...props} />
+          ) : (
+            <PresentationViewerModal isOpen {...props} />
+          ),
+        ),
+      );
+      await act(async () => vi.advanceTimersByTime(50));
+      expect(document.activeElement).toBe(unfoldKey());
+      await turn(false);
+      expect(document.activeElement).not.toBe(document.body);
+      expect(host.contains(document.activeElement)).toBe(true);
+    },
+  );
+
+  it("names each open window after its own card", async () => {
+    const presentation: GroupPresentation = {
+      v: 1,
+      slots: ["Drawing", "Plan"].map((title, index) => ({
+        slot_id: `slot-${index + 1}`,
+        index: index + 1,
+        card: {
+          slot_id: `slot-${index + 1}`,
+          title,
+          card_type: "markdown",
+          published_at: "one",
+          published_by: "worker",
+          content: { mode: "inline", markdown: title },
+        },
+      })),
+    };
+    const props = { isDark: false, groupId: "g", presentation, onClose: vi.fn() };
+    await act(async () =>
+      root.render(
+        <>
+          <PresentationViewerModal isOpen slotId="slot-1" {...props} />
+          <PresentationViewerModal isOpen slotId="slot-2" {...props} />
+        </>,
+      ),
+    );
+    const names = Array.from(host.querySelectorAll('[role="dialog"]'), (dialog) => {
+      const title = host.ownerDocument.getElementById(dialog.getAttribute("aria-labelledby")!);
+      return title?.querySelector("span")?.textContent;
+    });
+    expect(names).toEqual(["Drawing", "Plan"]);
+  });
+
   it("names the card type and publish time in the modal title for phone headers", async () => {
     await render(false, "g", "slot-1", "2026-10-07T09:19:00Z");
-    const title = host.ownerDocument.getElementById("presentation-viewer-title")!;
+    const dialog = host.querySelector('[role="dialog"]')!;
+    const title = host.ownerDocument.getElementById(dialog.getAttribute("aria-labelledby")!)!;
     const meta = title.querySelector("[data-presentation-title-meta]")!;
     expect(title.textContent).toContain("Drawing");
     expect(meta.textContent).toContain("presentationTypeImage");

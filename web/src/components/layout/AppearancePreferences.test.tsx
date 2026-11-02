@@ -99,9 +99,47 @@ describe("appearance choices inside their real hosts", () => {
       ? !!document.querySelector("[data-app-settings-menu]")
       : !!document.querySelector(".mobile-menu-panel");
   }
+  async function openMore() {
+    const more = document.querySelector<HTMLButtonElement>("[data-appearance-more]")!;
+    if (more.getAttribute("aria-expanded") !== "true") await click(more);
+  }
   for (const host of ["desktop", "sheet"] as const) {
+    it(`${host}: keeps theme and language in view and folds the rest behind one key`, async () => {
+      await renderHost(host, "light");
+      const more = document.querySelector<HTMLButtonElement>("[data-appearance-more]")!;
+      const folded = document.getElementById(more.getAttribute("aria-controls")!)!;
+      const names = (root: ParentNode) =>
+        [...root.querySelectorAll<HTMLElement>("[data-appearance-choice]")].map(
+          (choice) => choice.dataset.appearanceChoice,
+        );
+      expect(more.getAttribute("aria-expanded")).toBe("false");
+      expect(folded.hidden).toBe(true);
+      expect(names(folded)).toEqual([
+        "lcdBody",
+        "lcdWidth",
+        "lcdMotion",
+        "pendingPrompts",
+        "textScale",
+      ]);
+      const preferences = document.querySelector("[data-appearance-preferences]")!;
+      expect(names(preferences).filter((name) => !names(folded).includes(name))).toEqual([
+        "theme",
+        "language",
+      ]);
+      // The key follows what stays in view, so opening it moves nothing above.
+      const language = preferences.querySelector('[data-appearance-choice="language"]')!;
+      expect(
+        language.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      await click(more);
+      expect(more.getAttribute("aria-expanded")).toBe("true");
+      expect(folded.hidden).toBe(false);
+      expect(outerOpen(host)).toBe(true);
+    });
+
     it(`${host}: changes Waiting for you indicators without dismissing the menu`, async () => {
       await renderHost(host, "light");
+      await openMore();
       const choice = document.querySelector<HTMLElement>(
         '[data-appearance-choice="pendingPrompts"]',
       )!;
@@ -133,6 +171,7 @@ describe("appearance choices inside their real hosts", () => {
         `${host}/${theme}: shows every $name option and applies one in a tap without dismissing its host`,
         async ({ name, options, pick, value }) => {
           await renderHost(host, theme);
+          if (name === "textScale") await openMore();
           const group = document.querySelector<HTMLElement>(
             `[data-appearance-preferences] [data-appearance-choice="${name}"]`,
           )!;

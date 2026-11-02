@@ -9,7 +9,8 @@ function labelFor(recipients: string[] | undefined): string {
     dstTo: [],
     groupLabelById: {},
     recipients,
-    displayNameMap: new Map(),
+    displayNameMap: new Map([["peer1", "Peer One"]]),
+    userLabel: "You",
   });
 }
 
@@ -24,6 +25,25 @@ describe("buildToLabel", () => {
 
   it("keeps explicit @all recipients", () => {
     expect(labelFor(["@all"])).toBe("@all");
+  });
+
+  it("names the Group's user as the message head names them", () => {
+    expect(labelFor(["user"])).toBe("You");
+    expect(labelFor(["peer1", "user"])).toBe("Peer One, You");
+    expect(labelFor(["@user"])).toBe("You");
+  });
+
+  it("leaves a user in another Group or instance unnamed as the reader", () => {
+    const label = buildToLabel({
+      hasDestination: true,
+      dstGroupId: "g_remote",
+      dstTo: ["user"],
+      groupLabelById: {},
+      recipients: ["user"],
+      displayNameMap: new Map(),
+      userLabel: "You",
+    });
+    expect(label).toBe("user");
   });
 });
 

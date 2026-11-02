@@ -475,7 +475,7 @@ async fn verify_hermes_session_pages(
         {
             if session["cwd"]
                 .as_str()
-                .is_some_and(|path| Path::new(path) == cwd)
+                .is_some_and(|path| super::launch::names_workspace(path, cwd))
             {
                 return Ok(());
             }

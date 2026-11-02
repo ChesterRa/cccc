@@ -34,10 +34,10 @@ export function VirtualMessageListEmptyState({
       <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]">
         <MessageSquareTextIcon size={28} />
       </div>
-      <p className="text-sm font-medium text-[var(--color-text-secondary)]">
+      <p className="text-sm font-medium text-balance text-[var(--color-text-secondary)]">
         {emptyMessage ?? t(isFilteredEmpty ? "noResults" : "emptyStateTitle")}
       </p>
-      {!isFilteredEmpty ? (
+      {!isFilteredEmpty && !emptyMessage ? (
         <>
           <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
             {t("emptyStateSubtitle")}

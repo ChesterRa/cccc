@@ -67,14 +67,18 @@ pub fn validate_actor_id(value: &str) -> io::Result<String> {
     let first = chars
         .next()
         .ok_or_else(|| io::Error::other("actor id is required"))?;
-    let valid = id.chars().count() <= 32
+    let well_formed = id.chars().count() <= 32
         && first.is_alphanumeric()
-        && chars.all(|ch| ch.is_alphanumeric() || ch == '-' || ch == '_')
-        && !RESERVED.contains(&id.to_lowercase().as_str());
-    if !valid {
+        && chars.all(|ch| ch.is_alphanumeric() || ch == '-' || ch == '_');
+    if !well_formed {
         return Err(io::Error::other(
             "actor id must be 1-32 letters or numbers, optionally followed by '-' or '_'",
         ));
+    }
+    if RESERVED.contains(&id.to_lowercase().as_str()) {
+        return Err(io::Error::other(format!(
+            "actor id \"{id}\" is reserved; choose another id"
+        )));
     }
     Ok(id.to_owned())
 }

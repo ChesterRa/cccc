@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TextScale, Theme } from "../../types";
 import { useUIStore } from "../../stores/useUIStore";
@@ -13,6 +13,7 @@ import {
   type LcdWidth,
 } from "../../utils/uiStyle";
 import { SegmentedChoice, type SegmentedOption } from "../ui/segmented-choice";
+import { ChevronDownIcon } from "../Icons";
 
 export interface AppearancePreferencesProps {
   theme: Theme;
@@ -72,6 +73,11 @@ export function AppearancePreferences({
   const systemReducedMotion = useSystemReducedMotion();
   const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
   const setShowPendingPrompts = useUIStore((state) => state.setShowPendingPrompts);
+  // Theme and language stay in view; the choices people set once and leave fold behind
+  // one key after them, so opening it moves nothing above, and every opening of the menu
+  // starts folded.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreId = useId();
   return (
     <fieldset className="min-w-0" data-appearance-preferences>
       <legend className="px-2 pt-1.5 pb-1 text-xs font-semibold text-[var(--color-text-tertiary)]">
@@ -88,67 +94,6 @@ export function AppearancePreferences({
           { value: "system", label: t("themeSystem") },
         ]}
       />
-      <AppearanceChoice<LcdBodyFont>
-        name="lcdBody"
-        label={t("lcdBodyLabel")}
-        value={uiStyle.lcdBody}
-        onChange={(lcdBody) => setUiStylePrefs({ lcdBody })}
-        options={[
-          { value: "mono", label: t("lcdBodyMono") },
-          { value: "pixel", label: t("lcdBodyPixel") },
-        ]}
-      />
-      {/* Below 768px messages already use the full width, so the choice would change nothing. */}
-      <AppearanceChoice<LcdWidth>
-        name="lcdWidth"
-        label={t("lcdWidthLabel")}
-        value={uiStyle.lcdWidth}
-        onChange={(lcdWidth) => setUiStylePrefs({ lcdWidth })}
-        options={[
-          { value: "column", label: t("lcdWidthColumn") },
-          { value: "wide", label: t("lcdWidthWide") },
-          { value: "full", label: t("lcdWidthFull") },
-        ]}
-        className="max-md:hidden"
-      />
-      <AppearanceChoice<LcdMotion>
-        name="lcdMotion"
-        label={t("lcdMotionLabel")}
-        value={uiStyle.lcdMotion}
-        onChange={(lcdMotion) => setUiStylePrefs({ lcdMotion })}
-        options={[
-          { value: "on", label: t("lcdMotionOn") },
-          { value: "off", label: t("lcdMotionOff") },
-        ]}
-        className={systemReducedMotion ? "pb-1" : ""}
-      />
-      {/* The system's reduced-motion setting stills it whatever is chosen; say so
-              where the choice is made, without changing the stored choice. */}
-      {systemReducedMotion ? (
-        <p className="px-2 pb-2 text-xs text-[var(--color-text-secondary)]" data-lcd-motion-system>
-          {t("lcdMotionSystemStill")}
-        </p>
-      ) : null}
-      <AppearanceChoice
-        name="pendingPrompts"
-        label={t("pendingPromptsLabel")}
-        value={showPendingPrompts ? "show" : "off"}
-        onChange={(value) => setShowPendingPrompts(value === "show")}
-        options={[
-          { value: "show", label: t("pendingPromptsShow") },
-          { value: "off", label: t("pendingPromptsOff") },
-        ]}
-      />
-      <AppearanceChoice<TextScale>
-        name="textScale"
-        label={t("textSizeLabel")}
-        value={textScale}
-        onChange={onTextScaleChange}
-        options={TEXT_SCALE_OPTIONS.map((scale) => ({
-          value: scale,
-          label: getTextScaleLabel(scale),
-        }))}
-      />
       <AppearanceChoice
         name="language"
         label={t("common:language")}
@@ -160,6 +105,87 @@ export function AppearancePreferences({
           { value: "ja", label: "日本語" },
         ]}
       />
+      <button
+        type="button"
+        className="flex min-h-10 w-full items-center gap-2.5 rounded-[10px] px-2 text-left text-[13px] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2 pointer-coarse:min-h-11"
+        aria-expanded={moreOpen}
+        aria-controls={moreId}
+        onClick={() => setMoreOpen((open) => !open)}
+        data-appearance-more
+      >
+        <span className="flex-1">{t("moreAppearanceSettings")}</span>
+        <ChevronDownIcon
+          size={14}
+          aria-hidden="true"
+          className={`shrink-0 text-[var(--color-text-tertiary)] ${moreOpen ? "rotate-180" : ""}`}
+        />
+      </button>
+      <div id={moreId} hidden={!moreOpen}>
+        <AppearanceChoice<LcdBodyFont>
+          name="lcdBody"
+          label={t("lcdBodyLabel")}
+          value={uiStyle.lcdBody}
+          onChange={(lcdBody) => setUiStylePrefs({ lcdBody })}
+          options={[
+            { value: "mono", label: t("lcdBodyMono") },
+            { value: "pixel", label: t("lcdBodyPixel") },
+          ]}
+        />
+        {/* Below 768px messages already use the full width, so the choice would change nothing. */}
+        <AppearanceChoice<LcdWidth>
+          name="lcdWidth"
+          label={t("lcdWidthLabel")}
+          value={uiStyle.lcdWidth}
+          onChange={(lcdWidth) => setUiStylePrefs({ lcdWidth })}
+          options={[
+            { value: "column", label: t("lcdWidthColumn") },
+            { value: "wide", label: t("lcdWidthWide") },
+            { value: "full", label: t("lcdWidthFull") },
+          ]}
+          className="max-md:hidden"
+        />
+        <AppearanceChoice<LcdMotion>
+          name="lcdMotion"
+          label={t("lcdMotionLabel")}
+          value={uiStyle.lcdMotion}
+          onChange={(lcdMotion) => setUiStylePrefs({ lcdMotion })}
+          options={[
+            { value: "on", label: t("lcdMotionOn") },
+            { value: "off", label: t("lcdMotionOff") },
+          ]}
+          className={systemReducedMotion ? "pb-1" : ""}
+        />
+        {/* The system's reduced-motion setting stills it whatever is chosen; say so
+              where the choice is made, without changing the stored choice. */}
+        {systemReducedMotion ? (
+          <p
+            className="px-2 pb-2 text-xs text-[var(--color-text-secondary)]"
+            data-lcd-motion-system
+          >
+            {t("lcdMotionSystemStill")}
+          </p>
+        ) : null}
+        <AppearanceChoice
+          name="pendingPrompts"
+          label={t("pendingPromptsLabel")}
+          value={showPendingPrompts ? "show" : "off"}
+          onChange={(value) => setShowPendingPrompts(value === "show")}
+          options={[
+            { value: "show", label: t("pendingPromptsShow") },
+            { value: "off", label: t("pendingPromptsOff") },
+          ]}
+        />
+        <AppearanceChoice<TextScale>
+          name="textScale"
+          label={t("textSizeLabel")}
+          value={textScale}
+          onChange={onTextScaleChange}
+          options={TEXT_SCALE_OPTIONS.map((scale) => ({
+            value: scale,
+            label: getTextScaleLabel(scale),
+          }))}
+        />
+      </div>
     </fieldset>
   );
 }

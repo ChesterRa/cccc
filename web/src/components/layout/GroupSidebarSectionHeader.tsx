@@ -14,12 +14,14 @@ export function GroupSidebarSectionHeader({
   action?: ReactNode;
 }) {
   const { t } = useTranslation("layout");
+  // The list below is the only one in the sidebar and "New" names what it holds, so the
+  // row shows no heading, only the instance details when Connect has them and the action
+  // at the far end. Screen readers still hear the list named apart from Archived.
+  const label = <span className="sr-only">{t("workingGroups")}</span>;
+  if (!instanceLabel && !action) return label;
   return (
-    // The action keeps the far end; with a longer label or text size it wraps below.
     <div className="flex shrink-0 min-w-0 flex-wrap items-center gap-x-2 px-4 pt-2 pb-1">
-      <span className="text-xs font-medium text-[var(--color-text-tertiary)]">
-        {t("workingGroups")}
-      </span>
+      {label}
       {instanceLabel && (
         <Popover>
           <PopoverTrigger asChild>

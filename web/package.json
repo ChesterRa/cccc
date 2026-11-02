@@ -60,6 +60,11 @@
     "typescript": "^5.9.3",
     "vite-plus": "0.2.4"
   },
+  "overrides": {
+    "oxfmt": {
+      "tinypool": "2.1.2"
+    }
+  },
   "engines": {
     "node": "^22.18.0 || >=24.11.0"
   }

@@ -187,6 +187,8 @@ export interface MessageBubbleProps {
   webModelDeliveryStatus?: WebModelDeliveryStatus;
   isHighlighted?: boolean;
   collapseHeader?: boolean;
+  /** The message before this one is from the same sender. */
+  sameSender?: boolean;
   resolvedReplyQuoteText?: string;
   onReply: () => void;
   onShowRecipients: () => void;
@@ -214,6 +216,7 @@ export const MessageBubble = memo(
     webModelDeliveryStatus,
     isHighlighted,
     collapseHeader,
+    sameSender,
     resolvedReplyQuoteText,
     onReply,
     onShowRecipients,
@@ -492,6 +495,8 @@ export const MessageBubble = memo(
           : displayNameMap,
       [msgData?.dst_instance_id, msgData?.dst_actor_titles, displayNameMap],
     );
+    // A spectator of a read-only exhibit is not the Group's user.
+    const userRecipientLabel = readOnly ? t("senderUser") : t("messageAuthorYou");
     const toLabel = useMemo(() => {
       return buildToLabel({
         hasDestination,
@@ -500,8 +505,17 @@ export const MessageBubble = memo(
         groupLabelById,
         recipients,
         displayNameMap: destinationNames,
+        userLabel: userRecipientLabel,
       });
-    }, [destinationNames, dstGroupId, dstTo, groupLabelById, hasDestination, recipients]);
+    }, [
+      destinationNames,
+      dstGroupId,
+      dstTo,
+      groupLabelById,
+      hasDestination,
+      recipients,
+      userRecipientLabel,
+    ]);
 
     // Sender display name (use title if available)
     const senderActor = useMemo(() => {
@@ -590,7 +604,7 @@ export const MessageBubble = memo(
 
     const routingMetadata = (
       <MessageRoutingMetadata
-        toLabel={isDirectUserMessage && !hasSource && !hasDestination ? "" : toLabel}
+        toLabel={toLabel}
         isMail={isMail}
         hasSource={hasSource}
         sourceLabel={sourceLabel}
@@ -693,6 +707,7 @@ export const MessageBubble = memo(
         data-lcd-row
         data-lcd-user={fromReader || undefined}
         data-lcd-continued={collapseHeader || undefined}
+        data-lcd-same-sender={sameSender || undefined}
         data-lcd-accent={isUserMessage ? undefined : getActorAccentIndex(String(ev.by || ""))}
       >
         {/* One head line, so names never truncate and the text keeps the full width. */}
@@ -778,6 +793,7 @@ export const MessageBubble = memo(
       prevProps.webModelDeliveryStatus === nextProps.webModelDeliveryStatus &&
       prevProps.isHighlighted === nextProps.isHighlighted &&
       prevProps.collapseHeader === nextProps.collapseHeader &&
+      prevProps.sameSender === nextProps.sameSender &&
       prevProps.onViewContext === nextProps.onViewContext &&
       prevProps.onRelay === nextProps.onRelay &&
       prevProps.onOpenSource === nextProps.onOpenSource &&

@@ -16,6 +16,7 @@ type VirtualMessageRowProps = {
   resolvedReplyQuoteText?: string;
   collapseHeader?: boolean;
   compactSpacing?: boolean;
+  sameSender?: boolean;
   actorById: Map<string, Actor>;
   actors: Actor[];
   displayNameMap: Map<string, string>;
@@ -44,6 +45,7 @@ export const VirtualMessageRow = memo(function VirtualMessageRow({
   resolvedReplyQuoteText,
   collapseHeader,
   compactSpacing,
+  sameSender,
   measureElement,
   highlightEventId,
   onReply,
@@ -82,6 +84,7 @@ export const VirtualMessageRow = memo(function VirtualMessageRow({
         event={message}
         resolvedReplyQuoteText={resolvedReplyQuoteText}
         collapseHeader={collapseHeader}
+        sameSender={sameSender}
         isHighlighted={!!highlightEventId && String(message.id || "") === String(highlightEventId)}
         onReply={() => onReply(message)}
         onShowRecipients={() => {

@@ -99,3 +99,34 @@ it.each(["", "Native editor"])(
     expect(onClose).toHaveBeenCalledTimes(3);
   },
 );
+
+it("shows a window again at once and keeps it visible while it fades out", () => {
+  // A window kept mounted while closed, such as a presentation slot visited before,
+  // opens again by its classes alone. Were its visibility to fade in with its opacity,
+  // it would still count as hidden on the frame focus moves into it, and focus would
+  // fall to the page.
+  const frame = (isOpen: boolean) => {
+    act(() =>
+      root.render(
+        <ModalFrame
+          isOpen={isOpen}
+          isDark={false}
+          onClose={() => {}}
+          titleId="t"
+          title=""
+          closeAriaLabel="close"
+          panelClassName=""
+        >
+          <button type="button">Slot</button>
+        </ModalFrame>,
+      ),
+    );
+    return (host.firstElementChild as HTMLElement).className;
+  };
+  const closed = frame(false);
+  expect(closed).toContain("invisible");
+  expect(closed).toContain("transition-[opacity,visibility]");
+  const open = frame(true);
+  expect(open).toContain("visible");
+  expect(open).not.toContain("visibility");
+});

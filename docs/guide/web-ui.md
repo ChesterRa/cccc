@@ -49,8 +49,9 @@ with menus visible on touchscreens.
 
 The composer uses one send control with an adjacent mode arrow. The primary action
 shows the selected mode; its tooltip includes the send shortcut. Recipient chips
-need no separate “To” caption. Local messages addressed only to the user omit the
-redundant recipient label; cross-group routes and agent recipients remain explicit.
+need no separate “To” caption. A message within the Group names its recipients in the header,
+and one addressed to you shows **You** (in a read-only exhibit, **User**); a message sent to
+another Group or instance shows its destination route.
 User names remain accessible to screen readers without repeating a visible label
 above right-aligned local user messages. Message spacing is tighter, and the
 composer uses a subdued border that strengthens on focus.
@@ -68,21 +69,26 @@ Reduced-motion preferences show a static hint, and hidden tabs pause the animati
 set to **Off** under Appearance also shows a static hint.
 Hints are decorative and never become draft content or screen-reader live announcements.
 
-A thin line starts each message that shows its author, and a dotted line from the text column
-starts a message that continues under the same header; your own messages sit on your side without
-a line. Space inside a message is reduced so that it reads apart from the space between messages,
-and a Markdown rule inside a message is a short mark in the text column. Messages have no
-background, and pointing at one changes only its actions. Sender, recipient routing, Mail mode
-and time share a compact header; delivery failures and reply/read status stay visible.
+Each message is as wide as its content, header and attachments included, up to the column; a
+question waiting for your answer keeps room to answer in. Each run of messages from one sender
+opens with a thin line that spans its first message: the first message loaded, a message after a
+change of sender, and a message after a notice or any other entry that is not a message.
+Consecutive messages from the same sender, an agent's or yours, are set apart by space alone. In a
+wide reading column, agents' messages and yours keep the same room from the opposite edge; in a
+narrow one, as on a phone, beside the files panel or at a large text size, agents' messages may
+use the full width. Space inside a message is reduced so that it reads apart from the space
+between messages, and a Markdown rule inside a message is a short mark in the text column.
+Messages have no background, and pointing at one changes only its actions. Sender, recipients,
+Mail mode and time share a compact header; delivery failures and reply/read status stay visible.
 A reply shows up to two lines of the message it answers; clicking or tapping that
 quote, or pressing Enter on it, opens the original message. On hover-capable desktop
-screens, **Reply**, **Forward** and a copy icon appear in the message header on hover or
-keyboard focus, in space kept for them so nothing shifts; the icon copies the message
-content as the menu item did before. **Copy link** and other actions are in the **More** menu.
-Touch and narrow screens list every action, including copying, in one **More** menu.
+screens, **Reply**, **Forward** and a copy icon appear beside the message header on hover or
+keyboard focus, in the free space next to it, so nothing shifts; a long header wraps to leave
+them room. The icon copies the message content as the menu item did before. **Copy link** and
+other actions are in the **More** menu.
+Touch screens, narrow screens and reading columns too narrow for the actions beside the
+header list every action, including copying, in one **More** menu.
 Read-only views retain status information without exposing these actions. The composer groups recipients, text and tools into one surface.
-Short, transform/opacity-only message entry feedback respects reduced-motion
-preferences.
 
 On phones, the chat keeps as much of the screen as possible for messages. An empty
 composer that is not in use is a single row with the attachment button, the message
@@ -107,18 +113,20 @@ Reordering or archiving Groups does not move an existing selection.
 
 ### Group message and terminal views
 
-Use **Connect sessions**, beside or just below the **Working Groups** heading in the sidebar, to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
+Use **Connect sessions**, above the Group list in the sidebar, to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
 **Group connections** is available under the current Group’s settings and in each Group’s sidebar **⋮** menu, including remote Groups
 in CCCC Connect. The settings entry manages the current Group; the sidebar menu manages the Group
 whose menu you opened. Only incoming invitations ask which local Group should accept
 the connection.
-**Settings and more** collects theme, text size, language, account and the full settings entry.
-Appearance choices use application menus for theme, text size and language. Selecting an
-option keeps the containing menu open and returns focus to its trigger. Arrow keys navigate
-options; Escape closes only the inner choice menu. Narrow headers use the existing overflow
-sheet with the same choices and access rules; choice panels are portalled above its scroll area.
+**Settings and more** opens with your account, where your access includes it, and the full
+settings entry, then Appearance:
+theme and language stay in view, and **More appearance settings** unfolds body font, message
+area width, motion, ‘Waiting for you’ indicators and text size. The menu opens folded each
+time. A choice applies with one click or tap and keeps the menu open; arrow keys move a
+choice's selection. Narrow headers use the overflow sheet with the same choices and access
+rules; message area width is offered only on screens 768px and wider.
 Message identities, recipients, references, timestamps and actions follow the text-size preference.
 **‘Waiting for you’ indicators** under Appearance turns off what marks requests waiting for your
 answer: the sidebar's counts, including the archived Groups' total and the one on the phone's sidebar

@@ -213,9 +213,12 @@ fn authorize_tool(
     {
         let role = cccc_core::actors::effective_role(group, actor_id)
             .unwrap_or(cccc_contracts::ActorRole::Peer);
+        // The daemon authorizes each automation change by the caller's role, so a peer
+        // manages only reminders to itself; a Web Model peer may reach it like any peer.
+        let open_to_peers = name == "cccc_automation";
         if cccc_core::web_model_tool_names().any(|tool| tool == name)
             || (via_capability_use
-                && role == cccc_contracts::ActorRole::Foreman
+                && (role == cccc_contracts::ActorRole::Foreman || open_to_peers)
                 && cccc_core::is_builtin_capability_pack_tool(name))
         {
             return Ok(());
@@ -927,6 +930,10 @@ mod tests {
                 .expect_err("peer management call must fail"),
             "cccc_actor requires a Web Model foreman actor"
         );
+        // Automation is decided per change by the daemon, so a Web Model peer may reach
+        // it through capability use, though not by naming it directly.
+        assert!(super::authorize_tool(&home, "cccc_automation", &peer_args, true).is_ok());
+        assert!(super::authorize_tool(&home, "cccc_automation", &peer_args, false).is_err());
         let native_peer_args = json!({
             "group_id":peer_group.group_id,
             "by":"native-peer"

@@ -76,10 +76,12 @@ export function ModalFrame({
       className={
         inline
           ? `relative flex h-full min-h-0 min-w-0 flex-col ${isOpen ? "" : "hidden"}`
-          : `fixed inset-0 z-50 flex items-stretch justify-center p-0 transition-[opacity,visibility] duration-200 sm:items-center sm:p-4 ${
+          : `fixed inset-0 z-50 flex items-stretch justify-center p-0 duration-200 sm:items-center sm:p-4 ${
+              // A window shows at once, so focus can enter it on the frame it opens;
+              // it stays visible while it fades out.
               isOpen
-                ? "visible opacity-100 animate-fade-in"
-                : "pointer-events-none invisible opacity-0"
+                ? "visible opacity-100 animate-fade-in transition-opacity"
+                : "pointer-events-none invisible opacity-0 transition-[opacity,visibility]"
             }`
       }
       style={getModalOverlayStyle({ inline })}

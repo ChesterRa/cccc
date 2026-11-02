@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use cccc_client::DaemonClient;
-use cccc_contracts::DaemonRequest;
-use cccc_core::{GroupStore, HomeLayout, active};
+use cccc_contracts::{ActorRole, DaemonRequest};
+use cccc_core::{GroupStore, HomeLayout, active, actors};
 use serde_json::Map;
 
 pub async fn run(home: &HomeLayout, product_version: &str) -> Result<()> {
@@ -77,12 +77,13 @@ fn render(home: &HomeLayout, product_version: &str, daemon_running: bool) -> Res
             "  - {} ({}){} [{}]",
             group.title, group.group_id, active_mark, state
         )?;
-        for actor in group.actors {
-            let role = actor
-                .role
-                .and_then(|role| serde_json::to_value(role).ok())
-                .and_then(|role| role.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "peer".into());
+        // Members as the Web and the terminal panel list them: internal helpers are not
+        // shown, and the first member is the foreman whatever role was stored.
+        for actor in actors::visible(&group) {
+            let role = match actors::effective_role(&group, &actor.id) {
+                Some(ActorRole::Foreman) => "foreman",
+                _ => "peer",
+            };
             let runtime = serde_json::to_value(actor.runtime)
                 .ok()
                 .and_then(|runtime| runtime.as_str().map(str::to_owned))
@@ -113,5 +114,26 @@ mod tests {
         assert!(!output.contains("Python:"));
         assert!(!output.contains("Rust:"));
         assert!(output.contains("Groups:      (none)"));
+    }
+
+    #[test]
+    fn status_lists_members_with_the_role_they_hold() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("demo", "").expect("group");
+        // Stored roles are empty, as for members added today; an internal helper comes first.
+        let mut helper = cccc_contracts::Actor::new("helper");
+        helper.internal_kind = Some("fixture_helper".into());
+        group.actors.push(helper);
+        group.actors.push(cccc_contracts::Actor::new("lead"));
+        group.actors.push(cccc_contracts::Actor::new("implementer"));
+        store.save(&group).expect("save");
+
+        let output = render(&home, "0.4.47", false).expect("status");
+
+        assert!(output.contains("      lead (foreman, "), "{output}");
+        assert!(output.contains("      implementer (peer, "), "{output}");
+        assert!(!output.contains("helper"), "{output}");
     }
 }

@@ -7,7 +7,7 @@ import { PresentationViewerTitle } from "./PresentationViewerTitle";
 import { GraphicViewer } from "../viewer/GraphicViewer";
 import { getPresentationReferenceHref } from "./presentationAssets";
 import { usePresentationAsset } from "./usePresentationAsset";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUIStore } from "../../stores";
 import { MarkdownDocumentSurface } from "../document/MarkdownDocumentSurface";
@@ -20,6 +20,7 @@ import {
   ImageIcon,
   MessageSquareIcon,
   MessageSquareTextIcon,
+  MoreHorizontalIcon,
   RefreshIcon,
   ReplyIcon,
   SplitViewIcon,
@@ -28,7 +29,8 @@ import {
 } from "../Icons";
 import { ModalFrame } from "../modals/ModalFrame";
 import { SidePanelButton, SidePanelHeader } from "../layout/SidePanelHeader";
-import { useModalA11y } from "../../hooks/useModalA11y";
+import { focusFirst, useModalA11y } from "../../hooks/useModalA11y";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { GroupPresentation, LedgerEvent, PresentationMessageRef } from "../../types";
 import {
   fetchPresentationBrowserSurfaceSession,
@@ -103,6 +105,10 @@ async function dataUrlToFile(dataUrl: string, filename: string): Promise<File | 
   }
 }
 
+// A screen this short folds the viewer's slots and keys away. Phones turned sideways are
+// 320–430px tall.
+const SHORT_VIEWPORT_QUERY = "(max-height: 480px)";
+
 function formatTimestamp(value: string | undefined, locale: string): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -171,12 +177,76 @@ function PresentationViewer({
   const isModal = variant === "modal";
   const slotButtonRef = useRef<HTMLButtonElement>(null);
   const hasSlotNavigation = !!onSelectSlot;
+  // A short screen, such as a phone turned sideways, folds the slots, the card's details and
+  // its keys behind one key, so the card keeps the height and nothing covers it.
+  const compact = useMediaQuery(SHORT_VIEWPORT_QUERY);
+  const [chromeOpen, setChromeOpen] = useState(false);
+  const showChrome = !compact || chromeOpen;
+  const chromeId = useId();
+  // Each window names its own title: switching slots keeps the previous window mounted.
+  const titleId = useId();
+  const chromeToggleRef = useRef<HTMLButtonElement | null>(null);
+  // The current slot takes focus on opening; while the slots are folded, the key that
+  // unfolds them does. An empty slot opened from an old quote cannot take focus, so the
+  // viewer's first key does.
+  const initialFocusRef = useMemo(
+    () => ({
+      get current(): HTMLElement | null {
+        const slot = slotButtonRef.current;
+        return slot && !slot.disabled ? slot : chromeToggleRef.current;
+      },
+    }),
+    [],
+  );
   const { modalRef } = useModalA11y(isModal && isOpen, onClose, {
-    initialFocusRef: hasSlotNavigation ? slotButtonRef : undefined,
+    initialFocusRef: hasSlotNavigation ? initialFocusRef : undefined,
   });
+  // The side panel takes focus as the window does, on the same key.
+  const splitRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
-    if (!isModal && isOpen && hasSlotNavigation) slotButtonRef.current?.focus();
-  }, [isModal, isOpen, hasSlotNavigation, groupId, slotId]);
+    if (isModal || !isOpen || !hasSlotNavigation) return;
+    const target = initialFocusRef.current;
+    if (target) target.focus();
+    else if (splitRef.current) focusFirst(splitRef.current);
+  }, [isModal, isOpen, hasSlotNavigation, groupId, slotId, initialFocusRef]);
+  // Each short screen, and each opening, starts folded: a closed window stays mounted while
+  // its Group is open. A key that disappears while focused, because the slots fold or the
+  // screen grows taller and the unfold key goes, hands focus to the key that replaces it.
+  useEffect(() => setChromeOpen(false), [compact, isOpen]);
+  const chromeHadFocusRef = useRef(false);
+  // The viewer the unfold key sat in, when it held focus as it went.
+  const toggleFocusViewerRef = useRef<HTMLElement | null>(null);
+  const trackChromeFocus = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return undefined;
+    return () => {
+      chromeHadFocusRef.current = node.contains(document.activeElement);
+    };
+  }, []);
+  const attachChromeToggle = useCallback((node: HTMLButtonElement | null) => {
+    chromeToggleRef.current = node;
+    if (!node) return undefined;
+    return () => {
+      toggleFocusViewerRef.current =
+        document.activeElement === node
+          ? node.closest<HTMLElement>('[role="dialog"], section')
+          : null;
+      chromeToggleRef.current = null;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    if (!showChrome && chromeHadFocusRef.current) chromeToggleRef.current?.focus();
+    const viewer = toggleFocusViewerRef.current;
+    if (!compact && viewer) {
+      // An empty slot opened from an old quote cannot take focus; the viewer's first key
+      // on screen can.
+      const slot = slotButtonRef.current;
+      if (slot && !slot.disabled) slot.focus();
+      else focusFirst(viewer);
+    }
+    chromeHadFocusRef.current = false;
+    toggleFocusViewerRef.current = null;
+  }, [isOpen, showChrome, compact]);
   const [refreshTick, setRefreshTick] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
   const [copiedReference, setCopiedReference] = useState(false);
@@ -248,9 +318,14 @@ function PresentationViewer({
   const copyReferenceValue = String(
     card?.content.url || card?.content.workspace_rel_path || href || "",
   ).trim();
-  const viewerPanelClassName = isExpanded
-    ? "h-screen w-screen max-w-none sm:h-[96vh] sm:w-[96vw] sm:max-w-[96vw]"
-    : "h-screen w-screen max-w-none sm:h-[88vh] sm:w-[min(1280px,96vw)]";
+  // On a short screen the window takes the whole screen: the negative margin takes back the
+  // 1rem the frame pads it with from 640px wide, and the safe areas keep it clear of a notch.
+  const viewerPanelClassName = compact
+    ? "h-[100dvh] w-screen max-w-none sm:-m-4 pr-[env(safe-area-inset-right,0px)] pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)]"
+    : isExpanded
+      ? "h-screen w-screen max-w-none sm:h-[96vh] sm:w-[96vw] sm:max-w-[96vw]"
+      : "h-screen w-screen max-w-none sm:h-[88vh] sm:w-[min(1280px,96vw)]";
+  const chromeLabel = t("presentationSlotsAndDetailsAction", { defaultValue: "Slots and details" });
   const immersiveViewportClassName = "h-full min-h-0";
   const fullScreenLabel = isExpanded
     ? t("presentationExitFullScreenAction", { defaultValue: "Exit full screen" })
@@ -356,6 +431,27 @@ function PresentationViewer({
   // On phones the two chat actions are icon keys, so the title keeps its room beside them.
   const modalHeaderActions = (
     <>
+      {compact && (hasSlotNavigation || card) ? (
+        <button
+          ref={attachChromeToggle}
+          type="button"
+          data-lcd-key
+          data-presentation-action
+          aria-expanded={chromeOpen}
+          aria-controls={chromeId}
+          aria-label={chromeLabel}
+          title={chromeLabel}
+          onClick={() => setChromeOpen((value) => !value)}
+          className={classNames(
+            "inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border transition-colors",
+            isDark
+              ? "border-white/12 bg-white/[0.06] text-white hover:bg-white/[0.1]"
+              : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] hover:bg-white",
+          )}
+        >
+          <MoreHorizontalIcon size={16} />
+        </button>
+      ) : null}
       {sourceEventId && onOpenMessageContext ? (
         <button
           type="button"
@@ -410,7 +506,7 @@ function PresentationViewer({
           <RefreshIcon size={16} />
         </button>
       ) : null}
-      {card ? (
+      {card && !compact ? (
         <button
           type="button"
           data-lcd-key
@@ -938,122 +1034,131 @@ function PresentationViewer({
     </div>
   );
 
-  const viewerBody = (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {variant === "modal" ? (
-        <div
-          data-presentation-details
-          className={classNames(
-            "@container/details flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs",
-            isDark ? "border-white/10 text-slate-400" : "border-black/10 text-gray-600",
-          )}
-        >
-          {card ? (
-            <>
+  const detailsRow =
+    variant === "modal" ? (
+      <div
+        data-presentation-details
+        className={classNames(
+          "@container/details flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs",
+          isDark ? "border-white/10 text-slate-400" : "border-black/10 text-gray-600",
+        )}
+      >
+        {card ? (
+          <>
+            <span
+              data-presentation-tag
+              data-status-tone="neutral"
+              className={classNames(
+                "rounded-full px-2 py-1 font-medium max-sm:hidden",
+                isDark
+                  ? "bg-white/[0.08] text-white"
+                  : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
+              )}
+            >
+              {getCardTypeLabel(card.card_type, t)}
+            </span>
+            {isWorkspaceLinked ? (
               <span
                 data-presentation-tag
-                data-status-tone="neutral"
+                data-status-tone="ok"
                 className={classNames(
-                  "rounded-full px-2 py-1 font-medium max-sm:hidden",
-                  isDark
-                    ? "bg-white/[0.08] text-white"
-                    : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
+                  "rounded-full px-2 py-1 font-medium",
+                  isDark ? "bg-emerald-500/10 text-emerald-200" : "bg-emerald-50 text-emerald-700",
                 )}
               >
-                {getCardTypeLabel(card.card_type, t)}
+                {t("presentationWorkspaceLiveBadge", { defaultValue: "Live workspace link" })}
               </span>
-              {isWorkspaceLinked ? (
-                <span
-                  data-presentation-tag
-                  data-status-tone="ok"
-                  className={classNames(
-                    "rounded-full px-2 py-1 font-medium",
-                    isDark
-                      ? "bg-emerald-500/10 text-emerald-200"
-                      : "bg-emerald-50 text-emerald-700",
-                  )}
-                >
-                  {t("presentationWorkspaceLiveBadge", { defaultValue: "Live workspace link" })}
-                </span>
+            ) : null}
+            {card.source_label ? <span className="max-sm:hidden">{card.source_label}</span> : null}
+            {linkedAsset.stale ? (
+              <span
+                role="status"
+                data-status-tone="warning"
+                className="min-w-0 flex-1 truncate text-amber-700 dark:text-amber-300"
+                title={`${t("presentationRefreshFailed")} (${linkedAsset.error})`}
+              >
+                {t("presentationRefreshFailed")}
+              </span>
+            ) : publishedAt ? (
+              <span className="max-sm:hidden">{publishedAt}</span>
+            ) : null}
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 max-sm:ml-0 max-sm:w-full max-sm:justify-between">
+              {showWebPreviewModeToggle ? (
+                <PresentationPreviewModeToggle
+                  value={webPreviewMode}
+                  label={previewModeLabel}
+                  options={previewModeOptions}
+                  onChange={setWebPreviewMode}
+                />
               ) : null}
-              {card.source_label ? (
-                <span className="max-sm:hidden">{card.source_label}</span>
-              ) : null}
-              {linkedAsset.stale ? (
-                <span
-                  role="status"
-                  data-status-tone="warning"
-                  className="min-w-0 flex-1 truncate text-amber-700 dark:text-amber-300"
-                  title={`${t("presentationRefreshFailed")} (${linkedAsset.error})`}
-                >
-                  {t("presentationRefreshFailed")}
-                </span>
-              ) : publishedAt ? (
-                <span className="max-sm:hidden">{publishedAt}</span>
-              ) : null}
-              <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 max-sm:ml-0 max-sm:w-full max-sm:justify-between">
-                {showWebPreviewModeToggle ? (
-                  <PresentationPreviewModeToggle
-                    value={webPreviewMode}
-                    label={previewModeLabel}
-                    options={previewModeOptions}
-                    onChange={setWebPreviewMode}
-                  />
+              <div className="ml-auto flex items-center gap-1.5 max-sm:gap-1">
+                {canQuote ? (
+                  <div
+                    className={classNames("flex items-center gap-1", compact ? "" : "sm:hidden")}
+                  >
+                    {renderQuoteKey(true)}
+                    {renderSnapshotKey(true)}
+                  </div>
                 ) : null}
-                <div className="ml-auto flex items-center gap-1.5 max-sm:gap-1">
-                  {canQuote ? (
-                    <div className="flex items-center gap-1 sm:hidden">
-                      {renderQuoteKey(true)}
-                      {renderSnapshotKey(true)}
-                    </div>
-                  ) : null}
-                  {copyReferenceValue ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleCopyReference();
-                      }}
-                      className={copiedReference ? copiedIconButtonClassName : iconButtonClassName}
-                      aria-label={copyActionLabel}
-                      title={copyActionLabel}
-                    >
-                      <CopyIcon size={16} />
-                    </button>
-                  ) : null}
-                  {!readOnly && onReplaceSlot ? (
-                    <button
-                      type="button"
-                      onClick={() => slot && onReplaceSlot(slot.slot_id)}
-                      className={iconButtonClassName}
-                      aria-label={editActionLabel}
-                      title={editActionLabel}
-                    >
-                      <EditIcon size={16} />
-                    </button>
-                  ) : null}
-                  {!readOnly && onClearSlot ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleClearSlot()}
-                      disabled={!!clearingSlotId}
-                      className={destructiveIconButtonClassName}
-                      aria-label={clearActionLabel}
-                      title={clearActionLabel}
-                    >
-                      <TrashIcon size={16} />
-                    </button>
-                  ) : null}
-                </div>
+                {copyReferenceValue ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleCopyReference();
+                    }}
+                    className={copiedReference ? copiedIconButtonClassName : iconButtonClassName}
+                    aria-label={copyActionLabel}
+                    title={copyActionLabel}
+                  >
+                    <CopyIcon size={16} />
+                  </button>
+                ) : null}
+                {!readOnly && onReplaceSlot ? (
+                  <button
+                    type="button"
+                    onClick={() => slot && onReplaceSlot(slot.slot_id)}
+                    className={iconButtonClassName}
+                    aria-label={editActionLabel}
+                    title={editActionLabel}
+                  >
+                    <EditIcon size={16} />
+                  </button>
+                ) : null}
+                {!readOnly && onClearSlot ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleClearSlot()}
+                    disabled={!!clearingSlotId}
+                    className={destructiveIconButtonClassName}
+                    aria-label={clearActionLabel}
+                    title={clearActionLabel}
+                  >
+                    <TrashIcon size={16} />
+                  </button>
+                ) : null}
               </div>
-            </>
-          ) : (
-            <span>
-              {t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}
-            </span>
-          )}
-        </div>
-      ) : null}
+            </div>
+          </>
+        ) : (
+          <span>
+            {t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}
+          </span>
+        )}
+      </div>
+    ) : null;
 
+  const viewerBody = (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {isModal && !showChrome && linkedAsset.stale ? (
+        <p
+          role="status"
+          data-status-tone="warning"
+          className="shrink-0 truncate border-b border-[var(--glass-border-subtle)] px-3 py-1 text-xs"
+          title={`${t("presentationRefreshFailed")} (${linkedAsset.error})`}
+        >
+          {t("presentationRefreshFailed")}
+        </p>
+      ) : null}
       <div
         className={classNames(
           "relative min-h-0 flex-1 overflow-hidden",
@@ -1223,7 +1328,7 @@ function PresentationViewer({
             </div>
           </div>
         ) : null}
-        {canQuote ? (
+        {canQuote && !compact ? (
           <div
             className={classNames(
               "pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-5 z-10 flex items-center gap-2",
@@ -1252,6 +1357,7 @@ function PresentationViewer({
   if (variant === "split") {
     return (
       <section
+        ref={splitRef}
         className={classNames(
           "flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
           "bg-[var(--color-bg-primary)]",
@@ -1270,6 +1376,18 @@ function PresentationViewer({
           onClose={onClose}
           closeLabel={t("presentationCloseDockAction")}
         >
+          {compact && (hasSlotNavigation || card) ? (
+            <SidePanelButton
+              ref={attachChromeToggle}
+              title={chromeLabel}
+              data-presentation-action
+              aria-expanded={chromeOpen}
+              aria-controls={chromeId}
+              onClick={() => setChromeOpen((value) => !value)}
+            >
+              <MoreHorizontalIcon />
+            </SidePanelButton>
+          ) : null}
           {onCollapse && (
             <SidePanelButton title={t("presentationCompactSlots")} onClick={onCollapse}>
               <PanelRightClose />
@@ -1286,59 +1404,77 @@ function PresentationViewer({
             {t("presentationRefreshFailed")}
           </span>
         )}
-        {slotNavigation}
-        {(showWebPreviewModeToggle ||
-          canRefresh ||
-          copyReferenceValue ||
-          (!readOnly && (onReplaceSlot || onClearSlot) && slot)) && (
-          <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 py-1">
-            {showWebPreviewModeToggle ? (
-              <PresentationPreviewModeToggle
-                value={webPreviewMode}
-                label={previewModeLabel}
-                options={previewModeOptions}
-                compact
-                onChange={setWebPreviewMode}
-              />
-            ) : null}
-            <div className="ml-auto flex shrink-0 items-center gap-1">
-              {canRefresh && (
-                <SidePanelButton
-                  title={refreshActionLabel}
-                  onClick={() => setRefreshTick((value) => value + 1)}
-                >
-                  <RefreshIcon />
-                </SidePanelButton>
-              )}
-              {copyReferenceValue && (
-                <SidePanelButton title={copyActionLabel} onClick={() => void handleCopyReference()}>
-                  <CopyIcon />
-                </SidePanelButton>
-              )}
-              {!readOnly && onReplaceSlot && slot && (
-                <SidePanelButton
-                  title={editActionLabel}
-                  onClick={() => onReplaceSlot(slot.slot_id)}
-                >
-                  <EditIcon />
-                </SidePanelButton>
-              )}
-              {!readOnly && onClearSlot && slot && (
-                <SidePanelButton
-                  title={clearActionLabel}
-                  data-status-tone="error"
-                  onClick={() => void handleClearSlot()}
-                  disabled={!!clearingSlotId}
-                  className={
-                    isDark ? "text-rose-200 hover:bg-rose-500/15" : "text-rose-700 hover:bg-rose-50"
-                  }
-                >
-                  <TrashIcon />
-                </SidePanelButton>
+        <div id={chromeId} hidden={!showChrome} className="shrink-0">
+          {showChrome ? (
+            <div ref={trackChromeFocus}>
+              {slotNavigation}
+              {(showWebPreviewModeToggle ||
+                canRefresh ||
+                copyReferenceValue ||
+                (compact && canQuote) ||
+                (!readOnly && (onReplaceSlot || onClearSlot) && slot)) && (
+                <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 py-1">
+                  {showWebPreviewModeToggle ? (
+                    <PresentationPreviewModeToggle
+                      value={webPreviewMode}
+                      label={previewModeLabel}
+                      options={previewModeOptions}
+                      compact
+                      onChange={setWebPreviewMode}
+                    />
+                  ) : null}
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
+                    {compact && canQuote ? (
+                      <>
+                        {renderQuoteKey(true)}
+                        {renderSnapshotKey(true)}
+                      </>
+                    ) : null}
+                    {canRefresh && (
+                      <SidePanelButton
+                        title={refreshActionLabel}
+                        onClick={() => setRefreshTick((value) => value + 1)}
+                      >
+                        <RefreshIcon />
+                      </SidePanelButton>
+                    )}
+                    {copyReferenceValue && (
+                      <SidePanelButton
+                        title={copyActionLabel}
+                        onClick={() => void handleCopyReference()}
+                      >
+                        <CopyIcon />
+                      </SidePanelButton>
+                    )}
+                    {!readOnly && onReplaceSlot && slot && (
+                      <SidePanelButton
+                        title={editActionLabel}
+                        onClick={() => onReplaceSlot(slot.slot_id)}
+                      >
+                        <EditIcon />
+                      </SidePanelButton>
+                    )}
+                    {!readOnly && onClearSlot && slot && (
+                      <SidePanelButton
+                        title={clearActionLabel}
+                        data-status-tone="error"
+                        onClick={() => void handleClearSlot()}
+                        disabled={!!clearingSlotId}
+                        className={
+                          isDark
+                            ? "text-rose-200 hover:bg-rose-500/15"
+                            : "text-rose-700 hover:bg-rose-50"
+                        }
+                      >
+                        <TrashIcon />
+                      </SidePanelButton>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
-          </div>
-        )}
+          ) : null}
+        </div>
         {viewerBody}
       </section>
     );
@@ -1349,7 +1485,7 @@ function PresentationViewer({
       isOpen={isOpen}
       isDark={isDark}
       onClose={onClose}
-      titleId="presentation-viewer-title"
+      titleId={titleId}
       title={
         <PresentationViewerTitle
           title={card?.title || t("presentationTitle", { defaultValue: "Presentation" })}
@@ -1364,7 +1500,14 @@ function PresentationViewer({
       headerActions={modalHeaderActions}
       modalRef={modalRef}
     >
-      {slotNavigation}
+      <div id={chromeId} hidden={!showChrome} className="shrink-0">
+        {showChrome ? (
+          <div ref={trackChromeFocus}>
+            {slotNavigation}
+            {detailsRow}
+          </div>
+        ) : null}
+      </div>
       {viewerBody}
     </ModalFrame>
   );

@@ -6,6 +6,7 @@ export function buildToLabel({
   dstTo,
   recipients,
   displayNameMap,
+  userLabel,
 }: {
   hasDestination: boolean;
   dstGroupId: string;
@@ -13,14 +14,21 @@ export function buildToLabel({
   groupLabelById: Record<string, string>;
   recipients: string[] | undefined;
   displayNameMap: Map<string, string>;
+  /** The Group's user, named as the message head names them as an author. */
+  userLabel: string;
 }): string {
   if (hasDestination) {
     if (!dstTo || dstTo.length === 0) return "";
     return dstTo.map((recipient) => getRecipientDisplayName(recipient, displayNameMap)).join(", ");
   }
   if (!recipients || recipients.length === 0) return "@foreman";
+  // `@user` names the user too, as elsewhere in the Web; the daemon itself stores `user`.
   return recipients
-    .map((recipient) => getRecipientDisplayName(recipient, displayNameMap))
+    .map((recipient) =>
+      recipient === "user" || recipient === "@user"
+        ? userLabel
+        : getRecipientDisplayName(recipient, displayNameMap),
+    )
     .join(", ");
 }
 

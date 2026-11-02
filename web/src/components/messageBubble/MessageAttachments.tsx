@@ -44,6 +44,7 @@ export function MessageAttachments({
           className={classNames(
             "max-w-full items-start gap-2",
             useImageGrid ? "grid w-fit grid-cols-2" : "flex max-w-[min(30rem,82vw)] flex-col gap-3",
+            !useImageGrid && !isUserMessage && "w-[min(30rem,82vw)]",
           )}
         >
           {imageAttachments.map((attachment, index) => {
@@ -81,6 +82,7 @@ export function MessageAttachments({
         <div
           className={classNames(
             "flex max-w-full flex-col items-start gap-3",
+            !isUserMessage && "w-[min(30rem,82vw)]",
             imageAttachments.length > 0 && "mt-3",
           )}
         >

@@ -249,7 +249,7 @@ impl AnalystSession {
                     .map(String::as_str)
                 || started["sandbox"]["type"] != "workspaceWrite"
                 || started["sandbox"]["networkAccess"] != false
-                || started["runtimeWorkspaceRoots"] != json!([binding.root]))
+                || !confirms_secretary_root(&started["runtimeWorkspaceRoots"], &binding.root))
         {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -340,5 +340,76 @@ impl AnalystSession {
             purpose: SessionPurpose::VoiceAnalyst,
         })
         .await
+    }
+}
+
+/// The secretary's permission profile names exactly one workspace root: the
+/// bound directory, in whatever spelling Codex reports it.
+fn confirms_secretary_root(roots: &Value, root: &std::path::Path) -> bool {
+    matches!(
+        roots.as_array().map(Vec::as_slice),
+        Some([Value::String(reported)]) if super::launch::names_workspace(reported, root)
+    )
+}
+
+#[cfg(test)]
+mod secretary_root_tests {
+    use super::confirms_secretary_root;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn the_root_is_one_reported_path_naming_the_bound_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let work = temp.path().join("work");
+        let other = temp.path().join("other");
+        std::fs::create_dir(&work).expect("work directory");
+        std::fs::create_dir(&other).expect("other directory");
+        let root = work.canonicalize().expect("canonical root");
+        // The canonical path and another spelling of it name the directory.
+        assert!(confirms_secretary_root(&json!([root]), &root));
+        assert!(confirms_secretary_root(
+            &json!([other.join("..").join("work")]),
+            &root
+        ));
+        // Another or a missing directory, any other number of roots, or a
+        // non-string does not.
+        assert!(!confirms_secretary_root(&json!([other]), &root));
+        assert!(!confirms_secretary_root(
+            &json!([temp.path().join("missing")]),
+            &root
+        ));
+        assert!(!confirms_secretary_root(&json!([root, root]), &root));
+        assert!(!confirms_secretary_root(&json!([]), &root));
+        assert!(!confirms_secretary_root(&json!([1]), &root));
+        assert!(!confirms_secretary_root(&Value::Null, &root));
+    }
+
+    #[test]
+    fn a_relative_root_does_not_name_the_bound_directory() {
+        // From the daemon's own directory `.` resolves to the root, but a
+        // relative path does not say which workspace Codex means.
+        let here = std::env::current_dir()
+            .and_then(|here| here.canonicalize())
+            .expect("canonical current directory");
+        assert!(!confirms_secretary_root(&json!(["."]), &here));
+    }
+
+    /// Codex on Windows reports the workspace without the verbatim prefix that
+    /// `fs::canonicalize` adds: `\\?\C:\…` as `C:\…`, and `\\?\UNC\server\…`
+    /// as `\\server\…`.
+    #[cfg(windows)]
+    #[test]
+    fn windows_accepts_the_root_without_its_verbatim_prefix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let spelled = root.to_str().expect("UTF-8 path");
+        let plain = match spelled.strip_prefix(r"\\?\UNC\") {
+            Some(share) => format!(r"\\{share}"),
+            None => spelled
+                .strip_prefix(r"\\?\")
+                .expect("verbatim root")
+                .to_owned(),
+        };
+        assert!(confirms_secretary_root(&json!([plain]), &root));
     }
 }

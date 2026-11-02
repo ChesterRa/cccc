@@ -38,6 +38,23 @@ describe("useComposerStore clearComposer", () => {
   });
 });
 
+describe("useComposerStore group drafts", () => {
+  it("keeps a Group's draft while no Group is selected", () => {
+    // The chat shows no composer while no Group is selected; the draft lives here.
+    useComposerStore.setState({
+      activeGroupId: "group-a",
+      composerText: "half a thought",
+      drafts: {},
+    });
+
+    useComposerStore.getState().switchGroup("group-a", "");
+    expect(useComposerStore.getState().composerText).toBe("");
+
+    useComposerStore.getState().switchGroup("", "group-a");
+    expect(useComposerStore.getState().composerText).toBe("half a thought");
+  });
+});
+
 describe("useComposerStore voice document drafts", () => {
   it("keeps quoted documents scoped to their original group", () => {
     useComposerStore.setState({

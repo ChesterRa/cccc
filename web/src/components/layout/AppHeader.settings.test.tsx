@@ -98,6 +98,23 @@ describe("header settings menu", () => {
     expect(document.querySelector("[data-app-settings-menu]")).toBeNull();
   });
 
+  it("leads with the account and all settings, then the appearance choices", async () => {
+    await mount({});
+    const panel = await openMenu();
+    const order = [
+      ...panel.querySelectorAll(
+        "[data-app-settings-account], [data-app-settings-open-all], [data-appearance-preferences]",
+      ),
+    ].map((element) =>
+      element.hasAttribute("data-app-settings-account")
+        ? "account"
+        : element.hasAttribute("data-app-settings-open-all")
+          ? "all settings"
+          : "appearance",
+    );
+    expect(order).toEqual(["account", "all settings", "appearance"]);
+  });
+
   it("keeps browser preferences usable without granting settings or account access", async () => {
     await mount({ canAccessAccount: false, selectedGroupId: "" });
     const panel = await openMenu();
@@ -139,6 +156,9 @@ describe("header settings menu", () => {
     expect(checked("theme")).toBe("themeSystem");
     expect(checked("textScale")).toBe("100%");
     await act(async () => buttonByText(choice("theme"), "themeDark").click());
+    await act(async () =>
+      panel.querySelector<HTMLButtonElement>("[data-appearance-more]")!.click(),
+    );
     await act(async () => buttonByText(choice("textScale"), "125%").click());
     await act(async () => buttonByText(choice("language"), "日本語").click());
     expect(checked("theme")).toBe("themeDark");

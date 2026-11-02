@@ -130,6 +130,8 @@ export interface ChatTabProps {
   isDark: boolean;
   isSmallScreen: boolean;
   readOnly?: boolean;
+  /** The viewer may create a Group, so the empty chat can offer it. */
+  canCreateGroup?: boolean;
   mobileAppHeaderReserved?: boolean;
   onMobileReadingHiddenChange?: (hidden: boolean) => void;
   onMobileReadingOverlayChange?: (overlay: boolean) => void;
@@ -185,6 +187,7 @@ export function ChatTab({
   isDark,
   isSmallScreen,
   readOnly,
+  canCreateGroup = false,
   mobileAppHeaderReserved = false,
   onMobileReadingHiddenChange,
   onMobileReadingOverlayChange,
@@ -1138,15 +1141,23 @@ export function ChatTab({
                           hasMoreHistory={listHasMoreHistory}
                           isFilteredEmpty={isFilteredEmptyState}
                           emptyMessage={
-                            pendingActive
+                            !selectedGroupId
                               ? t(
-                                  pendingDaemonUnsupported
-                                    ? "pendingReply.daemonUnsupported"
-                                    : pendingPageError
-                                      ? "pendingReply.loadFailed"
-                                      : "pendingReply.empty",
+                                  readOnly
+                                    ? "noGroupSelectedReadOnly"
+                                    : canCreateGroup
+                                      ? "noGroupSelected"
+                                      : "noGroupSelectedNoCreate",
                                 )
-                              : undefined
+                              : pendingActive
+                                ? t(
+                                    pendingDaemonUnsupported
+                                      ? "pendingReply.daemonUnsupported"
+                                      : pendingPageError
+                                        ? "pendingReply.loadFailed"
+                                        : "pendingReply.empty",
+                                  )
+                                : undefined
                           }
                           onLoadMore={loadMoreHistory}
                         />
@@ -1246,59 +1257,61 @@ export function ChatTab({
                       restoreFocus={focusActiveFilter}
                     />
                   ) : null}
-                  <ChatComposer
-                    isDark={isDark}
-                    isSmallScreen={isSmallScreen}
-                    keepExpanded={mobileAppHeaderReserved}
-                    selectedGroupId={selectedGroupId}
-                    actors={actors}
-                    recipientActorsBusy={recipientActorsBusy}
-                    selectedGroupActorsHydrating={selectedGroupActorsHydrating}
-                    destGroupId={destGroupId}
-                    setDestGroupId={setDestGroupId}
-                    composerGroupSettled={composerGroupSettled}
-                    composerRouteGroups={composerRouteGroups}
-                    destGroupScopeLabel={destGroupScopeLabel}
-                    busy={busy}
-                    recentMessages={chatMessages}
-                    suggestionSourceMessages={suggestionSourceMessages}
-                    replyTarget={replyTarget}
-                    onCancelReply={cancelReply}
-                    quotedPresentationRef={quotedPresentationRef}
-                    onClearQuotedPresentationRef={clearQuotedPresentationRef}
-                    quotedVoiceDocumentRef={quotedVoiceDocumentRef}
-                    onQuoteVoiceDocumentRef={handleQuoteVoiceDocumentReference}
-                    onClearQuotedVoiceDocumentRef={clearQuotedVoiceDocumentRef}
-                    toTokens={toTokens}
-                    onToggleRecipient={toggleRecipient}
-                    onClearRecipients={clearRecipients}
-                    composerFiles={composerFiles}
-                    onRemoveComposerFile={removeComposerFile}
-                    appendComposerFiles={appendComposerFiles}
-                    fileInputRef={fileInputRef}
-                    composerRef={composerRef}
-                    setComposerText={setComposerText}
-                    composerGroupMentionTokens={composerGroupMentionTokens}
-                    setComposerGroupMentionTokens={setComposerGroupMentionTokens}
-                    composerAgentMentionTokens={composerAgentMentionTokens}
-                    setComposerAgentMentionTokens={setComposerAgentMentionTokens}
-                    messageMode={messageMode}
-                    setMessageMode={setMessageMode}
-                    onSendMessage={sendMessage}
-                    showMentionMenu={showMentionMenu}
-                    setShowMentionMenu={setShowMentionMenu}
-                    mentionSuggestions={mentionSuggestions}
-                    connectMentionStatus={
-                      mentionKind === "group" ? connectMentionStatus : undefined
-                    }
-                    mentionSelectedIndex={mentionSelectedIndex}
-                    setMentionSelectedIndex={setMentionSelectedIndex}
-                    setMentionFilter={setMentionFilter}
-                    setMentionKind={setMentionKind}
-                    setMentionActorScope={setMentionActorScope}
-                    setMentionTargetGroupId={setMentionTargetGroupId}
-                    slashCommands={slashCommands}
-                  />
+                  {selectedGroupId ? (
+                    <ChatComposer
+                      isDark={isDark}
+                      isSmallScreen={isSmallScreen}
+                      keepExpanded={mobileAppHeaderReserved}
+                      selectedGroupId={selectedGroupId}
+                      actors={actors}
+                      recipientActorsBusy={recipientActorsBusy}
+                      selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+                      destGroupId={destGroupId}
+                      setDestGroupId={setDestGroupId}
+                      composerGroupSettled={composerGroupSettled}
+                      composerRouteGroups={composerRouteGroups}
+                      destGroupScopeLabel={destGroupScopeLabel}
+                      busy={busy}
+                      recentMessages={chatMessages}
+                      suggestionSourceMessages={suggestionSourceMessages}
+                      replyTarget={replyTarget}
+                      onCancelReply={cancelReply}
+                      quotedPresentationRef={quotedPresentationRef}
+                      onClearQuotedPresentationRef={clearQuotedPresentationRef}
+                      quotedVoiceDocumentRef={quotedVoiceDocumentRef}
+                      onQuoteVoiceDocumentRef={handleQuoteVoiceDocumentReference}
+                      onClearQuotedVoiceDocumentRef={clearQuotedVoiceDocumentRef}
+                      toTokens={toTokens}
+                      onToggleRecipient={toggleRecipient}
+                      onClearRecipients={clearRecipients}
+                      composerFiles={composerFiles}
+                      onRemoveComposerFile={removeComposerFile}
+                      appendComposerFiles={appendComposerFiles}
+                      fileInputRef={fileInputRef}
+                      composerRef={composerRef}
+                      setComposerText={setComposerText}
+                      composerGroupMentionTokens={composerGroupMentionTokens}
+                      setComposerGroupMentionTokens={setComposerGroupMentionTokens}
+                      composerAgentMentionTokens={composerAgentMentionTokens}
+                      setComposerAgentMentionTokens={setComposerAgentMentionTokens}
+                      messageMode={messageMode}
+                      setMessageMode={setMessageMode}
+                      onSendMessage={sendMessage}
+                      showMentionMenu={showMentionMenu}
+                      setShowMentionMenu={setShowMentionMenu}
+                      mentionSuggestions={mentionSuggestions}
+                      connectMentionStatus={
+                        mentionKind === "group" ? connectMentionStatus : undefined
+                      }
+                      mentionSelectedIndex={mentionSelectedIndex}
+                      setMentionSelectedIndex={setMentionSelectedIndex}
+                      setMentionFilter={setMentionFilter}
+                      setMentionKind={setMentionKind}
+                      setMentionActorScope={setMentionActorScope}
+                      setMentionTargetGroupId={setMentionTargetGroupId}
+                      slashCommands={slashCommands}
+                    />
+                  ) : null}
                 </>
               )}
             </section>

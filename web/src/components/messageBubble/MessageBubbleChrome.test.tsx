@@ -148,12 +148,13 @@ describe("message chrome", () => {
     expect(markup).not.toContain("copyText");
   });
 
+  // A message to the user names its recipient too, so no route is left to be guessed.
   it.each([
-    { by: "worker", to: ["user"], source: false, expected: false },
-    { by: "worker", to: ["user", "other"], source: false, expected: true },
-    { by: "user", to: ["worker"], source: false, expected: true },
-    { by: "worker", to: ["user"], source: true, expected: true },
-  ])("keeps necessary routing labels: %j", ({ by, to, source, expected }) => {
+    { by: "worker", to: ["user"], source: false },
+    { by: "worker", to: ["user", "other"], source: false },
+    { by: "user", to: ["worker"], source: false },
+    { by: "worker", to: ["user"], source: true },
+  ])("shows every message's recipients: %j", ({ by, to, source }) => {
     const host = document.createElement("div");
     host.innerHTML = renderToStaticMarkup(
       <MessageBubble
@@ -179,7 +180,7 @@ describe("message chrome", () => {
         onShowRecipients={vi.fn()}
       />,
     );
-    expect(host.textContent?.includes("→")).toBe(expected);
+    expect(host.textContent?.includes("→")).toBe(true);
   });
 
   it("keeps Reply and Forward on the bar, the rest in its menu, and all in the touch menu", async () => {

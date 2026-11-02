@@ -164,10 +164,10 @@ cd /path/to/your/repo
 cccc attach .                              # bind this directory as a scope
 cccc setup --runtime claude                # prepare only the runtimes used here
 cccc setup --runtime codex
-cccc actor add foreman --runtime claude    # first actor becomes foreman
+cccc actor add lead --runtime claude       # first actor becomes foreman
 cccc actor add implementer --runtime codex # add a peer
 cccc group start                           # start all actors
-cccc send "Please inspect the repo and propose the first safe task." --to foreman
+cccc send "Please inspect the repo and propose the first safe task." --to @foreman
 cccc tracked-send "Please take the first concrete task and reply with validation evidence." \
   --to implementer \
   --title "First concrete task" \
@@ -419,7 +419,7 @@ cccc actor add <id> --runtime <runtime>
 cccc actor start|stop|restart <id>
 
 # Messaging
-cccc send "message" --to foreman
+cccc send "message" --to @foreman
 cccc tracked-send "delegated work" --to implementer --title "Task title" --outcome "Done criterion"
 cccc send "announcement" --to @all  # explicit broadcast
 cccc reply <event_id> "response"

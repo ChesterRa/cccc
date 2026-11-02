@@ -5,14 +5,16 @@
    in lcd.css, and images, PDFs, frames and the browser picture are left alone. */
 
 /* The viewer's own keys stand on the ground without shadow or blur: some float over the
-   card, so the ground is opaque. The snapshot key is reversed while the snapshot shows. */
+   card, so the ground is opaque. The snapshot key is reversed while the snapshot shows, and the
+   key that unfolds the slots on a short screen while they show. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-presentation-action] {
   background: var(--lcd-bg);
   box-shadow: none;
   backdrop-filter: none;
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-presentation-action][aria-pressed="true"] {
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-presentation-action][aria-pressed="true"],
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-presentation-action][aria-expanded="true"] {
   border-color: var(--lcd-sel-bg);
   background: var(--lcd-sel-bg);
   color: var(--lcd-sel-fg);

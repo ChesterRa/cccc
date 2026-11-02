@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AccountIcon, ChevronRightIcon, SettingsIcon } from "../Icons";
+import { AccountIcon, SettingsIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { AppearancePreferences, type AppearancePreferencesProps } from "./AppearancePreferences";
@@ -80,42 +80,35 @@ export function AppSettingsMenu({
           if (openingDialog.current) event.preventDefault();
         }}
       >
+        {/* Account and all settings open dialogs, so they carry no arrow; their icons share
+            one slot, so the two labels line up. The appearance choices come last, so
+            unfolding them pushes nothing down. */}
         {canAccessAccount ? (
-          <>
-            <button
-              type="button"
-              className={`${row} py-2`}
-              onClick={() => openDialog(onOpenAccount)}
-              data-app-settings-account
+          <button
+            type="button"
+            className={`${row} py-2`}
+            onClick={() => openDialog(onOpenAccount)}
+            data-app-settings-account
+          >
+            <span
+              aria-hidden="true"
+              className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--glass-tab-bg)] text-[13px] font-semibold text-[var(--color-text-secondary)]"
             >
-              <span
-                aria-hidden="true"
-                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--glass-tab-bg)] text-[13px] font-semibold text-[var(--color-text-secondary)]"
-              >
-                {initial || <AccountIcon size={16} />}
-              </span>
-              <span className="min-w-0 flex-1 text-left">
-                <span className="block text-[13px] font-semibold">{t("account")}</span>
-                {accountLabel ? (
-                  <span
-                    className="block truncate text-xs text-[var(--color-text-muted)]"
-                    title={t("linkedAccount", { account: accountLabel })}
-                  >
-                    {accountLabel}
-                  </span>
-                ) : null}
-              </span>
-              <ChevronRightIcon
-                size={14}
-                aria-hidden="true"
-                className="shrink-0 text-[var(--color-text-tertiary)]"
-              />
-            </button>
-            {divider}
-          </>
+              {initial || <AccountIcon size={16} />}
+            </span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block">{t("account")}</span>
+              {accountLabel ? (
+                <span
+                  className="block truncate text-xs text-[var(--color-text-muted)]"
+                  title={t("linkedAccount", { account: accountLabel })}
+                >
+                  {accountLabel}
+                </span>
+              ) : null}
+            </span>
+          </button>
         ) : null}
-        <AppearancePreferences {...appearance} />
-        {divider}
         <button
           type="button"
           className={row}
@@ -123,14 +116,16 @@ export function AppSettingsMenu({
           onClick={() => openDialog(onOpenSettings)}
           data-app-settings-open-all
         >
-          <SettingsIcon size={17} className="shrink-0 text-[var(--color-text-secondary)]" />
-          <span className="flex-1">{t("allSettings")}</span>
-          <ChevronRightIcon
-            size={14}
+          <span
             aria-hidden="true"
-            className="shrink-0 text-[var(--color-text-tertiary)]"
-          />
+            className="flex size-8 shrink-0 items-center justify-center text-[var(--color-text-secondary)]"
+          >
+            <SettingsIcon size={17} />
+          </span>
+          <span className="flex-1">{t("allSettings")}</span>
         </button>
+        {divider}
+        <AppearancePreferences {...appearance} />
       </PopoverContent>
     </Popover>
   );

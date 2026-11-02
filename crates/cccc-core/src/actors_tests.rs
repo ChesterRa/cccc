@@ -128,3 +128,21 @@ fn repeated_runtime_preserves_acp_mode_but_changed_runtime_resets_it() {
         actors::update(&mut group, "worker", changed.as_object().expect("patch")).expect("change");
     assert_eq!(updated.runtime_mode, RuntimeMode::Default);
 }
+
+#[test]
+fn reserved_actor_ids_are_named_as_reserved() {
+    for reserved in ["foreman", "Foreman", " USER "] {
+        let error = actors::validate_actor_id(reserved)
+            .expect_err(reserved)
+            .to_string();
+        assert!(error.contains("is reserved"), "{reserved}: {error}");
+    }
+    let too_long = "x".repeat(33);
+    for malformed in ["-lead", "lead lead", too_long.as_str()] {
+        let error = actors::validate_actor_id(malformed)
+            .expect_err(malformed)
+            .to_string();
+        assert!(error.contains("must be 1-32"), "{malformed}: {error}");
+    }
+    assert_eq!(actors::validate_actor_id(" lead ").expect("lead"), "lead");
+}

@@ -17,6 +17,26 @@ async fn automation(home: &HomeLayout, group_id: &str, actor: &str, arguments: V
         .clone()
 }
 
+/// The route a Web Model Actor takes: its remote schema lists only the core
+/// tools, so it reaches `cccc_automation` through `cccc_capability_use`.
+async fn automation_via_capability_use(
+    home: &HomeLayout,
+    group_id: &str,
+    actor: &str,
+    arguments: Value,
+) -> Value {
+    cccc_mcp::handle_request_for_actor(
+        home,
+        &json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+            "params":{"name":"cccc_capability_use","arguments":{
+                "tool_name":"cccc_automation","tool_arguments":arguments}}}),
+        group_id,
+        actor,
+    )
+    .await["result"]
+        .clone()
+}
+
 fn rule<'a>(result: &'a Value, id: &str) -> Option<&'a Value> {
     result["structuredContent"]["ruleset"]["rules"]
         .as_array()?
@@ -34,6 +54,11 @@ async fn automation_permissions_follow_the_authenticated_actor() {
     for id in ["lead", "peer1"] {
         cccc_core::actors::add(&mut group, cccc_contracts::Actor::new(id)).expect("actor");
     }
+    let mut web_peer = cccc_contracts::Actor::new("web1");
+    // The runtime of the report: a Grok Web Model peer. The router unit test covers
+    // the ChatGPT Web Model.
+    web_peer.runtime = cccc_contracts::ActorRuntime::GrokWebModel;
+    cccc_core::actors::add(&mut group, web_peer).expect("web model peer");
     store.save(&group).expect("save");
     let group_id = group.group_id.as_str();
     let daemon_home = home.clone();
@@ -111,10 +136,64 @@ async fn automation_permissions_follow_the_authenticated_actor() {
         "{foreman}"
     );
 
+    // The refused batches above wrote nothing.
+    let before_web = automation(&home, group_id, "lead", json!({"action":"state"})).await;
+    assert_eq!(before_web["structuredContent"]["version"], version);
+
+    // A Web Model peer cannot name the tool directly, but through capability use
+    // it sets a reminder for itself, as any peer can.
+    let direct = automation(&home, group_id, "web1", json!({"action":"state"})).await;
+    assert_eq!(direct["isError"], true, "{direct}");
+    let web_own = automation_via_capability_use(
+        &home,
+        group_id,
+        "web1",
+        json!({"action":"manage","actions":[{"type":"create_rule","rule":{
+            "id":"web1-hourly","trigger":{"kind":"interval","every_seconds":3600},
+            "action":{"kind":"notify","message":"hourly check"}
+        }}]}),
+    )
+    .await;
+    assert_ne!(web_own["isError"], true, "{web_own}");
+    // Capability use returns the tool's own result under `tool_result`.
+    let web_result = json!({"structuredContent": web_own["structuredContent"]["tool_result"]});
+    let web_reminder = rule(&web_result, "web1-hourly").expect("saved Web Model reminder");
+    assert_eq!(web_reminder["scope"], "personal");
+    assert_eq!(web_reminder["to"], json!(["web1"]));
+    let web_version = web_result["structuredContent"]["version"].clone();
+
+    // The route grants no more than a peer holds: a reminder for another Actor,
+    // or one claimed as the user, is refused and nothing is written.
+    for (id, arguments) in [
+        (
+            "web1-nudge",
+            json!({"action":"manage","actions":[{"type":"create_rule","rule":{
+            "id":"web1-nudge","scope":"group","to":["peer1"],
+            "trigger":{"kind":"interval","every_seconds":600},
+            "action":{"kind":"notify","message":"nudge"}}}]}),
+        ),
+        (
+            "web1-as-user",
+            json!({"action":"manage","by":"user","group_id":group_id,
+            "actions":[{"type":"create_rule","rule":{"id":"web1-as-user","to":["@all"],
+            "trigger":{"kind":"interval","every_seconds":600},
+            "action":{"kind":"notify","message":"all hands"}}}]}),
+        ),
+    ] {
+        let refused = automation_via_capability_use(&home, group_id, "web1", arguments).await;
+        assert_eq!(refused["isError"], true, "{id}: {refused}");
+        assert!(
+            refused.to_string().contains("permission_denied"),
+            "{id}: {refused}"
+        );
+        let after = automation(&home, group_id, "lead", json!({"action":"state"})).await;
+        assert!(rule(&after, id).is_none(), "{id} was saved");
+    }
+
     let state = automation(&home, group_id, "lead", json!({"action":"state"})).await;
     daemon.abort();
     let _ = daemon.await;
-    assert_eq!(state["structuredContent"]["version"], version);
+    assert_eq!(state["structuredContent"]["version"], web_version);
     assert_eq!(
         rule(&state, "nightly-pause").expect("kept")["enabled"],
         true

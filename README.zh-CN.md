@@ -154,10 +154,10 @@ cd /path/to/your/repo
 cccc attach .                              # 绑定当前目录为 scope
 cccc setup --runtime claude                # 仅准备本例使用的运行时
 cccc setup --runtime codex
-cccc actor add foreman --runtime claude    # 第一个 actor 自动成为 foreman
+cccc actor add lead --runtime claude       # 第一个 actor 自动成为 foreman
 cccc actor add implementer --runtime codex # 添加 peer
 cccc group start                           # 启动所有 actor
-cccc send "请检查这个仓库，并提出第一个安全任务。" --to foreman
+cccc send "请检查这个仓库，并提出第一个安全任务。" --to @foreman
 cccc tracked-send "请接手第一个具体任务，并回复验证证据。" \
   --to implementer \
   --title "第一个具体任务" \
@@ -409,7 +409,7 @@ cccc actor add <id> --runtime <runtime>
 cccc actor start|stop|restart <id>
 
 # 消息
-cccc send "消息" --to foreman
+cccc send "消息" --to @foreman
 cccc tracked-send "委派工作" --to implementer --title "任务标题" --outcome "完成标准"
 cccc send "公告" --to @all  # 显式广播
 cccc reply <event_id> "回复"

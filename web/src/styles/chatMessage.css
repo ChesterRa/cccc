@@ -35,7 +35,11 @@
     pointer-events: none;
     transition: opacity 140ms ease-out;
   }
+  /* A message's whole band in the list keeps its actions showing, not only the message
+     itself: they can sit beside a short message's head, past the message's own box, and
+     a pointer heading there from the text must not leave it on the way. */
   .message-row:hover .message-actions-inline,
+  [data-message-row]:hover .message-actions-inline,
   .message-row:focus-within .message-actions-inline {
     opacity: 1;
     pointer-events: auto;

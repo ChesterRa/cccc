@@ -513,7 +513,8 @@
    under the author's name. */
 :root[data-ui-style="lcd"] .lcd-row {
   position: relative;
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
   /* The row's own text (author, insight, request card) matches the Markdown body,
      so nothing around a message is set larger than the message itself. */
@@ -521,11 +522,12 @@
   line-height: 1.7;
 }
 
-/* Messages read as a ledger. A hairline in the space above starts each message that
-   shows its author; a dotted one, from the text column, starts a message continuing
-   under the same head. Space inside a message is reduced (see the Markdown spacing
-   further down) so that it reads apart from the space between messages. Messages get
-   no ground and no hover tone: a fill on every
+/* Messages read as a ledger. A hairline in the space above a message marks a change
+   of speaker; messages that follow from the same sender are set apart by space alone.
+   Each message, an agent's or yours, is as wide as its own text, and its line spans
+   exactly that width, so no line reaches past its message. Space inside a message is
+   reduced (see the Markdown spacing further down) so that it reads apart from the
+   space between messages. Messages get no ground and no hover tone: a fill on every
    message turned the page into blocks, and a tone change over a whole message read as
    a jump. Padding, not margin, keeps the space inside the row the virtual list
    measures; the line sits halfway down it. */
@@ -538,24 +540,14 @@
   --lcd-row-gap: 0.875rem;
 }
 
-:root[data-ui-style="lcd"] .lcd-row::after {
+:root[data-ui-style="lcd"] .lcd-row:not([data-lcd-same-sender])::after {
   content: "";
   position: absolute;
   top: calc(var(--lcd-row-gap) / 2);
-  left: -0.5rem;
+  left: 0;
   right: 0;
   border-top: 1px solid var(--lcd-sep);
   pointer-events: none;
-}
-
-:root[data-ui-style="lcd"] .lcd-row[data-lcd-continued]::after {
-  left: calc(1.25rem + 0.75ch);
-  border-top-style: dotted;
-}
-
-/* Your messages sit on your side, which already sets them apart. */
-:root[data-ui-style="lcd"] .lcd-row[data-lcd-user]::after {
-  display: none;
 }
 
 /* The message below its space, which a jump outlines. */
@@ -667,13 +659,9 @@
   color: var(--lcd-sel-fg);
 }
 
-/* Your own messages also sit on your side: head and text on the right, the rule
-   beside the text on the right, the text itself left-aligned. Agents stay on the
-   left, however many there are. The actions sit on the inner side of the head, next
-   to your name, as they follow the time on an agent's head; they keep their place
-   while hidden, so showing them on hover moves nothing and covers nothing. */
+/* Your own messages also sit on your side: head and text on the right, the text itself
+   left-aligned. Agents stay on the left, however many there are. */
 :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] {
-  width: fit-content;
   max-width: 85%;
   margin-left: auto;
 }
@@ -687,6 +675,8 @@
   justify-content: flex-end;
 }
 
+/* Your actions sit on the inner side of the head, next to your name, as they follow
+   the time on an agent's head. */
 :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] .lcd-row-head > [data-message-actions-inline] {
   order: -1;
 }
@@ -697,22 +687,80 @@
   padding-left: 0;
 }
 
-/* Agents leave room on the right as your messages do on the left, so the two edges
-   alternate instead of both reaching across the column. Phones keep that width
-   for the text. */
-@media (min-width: 640px) {
+/* Rows measure the conversation's own column, not the window, which a side panel or a
+   large text size can leave narrow. */
+:root[data-ui-style="lcd"] [data-message-column] {
+  container: messages / inline-size;
+}
+
+/* In a column 36rem wide or more the two sides mirror each other: an agent's message
+   keeps the same room from the right edge as yours keeps from the left. A narrower
+   column, as on a phone, gives agents the full width for their text. */
+@container messages (min-width: 36rem) {
+  :root[data-ui-style="lcd"] .lcd-row,
   :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] {
-    max-width: 75%;
+    max-width: calc(100% - clamp(6rem, 12%, 12rem));
+  }
+}
+
+/* With a pointer, the actions show in the free space beside the head instead of
+   keeping a place in it, so a short message, and its line, stay as wide as its text.
+   They follow the time on an agent's head and come before your name on yours, and
+   showing them moves nothing. The head's own end space, which the line spans, meets
+   them, so the pointer reaches them without leaving the message. A head stops 12rem
+   short of the reading column's far edge, room for the widest set of actions, so a
+   long head wraps instead of pushing them off the screen. A column narrower than
+   28rem, beside a side panel or at a large text size, has no such room: there, as on
+   a phone, every action is in the message's menu (⋮), which ends its head. */
+@media (min-width: 640px) and (hover: hover) {
+  @container messages (min-width: 28rem) {
+    :root[data-ui-style="lcd"] .lcd-row-head {
+      position: relative;
+      width: fit-content;
+      max-width: calc(100cqi - 12rem);
+      padding-right: 1ch;
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] .lcd-row-head {
+      margin-left: auto;
+      padding-right: 0;
+      padding-left: 1ch;
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row .lcd-row-head > [data-message-actions-inline] {
+      position: absolute;
+      top: 50%;
+      left: 100%;
+      width: max-content;
+      translate: 0 -50%;
+    }
+
+    :root[data-ui-style="lcd"]
+      .lcd-row[data-lcd-user]
+      .lcd-row-head
+      > [data-message-actions-inline] {
+      right: 100%;
+      left: auto;
+    }
   }
 
-  :root[data-ui-style="lcd"] .lcd-row:not([data-lcd-user]) {
-    padding-right: clamp(6rem, 12%, 12rem);
-  }
+  @container messages (width < 28rem) {
+    :root[data-ui-style="lcd"] .lcd-row .message-actions-inline {
+      display: none;
+    }
 
-  /* The line and the jump outline end where the text does. */
-  :root[data-ui-style="lcd"] .lcd-row:not([data-lcd-user])::before,
-  :root[data-ui-style="lcd"] .lcd-row:not([data-lcd-user])::after {
-    right: clamp(6rem, 12%, 12rem);
+    :root[data-ui-style="lcd"] .lcd-row .message-actions-menu {
+      display: block;
+      margin-left: auto;
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] .message-actions-menu {
+      margin-left: 0;
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row .message-actions-label {
+      display: none;
+    }
   }
 }
 
@@ -1561,10 +1609,12 @@
 
 /* S3: only the pending reply is emphasised. A double frame in the "waiting on
    you" colour with the title on its top edge; a closed question ends with one
-   status line instead. */
+   status line instead. A message is as wide as its text, but a question keeps
+   82ch, as the column allows, so a short one still has room to answer in. */
 :root[data-ui-style="lcd"] [data-lcd-scope] form[data-pending-reply] {
   position: relative;
-  max-width: 82ch;
+  width: 82ch;
+  max-width: 100%;
   margin-top: 1rem;
   padding: 0.75rem 1.5ch 0.5rem;
   border: 3px double var(--lcd-wait);

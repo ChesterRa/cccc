@@ -456,6 +456,20 @@ pub(super) fn bind_workspace(root: &Path) -> io::Result<WorkspaceBinding> {
     Ok(WorkspaceBinding { root })
 }
 
+/// Whether a path a Runtime reports names the bound workspace. Runtimes spell
+/// paths their own way: on Windows, Codex drops the `\\?\` prefix that
+/// `fs::canonicalize` adds. So an absolute reported path is resolved and
+/// compared with the canonical root. A relative path does not match, since it
+/// would resolve against the daemon's own directory, and neither does a path
+/// that cannot be resolved.
+pub(super) fn names_workspace(reported: &str, root: &Path) -> bool {
+    let reported = Path::new(reported);
+    reported.is_absolute()
+        && reported
+            .canonicalize()
+            .is_ok_and(|reported| reported == root)
+}
+
 #[cfg(test)]
 mod instruction_tests {
     #[test]

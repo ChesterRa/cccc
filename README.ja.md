@@ -159,10 +159,10 @@ cd /path/to/your/repo
 cccc attach .                              # ディレクトリを scope として紐付け
 cccc setup --runtime claude                # この例で使うランタイムだけを準備
 cccc setup --runtime codex
-cccc actor add foreman --runtime claude    # 最初の actor が foreman に
+cccc actor add lead --runtime claude       # 最初の actor が foreman に
 cccc actor add implementer --runtime codex # peer を追加
 cccc group start                           # 全 actor を起動
-cccc send "リポジトリを確認し、最初の安全なタスクを提案してください。" --to foreman
+cccc send "リポジトリを確認し、最初の安全なタスクを提案してください。" --to @foreman
 cccc tracked-send "最初の具体タスクを担当し、検証証拠を添えて返信してください。" \
   --to implementer \
   --title "最初の具体タスク" \
@@ -414,7 +414,7 @@ cccc actor add <id> --runtime <runtime>
 cccc actor start|stop|restart <id>
 
 # メッセージング
-cccc send "メッセージ" --to foreman
+cccc send "メッセージ" --to @foreman
 cccc tracked-send "委任作業" --to implementer --title "タスクタイトル" --outcome "完了条件"
 cccc send "告知" --to @all  # 明示的なブロードキャスト
 cccc reply <event_id> "返信"

@@ -45,6 +45,37 @@ describe("VirtualMessageListEmptyState", () => {
     expect(loadMore).toHaveBeenCalledOnce();
   });
 
+  it("shows the chat tips only in an ordinary empty chat", async () => {
+    await act(async () =>
+      root.render(
+        <VirtualMessageListEmptyState
+          isLoadingHistory={false}
+          hasMoreHistory={false}
+          isFilteredEmpty={false}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("emptyStateTitle");
+    expect(host.textContent).toContain("emptyStateQuickNoteTitle");
+
+    // A message of its own, such as the hint shown before any Group is selected,
+    // stands alone: the tips on sending and delegating would not apply.
+    await act(async () =>
+      root.render(
+        <VirtualMessageListEmptyState
+          isLoadingHistory={false}
+          hasMoreHistory={false}
+          isFilteredEmpty={false}
+          emptyMessage="noGroupSelected"
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("noGroupSelected");
+    expect(host.textContent).not.toContain("emptyStateTitle");
+    expect(host.textContent).not.toContain("emptyStateSubtitle");
+    expect(host.textContent).not.toContain("emptyStateQuickNoteTitle");
+  });
+
   it("shows progress instead of another request while history is loading", async () => {
     await act(async () =>
       root.render(
