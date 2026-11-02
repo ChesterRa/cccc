@@ -12,7 +12,6 @@ use crate::ops::{actor_delivery, messaging_inbox};
 mod cancellation;
 pub(crate) mod cross_group_attachments;
 mod cross_group_preflight;
-mod delegation;
 pub(super) mod files;
 pub(crate) mod install_command;
 mod message_validation;
@@ -43,7 +42,6 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "user_reply_requests_summary" => Operation::new(Read, super::reply_requests::summary),
         "message_deliver" => Operation::new(Write, message_deliver),
         "stream_emit" => Operation::new(Write, stream::emit),
-        "relay_user_delegation" => Operation::new(Write, delegation::relay),
         "system_notify" => {
             Operation::new(Write, |home, request| send(home, request, "system.notify"))
         }

@@ -58,10 +58,6 @@ fn json_routes() -> Router<AppState> {
         .merge(large_message_json_routes())
         .route("/api/v1/groups/{group_id}/tracked_send", post(tracked_send))
         .route(
-            "/api/v1/groups/{group_id}/delegate_contact",
-            post(delegate_contact),
-        )
-        .route(
             "/api/v1/groups/{group_id}/slash_skill_dispatch",
             post(slash_skill_dispatch),
         )
@@ -100,16 +96,6 @@ async fn tracked_send(
     Json(body): Json<Value>,
 ) -> ApiResult {
     daemon_body(&state, &principal, "tracked_send", group_id, body).await
-}
-async fn delegate_contact(
-    State(state): State<AppState>,
-    Extension(principal): Extension<Principal>,
-    Path(group_id): Path<String>,
-    Json(body): Json<Value>,
-) -> ApiResult {
-    let destination = super::messaging_cross_group::required(&body, "dst_group_id")?;
-    super::messaging_cross_group::ensure_access(&principal, &destination)?;
-    daemon_body(&state, &principal, "relay_user_delegation", group_id, body).await
 }
 async fn slash_skill_dispatch(
     State(state): State<AppState>,

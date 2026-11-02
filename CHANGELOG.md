@@ -67,6 +67,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Connect existing sessions** moved from the end of the Group list to a **Connect sessions** key beside the **Working Groups** heading, or an icon under **New** when the sidebar is collapsed, so it stays in view however many Groups there are and no longer looks like a Group. Where the label does not fit beside the heading, as in English, the key sits just below it.
 - Enlarged message images and videos open over the whole window instead of a fixed-width panel. In image and diagram viewers, Ctrl/⌘ + wheel and pinch zoom at the pointer while the plain wheel still scrolls, a click switches between fit and actual size (double-tap on touch screens), and rendered diagrams and workspace SVG previews can grow to fill the view. A click on the empty area around an enlarged message image closes it; releasing a drag does not.
 
+### Removed
+
+- The Web `delegate_contact` route and daemon `relay_user_delegation` operation, which sent a
+  human's request under a Group member's identity. Use the Web `send_cross_group` route to send as
+  `user`; replies return to the human sender instead of a relaying member.
+
 ### Fixed
 
 - The Web routes for sending, replying, sending attachments and sending to another Group now send

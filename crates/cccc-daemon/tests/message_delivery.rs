@@ -2107,7 +2107,7 @@ fn message_domain_contracts_cover_install_reply_idle_stream_and_validation() {
 }
 
 #[test]
-fn delegation_relays_to_target_foreman_with_legacy_cross_group_schema() {
+fn retired_delegation_is_rejected_and_user_cross_group_reply_still_works() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let source = call(&home, "group_create", json!({"title":"source","by":"user"}));
@@ -2130,19 +2130,50 @@ fn delegation_relays_to_target_foreman_with_legacy_cross_group_schema() {
         "actor_add",
         json!({"group_id":destination_id,"actor_id":"target-lead","by":"user"}),
     );
+    let store = GroupStore::new(home.clone()).expect("store");
+    for group_id in [source_id, destination_id] {
+        store
+            .mutate(group_id, |group| {
+                group.state = cccc_contracts::GroupState::Paused;
+                Ok(())
+            })
+            .expect("pause fixture");
+    }
 
     let direct = call(
         &home,
         "send_cross_group",
         json!({
-            "group_id":source_id,"dst_group_id":destination_id,"by":"source-lead",
+            "group_id":source_id,"dst_group_id":destination_id,"by":"user",
             "to":["target-lead"],"text":"schema","message_mode":"send"
         }),
     );
     assert_eq!(direct.result["src_event"], direct.result["source_event"]);
     assert_eq!(direct.result["dst_event"], direct.result["event"]);
+    assert_eq!(direct.result["source_event"]["by"], "user");
+    assert_eq!(direct.result["event"]["by"], format!("{source_id}::user"));
 
-    let delegated = call(
+    let reply = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":destination_id,"by":"target-lead",
+            "reply_to":direct.result["event"]["id"],
+            "text":"answer","message_mode":"send"
+        }),
+    );
+    assert_eq!(reply.result["dst_event"]["group_id"], source_id);
+    assert_eq!(reply.result["dst_event"]["data"]["to"], json!(["user"]));
+    assert_eq!(
+        reply.result["dst_event"]["data"]["reply_to"],
+        direct.result["source_event"]["id"]
+    );
+
+    let source_ledger = store.ledger_path(source_id).expect("source ledger");
+    let target_ledger = store.ledger_path(destination_id).expect("target ledger");
+    let before_source = std::fs::read(&source_ledger).expect("source history");
+    let before_target = std::fs::read(&target_ledger).expect("target history");
+    let delegated = call_raw(
         &home,
         "relay_user_delegation",
         json!({
@@ -2150,22 +2181,15 @@ fn delegation_relays_to_target_foreman_with_legacy_cross_group_schema() {
             "text":"#destination 请处理","source_event_id":"source-message"
         }),
     );
-    assert_eq!(delegated.result["relay"]["sender"], "source-lead");
-    assert_eq!(delegated.result["relay"]["target_actor_id"], "target-lead");
-    assert!(
-        delegated.result["relay"]["delegation_id"]
-            .as_str()
-            .is_some_and(|value| value.starts_with("dlg_"))
+    assert!(!delegated.ok);
+    assert_eq!(delegated.error.expect("error").code, "unknown_op");
+    assert_eq!(
+        std::fs::read(source_ledger).expect("source history"),
+        before_source
     );
-    assert!(
-        delegated.result["relay"]["src_event_id"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
-    );
-    assert!(
-        delegated.result["relay"]["dst_event_id"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
+    assert_eq!(
+        std::fs::read(target_ledger).expect("target history"),
+        before_target
     );
 }
 

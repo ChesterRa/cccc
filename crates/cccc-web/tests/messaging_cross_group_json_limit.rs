@@ -62,6 +62,12 @@ async fn multi_megabyte_local_cross_group_text_reaches_both_ledgers() {
             .iter()
             .find(|event| event.kind == "chat.message")
             .expect("chat message");
+        let expected_author = if *group_id == source.group_id {
+            "user".to_owned()
+        } else {
+            format!("{}::user", source.group_id)
+        };
+        assert_eq!(message.by, expected_author);
         assert_eq!(
             message.data["text"].as_str().map(str::len),
             Some(text.len())

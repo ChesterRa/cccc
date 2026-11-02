@@ -470,7 +470,7 @@ async fn scoped_token_cannot_open_another_group() {
 }
 
 #[tokio::test]
-async fn scoped_token_cannot_delegate_into_another_group() {
+async fn scoped_token_cannot_send_into_another_group() {
     let (_temp, home) = home();
     let token = AccessTokenStore::new(home.clone())
         .expect("store")
@@ -478,7 +478,7 @@ async fn scoped_token_cannot_delegate_into_another_group() {
         .expect("token");
     let response = cccc_web::app(home)
         .oneshot(
-            Request::post("/api/v1/groups/g_allowed/delegate_contact")
+            Request::post("/api/v1/groups/g_allowed/send_cross_group")
                 .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(r#"{"dst_group_id":"g_denied","text":"hello"}"#))
@@ -487,6 +487,31 @@ async fn scoped_token_cannot_delegate_into_another_group() {
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn retired_delegation_route_is_not_found() {
+    let (_temp, home) = home();
+    let store = AccessTokenStore::new(home.clone()).expect("store");
+    let token = store
+        .create(
+            "member",
+            vec!["g_source".into(), "g_target".into()],
+            false,
+            None,
+        )
+        .expect("token");
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::post("/api/v1/groups/g_source/delegate_contact")
+                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"dst_group_id":"g_target","text":"hello"}"#))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
